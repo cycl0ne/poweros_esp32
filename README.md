@@ -22,6 +22,40 @@ Espressif's QEMU. The ESP32-P4 is next.
 More in [the screenshots](docs/screenshots/README.md): a game in a window
 of its own, fonts, menus, a requester and gadgets.
 
+## What PowerOS is - and what it is not
+
+**It is** a desktop-style operating system small enough to read. The
+whole system - kernel, DOS, file systems, graphics, windows - is well
+under a megabyte of code, written in Zig, and runs on a microcontroller
+that costs a few euros. It is built from small modules that
+talk through message ports and jump tables: a library or a device can be
+replaced, added from disk or patched at run time, and a program is a file
+that is loaded, run and unloaded.
+
+**It is** made for the ESP32 family. It drives the chip itself, register by
+register - clock, MMU, PSRAM, interrupt matrix, DMA, display controller -
+so everything between the power-on and the desktop is in this tree.
+
+**It is** a young project. 0.1 is the first release: the system works end
+to end, but the API may still change before 1.0, and not every part has
+run on every board.
+
+**It is not** a Linux, a POSIX system or an RTOS in the usual sense.
+Programs use the system's own API - libraries opened by name, tag lists,
+messages - and there is no `libc`, no `fork`, no file descriptors.
+
+**It is not** an emulator. It uses the ideas of AmigaOS but runs no Amiga
+software, and no software written for any other machine: programs are
+native code for the chip, built with Zig against the SDK.
+
+**It is not** a protected system. All tasks share one address space, and
+a program that writes where it should not can bring the system down. It is a machine for one person at a
+time, not a server.
+
+**It does not (yet)** have networking (no Wi-Fi or Bluetooth drivers), USB
+host support, or a second CPU core: it runs on one of the chip's two
+cores.
+
 ## What is in it
 
 **Kernel (exec)**
