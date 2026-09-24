@@ -14,6 +14,18 @@ mask, gradients, a tiled background, text measured and drawn in bold, and a
 scroller in italic and underlined - everything in one RastPort, redrawn
 every frame.
 
+## A game: Dungeon Master
+
+![Dungeon Master: the title](dm-title.png)
+
+![Dungeon Master: the dungeon](dm-dungeon.png)
+
+Dungeon Master, built against the SDK in a repository of its own and put
+on the disk with its data files, running in a window of its own beside the
+shell: the title with its door, and the first corridor of the dungeon. It
+is started from the shell with `cd SYS:dm`, `Stack 65536` and
+`Run dm window`.
+
 ## The shell
 
 ![Shell](shell.png)

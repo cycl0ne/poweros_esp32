@@ -19,8 +19,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 [![The shell](docs/screenshots/shell.png)](docs/screenshots/README.md#the-shell)
 
-More in [the screenshots](docs/screenshots/README.md): fonts, menus, a
-requester and gadgets.
+More in [the screenshots](docs/screenshots/README.md): a game in a window
+of its own, fonts, menus, a requester and gadgets.
 
 ## What is in it
 
