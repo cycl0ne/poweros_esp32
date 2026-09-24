@@ -1,0 +1,3194 @@
+# utility.library
+
+utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
+multiplication and division, Latin-1 case, pack tables, named objects,
+unique IDs, pattern matching, strings and alignment. The reserved slots
+are kept free so that the slots after them stay where they are.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AddNamedObject](#addnamedobject) - Puts an object into a name space.
+- [AlignDown](#aligndown) - Rounds an offset down to a multiple of an alignment.
+- [AlignUp](#alignup) - Rounds an offset up to the next multiple of an alignment.
+- [AllocNamedObjectA](#allocnamedobjecta) - Makes a named object, with a name space and user space of its own if asked for.
+- [AllocateTagItems](#allocatetagitems) - Allocates an array of tag items, cleared.
+- [Amiga2Date](#amiga2date) - Turns seconds since 1 January 1978 into a date.
+- [ApplyTagChanges](#applytagchanges) - Gives every item of a list the data a change list has for its tag.
+- [AttemptRemNamedObject](#attemptremnamedobject) - Takes an object out of its name space if the caller's use is the only one.
+- [CallHookPkt](#callhookpkt) - Calls a hook with an object and a message.
+- [CheckDate](#checkdate) - Checks that a date is real and in range, and returns its seconds since 1 January 1978.
+- [CloneTagItems](#clonetagitems) - Makes a flat copy of a tag list.
+- [Date2Amiga](#date2amiga) - Turns a date into seconds since 1 January 1978.
+- [DateJoin](#datejoin) - The day number a date falls on.
+- [DateSplit](#datesplit) - A day number as the date it falls on.
+- [FilterTagChanges](#filtertagchanges) - Drops the changes in a change list that change nothing, and can apply the rest.
+- [FilterTagItems](#filtertagitems) - Keeps the items of a list whose tags are, or are not, in an array.
+- [FindNamedObject](#findnamedobject) - Finds the next object of a name space with a given name.
+- [FindTagItem](#findtagitem) - Finds the first item of a tag list with a given tag.
+- [FreeNamedObject](#freenamedobject) - Gives back the memory of a named object.
+- [FreeTagItems](#freetagitems) - Gives back an array from `AllocateTagItems` or `CloneTagItems`.
+- [GetTagData](#gettagdata) - Returns the data of the first item with a given tag, or a default.
+- [GetUniqueID](#getuniqueid) - Returns a number no earlier call has returned.
+- [MapTags](#maptags) - Renames the tags of a list through a map.
+- [MatchPattern](#matchpattern) - Tells whether a string matches a pattern made by `ParsePattern`.
+- [MatchPatternNoCase](#matchpatternnocase) - Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
+- [NamedObjectName](#namedobjectname) - Returns the name of a named object.
+- [NextTagItem](#nexttagitem) - Returns the next item a tag list holds, and moves the caller's place in the list past it.
+- [PackBoolTags](#packbooltags) - Sets and clears flag bits from the boolean tags of a list.
+- [PackStructureTags](#packstructuretags) - Copies the data of a tag list into the fields of a structure, as a pack table lays them out.
+- [ParsePattern](#parsepattern) - Turns a pattern into the tokens `MatchPattern` works on.
+- [ParsePatternNoCase](#parsepatternnocase) - Turns a pattern into the tokens `MatchPatternNoCase` works on.
+- [RefreshTagItemClones](#refreshtagitemclones) - Copies a tag list into an earlier clone of it again.
+- [ReleaseNamedObject](#releasenamedobject) - Gives back one use of an object.
+- [RemNamedObject](#remnamedobject) - Takes an object out of its name space, and reports when its last user has let go.
+- [SDivMod32](#sdivmod32) - Divides two signed 32-bit numbers into a quotient and a remainder.
+- [SMult32](#smult32) - Multiplies two signed 32-bit numbers and keeps the low 32 bits.
+- [SMult64](#smult64) - Multiplies two signed 32-bit numbers into their whole 64-bit product.
+- [SetWildStar](#setwildstar) - Makes `*` a wildcard, or a plain character again, for the patterns parsed from now on.
+- [Strchr](#strchr) - Finds the first occurrence of a character in a string.
+- [Strcmp](#strcmp) - Compares two strings, case included.
+- [Stricmp](#stricmp) - Compares two strings without regard to case.
+- [Strlcpy](#strlcpy) - Copies a string into a buffer, cut to fit and always ended with a NUL.
+- [Strlen](#strlen) - Returns the length of a string, without its NUL.
+- [Strnicmp](#strnicmp) - Compares at most a given number of characters of two strings without regard to case.
+- [Strrchr](#strrchr) - Finds the last occurrence of a character in a string.
+- [TagInArray](#taginarray) - Tells whether a tag is in an array of tags.
+- [ToLower](#tolower) - Turns a Latin-1 character into lower case.
+- [ToUpper](#toupper) - Turns a Latin-1 character into upper case.
+- [UDivMod32](#udivmod32) - Divides two unsigned 32-bit numbers into a quotient and a remainder.
+- [UMult32](#umult32) - Multiplies two unsigned 32-bit numbers and keeps the low 32 bits.
+- [UMult64](#umult64) - Multiplies two unsigned 32-bit numbers into their whole 64-bit product.
+- [UnpackStructureTags](#unpackstructuretags) - Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
+
+## AddNamedObject
+
+Puts an object into a name space.
+
+**SYNOPSIS**
+
+```zig
+fn AddNamedObject(ub: *UtilityBase, name_space: ?*NamedObject, object: ?*NamedObject) bool
+```
+
+**SINCE**
+
+1.0. LVO -148.
+
+**INPUTS**
+
+- `name_space` - an object made with `ANO_NameSpace`, or null for the
+  system's root name space.
+- `object` - the object to add. In no name space yet.
+
+**RESULT**
+
+True if it was added. False if `name_space` has no name space, the
+object is null, already in a name space or would go into its own, or the
+name space has `NSF_NODUPS` and the name is taken.
+
+**BEHAVIOR**
+
+The object goes in by priority, behind those of the same priority. The
+name space's semaphore is held exclusively meanwhile, so no search sees
+it half in.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the name space's semaphore.
+- Interrupts: no. It may wait.
+- Forbid: must not be relied on across it: waiting for the semaphore
+  breaks it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The name space holds the object until
+`RemNamedObject` or `AttemptRemNamedObject` takes it out; the caller
+keeps its use.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindNamedObject`, `RemNamedObject`, `AllocNamedObjectA`
+
+**EXAMPLES**
+
+```zig
+if (!ub.AddNamedObject(null, obj)) {
+    ub.FreeNamedObject(obj);
+    return error.Exists;
+}
+```
+
+## AlignDown
+
+Rounds an offset down to a multiple of an alignment.
+
+**SYNOPSIS**
+
+```zig
+fn AlignDown(_: *UtilityBase, offset: usize, alignment: usize) usize
+```
+
+**SINCE**
+
+1.0. LVO -232.
+
+**INPUTS**
+
+- `offset` - an offset, a size or an address.
+- `alignment` - a power of two.
+
+**RESULT**
+
+The largest multiple of `alignment` that is not above `offset`;
+`offset` itself when it is aligned already.
+
+**BEHAVIOR**
+
+A power of two has one bit set, so its multiples are the numbers whose
+bits below it are clear: clearing those bits rounds down in one
+operation, with no division. It cannot overflow.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+An `alignment` that is not a power of two gives a number with no
+meaning, and 0 gives 0. Nothing checks either.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AlignUp`
+
+**EXAMPLES**
+
+```zig
+const line = ub.AlignDown(address, DCACHE_LINE_SIZE);
+```
+
+## AlignUp
+
+Rounds an offset up to the next multiple of an alignment.
+
+**SYNOPSIS**
+
+```zig
+fn AlignUp(_: *UtilityBase, offset: usize, alignment: usize) usize
+```
+
+**SINCE**
+
+1.0. LVO -228.
+
+**INPUTS**
+
+- `offset` - an offset, a size or an address.
+- `alignment` - a power of two.
+
+**RESULT**
+
+The smallest multiple of `alignment` that is not below `offset`;
+`offset` itself when it is aligned already.
+
+**BEHAVIOR**
+
+A power of two has one bit set, so its multiples are the numbers whose
+bits below it are clear: adding `alignment - 1` and clearing those
+bits rounds up in two operations, with no division.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+An `alignment` that is not a power of two gives a number with no
+meaning, and 0 gives 0. Nothing checks either.
+
+**BUGS**
+
+An `offset` within `alignment - 1` of the top of the address space
+wraps to 0 instead of failing.
+
+**SEE ALSO**
+
+`AlignDown`
+
+**EXAMPLES**
+
+```zig
+const user_at = ub.AlignUp(name_at + len + 1, @alignOf(usize));
+```
+
+## AllocNamedObjectA
+
+Makes a named object, with a name space and user space of its own if asked for.
+
+**SYNOPSIS**
+
+```zig
+fn AllocNamedObjectA(ub: *UtilityBase, name: ?[*:0]const u8, tag_list: ?[*]const TagItem) ?*NamedObject
+```
+
+**SINCE**
+
+1.0. LVO -152.
+
+**INPUTS**
+
+- `name` - the name. Copied, so the caller's string may go. Null fails.
+- `tag_list` - options, null for none:
+  - `ANO_NameSpace` - non-zero gives the object a name space, so that
+    other objects can be added to it.
+  - `ANO_UserSpace` - bytes of user space. It is cleared and aligned to
+    a pointer, and `NamedObject.object` points to it; without it that is
+    null.
+  - `ANO_Priority` - the object's place in a name space, higher first.
+    The low 8 bits count, signed.
+  - `ANO_Flags` - its own name space's flags: `NSF_NODUPS` refuses a
+    second object of a name, `NSF_CASE` compares names with case.
+
+**RESULT**
+
+The object, or null without a name or without memory.
+
+**BEHAVIOR**
+
+The object, its name space, its name and its user space are one
+allocation. The object has one use - the caller's - and is in no name
+space until `AddNamedObject` puts it into one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller owns the object. `FreeNamedObject` gives it back once it is
+in no name space.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddNamedObject`, `FreeNamedObject`, `NamedObjectName`
+
+**EXAMPLES**
+
+```zig
+const tags = [_]TagItem{ .{ .tag = ANO_UserSpace, .data = @sizeOf(Entry) }, .{} };
+const obj = ub.AllocNamedObjectA("fonts", &tags) orelse return error.NoMemory;
+```
+
+## AllocateTagItems
+
+Allocates an array of tag items, cleared.
+
+**SYNOPSIS**
+
+```zig
+fn AllocateTagItems(ub: *UtilityBase, num_tags: u32) ?[*]TagItem
+```
+
+**SINCE**
+
+1.0. LVO -44.
+
+**INPUTS**
+
+- `num_tags` - how many items. The `TAG_DONE` that ends a list is one of
+  them. 0 gives null.
+
+**RESULT**
+
+The array, or null for 0 items or without memory.
+
+**BEHAVIOR**
+
+Every item is `{ TAG_DONE, 0 }`, so the array is an empty list at every
+position until it is filled. It comes from `AllocVec`, which is what
+lets `FreeTagItems` give it back by its address alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller owns the array and gives it back with `FreeTagItems`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FreeTagItems`, `CloneTagItems`
+
+**EXAMPLES**
+
+```zig
+const tags = ub.AllocateTagItems(3) orelse return error.NoMemory;
+defer ub.FreeTagItems(tags);
+```
+
+## Amiga2Date
+
+Turns seconds since 1 January 1978 into a date.
+
+**SYNOPSIS**
+
+```zig
+fn Amiga2Date(_: *UtilityBase, seconds: u32, result: *ClockData) void
+```
+
+**SINCE**
+
+1.0. LVO -80.
+
+**INPUTS**
+
+- `seconds` - since 1 January 1978, 00:00:00. The whole range is valid,
+  up to 7 February 2114, 06:28:15.
+- `result` - filled in.
+
+**RESULT**
+
+Nothing. `result` holds the second, minute, hour, day of the month,
+month (1 to 12), year and weekday (0 is Sunday).
+
+**BEHAVIOR**
+
+The Gregorian calendar: 2000 is a leap year, 2100 is not. There is no
+time zone and there are no leap seconds - a day is 86400 seconds.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Date2Amiga`, `CheckDate`
+
+**EXAMPLES**
+
+```zig
+var cd: ClockData = .{};
+ub.Amiga2Date(seconds, &cd);
+```
+
+## ApplyTagChanges
+
+Gives every item of a list the data a change list has for its tag.
+
+**SYNOPSIS**
+
+```zig
+fn ApplyTagChanges(ub: *UtilityBase, list: ?[*]TagItem, change_list: ?[*]const TagItem) void
+```
+
+**SINCE**
+
+1.0. LVO -124.
+
+**INPUTS**
+
+- `list` - the list to change, in place.
+- `change_list` - the new data. Tags `list` does not have are ignored.
+  Null changes nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Each item takes the data of the first change with its tag. Unlike
+`FilterTagChanges` it does not look at whether the data differs, and it
+leaves the change list as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `list` is written in place, so it may not be
+read-only.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FilterTagChanges`, `FindTagItem`
+
+**EXAMPLES**
+
+```zig
+ub.ApplyTagChanges(current, changes);
+```
+
+## AttemptRemNamedObject
+
+Takes an object out of its name space if the caller's use is the only one.
+
+**SYNOPSIS**
+
+```zig
+fn AttemptRemNamedObject(ub: *UtilityBase, object: ?*NamedObject) i32
+```
+
+**SINCE**
+
+1.0. LVO -156.
+
+**INPUTS**
+
+- `object` - the object to take out.
+
+**RESULT**
+
+1 if it was taken out, and the caller's use given back with it. 0 if
+others still hold it, if it is in no name space, or for null.
+
+**BEHAVIOR**
+
+The non-waiting form of `RemNamedObject`: it succeeds only where
+`RemNamedObject` would reply at once, and otherwise changes nothing.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the name space's semaphore.
+- Interrupts: no. It may wait.
+- Forbid: taken here, and broken while waiting for the semaphore.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. On success the object is the caller's alone, in no
+name space, ready for `FreeNamedObject`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemNamedObject`, `FreeNamedObject`
+
+**EXAMPLES**
+
+```zig
+if (ub.AttemptRemNamedObject(obj) != 0) ub.FreeNamedObject(obj);
+```
+
+## CallHookPkt
+
+Calls a hook with an object and a message.
+
+**SYNOPSIS**
+
+```zig
+fn CallHookPkt(_: *UtilityBase, hook: *Hook, object: ?*anyopaque, param_packet: ?*anyopaque) usize
+```
+
+**SINCE**
+
+1.0. LVO -68.
+
+**INPUTS**
+
+- `hook` - the hook. One without an `h_Entry` does nothing.
+- `object` - what the hook works on, handed on as it is.
+- `param_packet` - the message, handed on as it is.
+
+**RESULT**
+
+What `h_Entry` returns, or 0 for a hook without one.
+
+**BEHAVIOR**
+
+`h_Entry(hook, object, param_packet)`. The hook is passed to its own
+function, which is how the function finds its context: `h_Data`, or the
+structure the hook is embedded in. Nothing is looked at or checked on
+the way.
+
+**CONTEXT**
+
+- Waits: only if the hook's function does.
+- Interrupts: as far as the hook's function allows.
+- Forbid: not taken; the hook's function decides what it needs.
+- Process: whatever the hook's function needs.
+
+**OWNERSHIP**
+
+Nothing is allocated. The object and the message stay the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Hook`
+
+**EXAMPLES**
+
+```zig
+fn count(hook: *Hook, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize {
+    const total: *usize = @ptrCast(@alignCast(hook.data.?));
+    total.* += 1;
+    return total.*;
+}
+
+var hook: Hook = .{ .entry = count, .data = &total };
+_ = ub.CallHookPkt(&hook, null, null);
+```
+
+## CheckDate
+
+Checks that a date is real and in range, and returns its seconds since 1 January 1978.
+
+**SYNOPSIS**
+
+```zig
+fn CheckDate(ub: *UtilityBase, clock_data: *const ClockData) u32
+```
+
+**SINCE**
+
+1.0. LVO -88.
+
+**INPUTS**
+
+- `clock_data` - the date to check. Its weekday is ignored.
+
+**RESULT**
+
+The date as seconds since 1 January 1978, or 0 if it is not a date or
+lies outside 1 January 1978, 00:00:00 to 7 February 2114, 06:28:15.
+
+**BEHAVIOR**
+
+The date is turned into seconds and back, and it is a date if every
+field but the weekday comes back as it went in. That one comparison is
+every range check the calendar implies: days per month, leap years,
+hours, minutes, seconds and the ends of the range.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+1 January 1978, 00:00:00 is a valid date whose seconds are 0, and so
+cannot be told from a refusal.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Date2Amiga`, `Amiga2Date`
+
+**EXAMPLES**
+
+```zig
+const seconds = ub.CheckDate(&cd);
+if (seconds == 0) return error.BadDate;
+```
+
+## CloneTagItems
+
+Makes a flat copy of a tag list.
+
+**SYNOPSIS**
+
+```zig
+fn CloneTagItems(ub: *UtilityBase, tag_list: ?[*]const TagItem) ?[*]TagItem
+```
+
+**SINCE**
+
+1.0. LVO -48.
+
+**INPUTS**
+
+- `tag_list` - the list to copy. Null gives a list holding only
+  `TAG_DONE`.
+
+**RESULT**
+
+The copy, or null without memory.
+
+**BEHAVIOR**
+
+The copy holds the items `NextTagItem` finds, in order, in one array
+ended by `TAG_DONE`: the control items are gone and a `TAG_MORE` chain
+is
+joined into one. The data is copied as it stands - what a data word
+points to is not. Later changes to the original are not seen;
+`RefreshTagItemClones` copies them into the same array again.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller owns the copy and gives it back with `FreeTagItems`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RefreshTagItemClones`, `FreeTagItems`, `AllocateTagItems`
+
+**EXAMPLES**
+
+```zig
+const copy = ub.CloneTagItems(tags) orelse return error.NoMemory;
+defer ub.FreeTagItems(copy);
+```
+
+## Date2Amiga
+
+Turns a date into seconds since 1 January 1978.
+
+**SYNOPSIS**
+
+```zig
+fn Date2Amiga(_: *UtilityBase, clock_data: *const ClockData) u32
+```
+
+**SINCE**
+
+1.0. LVO -84.
+
+**INPUTS**
+
+- `clock_data` - the date. Its weekday is ignored, and nothing in it is
+  checked.
+
+**RESULT**
+
+The seconds, as the low 32 bits of the count. A date before 1978 or
+after 7 February 2114, 06:28:15 wraps.
+
+**BEHAVIOR**
+
+Plain arithmetic on the fields, so a field out of its range carries into
+the next: 31 April is 1 May, and hour 24 is the next day's midnight.
+`CheckDate` is the call that refuses such a date.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Amiga2Date`, `CheckDate`
+
+**EXAMPLES**
+
+```zig
+const seconds = ub.Date2Amiga(&cd);
+```
+
+## DateJoin
+
+The day number a date falls on.
+
+**SYNOPSIS**
+
+```zig
+fn DateJoin(ub: *UtilityBase, date: *const ClockData) i32
+```
+
+**SINCE**
+
+1.0. LVO -252.
+
+**INPUTS**
+
+- `ub` - the library's base.
+- `date` - the date. Only `year`, `month` (1 to 12) and `mday` (1 to
+  31) are read; the time fields and `wday` are ignored.
+
+**RESULT**
+
+Days since 1 January 1978, which is day 0, or -1 when `date` is no
+date: a month outside 1 to 12, a day the month does not have, or a
+day before the count begins.
+
+**BEHAVIOR**
+
+A day that the month does not have carries into the next month, so
+the date is converted back and compared: the 31st of February comes
+back as the 2nd or 3rd of March and is refused. So is the 29th of
+February in a year that is not a leap year, which on the Gregorian
+calendar includes 2100.
+
+**-1 is the refusal, not 0.** Day 0 is a date - the day the count
+starts on - so a call that answered 0 for both could not tell them
+apart. `CheckDate` answers seconds and has that ambiguity; this does
+not.
+
+**It counts days, not seconds.** `Date2Amiga` answers seconds in 32
+bits and so stops in 2114; this reaches any year a `ClockData` holds.
+
+**CONTEXT**
+
+Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+
+**OWNERSHIP**
+
+Nothing is allocated. `date` is the caller's and is not written.
+
+**NOTES**
+
+`DateSplit` is the inverse, and the two round-trip exactly.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DateSplit`, `Date2Amiga`, `CheckDate`
+
+**EXAMPLES**
+
+```zig
+const days = ub.DateJoin(&.{ .year = 2026, .month = 9, .mday = 16 });
+if (days < 0) return error.BadDate;
+```
+
+## DateSplit
+
+A day number as the date it falls on.
+
+**SYNOPSIS**
+
+```zig
+fn DateSplit(ub: *UtilityBase, days: u32, result: *ClockData) void
+```
+
+**SINCE**
+
+1.0. LVO -248.
+
+**INPUTS**
+
+- `ub` - the library's base.
+- `days` - days since 1 January 1978, which is day 0.
+- `result` - filled in with the date.
+
+**RESULT**
+
+Nothing. `result` is always written.
+
+**BEHAVIOR**
+
+`result.year`, `result.month` (1 to 12), `result.mday` (1 to 31) and
+`result.wday` (0 for Sunday) are the date `days` falls on. The time
+fields are set to 0: a day number says nothing about the time of day.
+
+The calendar is the Gregorian one, so a year divisible by 100 is a
+leap year only when it is also divisible by 400 - 2000 is, 2100 is
+not.
+
+**It counts days, not seconds.** `Amiga2Date` takes seconds in 32
+bits and so stops in 2114; this takes days and reaches the last year
+a `ClockData` holds. A caller with a day number and no time of day
+wants this one.
+
+A day number past that last year answers with the last date there
+is, rather than with a year that has wrapped.
+
+**CONTEXT**
+
+Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+
+**OWNERSHIP**
+
+Nothing is allocated. `result` is the caller's.
+
+**NOTES**
+
+`DateJoin` is the inverse, and the two round-trip exactly for every
+day number this takes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DateJoin`, `Amiga2Date`, `CheckDate`
+
+**EXAMPLES**
+
+```zig
+var cd: ClockData = .{};
+ub.DateSplit(17_790, &cd); // 16 September 2026, a Wednesday
+```
+
+## FilterTagChanges
+
+Drops the changes in a change list that change nothing, and can apply the rest.
+
+**SYNOPSIS**
+
+```zig
+fn FilterTagChanges(ub: *UtilityBase, change_list: ?[*]TagItem, original_list: ?[*]TagItem, apply: u32) void
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `change_list` - the proposed changes. Changed in place.
+- `original_list` - the current values. Changed in place when `apply` is
+  set.
+- `apply` - non-zero writes each remaining change into the original.
+
+**RESULT**
+
+Nothing. `change_list` now holds only the real changes and the tags the
+original does not have.
+
+**BEHAVIOR**
+
+A change is compared with the first item of the original that has its
+tag:
+
+- **Same data:** the change becomes `TAG_IGNORE`.
+- **Other data:** the change stays; with `apply` the original item takes
+  the new data.
+- **Tag not in the original:** the change stays and nothing is applied -
+  it is a change, but there is nowhere to put it.
+
+What is left is exactly what changed, which is what an object needs in
+order to tell others about an update and stay quiet about the rest.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. Both lists are written in place, so neither may be
+read-only.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ApplyTagChanges`, `FindTagItem`
+
+**EXAMPLES**
+
+```zig
+ub.FilterTagChanges(changes, current, 1);
+var place: ?[*]const TagItem = changes;
+while (ub.NextTagItem(&place)) |item| notify(item);
+```
+
+## FilterTagItems
+
+Keeps the items of a list whose tags are, or are not, in an array.
+
+**SYNOPSIS**
+
+```zig
+fn FilterTagItems(ub: *UtilityBase, tag_list: ?[*]TagItem, filter_array: ?[*]const Tag, logic: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -64.
+
+**INPUTS**
+
+- `tag_list` - the list to filter, in place.
+- `filter_array` - tags ended by `TAG_DONE`. Null holds no tags.
+- `logic` - `TAGFILTER_AND` keeps the tags in the array,
+  `TAGFILTER_NOT` those that are not.
+
+**RESULT**
+
+How many items were kept.
+
+**BEHAVIOR**
+
+An item that is not kept becomes `TAG_IGNORE`, so the array keeps its
+length and every `TAG_MORE` stays where it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The list is written in place, so it may not be
+read-only.
+
+**NOTES**
+
+Any `logic` other than `TAGFILTER_AND` works as `TAGFILTER_NOT`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`TagInArray`, `MapTags`
+
+**EXAMPLES**
+
+```zig
+const not_allowed = [_]Tag{ NP_Entry, NP_Seglist, TAG_DONE };
+_ = ub.FilterTagItems(copy, &not_allowed, TAGFILTER_NOT);
+```
+
+## FindNamedObject
+
+Finds the next object of a name space with a given name.
+
+**SYNOPSIS**
+
+```zig
+fn FindNamedObject(ub: *UtilityBase, name_space: ?*NamedObject, name: ?[*:0]const u8, last_object: ?*NamedObject) ?*NamedObject
+```
+
+**SINCE**
+
+1.0. LVO -160.
+
+**INPUTS**
+
+- `name_space` - an object with a name space, or null for the root name
+  space.
+- `name` - the name; null matches every object.
+- `last_object` - where the previous search ended, to go on from there;
+  null to start at the beginning. Still held, and still in this name
+  space.
+
+**RESULT**
+
+The object, with one more use for the caller, or null.
+
+**BEHAVIOR**
+
+Names compare without case unless the name space has `NSF_CASE`. With a
+null name, going on from each result visits the whole name space by
+priority. The semaphore is held shared, so any number of searches run at
+once; the use count is raised under Forbid, since the others holding the
+semaphore may raise it too.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the name space's semaphore
+  exclusively.
+- Interrupts: no. It may wait.
+- Forbid: must not be relied on across it: waiting for the semaphore
+  breaks it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The caller holds a use of the object and gives it
+back with `ReleaseNamedObject`; until then a `RemNamedObject` waits for
+it.
+
+**NOTES**
+
+`last_object` must still be in the name space: one taken out since has
+no place in it to go on from.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseNamedObject`, `AddNamedObject`
+
+**EXAMPLES**
+
+```zig
+var obj = ub.FindNamedObject(space, null, null);
+while (obj) |current| {
+    use(current);
+    obj = ub.FindNamedObject(space, null, current);
+    ub.ReleaseNamedObject(current);
+}
+```
+
+## FindTagItem
+
+Finds the first item of a tag list with a given tag.
+
+**SYNOPSIS**
+
+```zig
+fn FindTagItem(ub: *UtilityBase, tag_val: Tag, tag_list: ?[*]const TagItem) ?*const TagItem
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `tag_val` - the tag to find. A control tag (`TAG_DONE`, `TAG_IGNORE`,
+  `TAG_SKIP`, `TAG_MORE`) is never found.
+- `tag_list` - the list. Null is an empty list.
+
+**RESULT**
+
+The item, or null if the list does not have the tag.
+
+**BEHAVIOR**
+
+The list is walked with `NextTagItem`, so `TAG_MORE` is followed and the
+control items are passed over. The first item with the tag wins: a list
+that gives the same tag twice means the earlier one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The item belongs to the list and lives as long as
+the list does.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetTagData`, `NextTagItem`, `TagInArray`
+
+**EXAMPLES**
+
+```zig
+if (ub.FindTagItem(NP_Name, tags)) |item| {
+    name = @ptrFromInt(item.data);
+}
+```
+
+## FreeNamedObject
+
+Gives back the memory of a named object.
+
+**SYNOPSIS**
+
+```zig
+fn FreeNamedObject(ub: *UtilityBase, object: ?*NamedObject) void
+```
+
+**SINCE**
+
+1.0. LVO -164.
+
+**INPUTS**
+
+- `object` - the object. Null does nothing. In no name space, and with
+  its own name space empty.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+An object still in a name space is not freed at all, and neither is one
+whose own name space still holds objects: the mistake leaks the object
+rather than leaving a freed node on a list others search, or objects on
+a list in freed memory.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the object's own name space.
+- Interrupts: no. `FreeMem` takes Forbid.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The object, its name and its user space are gone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocNamedObjectA`, `RemNamedObject`, `AttemptRemNamedObject`
+
+**EXAMPLES**
+
+```zig
+ub.FreeNamedObject(obj);
+```
+
+## FreeTagItems
+
+Gives back an array from `AllocateTagItems` or `CloneTagItems`.
+
+**SYNOPSIS**
+
+```zig
+fn FreeTagItems(ub: *UtilityBase, tag_list: ?[*]TagItem) void
+```
+
+**SINCE**
+
+1.0. LVO -52.
+
+**INPUTS**
+
+- `tag_list` - the array. Null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+`FreeVec` on the array, which finds the size in front of it. Only the
+array goes; whatever its items point to is left alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. `FreeMem` takes Forbid.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The array is gone, with everything that pointed into it.
+
+**NOTES**
+
+An array from anywhere else - a constant list, one on the stack - must
+not be passed: the size word `FreeVec` reads is not there.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateTagItems`, `CloneTagItems`
+
+**EXAMPLES**
+
+```zig
+ub.FreeTagItems(copy);
+```
+
+## GetTagData
+
+Returns the data of the first item with a given tag, or a default.
+
+**SYNOPSIS**
+
+```zig
+fn GetTagData(ub: *UtilityBase, tag_val: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `tag_val` - the tag to look for.
+- `default_value` - what to return when the list does not have the tag.
+- `tag_list` - the list. Null is an empty list.
+
+**RESULT**
+
+The first matching item's `ti_Data`, or `default_value`.
+
+**BEHAVIOR**
+
+`FindTagItem` with a fallback, for the common case of an option with a
+default. A tag given with the default as its data cannot be told from a
+missing one; `FindTagItem` tells them apart.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindTagItem`, `NextTagItem`
+
+**EXAMPLES**
+
+```zig
+const stack_size = ub.GetTagData(NP_StackSize, 4096, tags);
+```
+
+## GetUniqueID
+
+Returns a number no earlier call has returned.
+
+**SYNOPSIS**
+
+```zig
+fn GetUniqueID(ub: *UtilityBase) u32
+```
+
+**SINCE**
+
+1.0. LVO -180.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+1 on the first call, then one more each time, across the whole system.
+
+**BEHAVIOR**
+
+One counter for everyone, raised under Disable, so tasks and interrupts
+may all take numbers from it and never get the same one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It takes Disable.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+After 2^32 calls the counter wraps to 0 and the numbers repeat.
+
+**EXAMPLES**
+
+```zig
+const id = ub.GetUniqueID();
+```
+
+## MapTags
+
+Renames the tags of a list through a map.
+
+**SYNOPSIS**
+
+```zig
+fn MapTags(ub: *UtilityBase, tag_list: ?[*]TagItem, map_list: ?[*]const TagItem, map_type: u32) void
+```
+
+**SINCE**
+
+1.0. LVO -40.
+
+**INPUTS**
+
+- `tag_list` - the list to change, in place.
+- `map_list` - pairs of old tag (`ti_Tag`) and new tag (`ti_Data`). A
+  new tag of `TAG_DONE` removes the item. Null maps nothing.
+- `map_type` - `MAP_KEEP_NOT_FOUND` keeps a tag the map does not have,
+  `MAP_REMOVE_NOT_FOUND` removes it.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A removed item becomes `TAG_IGNORE` rather than being cut out, so the
+array keeps its length and every `TAG_MORE` stays where it is. The data
+of an item is never changed. With a null map and `MAP_REMOVE_NOT_FOUND`
+every item goes.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The list is written in place, so it may not be
+read-only.
+
+**NOTES**
+
+Any `map_type` other than `MAP_REMOVE_NOT_FOUND` keeps the tag.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FilterTagItems`, `FindTagItem`
+
+**EXAMPLES**
+
+```zig
+const to_gadget = [_]TagItem{ .{ .tag = MY_Left, .data = GA_Left }, .{} };
+ub.MapTags(tags, &to_gadget, MAP_KEEP_NOT_FOUND);
+```
+
+## MatchPattern
+
+Tells whether a string matches a pattern made by `ParsePattern`.
+
+**SYNOPSIS**
+
+```zig
+fn MatchPattern(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
+```
+
+**SINCE**
+
+1.0. LVO -208.
+
+**INPUTS**
+
+- `pattern` - the tokens from `ParsePattern`, not the pattern's text.
+- `string` - the string to match.
+
+**RESULT**
+
+True if the whole string matches. False if it does not, and also on
+failure, which only IoErr tells apart: `ERROR_TOO_MANY_LEVELS` when the
+backtracking needs more than 1024 frames, `ERROR_NO_FREE_STORE` without
+memory for them.
+
+**BEHAVIOR**
+
+Every way the pattern can match is tried, backtracking on a stack of
+frames rather than the machine's: 16 on the caller's stack, then chunks
+of 64 from `AllocVec`, all given back before it returns. A repeated
+group takes at most three frames a character, so a name of 255
+characters always fits.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It may allocate.
+- Forbid: not needed, and not taken.
+- Process: a Task will do; only a process gets the IoErr.
+
+**OWNERSHIP**
+
+Nothing is kept: the frames taken are given back before it returns. The
+tokens are only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ParsePattern`, `MatchPatternNoCase`
+
+**EXAMPLES**
+
+```zig
+if (ub.MatchPattern(@ptrCast(&tokens), name)) list(name);
+```
+
+## MatchPatternNoCase
+
+Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
+
+**SYNOPSIS**
+
+```zig
+fn MatchPatternNoCase(ub: *UtilityBase, pattern: [*:0]const u8, string: [*:0]const u8) bool
+```
+
+**SINCE**
+
+1.0. LVO -212.
+
+**INPUTS**
+
+- `pattern` - the tokens from `ParsePatternNoCase`.
+- `string` - the string to match.
+
+**RESULT**
+
+True if the whole string matches. False if it does not, and also on
+failure, which only IoErr tells apart: `ERROR_TOO_MANY_LEVELS` when the
+backtracking needs more than 1024 frames, `ERROR_NO_FREE_STORE` without
+memory for them.
+
+**BEHAVIOR**
+
+Each character of the string goes through `ToUpper` before it is
+compared, so the pattern must be upper case as well, which is what
+`ParsePatternNoCase` makes it.
+
+Every way the pattern can match is tried, backtracking on a stack of
+frames rather than the machine's: 16 on the caller's stack, then chunks
+of 64 from `AllocVec`, all given back before it returns. A repeated
+group takes at most three frames a character, so a name of 255
+characters always fits.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It may allocate.
+- Forbid: not needed, and not taken.
+- Process: a Task will do; only a process gets the IoErr.
+
+**OWNERSHIP**
+
+Nothing is kept: the frames taken are given back before it returns. The
+tokens are only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ParsePatternNoCase`, `MatchPattern`
+
+**EXAMPLES**
+
+```zig
+if (ub.MatchPatternNoCase(@ptrCast(&tokens), name)) list(name);
+```
+
+## NamedObjectName
+
+Returns the name of a named object.
+
+**SYNOPSIS**
+
+```zig
+fn NamedObjectName(_: *UtilityBase, object: ?*NamedObject) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.0. LVO -168.
+
+**INPUTS**
+
+- `object` - the object. Null gives null.
+
+**RESULT**
+
+The object's name, or null for no object.
+
+**BEHAVIOR**
+
+The object's own copy of the name, made by `AllocNamedObjectA`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The name is read-only and lives as long as the
+object.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocNamedObjectA`, `FindNamedObject`
+
+**EXAMPLES**
+
+```zig
+const name = ub.NamedObjectName(obj).?;
+```
+
+## NextTagItem
+
+Returns the next item a tag list holds, and moves the caller's place in the list past it.
+
+**SYNOPSIS**
+
+```zig
+fn NextTagItem(_: *UtilityBase, tag_list_ptr: *?[*]const TagItem) ?*const TagItem
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `tag_list_ptr` - where the caller keeps its place: at first the list
+  itself, then whatever this call left there. Null means the end.
+
+**RESULT**
+
+The next item with a tag of its own, or null at the end of the list -
+and then `*tag_list_ptr` is null too.
+
+**BEHAVIOR**
+
+The control tags are followed, never returned:
+
+- `TAG_DONE` ends the list.
+- `TAG_IGNORE` passes over its own item.
+- `TAG_SKIP` passes over itself and the `ti_Data` items behind it.
+- `TAG_MORE` goes on at the array its `ti_Data` points to; a null there
+  ends the list.
+
+Every other tag is returned. A list is walked by calling this until it
+returns null, never by indexing the array: `TAG_MORE` can continue the
+list anywhere, and what lies behind it in the array is not the list's.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The item belongs to the list and lives as long as
+the list does.
+
+**NOTES**
+
+Nothing guards against a `TAG_MORE` chain that leads back into itself;
+such a list is walked for ever.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindTagItem`, `GetTagData`, `CloneTagItems`
+
+**EXAMPLES**
+
+```zig
+var place: ?[*]const TagItem = tags;
+while (ub.NextTagItem(&place)) |item| {
+    switch (item.tag) {
+        MY_Width => width = item.data,
+        else => {},
+    }
+}
+```
+
+## PackBoolTags
+
+Sets and clears flag bits from the boolean tags of a list.
+
+**SYNOPSIS**
+
+```zig
+fn PackBoolTags(ub: *UtilityBase, initial_flags: u32, tag_list: ?[*]const TagItem, bool_map: ?[*]const TagItem) u32
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `initial_flags` - the flags to start from.
+- `tag_list` - the boolean tags: non-zero data is true, zero is false.
+- `bool_map` - a tag list with, for each boolean tag, the bits it stands
+  for in its `ti_Data`. Only the low 32 bits count.
+
+**RESULT**
+
+`initial_flags` with the mapped bits set or cleared.
+
+**BEHAVIOR**
+
+Every item of `tag_list` whose tag the map has sets its bits when its
+data is non-zero and clears them when it is zero. Items apply in list
+order, so of two items for the same bits the later one wins. A tag the
+map does not have changes nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindTagItem`, `PackStructureTags`
+
+**EXAMPLES**
+
+```zig
+const map = [_]TagItem{
+    .{ .tag = MY_Visible, .data = MYF_VISIBLE },
+    .{ .tag = MY_Locked, .data = MYF_LOCKED },
+    .{},
+};
+flags = ub.PackBoolTags(flags, tags, &map);
+```
+
+## PackStructureTags
+
+Copies the data of a tag list into the fields of a structure, as a pack table lays them out.
+
+**SYNOPSIS**
+
+```zig
+fn PackStructureTags(ub: *UtilityBase, structure: ?*anyopaque, pack_table: ?[*]const u32, tag_list: ?[*]const TagItem) u32
+```
+
+**SINCE**
+
+1.0. LVO -140.
+
+**INPUTS**
+
+- `structure` - the structure to fill. Null does nothing.
+- `pack_table` - the table: a base tag, then one entry per field made
+  with `packEntry` or `packBit`, then `PACK_ENDTABLE`. `PACK_NEWOFFSET`
+  followed by a new base tag switches the base. Null does nothing.
+- `tag_list` - the values.
+
+**RESULT**
+
+How many entries found their tag and were packed.
+
+**BEHAVIOR**
+
+Every entry whose tag the list has, and that is not marked unpack-only
+(`PSTF_PACK`), takes the tag's data:
+
+- **Byte, word, long:** the data truncated to the field, in the CPU's
+  byte order.
+- **Bit:** set when the data is not zero - always, with `PSTF_EXISTS` -
+  and cleared otherwise; `PKCTRL_FLIPBIT` inverts it.
+
+A field whose tag the list does not have is left as it is. The tag is
+found with `FindTagItem`, so the first item with it wins.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The fields are written in the caller's structure.
+
+**NOTES**
+
+An entry holds the field's offset in 13 bits and the tag's distance from
+the base tag in 10, so a field lies within the first 8 KiB of the
+structure and a tag within 1023 of its base. An entry of 0 ends the
+table, so the base tag itself cannot describe an unsigned byte at offset
+0.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnpackStructureTags`, `PackBoolTags`
+
+**EXAMPLES**
+
+```zig
+const table = [_]u32{
+    MY_Dummy,
+    pack.packEntry(MY_Dummy, MY_Width, @offsetOf(Box, "width"), pack.PKCTRL_ULONG),
+    pack.packBit(MY_Dummy, MY_Framed, @offsetOf(Box, "flags"), pack.PKCTRL_BIT, BOXF_FRAMED),
+    pack.PACK_ENDTABLE,
+};
+_ = ub.PackStructureTags(&box, &table, tags);
+```
+
+## ParsePattern
+
+Turns a pattern into the tokens `MatchPattern` works on.
+
+**SYNOPSIS**
+
+```zig
+fn ParsePattern(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
+```
+
+**SINCE**
+
+1.0. LVO -200.
+
+**INPUTS**
+
+- `source` - the pattern.
+- `dest` - where the tokens go.
+- `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
+  pattern of `len` characters is always enough.
+
+**RESULT**
+
+1 if the pattern has wildcards, 0 if it is a plain name (the escapes
+resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
+a pattern that does not parse - unbalanced groups, a class without its
+`]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
+small, and `dest` holds an empty pattern.
+
+**BEHAVIOR**
+
+The syntax:
+
+- `?` - any one character.
+- `#x` - any number of `x`, where `x` is one character, class or group;
+  `#?` is any string.
+- `*` - any string, when `SetWildStar` has made it a wildcard; otherwise
+  itself.
+- `(a|b|c)` - one of the alternatives, which may be empty.
+- `~x` - anything `x` does not match. A `~` at the end is itself.
+- `[abc]`, `[a-z]`, `[~a-z]` - a class. A `-` first or last is itself.
+- `%` - nothing, the empty string.
+- `'x` - `x` itself.
+
+A pattern that parses leaves IoErr as it was.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. A failure is reported in the IoErr of whichever
+  process was interrupted.
+- Forbid: not needed, and not taken.
+- Process: a Task will do; only a process gets the IoErr.
+
+**OWNERSHIP**
+
+Nothing is allocated. The tokens are the caller's, and any number of
+tasks may match against them at once: matching never writes them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MatchPattern`, `ParsePatternNoCase`, `SetWildStar`
+
+**EXAMPLES**
+
+```zig
+var tokens: [sdk.utility.parsedSize(64)]u8 = undefined;
+if (ub.ParsePattern(pattern, &tokens, tokens.len) < 0) return error.BadPattern;
+if (ub.MatchPattern(@ptrCast(&tokens), name)) list(name);
+```
+
+## ParsePatternNoCase
+
+Turns a pattern into the tokens `MatchPatternNoCase` works on.
+
+**SYNOPSIS**
+
+```zig
+fn ParsePatternNoCase(ub: *UtilityBase, source: [*:0]const u8, dest: [*]u8, size: usize) isize
+```
+
+**SINCE**
+
+1.0. LVO -204.
+
+**INPUTS**
+
+- `source` - the pattern.
+- `dest` - where the tokens go.
+- `size` - the bytes at `dest`. `sdk.utility.parsedSize(len)` for a
+  pattern of `len` characters is always enough.
+
+**RESULT**
+
+1 if the pattern has wildcards, 0 if it is a plain name (the escapes
+resolved), -1 on failure. On failure IoErr is `ERROR_BAD_TEMPLATE` for
+a pattern that does not parse - unbalanced groups, a class without its
+`]`, a byte 0x80-0x8B - or `ERROR_LINE_TOO_LONG` when `dest` is too
+small, and `dest` holds an empty pattern.
+
+**BEHAVIOR**
+
+`ParsePattern` with every character and class of the pattern put
+through `ToUpper`, which is what `MatchPatternNoCase` compares against.
+
+The syntax:
+
+- `?` - any one character.
+- `#x` - any number of `x`, where `x` is one character, class or group;
+  `#?` is any string.
+- `*` - any string, when `SetWildStar` has made it a wildcard; otherwise
+  itself.
+- `(a|b|c)` - one of the alternatives, which may be empty.
+- `~x` - anything `x` does not match. A `~` at the end is itself.
+- `[abc]`, `[a-z]`, `[~a-z]` - a class. A `-` first or last is itself.
+- `%` - nothing, the empty string.
+- `'x` - `x` itself.
+
+A pattern that parses leaves IoErr as it was.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. A failure is reported in the IoErr of whichever
+  process was interrupted.
+- Forbid: not needed, and not taken.
+- Process: a Task will do; only a process gets the IoErr.
+
+**OWNERSHIP**
+
+Nothing is allocated. The tokens are the caller's, and any number of
+tasks may match against them at once: matching never writes them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MatchPatternNoCase`, `ParsePattern`
+
+**EXAMPLES**
+
+```zig
+var tokens: [sdk.utility.parsedSize(64)]u8 = undefined;
+if (ub.ParsePatternNoCase(pattern, &tokens, tokens.len) < 0) return error.BadPattern;
+if (ub.MatchPatternNoCase(@ptrCast(&tokens), name)) list(name);
+```
+
+## RefreshTagItemClones
+
+Copies a tag list into an earlier clone of it again.
+
+**SYNOPSIS**
+
+```zig
+fn RefreshTagItemClones(ub: *UtilityBase, clone: ?[*]TagItem, original: ?[*]const TagItem) void
+```
+
+**SINCE**
+
+1.0. LVO -56.
+
+**INPUTS**
+
+- `clone` - an array from `CloneTagItems` of this list. Null does
+  nothing.
+- `original` - the list. Null leaves the clone holding only `TAG_DONE`.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The same flat copy `CloneTagItems` makes, into the array it made, so a
+holder of the clone sees the original's current values without a new
+allocation.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe in itself; it allocates nothing. The lists are the
+  caller's, and so is keeping others off them.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+The clone must have room: the original may not hold more items now than
+when it was cloned. Nothing checks this.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloneTagItems`
+
+**EXAMPLES**
+
+```zig
+ub.RefreshTagItemClones(copy, tags);
+```
+
+## ReleaseNamedObject
+
+Gives back one use of an object.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseNamedObject(ub: *UtilityBase, object: ?*NamedObject) void
+```
+
+**SINCE**
+
+1.0. LVO -172.
+
+**INPUTS**
+
+- `object` - the object. Null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The use count goes down under Forbid. When it reaches zero and a
+`RemNamedObject` is waiting, its message is replied now. A count already
+at zero stays there.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It takes Forbid.
+- Forbid: taken here.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The caller's use is gone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindNamedObject`, `RemNamedObject`
+
+**EXAMPLES**
+
+```zig
+ub.ReleaseNamedObject(obj);
+```
+
+## RemNamedObject
+
+Takes an object out of its name space, and reports when its last user has let go.
+
+**SYNOPSIS**
+
+```zig
+fn RemNamedObject(ub: *UtilityBase, object: ?*NamedObject, message: ?*exec.Message) void
+```
+
+**SINCE**
+
+1.0. LVO -176.
+
+**INPUTS**
+
+- `object` - the object to take out. For null the message comes back at
+  once with `ln_Name` null.
+- `message` - replied when the last use is gone. Null makes this
+  `AttemptRemNamedObject`, with nothing to report the result.
+
+**RESULT**
+
+Nothing. The reply is the answer: its `ln_Name` points to the object
+when it was taken out, and is null when the object was in no name
+space.
+
+**BEHAVIOR**
+
+The object leaves its name space at once, so no search finds it any
+more, and the caller's use is given back as by `ReleaseNamedObject`. The
+message comes back when every other use has been released - at once if
+there are none. After the reply nobody holds the object, and
+`FreeNamedObject` may free it.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the name space's semaphore. It
+  does not wait for the reply; that is the caller's to do.
+- Interrupts: no. It may wait.
+- Forbid: taken here, and broken while waiting for the semaphore.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The name space holds the message until it is
+replied. The caller's use is consumed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AttemptRemNamedObject`, `ReleaseNamedObject`, `FreeNamedObject`
+
+**EXAMPLES**
+
+```zig
+var msg: Message = .{ .reply_port = port };
+ub.RemNamedObject(obj, &msg);
+_ = sys.WaitPort(port);
+_ = sys.GetMsg(port);
+ub.FreeNamedObject(obj);
+```
+
+## SDivMod32
+
+Divides two signed 32-bit numbers into a quotient and a remainder.
+
+**SYNOPSIS**
+
+```zig
+fn SDivMod32(ub: *UtilityBase, dividend: i32, divisor: i32) SDivMod32Result
+```
+
+**SINCE**
+
+1.0. LVO -100.
+
+**INPUTS**
+
+- `dividend` - the number divided.
+- `divisor` - what it is divided by. Not 0.
+
+**RESULT**
+
+`quotient` and `remainder`, with `dividend = quotient * divisor +
+remainder`. A zero divisor does not return.
+
+**BEHAVIOR**
+
+The quotient is rounded towards zero, so the remainder has the
+dividend's sign: -7 / 2 is -3 remainder -1. The smallest number divided
+by -1 wraps to itself, remainder 0, instead of faulting.
+
+A zero divisor is a programming error with no answer to give, and ends
+in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
+  too.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UDivMod32`, `SMult32`
+
+**EXAMPLES**
+
+```zig
+const r = ub.SDivMod32(-7, 2); // quotient -3, remainder -1
+```
+
+## SMult32
+
+Multiplies two signed 32-bit numbers and keeps the low 32 bits.
+
+**SYNOPSIS**
+
+```zig
+fn SMult32(_: *UtilityBase, arg1: i32, arg2: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -92.
+
+**INPUTS**
+
+- `arg1` - the one factor.
+- `arg2` - the other.
+
+**RESULT**
+
+The low 32 bits of the product. An overflow wraps.
+
+**BEHAVIOR**
+
+The low half of the product, which is the same bits whatever the
+signs; `SMult64` gives the whole product.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SMult64`, `SDivMod32`
+
+**EXAMPLES**
+
+```zig
+const area = ub.SMult32(width, height);
+```
+
+## SMult64
+
+Multiplies two signed 32-bit numbers into their whole 64-bit product.
+
+**SYNOPSIS**
+
+```zig
+fn SMult64(_: *UtilityBase, arg1: i32, arg2: i32) i64
+```
+
+**SINCE**
+
+1.0. LVO -132.
+
+**INPUTS**
+
+- `arg1` - the one factor.
+- `arg2` - the other.
+
+**RESULT**
+
+The product. It always fits, so nothing is lost.
+
+**BEHAVIOR**
+
+A 32 by 32 bit multiplication cannot overflow 64 bits. `SMult32` is the
+call for the low 32 bits alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SMult32`, `SDivMod32`
+
+**EXAMPLES**
+
+```zig
+const bytes = ub.SMult64(width, height);
+```
+
+## SetWildStar
+
+Makes `*` a wildcard, or a plain character again, for the patterns parsed from now on.
+
+**SYNOPSIS**
+
+```zig
+fn SetWildStar(ub: *UtilityBase, on: bool) bool
+```
+
+**SINCE**
+
+1.0. LVO -216.
+
+**INPUTS**
+
+- `on` - true makes `*` match any string, as `#?` does.
+
+**RESULT**
+
+The setting before the call.
+
+**BEHAVIOR**
+
+The setting is the library's, for every task: it changes how everyone's
+patterns parse. Patterns parsed already keep their tokens. It is off
+when the system starts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It is one store.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+A program that changes the setting should put it back, which is what
+the result is for.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ParsePattern`, `ParsePatternNoCase`
+
+**EXAMPLES**
+
+```zig
+const old = ub.SetWildStar(true);
+defer _ = ub.SetWildStar(old);
+```
+
+## Strchr
+
+Finds the first occurrence of a character in a string.
+
+**SYNOPSIS**
+
+```zig
+fn Strchr(_: *UtilityBase, string: [*:0]const u8, character: u8) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.0. LVO -240.
+
+**INPUTS**
+
+- `string` - the string to search.
+- `character` - the byte to find.
+
+**RESULT**
+
+Where in `string` the first occurrence of `character` is, or null if it isn't
+there. The part of the string before it is `string[0 .. result -
+string]`.
+
+**BEHAVIOR**
+
+The string is read from its start, and the search stops at the first match or at the NUL. A `character` of 0 finds the NUL that ends the string, so
+the result is then never null.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It only reads its inputs.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The result points into `string`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Strrchr`, `Strlen`
+
+**EXAMPLES**
+
+```zig
+const colon = ub.Strchr(name, ':') orelse return false; // no device in the name
+```
+
+## Strcmp
+
+Compares two strings, case included.
+
+**SYNOPSIS**
+
+```zig
+fn Strcmp(_: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8) i32
+```
+
+**SINCE**
+
+1.0. LVO -220.
+
+**INPUTS**
+
+- `string1` - a string.
+- `string2` - the string to compare it with.
+
+**RESULT**
+
+Less than 0, 0 or more than 0 as `string1` sorts before, the same as or
+after `string2` - the difference of the first two characters that
+differ.
+
+**BEHAVIOR**
+
+The characters are compared as the bytes they are, so the order is that
+of their codes: every upper-case ASCII letter sorts before every
+lower-case one, and the Latin-1 letters after all of ASCII. A string
+that is the start of the other sorts first.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Stricmp`, `Strnicmp`
+
+**EXAMPLES**
+
+```zig
+if (ub.Strcmp(name, "System") == 0) return volume;
+```
+
+## Stricmp
+
+Compares two strings without regard to case.
+
+**SYNOPSIS**
+
+```zig
+fn Stricmp(ub: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8) i32
+```
+
+**SINCE**
+
+1.0. LVO -108.
+
+**INPUTS**
+
+- `string1` - a Latin-1 string.
+- `string2` - the string to compare it with.
+
+**RESULT**
+
+Less than 0, 0 or more than 0 as `string1` sorts before, the same as or
+after `string2` - the difference of the first two characters that
+differ, after `ToUpper`.
+
+**BEHAVIOR**
+
+Each character goes through `ToUpper` before the comparison, so the
+order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
+the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
+upper case and compares as itself.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Strnicmp`, `ToUpper`
+
+**EXAMPLES**
+
+```zig
+if (ub.Stricmp(name, "ram") == 0) return ram;
+```
+
+## Strlcpy
+
+Copies a string into a buffer, cut to fit and always ended with a NUL.
+
+**SYNOPSIS**
+
+```zig
+fn Strlcpy(_: *UtilityBase, dest: [*]u8, size: usize, source: [*:0]const u8) usize
+```
+
+**SINCE**
+
+1.0. LVO -236.
+
+**INPUTS**
+
+- `dest` - the buffer.
+- `size` - how many bytes it has, the NUL included. 0 writes nothing.
+- `source` - the string to copy.
+
+**RESULT**
+
+The length of `source`, whatever was copied. A result of `size` or more
+says the copy was cut short.
+
+**BEHAVIOR**
+
+At most `size - 1` bytes are copied, and a NUL is put after them, so
+the buffer always holds a string - unlike a copy that stops at the size
+and leaves the end open. The whole of `source` is read to count it, so
+a caller can tell a cut copy from a whole one and make room.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its inputs and writes the caller's buffer.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The buffer is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Strlen`, `Strcmp`
+
+**EXAMPLES**
+
+```zig
+var name: [32]u8 = undefined;
+if (ub.Strlcpy(&name, name.len, wanted) >= name.len) return error.NameTooLong;
+```
+
+## Strlen
+
+Returns the length of a string, without its NUL.
+
+**SYNOPSIS**
+
+```zig
+fn Strlen(_: *UtilityBase, string: [*:0]const u8) usize
+```
+
+**SINCE**
+
+1.0. LVO -224.
+
+**INPUTS**
+
+- `string` - the string.
+
+**RESULT**
+
+How many bytes come before the NUL; 0 for an empty string.
+
+**BEHAVIOR**
+
+A count of bytes, not of characters: every byte but 0 counts one,
+which in Latin-1 is the same thing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Strcmp`, `Stricmp`
+
+**EXAMPLES**
+
+```zig
+const len = ub.Strlen(name);
+@memcpy(copy[0..len], name[0..len]);
+```
+
+## Strnicmp
+
+Compares at most a given number of characters of two strings without regard to case.
+
+**SYNOPSIS**
+
+```zig
+fn Strnicmp(_: *UtilityBase, string1: [*:0]const u8, string2: [*:0]const u8, length: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -112.
+
+**INPUTS**
+
+- `string1` - a Latin-1 string.
+- `string2` - the string to compare it with.
+- `length` - how many characters at most. 0 or less compares nothing.
+
+**RESULT**
+
+Less than 0, 0 or more than 0 as the first `length` characters of
+`string1` sort before, the same as or after those of `string2`; 0 for a
+`length` of 0 or less.
+
+**BEHAVIOR**
+
+Each character goes through `ToUpper` before the comparison, so the
+order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
+the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
+upper case and compares as itself. The comparison also ends at the end
+of
+either string.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Stricmp`, `ToUpper`
+
+**EXAMPLES**
+
+```zig
+if (ub.Strnicmp(line, "set ", 4) == 0) return parseSet(line + 4);
+```
+
+## Strrchr
+
+Finds the last occurrence of a character in a string.
+
+**SYNOPSIS**
+
+```zig
+fn Strrchr(_: *UtilityBase, string: [*:0]const u8, character: u8) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.0. LVO -244.
+
+**INPUTS**
+
+- `string` - the string to search.
+- `character` - the byte to find.
+
+**RESULT**
+
+Where in `string` the last occurrence of `character` is, or null if it isn't
+there. The part of the string before it is `string[0 .. result -
+string]`.
+
+**BEHAVIOR**
+
+The whole string is read, and the last match before the NUL is the one kept. A `character` of 0 finds the NUL that ends the string, so
+the result is then never null.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It only reads its inputs.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The result points into `string`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Strchr`, `Strlen`
+
+**EXAMPLES**
+
+```zig
+const slash = ub.Strrchr(path, '/') orelse path; // the last part of a path
+```
+
+## TagInArray
+
+Tells whether a tag is in an array of tags.
+
+**SYNOPSIS**
+
+```zig
+fn TagInArray(_: *UtilityBase, tag_val: Tag, tag_array: ?[*]const Tag) bool
+```
+
+**SINCE**
+
+1.0. LVO -60.
+
+**INPUTS**
+
+- `tag_val` - the tag to look for.
+- `tag_array` - plain tags, not tag items, ended by `TAG_DONE`. Null is
+  an empty array.
+
+**RESULT**
+
+True if the array has the tag.
+
+**BEHAVIOR**
+
+A plain scan. An array of tags has no control tags, and `TAG_DONE`
+itself cannot be looked for, since it ends the array.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FilterTagItems`, `FindTagItem`
+
+**EXAMPLES**
+
+```zig
+const allowed = [_]Tag{ NP_Name, NP_StackSize, TAG_DONE };
+if (ub.TagInArray(item.tag, &allowed)) keep(item);
+```
+
+## ToLower
+
+Turns a Latin-1 character into lower case.
+
+**SYNOPSIS**
+
+```zig
+fn ToLower(_: *UtilityBase, character: u32) u8
+```
+
+**SINCE**
+
+1.0. LVO -120.
+
+**INPUTS**
+
+- `character` - the character, in the low 8 bits; the rest is ignored.
+
+**RESULT**
+
+The lower case of `A`-`Z` and of the Latin-1 upper-case letters
+0xC0-0xDE but for `×` (0xD7); every other character as it is.
+
+**BEHAVIOR**
+
+The inverse of `ToUpper` on the letters. `×` is not a letter and stays
+as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ToUpper`
+
+**EXAMPLES**
+
+```zig
+const c = ub.ToLower(key);
+```
+
+## ToUpper
+
+Turns a Latin-1 character into upper case.
+
+**SYNOPSIS**
+
+```zig
+fn ToUpper(_: *UtilityBase, character: u32) u8
+```
+
+**SINCE**
+
+1.0. LVO -116.
+
+**INPUTS**
+
+- `character` - the character, in the low 8 bits; the rest is ignored.
+
+**RESULT**
+
+The upper case of `a`-`z` and of the Latin-1 lower-case letters
+0xE0-0xFE but for `÷` (0xF7); every other character as it is.
+
+**BEHAVIOR**
+
+`ß` and `ÿ` have no upper case in Latin-1 and stay as they are. Pattern
+matching without case and the string compares use the same mapping.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ToLower`, `Stricmp`
+
+**EXAMPLES**
+
+```zig
+const c = ub.ToUpper(key);
+```
+
+## UDivMod32
+
+Divides two unsigned 32-bit numbers into a quotient and a remainder.
+
+**SYNOPSIS**
+
+```zig
+fn UDivMod32(ub: *UtilityBase, dividend: u32, divisor: u32) UDivMod32Result
+```
+
+**SINCE**
+
+1.0. LVO -104.
+
+**INPUTS**
+
+- `dividend` - the number divided.
+- `divisor` - what it is divided by. Not 0.
+
+**RESULT**
+
+`quotient` and `remainder`, with `dividend = quotient * divisor +
+remainder`. A zero divisor does not return.
+
+**BEHAVIOR**
+
+A zero divisor is a programming error with no answer to give, and ends
+in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
+  too.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SDivMod32`, `UMult32`
+
+**EXAMPLES**
+
+```zig
+const r = ub.UDivMod32(17, 5); // quotient 3, remainder 2
+```
+
+## UMult32
+
+Multiplies two unsigned 32-bit numbers and keeps the low 32 bits.
+
+**SYNOPSIS**
+
+```zig
+fn UMult32(_: *UtilityBase, arg1: u32, arg2: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -96.
+
+**INPUTS**
+
+- `arg1` - the one factor.
+- `arg2` - the other.
+
+**RESULT**
+
+The low 32 bits of the product. An overflow wraps.
+
+**BEHAVIOR**
+
+The low half of the product, which is the same bits whatever the
+signs; `UMult64` gives the whole product.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UMult64`, `UDivMod32`
+
+**EXAMPLES**
+
+```zig
+const area = ub.UMult32(width, height);
+```
+
+## UMult64
+
+Multiplies two unsigned 32-bit numbers into their whole 64-bit product.
+
+**SYNOPSIS**
+
+```zig
+fn UMult64(_: *UtilityBase, arg1: u32, arg2: u32) u64
+```
+
+**SINCE**
+
+1.0. LVO -136.
+
+**INPUTS**
+
+- `arg1` - the one factor.
+- `arg2` - the other.
+
+**RESULT**
+
+The product. It always fits, so nothing is lost.
+
+**BEHAVIOR**
+
+A 32 by 32 bit multiplication cannot overflow 64 bits. `UMult32` is the
+call for the low 32 bits alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UMult32`, `UDivMod32`
+
+**EXAMPLES**
+
+```zig
+const bytes = ub.UMult64(width, height);
+```
+
+## UnpackStructureTags
+
+Copies the fields of a structure out to where the items of a tag list point, as a pack table lays them out.
+
+**SYNOPSIS**
+
+```zig
+fn UnpackStructureTags(ub: *UtilityBase, structure: ?*const anyopaque, pack_table: ?[*]const u32, tag_list: ?[*]const TagItem) u32
+```
+
+**SINCE**
+
+1.0. LVO -144.
+
+**INPUTS**
+
+- `structure` - the structure to read. Null does nothing.
+- `pack_table` - the table: a base tag, then one entry per field made
+  with `packEntry` or `packBit`, then `PACK_ENDTABLE`. `PACK_NEWOFFSET`
+  followed by a new base tag switches the base. Null does nothing.
+- `tag_list` - each item's data is the address of a `u32` that receives
+  its field. An item with a null address is passed over.
+
+**RESULT**
+
+How many entries found their tag and were unpacked.
+
+**BEHAVIOR**
+
+Every entry whose tag the list has, and that is not marked pack-only
+(`PSTF_UNPACK`), writes a whole `u32`, whatever the field's size:
+
+- **Byte, word:** zero-extended, or sign-extended for a signed field.
+- **Long:** as it is.
+- **Bit:** all ones when set, 0 when clear; `PKCTRL_FLIPBIT` inverts it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The values are written where the caller's tags
+point.
+
+**NOTES**
+
+An entry holds the field's offset in 13 bits and the tag's distance from
+the base tag in 10, so a field lies within the first 8 KiB of the
+structure and a tag within 1023 of its base. An entry of 0 ends the
+table, so the base tag itself cannot describe an unsigned byte at offset
+0.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PackStructureTags`
+
+**EXAMPLES**
+
+```zig
+var width: u32 = 0;
+const query = [_]TagItem{ .{ .tag = MY_Width, .data = @intFromPtr(&width) }, .{} };
+_ = ub.UnpackStructureTags(&box, &table, &query);
+```

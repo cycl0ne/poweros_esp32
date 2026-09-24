@@ -1,0 +1,54 @@
+TABLE OF CONTENTS
+
+platform.resource/CpuClock
+platform.resource/GetPlatformInfo
+platform.resource/PlatformName
+platform.resource/TickRate
+platform.resource/CpuClock                          platform.resource/CpuClock
+
+   NAME
+	CpuClock -- The clock the system runs and times by, in Hz.
+
+   SYNOPSIS
+	    u32 CpuClock()
+
+   BEHAVIOR
+	It is the configured one while the measurement against the crystal
+	agrees with it (within 5%), and the measured one when it does not -
+	GetPlatformInfo's `cpu_hz` and `measured_cpu_hz` are both there to be
+	compared. What a delay loop or a benchmark wants. 0 before the tick has
+	been set up.
+platform.resource/GetPlatformInfo            platform.resource/GetPlatformInfo
+
+   NAME
+	GetPlatformInfo -- Fill in `info` (sdk/resources/platform.zig), of which `size` bytes are there - pass @sizeOf(PlatformInfo).
+
+   SYNOPSIS
+	    u32 GetPlatformInfo(*platform.PlatformInfo info, u32 size)
+
+   BEHAVIOR
+	Returns how many bytes it wrote, which is the lesser of `size` and its
+	own idea of the structure: a program from the disk may have been built
+	against another SDK than the ROM answering it, so check the count before
+	trusting a field near the end. Nothing is written and 0 comes back for a
+	`size` too small to hold anything.
+platform.resource/PlatformName                  platform.resource/PlatformName
+
+   NAME
+	PlatformName -- The chip's name, a C string ("ESP32-S3").
+
+   SYNOPSIS
+	    [*:0]const u8 PlatformName()
+
+   BEHAVIOR
+	Never null.
+platform.resource/TickRate                          platform.resource/TickRate
+
+   NAME
+	TickRate -- The kernel tick in Hz.
+
+   SYNOPSIS
+	    u32 TickRate()
+
+   BEHAVIOR
+	Not timer.device's units, and not the 1/50 s Delay counts in.

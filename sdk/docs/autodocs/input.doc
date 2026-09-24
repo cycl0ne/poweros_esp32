@@ -1,0 +1,10 @@
+TABLE OF CONTENTS
+
+input.device/PeekQualifier
+input.device/PeekQualifier                          input.device/PeekQualifier
+
+   NAME
+	PeekQualifier -- The qualifiers as the device has them now: the shifts, Caps Lock, Control, the Alts and the Amiga keys, and the pointer's buttons.
+
+   SYNOPSIS
+	    u32 PeekQualifier()

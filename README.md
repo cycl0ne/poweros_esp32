@@ -171,6 +171,7 @@ More build steps and options:
 | `./zig build flash-disk` | a fresh, empty file system on the board's disk |
 | `./zig build qemu-disk` | QEMU on an image whose disk keeps what is written |
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
+| `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
 
 On a board the serial console is the chip's USB port
@@ -180,7 +181,9 @@ On a board the serial console is the chip's USB port
 
 The SDK (`sdk/`) is a Zig package of its own. A program depends on it and
 builds with `addProgram`, which knows the chip, the linker script and how
-to make the load file:
+to make the load file. Every library, device and resource call is
+described in [`sdk/docs/autodocs/`](sdk/docs/README.md), one file per
+module.
 
 ```zig
 // build.zig
@@ -307,7 +310,7 @@ src/rom/       what is in the ROM: libraries, devices, handlers, resources, shel
 src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
-sdk/           the SDK: types, constants, jump tables, tools (a package)
+sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
 tools/         build helpers: mkfs, ressize, checks
 scripts/       the QEMU build and a serial terminal
 ```

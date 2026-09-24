@@ -1,0 +1,70 @@
+TABLE OF CONTENTS
+
+console.device/AddSnipHook
+console.device/CDInputHandler
+console.device/GetConSnip
+console.device/RawKeyConvert
+console.device/RemSnipHook
+console.device/SetConSnip
+console.device/AddSnipHook                          console.device/AddSnipHook
+
+   NAME
+	AddSnipHook -- Call `hook` whenever a console window's selection is finished, so that a program can carry the text away - to a clipboard, say.
+
+   SYNOPSIS
+	    void AddSnipHook(*hooks.Hook hook)
+
+   BEHAVIOR
+	The hook is called on the console's own task, with the `ConUnit` the
+	text came from as its object and a `SnipHookMsg` as its message; neither
+	outlives the call, so a hook that wants the text copies it. The hook may
+	call nothing that waits. Its node belongs to the device until it is
+	removed.
+console.device/CDInputHandler                    console.device/CDInputHandler
+
+   NAME
+	CDInputHandler -- Hand input events to the consoles: a key goes to the console of the window that is active, through that unit's keymap, and a window event (`IECLASS_EVENT`, `IECLASS_ACTIVEWINDOW`, `IECLASS_INACTIVEWINDOW`) to the console of the window it names.
+
+   SYNOPSIS
+	    ?*ie.InputEvent CDInputHandler(?*ie.InputEvent events)
+
+   BEHAVIOR
+	Answers the events, so whoever is next on input.device's chain still
+	sees them. The device's own handler is this call.
+console.device/GetConSnip                            console.device/GetConSnip
+
+   NAME
+	GetConSnip -- A copy of what was last selected in a console window, NUL terminated and allocated with AllocVec - the caller frees it - or null when nothing is selected and nothing was put there.
+
+   SYNOPSIS
+	    ?[*:0]u8 GetConSnip()
+console.device/RawKeyConvert                      console.device/RawKeyConvert
+
+   NAME
+	RawKeyConvert -- The characters a list of key events makes, into `buffer` (room for `length`): how many, or -1 when they did not fit.
+
+   SYNOPSIS
+	    i32 RawKeyConvert(?*const ie.InputEvent events, [*]u8 buffer, i32 length, ?*const keymap.KeyMap key_map)
+
+   BEHAVIOR
+	`key_map` null is keymap.library's default.
+console.device/RemSnipHook                          console.device/RemSnipHook
+
+   NAME
+	RemSnipHook -- Take a hook off again.
+
+   SYNOPSIS
+	    void RemSnipHook(*hooks.Hook hook)
+
+   BEHAVIOR
+	It is not called after this returns.
+console.device/SetConSnip                            console.device/SetConSnip
+
+   NAME
+	SetConSnip -- What a paste is to give from now on; it is copied.
+
+   SYNOPSIS
+	    bool SetConSnip(?[*:0]const u8 snip)
+
+   BEHAVIOR
+	Null empties it. False when there was no memory.

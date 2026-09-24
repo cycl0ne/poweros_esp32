@@ -1,0 +1,164 @@
+TABLE OF CONTENTS
+
+dma.resource/AllocDMAChain
+dma.resource/AllocDMAChannel
+dma.resource/ClearDMAInts
+dma.resource/ConnectDMAChannel
+dma.resource/DMAChannelOwner
+dma.resource/DMAEOFDescriptor
+dma.resource/DMAIntStatus
+dma.resource/DMARawIntStatus
+dma.resource/EnableDMAInts
+dma.resource/FreeDMAChain
+dma.resource/FreeDMAChannel
+dma.resource/ResetDMA
+dma.resource/SetDMAPriority
+dma.resource/StartDMA
+dma.resource/StopDMA
+dma.resource/AllocDMAChain                          dma.resource/AllocDMAChain
+
+   NAME
+	AllocDMAChain -- A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT sends them all (EOF on the last descriptor), DMA_IN fills them.
+
+   SYNOPSIS
+	    ?*dma.DMADescriptor AllocDMAChain(u32 side, ?*anyopaque buffer, u32 length, u32 flags)
+
+   BEHAVIOR
+	In internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per
+	descriptor; DMACHF_LOOP links the last back to the first. Null if the
+	buffer isn't in internal RAM or PSRAM, or without memory. Not from
+	interrupts.
+dma.resource/AllocDMAChannel                      dma.resource/AllocDMAChannel
+
+   NAME
+	AllocDMAChannel -- Claim a channel (0-4) for `name`: null if it is now yours, else its owner's name.
+
+   SYNOPSIS
+	    ?[*:0]const u8 AllocDMAChannel(u32 channel, [*:0]const u8 name)
+
+   BEHAVIOR
+	Not from interrupts.
+dma.resource/ClearDMAInts                            dma.resource/ClearDMAInts
+
+   NAME
+	ClearDMAInts -- Clear a side's interrupts.
+
+   SYNOPSIS
+	    void ClearDMAInts(u32 channel, u32 side, u32 mask)
+
+   BEHAVIOR
+	From interrupts too.
+dma.resource/ConnectDMAChannel                  dma.resource/ConnectDMAChannel
+
+   NAME
+	ConnectDMAChannel -- Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
+
+   SYNOPSIS
+	    bool ConnectDMAChannel(u32 channel, u32 peripheral, u32 flags)
+
+   BEHAVIOR
+	Resets the channel. False for a bad channel or peripheral, or a
+	peripheral another channel is connected to.
+dma.resource/DMAChannelOwner                      dma.resource/DMAChannelOwner
+
+   NAME
+	DMAChannelOwner -- Who has a channel, or null.
+
+   SYNOPSIS
+	    ?[*:0]const u8 DMAChannelOwner(u32 channel)
+dma.resource/DMAEOFDescriptor                    dma.resource/DMAEOFDescriptor
+
+   NAME
+	DMAEOFDescriptor -- The descriptor that ended a side's last frame: IN's with SUC_EOF, OUT's last with EOF sent.
+
+   SYNOPSIS
+	    ?*dma.DMADescriptor DMAEOFDescriptor(u32 channel, u32 side)
+
+   BEHAVIOR
+	Null if none yet.
+dma.resource/DMAIntStatus                            dma.resource/DMAIntStatus
+
+   NAME
+	DMAIntStatus -- A side's pending, enabled interrupts.
+
+   SYNOPSIS
+	    u32 DMAIntStatus(u32 channel, u32 side)
+
+   BEHAVIOR
+	From interrupts too.
+dma.resource/DMARawIntStatus                      dma.resource/DMARawIntStatus
+
+   NAME
+	DMARawIntStatus -- A side's interrupt bits as the hardware sets them, enabled or not: what a driver polls when it wants to know that something happened without being interrupted by it.
+
+   SYNOPSIS
+	    u32 DMARawIntStatus(u32 channel, u32 side)
+
+   BEHAVIOR
+	From interrupts too.
+dma.resource/EnableDMAInts                          dma.resource/EnableDMAInts
+
+   NAME
+	EnableDMAInts -- Enable a side's interrupts (DMAINTF_*); 0: none.
+
+   SYNOPSIS
+	    void EnableDMAInts(u32 channel, u32 side, u32 mask)
+dma.resource/FreeDMAChain                            dma.resource/FreeDMAChain
+
+   NAME
+	FreeDMAChain -- Free a chain from AllocDMAChain (null: nothing).
+
+   SYNOPSIS
+	    void FreeDMAChain(?*dma.DMADescriptor chain)
+
+   BEHAVIOR
+	Not from interrupts.
+dma.resource/FreeDMAChannel                        dma.resource/FreeDMAChannel
+
+   NAME
+	FreeDMAChannel -- Give a channel back: it stops, is disconnected, its interrupts off.
+
+   SYNOPSIS
+	    void FreeDMAChannel(u32 channel)
+
+   BEHAVIOR
+	Remove your interrupt servers first. Not from interrupts.
+dma.resource/ResetDMA                                    dma.resource/ResetDMA
+
+   NAME
+	ResetDMA -- Reset a side: its FIFO and state machine, its connection and flags left as they are.
+
+   SYNOPSIS
+	    void ResetDMA(u32 channel, u32 side)
+
+   BEHAVIOR
+	Stopping a side does not empty it, and what it still holds goes out
+	ahead of the next chain it is started on. From interrupts too.
+dma.resource/SetDMAPriority                        dma.resource/SetDMAPriority
+
+   NAME
+	SetDMAPriority -- A side's priority on the bus, 0 (lowest) to DMA_MAXPRI.
+
+   SYNOPSIS
+	    bool SetDMAPriority(u32 channel, u32 side, u32 priority)
+
+   BEHAVIOR
+	False for a bad channel, side or priority.
+dma.resource/StartDMA                                    dma.resource/StartDMA
+
+   NAME
+	StartDMA -- Start a side (DMA_IN, DMA_OUT) on a descriptor chain.
+
+   SYNOPSIS
+	    bool StartDMA(u32 channel, u32 side, *dma.DMADescriptor list)
+
+   BEHAVIOR
+	False unless the first descriptor is 4-byte aligned in internal RAM.
+	Memory to memory: IN first, then OUT.
+dma.resource/StopDMA                                      dma.resource/StopDMA
+
+   NAME
+	StopDMA -- Stop a side.
+
+   SYNOPSIS
+	    void StopDMA(u32 channel, u32 side)

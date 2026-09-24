@@ -1,0 +1,38 @@
+TABLE OF CONTENTS
+
+watchdog.resource/ArmWatchdog
+watchdog.resource/DisarmWatchdog
+watchdog.resource/FeedWatchdog
+watchdog.resource/ReadWatchdog
+watchdog.resource/ArmWatchdog                    watchdog.resource/ArmWatchdog
+
+   NAME
+	ArmWatchdog -- Arm the watchdog: after `millis` ms without a FeedWatchdog it does `action` (WATCHDOG_RESET_SYSTEM or WATCHDOG_RESET_CPU).
+
+   SYNOPSIS
+	    bool ArmWatchdog(u32 millis, u32 action)
+
+   BEHAVIOR
+	Armed again, it starts over. False for 0 ms, too long a time, or another
+	action.
+watchdog.resource/DisarmWatchdog              watchdog.resource/DisarmWatchdog
+
+   NAME
+	DisarmWatchdog -- Stop the watchdog.
+
+   SYNOPSIS
+	    void DisarmWatchdog()
+watchdog.resource/FeedWatchdog                  watchdog.resource/FeedWatchdog
+
+   NAME
+	FeedWatchdog -- Start the armed time over.
+
+   SYNOPSIS
+	    void FeedWatchdog()
+watchdog.resource/ReadWatchdog                  watchdog.resource/ReadWatchdog
+
+   NAME
+	ReadWatchdog -- The armed time in ms, 0 while it is disarmed.
+
+   SYNOPSIS
+	    u32 ReadWatchdog()

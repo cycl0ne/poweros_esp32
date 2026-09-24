@@ -1,0 +1,3314 @@
+TABLE OF CONTENTS
+
+graphics.library/AddFont
+graphics.library/AllocBitMapTagList
+graphics.library/AndRectRegion
+graphics.library/AndRegionRegion
+graphics.library/AreaArc
+graphics.library/AreaCircle
+graphics.library/AreaDraw
+graphics.library/AreaEllipse
+graphics.library/AreaEnd
+graphics.library/AreaMove
+graphics.library/AskSoftStyle
+graphics.library/BeginDraw
+graphics.library/BitMapScale
+graphics.library/BltBitMap
+graphics.library/BltBitMapRastPort
+graphics.library/BltMaskBitMapRastPort
+graphics.library/BltMaskRastPort
+graphics.library/BltPattern
+graphics.library/BltRastPort
+graphics.library/BltTemplate
+graphics.library/ClearRectRegion
+graphics.library/ClearRegion
+graphics.library/CloseFont
+graphics.library/CreateRastPortTagList
+graphics.library/DisposeRegion
+graphics.library/Draw
+graphics.library/DrawArc
+graphics.library/DrawCircle
+graphics.library/DrawEllipse
+graphics.library/DrawHLine
+graphics.library/DrawPoly
+graphics.library/DrawRect
+graphics.library/DrawVLine
+graphics.library/EndDraw
+graphics.library/EraseRect
+graphics.library/FontExtent
+graphics.library/FreeBitMap
+graphics.library/FreeRastPort
+graphics.library/GetRPAttrs
+graphics.library/GraphicsErrorText
+graphics.library/InitArea
+graphics.library/Move
+graphics.library/NewRegion
+graphics.library/OffsetRegion
+graphics.library/OpenFont
+graphics.library/OrRectRegion
+graphics.library/OrRegionRegion
+graphics.library/PointInRegion
+graphics.library/ReadPixel
+graphics.library/RectFill
+graphics.library/RegionRectangles
+graphics.library/RemFont
+graphics.library/ScrollRaster
+graphics.library/SetRPAttrs
+graphics.library/SetSoftStyle
+graphics.library/SubRegionRegion
+graphics.library/Text
+graphics.library/TextExtent
+graphics.library/TextFit
+graphics.library/TextLength
+graphics.library/WriteLUTPixelArray
+graphics.library/WritePixel
+graphics.library/WritePixelArray
+graphics.library/XorRectRegion
+graphics.library/XorRegionRegion
+graphics.library/AddFont                              graphics.library/AddFont
+
+   NAME
+	AddFont -- Puts a font on the library's list.
+
+   SYNOPSIS
+	    fn AddFont(gb: *GraphicsBase, font: *TextFont) bool
+
+   SINCE
+	0.15. LVO -176.
+
+   INPUTS
+	- `font` - a font somebody built. Its name and height are what
+	  `OpenFont` will match on.
+
+   RESULT
+	False if it is already on the list.
+
+   BEHAVIOR
+	This is the way in for fonts that are not in this ROM. Something that
+	reads a font out of a file builds a `TextFont` and calls this, and a
+	later plain `OpenFont` finds it - which is why `OpenFont` walks a list.
+	The library itself never reads files, for the same reason rtg.library
+	does not read the board file and ramlib exists rather than exec loading
+	libraries itself: each layer keeps to what it can do on its own.
+
+   CONTEXT
+	- Waits: yes, while another task holds the font list.
+	- Interrupts: no.
+	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The font stays the caller's. The library only holds it on a list, and
+	`RemFont` takes it off again.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RemFont`, `OpenFont`
+
+   EXAMPLES
+	    if (!gb.AddFont(loaded)) return error.AlreadyThere;
+graphics.library/AllocBitMapTagList        graphics.library/AllocBitMapTagList
+
+   NAME
+	AllocBitMapTagList -- A bitmap of one's own to draw into.
+
+   SYNOPSIS
+	    fn AllocBitMapTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*Surface
+
+   SINCE
+	0.5. LVO -40.
+
+   INPUTS
+	- `tag_list` - what to make:
+	  - `BMTAG_Width`, `BMTAG_Height` (u32) - required, and neither may be 0.
+	  - `BMTAG_Format` (`PixelFormat`) - what a pixel looks like.
+	  - `BMTAG_Friend` (`*RastPort`) - take the format from that RastPort's
+	    surface, so the two can be moved between without converting. How a
+	    caller says what the bitmap is for without knowing what the display
+	    is.
+	  - `BMTAG_Clear` (bool) - zero it. Otherwise its contents are whatever
+	    the memory held.
+
+	  With neither Format nor Friend it is rgb565.
+
+   RESULT
+	A `Surface` to make a RastPort on with `RPTAG_Surface`, or null: no
+	memory, a zero width or height, or a format no pen can be packed for -
+	which is refused here rather than handed back to fail at the first
+	drawing call.
+
+   BEHAVIOR
+	The memory is the machine's, not the board's. A board's display memory
+	is where what is *shown* lives, and on this machine there is exactly one
+	framebuffer's worth of it and none spare. So what comes back is a
+	`Surface` and not an `RtgBitMap`: a surface is all that drawing needs,
+	and what an RtgBitMap adds is a board.
+
+	The header and the pixels are one allocation, the pixels on a cache-line
+	boundary behind the header - so there is no second pointer and no flag
+	saying who owns what.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no; it allocates.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's until `FreeBitMap`, which takes exactly what this returned.
+	A RastPort made on it must go first, or it will be drawing into freed
+	memory.
+
+   NOTES
+	- A caller that already has the memory does not need this call: fill in
+	  a `Surface` and pass `RPTAG_Surface`.
+	- This is the half of SMART_REFRESH and SUPERBITMAP that keeps what is
+	  covered, or what a window draws into; `BltRastPort` is the other half.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FreeBitMap`, `BltRastPort`, `CreateRastPortTagList`
+
+   EXAMPLES
+	    // Somewhere to draw that is not the screen, in the screen's format.
+	    const tags = [_]TagItem{
+	        .{ .tag = sdk.graphics.BMTAG_Width, .data = 320 },
+	        .{ .tag = sdk.graphics.BMTAG_Height, .data = 200 },
+	        .{ .tag = sdk.graphics.BMTAG_Friend, .data = @intFromPtr(screen_rp) },
+	        .{ .tag = sdk.graphics.BMTAG_Clear, .data = 1 },
+	        .{},
+	    };
+	    const bm = gb.AllocBitMapTagList(&tags) orelse return;
+	    defer gb.FreeBitMap(bm);
+graphics.library/AndRectRegion                  graphics.library/AndRectRegion
+
+   NAME
+	AndRectRegion -- Cuts a region down to what is also inside a rectangle.
+
+   SYNOPSIS
+	    fn AndRectRegion(gb: *GraphicsBase, region: *Region, rect: *const Rect) bool
+
+   SINCE
+	0.8. LVO -224.
+
+   INPUTS
+	- `region` - the region to change.
+	- `rect` - what to keep.
+
+   RESULT
+	False if a rectangle could not be allocated. The region is then as it
+	was: the new list is built beside the old one and only swapped in when
+	all of it succeeded.
+
+   BEHAVIOR
+	Each rectangle of the region is cut to the rectangle; what does not meet
+	it goes.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The region keeps its rectangles in the region pool.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AndRegionRegion`, `OrRectRegion`
+
+   EXAMPLES
+	    _ = gb.AndRectRegion(region, &window_bounds);
+graphics.library/AndRegionRegion              graphics.library/AndRegionRegion
+
+   NAME
+	AndRegionRegion -- Cuts `dest` down to what is also in `source`.
+
+   SYNOPSIS
+	    fn AndRegionRegion(gb: *GraphicsBase, source: *const Region, dest: *Region) bool
+
+   SINCE
+	0.8. LVO -240.
+
+   INPUTS
+	- `source` - the region to keep inside. Read and not changed.
+	- `dest` - the region that is cut down.
+
+   RESULT
+	False without memory for the rectangles; `dest` is then as it was.
+
+   BEHAVIOR
+	Each rectangle of `dest` is kept where it meets a rectangle of
+	`source`. The answer is built beside `dest` and swapped in at the end, so
+	no rectangle of `source` can undo what another added.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`dest` keeps its rectangles in the region pool; `source` is untouched.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AndRectRegion`, `SubRegionRegion`
+
+   EXAMPLES
+	    _ = gb.AndRegionRegion(clip, visible);
+graphics.library/AreaArc                              graphics.library/AreaArc
+
+   NAME
+	AreaArc -- A wedge: out from the middle, round the arc, and back.
+
+   SYNOPSIS
+	    fn AreaArc(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32, from: i32, to: i32) bool
+
+   SINCE
+	0.10. LVO -116.
+
+   INPUTS
+	- `rp` - the RastPort, with room from `InitArea`.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `radius` - in pixels; below 0 adds nothing.
+	- `from` - where the wedge starts, in degrees, 0 to the right and 90
+	  upward, as `DrawArc` has them.
+	- `to` - where it ends. Equal to `from` adds nothing.
+
+   RESULT
+	False, with the error in the RastPort, if the room ran out part way.
+
+   BEHAVIOR
+	A wedge: a shape begun at the centre, out along `from`, round the arc
+	and back - so what is filled is the slice a person means by one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The corners go into the room `InitArea` gave.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawArc`, `AreaEllipse`
+
+   EXAMPLES
+	    _ = gb.AreaArc(rp, 100, 100, 50, 0, 90);
+graphics.library/AreaCircle                        graphics.library/AreaCircle
+
+   NAME
+	AreaCircle -- A whole circle as a shape of its own.
+
+   SYNOPSIS
+	    fn AreaCircle(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32) bool
+
+   SINCE
+	0.10. LVO -112.
+
+   INPUTS
+	- `rp` - the RastPort, with room from `InitArea`.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `radius` - in pixels; below 0 adds nothing.
+
+   RESULT
+	False, with the error in the RastPort, if the room ran out part way.
+
+   BEHAVIOR
+	`AreaEllipse` with both radii the same.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The corners go into the room `InitArea` gave.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AreaEllipse`, `DrawCircle`
+
+   EXAMPLES
+	    _ = gb.AreaCircle(rp, 35, 35, 12);
+graphics.library/AreaDraw                            graphics.library/AreaDraw
+
+   NAME
+	AreaDraw -- The next corner of the shape being collected.
+
+   SYNOPSIS
+	    fn AreaDraw(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) bool
+
+   SINCE
+	0.10. LVO -104.
+
+   INPUTS
+	- `rp` - the RastPort, with a shape begun.
+	- `x` - the next corner, across.
+	- `y` - the next corner, down.
+
+   RESULT
+	False with `GERR_BAD_SIZE` if no shape has been begun. A corner with no
+	shape is the caller's slip rather than a new shape, and saying so is
+	more use than quietly starting one.
+
+   BEHAVIOR
+	The corner joins the shape begun last. The edge back from the last
+	corner to the first is implied: `AreaEnd` closes every shape.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The corner goes into the room `InitArea` gave.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AreaMove`, `AreaEnd`
+
+   EXAMPLES
+	    _ = gb.AreaDraw(rp, 60, 10);
+graphics.library/AreaEllipse                      graphics.library/AreaEllipse
+
+   NAME
+	AreaEllipse -- A whole ellipse as a shape of its own.
+
+   SYNOPSIS
+	    fn AreaEllipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, ry: i32) bool
+
+   SINCE
+	0.10. LVO -108.
+
+   INPUTS
+	- `rp` - the RastPort, with room from `InitArea`.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `rx` - the radius across.
+	- `ry` - the radius up and down. Either below 0 adds nothing.
+
+   RESULT
+	False, with the error in the RastPort, if the room ran out part way;
+	the shape is then only part of an ellipse.
+
+   BEHAVIOR
+	It arrives as corners rather than as a curve: cut into pieces short
+	enough that each is about a pixel long, off the same quarter-turn table
+	the outline calls use. So there is one fill in the library and not one
+	per kind of shape.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The corners go into the room `InitArea` gave.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AreaCircle`, `AreaArc`, `DrawEllipse`
+
+   EXAMPLES
+	    _ = gb.AreaEllipse(rp, 100, 60, 40, 20);
+graphics.library/AreaEnd                              graphics.library/AreaEnd
+
+   NAME
+	AreaEnd -- Fills everything collected and begins again.
+
+   SYNOPSIS
+	    fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool
+
+   SINCE
+	0.10. LVO -120.
+
+   INPUTS
+	- `rp` - the RastPort with the collected shapes.
+
+   RESULT
+	True with nothing drawn when nothing was collected, or when what was
+	collected is fewer than three corners. That is not a failure: an empty
+	shape has no inside.
+
+   BEHAVIOR
+	Even-odd, a row at a time: every shape's edges are crossed against the
+	row, the crossings are sorted, and what lies between the first and
+	second, the third and fourth and so on is inside. A corner shared by two
+	edges is counted once - the test is half-open in y - so the crossings
+	stay even and a shape never leaks along a row.
+
+	The fill is solid. A line pattern belongs to a line, and the inside of a
+	shape is not one; the pens and the draw mode apply as everywhere else,
+	so a shape can be filled by inverting what is under it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The room stays for the next shapes; `InitArea` with 0 or `FreeRastPort`
+	gives it back.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitArea`, `AreaMove`, `AreaDraw`
+
+   EXAMPLES
+	    _ = gb.InitArea(rp, 64);
+	    _ = gb.AreaMove(rp, 10, 10);   // a square
+	    _ = gb.AreaDraw(rp, 60, 10);
+	    _ = gb.AreaDraw(rp, 60, 60);
+	    _ = gb.AreaDraw(rp, 10, 60);
+	    _ = gb.AreaCircle(rp, 35, 35, 12); // with a round hole in it
+	    _ = gb.AreaEnd(rp);
+graphics.library/AreaMove                            graphics.library/AreaMove
+
+   NAME
+	AreaMove -- Begins a shape.
+
+   SYNOPSIS
+	    fn AreaMove(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) bool
+
+   SINCE
+	0.10. LVO -100.
+
+   INPUTS
+	- `rp` - the RastPort, with room from `InitArea`.
+	- `x` - the shape's first corner, across.
+	- `y` - its first corner, down.
+
+   RESULT
+	False with `GERR_NO_MEMORY` if `InitArea` was never called, or
+	`GERR_BAD_SIZE` if there is no room for another corner.
+
+   BEHAVIOR
+	A shape already begun is kept, to be filled along with this one. That is
+	what gives holes: the fill is even-odd, so a shape inside another leaves
+	the middle empty, and neither has to be wound any particular way.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The corner goes into the room `InitArea` gave.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AreaDraw`, `AreaEnd`, `InitArea`
+
+   EXAMPLES
+	    _ = gb.AreaMove(rp, 10, 10);
+graphics.library/AskSoftStyle                    graphics.library/AskSoftStyle
+
+   NAME
+	AskSoftStyle -- Which styles can still be asked for.
+
+   SYNOPSIS
+	    fn AskSoftStyle(_: *GraphicsBase, rp: *const RastPort) u32
+
+   SINCE
+	0.15. LVO -188.
+
+   INPUTS
+	- `rp` - the RastPort, whose font is asked about.
+
+   RESULT
+	The styles the RastPort's font was **not** already drawn with, so a
+	caller can offer only what will make a difference. 0 with no font.
+
+   BEHAVIOR
+	A style the font was already drawn with cannot be applied again: a
+	font drawn extended would be widened twice.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
+	  not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SetSoftStyle`, `FontExtent`
+
+   EXAMPLES
+	    const can = gb.AskSoftStyle(rp);
+graphics.library/BeginDraw                          graphics.library/BeginDraw
+
+   NAME
+	BeginDraw -- The drawing from here to the matching `EndDraw` is one piece of work.
+
+   SYNOPSIS
+	    fn BeginDraw(gb: *GraphicsBase, rp: *RastPort) void
+
+   SINCE
+	1.0. LVO -276.
+
+   INPUTS
+	- `gb` - the library's base.
+	- `rp` - the RastPort the piece of work is drawn with.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Every drawing call hands the rows it wrote to the display as it
+	finishes, so a thing drawn in two calls - rubbed out, then drawn
+	again - can be seen half done: the display is given the picture
+	between the two. Between `BeginDraw` and `EndDraw` the rows are
+	gathered instead, and `EndDraw` hands the lot on at once, so no
+	half-finished state is ever shown.
+
+	The batch is held on the **buffer**, not on this RastPort, so drawing
+	through another RastPort onto the same buffer is gathered into it
+	too. That is what lets whoever manages windows open one around a
+	window's whole redraw while the drawing itself goes through a
+	RastPort of its own.
+
+	They nest. Each `BeginDraw` needs its own `EndDraw`, and nothing is
+	handed on until the last.
+
+	A RastPort drawing into plain memory has nothing to hand rows to, and
+	this does nothing for it.
+
+   CONTEXT
+	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	None.
+
+   BUGS
+	A `BeginDraw` whose `EndDraw` never comes leaves the buffer gathering
+	for ever and nothing more reaches the display from it, as a `Forbid`
+	with no `Permit` stops the machine scheduling. Pair them on every
+	path out, an error return included.
+
+   SEE ALSO
+	`EndDraw`, `rtg.RefreshBitMap`
+
+   EXAMPLES
+	    gb.BeginDraw(rp);
+	    gb.WritePixelArray(rp, ...); // the old pointer rubbed out
+	    gb.WritePixelArray(rp, ...); // the new one drawn
+	    gb.EndDraw(rp); // both reach the display together
+graphics.library/BitMapScale                      graphics.library/BitMapScale
+
+   NAME
+	BitMapScale -- Stretches a rectangle to fill another.
+
+   SYNOPSIS
+	    fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const Rect, dest: *RastPort, dest_area: *const Rect) void
+
+   SINCE
+	0.13. LVO -164.
+
+   INPUTS
+	- `src` - the surface to stretch from.
+	- `src_area` - what of it to stretch, cut to what the surface has.
+	- `dest` - where it goes. Its clip decides what lands.
+	- `dest_area` - how big it becomes, and where.
+
+   RESULT
+	Nothing. `GERR_BAD_FORMAT` if the formats differ, `GERR_BAD_SIZE` if
+	either rectangle is empty.
+
+   BEHAVIOR
+	The nearest pixel for each, stepped with whole numbers - no smoothing.
+	It keeps a
+	scaled-up shape's edges where they were rather than blurring them
+	across the pixels either side. Scaling down drops pixels rather than
+	averaging them.
+
+	Which source pixel a destination pixel comes from is worked out from the
+	destination rectangle's own corner and not from the clipped one, so a
+	stretch that is partly off the screen shows the right part of the
+	picture rather than sliding.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The surface stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltBitMapRastPort`
+
+   EXAMPLES
+	    gb.BitMapScale(thumb, &.{ .max_x = 32, .max_y = 32 }, rp, &.{ .min_x = 10, .min_y = 10, .max_x = 138, .max_y = 138 });
+graphics.library/BltBitMap                          graphics.library/BltBitMap
+
+   NAME
+	BltBitMap -- Moves a rectangle of pixels from one surface to another.
+
+   SYNOPSIS
+	    fn BltBitMap(_: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32
+
+   SINCE
+	0.13. LVO -152.
+
+   INPUTS
+	- `src` - the surface to take from. An `RtgBitMap` is one by pointer.
+	- `src_x` - the rectangle's left edge in the source.
+	- `src_y` - its top edge.
+	- `dest` - the surface to put it in, in the same format.
+	- `dest_x` - where its left edge lands.
+	- `dest_y` - where its top edge lands.
+	- `width` - how wide the rectangle is.
+	- `height` - how tall.
+
+   RESULT
+	`GERR_OK`, or `GERR_BAD_FORMAT` for surfaces of two formats, which are
+	left alone: there is no RastPort to hold the error, so it is the
+	answer. What falls outside either surface is simply not moved, and is
+	no error.
+
+   BEHAVIOR
+	**Neither side has any drawing state**, so nothing is clipped, no draw
+	mode applies and nothing is handed on to a display - this is the move
+	itself, for a caller that has two pieces of memory and wants one in the
+	other. `BltBitMapRastPort` is the same move landing somewhere that does
+	have state.
+
+	The two may be the same surface and may overlap: rows are taken from
+	the end when moving down and bytes from the end when moving right.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. Both surfaces stay the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltBitMapRastPort`, `BltRastPort`
+
+   EXAMPLES
+	    if (gb.BltBitMap(sheet, 32, 0, buffer, 0, 0, 16, 16) != graphics.GERR_OK) return;
+graphics.library/BltBitMapRastPort          graphics.library/BltBitMapRastPort
+
+   NAME
+	BltBitMapRastPort -- Moves a rectangle of pixels into a RastPort.
+
+   SYNOPSIS
+	    fn BltBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32) void
+
+   SINCE
+	0.13. LVO -156.
+
+   INPUTS
+	- `src` - where the pixels come from. A surface and not a RastPort: the
+	  source of a blit has no clip, no pens and no draw mode.
+	- `src_x` - the rectangle's left edge in the source.
+	- `src_y` - its top edge.
+	- `dest` - where they go. Its clip decides what lands, and the rows are
+	  handed on.
+	- `dest_x` - where the left edge lands.
+	- `dest_y` - where the top edge lands.
+	- `width` - how wide the rectangle is.
+	- `height` - how tall.
+
+   RESULT
+	Nothing. `GERR_BAD_FORMAT` if the two formats differ - converting is a
+	different operation and will be a different call.
+
+   BEHAVIOR
+	The destination's clip cuts it, and the board's engine moves it when
+	the destination is a board's buffer and the engine can.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The surface stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltMaskBitMapRastPort`, `BitMapScale`
+
+   EXAMPLES
+	    gb.BltBitMapRastPort(picture, 0, 0, rp, 20, 20, 64, 48);
+graphics.library/BltMaskBitMapRastPort  graphics.library/BltMaskBitMapRastPort
+
+   NAME
+	BltMaskBitMapRastPort -- The same, leaving alone the pixels the mask does not cover.
+
+   SYNOPSIS
+	    fn BltMaskBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32, mask: [*]const u8, mask_pitch: u32) void
+
+   SINCE
+	0.13. LVO -160.
+
+   INPUTS
+	- `src` - where the pixels come from.
+	- `src_x` - the rectangle's left edge in the source.
+	- `src_y` - its top edge.
+	- `dest` - where they go. Its clip decides what lands.
+	- `dest_x` - where the left edge lands.
+	- `dest_y` - where the top edge lands.
+	- `width` - how wide the rectangle is.
+	- `height` - how tall.
+	- `mask` - one bit to a pixel, read from the source's corner, so it
+	  travels with the shape. `DRMD_INVERSVID` swaps which bit means copy.
+	- `mask_pitch` - bytes from one row of the mask to the next.
+
+   RESULT
+	Nothing. `GERR_BAD_FORMAT` in `dest` if the formats differ.
+
+   BEHAVIOR
+	This is the blit an icon wants: a shape moved over a background it does
+	not cover. No engine is asked - an engine copies rectangles, and this is
+	a rectangle with holes in it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The surface and the mask stay the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltBitMapRastPort`, `BltMaskRastPort`
+
+   EXAMPLES
+	    gb.BltMaskBitMapRastPort(icon, 0, 0, rp, x, y, 32, 32, &icon_mask, 4);
+graphics.library/BltMaskRastPort              graphics.library/BltMaskRastPort
+
+   NAME
+	BltMaskRastPort -- Moves a rectangle, leaving alone the pixels the mask does not cover.
+
+   SYNOPSIS
+	    fn BltMaskRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *const Rect, dest_x: i32, dest_y: i32, mask: [*]const u8, mask_pitch: u32) void
+
+   SINCE
+	0.12. LVO -148.
+
+   INPUTS
+	- `src` - where the pixels come from.
+	- `dest` - where they go. Both must be in one format.
+	- `area` - what to take, in the source's coordinates.
+	- `dest_x` - where its top-left lands, across.
+	- `dest_y` - where it lands, down.
+	- `mask` - one bit to a pixel, the same shape as `area`, read where the
+	  source is read, so it travels with the shape.
+	- `mask_pitch` - bytes from one row of the mask to the next.
+
+   RESULT
+	Nothing. `GERR_BAD_FORMAT` in `dest` if the formats differ.
+
+   BEHAVIOR
+	A set bit is copied and a clear bit is left alone, and
+	`DRMD_INVERSVID` swaps that. This is the blit an icon wants: a shape
+	moved over a background it does not cover.
+
+	No engine: an engine copies rectangles, and this is a rectangle with
+	holes in it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The mask stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltRastPort`, `BltTemplate`
+
+   EXAMPLES
+	    gb.BltMaskRastPort(icons, rp, &icon_area, x, y, &icon_mask, 4);
+graphics.library/BltPattern                        graphics.library/BltPattern
+
+   NAME
+	BltPattern -- Fills a rectangle with a tile, repeated.
+
+   SYNOPSIS
+	    fn BltPattern(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u32, width: u32, height: u32, area: *const Rect) void
+
+   SINCE
+	0.12. LVO -144.
+
+   INPUTS
+	- `rp` - the RastPort. Its pens, draw mode and clip decide the result.
+	- `bits` - the tile, one bit to a pixel, as a template's shape is.
+	- `pitch` - bytes from one row of the tile to the next.
+	- `width` - how wide the tile is before it repeats.
+	- `height` - how tall. 0 either way is `GERR_BAD_SIZE`.
+	- `area` - what to fill, half-open.
+
+   RESULT
+	Nothing. `GERR_BAD_SIZE` in the RastPort for a tile of no size.
+
+   BEHAVIOR
+	**The tile is anchored to the surface, not to the rectangle.** So two
+	rectangles filled with one pattern line up where they meet, and a
+	desktop repainted in pieces looks like one desktop rather than a grid
+	of them. That is the whole reason a pattern is a call of its own rather
+	than a loop in the caller.
+
+	Clear bits and the engine work as for a template.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The tile stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltTemplate`, `RectFill`
+
+   EXAMPLES
+	    gb.BltPattern(rp, &checker, 1, 8, 8, &desktop);
+graphics.library/BltRastPort                      graphics.library/BltRastPort
+
+   NAME
+	BltRastPort -- Moves a rectangle from one RastPort to another.
+
+   SYNOPSIS
+	    fn BltRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *const Rect, dest_x: i32, dest_y: i32) void
+
+   SINCE
+	0.5. LVO -48.
+
+   INPUTS
+	- `src` - where the pixels come from. Its clip is not consulted: a clip
+	  says what may be *written*.
+	- `dest` - where they go. Its clip decides what lands.
+	- `area` - what to take, in the source's coordinates, half-open.
+	- `dest_x`, `dest_y` - where `area`'s top left lands in the
+	  destination.
+
+   RESULT
+	Nothing. Nothing lands if the two are in different formats, if the area
+	is outside the source, or if where it would land is outside the
+	destination's clip - none of which is an error.
+
+   BEHAVIOR
+	The area is first cut to what the source actually has, then moved to
+	where it would land and clipped there, and only then copied - which is
+	the only order that gets a partly-clipped copy right.
+
+	The two RastPorts may be the same one and the rectangles may overlap:
+	rows are taken from the end when moving down and bytes from the end
+	when moving right, so a rectangle can be moved over itself.
+
+	Both must be in the same format. Moving between formats means unpacking
+	and repacking every pixel, which is a different operation and will be a
+	different call.
+
+	The rows written in the destination are handed on to the display before
+	it returns, as every drawing call does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded and it hands rows on at the end.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The destination's surface is written.
+
+   NOTES
+	- This is the other half of SMART_REFRESH: what was covered is kept in
+	  a bitmap of its own and put back with this.
+	- The pen and the draw mode are not consulted. A blit moves pixels; it
+	  does not compose them.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AllocBitMapTagList`, `RectFill`, `rtg.CopyRect`
+
+   EXAMPLES
+	    // Keep what is under a box, then put it back.
+	    gb.BltRastPort(screen_rp, saved_rp, &box, 0, 0);
+	    // ... draw over the screen ...
+	    gb.BltRastPort(saved_rp, screen_rp, &.{
+	        .min_x = 0, .min_y = 0,
+	        .max_x = box.width(), .max_y = box.height(),
+	    }, box.min_x, box.min_y);
+graphics.library/BltTemplate                      graphics.library/BltTemplate
+
+   NAME
+	BltTemplate -- Stencils a shape onto the surface in the pens.
+
+   SYNOPSIS
+	    fn BltTemplate(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u32, src_x: i32, src_y: i32, area: *const Rect) void
+
+   SINCE
+	0.12. LVO -140.
+
+   INPUTS
+	- `rp` - the RastPort. Its pens, draw mode and clip decide the result.
+	- `bits` - the shape, one bit to a pixel, the leftmost pixel of a row in
+	  the highest bit of its first byte.
+	- `pitch` - bytes from one row of the shape to the next.
+	- `src_x` - where in the shape to start, across. So one sheet of glyphs or
+	  icons can be drawn from without cutting it up.
+	- `src_y` - where in the shape to start, down.
+	- `area` - where it lands, half-open. Its size is how much is taken.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	**The draw mode says what a clear bit means**, so there are no flags to
+	pass: `DRMD_JAM1` leaves the surface alone where the shape is clear,
+	`DRMD_JAM2` puts the background pen there, and `DRMD_INVERSVID` swaps
+	set and clear. That is the rule the line pattern already follows - a
+	shape and a dotted line are the same idea at different sizes.
+
+	The board's engine does it when it can. It writes the two colours it is
+	given and nothing else, so a mode that inverts the destination or a pen
+	that is not opaque comes back here instead.
+
+	When the clip cuts the front off, the shape starts that much further
+	in - otherwise a clipped shape would slide rather than be cut.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The shape stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltPattern`, `BltMaskRastPort`, `Text`
+
+   EXAMPLES
+	    gb.BltTemplate(rp, &arrow_bits, 2, 0, 0, &.{ .min_x = x, .min_y = y, .max_x = x + 16, .max_y = y + 16 });
+graphics.library/ClearRectRegion              graphics.library/ClearRectRegion
+
+   NAME
+	ClearRectRegion -- Takes a rectangle out of a region.
+
+   SYNOPSIS
+	    fn ClearRectRegion(gb: *GraphicsBase, region: *Region, rect: *const Rect) bool
+
+   SINCE
+	0.8. LVO -228.
+
+   INPUTS
+	- `region` - the region to change.
+	- `rect` - the rectangle to take out. An empty one takes nothing.
+
+   RESULT
+	False if a rectangle could not be allocated. The region is then as it
+	was: the new list is built beside the old one and only swapped in when
+	all of it succeeded.
+
+   BEHAVIOR
+	Every rectangle of the region that meets it is cut into the up to four
+	pieces that lie around it. This one cut is the geometry every other
+	region call rests on.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The region keeps its rectangles in the region pool.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SubRegionRegion`, `OrRectRegion`
+
+   EXAMPLES
+	    _ = gb.ClearRectRegion(visible, &covering_window);
+graphics.library/ClearRegion                      graphics.library/ClearRegion
+
+   NAME
+	ClearRegion -- Empties a region, keeping the region itself.
+
+   SYNOPSIS
+	    fn ClearRegion(gb: *GraphicsBase, region: *Region) void
+
+   SINCE
+	0.8. LVO -208.
+
+   INPUTS
+	- `region` - the region.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Every rectangle goes back to the pool and the bounds become empty, so
+	the region can be filled again without a new one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It frees memory.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The rectangles are gone; the region stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisposeRegion`, `NewRegion`
+
+   EXAMPLES
+	    gb.ClearRegion(region);
+graphics.library/CloseFont                          graphics.library/CloseFont
+
+   NAME
+	CloseFont -- Gives a font back.
+
+   SYNOPSIS
+	    fn CloseFont(gb: *GraphicsBase, font: ?*TextFont) void
+
+   SINCE
+	0.11. LVO -128.
+
+   INPUTS
+	- `font` - the font, or null, which does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	One open given back. A font in the ROM stays whatever the count says.
+
+   CONTEXT
+	- Waits: yes, while another task holds the font list.
+	- Interrupts: no.
+	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's open is gone.
+
+   NOTES
+	- A RastPort still drawing with it should be given another font first.
+	  Nothing goes wrong today, since a font in the ROM stays, but that is
+	  the ROM's doing rather than this call's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenFont`, `RemFont`
+
+   EXAMPLES
+	    gb.CloseFont(font);
+graphics.library/CreateRastPortTagList  graphics.library/CreateRastPortTagList
+
+   NAME
+	CreateRastPortTagList -- A surface to draw into and the state to draw it with.
+
+   SYNOPSIS
+	    fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastPort
+
+   SINCE
+	0.2. LVO -20.
+
+   INPUTS
+	- `tag_list` - what to make it on and what state to give it, or null
+	  for a RastPort on the display with its default pens.
+	  - `RPTAG_Surface` (`*Surface`) - plain memory. No board is behind it,
+	    so everything is drawn in software and nothing is refreshed.
+	  - `RPTAG_BitMap` (`*RtgBitMap`) - a buffer of a board's. The board's
+	    engine is then available.
+	  - `RPTAG_Board` (`*RtgBoard`) - the buffer that board is displaying.
+	  - `RPTAG_APen`, `RPTAG_BPen` (u32, 0xAARRGGBB) - the pens. Default
+	    white on black, so that a RastPort nobody configured still draws
+	    something a person can see.
+	  - `RPTAG_DrMd` (`DrawMode`) - default `.copy`.
+
+	  The first of Surface, BitMap and Board that is present wins; with
+	  none of them the View is used.
+
+   RESULT
+	The RastPort, or null. Null means one of three things, and none of them
+	sets an error code yet - the call that reports one arrives with the
+	drawing calls:
+	- there was no memory for it;
+	- nothing was named and there is no display, or the board named is
+	  showing nothing;
+	- the surface's format is one no pen can be packed for (`indexed8`,
+	  `gray8`, `mono1`). It is refused here rather than handed back to fail
+	  at every drawing call.
+
+   BEHAVIOR
+	The pens are packed into the surface's format once, here, and kept
+	packed, so the drawing path never converts a colour.
+
+	With no tags the buffer is the View's: the first board rtg.library
+	lists, and the buffer it is displaying. Both are asked for afresh each
+	time - a board's displayed buffer can be swapped, and a board can be
+	deleted - and the base is left holding the board that answered.
+
+	A RastPort holds the buffer it was made on. Showing another buffer on
+	the board afterwards does not move it, which is what double buffering
+	wants: the RastPort is where the drawing goes, not where the eye is.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It allocates, and finding the View takes Forbid.
+	- Forbid: not held by the caller and not wanted; the View is read under
+	  a Forbid of its own.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The RastPort is the caller's until `FreeRastPort`. The buffer is not
+	touched and not claimed: a board's belongs to rtg.library and memory to
+	whoever lent it, and both must outlive the RastPort.
+
+   NOTES
+	- A pen is a colour, `0xAARRGGBB`, never an index. There is no palette
+	  on this hardware, and a colour already packed for one surface would
+	  be the wrong bits for the next.
+	- Only an opaque pen (`AA` = `0xFF`) can be handed to a board's engine,
+	  which takes one colour word and writes it. Anything less has to be
+	  composed pixel by pixel, in software.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FreeRastPort`, `rtg.AllocBitMap`, `rtg.BoardDisplayBitMap`,
+	`rtg.RefreshBitMap`
+
+   EXAMPLES
+	    // The display, in one call.
+	    const gb: *GraphicsBase = @ptrCast(
+	        sys.OpenLibrary(sdk.graphics.GRAPHICSNAME, 0) orelse return);
+	    defer sys.CloseLibrary(@ptrCast(gb));
+
+	    const rp = gb.CreateRastPortTagList(null) orelse {
+	        // No display on this machine, or no memory.
+	        return;
+	    };
+	    defer gb.FreeRastPort(rp);
+
+	    // A buffer of one's own, in red, composed over what is there.
+	    const tags = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_BitMap, .data = @intFromPtr(bm) },
+	        .{ .tag = sdk.graphics.RPTAG_APen, .data = 0x80FF0000 },
+	        .{ .tag = sdk.graphics.RPTAG_DrMd, .data = @intFromEnum(
+	            sdk.graphics.DRMD_BLEND) },
+	        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+	    };
+	    const off = gb.CreateRastPortTagList(&tags) orelse return;
+	    defer gb.FreeRastPort(off);
+graphics.library/DisposeRegion                  graphics.library/DisposeRegion
+
+   NAME
+	DisposeRegion -- Gives a region back, with every rectangle in it.
+
+   SYNOPSIS
+	    fn DisposeRegion(gb: *GraphicsBase, region: ?*Region) void
+
+   SINCE
+	0.8. LVO -204.
+
+   INPUTS
+	- `region` - the region. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Every rectangle goes back to the region pool, then the region itself.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It frees memory.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The region and its rectangles are gone.
+
+   NOTES
+	- A RastPort still using it as its clip region must be given another
+	  clip first, or it will be reading freed memory.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NewRegion`, `ClearRegion`
+
+   EXAMPLES
+	    gb.DisposeRegion(region);
+graphics.library/Draw                                    graphics.library/Draw
+
+   NAME
+	Draw -- Draws a line from the current point, which then moves to the end of it.
+
+   SYNOPSIS
+	    fn Draw(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void
+
+   SINCE
+	0.6. LVO -56.
+
+   INPUTS
+	- `rp` - the RastPort, whose pen, draw mode and clip decide the result.
+	- `x`, `y` - where the line ends. Either end may be outside the
+	  surface.
+
+   RESULT
+	Nothing. A line entirely outside the clip draws nothing, which is an
+	answer and not an error.
+
+   BEHAVIOR
+	Both ends are drawn, so a Move followed by a Draw to the same place puts
+	down one pixel.
+
+	**The current point moves whether or not anything was drawn.** It is
+	where the next Draw starts from, not where the last one reached, so a
+	run of Draws traces the shape that was asked for even while part of it
+	is off the surface.
+
+	The line is cut to the clip before any of it is walked, rather than
+	walked with every pixel tested - so a line mostly off the surface costs
+	almost nothing, which is what a window dragged half off the screen will
+	ask for constantly.
+
+	There is no engine call: a board's engine fills and copies rectangles,
+	and this is neither. A pen that is not opaque composes under
+	`.src_over`, as everywhere else.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded and it hands rows on at the end.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	- The rows written are handed on to the display before it returns, as
+	  every drawing call does. A run of Draws therefore costs a refresh
+	  each; that is the same bargain RectFill makes, and the place to
+	  change it if it is ever measured to matter is `handOn`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`Move`, `RectFill`
+
+   EXAMPLES
+	    // A box, drawn as four lines.
+	    gb.Move(rp, 10, 10);
+	    gb.Draw(rp, 100, 10);
+	    gb.Draw(rp, 100, 60);
+	    gb.Draw(rp, 10, 60);
+	    gb.Draw(rp, 10, 10);
+graphics.library/DrawArc                              graphics.library/DrawArc
+
+   NAME
+	DrawArc -- Part of a circle's outline.
+
+   SYNOPSIS
+	    fn DrawArc(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32, from: i32, to: i32) void
+
+   SINCE
+	0.9. LVO -88.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `radius` - in pixels; below 0 draws nothing.
+	- `from` - where the arc starts, in degrees, with 0 to the right and 90
+	  upward.
+	- `to` - where it ends, the way the numbers increase. Equal to `from`
+	  draws nothing; `DrawCircle` draws all of it.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The circle is walked as usual and each point is asked whether it lies in
+	the sweep. That question is answered with two cross products against
+	the sweep's edges, so no angle is ever computed for a point - the only
+	trigonometry is the two edges, and it comes from a table of a quarter
+	turn the compiler worked out. Nothing here needs floating point at run
+	time.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawCircle`, `AreaArc`
+
+   EXAMPLES
+	    gb.DrawArc(rp, 160, 100, 40, 0, 90); // the upper right quarter
+graphics.library/DrawCircle                        graphics.library/DrawCircle
+
+   NAME
+	DrawCircle -- A circle's outline.
+
+   SYNOPSIS
+	    fn DrawCircle(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32) void
+
+   SINCE
+	0.9. LVO -80.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `radius` - in pixels. 0 is one pixel; less draws nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The midpoint algorithm: one eighth of it is walked with whole numbers
+	only and the other seven come from its symmetry, so there is no
+	rounding to drift and no arithmetic a small machine minds.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawEllipse`, `DrawArc`, `AreaCircle`
+
+   EXAMPLES
+	    gb.DrawCircle(rp, 160, 100, 40);
+graphics.library/DrawEllipse                      graphics.library/DrawEllipse
+
+   NAME
+	DrawEllipse -- An ellipse's outline.
+
+   SYNOPSIS
+	    fn DrawEllipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, ry: i32) void
+
+   SINCE
+	0.9. LVO -84.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `cx` - the centre's column.
+	- `cy` - the centre's row.
+	- `rx` - the radius across.
+	- `ry` - the radius up and down. Either below 0 draws nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Walked in two halves - where it runs mostly sideways, and where it runs
+	mostly up and down - because one decision variable cannot serve both.
+	A radius of 0 in either direction is a straight run rather than a
+	curve, and is drawn as one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawCircle`, `AreaEllipse`
+
+   EXAMPLES
+	    gb.DrawEllipse(rp, 160, 100, 60, 30);
+graphics.library/DrawHLine                          graphics.library/DrawHLine
+
+   NAME
+	DrawHLine -- A run of pixels rightward.
+
+   SYNOPSIS
+	    fn DrawHLine(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32, length: i32) void
+
+   SINCE
+	0.9. LVO -68.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `x` - where the run starts, across.
+	- `y` - its row.
+	- `length` - how many pixels. 0 or less draws nothing.
+
+   RESULT
+	Nothing. What the clip keeps out is not drawn, which is not an error.
+
+   BEHAVIOR
+	Patterned like a line, and the pattern counts from the start of the run
+	rather than from where the clip let it begin - so a run cut in two by
+	the clip is dotted as though it had not been.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawVLine`, `DrawRect`, `RectFill`
+
+   EXAMPLES
+	    gb.DrawHLine(rp, 10, 20, 100);
+graphics.library/DrawPoly                            graphics.library/DrawPoly
+
+   NAME
+	DrawPoly -- A line through each of a list of points.
+
+   SYNOPSIS
+	    fn DrawPoly(gb: *GraphicsBase, rp: *RastPort, count: u32, points: [*]const graphics.Point) void
+
+   SINCE
+	0.9. LVO -92.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result, and its current point is where the first leg starts.
+	- `count` - how many points.
+	- `points` - where to go, in turn. A closed shape repeats its first point
+	  at the end.
+
+   RESULT
+	Nothing. The current point is left at the last point.
+
+   BEHAVIOR
+	Each leg is an ordinary `Draw`, so the current point follows it, the
+	clipping is the same clipping, and the line pattern runs on round the
+	corners rather than starting again at each.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`Draw`, `Move`, `AreaDraw`
+
+   EXAMPLES
+	    const corners = [_]graphics.Point{ .{ .x = 60, .y = 10 }, .{ .x = 60, .y = 60 }, .{ .x = 10, .y = 10 } };
+	    gb.Move(rp, 10, 10);
+	    gb.DrawPoly(rp, corners.len, &corners);
+graphics.library/DrawRect                            graphics.library/DrawRect
+
+   NAME
+	DrawRect -- The outline of a rectangle.
+
+   SYNOPSIS
+	    fn DrawRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void
+
+   SINCE
+	0.9. LVO -76.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `area` - half-open, as every rectangle here is: the outline is drawn
+	  just inside `max_x` and `max_y`. An empty one draws nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Four runs, with the corners belonging to the two horizontal ones so
+	that **no pixel is drawn twice**. That is not tidiness: under
+	`DRMD_COMPLEMENT` a pixel drawn twice is a pixel put back, and the
+	corners would be holes.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RectFill`, `DrawHLine`
+
+   EXAMPLES
+	    gb.DrawRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 110, .max_y = 60 });
+graphics.library/DrawVLine                          graphics.library/DrawVLine
+
+   NAME
+	DrawVLine -- A run of pixels downward. `DrawHLine` turned on its side.
+
+   SYNOPSIS
+	    fn DrawVLine(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32, length: i32) void
+
+   SINCE
+	0.9. LVO -72.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode, line pattern and clip decide
+	  the result.
+	- `x` - its column.
+	- `y` - where the run starts, down.
+	- `length` - how many pixels. 0 or less draws nothing.
+
+   RESULT
+	Nothing. What the clip keeps out is not drawn, which is not an error.
+
+   BEHAVIOR
+	`DrawHLine` turned on its side: patterned like a line, the pattern
+	counting from the start of the run.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawHLine`, `DrawRect`
+
+   EXAMPLES
+	    gb.DrawVLine(rp, 10, 20, 50);
+graphics.library/EndDraw                              graphics.library/EndDraw
+
+   NAME
+	EndDraw -- The rows gathered since `BeginDraw` handed to the display, in one.
+
+   SYNOPSIS
+	    fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void
+
+   SINCE
+	1.0. LVO -280.
+
+   INPUTS
+	- `gb` - the library's base.
+	- `rp` - the RastPort the piece of work was drawn with.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The rows written since the matching `BeginDraw` go to the display as
+	one run, from the first row written to the last - what lies between
+	them is sent as well, since a run is what a display is told. Nothing
+	was drawn, nothing is sent.
+
+	With batches nested, this closes one of them; the rows go when the
+	last one closes. Without a `BeginDraw` to match, it does nothing.
+
+   CONTEXT
+	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	The rows go to the buffer `BeginDraw` remembered, not to whatever the
+	RastPort's clip targets point at now: a window moved or resized in
+	between rebuilds those, and the rows belong to the buffer they were
+	written into.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BeginDraw`, `rtg.RefreshBitMap`
+
+   EXAMPLES
+	    gb.BeginDraw(rp);
+	    defer gb.EndDraw(rp);
+graphics.library/EraseRect                          graphics.library/EraseRect
+
+   NAME
+	EraseRect -- Paints part of a RastPort the way its empty parts are meant to look.
+
+   SYNOPSIS
+	    fn EraseRect(gb: *GraphicsBase, rp: *RastPort, area: *const graphics.Rect) void
+
+   SINCE
+	0.17. LVO -260.
+
+   INPUTS
+	- `rp` - the RastPort to paint in.
+	- `area` - what to paint, in its coordinates, half-open as every
+	  rectangle here is.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	What to paint with is what `RPTAG_BackFill` says:
+
+	- a **`*utility.Hook`**: called once with the RastPort as its object and
+	  a `BackFillMsg` carrying `area`. The hook draws through that same
+	  RastPort, so what it puts down is clipped exactly as anything else
+	  drawn through it - it need not know what it can be seen through, or
+	  whether it can be seen at all.
+	- **`BACKFILL_NONE`**: nothing is written.
+	- **0**, which is what a RastPort has until something says otherwise:
+	  the area is filled with the RastPort's own background pen.
+
+	The pen and the draw mode are put back as they were, and the fill is
+	plain whatever mode was set - a caller that left COMPLEMENT on does not
+	get it applied to the ground.
+
+	This library does not know what a window or a layer is. It knows that a
+	RastPort may carry a hook saying how its empty parts look, and it calls
+	it. Whatever manages windows is what sets that hook.
+
+   CONTEXT
+	- Waits: only if the hook does.
+	- Interrupts: no. It draws, and it may call a hook.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The hook is the caller's; this call neither keeps nor frees it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RectFill`, `SetRPAttrs`
+
+   EXAMPLES
+	    gb.EraseRect(rp, &.{ .min_x = 0, .min_y = 0, .max_x = 200, .max_y = 100 });
+graphics.library/FontExtent                        graphics.library/FontExtent
+
+   NAME
+	FontExtent -- What a font is.
+
+   SYNOPSIS
+	    fn FontExtent(_: *GraphicsBase, font: *const TextFont, out: *graphics.FontExtent) void
+
+   SINCE
+	0.15. LVO -184.
+
+   INPUTS
+	- `font` - the font.
+	- `out` - where the answer goes: the width and height, the baseline, the
+	  styles it was **drawn** with, and where one character's ink lands
+	  relative to the point.
+
+   RESULT
+	Nothing; the answer is in `out`.
+
+   BEHAVIOR
+	The style is the part worth reading. On a font drawn extended,
+	asking for `FSF_EXTENDED` does nothing - `AskSoftStyle` says as much, and widening it twice is the sort of thing nobody notices until a
+	column of text fails to line up.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe. It reads the font and nothing else.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AskSoftStyle`, `TextExtent`
+
+   EXAMPLES
+	    var about: graphics.FontExtent = .{};
+	    gb.FontExtent(font, &about);
+graphics.library/FreeBitMap                        graphics.library/FreeBitMap
+
+   NAME
+	FreeBitMap -- Gives a bitmap back.
+
+   SYNOPSIS
+	    fn FreeBitMap(gb: *GraphicsBase, bitmap: ?*Surface) void
+
+   SINCE
+	0.5. LVO -44.
+
+   INPUTS
+	- `bitmap` - what `AllocBitMapTagList` returned, or null, which does
+	  nothing. A surface this library did not allocate must not be passed:
+	  it frees the block the header is the front of.
+
+   RESULT
+	Nothing. It cannot fail.
+
+   BEHAVIOR
+	The header and its pixels were one allocation, so one `FreeVec` gives
+	both back.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no; it frees memory.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The header and its pixels, which were one allocation.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AllocBitMapTagList`
+
+   EXAMPLES
+	    gb.FreeBitMap(buffer);
+graphics.library/FreeRastPort                    graphics.library/FreeRastPort
+
+   NAME
+	FreeRastPort -- Gives a RastPort back.
+
+   SYNOPSIS
+	    fn FreeRastPort(gb: *GraphicsBase, rp: ?*RastPort) void
+
+   SINCE
+	0.2. LVO -24.
+
+   INPUTS
+	- `rp` - the RastPort, or null, which does nothing. Passing one twice
+	  is the caller's bug and is not caught.
+
+   RESULT
+	Nothing. It cannot fail.
+
+   BEHAVIOR
+	The buffer it drew into is not touched. A board's buffer belongs to
+	rtg.library and is given back with `FreeBitMap`; plain memory belongs
+	to whoever lent it. What is drawn stays drawn - nothing is cleared and
+	nothing is refreshed.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no; it frees memory.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The RastPort's own memory, and nothing else.
+
+   NOTES
+	- It does not wait for a board's engine. A drawing call still in flight
+	  is finished with `rtg.WaitBlit` before the RastPort goes, once there
+	  are drawing calls to be in flight.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateRastPortTagList`, `rtg.FreeBitMap`, `rtg.WaitBlit`
+
+   EXAMPLES
+	    const rp = gb.CreateRastPortTagList(null) orelse return;
+	    defer gb.FreeRastPort(rp);
+graphics.library/GetRPAttrs                        graphics.library/GetRPAttrs
+
+   NAME
+	GetRPAttrs -- Reads a RastPort.
+
+   SYNOPSIS
+	    fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
+
+   SINCE
+	0.4. LVO -36.
+
+   INPUTS
+	- `rp` - the RastPort to read.
+	- `tag_list` - what to read. **Each `ti_Data` is a pointer to where that
+	  value goes**, not the value:
+	  - `RPTAG_APen`, `RPTAG_BPen`, `RPTAG_DrMd`, `RPTAG_Format` - `*u32`
+	  - `RPTAG_ClipRect`, `RPTAG_Bounds` - `*Rect`
+	  - `RPTAG_Surface`, `RPTAG_BitMap` - `*usize`, and `BitMap` is 0 for a
+	    surface that is plain memory
+
+   RESULT
+	Nothing. What was asked for has been written where the tags pointed. A
+	tag this library does not know, or one whose `ti_Data` is null, is
+	passed over and nothing is written for it.
+
+   BEHAVIOR
+	`RPTAG_Bounds` is the whole of the surface, 0,0 to its width and height,
+	and is the way to find out how big a display is - there is nothing else
+	that says. It is also what to fill to cover everything.
+
+	The surface's own properties - the bounds and the format - can be read
+	and not set, because they are the buffer's rather than the RastPort's.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no; it calls utility.library to walk the list.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated and nothing is kept. The pointers are the
+	caller's and are written to during the call only.
+
+   NOTES
+	- The clip that comes back is the one in force, already clamped to the
+	  surface - not what was asked for when it was set.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SetRPAttrs`, `RectFill`
+
+   EXAMPLES
+	    // Clear the whole display, whatever size it turns out to be.
+	    var bounds: sdk.graphics.Rect = .{};
+	    const ask = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_Bounds, .data = @intFromPtr(&bounds) },
+	        .{},
+	    };
+	    gb.GetRPAttrs(rp, &ask);
+	    gb.RectFill(rp, &bounds);
+graphics.library/GraphicsErrorText          graphics.library/GraphicsErrorText
+
+   NAME
+	GraphicsErrorText -- What a GERR_ code means, in words.
+
+   SYNOPSIS
+	    fn GraphicsErrorText(_: *GraphicsBase, code: i32) [*:0]const u8
+
+   SINCE
+	0.7. LVO -196.
+
+   INPUTS
+	- `code` - a `GERR_` code, as `RPTAG_LastError`, `RPTAG_ErrorPtr` or
+	  `BMTAG_ErrorPtr` gave it.
+
+   RESULT
+	A NUL-terminated string in the ROM, never null. A code this library
+	does not know is "unknown error" rather than nothing, so a caller can
+	print the answer without checking it first.
+
+   BEHAVIOR
+	The text is the library's rather than the caller's, because the codes
+	grow with the library: a program built against an older SDK still
+	prints something true about a code that arrived after it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe. It is a lookup in the ROM and touches nothing.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The string is the ROM's and lasts for ever. It is not to be freed.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GetRPAttrs`, `CreateRastPortTagList`, `AllocBitMapTagList`
+
+   EXAMPLES
+	    // Why a RastPort could not be had.
+	    var why: i32 = 0;
+	    const tags = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_ErrorPtr, .data = @intFromPtr(&why) },
+	        .{},
+	    };
+	    const rp = gb.CreateRastPortTagList(&tags) orelse {
+	        Printf(dl, "no RastPort: %s\n", .{gb.GraphicsErrorText(why)});
+	        return;
+	    };
+
+	    // And why a drawing call did nothing.
+	    gb.BltRastPort(src, rp, &area, 0, 0);
+	    var err: i32 = 0;
+	    const ask = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_LastError, .data = @intFromPtr(&err) },
+	        .{},
+	    };
+	    gb.GetRPAttrs(rp, &ask);
+graphics.library/InitArea                            graphics.library/InitArea
+
+   NAME
+	InitArea -- Room to collect a filled shape in.
+
+   SYNOPSIS
+	    fn InitArea(gb: *GraphicsBase, rp: *RastPort, max_points: u32) bool
+
+   SINCE
+	0.10. LVO -96.
+
+   INPUTS
+	- `rp` - the RastPort the shapes will be filled on.
+	- `max_points` - as many corners as will be needed. A curve becomes
+	  corners too, about one for each degree of a small one and fewer as it
+	  grows, so an ellipse wants up to 360. 0 gives the room back.
+
+   RESULT
+	False with `GERR_NO_MEMORY` if the room could not be had.
+
+   BEHAVIOR
+	Room already there is given back first, with anything collected in it,
+	so the call can be made again to grow the room.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It allocates.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The room is the library's and goes with the RastPort: `FreeRastPort`
+	gives it back, so a shape collected and never ended leaves nothing
+	behind. The RastPort is opaque, so there is nowhere for a caller to keep
+	it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AreaMove`, `AreaEnd`
+
+   EXAMPLES
+	    if (!gb.InitArea(rp, 360)) return error.NoMemory;
+graphics.library/Move                                    graphics.library/Move
+
+   NAME
+	Move -- Puts the current point somewhere, drawing nothing.
+
+   SYNOPSIS
+	    fn Move(_: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void
+
+   SINCE
+	0.6. LVO -52.
+
+   INPUTS
+	- `rp` - the RastPort.
+	- `x` - where the next `Draw` starts, across. It may be outside the
+	  surface: the clipping sorts that out.
+	- `y` - where it starts, down.
+
+   RESULT
+	Nothing, and nothing is drawn.
+
+   BEHAVIOR
+	The current point is where the next `Draw` starts. Nothing is clipped
+	or handed on, and `last_error` is left alone: a call that cannot fail
+	saying so would clear what the call before it found.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort, which an interrupt
+	  does not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	- `RPTAG_Cursor` does the same thing and reads it back.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`Draw`, `GetRPAttrs`
+
+   EXAMPLES
+	    gb.Move(rp, 10, 10);
+	    gb.Draw(rp, 100, 60);
+graphics.library/NewRegion                          graphics.library/NewRegion
+
+   NAME
+	NewRegion -- An empty region.
+
+   SYNOPSIS
+	    fn NewRegion(gb: *GraphicsBase) ?*Region
+
+   SINCE
+	0.8. LVO -200.
+
+   INPUTS
+	None.
+
+   RESULT
+	A region with nothing in it, or null if there was no memory. An empty
+	region contains no point and meets no rectangle, so it is a safe thing
+	to hold before anything has been put in it.
+
+   BEHAVIOR
+	The region is the library's own structure behind an opaque pointer: a
+	list of rectangles that never overlap, and their bounds. Nothing is in it
+	until something is added.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It allocates.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's until `DisposeRegion`, which also frees every rectangle
+	that was put in it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisposeRegion`, `OrRectRegion`
+
+   EXAMPLES
+	    const region = gb.NewRegion() orelse return error.NoMemory;
+	    defer gb.DisposeRegion(region);
+graphics.library/OffsetRegion                    graphics.library/OffsetRegion
+
+   NAME
+	OffsetRegion -- Moves a whole region.
+
+   SYNOPSIS
+	    fn OffsetRegion(_: *GraphicsBase, region: *Region, dx: i32, dy: i32) void
+
+   SINCE
+	0.8. LVO -216.
+
+   INPUTS
+	- `region` - the region.
+	- `dx` - how far across.
+	- `dy` - how far down.
+
+   RESULT
+	Nothing. It cannot fail.
+
+   BEHAVIOR
+	Every rectangle moves, since they are kept in absolute coordinates.
+	Keeping them relative to the region's bounds would make this free and
+	cost an addition in each of the other twelve calls; the region is
+	opaque, so that trade can be made again later without anything noticing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NewRegion`, `DisposeRegion`, `RegionRectangles`
+
+   EXAMPLES
+	    gb.OffsetRegion(region, -layer_x, -layer_y);
+graphics.library/OpenFont                            graphics.library/OpenFont
+
+   NAME
+	OpenFont -- A font by name and height.
+
+   SYNOPSIS
+	    fn OpenFont(gb: *GraphicsBase, name: [*:0]const u8, height: u32) ?*TextFont
+
+   SINCE
+	0.11. LVO -124.
+
+   INPUTS
+	- `name` - the font's name. This ROM has `POSPAZNAME` and nothing else.
+	- `height` - how many rows tall. Pospaz is here at 8 and 16.
+
+   RESULT
+	The font, or null if there is none of that name and height. A font is
+	not made to fit: asking for 12 finds nothing rather than a stretched 8.
+
+   BEHAVIOR
+	Pospaz 16 has the same columns as Pospaz 8, each row drawn twice: text
+	laid out in one lines up in the other, only twice as tall.
+
+   CONTEXT
+	- Waits: yes, while another task holds the font list.
+	- Interrupts: no.
+	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	A font in the ROM lasts for ever and `CloseFont` only counts. Closing
+	it is still right: a font that is not in the ROM will want it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CloseFont`, `Text`, `RPTAG_Font`
+
+   EXAMPLES
+	    const font = gb.OpenFont(sdk.graphics.POSPAZNAME, 8) orelse return;
+	    defer gb.CloseFont(font);
+	    const use = [_]TagItem{ .{ .tag = sdk.graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
+	    gb.SetRPAttrs(rp, &use);
+graphics.library/OrRectRegion                    graphics.library/OrRectRegion
+
+   NAME
+	OrRectRegion -- Adds a rectangle to a region.
+
+   SYNOPSIS
+	    fn OrRectRegion(gb: *GraphicsBase, region: *Region, rect: *const Rect) bool
+
+   SINCE
+	0.8. LVO -220.
+
+   INPUTS
+	- `region` - the region to change.
+	- `rect` - the rectangle to add. An empty one adds nothing.
+
+   RESULT
+	False if a rectangle could not be allocated, and the region is then as
+	it was - the new shape is built beside the old one and only swapped in
+	when all of it succeeded, so a region is never left half changed.
+
+   BEHAVIOR
+	The rectangle is cut out of everything already there before it is
+	added, so nothing in a region ever overlaps and no tidying pass is
+	needed.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The region keeps its rectangles in the region pool; `DisposeRegion`
+	gives them back.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OrRegionRegion`, `ClearRectRegion`
+
+   EXAMPLES
+	    const box = graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 100, .max_y = 50 };
+	    if (!gb.OrRectRegion(region, &box)) return error.NoMemory;
+graphics.library/OrRegionRegion                graphics.library/OrRegionRegion
+
+   NAME
+	OrRegionRegion -- Adds everything in `source` to `dest`.
+
+   SYNOPSIS
+	    fn OrRegionRegion(gb: *GraphicsBase, source: *const Region, dest: *Region) bool
+
+   SINCE
+	0.8. LVO -236.
+
+   INPUTS
+	- `source` - the region to add. Read and not changed.
+	- `dest` - the region that grows.
+
+   RESULT
+	False without memory for the rectangles; `dest` may then hold part of
+	`source`.
+
+   BEHAVIOR
+	Each rectangle of `source` is added as `OrRectRegion` would add it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`dest` keeps its rectangles in the region pool; `source` is untouched.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OrRectRegion`, `AndRegionRegion`
+
+   EXAMPLES
+	    _ = gb.OrRegionRegion(damage, total);
+graphics.library/PointInRegion                  graphics.library/PointInRegion
+
+   NAME
+	PointInRegion -- Whether a point is inside a region.
+
+   SYNOPSIS
+	    fn PointInRegion(_: *GraphicsBase, region: *const Region, x: i32, y: i32) bool
+
+   SINCE
+	0.8. LVO -212.
+
+   INPUTS
+	- `region` - the region.
+	- `x` - the point's column.
+	- `y` - its row.
+
+   RESULT
+	True if the point is in any of the region's rectangles. The region's
+	own bounds are checked first, so a point nowhere near it costs two
+	comparisons rather than a walk.
+
+   BEHAVIOR
+	A rectangle holds its minimum edges and not its maximum ones, as every
+	rectangle here does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe in itself: it only reads the region.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NewRegion`, `DisposeRegion`, `RegionRectangles`
+
+   EXAMPLES
+	    if (gb.PointInRegion(region, mouse_x, mouse_y)) hit();
+graphics.library/ReadPixel                          graphics.library/ReadPixel
+
+   NAME
+	ReadPixel -- The colour of one pixel.
+
+   SYNOPSIS
+	    fn ReadPixel(_: *GraphicsBase, rp: *RastPort, x: i32, y: i32, out: *graphics.Pen) bool
+
+   SINCE
+	0.9. LVO -64.
+
+   INPUTS
+	- `rp` - the RastPort.
+	- `x` - the pixel's column.
+	- `y` - its row.
+	- `out` - where the colour goes, as 0xAARRGGBB. Untouched on false.
+
+   RESULT
+	False if the point is outside the surface. **The clip is not
+	consulted**: a clip says what may be written, and reading a pixel it
+	would have kept out of is a fair question - a program restoring what it
+	covered needs exactly that.
+
+   BEHAVIOR
+	The surface's format is undone to give a colour back, so a format with
+	fewer bits a channel answers with the colour it can hold rather than
+	the one that was written. A pixel read out and written back is
+	unchanged.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
+	  not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`WritePixel`, `BltRastPort`
+
+   EXAMPLES
+	    var colour: graphics.Pen = 0;
+	    if (gb.ReadPixel(rp, 10, 10, &colour)) keep(colour);
+graphics.library/RectFill                            graphics.library/RectFill
+
+   NAME
+	RectFill -- Fills a rectangle with the RastPort's pen.
+
+   SYNOPSIS
+	    fn RectFill(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void
+
+   SINCE
+	0.3. LVO -28.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, its draw mode and its clip are what
+	  decide the result.
+	- `area` - what to fill, in the surface's coordinates, half-open: the
+	  row `max_y` and the column `max_x` are not written. It may lie partly
+	  or wholly outside the surface.
+
+   RESULT
+	Nothing. There is no way for it to fail: a rectangle outside the clip
+	draws nothing, which is an answer and not an error, and a pen that
+	could not be packed was refused when the RastPort was made.
+
+   BEHAVIOR
+	The rectangle is clipped to the RastPort's clip, which is itself inside
+	the surface, and what is left is filled. The pen's alpha decides how:
+
+	- **Opaque** (`AA` = `0xFF`) and the surface is a board's buffer: the
+	  board's engine is asked to do it. An engine it has not got, or one
+	  that will not take this format, answers RTGERR_NOT_SUPPORTED and it
+	  falls to software - which is what both of this machine's displays do
+	  today.
+	- **Anything less**, or plain memory: composed here, a pixel at a time,
+	  reading what is under it. A board's engine takes one colour word and
+	  has nowhere to put a coverage, so this cannot be given to it.
+
+	`DRMD_JAM1` alone writes the pen whatever its alpha, so a pen that is not
+	opaque is only composed under `.src_over`.
+
+	The rows that were written are handed on to the display before it
+	returns, so drawing is immediate. Only the rows
+	touched go: a small fill costs a small refresh. A surface in plain
+	memory has nobody to hand them to.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded - a full-screen fill is a
+	  million pixels - and it hands rows on to rtg.library at the end.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The surface is written and nothing else is
+	touched.
+
+   NOTES
+	- The rectangle is half-open, as every rectangle here is: `max_x` is
+	  one past the last pixel. Filling 0,0 to 8,4 writes 32 pixels.
+	- Every drawing call takes the same path through the clip, which today
+	  hands back one rectangle and will hand back a region's several. A
+	  caller never sees the difference.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateRastPortTagList`, `rtg.FillRect`, `rtg.RefreshBitMap`
+
+   EXAMPLES
+	    // A red box on the display.
+	    const tags = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_APen, .data = sdk.graphics.penRGB(255, 0, 0) },
+	        .{},
+	    };
+	    const rp = gb.CreateRastPortTagList(&tags) orelse return;
+	    defer gb.FreeRastPort(rp);
+	    gb.RectFill(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 110, .max_y = 60 });
+
+	    // Half-covering green over it, which is composed rather than written.
+	    const shade = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_APen, .data = sdk.graphics.penARGB(128, 0, 255, 0) },
+	        .{ .tag = sdk.graphics.RPTAG_DrMd, .data = sdk.graphics.DRMD_BLEND },
+	        .{},
+	    };
+	    const over = gb.CreateRastPortTagList(&shade) orelse return;
+	    defer gb.FreeRastPort(over);
+	    gb.RectFill(over, &.{ .min_x = 60, .min_y = 10, .max_x = 160, .max_y = 60 });
+graphics.library/RegionRectangles            graphics.library/RegionRectangles
+
+   NAME
+	RegionRectangles -- Reads out the rectangles a region is made of.
+
+   SYNOPSIS
+	    fn RegionRectangles(_: *GraphicsBase, region: *const Region, into: ?[*]Rect, max: u32) u32
+
+   SINCE
+	0.8. LVO -252.
+
+   INPUTS
+	- `region` - the region.
+	- `into` - where to write them, or null to only count.
+	- `max` - how many `into` has room for.
+
+   RESULT
+	How many rectangles the region has, whatever `max` was. Up to `max` of
+	them are written. 0 means the region is empty.
+
+   BEHAVIOR
+	They do not overlap - that is the invariant a region keeps - and they
+	are in order of `min_y`, then `min_x`. The order matters to a caller
+	moving pixels over the surface they are already on, which has to work
+	through them in the order they lie in to read before it writes.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe in itself: it only reads the region.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The rectangles are copied into the caller's room.
+
+   NOTES
+	This is how anything outside this library sees the shape of a region,
+	which is otherwise opaque. Asking with `into` null and `max` 0 is how
+	to find out how much room is needed.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NewRegion`, `PointInRegion`
+
+   EXAMPLES
+	    const n = gb.RegionRectangles(region, null, 0);
+	    // ... room for n ...
+	    _ = gb.RegionRectangles(region, buffer.ptr, n);
+graphics.library/RemFont                              graphics.library/RemFont
+
+   NAME
+	RemFont -- Takes a font off the list.
+
+   SYNOPSIS
+	    fn RemFont(gb: *GraphicsBase, font: *TextFont) bool
+
+   SINCE
+	0.15. LVO -180.
+
+   INPUTS
+	- `font` - a font on the list.
+
+   RESULT
+	False while anything still has it open. Taking it off then would leave
+	a RastPort drawing out of memory that is about to go, so it is refused
+	rather than trusted.
+
+   BEHAVIOR
+	The font leaves the list, so `OpenFont` no longer finds it; a font
+	still open is refused.
+
+   CONTEXT
+	- Waits: yes, while another task holds the font list.
+	- Interrupts: no.
+	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The font is the caller's again, to free.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddFont`, `CloseFont`
+
+   EXAMPLES
+	    if (gb.RemFont(loaded)) freeFont(loaded);
+graphics.library/ScrollRaster                    graphics.library/ScrollRaster
+
+   NAME
+	ScrollRaster -- Moves a rectangle of a RastPort within the RastPort itself.
+
+   SYNOPSIS
+	    fn ScrollRaster(gb: *GraphicsBase, rp: *RastPort, dx: i32, dy: i32, area: *const Rect) bool
+
+   SINCE
+	0.16. LVO -256.
+
+   INPUTS
+	- `rp` - what is scrolled, and what the pixels are read through.
+	- `dx`, `dy` - how far the contents move left and up. A terminal that
+	  scrolls its text up by one row asks for a `dy` of one row's pixels.
+	- `area` - what moves, in the RastPort's coordinates, half-open. It is
+	  cut to the RastPort's clip first.
+
+   RESULT
+	True when all of it moved. False when part of what was to be read is
+	not kept anywhere - the part of a simple window another window covers -
+	and then **nothing** moved: half a scrolled window is worse than one
+	the caller draws again. False as well when the area is in more pieces
+	than this can move at once, which answers the same way and wants the
+	same thing of the caller.
+
+   BEHAVIOR
+	The pixels are read through the same clip they are written through, so
+	each part of them comes from wherever that part is kept - the display
+	where the RastPort is visible, a keeping surface where it is covered.
+	A blit would instead read the surface at those coordinates, which for a
+	window's RastPort is whatever is on the display there.
+
+	What the move vacates is left as it was: whoever scrolled is about to
+	draw there, and a fill would be drawn over.
+
+	The rows written are handed on to the display before it returns, as
+	every drawing call does.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded and it hands rows on at the end.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	- This is what makes a scrolling terminal cost one row of drawing
+	  rather than a windowful.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltRastPort`, `RectFill`
+
+   EXAMPLES
+	    // The text moves up by a row; the row it leaves is drawn by the caller.
+	    if (!gb.ScrollRaster(rp, 0, cell_height, &text_area)) drawEverything();
+graphics.library/SetRPAttrs                        graphics.library/SetRPAttrs
+
+   NAME
+	SetRPAttrs -- Changes a RastPort.
+
+   SYNOPSIS
+	    fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) void
+
+   SINCE
+	0.4. LVO -32.
+
+   INPUTS
+	- `rp` - the RastPort to change.
+	- `tag_list` - what to change, or null for nothing:
+	  - `RPTAG_APen`, `RPTAG_BPen` (u32, 0xAARRGGBB)
+	  - `RPTAG_DrMd` (`DrawMode`)
+	  - `RPTAG_ClipRect` (`*const Rect`), clamped to the surface
+
+	  These are the same tags that make a RastPort, so what can be set at
+	  birth can be changed afterwards and is spelled the same way.
+
+   RESULT
+	Nothing. A tag this library does not know is passed over: a tag list is
+	often shared between calls, and refusing one would make sharing it an
+	error.
+
+   BEHAVIOR
+	A pen is packed into the surface's format here, once, so that the
+	drawing path never converts a colour - which is the whole reason a pen
+	is set through a call rather than written into a field.
+
+	The buffer cannot be changed. A RastPort draws into the one it was made
+	on, and `RPTAG_BitMap`, `RPTAG_Surface` and `RPTAG_Board` are passed
+	over here; make another RastPort for another buffer, which is cheap and
+	is what double buffering wants anyway.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no; it calls utility.library to walk the list.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. A `Rect` passed in is copied, so the caller's may
+	be on its stack.
+
+   NOTES
+	- A clip is clamped to the surface, so it can only ever narrow. Setting
+	  one bigger than the surface sets the surface.
+	- A pen that cannot be packed for this surface is not applied, rather
+	  than applied half way. It cannot happen through this call: a surface
+	  whose format has no pen mapping never got a RastPort.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GetRPAttrs`, `CreateRastPortTagList`, `RectFill`
+
+   EXAMPLES
+	    // Draw two boxes in different colours with one RastPort.
+	    gb.RectFill(rp, &first);
+	    const change = [_]TagItem{
+	        .{ .tag = sdk.graphics.RPTAG_APen, .data = sdk.graphics.penRGB(0, 0, 255) },
+	        .{},
+	    };
+	    gb.SetRPAttrs(rp, &change);
+	    gb.RectFill(rp, &second);
+graphics.library/SetSoftStyle                    graphics.library/SetSoftStyle
+
+   NAME
+	SetSoftStyle -- Sets the styles, keeping only what will make a difference.
+
+   SYNOPSIS
+	    fn SetSoftStyle(_: *GraphicsBase, rp: *RastPort, style: u32, enable: u32) u32
+
+   SINCE
+	0.15. LVO -192.
+
+   INPUTS
+	- `rp` - the RastPort.
+	- `style` - what is wanted.
+	- `enable` - which of those the caller will allow, so a menu can offer
+	  bold and italic and refuse the rest without knowing the font.
+
+   RESULT
+	What the style became: `style & enable`, less anything the font already
+	has. `RPTAG_TextStyle` sets it without the masking, for a caller that
+	has already asked.
+
+   BEHAVIOR
+	The style is drawn, not stored in the font: bold, italic, underlined
+	and extended are applied as each character is drawn.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It changes the caller's RastPort, which an interrupt
+	  does not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AskSoftStyle`, `Text`
+
+   EXAMPLES
+	    _ = gb.SetSoftStyle(rp, graphics.FSF_BOLD, gb.AskSoftStyle(rp));
+graphics.library/SubRegionRegion              graphics.library/SubRegionRegion
+
+   NAME
+	SubRegionRegion -- Takes everything in `source` out of `dest`.
+
+   SYNOPSIS
+	    fn SubRegionRegion(gb: *GraphicsBase, source: *const Region, dest: *Region) bool
+
+   SINCE
+	0.8. LVO -244.
+
+   INPUTS
+	- `source` - what to take out. Read and not changed.
+	- `dest` - the region that loses it.
+
+   RESULT
+	False without memory for the rectangles; `dest` may then have lost
+	part of `source`.
+
+   BEHAVIOR
+	Each rectangle of `source` is taken out as `ClearRectRegion` would.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`dest` keeps its rectangles in the region pool; `source` is untouched.
+
+   NOTES
+	- This is what a window covered by another is left with.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ClearRectRegion`, `AndRegionRegion`
+
+   EXAMPLES
+	    _ = gb.SubRegionRegion(in_front, visible);
+graphics.library/Text                                    graphics.library/Text
+
+   NAME
+	Text -- Draws text at the current point.
+
+   SYNOPSIS
+	    fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
+
+   SINCE
+	0.11. LVO -132.
+
+   INPUTS
+	- `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
+	  the result, and its current point is where the text starts.
+	- `string` - the characters: bytes, and a character the font has no
+	  glyph for gets the one at the end of it.
+	- `count` - how many.
+
+   RESULT
+	Nothing. With no font set nothing is drawn and the error is
+	`GERR_NO_FONT`: being asked to draw and drawing nothing is a failure,
+	not an answer, and `OpenFont` does not put a font on a RastPort -
+	`RPTAG_Font` does.
+
+   BEHAVIOR
+	**The point is the left of the baseline**, so
+	letters sit above it and a tail hangs below. The point moves to just
+	past the last letter, so one `Text` follows another.
+
+	The draw mode is the draw mode: `DRMD_JAM1` puts ink down and leaves
+	the paper alone, `DRMD_JAM2` lays the background pen behind the
+	letters, `DRMD_INVERSVID` swaps them, and `DRMD_COMPLEMENT` inverts
+	whatever is underneath. A console wants JAM2 and gets it for nothing,
+	because text goes through the same plot as every other primitive.
+
+	The styles are drawn rather than stored: **bold** is the glyph over
+	itself one pixel right, *italic* leans each row further right as it
+	goes up, and underlined is a run along the bottom of the whole string.
+	Bold and extended each widen a character by one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing the caller has to free: the string is only read.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`TextLength`, `OpenFont`, `RPTAG_TextStyle`
+
+   EXAMPLES
+	    gb.Move(rp, 10, 30);
+	    gb.Text(rp, "Hello", 5);
+graphics.library/TextExtent                        graphics.library/TextExtent
+
+   NAME
+	TextExtent -- How much room some text would take.
+
+   SYNOPSIS
+	    fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void
+
+   SINCE
+	0.14. LVO -168.
+
+   INPUTS
+	- `rp` - the RastPort. Its font and text style decide the answer.
+	- `string` - the characters.
+	- `count` - how many.
+	- `out` - where the answer goes. All zeroes with no font set, and the
+	  error is then `GERR_NO_FONT`.
+
+   RESULT
+	Nothing; the answer is in `out`.
+
+   BEHAVIOR
+	`width` is how far `Text` would move the point - the same number
+	`TextLength` answers - and `extent` is where the ink lands **relative
+	to the current point**: above the line by the font's baseline and below
+	it by what is left. So a caller that wants to clear behind a line of
+	text moves the extent to where the text will go and fills that.
+
+	Half-open like every rectangle here, so the height is `max_y - min_y`
+	and there is no `+ 1` anywhere.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
+	  not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`TextFit`, `TextLength`, `Text`
+
+   EXAMPLES
+	    // Clear the ground a line of text is about to go on.
+	    var room: sdk.graphics.TextExtent = .{};
+	    gb.TextExtent(rp, msg.ptr, msg.len, &room);
+	    gb.RectFill(rp, &.{
+	        .min_x = x + room.extent.min_x, .min_y = y + room.extent.min_y,
+	        .max_x = x + room.extent.max_x, .max_y = y + room.extent.max_y,
+	    });
+	    gb.Move(rp, x, y);
+	    gb.Text(rp, msg.ptr, msg.len);
+graphics.library/TextFit                              graphics.library/TextFit
+
+   NAME
+	TextFit -- How many characters fit in the room given.
+
+   SYNOPSIS
+	    fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent, constraining: ?*const graphics.TextExtent, direction: i32, width: i32, height: i32) u32
+
+   SINCE
+	0.14. LVO -172.
+
+   INPUTS
+	- `rp` - the RastPort. Its font and text style decide the answer.
+	- `string` - the characters; with `TEXT_BACKWARD`, the **last** of them.
+	- `count` - how many there are.
+	- `out` - the room the characters that fit take, as `TextExtent` gives
+	  it.
+	- `constraining` - a box to fit inside, or null.
+	- `direction` - `TEXT_FORWARD`, or `TEXT_BACKWARD`, which is how a line
+	  is trimmed from its end.
+	- `width` - above 0, overrides the box's width.
+	- `height` - above 0, overrides the box's height.
+
+   RESULT
+	How many characters fit, and `out` filled for those. 0 when the font is
+	taller than the room - a character cut off across the middle is not a
+	character that fits - and 0 with no font set, where the error is
+	`GERR_NO_FONT`.
+
+   BEHAVIOR
+	Every character of the fonts in this ROM is the same width, so this is
+	a division today. It takes the direction anyway, and is a call rather
+	than a sum the caller does, because a font that is not fixed-width will
+	need to walk the string and callers should not change when one arrives.
+
+	This is what a label does when its box is too small for it: ask how
+	much fits, draw that, and put an ellipsis after it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
+	  not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`TextExtent`, `Text`
+
+   EXAMPLES
+	    var room: graphics.TextExtent = .{};
+	    const fits = gb.TextFit(rp, label.ptr, label.len, &room, null, graphics.TEXT_FORWARD, box_width, 0);
+	    gb.Text(rp, label.ptr, fits);
+graphics.library/TextLength                        graphics.library/TextLength
+
+   NAME
+	TextLength -- How wide some text would be, without drawing it.
+
+   SYNOPSIS
+	    fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32
+
+   SINCE
+	0.11. LVO -136.
+
+   INPUTS
+	- `rp` - the RastPort. Its font and text style decide the answer.
+	- `string` - the characters.
+	- `count` - how many.
+
+   RESULT
+	The pixels `Text` would move the point along. The style counts: bold
+	and extended each widen a character. With no font set the answer is 0
+	and the error is `GERR_NO_FONT`.
+
+   BEHAVIOR
+	Every character of these fonts is the same width, so this is a
+	multiplication. It is a call rather than a sum the caller does because
+	a font that is not fixed-width will want it to be, and callers should
+	not have to change when one arrives.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
+	  not share.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`TextExtent`, `TextFit`, `Text`
+
+   EXAMPLES
+	    const w = gb.TextLength(rp, label.ptr, label.len);
+graphics.library/WriteLUTPixelArray        graphics.library/WriteLUTPixelArray
+
+   NAME
+	WriteLUTPixelArray -- Puts a rectangle of 8-bit colour numbers down through a table of 256 pens.
+
+   SYNOPSIS
+	    fn WriteLUTPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch: u32, table: [*]const Pen, src_x: i32, src_y: i32, area: *const Rect) void
+
+   SINCE
+	0.18. LVO -268.
+
+   INPUTS
+	- `rp` - the RastPort. Its clip decides where the pixels land.
+	- `pixels` - the picture: rows of `pitch` bytes, a colour number to a
+	  byte.
+	- `pitch` - bytes from one row of it to the next.
+	- `table` - 256 pens, 0xAARRGGBB: colour number n is `table[n]`.
+	- `src_x` - where in the picture to start, across.
+	- `src_y` - where in it to start, down.
+	- `area` - where it lands, half-open. Its size is how much is taken.
+
+   RESULT
+	Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a surface with no
+	colours in it - `indexed8`, `gray8`, `mono1` - and `GERR_NO_MEMORY`
+	when there was no kilobyte for the packed table; then nothing was
+	written.
+
+   BEHAVIOR
+	The table is packed into the surface's format once, and each byte of
+	the picture then picks its packed colour - so a frame of a chunky game
+	or a decoder's indexed picture costs a load and a store a pixel,
+	whatever the surface. Changing the table between frames is how a palette
+	is cycled or faded. The pens, the draw mode and the table's alpha are
+	not used: each pixel goes down as its colour.
+
+	When the clip cuts the front off, the picture starts that much further
+	in, so a clipped picture is cut rather than slid.
+
+   CONTEXT
+	- Waits: no, but it allocates.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote
+	  on to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The packed table is a kilobyte allocated for the call and given back
+	before it returns. The picture and the table stay the caller's; the
+	table is read before anything is written.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`WritePixelArray`, `BltBitMapRastPort`
+
+   EXAMPLES
+	    gb.WriteLUTPixelArray(rp, chunky.ptr, 320, &palette, 0, 0, &.{ .max_x = 320, .max_y = 200 });
+graphics.library/WritePixel                        graphics.library/WritePixel
+
+   NAME
+	WritePixel -- One pixel in the foreground pen.
+
+   SYNOPSIS
+	    fn WritePixel(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void
+
+   SINCE
+	0.9. LVO -60.
+
+   INPUTS
+	- `rp` - the RastPort. Its pen, draw mode and clip decide the result.
+	- `x` - the pixel's column. Outside the clip draws nothing, which is not
+	  an error.
+	- `y` - its row.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The line pattern is not consulted - one pixel is not a run, and a
+	caller that asked for a pixel meant a pixel.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
+	  to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ReadPixel`, `Draw`
+
+   EXAMPLES
+	    gb.WritePixel(rp, 10, 10);
+graphics.library/WritePixelArray              graphics.library/WritePixelArray
+
+   NAME
+	WritePixelArray -- Puts a rectangle of one's own pixels down, converted to the surface's format.
+
+   SYNOPSIS
+	    fn WritePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const Rect) void
+
+   SINCE
+	0.18. LVO -264.
+
+   INPUTS
+	- `rp` - the RastPort. Its clip decides where the pixels land.
+	- `pixels` - the picture: rows of `pitch` bytes, each pixel in `format`.
+	- `pitch` - bytes from one row of it to the next.
+	- `format` - a `rtg.bitmaps.PixelFormat` with colours: `rgba32`,
+	  `bgra32`, `rgb24`, `bgr24`, `rgb565` or `argb1555`.
+	- `src_x` - where in the picture to start, across.
+	- `src_y` - where in it to start, down.
+	- `area` - where it lands, half-open. Its size is how much is taken.
+
+   RESULT
+	Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with no
+	colours in it - `indexed8`, `gray8`, `mono1` - on either side, and then
+	nothing was written.
+
+   BEHAVIOR
+	Each pixel goes down as it is: the pens, the draw mode and any alpha in
+	the picture are not used, so this is how a decoded image, a captured
+	screen or a frame drawn elsewhere is put back. Where the picture's
+	format is the surface's, each row of a piece is one copy; otherwise
+	each pixel is converted, through the same colour a pen would be.
+
+	When the clip cuts the front off, the picture starts that much further
+	in, so a clipped picture is cut rather than slid.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it wrote
+	  on to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The picture stays the caller's.
+
+   NOTES
+	A window's RastPort is drawn through with the window's layer held, as
+	for any drawing call.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`WriteLUTPixelArray`, `BltBitMapRastPort`, `ReadPixel`
+
+   EXAMPLES
+	    gb.WritePixelArray(rp, frame.ptr, 320 * 4, @intFromEnum(PixelFormat.rgba32), 0, 0, &.{ .min_x = 10, .min_y = 10, .max_x = 330, .max_y = 250 });
+graphics.library/XorRectRegion                  graphics.library/XorRectRegion
+
+   NAME
+	XorRectRegion -- What is in the region or the rectangle, but not in both.
+
+   SYNOPSIS
+	    fn XorRectRegion(gb: *GraphicsBase, region: *Region, rect: *const Rect) bool
+
+   SINCE
+	0.8. LVO -232.
+
+   INPUTS
+	- `region` - the region to change.
+	- `rect` - the rectangle.
+
+   RESULT
+	False without memory for the rectangles.
+
+   BEHAVIOR
+	The answer is built in a copy of the region: the part of the rectangle
+	the region does not already cover is worked out in a region of its
+	own, then the copy loses what the rectangle covers and gains that part.
+	Only a complete answer replaces the region, so a failure leaves it as
+	it was.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The region keeps its rectangles in the region pool.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`XorRegionRegion`, `OrRectRegion`, `ClearRectRegion`
+
+   EXAMPLES
+	    _ = gb.XorRectRegion(region, &toggled);
+graphics.library/XorRegionRegion              graphics.library/XorRegionRegion
+
+   NAME
+	XorRegionRegion -- Leaves in `dest` what is in one of the two regions but not in both.
+
+   SYNOPSIS
+	    fn XorRegionRegion(gb: *GraphicsBase, source: *const Region, dest: *Region) bool
+
+   SINCE
+	0.8. LVO -248.
+
+   INPUTS
+	- `source` - the other region. Read and not changed.
+	- `dest` - the region that changes.
+
+   RESULT
+	False without memory for the rectangles.
+
+   BEHAVIOR
+	Each rectangle of `source` is applied as `XorRectRegion` would apply it,
+	to a copy of `dest`; only a complete answer replaces `dest`, so a
+	failure leaves it as it was.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. Rectangles come from the region pool.
+	- Forbid: not needed; the region is the caller's to keep others off.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`dest` keeps its rectangles in the region pool; `source` is untouched.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`XorRectRegion`, `OrRegionRegion`
+
+   EXAMPLES
+	    _ = gb.XorRegionRegion(before, after); // what changed

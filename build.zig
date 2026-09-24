@@ -240,6 +240,27 @@ pub fn build(b: *std.Build) void {
     check_shell.addArg(b.pathFromRoot("src/rom/libs/exec/_shell"));
     check_shell.has_side_effects = true;
     test_step.dependOn(&check_shell.step);
+    // The SDK's autodocs (sdk/docs/autodocs) come from the doc comments of
+    // every call in sdk/fd: `autodoc` writes them, and `test` fails if one
+    // isn't up to date (tools/autodoc.zig).
+    const autodoc = b.addExecutable(.{
+        .name = "autodoc",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/autodoc.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const autodoc_args = [_][]const u8{ b.pathFromRoot("sdk/fd"), b.pathFromRoot("src/rom"), b.pathFromRoot("sdk/docs/autodocs") };
+    const write_autodocs = b.addRunArtifact(autodoc);
+    write_autodocs.addArgs(&autodoc_args);
+    write_autodocs.has_side_effects = true;
+    b.step("autodoc", "Generate the SDK's autodocs (sdk/docs/autodocs) from the source").dependOn(&write_autodocs.step);
+    const check_autodocs = b.addRunArtifact(autodoc);
+    check_autodocs.addArg("--check");
+    check_autodocs.addArgs(&autodoc_args);
+    check_autodocs.has_side_effects = true;
+    test_step.dependOn(&check_autodocs.step);
     // Every program and module on the disk compiles: the disk image is
     // made from all of them.
     test_step.dependOn(&make_disk.step);
