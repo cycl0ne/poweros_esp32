@@ -4,3 +4,7 @@ zig-out/
 
 # The Espressif Zig and QEMU, fetched by ./zig and scripts/build-qemu.sh
 toolchain/
+
+# Local assistant files
+CLAUDE.md
+.claude/
