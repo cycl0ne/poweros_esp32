@@ -159,6 +159,107 @@ pub fn build(b: *std.Build) void {
 }
 ```
 
+### Hello, world - in the shell
+
+A command is a function `_program_entry` that gets exec's base. It opens
+the libraries it needs by name and closes them again:
+
+```zig
+// hello.zig
+const sdk = @import("sdk");
+const dos = sdk.dos;
+const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
+
+export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
+    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(dos_lib);
+    const dl: *DosBase = @ptrCast(dos_lib);
+
+    _ = dos.stdio.Printf(dl, "Hello, world!\n", .{});
+    return dos.RETURN_OK;
+}
+```
+
+### Hello, world - in a window
+
+The same with intuition.library and graphics.library: a window on the
+default screen, the words drawn into its RastPort, and the close gadget
+waited for on the window's message port:
+
+```zig
+// window.zig
+const sdk = @import("sdk");
+const dos = sdk.dos;
+const exec = sdk.exec;
+const graphics = sdk.graphics;
+const intuition = sdk.intuition;
+const wn = intuition.windows;
+const TagItem = sdk.utility.TagItem;
+const ExecBase = sdk.interface.exec.ExecBase;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+
+export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
+    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(int_lib);
+    const ib: *IntuitionBase = @ptrCast(int_lib);
+    const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(gfx_lib);
+    const gb: *GraphicsBase = @ptrCast(gfx_lib);
+
+    // A window on the default screen, with a close gadget that tells us so.
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("Hello") },
+        .{ .tag = wn.WA_InnerWidth, .data = 240 },
+        .{ .tag = wn.WA_InnerHeight, .data = 60 },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
+        .{},
+    }) orelse return dos.RETURN_FAIL;
+    defer ib.CloseWindow(w);
+
+    // The window's RastPort, its message port, and where the inside starts.
+    var rp_addr: usize = 0;
+    var port_addr: usize = 0;
+    var left: usize = 0;
+    var top: usize = 0;
+    ib.GetWindowAttrs(w, &[_]TagItem{
+        .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp_addr) },
+        .{ .tag = wn.WA_UserPort, .data = @intFromPtr(&port_addr) },
+        .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
+        .{ .tag = wn.WA_BorderTop, .data = @intFromPtr(&top) },
+        .{},
+    });
+    const rp: *graphics.RastPort = @ptrFromInt(rp_addr);
+    const port: *exec.MsgPort = @ptrFromInt(port_addr);
+
+    // The words, in the screen's text pen.
+    const text = "Hello, world!";
+    gb.Move(rp, @intCast(left + 20), @intCast(top + 35));
+    gb.Text(rp, text, text.len);
+
+    // Wait until the close gadget is used.
+    while (true) {
+        _ = sys.Wait(port.sigMask());
+        while (sys.GetMsg(port)) |m| {
+            const class = @as(*intuition.IntuiMessage, @ptrCast(@alignCast(m))).class;
+            sys.ReplyMsg(m);
+            if (class == wn.IDCMP_CLOSEWINDOW) return dos.RETURN_OK;
+        }
+    }
+}
+```
+
+Each gets its own `addProgram` in `build.zig`, as `hello` above, and
+`zig build` makes `zig-out/bin/hello.seg` and `window.seg`. Put them on
+the disk with `-Dextra=c/hello=path/to/hello.seg` (or drop them into the
+tree's `disk/c/`), and run them from the shell: `hello`, or `run window`
+so the shell stays free while the window is open.
+
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.
