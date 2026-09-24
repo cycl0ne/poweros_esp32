@@ -8,3 +8,6 @@ toolchain/
 # Local assistant files
 CLAUDE.md
 .claude/
+
+# Files dropped onto the disk image (see build.zig: disk_tree)
+disk/
