@@ -1,8 +1,9 @@
 # Screenshots
 
-PowerOS 0.1 in Espressif's QEMU (`./zig build qemu-display`, with the QEMU
-from `scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7"
-board has. Every program shown is on the flash disk and runs from there.
+PowerOS 0.1 on a board, and in Espressif's QEMU. The screenshots are
+QEMU's (`./zig build qemu-display`, with the QEMU from
+`scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
+has. Every program shown is on the flash disk and runs from there.
 
 ## Graphics: `C:test/Anim`
 
@@ -13,6 +14,15 @@ graphics.library in one moving picture: filled polygons with a hole
 mask, gradients, a tiled background, text measured and drawn in bold, and a
 scroller in italic and underlined - everything in one RastPort, redrawn
 every frame.
+
+## On the board
+
+![PowerOS on the ES3C35P](board-es3c35p.jpg)
+
+The LCDwiki ES3C35P, an ESP32-S3 with a 3.5" 480×320 panel, running
+PowerOS 0.1: the shell window just after boot, on the system's own font.
+The speaker beside it is the board's; the machine is powered and its
+serial console reached over the USB cable.
 
 ## A game: Dungeon Master
 

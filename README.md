@@ -19,6 +19,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 [![The shell](docs/screenshots/shell.png)](docs/screenshots/README.md#the-shell)
 
+[![PowerOS on a 3.5" ESP32-S3 board](docs/screenshots/board-es3c35p.jpg)](docs/screenshots/README.md#on-the-board)
+
 More in [the screenshots](docs/screenshots/README.md): a game in a window
 of its own, fonts, menus, a requester and gadgets.
 
