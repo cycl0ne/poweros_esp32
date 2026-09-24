@@ -16,6 +16,11 @@ every frame.
 
 ## A game: Dungeon Master
 
+![Dungeon Master, played](dm.gif)
+
+A minute of play, full screen: the language, the door, into the dungeon
+and a few steps. The same as a video: [dm.mp4](dm.mp4).
+
 ![Dungeon Master: the title](dm-title.png)
 
 ![Dungeon Master: the dungeon](dm-dungeon.png)
