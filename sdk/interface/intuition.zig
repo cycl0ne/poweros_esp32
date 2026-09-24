@@ -97,6 +97,9 @@ pub const LVO = struct {
     pub const AutoRequestTagList = libraries.lvo(79);
     pub const BuildSysRequestTagList = libraries.lvo(80);
     pub const DoubleClick = libraries.lvo(81);
+    pub const GetIMsg = libraries.lvo(82);
+    pub const ReplyIMsg = libraries.lvo(83);
+    pub const WaitIMsg = libraries.lvo(84);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -180,6 +183,9 @@ pub const Fn = struct {
     pub const AutoRequestTagList = *const fn (*IntuitionBase, ?*intuition.Window, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const BuildSysRequestTagList = *const fn (*IntuitionBase, ?*intuition.Window, ?[*]const utility.TagItem) callconv(.c) ?*intuition.Window;
     pub const DoubleClick = *const fn (*IntuitionBase, u32, u32, u32, u32) callconv(.c) bool;
+    pub const GetIMsg = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) ?*intuition.IntuiMessage;
+    pub const ReplyIMsg = *const fn (*IntuitionBase, *intuition.IntuiMessage) callconv(.c) void;
+    pub const WaitIMsg = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -660,5 +666,22 @@ pub const IntuitionBase = opaque {
     /// Whether two moments are close enough together to be a double-click.
     pub fn DoubleClick(self: *IntuitionBase, start_seconds: u32, start_micros: u32, current_seconds: u32, current_micros: u32) bool {
         return libraries.call(self, LVO.DoubleClick, Fn.DoubleClick, .{ start_seconds, start_micros, current_seconds, current_micros });
+    }
+
+    /// The next message on a window's port, taken off it, or null when there
+    /// is none or the window has no port. Never waits.
+    pub fn GetIMsg(self: *IntuitionBase, window: *intuition.Window) ?*intuition.IntuiMessage {
+        return libraries.call(self, LVO.GetIMsg, Fn.GetIMsg, .{window});
+    }
+
+    /// Hand a message from GetIMsg back.
+    pub fn ReplyIMsg(self: *IntuitionBase, msg: *intuition.IntuiMessage) void {
+        return libraries.call(self, LVO.ReplyIMsg, Fn.ReplyIMsg, .{msg});
+    }
+
+    /// Wait until the window has a message or a signal in `others` arrives,
+    /// and answer the signals received.
+    pub fn WaitIMsg(self: *IntuitionBase, window: *intuition.Window, others: u32) u32 {
+        return libraries.call(self, LVO.WaitIMsg, Fn.WaitIMsg, .{ window, others });
     }
 };

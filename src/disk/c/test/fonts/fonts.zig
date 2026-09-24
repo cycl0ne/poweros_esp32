@@ -210,7 +210,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer ib.CloseWindow(w);
 
     const rp: *RastPort = @ptrFromInt(wattr(ib, w, wn.WA_RastPort));
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     const left: i32 = @intCast(wattr(ib, w, wn.WA_BorderLeft));
     const top: i32 = @intCast(wattr(ib, w, wn.WA_BorderTop));
     const shown_w: i32 = @intCast(wattr(ib, w, wn.WA_InnerWidth));
@@ -230,12 +229,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = Printf(dl, MSG_WAITING, .{});
     var open = true;
     while (open) {
-        const got = sys.Wait(port.sigMask() | exec.SIGBREAKF_CTRL_C);
+        const got = ib.WaitIMsg(w, exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) break;
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) open = false;
         }
     }

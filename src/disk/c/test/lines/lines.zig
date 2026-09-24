@@ -482,7 +482,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const rp: *RastPort = @ptrFromInt(wattr(ib, w, wn.WA_RastPort));
     const layer: *sdk.layers.Layer = @ptrFromInt(wattr(ib, w, wn.WA_Layer));
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
 
     var why: i32 = 0;
     var inner_w: i32 = @intCast(wattr(ib, w, wn.WA_InnerWidth));
@@ -530,11 +529,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     while (running and (frames == 0 or drawn < frames)) {
         if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) break;
 
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
             const code = im.code;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) running = false;
             if (class != wn.IDCMP_MENUPICK) continue;
             // Each item picked, along the chain. The checkmarks say what

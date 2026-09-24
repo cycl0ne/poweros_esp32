@@ -881,13 +881,11 @@ fn windowAttr(ib: *IntuitionBase, w: *intuition.Window, tag: utility.Tag) usize 
 /// Every message waiting on a window's port, replied, as their classes in
 /// the order they came.
 fn drainClasses(ib: *IntuitionBase, w: *intuition.Window, out: []u32) usize {
-    const port: *exec.MsgPort = @ptrFromInt(windowAttr(ib, w, intuition.windows.WA_UserPort));
     var n: usize = 0;
-    while (ib.sys_base.GetMsg(port)) |m| {
-        const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+    while (ib.iface().GetIMsg(w)) |im| {
         if (n < out.len) out[n] = im.class;
         n += 1;
-        ib.sys_base.ReplyMsg(m);
+        ib.iface().ReplyIMsg(im);
     }
     return n;
 }
@@ -1524,13 +1522,11 @@ test "windows: IDCMP - activation, a simple window repaired and told, moves and 
 
 /// Every message on a window's port, copied out and replied.
 fn drainMessages(ib: *IntuitionBase, w: *intuition.Window, out: []intuition.IntuiMessage) usize {
-    const port: *exec.MsgPort = @ptrFromInt(windowAttr(ib, w, intuition.windows.WA_UserPort));
     var n: usize = 0;
-    while (ib.sys_base.GetMsg(port)) |m| {
-        const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+    while (ib.iface().GetIMsg(w)) |im| {
         if (n < out.len) out[n] = im.*;
         n += 1;
-        ib.sys_base.ReplyMsg(m);
+        ib.iface().ReplyIMsg(im);
     }
     return n;
 }
@@ -2248,6 +2244,62 @@ test "IDCMP: moves and repeats are held to a few at a time, news always goes" {
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     ib.iface().CloseWindow(w);
     try testing.expect(ib.iface().CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "GetIMsg, ReplyIMsg, WaitIMsg: a window's messages typed, and other signals heard" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const sys = ib.sys_base;
+    const display = try Display.up(ib);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_RAWKEY },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const port: *exec.MsgPort = @ptrFromInt(windowAttr(ib, w, wn.WA_UserPort));
+
+    // Nothing there: nothing taken.
+    try testing.expectEqual(@as(?*intuition.IntuiMessage, null), it.GetIMsg(w));
+
+    // Two messages: a wait answers at once with the port's signal, and
+    // they come in order, as what they are.
+    try testing.expect(_window.sendWith(ib, win, wn.IDCMP_RAWKEY, 0x20, null));
+    try testing.expect(_window.sendWith(ib, win, wn.IDCMP_CLOSEWINDOW, 0, null));
+    try testing.expectEqual(port.sigMask(), it.WaitIMsg(w, 0));
+    const first = it.GetIMsg(w).?;
+    try testing.expectEqual(wn.IDCMP_RAWKEY, first.class);
+    try testing.expectEqual(@as(u32, 0x20), first.code);
+    try testing.expectEqual(w, first.window.?);
+    it.ReplyIMsg(first);
+    const second = it.GetIMsg(w).?;
+    try testing.expectEqual(wn.IDCMP_CLOSEWINDOW, second.class);
+    it.ReplyIMsg(second);
+    try testing.expectEqual(@as(?*intuition.IntuiMessage, null), it.GetIMsg(w));
+
+    // A message waiting and Ctrl-C already set: both are answered.
+    try testing.expect(_window.sendWith(ib, win, wn.IDCMP_CLOSEWINDOW, 0, null));
+    _ = sys.SetSignal(exec.SIGBREAKF_CTRL_C, exec.SIGBREAKF_CTRL_C);
+    try testing.expectEqual(port.sigMask() | exec.SIGBREAKF_CTRL_C, it.WaitIMsg(w, exec.SIGBREAKF_CTRL_C));
+    it.ReplyIMsg(it.GetIMsg(w).?);
+
+    // Without a port: nothing to take, the other signals alone waited
+    // for, and nothing to wait for at all answers 0.
+    try testing.expect(it.ModifyIDCMP(w, 0));
+    try testing.expectEqual(@as(?*intuition.IntuiMessage, null), it.GetIMsg(w));
+    try testing.expectEqual(@as(u32, 0), it.WaitIMsg(w, 0));
+    try testing.expectEqual(exec.SIGBREAKF_CTRL_C, it.WaitIMsg(w, exec.SIGBREAKF_CTRL_C));
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, 0) & exec.SIGBREAKF_CTRL_C);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);
 }

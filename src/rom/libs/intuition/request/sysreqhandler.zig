@@ -73,20 +73,18 @@ const false_key = 'B';
 /// while (answer == requesters.SYSREQ_PENDING) : (answer = ib.SysReqHandler(req, null, true)) {}
 /// ```
 pub fn SysReqHandler(ib: *IntuitionBase, window: ?*Window, idcmp_ptr: ?*u32, wait_input: bool) i32 {
-    const sys = ib.sys_base;
-    const w = window orelse return 0;
-    const port = w.user_port orelse return intuition.requesters.SYSREQ_PENDING;
-    if (wait_input) _ = sys.WaitPort(port);
+    const it = ib.iface();
+    const w: *intuition.Window = @ptrCast(window orelse return 0);
+    if (wait_input) _ = it.WaitIMsg(w, 0);
 
     var answer: i32 = intuition.requesters.SYSREQ_PENDING;
     while (answer == intuition.requesters.SYSREQ_PENDING) {
-        const m = sys.GetMsg(port) orelse break;
-        const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        const im = it.GetIMsg(w) orelse break;
         switch (im.class) {
             wn.IDCMP_GADGETUP => {
                 var id: usize = 0;
                 const gadget: ?*Object = @ptrCast(im.iaddress);
-                _ = ib.iface().GetAttr(gc.GA_ID, gadget, &id);
+                _ = it.GetAttr(gc.GA_ID, gadget, &id);
                 answer = @intCast(id);
             },
             wn.IDCMP_VANILLAKEY => if (im.qualifier & ie.IEQUALIFIER_LCOMMAND != 0) {
@@ -99,7 +97,7 @@ pub fn SysReqHandler(ib: *IntuitionBase, window: ?*Window, idcmp_ptr: ?*u32, wai
                 if (idcmp_ptr) |out| out.* = im.class;
             },
         }
-        sys.ReplyMsg(m);
+        it.ReplyIMsg(im);
     }
     return answer;
 }

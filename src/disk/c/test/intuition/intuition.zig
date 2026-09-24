@@ -245,13 +245,11 @@ fn textDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scre
     _ = Printf(dl, MSG_IMAGES, .{drawn});
     _ = Printf(dl, MSG_TEXT, .{ label, @as(i64, wide), @as(u64, width), @as(u64, height) });
 
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     var running = true;
     while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) running = false;
         }
         dl.Delay(5);
@@ -449,7 +447,7 @@ const Strip = struct {
     }
 };
 
-fn menusDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
+fn menusDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     const tags = [_]TagItem{
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(s) },
         .{ .tag = wn.WA_Left, .data = 200 },
@@ -485,18 +483,16 @@ fn menusDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scr
     ib.OffMenu(w, mn.FULLMENUNUM(2, mn.NOITEM, mn.NOSUB));
     _ = Printf(dl, MSG_MENUS, .{});
 
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     var running = true;
     while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
             const code = im.code;
             // Answered at once: this program has nothing to change first.
             if (class == wn.IDCMP_MENUVERIFY) {
                 _ = Printf(dl, MSG_VERIFY, .{@as([*:0]const u8, if (code == mn.MENUHOT) "MENUHOT - the menus are ours" else "MENUWAITING")});
             }
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             switch (class) {
                 wn.IDCMP_CLOSEWINDOW => running = false,
                 wn.IDCMP_MENUHELP => _ = Printf(dl, MSG_HELP, .{ @as(i64, mn.MENUNUM(code)), @as(i64, mn.ITEMNUM(code)), @as(i64, mn.SUBNUM(code)) }),
@@ -561,7 +557,7 @@ fn endButton(ib: *IntuitionBase, prev: ?*intuition.Object, id: usize, text: [*:0
     return b;
 }
 
-fn requesterDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
+fn requesterDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     const rq = intuition.requesters;
     const dri = ib.GetScreenDrawInfo(s);
     defer ib.FreeScreenDrawInfo(s, dri);
@@ -641,14 +637,12 @@ fn requesterDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition
     defer if (quick.flags & rq.REQACTIVE != 0) ib.EndRequest(&quick, w);
     _ = Printf(dl, MSG_REQUESTER, .{});
 
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     var running = true;
     while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
             const address = im.iaddress;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             const which: [*:0]const u8 = if (address == @as(?*anyopaque, @ptrCast(&ask))) "the name requester" else "the double-click requester";
             switch (class) {
                 wn.IDCMP_CLOSEWINDOW => running = false,
@@ -758,7 +752,6 @@ fn gadgetsDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
     // one it opened with.
     _ = ib.WindowLimits(w, 0, 0, 600, -1);
     _ = Printf(dl, MSG_GADGETS, .{});
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     var presses: u32 = 0;
     var two_off = false;
     // Two, used in turn: the window keeps showing one while the other is
@@ -766,11 +759,10 @@ fn gadgetsDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
     var titles: [2]Title = .{ .{}, .{} };
     var running = true;
     while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
             const gadget: ?*intuition.Object = @ptrCast(im.iaddress);
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) running = false;
             if (class != wn.IDCMP_GADGETUP) continue;
             var id: usize = 0;
@@ -796,7 +788,7 @@ fn gadgetsDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
 /// A window with sliders down its right and along its bottom, a line to
 /// type in, and a group of two buttons: one of each of the gadget classes
 /// that were not here before.
-fn slidersDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
+fn slidersDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     const pg = intuition.propgclass;
     const cu = intuition.classusr;
     // The title bar is as tall as the screen's font makes it, so what goes
@@ -912,15 +904,13 @@ fn slidersDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
     defer ib.CloseWindow(w);
 
     _ = Printf(dl, MSG_SLIDERS, .{});
-    const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
     var running = true;
     // The last place each slider was seen, so that the interim updates a
     // drag sends - one per pointer move - are printed only when they say
     // something new. Which slider is which comes from its GA_ID.
     var last = [_]usize{ 0xFFFF, 0xFFFF };
     while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(w)) |im| {
             const class = im.class;
             // Everything wanted from the message is taken while the message
             // is still ours. Replying hands it back, and the tag list of an
@@ -949,7 +939,7 @@ fn slidersDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
                     }
                 }
             }
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) running = false;
             // A slider says where it stands; anything else that speaks only
             // its ID is a button that was used.
@@ -1017,12 +1007,10 @@ fn windowsDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
         // The other two only listen for their close gadget.
         for ([_]usize{ 0, 2 }) |k| {
             const w = open[k] orelse continue;
-            const port: *exec.MsgPort = @ptrFromInt(wattr(ib, w, wn.WA_UserPort));
             var close = false;
-            while (sys.GetMsg(port)) |m| {
-                const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+            while (ib.GetIMsg(w)) |im| {
                 if (im.class == wn.IDCMP_CLOSEWINDOW) close = true;
-                sys.ReplyMsg(m);
+                ib.ReplyIMsg(im);
                 messages += 1;
             }
             if (close) {
@@ -1035,16 +1023,14 @@ fn windowsDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.S
             dl.Delay(5);
             continue;
         };
-        const port: *exec.MsgPort = @ptrFromInt(wattr(ib, listener, wn.WA_UserPort));
         var closing = false;
-        while (sys.GetMsg(port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(listener)) |im| {
             const class = im.class;
             const code = im.code;
             const x = im.mouse_x;
             const y = im.mouse_y;
             const qualifier = im.qualifier;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
             messages += 1;
             switch (class) {
                 wn.IDCMP_MOUSEBUTTONS => {
@@ -1166,12 +1152,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[arg_windows] != 0) return windowsDemo(sys, dl, ib, s);
     if (argv[arg_gadgets] != 0) return gadgetsDemo(sys, dl, ib, s);
-    if (argv[arg_sliders] != 0) return slidersDemo(sys, dl, ib, s);
+    if (argv[arg_sliders] != 0) return slidersDemo(dl, ib, s);
 
     if (argv[arg_text] != 0) return textDemo(sys, dl, ib, s);
     if (argv[arg_request] != 0) return requestDemo(dl, ib, s);
-    if (argv[arg_menus] != 0) return menusDemo(sys, dl, ib, s);
-    if (argv[arg_requester] != 0) return requesterDemo(sys, dl, ib, s);
+    if (argv[arg_menus] != 0) return menusDemo(dl, ib, s);
+    if (argv[arg_requester] != 0) return requesterDemo(dl, ib, s);
 
     const dri = ib.GetScreenDrawInfo(s);
     defer ib.FreeScreenDrawInfo(s, dri);

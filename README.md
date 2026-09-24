@@ -222,8 +222,8 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 ### Hello, world - in a window
 
 The same with intuition.library and graphics.library: a window on the
-default screen, the words drawn into its RastPort, and the close gadget
-waited for on the window's message port:
+default screen, the words drawn into its RastPort, and its messages
+waited for until the close gadget is used or Ctrl-C comes:
 
 ```zig
 // window.zig
@@ -260,32 +260,30 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     }) orelse return dos.RETURN_FAIL;
     defer ib.CloseWindow(w);
 
-    // The window's RastPort, its message port, and where the inside starts.
+    // The window's RastPort, and where the inside starts.
     var rp_addr: usize = 0;
-    var port_addr: usize = 0;
     var left: usize = 0;
     var top: usize = 0;
     ib.GetWindowAttrs(w, &[_]TagItem{
         .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp_addr) },
-        .{ .tag = wn.WA_UserPort, .data = @intFromPtr(&port_addr) },
         .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
         .{ .tag = wn.WA_BorderTop, .data = @intFromPtr(&top) },
         .{},
     });
     const rp: *graphics.RastPort = @ptrFromInt(rp_addr);
-    const port: *exec.MsgPort = @ptrFromInt(port_addr);
 
     // The words, in the screen's text pen.
     const text = "Hello, world!";
     gb.Move(rp, @intCast(left + 20), @intCast(top + 35));
     gb.Text(rp, text, text.len);
 
-    // Wait until the close gadget is used.
+    // Wait until the close gadget is used, or Ctrl-C comes.
     while (true) {
-        _ = sys.WaitPort(port);
-        while (sys.GetMsg(port)) |m| {
-            const class = @as(*intuition.IntuiMessage, @ptrCast(@alignCast(m))).class;
-            sys.ReplyMsg(m);
+        const got = ib.WaitIMsg(w, exec.SIGBREAKF_CTRL_C);
+        if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
+        while (ib.GetIMsg(w)) |im| {
+            const class = im.class;
+            ib.ReplyIMsg(im);
             if (class == wn.IDCMP_CLOSEWINDOW) return dos.RETURN_OK;
         }
     }

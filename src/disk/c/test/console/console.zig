@@ -412,7 +412,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var shown: [64]u8 = undefined;
 
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
-    const window_port: *exec.MsgPort = @ptrFromInt(attr(ib, window, wn.WA_UserPort));
     var total: u32 = 0;
     var running = true;
     reader.req.command = exec.CMD_READ;
@@ -436,12 +435,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
 
     while (running) {
-        const got = sys.Wait(read_port.sigMask() | window_port.sigMask() | seen.signal | exec.SIGBREAKF_CTRL_C);
+        const got = ib.WaitIMsg(window, read_port.sigMask() | seen.signal | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) running = false;
-        while (sys.GetMsg(window_port)) |m| {
-            const im: *intuition.IntuiMessage = @ptrCast(@alignCast(m));
+        while (ib.GetIMsg(window)) |im| {
             if (im.class == wn.IDCMP_CLOSEWINDOW) running = false;
-            sys.ReplyMsg(m);
+            ib.ReplyIMsg(im);
         }
         // What the snip hook was handed, printed from here: the hook
         // itself runs on the console's task and may not wait.

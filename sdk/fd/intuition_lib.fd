@@ -250,4 +250,12 @@ bool AutoRequestTagList(?*intuition.Window window, ?[*]const utility.TagItem tag
 ?*intuition.Window BuildSysRequestTagList(?*intuition.Window window, ?[*]const utility.TagItem tags)
 /// Whether two moments are close enough together to be a double-click.
 bool DoubleClick(u32 start_seconds, u32 start_micros, u32 current_seconds, u32 current_micros)
+/// The next message on a window's port, taken off it, or null when there
+/// is none or the window has no port. Never waits.
+?*intuition.IntuiMessage GetIMsg(*intuition.Window window)
+/// Hand a message from GetIMsg back.
+void ReplyIMsg(*intuition.IntuiMessage msg)
+/// Wait until the window has a message or a signal in `others` arrives,
+/// and answer the signals received.
+u32 WaitIMsg(*intuition.Window window, u32 others)
 ##end

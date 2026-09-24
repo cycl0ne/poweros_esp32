@@ -101,6 +101,9 @@ const ClearDMRequest = @import("requester/cleardmrequest.zig").ClearDMRequest;
 const AutoRequestTagList = @import("request/autorequesttaglist.zig").AutoRequestTagList;
 const BuildSysRequestTagList = @import("request/buildsysrequesttaglist.zig").BuildSysRequestTagList;
 const DoubleClick = @import("input/doubleclick.zig").DoubleClick;
+const GetIMsg = @import("window/getimsg.zig").GetIMsg;
+const ReplyIMsg = @import("window/replyimsg.zig").ReplyIMsg;
+const WaitIMsg = @import("window/waitimsg.zig").WaitIMsg;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -444,6 +447,15 @@ fn lvoBuildSysRequestTagList(ib: *IntuitionBase, window: ?*intuition.Window, tag
 fn lvoDoubleClick(ib: *IntuitionBase, start_seconds: u32, start_micros: u32, current_seconds: u32, current_micros: u32) callconv(.c) bool {
     return DoubleClick(ib, start_seconds, start_micros, current_seconds, current_micros);
 }
+fn lvoGetIMsg(ib: *IntuitionBase, window: *intuition.Window) callconv(.c) ?*intuition.IntuiMessage {
+    return GetIMsg(ib, @ptrCast(@alignCast(window)));
+}
+fn lvoReplyIMsg(ib: *IntuitionBase, msg: *intuition.IntuiMessage) callconv(.c) void {
+    ReplyIMsg(ib, msg);
+}
+fn lvoWaitIMsg(ib: *IntuitionBase, window: *intuition.Window, others: u32) callconv(.c) u32 {
+    return WaitIMsg(ib, @ptrCast(@alignCast(window)), others);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -528,6 +540,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAutoRequestTagList),
     vec(lvoBuildSysRequestTagList),
     vec(lvoDoubleClick),
+    vec(lvoGetIMsg),
+    vec(lvoReplyIMsg),
+    vec(lvoWaitIMsg),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
