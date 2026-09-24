@@ -17,6 +17,12 @@ every frame.
 
 ## On the board
 
+![PowerOS on the Waveshare 7" board, multitasking](board-waveshare-7b.jpg)
+
+Multitasking on the Waveshare ESP32-S3-Touch-LCD-7B: the shell, two
+`Lines` windows drawing at the same time, and Dungeon Master at its door -
+four programs, each in a window of its own, on the 7" 1024×600 panel.
+
 ![PowerOS on the ES3C35P](board-es3c35p.jpg)
 
 The LCDwiki ES3C35P, an ESP32-S3 with a 3.5" 480×320 panel, running
