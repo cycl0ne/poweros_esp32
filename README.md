@@ -46,17 +46,52 @@ run on every board.
 Programs use the system's own API - libraries opened by name, tag lists,
 messages - and there is no `libc`, no `fork`, no file descriptors.
 
-**It is not** an emulator. It uses the ideas of AmigaOS but runs no Amiga
-software, and no software written for any other machine: programs are
-native code for the chip, built with Zig against the SDK.
+**It is not** an AmigaOS clone. It takes the ideas of AmigaOS - exec's
+libraries, devices and message ports, dos with its handlers and packets,
+screens and windows, classes of gadgets - and builds them anew for this
+machine and this language, keeping the model and leaving the old
+machine's baggage behind.
+
+**It is not** an emulator. It runs no Amiga software, and no software
+written for any other machine: programs are native code for the chip,
+built with Zig against the SDK.
 
 **It is not** a protected system. All tasks share one address space, and
-a program that writes where it should not can bring the system down. It is a machine for one person at a
-time, not a server.
+a program that writes where it should not can bring the system down. It is
+a machine for one person at a time, not a server.
 
 **It does not (yet)** have networking (no Wi-Fi or Bluetooth drivers), USB
 host support, or a second CPU core: it runs on one of the chip's two
 cores.
+
+### How it differs from AmigaOS
+
+- **No 68000, no custom chips.** Graphics are retargetable from the start
+  (rtg.library): true colour on whatever panel the board has, drawn through
+  the chip's DMA and display controller - no bitplanes, copper or blitter.
+- **No BCPL legacy.** No BPTRs, no BSTRs, no 16-bit data: pointers are
+  pointers, strings are C strings, sizes are 32 or 64 bits wide.
+- **Packets are messages.** A dos packet is an exec message with typed
+  arguments, not a message pointing at a packet pointing back.
+- **Own load files.** Programs are ELF files turned into the system's own
+  `.seg` format by `elf2seg`, with only the relocations an address needs.
+- **Tag lists where there were accessors.** A RastPort is opaque and set
+  with `SetRPAttrs`; new libraries take tags rather than growing a call
+  for every field.
+- **New jobs get a new API.** Where this machine needs something the old
+  one did not - expansion.library describing a board, platform.resource
+  describing the chip - the calls are designed for that job, even where a
+  name is reused, instead of keeping inherited slots.
+- **Boards are data.** What is fitted and how it is wired is a tag list in
+  the ROM; a driver asks for its part at run time instead of assuming a
+  machine.
+- **Today's terminal.** The console speaks VT100 with the parts of xterm
+  programs expect, 256 colours included.
+- **Today's storage.** A log-structured file system for the on-board
+  flash, and FAT32 for SD cards, instead of floppy-era formats.
+- **Zig, with its safety checks.** The system is built in ReleaseSafe:
+  overflows, bad casts and out-of-range indices are caught instead of
+  corrupting memory, and the SDK is a Zig package.
 
 ## What is in it
 
