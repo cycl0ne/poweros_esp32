@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: MIT
+//! exec.library's jump table: libraries, lists, task switching and
+//! interrupts, memory, tasks and signals, messages and ports, semaphores,
+//! devices and I/O, and resident modules. New functions only ever go at
+//! the end, so a slot never moves.
+##include libs/exec/exec as exec
+##basetype ExecBase
+##name exec.library
+##bias 4
+##public
+// Libraries
+?*exec.Library MakeLibrary([*]const *const anyopaque vectors, usize count, usize data_size, ?exec.InitFn init, ?*anyopaque seg_list)
+void AddLibrary(*exec.Library library)
+?*anyopaque RemLibrary(*exec.Library library)
+?*exec.Library OpenLibrary([*:0]const u8 name, u32 version)
+void CloseLibrary(?*exec.Library library)
+*const anyopaque SetFunction(*exec.Library library, isize offset, *const anyopaque new)
+?*exec.Library CreateLibrary(*const exec.LibraryInit desc)
+// Lists, task switching
+?*exec.Node FindName(*exec.List list, [*:0]const u8 name)
+void Forbid()
+void Permit()
+void Insert(*exec.List list, *exec.Node node, ?*exec.Node pred)
+void AddHead(*exec.List list, *exec.Node node)
+void AddTail(*exec.List list, *exec.Node node)
+void Remove(*exec.Node node)
+?*exec.Node RemHead(*exec.List list)
+?*exec.Node RemTail(*exec.List list)
+void Enqueue(*exec.List list, *exec.Node node)
+void NewList(*exec.List list)
+// Memory
+?*exec.MemHeader CreateMemHeader(usize size, u32 attributes, i8 pri, *anyopaque base, ?[*:0]const u8 name)
+?*exec.MemHeader AddMemList(usize size, u32 attributes, i8 pri, *anyopaque base, ?[*:0]const u8 name)
+?*anyopaque Allocate(*exec.MemHeader mh, usize byte_size)
+void Deallocate(*exec.MemHeader mh, ?*anyopaque memory_block, usize byte_size)
+?*anyopaque AllocMem(usize byte_size, u32 requirements)
+void FreeMem(?*anyopaque memory_block, usize byte_size)
+usize AvailMem(u32 requirements)
+void AddMemHandler(*exec.Interrupt handler)
+void RemMemHandler(*exec.Interrupt handler)
+// Interrupts and alerts
+?*exec.Interrupt SetIntVector(u32 int_number, ?*exec.Interrupt interrupt)
+void AddIntServer(u32 int_number, *exec.Interrupt interrupt)
+void RemIntServer(u32 int_number, *exec.Interrupt interrupt)
+void Disable()
+void Enable()
+void Cause(*exec.Interrupt interrupt)
+void Alert(u32 alert_num)
+?exec.TrapFn SetTrapCode(?exec.TrapFn code, ?*anyopaque data)
+// Tasks and signals
+*exec.Task AddTask(*exec.Task task, exec.TaskFn init_pc, ?exec.TaskFn final_pc)
+void RemTask(?*exec.Task task)
+?*exec.Task FindTask(?[*:0]const u8 name)
+i8 SetTaskPri(*exec.Task task, i8 pri)
+void Signal(*exec.Task task, u32 signals)
+u32 Wait(u32 signal_set)
+u32 SetSignal(u32 new_signals, u32 signal_mask)
+i8 AllocSignal(i8 signal_num)
+void FreeSignal(i8 signal_num)
+?*exec.Task CreateTask([*:0]const u8 name, i8 pri, exec.TaskFn init_pc, usize stack_size)
+u32 SetExcept(u32 new_signals, u32 signal_set)
+// Messages and ports
+void PutMsg(*exec.MsgPort port, *exec.Message msg)
+?*exec.Message GetMsg(*exec.MsgPort port)
+void ReplyMsg(*exec.Message msg)
+*exec.Message WaitPort(*exec.MsgPort port)
+void AddPort(*exec.MsgPort port)
+void RemPort(*exec.MsgPort port)
+?*exec.MsgPort FindPort([*:0]const u8 name)
+?*exec.MsgPort CreateMsgPort()
+void DeleteMsgPort(?*exec.MsgPort port)
+// Semaphores
+void InitSemaphore(*exec.SignalSemaphore sem)
+void ObtainSemaphore(*exec.SignalSemaphore sem)
+void ReleaseSemaphore(*exec.SignalSemaphore sem)
+bool AttemptSemaphore(*exec.SignalSemaphore sem)
+void ObtainSemaphoreList(*exec.List list)
+void ReleaseSemaphoreList(*exec.List list)
+?*exec.SignalSemaphore FindSemaphore([*:0]const u8 name)
+void AddSemaphore(*exec.SignalSemaphore sem)
+void RemSemaphore(*exec.SignalSemaphore sem)
+void ObtainSemaphoreShared(*exec.SignalSemaphore sem)
+bool AttemptSemaphoreShared(*exec.SignalSemaphore sem)
+void Procure(*exec.SignalSemaphore sem, *exec.SemaphoreMessage bid)
+void Vacate(*exec.SignalSemaphore sem, *exec.SemaphoreMessage bid)
+// More memory
+?*anyopaque AllocVec(usize byte_size, u32 requirements)
+void FreeVec(?*anyopaque memory_block)
+void CopyMem(*const anyopaque source, *anyopaque dest, usize size)
+void CopyMemQuick(*const anyopaque source, *anyopaque dest, usize size)
+void SetMem(*anyopaque dest, u8 value, usize size)
+// Devices and I/O
+void AddDevice(*exec.Device dev)
+?*anyopaque RemDevice(*exec.Device dev)
+i32 OpenDevice([*:0]const u8 name, u32 unit, *exec.IORequest io, u32 flags)
+void CloseDevice(*exec.IORequest io)
+i32 DoIO(*exec.IORequest io)
+void SendIO(*exec.IORequest io)
+i32 WaitIO(*exec.IORequest io)
+void ReplyIO(*exec.IORequest io)
+?*exec.IORequest CheckIO(*exec.IORequest io)
+i32 AbortIO(*exec.IORequest io)
+// Resident modules
+?*const exec.Resident FindResident([*:0]const u8 name)
+?*anyopaque InitCode(u32 start_class, u32 version)
+?*anyopaque InitResident(*const exec.Resident tag, ?*anyopaque seg_list)
+// I/O requests
+?*exec.IORequest CreateIORequest(?*exec.MsgPort reply_port, u32 size)
+void DeleteIORequest(?*exec.IORequest io)
+// Formatting and raw I/O
+?*const anyopaque RawDoFmt([*:0]const u8 format_string, ?*const anyopaque data_stream, ?exec.PutChProc put_ch_proc, ?*anyopaque put_ch_data)
+void RawPutChar(u8 ch)
+i32 RawMayGetChar()
+void RawIOInit()
+// Resources, reboot
+void AddResource(*anyopaque resource)
+void RemResource(*anyopaque resource)
+?*anyopaque OpenResource([*:0]const u8 res_name)
+noreturn ColdReboot()
+// Caches
+void CacheClearU()
+void CacheClearE(*anyopaque address, u32 length, u32 caches)
+*anyopaque CachePreDMA(*anyopaque address, *u32 length, u32 flags)
+void CachePostDMA(*anyopaque address, *u32 length, u32 flags)
+// Stacks
+/// `code(arg)` on a stack of its own of
+/// `stack_size` bytes; its answer, or -1 without memory for the stack.
+i32 NewStackRun(exec.StackFn code, ?*anyopaque arg, u32 stack_size)
+// Loaded code
+/// Where `length` bytes at `address` can be run, i.e. the same
+/// memory on the instruction bus, or null when the CPU can't reach it there
+/// (only memory behind the caches has both views). Code written through the
+/// data bus needs CacheClearU before it is run.
+?*anyopaque CodeAddress(*anyopaque address, u32 length)
+// Looking at exec
+/// One of exec's own lists (EXECLIST_*), or null for a number it has not
+/// got. It is exec's list, not a copy: hold Forbid while walking it - or
+/// Disable for the two task queues, which the scheduler moves from
+/// interrupts - and write nothing into it. The header itself never moves,
+/// so the answer stays good for as long as exec does.
+?*exec.List ExecList(u32 which)
+/// What exec does when one interrupt number fires: the handler, the server
+/// chain and how often it has been dispatched. Null for a number this chip
+/// has not got. Read under Disable; the vector itself never moves.
+?*exec.IntVector IntVector(u32 int_number)
+/// The ROM tags of this image, in the order they were started, ending with
+/// a null. Null before the scan at boot has run. They are in the image and
+/// never move.
+?[*]const ?*const exec.Resident ResModules()
+// The loader
+/// Keep the loader's base for it. Whatever patches OpenLibrary has one
+/// pointer its replacement needs - the vectors it replaced, and where to
+/// send the work - and nowhere of its own to put it, since a module may
+/// keep nothing in its image and this base is opaque. exec holds it and
+/// never looks at what it points to. Null until something sets it.
+void SetRamLib(?*anyopaque base)
+/// What SetRamLib was given, or null.
+?*anyopaque RamLib()
+// Memory pools
+/// A pool to take many small blocks from, which come back together.
+/// `puddle_size` is how much the pool takes from the system at a time and
+/// `thresh_size` the request that gets memory of its own instead, or 0 for
+/// no threshold at all. Null if there is no memory. A pool made with MEMF_CLEAR clears every block it
+/// hands out, not only the first.
+?*anyopaque CreatePool(u32 requirements, usize puddle_size, usize thresh_size)
+/// Free everything a pool holds, and the pool with it. Null is ignored.
+void DeletePool(?*anyopaque pool)
+/// `byte_size` bytes from a pool. Null if there is no memory.
+?*anyopaque AllocPooled(?*anyopaque pool, usize byte_size)
+/// Give a block from AllocPooled back. `byte_size` must be what was asked
+/// for: a pooled block carries no header of its own, which is the point.
+void FreePooled(?*anyopaque pool, ?*anyopaque memory_block, usize byte_size)
+##end

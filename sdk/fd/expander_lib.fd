@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+//! expander.resource's functions: the board's IO expander - the pins the
+//! panel, the touch controller and the SD card are held by, the backlight
+//! and an analogue input. A resource: no Open or Close, its first function
+//! in the first slot. The base comes from OpenResource("expander.resource").
+##include resources/expander as expander
+##basetype ExpanderBase
+##name expander.resource
+##bias 0
+##public
+/// Take `pin` (0 to PIN_COUNT-1) for `name`, which is kept for the listing
+/// and must outlive the claim. False if the pin is out of range or someone
+/// else already holds it. A driver claims the pins it is going to drive so
+/// that two of them fighting over one is an error at claim time rather than
+/// a light that goes out when an unrelated card is initialised.
+bool ClaimPin(u32 pin, [*:0]const u8 name)
+/// Give `pin` back. Its level is left as it is.
+void ReleasePin(u32 pin)
+/// Who holds `pin`, or null if nobody does.
+?[*:0]const u8 PinOwner(u32 pin)
+/// Drive `pin` high or low. The pin becomes an output if it was not one,
+/// its value being written before the direction changes so that it never
+/// drives the wrong level first. False if the pin is out of range or the
+/// part does not answer.
+bool SetPin(u32 pin, bool high)
+/// What `pin` reads: 0 or 1, or -1 if the pin is out of range or the part
+/// does not answer.
+i32 GetPin(u32 pin)
+/// The backlight, BACKLIGHT_OFF (0) to BACKLIGHT_FULL (100). The register
+/// behind it counts the other way, which this hides. False if the part does
+/// not answer.
+bool SetBacklight(u32 percent)
+/// What SetBacklight was last given.
+u32 Backlight()
+/// The analogue input, 0 to 65535, or -1 if the part does not answer.
+i32 ReadADC()
+##end

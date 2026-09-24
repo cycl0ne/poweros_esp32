@@ -1,0 +1,253 @@
+// SPDX-License-Identifier: MIT
+//! intuition.library's functions. So far the object system: classes made
+//! and freed, objects made from them, and messages sent to those objects.
+//! Every object's class is a Hook that is handed each message; a class
+//! passes what it does not handle on to the class it was made from, up to
+//! rootclass. Open it with OpenLibrary("intuition.library", 0).
+##include libs/exec/exec as exec
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/intuition/intuition as intuition
+##basetype IntuitionBase
+##name intuition.library
+##bias 4
+##public
+/// A new class made from a superclass, named `class_id`, or private when
+/// that is null. The superclass is the public one named `super_id`, or
+/// else `super_class`; only rootclass has neither. Null if the name is
+/// taken, the superclass is not found, or there is no memory. The class
+/// comes back with a dispatcher that answers 0 to everything and off the
+/// public list: set its dispatcher, then AddClass it if it is public.
+?*intuition.Class MakeClass(?[*:0]const u8 class_id, ?[*:0]const u8 super_id, ?*intuition.Class super_class, u32 inst_size)
+/// Take a class off the public list and free it. False, with the class
+/// off the list and still there, while it has objects or subclasses. Null
+/// is true.
+bool FreeClass(?*intuition.Class cl)
+/// Put a named class on the public list. A private one, or one already
+/// there, is left alone.
+void AddClass(*intuition.Class cl)
+/// Take a class off the public list. One not on it is left alone.
+void RemoveClass(*intuition.Class cl)
+/// The public class of that name, or null.
+?*intuition.Class FindClass([*:0]const u8 class_id)
+/// Hold the public class list, and answer it. Nothing is added to it or
+/// taken off it until UnlockClassList.
+*exec.MinList LockClassList()
+/// Let the public class list go again.
+void UnlockClassList()
+/// A new object of the class `cl`, or of the public class named
+/// `class_id` when `cl` is null, with `tags` as its first attributes.
+/// Null if there is no such class, or it would not make one.
+?*intuition.Object NewObjectTagList(?*intuition.Class cl, ?[*:0]const u8 class_id, ?[*]const utility.TagItem tags)
+/// Free an object, and what its classes had it hold. Null does nothing.
+void DisposeObject(?*intuition.Object object)
+/// Change an object's attributes. Nonzero when something that shows
+/// changed, as its class decides.
+u32 SetAttrsTagList(?*intuition.Object object, ?[*]const utility.TagItem tags)
+/// Read one attribute into `storage`. 0 when its class does not know it.
+u32 GetAttr(utility.Tag attr_id, ?*intuition.Object object, *usize storage)
+/// The next object on a list of objects (OM_ADDTAIL), from a node pointer
+/// that starts at the list's head and is moved along. Null at the end.
+?*intuition.Object NextObject(*?*exec.MinNode state)
+/// Send a message to an object, to be handled by its own class. 0 for a
+/// null object; otherwise whatever the class answers.
+usize SendMessage(?*intuition.Object object, *intuition.Msg msg)
+/// Send a message to an object as `cl`'s superclass would handle it: how
+/// a dispatcher passes on what it does not handle itself.
+usize SendSuperMessage(*intuition.Class cl, ?*intuition.Object object, *intuition.Msg msg)
+/// Send a message to an object as `cl` would handle it, whatever the
+/// object's own class is.
+usize CoerceMessage(*intuition.Class cl, ?*intuition.Object object, *intuition.Msg msg)
+/// Draw an image at (left, top) in the RastPort, added to the image's own
+/// left and top: IM_DRAW in the normal state. Null does nothing.
+void DrawImage(*graphics.RastPort rp, ?*intuition.Object image, i32 left, i32 top)
+/// The same in a state (IDS_), with a screen's pens where the image wants
+/// them (may be null).
+void DrawImageState(*graphics.RastPort rp, ?*intuition.Object image, i32 left, i32 top, u32 state, ?*intuition.imageclass.DrawInfo draw_info)
+/// Clear what an image covers at (left, top): IM_ERASE. Null does nothing.
+void EraseImage(*graphics.RastPort rp, ?*intuition.Object image, i32 left, i32 top)
+/// Whether a point is in an image, in the coordinates of its left and top:
+/// IM_HITTEST. A null image contains every point.
+bool PointInImage(i32 x, i32 y, ?*intuition.Object image)
+/// A screen on a display: its whole size, its own buffer, a title bar and
+/// the pens and font its parts are drawn in (SA_ tags). Null, with the
+/// reason in SA_ErrorCode, when there is no display, the display already
+/// shows a screen, the public name is taken, or there is no memory.
+?*intuition.Screen OpenScreenTagList(?[*]const utility.TagItem tags)
+/// Close a screen. False, and it stays open, while a public screen is
+/// locked by anyone. Null is true.
+bool CloseScreen(?*intuition.Screen screen)
+/// Read a screen: each tag's data is a *usize the value is written to.
+void GetScreenAttrs(*intuition.Screen screen, ?[*]const utility.TagItem tags)
+/// Bring a screen in front of the others on its display. A display shows
+/// one screen, so there is nothing to change yet.
+void ScreenToFront(*intuition.Screen screen)
+/// Put a screen behind the others on its display. The same.
+void ScreenToBack(*intuition.Screen screen)
+/// The pens and font a screen's parts are drawn in. Give it back with
+/// FreeScreenDrawInfo.
+*intuition.DrawInfo GetScreenDrawInfo(*intuition.Screen screen)
+/// Give back what GetScreenDrawInfo handed out. Null does nothing.
+void FreeScreenDrawInfo(*intuition.Screen screen, ?*intuition.DrawInfo draw_info)
+/// A public screen by name, kept open until UnlockPubScreen. Null names
+/// the default public screen, which is opened if it is not open yet.
+/// Null if there is no such screen.
+?*intuition.Screen LockPubScreen(?[*:0]const u8 name)
+/// Let a locked public screen go: `screen` if given, else the one named.
+void UnlockPubScreen(?[*:0]const u8 name, ?*intuition.Screen screen)
+/// A window on a screen (WA_ tags): a layer with a border, and a message
+/// port when WA_IDCMP asks for one. Null if there is no screen to open it
+/// on, or no memory.
+?*intuition.Window OpenWindowTagList(?[*]const utility.TagItem tags)
+/// Close a window: its layer, its border, and its port with any messages
+/// still waiting on it. Null does nothing.
+void CloseWindow(?*intuition.Window window)
+/// Read a window: each tag's data is a *usize the value is written to.
+void GetWindowAttrs(*intuition.Window window, ?[*]const utility.TagItem tags)
+/// Move a window by (dx, dy), kept on its screen.
+void MoveWindow(*intuition.Window window, i32 dx, i32 dy)
+/// Size a window by (dw, dh), kept within its limits and its screen.
+void SizeWindow(*intuition.Window window, i32 dw, i32 dh)
+/// Move and size a window at once, to an absolute box.
+void ChangeWindowBox(*intuition.Window window, i32 left, i32 top, i32 width, i32 height)
+/// Bring a window in front of the others on its screen.
+void WindowToFront(*intuition.Window window)
+/// Put a window behind the others on its screen.
+void WindowToBack(*intuition.Window window)
+/// Make a window the active one: its border is drawn in the fill pen, and
+/// the one it takes over from is told.
+void ActivateWindow(*intuition.Window window)
+/// Change which IDCMP classes a window is told about. 0 takes its port
+/// away; from 0, it gets one. False if a port could not be made.
+bool ModifyIDCMP(*intuition.Window window, u32 flags)
+/// Begin redrawing what IDCMP_REFRESHWINDOW reported: until EndRefresh,
+/// drawing reaches only the part that needs it.
+void BeginRefresh(*intuition.Window window)
+/// End it. `complete` false keeps the damage for another BeginRefresh.
+void EndRefresh(*intuition.Window window, bool complete)
+/// Draw a window's border again.
+void RefreshWindowFrame(*intuition.Window window)
+/// Put `count` gadgets (-1: all, following their links) into a window's
+/// list after `position` of its own (-1: at the end). Answers where they
+/// went. Nothing is drawn: RefreshGList does that.
+u32 AddGList(*intuition.Window window, *intuition.Object gadget, i32 position, i32 count)
+/// Take `count` gadgets (-1: the rest of the list) out of a window, from
+/// `gadget` on. Answers the position it had, or -1 if it was not there.
+i32 RemoveGList(*intuition.Window window, *intuition.Object gadget, i32 count)
+/// Draw `count` gadgets of a window (-1: the rest of the list) from
+/// `gadget` on.
+void RefreshGList(*intuition.Object gadget, *intuition.Window window, i32 count)
+/// OM_SET on a gadget, told its window so it can show the change. Answers
+/// what OM_SET answered.
+usize SetGadgetAttrsTagList(*intuition.Object gadget, ?*intuition.Window window, ?[*]const utility.TagItem tags)
+/// The RastPort of a gadget's window, its layer held, for drawing; null
+/// for a null GadgetInfo. Give it back with ReleaseGIRPort.
+?*graphics.RastPort ObtainGIRPort(?*intuition.GadgetInfo gadget_info)
+/// Give back what ObtainGIRPort lent.
+void ReleaseGIRPort(?*graphics.RastPort rp)
+/// Draw a run of text and every run linked after it, at (left, top) added
+/// to each run's own place, in its pens, draw mode and font. The
+/// RastPort keeps its own pens, mode and font. Null does nothing.
+void PrintIText(*graphics.RastPort rp, ?*const intuition.IntuiText itext, i32 left, i32 top)
+/// Draw a line through a Border's points and every Border linked after
+/// it, at (left, top) added to each one's own place, in its pens and draw
+/// mode. The RastPort keeps its own. Null does nothing.
+void DrawBorder(*graphics.RastPort rp, ?*const intuition.Border border, i32 left, i32 top)
+/// How wide one run of text is in pixels, in its own font or, without
+/// one, in the font a screen has when it is given none. The runs linked
+/// after it are not counted.
+i32 IntuiTextLength(*const intuition.IntuiText itext)
+/// Hold the screens, their windows and which one is active, so that
+/// several reads of them agree. Answers what to hand to UnlockIBase.
+u32 LockIBase(u32 lock_number)
+/// Let go what LockIBase took.
+void UnlockIBase(u32 lock_number)
+/// Flip a window to its other box and back: the one WA_Zoom gave it, or
+/// its smallest or largest size, as its zoom gadget does.
+void ZipWindow(*intuition.Window window)
+/// Change a window's title and the screen title it shows while active.
+/// TITLE_UNCHANGED leaves either as it is; null clears it.
+void SetWindowTitles(*intuition.Window window, ?[*:0]const u8 window_title, ?[*:0]const u8 screen_title)
+/// Set the smallest and largest a window may be sized to. 0 leaves a limit
+/// as it is and a negative maximum is the screen's size. False, with the
+/// others taken, when a limit would not fit the size it has now.
+bool WindowLimits(*intuition.Window window, i32 min_width, i32 min_height, i32 max_width, i32 max_height)
+/// Let a gadget be pressed again, and show it so: one of the window's own,
+/// or with `requester` one of that requester's.
+void OnGadget(*intuition.Object gadget, *intuition.Window window, ?*intuition.Requester requester)
+/// Keep a gadget from being pressed, and show it so: one of the window's
+/// own, or with `requester` one of that requester's.
+void OffGadget(*intuition.Object gadget, *intuition.Window window, ?*intuition.Requester requester)
+/// Ask something and wait for the answer: a requester window with the
+/// message and its buttons (EasyStruct), formatted from `args`, on the
+/// window's screen or the default public one. 1, 2, ... for the buttons
+/// from the left and 0 for the rightmost; -1 when one of `*idcmp_ptr`'s
+/// classes arrived, with the class written back there.
+i32 EasyRequestArgs(?*intuition.Window window, *const intuition.EasyStruct easy_struct, ?*u32 idcmp_ptr, ?*const anyopaque args)
+/// The same requester, opened and handed back to be answered with
+/// SysReqHandler and closed with FreeSysRequest. Null when it could not be
+/// made; a process's IoErr then says why.
+?*intuition.Window BuildEasyRequestArgs(?*intuition.Window window, *const intuition.EasyStruct easy_struct, u32 idcmp, ?*const anyopaque args)
+/// Read what arrived at a requester: a button's answer, -1 for one of the
+/// caller's IDCMP classes, or -2 when nothing answered it. With
+/// `wait_input` it waits for something first. Null answers 0.
+i32 SysReqHandler(?*intuition.Window window, ?*u32 idcmp_ptr, bool wait_input)
+/// Close a requester BuildEasyRequestArgs opened, and free what it made.
+/// Null does nothing.
+void FreeSysRequest(?*intuition.Window window)
+/// Give a window its menus: a strip of Menus the program keeps, laid out
+/// here from the items it holds. Always true.
+bool SetMenuStrip(*intuition.Window window, *intuition.Menu menu_strip)
+/// Take a window's menus away, before the strip is changed or freed and
+/// before the window closes.
+void ClearMenuStrip(*intuition.Window window)
+/// Give a window back the strip it had, changed only in which items are
+/// checked or enabled, without laying it out again. Always true.
+bool ResetMenuStrip(*intuition.Window window, *intuition.Menu menu_strip)
+/// The item or subitem a menu number names in a strip, or null for a
+/// number that names only a title, or none.
+?*intuition.MenuItem ItemAddress(?*intuition.Menu menu_strip, u32 menu_number)
+/// Let a menu, an item or a subitem be picked again, by its menu number.
+void OnMenu(*intuition.Window window, u32 menu_number)
+/// Keep a menu, an item or a subitem from being picked, by its menu
+/// number: it is shown ghosted.
+void OffMenu(*intuition.Window window, u32 menu_number)
+/// Make the menu button in one window show another window's menus, as
+/// though that window were active; null undoes it.
+void LendMenus(*intuition.Window from_window, ?*intuition.Window to_window)
+/// Give a gadget of the active window the input without it being pressed,
+/// as a click would: a line of text takes the keys at once. False when
+/// the window is not active, something else has the input, or the gadget
+/// declines. With a requester up only its gadgets may be, and `requester`
+/// names it.
+bool ActivateGadget(*intuition.Object gadget, *intuition.Window window, ?*intuition.Requester requester)
+/// Send a gadget a method with a GadgetInfo for its window filled in, so
+/// it can draw or lay itself out - measured in `requester` for one of its
+/// gadgets. What the method answers.
+usize DoGadgetMethodA(*intuition.Object gadget, ?*intuition.Window window, ?*intuition.Requester requester, *intuition.Msg message)
+/// Clear a Requester to be filled in.
+void InitRequester(*intuition.Requester requester)
+/// Put a requester up in a window: in front of it, its gadgets the only
+/// ones pressed until it comes down. The window gets IDCMP_REQSET. False
+/// when there was no memory for it.
+bool Request(*intuition.Requester requester, *intuition.Window window)
+/// Take a requester down, wherever it is in the window's stack. The window
+/// gets IDCMP_REQCLEAR.
+void EndRequest(*intuition.Requester requester, *intuition.Window window)
+/// The requester a double-click of the menu button puts up in the window.
+/// False, and nothing changed, while the one it has is up.
+bool SetDMRequest(*intuition.Window window, *intuition.Requester requester)
+/// No double-click requester any more. False while the one it has is up.
+bool ClearDMRequest(*intuition.Window window)
+/// Ask with two buttons made from IntuiTexts and wait - the texts and the
+/// IDCMP classes that answer it in SYSREQ_ tags: true for the left button
+/// or a class of SYSREQ_PositiveFlags, false for the right one, a class of
+/// SYSREQ_NegativeFlags, or when it could not be made.
+bool AutoRequestTagList(?*intuition.Window window, ?[*]const utility.TagItem tags)
+/// The requester AutoRequestTagList waits on, opened and handed back to be
+/// answered with SysReqHandler and closed with FreeSysRequest: 1 for the
+/// left button, 0 for the right. Null when it could not be made.
+?*intuition.Window BuildSysRequestTagList(?*intuition.Window window, ?[*]const utility.TagItem tags)
+/// Whether two moments are close enough together to be a double-click.
+bool DoubleClick(u32 start_seconds, u32 start_micros, u32 current_seconds, u32 current_micros)
+##end

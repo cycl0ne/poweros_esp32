@@ -1,0 +1,457 @@
+// SPDX-License-Identifier: MIT
+//! dos.library's functions: packets, dos objects, IoErr and processes,
+//! the device list, paths, segments, locks, dates, files, examining, the
+//! CLI, assigns, pattern searches, buffered I/O, argument parsing, faults,
+//! variables and loading code. The functions come in the order they were
+//! written.
+##include libs/exec/exec as exec
+##include libs/dos/dos as dos
+##include libs/utility/utility as utility
+##basetype DosBase
+##name dos.library
+##bias 4
+##public
+// Packets
+/// Send a packet (action, up to five arguments) to the handler at `port`
+/// and wait for it to come back. Returns dp_Res1; a process gets dp_Res2
+/// from IoErr(). Works from a plain task too, with a port of its own for
+/// the reply. Other packets that come back meanwhile are kept for the
+/// caller.
+isize DoPkt(*exec.MsgPort port, i32 action, isize arg1, isize arg2, isize arg3, isize arg4, isize arg5)
+/// Send a packet to `port` without waiting; it comes back to `reply_port`
+/// (your process's msg_port, to get it with WaitPkt). Callable from tasks.
+void SendPkt(*dos.DosPacket packet, *exec.MsgPort port, *exec.MsgPort reply_port)
+/// Wait for a packet at your process's msg_port (through pr_PktWait if
+/// set) and take it off the port. Null from a plain task.
+?*dos.DosPacket WaitPkt()
+/// Send a packet back to its sender with res1 and res2. Its dp_Port becomes
+/// your msg_port, so a ReplyPkt from there returns it to you. Null does
+/// nothing.
+void ReplyPkt(?*dos.DosPacket packet, isize res1, i32 res2)
+/// Ask for a packet sent with SendPkt to be aborted. Does nothing: wait
+/// for the packet to come back all the same.
+void AbortPkt(*exec.MsgPort port, *dos.DosPacket packet)
+// Dos objects
+/// A dos object of `obj_type` (DOS_*): so far DOS_STDPKT, a cleared
+/// DosPacket. Null for no memory (ERROR_NO_FREE_STORE), a type not done
+/// yet (ERROR_NOT_IMPLEMENTED) or an unknown one.
+?*anyopaque AllocDosObject(u32 obj_type, ?[*]const utility.TagItem tags)
+/// Free an object from AllocDosObject, given its type. Null does nothing.
+void FreeDosObject(u32 obj_type, ?*anyopaque ptr)
+// Errors
+/// The secondary result of the last dos call (pr_Result2);
+/// ERROR_NO_PROCESS from a plain task.
+i32 IoErr()
+/// Set what IoErr() returns, and return the old value (0 from a task).
+i32 SetIoErr(i32 code)
+// Processes
+/// Start a process: NP_Entry (required), NP_Name, NP_StackSize,
+/// NP_Priority, NP_ConsoleTask, NP_WindowPtr. Null on failure; IoErr()
+/// says why.
+?*dos.Process CreateNewProc(?[*]const utility.TagItem tags)
+// The device list
+/// Lock the device list (LDF_ALL, or some of LDF_DEVICES, LDF_VOLUMES,
+/// LDF_ASSIGNS) and/or LDF_ENTRY, LDF_DELETE, with exactly one of LDF_READ
+/// and LDF_WRITE. Returns the start for FindDosEntry and NextDosEntry;
+/// null for bad flags. Handlers must not LDF_WRITE it (use
+/// AttemptLockDosList).
+?*dos.DosList LockDosList(u32 flags)
+/// Unlock what LockDosList locked, with the same flags.
+void UnLockDosList(u32 flags)
+/// LockDosList without waiting: null if it can't have it at once.
+?*dos.DosList AttemptLockDosList(u32 flags)
+/// Add a node (from MakeDosEntry). False and ERROR_OBJECT_EXISTS if a node
+/// of the name is there: a volume only shadows a device or assign, or a
+/// volume with another date.
+bool AddDosEntry(*dos.DosList dlist)
+/// Take a node off the list (the caller holds it with LDF_WRITE); it is
+/// not freed. False if it isn't on the list.
+bool RemDosEntry(*dos.DosList dlist)
+/// The first node from `dlist` on of the types in `flags` (LDF_DEVICES,
+/// ...) with that name (without colon, any case; null: any name). The
+/// list must be locked.
+?*dos.DosList FindDosEntry(*dos.DosList dlist, ?[*:0]const u8 name, u32 flags)
+/// The node after `dlist` of the types in `flags`. The list must be locked.
+?*dos.DosList NextDosEntry(*dos.DosList dlist, u32 flags)
+/// A cleared node of type `dlt` (DLT_*) with a copy of the name (without
+/// colon), not yet on the list. Null for no memory.
+?*dos.DosList MakeDosEntry([*:0]const u8 name, i32 dlt)
+/// Free a node from MakeDosEntry (off the list). Null does nothing.
+void FreeDosEntry(?*dos.DosList dlist)
+// Handlers
+/// The handler for a name ("NIL:", "DF0:file", "CONSOLE:", or a path
+/// without device for the current file system), starting a device's
+/// handler if it isn't running. With the previous DevProc of a
+/// multi-assign, the next directory. Null on failure; IoErr() says why.
+/// Free it with FreeDeviceProc.
+?*dos.DevProc GetDeviceProc([*:0]const u8 name, ?*dos.DevProc olddp)
+/// Free a DevProc from GetDeviceProc. Null does nothing.
+void FreeDeviceProc(?*dos.DevProc dp)
+// Paths
+/// Add `filename` to the path in `dirname` (a buffer of `size` bytes), with
+/// a "/" if needed. A name with a colon replaces the path; one starting
+/// with ":" goes after the path's device. False and ERROR_LINE_TOO_LONG if
+/// it wouldn't fit; `dirname` is then unchanged.
+bool AddPart([*:0]u8 dirname, [*:0]const u8 filename, u32 size)
+/// The last component of a path: "xxx:yyy/zzz/qqq" gives "qqq", "xxx:yyy"
+/// gives "yyy". Points into `name`.
+[*:0]const u8 FilePart([*:0]const u8 name)
+/// Where the next-to-last component ends: "xxx:yyy/zzz/qqq" gives "/qqq",
+/// "xxx:yyy" gives "yyy". A slash after a slash or a colon stays in the
+/// path (a way up). Points into `name`.
+[*:0]const u8 PathPart([*:0]const u8 name)
+/// Copy the part of `name` from `oldpos` to `separator` into `buf` (at most
+/// size-1 characters and a NUL). Returns the position after the separator
+/// for the next call, or -1 for the last part.
+i32 SplitName([*:0]const u8 name, u8 separator, [*]u8 buf, i32 oldpos, u32 size)
+/// Split a path: "DEV:rest" is absolute (volume "DEV"), ":rest" from the
+/// current volume's root, anything else relative. False and
+/// ERROR_INVALID_COMPONENT_NAME for a device name over 30 characters.
+bool ParsePath([*:0]const u8 name, *dos.ParsedPath parsed)
+// Resident segments
+/// Add named code to dos's resident segments; `seg_type` is its seg_UC
+/// (CMD_SYSTEM for system code, 0 for a user command nobody uses yet).
+/// Names already there aren't checked. False and ERROR_NO_FREE_STORE for no
+/// memory. Not while holding LockSegmentList.
+bool AddSegment([*:0]const u8 name, ?*const dos.SegCode code, i32 seg_type)
+/// The next segment after `start` (null: from the first) with that name,
+/// in any case: with `system` one of the system's (seg_UC below 0), else a
+/// user segment (0 and up). The list must be locked (LockSegmentList);
+/// raise seg_UC under that lock while you use a user segment, and lower it
+/// when done. Null and ERROR_OBJECT_NOT_FOUND if there is none.
+?*dos.Segment FindSegment([*:0]const u8 name, ?*dos.Segment start, bool system)
+/// Take a segment off the list and free it: only a user segment nobody
+/// uses (seg_UC 0). False and ERROR_OBJECT_IN_USE otherwise, or
+/// ERROR_OBJECT_NOT_FOUND if it isn't on the list. Not while holding
+/// LockSegmentList.
+bool RemSegment(*dos.Segment seg)
+/// Lock the resident segments, shared or exclusive; returns the first.
+?*dos.Segment LockSegmentList(bool shared)
+/// Unlock the resident segments.
+void UnLockSegmentList()
+// Locks
+/// A lock on a file or directory, SHARED_LOCK or EXCLUSIVE_LOCK: the name's
+/// handler (GetDeviceProc) is asked with ACTION_LOCATE_OBJECT, and along a
+/// multi-assign while the object isn't found. A name without a device is
+/// from the current directory. Null on failure; IoErr() says why.
+?*dos.FileLock Lock([*:0]const u8 name, i32 mode)
+/// Give a lock back to its handler (ACTION_FREE_LOCK). Null does nothing;
+/// IoErr() stays as it was.
+void UnLock(?*dos.FileLock lock)
+/// Another shared lock on the same object (ACTION_COPY_DIR). DupLock(null)
+/// is null.
+?*dos.FileLock DupLock(?*dos.FileLock lock)
+/// A lock on the directory the object is in (ACTION_PARENT); null at the
+/// root (IoErr() 0) or on failure. Null asks the current file system.
+?*dos.FileLock ParentDir(?*dos.FileLock lock)
+/// LOCK_SAME if both lock the same object, LOCK_SAME_VOLUME if only the
+/// volume is the same, LOCK_DIFFERENT otherwise (also for null).
+i32 SameLock(?*dos.FileLock lock1, ?*dos.FileLock lock2)
+/// Make `lock` the process's current directory (null: the file system's
+/// root) and return the old one. Neither is duplicated or unlocked: the
+/// caller owns both. Null from a plain task, which has none.
+?*dos.FileLock CurrentDir(?*dos.FileLock lock)
+/// Make a directory (ACTION_CREATE_DIR) and return an exclusive lock on it.
+?*dos.FileLock CreateDir([*:0]const u8 name)
+/// Delete a file or an empty directory (ACTION_DELETE_OBJECT).
+bool DeleteFile([*:0]const u8 name)
+// Dates
+/// The time now as a DateStamp (days since 1 Jan 1978, minutes past
+/// midnight, ticks of 1/50 s past the minute), from timer.device; all zero
+/// without it. Returns `date`.
+*dos.DateStamp DateStamp(*dos.DateStamp date)
+/// Which of two DateStamps is earlier: negative when `date1` is, zero when
+/// they are the same, positive when `date2` is.
+i32 CompareDates(*const dos.DateStamp date1, *const dos.DateStamp date2)
+/// A DateStamp into the strings of a DateTime (sdk/libs/dos/datetime.zig):
+/// dat_StrDay the weekday, dat_StrDate the date in dat_Format, dat_StrTime
+/// "hh:mm:ss"; a null buffer is skipped. With DTF_SUBST and FORMAT_DOS the
+/// date of the last week or the next day comes out as "Today",
+/// "Yesterday", "Tomorrow", "Future" or a weekday name. False on a
+/// DateStamp that is no date. Each buffer holds LEN_DATSTRING bytes.
+bool DateToStr(*dos.DateTime datetime)
+/// The strings of a DateTime into its DateStamp: dat_StrDate the date, in
+/// dat_Format or as "Today", "Monday", ...; dat_StrTime "hh:mm[:ss]". A
+/// null string leaves that part of the stamp alone. DTF_FUTURE reads a
+/// weekday name as the coming one. False when a string is no date.
+bool StrToDate(*dos.DateTime datetime)
+// Files, unbuffered: one packet per call
+/// Open a file: MODE_OLDFILE (an existing one), MODE_NEWFILE (a new one, or
+/// an existing one emptied), MODE_READWRITE (an existing one, or a new one,
+/// shared). "*" is the console (NIL: without one). Null on failure; IoErr()
+/// says why.
+?*dos.FileHandle Open([*:0]const u8 name, i32 mode)
+/// Close a file (ACTION_END) and free the handle, even when that fails.
+/// Close each file once. False for null or when the handler says so.
+bool Close(?*dos.FileHandle file)
+/// Read up to `length` bytes: the number read, 0 at the end, -1 on error.
+isize Read(?*dos.FileHandle file, [*]u8 buffer, isize length)
+/// Write `length` bytes: the number written, -1 on error.
+isize Write(?*dos.FileHandle file, [*]const u8 buffer, isize length)
+/// Move to `position` from OFFSET_BEGINNING, OFFSET_CURRENT or OFFSET_END:
+/// the old position, -1 on error. Not past the end.
+isize Seek(?*dos.FileHandle file, isize position, i32 mode)
+/// The process's input (pr_CIS); don't close it. Null from a plain task.
+?*dos.FileHandle Input()
+/// The process's output (pr_COS); don't close it. Null from a plain task.
+?*dos.FileHandle Output()
+/// Make `file` the process's input; returns the old one.
+?*dos.FileHandle SelectInput(?*dos.FileHandle file)
+/// Make `file` the process's output; returns the old one.
+?*dos.FileHandle SelectOutput(?*dos.FileHandle file)
+/// Whether the file is a console (a virtual terminal).
+bool IsInteractive(?*dos.FileHandle file)
+// Examining
+/// Fill in the FileInfoBlock about the lock's object (lock 0: the current
+/// file system's root). Examine a directory before ExNext with the same
+/// FIB.
+bool Examine(?*dos.FileLock lock, *dos.FileInfoBlock fib)
+/// The next entry of the directory Examine was called on, with the same
+/// lock and FIB. False at the end (IoErr() ERROR_NO_MORE_ENTRIES) or on
+/// error; not for lock 0.
+bool ExNext(?*dos.FileLock lock, *dos.FileInfoBlock fib)
+/// Fill in the FileInfoBlock about an open file.
+bool ExamineFH(?*dos.FileHandle file, *dos.FileInfoBlock fib)
+/// Several entries of a directory into `buffer` as ExAllData records of
+/// level `data_type` (ED_NAME .. ED_OWNER); `control` (AllocDosObject,
+/// last_key 0) keeps the place. True: call again (control.entries may be
+/// 0); false: done (IoErr() ERROR_NO_MORE_ENTRIES) or failed. dos does it
+/// with Examine/ExNext for handlers that don't know EXAMINE_ALL.
+bool ExAll(?*dos.FileLock lock, [*]u8 buffer, isize size, i32 data_type, *dos.ExAllControl control)
+/// Stop an ExAll before it is done, with the same arguments.
+void ExAllEnd(?*dos.FileLock lock, [*]u8 buffer, isize size, i32 data_type, *dos.ExAllControl control)
+// The process's context
+/// The process's CommandLineInterface; null when it isn't a CLI, or for a
+/// plain task.
+?*dos.CommandLineInterface Cli()
+/// Make `file` the error stream (pr_CES; null: none, use Output()) and
+/// return the old one.
+?*dos.FileHandle SelectError(?*dos.FileHandle file)
+/// The error stream (pr_CES), null if none is set.
+?*dos.FileHandle ErrorOutput()
+/// The console handler's port (pr_ConsoleTask), for "*" and CONSOLE:.
+?*exec.MsgPort GetConsoleTask()
+/// Set pr_ConsoleTask; returns the old one.
+?*exec.MsgPort SetConsoleTask(?*exec.MsgPort port)
+/// The default file system's port (pr_FileSystemTask), for lock 0.
+?*exec.MsgPort GetFileSysTask()
+/// Set pr_FileSystemTask; returns the old one.
+?*exec.MsgPort SetFileSysTask(?*exec.MsgPort port)
+/// The program's directory (pr_HomeDir, PROGDIR:); don't UnLock it.
+?*dos.FileLock GetProgramDir()
+/// Set pr_HomeDir; returns the old lock, the caller's to UnLock.
+?*dos.FileLock SetProgramDir(?*dos.FileLock lock)
+/// The CLI's command name. False without a CLI, or if it doesn't fit
+/// (IoErr() ERROR_LINE_TOO_LONG; nothing changes).
+bool SetProgramName([*:0]const u8 name)
+/// The CLI's command name into `buffer`. False without a CLI, or cut to
+/// fit (IoErr() ERROR_LINE_TOO_LONG).
+bool GetProgramName([*]u8 buffer, u32 size)
+/// The CLI's prompt, as SetProgramName.
+bool SetPrompt([*:0]const u8 name)
+/// The CLI's prompt, as GetProgramName.
+bool GetPrompt([*]u8 buffer, u32 size)
+/// The CLI's name for its current directory, as SetProgramName (dos
+/// doesn't check it against the current directory).
+bool SetCurrentDirName([*:0]const u8 name)
+/// The CLI's name for its current directory, as GetProgramName; without a
+/// CLI, NameFromLock of the current directory.
+bool GetCurrentDirName([*]u8 buffer, u32 size)
+/// The full name of a lock's object ("Ram Disk:d/file"; lock 0: the file
+/// system's root). False on error or if it doesn't fit (IoErr()
+/// ERROR_LINE_TOO_LONG), with an empty buffer.
+bool NameFromLock(?*dos.FileLock lock, [*]u8 buffer, u32 size)
+// Assigns
+/// Make `name` (without the colon, up to 30 characters) an assign to the
+/// directory `lock`, which dos keeps; on failure it stays yours. An assign
+/// of that name is replaced and its locks unlocked; a null lock removes
+/// it. A device's or volume's name is ERROR_OBJECT_EXISTS.
+bool AssignLock([*:0]const u8 name, ?*dos.FileLock lock)
+/// A late-binding assign: `path` is locked the first time the assign is
+/// used, and from then on it is an assign to that directory.
+bool AssignLate([*:0]const u8 name, [*:0]const u8 path)
+/// A non-binding assign: `path` is locked each time the assign is used.
+bool AssignPath([*:0]const u8 name, [*:0]const u8 path)
+/// Add a directory after the others of the assign `name` (a plain one,
+/// not late or non-binding); dos keeps the lock.
+bool AssignAdd([*:0]const u8 name, *dos.FileLock lock)
+/// Remove the directory that SameLock finds the same as `lock` from the
+/// assign `name`, the first one too (the next moves up; the last takes
+/// the assign with it). `lock` stays yours.
+bool RemAssignList([*:0]const u8 name, *dos.FileLock lock)
+// Pattern searches
+/// The first object a pattern names ("RAM:d/#?.txt": utility.library's
+/// patterns, the device part literal): in anchor.info, and its full path
+/// in the anchor.strlen bytes after the AnchorPath when strlen isn't 0.
+/// 0, or an error (ERROR_NO_MORE_ENTRIES for none; also in IoErr()). "*"
+/// and handlers that aren't file systems give one entry, the name itself.
+i32 MatchFirst([*:0]const u8 pattern, *dos.AnchorPath anchor)
+/// The next object, as MatchFirst. Set APF_DODIR first to go into the
+/// directory just found; it comes again with APF_DIDDIR when it is done.
+/// Any error but ERROR_BUFFER_OVERFLOW ends the search.
+i32 MatchNext(*dos.AnchorPath anchor)
+/// Free what MatchFirst and MatchNext hold.
+void MatchEnd(*dos.AnchorPath anchor)
+// Changing objects
+/// Rename or move `from` to `to` on the same volume ("RAM:a" to
+/// "RAM:d/b"): ERROR_RENAME_ACROSS_DEVICES for another handler,
+/// ERROR_OBJECT_EXISTS if `to` is there.
+bool Rename([*:0]const u8 from, [*:0]const u8 to)
+/// Set the protection bits (FIBF_*; the low four are set to forbid).
+bool SetProtection([*:0]const u8 name, u32 bits)
+/// Set the comment: at most 79 characters, "" removes it.
+bool SetComment([*:0]const u8 name, [*:0]const u8 comment)
+/// Set the date (DateStamp()'s, say).
+bool SetFileDate([*:0]const u8 name, *const dos.DateStamp date)
+/// Set the owner: user << 16 | group.
+bool SetOwner([*:0]const u8 name, u32 owner_info)
+/// Cut or grow an open file to `offset` from OFFSET_BEGINNING,
+/// OFFSET_CURRENT or OFFSET_END; new bytes are 0. The new size, or -1.
+isize SetFileSize(?*dos.FileHandle file, isize offset, i32 mode)
+/// A shared lock on an open file.
+?*dos.FileLock DupLockFromFH(?*dos.FileHandle file)
+/// A shared lock on the directory an open file is in.
+?*dos.FileLock ParentOfFH(?*dos.FileHandle file)
+/// The full name of an open file, as NameFromLock.
+bool NameFromFH(?*dos.FileHandle file, [*]u8 buffer, u32 size)
+/// An open file from a lock on a file; the lock is the file's from then
+/// on (on failure it stays yours).
+?*dos.FileHandle OpenFromLock(?*dos.FileLock lock)
+/// A lock (CHANGE_LOCK: SHARED_LOCK or EXCLUSIVE_LOCK) or an open file
+/// (CHANGE_FH: MODE_NEWFILE exclusive, else shared) to another access;
+/// ERROR_OBJECT_IN_USE while others hold it.
+bool ChangeMode(i32 kind, ?*anyopaque object, i32 mode)
+/// The volume a lock is on, in `data` (lock 0: the current file system).
+bool Info(?*dos.FileLock lock, *dos.InfoData data)
+/// Whether a name's handler is a file system ("*" isn't; a name without a
+/// device is).
+bool IsFileSystem([*:0]const u8 name)
+/// Whether two locks are on one device: the same volume or handler.
+bool SameDevice(?*dos.FileLock lock1, ?*dos.FileLock lock2)
+// Buffered I/O
+/// Hand back what the buffer holds: waiting bytes are written, bytes read
+/// ahead given back (seeked back over). False, with
+/// IoErr, when writing fails.
+bool Flush(?*dos.FileHandle file)
+/// The next byte (0-255), or -1 at the end (IoErr 0) or on an error.
+i32 FGetC(?*dos.FileHandle file)
+/// Push `character` back for the next FGetC; -1 pushes back the last one
+/// FGetC gave (the end too). Up to 4; false when full or nothing to push.
+bool UnGetC(?*dos.FileHandle file, i32 character)
+/// Write a byte (the low 8 bits): the byte, or -1 on an error.
+i32 FPutC(?*dos.FileHandle file, i32 character)
+/// Read up to `length` bytes through the buffer: the number read, 0 at the
+/// end, -1 on an error before any byte. A console gives what it has.
+isize FRead(?*dos.FileHandle file, [*]u8 buffer, isize length)
+/// Write `length` bytes through the buffer: `length`, or -1 on an error.
+isize FWrite(?*dos.FileHandle file, [*]const u8 buffer, isize length)
+/// A line into `buffer`: at most size-1 bytes, the newline kept, then a
+/// NUL. Null at the end (or on an error) before any byte.
+?[*]u8 FGets(?*dos.FileHandle file, [*]u8 buffer, u32 size)
+/// Write a C string: 0, or -1 on an error.
+i32 FPuts(?*dos.FileHandle file, [*:0]const u8 string)
+/// The buffer's mode (BUF_LINE, BUF_FULL, BUF_NONE) and, unless size is
+/// -1, its size, in `buffer` (the caller's, kept until Close) or allocated
+/// (buffer null). What the old one held is flushed. 0, or -1 with IoErr.
+i32 SetVBuf(?*dos.FileHandle file, ?[*]u8 buffer, i32 mode, isize size)
+/// RawDoFmt's format with its data stream, through FPutC: the bytes
+/// written, or -1. sdk.dos.stdio.FPrintf packs the values.
+i32 VFPrintf(?*dos.FileHandle file, [*:0]const u8 format, ?*const anyopaque args)
+/// VFPrintf to Output() (sdk.dos.stdio.Printf).
+i32 VPrintf([*:0]const u8 format, ?*const anyopaque args)
+/// FPuts to Output().
+i32 PutStr([*:0]const u8 string)
+/// FWrite to Output().
+isize WriteChars([*]const u8 buffer, isize length)
+// Arguments
+/// Parse arguments by a template ("FROM/M/A,TO/A,Q=QUIET/S"): /A required,
+/// /K only with its keyword, /S switch, /N number, /T toggle (YES, NO, ON,
+/// OFF), /M many, /F the rest of the line; '=' names aliases. Into `argv`,
+/// one pointer-sized slot per item, set by the caller to defaults: a
+/// string, an i32's address (/N), DOSTRUE (/S, /T), or a null-terminated
+/// array (/M). From `rdargs`'s CSource, else Input(); a null `rdargs`
+/// makes one. Null on failure (IoErr); FreeArgs the result.
+?*dos.RDArgs ReadArgs([*:0]const u8 template, [*]usize argv, ?*dos.RDArgs rdargs)
+/// Free what ReadArgs allocated (its RDArgs too, if it made it). Null is
+/// fine, and so is a second call.
+void FreeArgs(?*dos.RDArgs rdargs)
+/// The next item from `csource` (Input() without a buffer) into `buffer`
+/// (`maxchars` bytes with the NUL): ITEM_QUOTED, ITEM_UNQUOTED,
+/// ITEM_NOTHING (the line's end), ITEM_EQUAL (a leading '='), ITEM_ERROR.
+i32 ReadItem([*]u8 buffer, i32 maxchars, ?*dos.CSource csource)
+/// The number of the template item `keyword` names (any alias, any case),
+/// or -1.
+i32 FindArg([*:0]const u8 template, [*:0]const u8 keyword)
+/// A decimal number (after spaces, with an optional '-') into `value`: the
+/// characters used, or -1 (value 0) without one or beyond an i32.
+i32 StrToLong([*:0]const u8 string, *i32 value)
+// Consoles
+/// A console's mode: 1 raw (bytes as typed, no echo or editing), 0 cooked
+/// (edited lines). What waits in the buffer is written first. False, with
+/// IoErr, when the handler can't.
+bool SetMode(?*dos.FileHandle file, i32 mode)
+/// Whether a console has input within `timeout` microseconds (cooked: a
+/// whole line); bytes in the handle's buffer count.
+bool WaitForChar(?*dos.FileHandle file, isize timeout)
+// Errors
+/// The text for an error code (IoErr's; the shell's are negative) after
+/// `header` and ": " into `buffer` (`len` bytes with the NUL, cut to
+/// fit); "Error <n>" for one without a text; nothing for 0. The length.
+i32 Fault(i32 code, ?[*:0]const u8 header, [*]u8 buffer, i32 len)
+/// Fault's text and a newline to Output(); IoErr is left at the code.
+/// False without an Output() or when the write fails.
+bool PrintFault(i32 code, ?[*:0]const u8 header)
+// Variables
+/// Set a local variable or alias (LV_VAR or LV_ALIAS in the low byte of
+/// `flags`), or a global one in ENV: with GVF_GLOBAL_ONLY; `size` -1 is
+/// strlen. A null `buffer` deletes it. False, with IoErr, on failure.
+bool SetVar([*:0]const u8 name, ?[*]const u8 buffer, isize size, u32 flags)
+/// A variable's value into `buffer` (`size` bytes): the local one, else
+/// ENV:'s (unless GVF_LOCAL_ONLY); text is cut at a newline and ends in a
+/// NUL. The bytes copied (IoErr: the whole length), or -1 with IoErr.
+isize GetVar([*:0]const u8 name, [*]u8 buffer, isize size, u32 flags)
+/// SetVar(name, null, 0, flags).
+bool DeleteVar([*:0]const u8 name, u32 flags)
+/// A local variable or alias of `var_type` (LV_VAR, LV_ALIAS), or null.
+?*dos.LocalVar FindVar([*:0]const u8 name, u32 var_type)
+// Processes and CLIs
+/// Which of `mask`'s signals came (SIGBREAKF_CTRL_C..F); they are cleared.
+u32 CheckSignal(u32 mask)
+/// Wait `ticks` fiftieths of a second.
+void Delay(u32 ticks)
+/// The running command's argument line (pr_Arguments), or null.
+?[*:0]const u8 GetArgStr()
+/// Set pr_Arguments; the old one.
+?[*:0]const u8 SetArgStr(?[*:0]const u8 string)
+/// The highest CLI number in use (0: none).
+u32 MaxCli()
+/// The CLI process with number `num` (pr_TaskNum), or null.
+?*dos.Process FindCliProc(u32 num)
+// Commands
+/// Run a segment's command on this process, on a stack of its own of
+/// `stack_size` bytes: `args` (`length` bytes, a line ending in a newline)
+/// are Input()'s read-ahead and pr_Arguments meanwhile. The command's
+/// return code, or -1 (IoErr) when it can't run.
+i32 RunCommand(?*const dos.SegCode code, u32 stack_size, [*]const u8 args, isize length)
+// Shells
+/// Run `command` (a line, or several) in a new shell ("BootShell";
+/// SYS_UserShell: "shell"; SYS_CustomShell: another resident) with
+/// SYS_Input and SYS_Output (default Input(), Output()). Waits and returns
+/// the last return code (IoErr: its Result2), or -1 when it can't start;
+/// with SYS_Asynch it returns at once, with the new CLI's number, and the
+/// shell closes the streams. A null command starts an interactive shell on
+/// SYS_Input. CreateNewProc's tags pass through.
+i32 SystemTagList(?[*:0]const u8 command, ?[*]const utility.TagItem tags)
+/// Run `command` in a new shell, then the commands from `input` (if any),
+/// with `output` (null: Output()). True if the shell ran.
+bool Execute([*:0]const u8 command, ?*dos.FileHandle input, ?*dos.FileHandle output)
+
+// Loading code
+/// Load a program or module file (sdk/libs/dos/loadfile.zig, made by
+/// sdk/tools/elf2seg): its segments into memory the CPU can run, the
+/// addresses in them relocated. Returns the seglist for UnLoadSeg, or null
+/// with IoErr.
+?*dos.SegList LoadSeg([*:0]const u8 name)
+/// Free what LoadSeg made. Null is allowed.
+void UnLoadSeg(?*dos.SegList seg_list)
+##end

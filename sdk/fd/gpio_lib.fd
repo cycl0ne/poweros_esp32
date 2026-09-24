@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+//! gpio.resource's functions: who holds which of the chip's pads. A driver
+//! takes each pad it routes and gives it back when it is done, so two of
+//! them wanting one pad is a refusal at the take rather than a line two
+//! drivers fight over. A resource: no Open or Close, its first function in
+//! the first slot. The base comes from OpenResource("gpio.resource").
+##include resources/gpio as gpio
+##basetype GpioBase
+##name gpio.resource
+##bias 0
+##public
+/// Take `pad` for `name`, which must outlive the claim: null if it is now
+/// yours, else who has it. Not from interrupts.
+?[*:0]const u8 AllocGPIO(u32 pad, [*:0]const u8 name)
+/// Give `pad` back. Its setting is left as it is. Not from interrupts.
+void FreeGPIO(u32 pad)
+/// Who holds `pad`, or null if nobody does.
+?[*:0]const u8 GPIOOwner(u32 pad)
+##end

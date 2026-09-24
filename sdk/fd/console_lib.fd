@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MIT
+//! console.device's functions, after BeginIO and AbortIO. The base is the
+//! device's: io_Device of a request opened on any unit, CONU_LIBRARY
+//! included.
+##include devices/inputevent as ie
+##include libs/keymap/keymap as keymap
+##include libs/utility/hooks as hooks
+##basetype ConsoleBase
+##name console.device
+##bias 6
+##public
+/// Hand input events to the consoles: a key goes to the console of the
+/// window that is active, through that unit's keymap, and a window event
+/// (`IECLASS_EVENT`, `IECLASS_ACTIVEWINDOW`, `IECLASS_INACTIVEWINDOW`) to
+/// the console of the window it names. Answers the events, so whoever is
+/// next on input.device's chain still sees them. The device's own handler
+/// is this call.
+?*ie.InputEvent CDInputHandler(?*ie.InputEvent events)
+/// The characters a list of key events makes, into `buffer` (room for
+/// `length`): how many, or -1 when they did not fit. `key_map` null is
+/// keymap.library's default.
+i32 RawKeyConvert(?*const ie.InputEvent events, [*]u8 buffer, i32 length, ?*const keymap.KeyMap key_map)
+/// A copy of what was last selected in a console window, NUL terminated
+/// and allocated with AllocVec - the caller frees it - or null when
+/// nothing is selected and nothing was put there.
+?[*:0]u8 GetConSnip()
+/// What a paste is to give from now on; it is copied. Null empties it.
+/// False when there was no memory.
+bool SetConSnip(?[*:0]const u8 snip)
+/// Call `hook` whenever a console window's selection is finished, so that
+/// a program can carry the text away - to a clipboard, say. The hook is
+/// called on the console's own task, with the `ConUnit` the text came from
+/// as its object and a `SnipHookMsg` as its message; neither outlives the
+/// call, so a hook that wants the text copies it. The hook may call
+/// nothing that waits. Its node belongs to the device until it is removed.
+void AddSnipHook(*hooks.Hook hook)
+/// Take a hook off again. It is not called after this returns.
+void RemSnipHook(*hooks.Hook hook)
+##end

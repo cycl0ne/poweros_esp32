@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+//! keymap.library's functions: rawkeys into characters and back. Open it
+//! with OpenLibrary("keymap.library", 0).
+##include libs/keymap/keymap as keymap
+##include devices/inputevent as ie
+##basetype KeymapBase
+##name keymap.library
+##bias 4
+##public
+/// Make `key_map` the default, which every call given null uses.
+void SetKeyMapDefault(*keymap.KeyMap key_map)
+/// The default KeyMap.
+*keymap.KeyMap AskKeyMapDefault()
+/// The characters an IECLASS_RAWKEY event makes, into `buffer` (room for
+/// `length`): how many, 0 for none (a key going up, a dead key, a key that
+/// sends nothing, another class), or -1 when they did not fit. `key_map`
+/// null is the default. The event's x and y are the keys down before it,
+/// which is what a dead key changes.
+i32 MapRawKey(*const ie.InputEvent event, [*]u8 buffer, i32 length, ?*const keymap.KeyMap key_map)
+/// The keys that make `count` characters of `string`, into `buffer` (room
+/// for `length` pairs): how many pairs, 0 when a character cannot be made
+/// with this keymap, -1 when they did not fit.
+i32 MapANSI([*]const u8 string, i32 count, [*]keymap.KeyPair buffer, i32 length, ?*const keymap.KeyMap key_map)
+/// The KeyMap of that name on the library's list - "usa", "deutsch" - or
+/// null.
+?*keymap.KeyMap FindKeyMap([*:0]const u8 name)
+##end

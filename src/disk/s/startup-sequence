@@ -1,0 +1,37 @@
+; Startup-Sequence: the boot shell reads this once, before its first
+; prompt - the shell dos's init starts in a window. Every shell after it,
+; `s3> newshell`'s included, reads S:Shell-Startup instead.
+
+; Answers with the system's version and leaves it in the local variable
+; Kickstart, which the SetEnv below puts where anything can read it.
+C:Version >NIL:
+
+FailAt 21
+
+C:MakeDir >NIL: RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys
+
+; Kept in memory: loaded once and run from there until Resident takes it
+; off the list again. Assign is cached because the lines below call it.
+Resident >NIL: C:Assign PURE
+Resident >NIL: C:Dir PURE
+Resident >NIL: C:List PURE
+
+; The global variables that survive a reboot live on the disk; the ones a
+; running system reads live in RAM:, and start as a copy of them.
+Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
+C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
+
+Assign >NIL: ENV: RAM:ENV
+Assign >NIL: T: RAM:T
+Assign >NIL: CLIPS: RAM:Clipboards
+
+; Where a command is looked for, before C:. C:test holds the programs that
+; exercise a device or a library, so they are called by name like the rest.
+Path >NIL: RAM: SYS: S: C:test
+
+SetEnv Kickstart $Kickstart
+UnSet Kickstart
+
+If EXISTS S:User-Startup
+  Execute S:User-Startup
+EndIf

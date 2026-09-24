@@ -1,0 +1,90 @@
+/* HANDLERS:MountList - what a device is, for C:Mount to read.
+ *
+ * An entry begins with the device's name and a colon and ends with a #
+ * on a line of its own. Keywords may be given in any order and any case;
+ * a value is a number (0x... for hexadecimal), a word, or a string in
+ * quotes. Mount DEVICE: reads the entry of that name from here, unless
+ * HANDLERS:DEVICE says it first.
+ *
+ * Handler names the code that serves the device. dos looks it up by name
+ * among its segments, which is where the ROM's handlers are, so a plain
+ * name is what an entry says today. It may also be written as the file it
+ * would come from - HANDLERS:con-handler - and then the name at the end is
+ * what is looked for; an entry written that way mounts now and will mean
+ * the same when a handler's code can be loaded off the disk, which is what
+ * this directory is for.
+ *
+ * Baud and Control are the line a handler on a serial port gets: its
+ * speed, and "8N1/NONE" - data bits, parity (N, E or O), stop bits, and
+ * how the two ends hold each other back (NONE, RTSCTS or XONXOFF, and the
+ * handshake may be left off altogether). What is not given is left as the
+ * port had it, and so is everything if the port will not take them.
+ */
+
+/* A second console, on the serial port this machine is not using for its
+ * own. The handler is told what it runs on by Device and Unit, so this is
+ * the same con-handler the display's windows use, on a terminal instead.
+ *
+ * Unit 1 is UART1, which is on no pads until something asks for them; on
+ * the board the console is the USB port and UART0 is the kernel's own
+ * output, so a second terminal is what this describes and not either of
+ * those.
+ */
+AUX1:
+	Handler   = con-handler
+	Device    = serial.device
+	Unit      = 1
+	Baud      = 115200
+	Control   = "8N1/NONE"
+	StackSize = 16384
+	Priority  = 5
+#
+
+/* The card in the slot, on a board that has one. Both halves are on
+ * this disk rather than in the ROM: the handler is HANDLERS:fat-handler,
+ * which dos loads the first time the device is used, and it opens
+ * sd.device, which ramlib loads from DEVS:. fat-handler finds the volume
+ * on the card itself - the partition table in its first block and the
+ * boot sector behind it - so the entry names only the device, and the
+ * volume takes the card's own name. Activate starts the handler at once,
+ * so the volume is there as soon as the card is mounted.
+ *
+ * DosType "MSD\0" is what says FAT to anything that goes by it; the
+ * stack is the handler's deepest packet, a rename, with room to spare.
+ */
+SD0:
+	Handler   = HANDLERS:fat-handler
+	Device    = sd.device
+	Unit      = 0
+	DosType   = 0x4D534400
+	StackSize = 16384
+	Priority  = 5
+	Activate  = 1
+#
+
+/* A second partition of the flash disk, were one to be made. The numbers
+ * are the ones the RigidDiskBlock carries for DH0 (C:RDB FULL prints
+ * them), with LowCyl and HighCyl moved past it; DosType "FLS\0" is what
+ * picks flashfs-handler.
+ *
+ * Commented out because this disk has no such partition: writing one is
+ * C:RDB's business, and a partition the RigidDiskBlock describes is
+ * mounted at boot without a mountlist at all. It is here to show what the
+ * geometry keywords are for.
+ *
+ * DH1:
+ *	Handler        = flashfs-handler
+ *	Device         = flash.device
+ *	Unit           = 0
+ *	BlockSize      = 4096
+ *	Surfaces       = 1
+ *	BlocksPerTrack = 1
+ *	LowCyl         = 2048
+ *	HighCyl        = 3071
+ *	Buffers        = 0
+ *	BootPri        = -10
+ *	DosType        = 0x464C5300
+ *	StackSize      = 16384
+ *	Priority       = 5
+ * #
+ */

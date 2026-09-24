@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+//! input.device's function, after BeginIO and AbortIO. The base is the
+//! device's: io_Device of an open request.
+##basetype InputBase
+##name input.device
+##bias 6
+##public
+/// The qualifiers as the device has them now: the shifts, Caps Lock,
+/// Control, the Alts and the Amiga keys, and the pointer's buttons.
+u32 PeekQualifier()
+##end

@@ -1,0 +1,6 @@
+; Shell-startup: every shell that NewShell starts reads this before it
+; takes its first line from the console, and so does one `s3> newshell`
+; starts.
+
+Prompt "%N.%S> "
+Alias Clear "Echo *"*E[0;0H*E[J*" "

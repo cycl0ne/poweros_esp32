@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT
+//! dma.resource's functions: the chip's general DMA engine (GDMA), its
+//! channels handed out to one owner each. A
+//! resource: no Open or Close, its first function in the first slot. The
+//! base comes from OpenResource("dma.resource").
+##include resources/dma as dma
+##basetype DmaBase
+##name dma.resource
+##bias 0
+##public
+/// Claim a channel (0-4) for `name`: null if it is now yours, else its
+/// owner's name. Not from interrupts.
+?[*:0]const u8 AllocDMAChannel(u32 channel, [*:0]const u8 name)
+/// Give a channel back: it stops, is disconnected, its interrupts off.
+/// Remove your interrupt servers first. Not from interrupts.
+void FreeDMAChannel(u32 channel)
+/// Who has a channel, or null.
+?[*:0]const u8 DMAChannelOwner(u32 channel)
+/// Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for
+/// memory to memory, with DMACF_* flags. Resets the channel. False for a bad
+/// channel or peripheral, or a peripheral another channel is connected to.
+bool ConnectDMAChannel(u32 channel, u32 peripheral, u32 flags)
+/// Start a side (DMA_IN, DMA_OUT) on a descriptor chain. False unless the
+/// first descriptor is 4-byte aligned in internal RAM. Memory to memory:
+/// IN first, then OUT.
+bool StartDMA(u32 channel, u32 side, *dma.DMADescriptor list)
+/// Stop a side.
+void StopDMA(u32 channel, u32 side)
+/// Reset a side: its FIFO and state machine, its connection and flags left
+/// as they are. Stopping a side does not empty it, and what it still holds
+/// goes out ahead of the next chain it is started on. From interrupts too.
+void ResetDMA(u32 channel, u32 side)
+/// Enable a side's interrupts (DMAINTF_*); 0: none.
+void EnableDMAInts(u32 channel, u32 side, u32 mask)
+/// A side's pending, enabled interrupts. From interrupts too.
+u32 DMAIntStatus(u32 channel, u32 side)
+/// A side's interrupt bits as the hardware sets them, enabled or not: what
+/// a driver polls when it wants to know that something happened without
+/// being interrupted by it. From interrupts too.
+u32 DMARawIntStatus(u32 channel, u32 side)
+/// Clear a side's interrupts. From interrupts too.
+void ClearDMAInts(u32 channel, u32 side, u32 mask)
+/// A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT
+/// sends them all (EOF on the last descriptor), DMA_IN fills them. In
+/// internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per descriptor;
+/// DMACHF_LOOP links the last back to the first. Null if the buffer isn't
+/// in internal RAM or PSRAM, or without memory. Not from interrupts.
+?*dma.DMADescriptor AllocDMAChain(u32 side, ?*anyopaque buffer, u32 length, u32 flags)
+/// Free a chain from AllocDMAChain (null: nothing). Not from interrupts.
+void FreeDMAChain(?*dma.DMADescriptor chain)
+/// The descriptor that ended a side's last frame: IN's with SUC_EOF, OUT's
+/// last with EOF sent. Null if none yet.
+?*dma.DMADescriptor DMAEOFDescriptor(u32 channel, u32 side)
+/// A side's priority on the bus, 0 (lowest) to DMA_MAXPRI. False for a bad
+/// channel, side or priority.
+bool SetDMAPriority(u32 channel, u32 side, u32 priority)
+##end

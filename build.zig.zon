@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+.{
+    .name = .poweros,
+    .version = "0.1.0",
+    .fingerprint = 0xb3b062e41617d465,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .poweros_sdk = .{ .path = "sdk" },
+        .poweros_userland = .{ .path = "src/disk" },
+    },
+    .paths = .{""},
+}

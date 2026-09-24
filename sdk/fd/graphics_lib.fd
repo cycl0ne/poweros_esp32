@@ -1,0 +1,256 @@
+// SPDX-License-Identifier: MIT
+//! graphics.library's functions: the layer that draws. What it draws into
+//! is rtg.library's - a board's display memory, handed out as RtgBitMaps -
+//! and it opens rtg itself, so a caller that only wants to draw on the
+//! display never touches it. Ask for a RastPort with no tags and one comes
+//! back on the display; ask with RPTAG_BitMap or RPTAG_Surface and it is
+//! on that buffer instead. Open it with OpenLibrary("graphics.library", 0).
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/rtg/rtg as rtg
+##basetype GraphicsBase
+##name graphics.library
+##bias 4
+##public
+/// A surface to draw into and the state to draw it with. With no tags it
+/// is the display: the first board rtg lists, and the buffer it is
+/// showing. RPTAG_BitMap, RPTAG_Surface or RPTAG_Board name another, and
+/// RPTAG_APen, RPTAG_BPen and RPTAG_DrMd set the state at birth. Null if
+/// there is no memory, or no display and no buffer was named.
+?*graphics.RastPort CreateRastPortTagList(?[*]const utility.TagItem tags)
+/// Give a RastPort back. Null is allowed. The buffer it drew into is not
+/// touched: a board's belongs to rtg.library and memory to whoever lent
+/// it.
+void FreeRastPort(?*graphics.RastPort rp)
+/// Fill a rectangle with the RastPort's pen, clipped to its clip and to
+/// the surface. An opaque pen is handed to the board's engine where there
+/// is one; anything less is composed pixel by pixel. What was written is
+/// handed on to the display before it returns.
+void RectFill(*graphics.RastPort rp, *const graphics.Rect area)
+/// Change a RastPort: RPTAG_APen, RPTAG_BPen, RPTAG_DrMd and
+/// RPTAG_ClipRect, the same tags that make one. A tag it does not know is
+/// passed over, and the buffer cannot be changed - a RastPort draws into
+/// the one it was made on.
+void SetRPAttrs(*graphics.RastPort rp, ?[*]const utility.TagItem tags)
+/// Read a RastPort. Each ti_Data is a pointer to where that value goes:
+/// a *u32 for a pen, the draw mode or the format, and a *Rect for the clip
+/// or the bounds. A tag it does not know is passed over and nothing is
+/// written for it.
+void GetRPAttrs(*graphics.RastPort rp, ?[*]const utility.TagItem tags)
+/// A bitmap of one's own, in system memory, to draw into and move to the
+/// screen from. BMTAG_Width and BMTAG_Height are required; BMTAG_Format or
+/// BMTAG_Friend says what a pixel looks like, and BMTAG_Clear zeroes it.
+/// Null if it cannot be had. Free it with FreeBitMap.
+?*rtg.Surface AllocBitMapTagList(?[*]const utility.TagItem tags)
+/// Give one back. Null is allowed. A surface this library did not allocate
+/// must not be passed.
+void FreeBitMap(?*rtg.Surface bitmap)
+/// Move a rectangle from one RastPort to another, its top left landing at
+/// (dest_x, dest_y). Clipped by the destination, and the two may be the
+/// same RastPort. Both must be in the same format.
+void BltRastPort(*graphics.RastPort src, *graphics.RastPort dest, *const graphics.Rect area, i32 dest_x, i32 dest_y)
+/// Put the current point at (x, y) without drawing anything. Where Draw
+/// starts from.
+void Move(*graphics.RastPort rp, i32 x, i32 y)
+/// A line from the current point to (x, y), which then becomes the current
+/// point. Both ends are drawn. Clipped, and composed with what is under it
+/// when the pen is not opaque.
+void Draw(*graphics.RastPort rp, i32 x, i32 y)
+/// One pixel in the foreground pen, clipped like everything else.
+void WritePixel(*graphics.RastPort rp, i32 x, i32 y)
+/// The colour of one pixel, as 0xAARRGGBB. False if it is outside the
+/// surface, and `out` is then untouched. The clip is not consulted:
+/// a clip says what may be written.
+bool ReadPixel(*graphics.RastPort rp, i32 x, i32 y, *graphics.Pen out)
+/// `length` pixels rightward from (x, y).
+void DrawHLine(*graphics.RastPort rp, i32 x, i32 y, i32 length)
+/// `length` pixels downward from (x, y).
+void DrawVLine(*graphics.RastPort rp, i32 x, i32 y, i32 length)
+/// The outline of a rectangle, half-open like every rectangle here, with
+/// no pixel drawn twice.
+void DrawRect(*graphics.RastPort rp, *const graphics.Rect area)
+/// A circle's outline about (cx, cy).
+void DrawCircle(*graphics.RastPort rp, i32 cx, i32 cy, i32 radius)
+/// An ellipse's outline about (cx, cy), `rx` wide and `ry` tall.
+void DrawEllipse(*graphics.RastPort rp, i32 cx, i32 cy, i32 rx, i32 ry)
+/// Part of a circle's outline, from `from` degrees to `to` degrees the way
+/// the numbers increase, with 0 to the right and 90 upward.
+void DrawArc(*graphics.RastPort rp, i32 cx, i32 cy, i32 radius, i32 from, i32 to)
+/// A line from the current point through each of `points` in turn, which
+/// then ends at the last of them. A closed shape repeats its first point.
+void DrawPoly(*graphics.RastPort rp, u32 count, [*]const graphics.Point points)
+/// Room to collect a filled shape in, for the Area calls: as many corners
+/// as will be needed, curves included. 0 gives the room back. False if
+/// there was no memory. The room goes with the RastPort.
+bool InitArea(*graphics.RastPort rp, u32 max_points)
+/// Begin a shape at (x, y). A shape already begun is left to be filled
+/// with this one, so several shapes can be filled at once - one inside
+/// another is a hole.
+bool AreaMove(*graphics.RastPort rp, i32 x, i32 y)
+/// The next corner of the shape being collected.
+bool AreaDraw(*graphics.RastPort rp, i32 x, i32 y)
+/// A whole ellipse as a shape of its own.
+bool AreaEllipse(*graphics.RastPort rp, i32 cx, i32 cy, i32 rx, i32 ry)
+/// A whole circle as a shape of its own.
+bool AreaCircle(*graphics.RastPort rp, i32 cx, i32 cy, i32 radius)
+/// A wedge: out from the middle, round the arc from `from` to `to`
+/// degrees, and back.
+bool AreaArc(*graphics.RastPort rp, i32 cx, i32 cy, i32 radius, i32 from, i32 to)
+/// Fill everything collected and begin again. Nothing collected fills
+/// nothing, which is not a failure.
+bool AreaEnd(*graphics.RastPort rp)
+/// A font of that name and height, or null if there is none. The fonts in
+/// this ROM are all POSPAZNAME, at heights 8 and 16.
+?*graphics.TextFont OpenFont([*:0]const u8 name, u32 height)
+/// Give a font back. Null is allowed. A font in the ROM stays whatever
+/// happens, so this only counts.
+void CloseFont(?*graphics.TextFont font)
+/// Draw `count` characters at the current point, which moves to the end of
+/// them. The point is the **left of the baseline**, as it has always been,
+/// so letters sit above it and tails hang below.
+void Text(*graphics.RastPort rp, [*]const u8 string, u32 count)
+/// How far `Text` would move along, in pixels, without drawing anything.
+i32 TextLength(*graphics.RastPort rp, [*]const u8 string, u32 count)
+/// Stencil a shape of one bit to a pixel onto the surface in the pens.
+/// `bits` is rows of `pitch` bytes, the leftmost pixel in the highest bit;
+/// (src_x, src_y) is where in it the shape starts. The draw mode says what
+/// a clear bit means.
+void BltTemplate(*graphics.RastPort rp, [*]const u8 bits, u32 pitch, i32 src_x, i32 src_y, *const graphics.Rect area)
+/// Fill a rectangle with a tile of one bit to a pixel, repeated. The tile
+/// is anchored to the surface, so two rectangles of one pattern line up
+/// where they meet.
+void BltPattern(*graphics.RastPort rp, [*]const u8 bits, u32 pitch, u32 width, u32 height, *const graphics.Rect area)
+/// Move a rectangle from one RastPort to another, leaving alone the pixels
+/// whose mask bit is clear. The mask is read where the source is read, so
+/// it travels with the shape.
+void BltMaskRastPort(*graphics.RastPort src, *graphics.RastPort dest, *const graphics.Rect area, i32 dest_x, i32 dest_y, [*]const u8 mask, u32 mask_pitch)
+/// Move a rectangle of pixels from one surface to another. Neither side
+/// has any drawing state, so nothing is clipped and no draw mode applies:
+/// this is the move itself. Both must be in one format; overlapping is
+/// safe. An RtgBitMap is a Surface by pointer.
+i32 BltBitMap(*const rtg.Surface src, i32 src_x, i32 src_y, *rtg.Surface dest, i32 dest_x, i32 dest_y, i32 width, i32 height)
+/// The same, landing in a RastPort - so the destination's clip and draw
+/// mode apply and the rows are handed on. The source is a surface because
+/// the source of a blit has no drawing state.
+void BltBitMapRastPort(*const rtg.Surface src, i32 src_x, i32 src_y, *graphics.RastPort dest, i32 dest_x, i32 dest_y, i32 width, i32 height)
+/// The same again, leaving alone the pixels whose mask bit is clear. The
+/// mask is one bit to a pixel, rows of `mask_pitch` bytes, read from the
+/// source's corner.
+void BltMaskBitMapRastPort(*const rtg.Surface src, i32 src_x, i32 src_y, *graphics.RastPort dest, i32 dest_x, i32 dest_y, i32 width, i32 height, [*]const u8 mask, u32 mask_pitch)
+/// Stretch a rectangle of a surface to fill a rectangle of a RastPort,
+/// taking the nearest pixel for each. Clipped and handed on like any
+/// drawing call.
+void BitMapScale(*const rtg.Surface src, *const graphics.Rect src_area, *graphics.RastPort dest, *const graphics.Rect dest_area)
+/// How much room `count` characters would take, without drawing them.
+void TextExtent(*graphics.RastPort rp, [*]const u8 string, u32 count, *graphics.TextExtent out)
+/// How many characters fit in the room given, and how much room those
+/// take. `constraining` is a box to fit inside, or null; `width` and
+/// `height` override it when either is above 0. `direction` is
+/// TEXT_FORWARD, or TEXT_BACKWARD with `string` pointing at the last
+/// character. 0 when the font is taller than the room.
+u32 TextFit(*graphics.RastPort rp, [*]const u8 string, u32 count, *graphics.TextExtent out, ?*const graphics.TextExtent constraining, i32 direction, i32 width, i32 height)
+/// Put a font on the library's list, so OpenFont can find it. What
+/// something that loads a font from a file calls once it has built one.
+/// False if it is already there.
+bool AddFont(*graphics.TextFont font)
+/// Take one off again. False while anything still has it open.
+bool RemFont(*graphics.TextFont font)
+/// What a font is: its width, height, baseline, the styles it was drawn
+/// with, and where one character's ink lands relative to the point.
+void FontExtent(*graphics.TextFont font, *graphics.FontExtent out)
+/// Which styles can still be asked for on the RastPort's font - the ones
+/// it was not already drawn with. 0 with no font.
+u32 AskSoftStyle(*graphics.RastPort rp)
+/// Set the styles to `style`, keeping only the bits `enable` allows and
+/// only those AskSoftStyle offers. Answers what the style became.
+u32 SetSoftStyle(*graphics.RastPort rp, u32 style, u32 enable)
+/// What a GERR_ code means, in words, for a program that wants to say so.
+/// A code it does not know is "unknown error"; it never answers null.
+[*:0]const u8 GraphicsErrorText(i32 code)
+/// An empty region. Null if there was no memory. Free it with
+/// DisposeRegion.
+?*graphics.Region NewRegion()
+/// Give a region back, with every rectangle in it. Null is allowed.
+void DisposeRegion(?*graphics.Region region)
+/// Make it empty again, keeping the region itself.
+void ClearRegion(*graphics.Region region)
+/// Whether the point is inside.
+bool PointInRegion(*graphics.Region region, i32 x, i32 y)
+/// Move the whole region by (dx, dy).
+void OffsetRegion(*graphics.Region region, i32 dx, i32 dy)
+/// Add the rectangle to the region. False if there was no memory, and the
+/// region is then unchanged.
+bool OrRectRegion(*graphics.Region region, *const graphics.Rect rect)
+/// Cut the region down to what is also inside the rectangle. False if
+/// there was no memory.
+bool AndRectRegion(*graphics.Region region, *const graphics.Rect rect)
+/// Take the rectangle out of the region. False if there was no memory.
+bool ClearRectRegion(*graphics.Region region, *const graphics.Rect rect)
+/// Everything in the rectangle that is not in the region, and everything
+/// in the region that is not in the rectangle. False if there was no
+/// memory.
+bool XorRectRegion(*graphics.Region region, *const graphics.Rect rect)
+/// Add everything in `source` to `dest`. False if there was no memory.
+bool OrRegionRegion(*const graphics.Region source, *graphics.Region dest)
+/// Cut `dest` down to what is also in `source`. False if there was no
+/// memory.
+bool AndRegionRegion(*const graphics.Region source, *graphics.Region dest)
+/// Take everything in `source` out of `dest`. False if there was no
+/// memory.
+bool SubRegionRegion(*const graphics.Region source, *graphics.Region dest)
+/// What is in one of the two but not both. False if there was no memory.
+bool XorRegionRegion(*const graphics.Region source, *graphics.Region dest)
+/// The rectangles a region is made of, which is how anything outside can
+/// see the shape of one. It answers how many there are and fills up to
+/// `max` of them, so a caller asks once with no room to find out how much
+/// it needs. They do not overlap and they are in order of min_y, then
+/// min_x. 0 means the region is empty.
+u32 RegionRectangles(*const graphics.Region region, ?[*]graphics.Rect into, u32 max)
+/// Moves what is inside `area` of the RastPort itself: the contents go
+/// `dx` to the left and `dy` up, so a terminal scrolling its text up by a
+/// row asks for `dy` of one row. What the move vacates is left as it was -
+/// whoever scrolled is about to draw there. The pixels are read through
+/// the same clip the RastPort is drawn through, so a window moves its own
+/// pixels and not whatever is on the display at those coordinates. False
+/// when part of what was to be moved could not be read - a window covered
+/// by another keeps nothing of what is under it - and then nothing was
+/// moved at all, so the caller draws that area again.
+bool ScrollRaster(*graphics.RastPort rp, i32 dx, i32 dy, *const graphics.Rect area)
+/// Paints `area` of the RastPort the way an area with nothing in it yet is
+/// meant to look: through the hook `RPTAG_BackFill` names, or in the
+/// RastPort's own background pen when it names none, or not at all when it
+/// says `BACKFILL_NONE`.
+///
+/// What that hook is, is set by whatever manages windows - it is what knows
+/// how a window's ground looks. This library only calls it, and learns
+/// nothing about windows or layers by doing so. A hook draws through this
+/// same RastPort, so what it puts down is clipped as anything else drawn
+/// through it would be.
+///
+/// This is what an image erases with: a picture taken off a window leaves
+/// the window's own ground behind, pattern and all, rather than a flat
+/// rectangle of whichever pen happened to be set.
+void EraseRect(*graphics.RastPort rp, *const graphics.Rect area)
+/// A rectangle of pixels of one's own put down as they are, in any
+/// rtg.library format with colours (`format`, a PixelFormat) - converted to
+/// the surface's when the two differ, a row copied whole when they do not.
+/// `pixels` is rows of `pitch` bytes; (src_x, src_y) is where in them to
+/// start, and `area` where it lands, half-open. Clipped like any drawing;
+/// the pens and the draw mode are not used.
+void WritePixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, u32 format, i32 src_x, i32 src_y, *const graphics.Rect area)
+/// A rectangle of 8-bit colour numbers put down through `table`, 256 pens
+/// as 0xAARRGGBB: each byte is the pen at that place in it. Otherwise as
+/// WritePixelArray - the chunky picture of an old game, or a decoder's
+/// indexed frame, on a surface of any format.
+void WriteLUTPixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, [*]const graphics.Pen table, i32 src_x, i32 src_y, *const graphics.Rect area)
+// Batches
+/// The drawing from here to the matching EndDraw is one piece of work:
+/// the rows it writes are gathered and handed to the display once, at
+/// the end, instead of after every call. What is drawn in two steps - a
+/// thing rubbed out and drawn again - is never shown half done.
+void BeginDraw(*graphics.RastPort rp)
+/// The end of that piece of work: the rows gathered since BeginDraw go
+/// to the display, in one. Nested BeginDraws need one of these each, and
+/// nothing goes until the last.
+void EndDraw(*graphics.RastPort rp)
+##end

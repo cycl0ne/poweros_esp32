@@ -1,0 +1,6 @@
+# Build output
+.zig-cache/
+zig-out/
+
+# The Espressif Zig and QEMU, fetched by ./zig and scripts/build-qemu.sh
+toolchain/

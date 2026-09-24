@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+//! timer.device's functions, after BeginIO and AbortIO: time arithmetic,
+//! the E-clock and the system time. The base is the device's: io_Device of an open request.
+##include devices/timer as timer
+##basetype TimerBase
+##name timer.device
+##bias 6
+##public
+/// dest += src, the microseconds carried into the seconds.
+void AddTime(*timer.TimeVal dest, *const timer.TimeVal src)
+/// dest -= src, borrowing a second when needed.
+void SubTime(*timer.TimeVal dest, *const timer.TimeVal src)
+/// 0 if they are equal, -1 if dest is later than src, +1 if it is earlier.
+i32 CmpTime(*const timer.TimeVal dest, *const timer.TimeVal src)
+/// The E-clock count now into dest; returns the E-clock's rate in Hz.
+u32 ReadEClock(*timer.EClockVal dest)
+/// The system time into dest. It only ever rises and never repeats.
+void GetSysTime(*timer.TimeVal dest)
+##end

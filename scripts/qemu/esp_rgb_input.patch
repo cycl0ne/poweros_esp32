@@ -1,0 +1,242 @@
+diff --git a/hw/display/esp_rgb.c b/hw/display/esp_rgb.c
+index 345ef37..aba9a33 100644
+--- a/hw/display/esp_rgb.c
++++ b/hw/display/esp_rgb.c
+@@ -23,7 +23,7 @@
+ #define RGB_DEBUG   0
+ 
+ #define RGB_VERSION_MAJOR 0
+-#define RGB_VERSION_MINOR 2
++#define RGB_VERSION_MINOR 5
+ 
+ static void update_rgb_surface(ESPRgbState* s){
+     DisplaySurface *surface;
+@@ -93,6 +93,30 @@ static uint64_t esp_rgb_read(void *opaque, hwaddr addr, unsigned int size)
+             r = s->bpp;
+             break;
+ 
++        case A_RGB_POINTER:
++            r = FIELD_DP32(r, RGB_POINTER, X, s->pointer_x);
++            r = FIELD_DP32(r, RGB_POINTER, Y, s->pointer_y);
++            r = FIELD_DP32(r, RGB_POINTER, DOWN, s->pointer_down);
++            r = FIELD_DP32(r, RGB_POINTER, RIGHT, s->pointer_right);
++            r = FIELD_DP32(r, RGB_POINTER, MIDDLE, s->pointer_middle);
++            break;
++
++        case A_RGB_POINTER_SEQ:
++            r = s->pointer_seq;
++            break;
++
++        case A_RGB_KEY:
++            if (s->key_count > 0) {
++                r = s->keys[s->key_head];
++                s->key_head = (s->key_head + 1) % ESP_RGB_KEY_FIFO;
++                s->key_count--;
++            }
++            break;
++
++        case A_RGB_KEY_COUNT:
++            r = s->key_count;
++            break;
++
+         default:
+ #if RGB_WARNING
+             warn_report("[ESP RGB] Unsupported read to 0x%lx", (unsigned long) addr);
+@@ -258,10 +282,115 @@ static const GraphicHwOps fb_ops = {
+ };
+ 
+ 
++/* The window's pointer, scaled to the window's pixels. A window sends it
++ * absolute; the monitor's mouse_move sends it relative, which is added up
++ * and kept inside the window, so a script can drive it too. */
++static void esp_rgb_pointer_event(DeviceState *dev, QemuConsole *src,
++                                  InputEvent *evt)
++{
++    ESPRgbState *s = ESP_RGB(dev);
++    InputMoveEvent *move;
++    InputBtnEvent *btn;
++
++    switch (evt->type) {
++    case INPUT_EVENT_KIND_ABS:
++        move = evt->u.abs.data;
++        if (move->axis == INPUT_AXIS_X) {
++            s->pointer_x = qemu_input_scale_axis(move->value, INPUT_EVENT_ABS_MIN,
++                                                 INPUT_EVENT_ABS_MAX, 0, s->width - 1);
++        } else if (move->axis == INPUT_AXIS_Y) {
++            s->pointer_y = qemu_input_scale_axis(move->value, INPUT_EVENT_ABS_MIN,
++                                                 INPUT_EVENT_ABS_MAX, 0, s->height - 1);
++        }
++        break;
++    case INPUT_EVENT_KIND_REL: {
++        int64_t at;
++        move = evt->u.rel.data;
++        if (move->axis == INPUT_AXIS_X) {
++            at = (int64_t)s->pointer_x + move->value;
++            s->pointer_x = at < 0 ? 0 : (at >= s->width ? s->width - 1 : at);
++        } else if (move->axis == INPUT_AXIS_Y) {
++            at = (int64_t)s->pointer_y + move->value;
++            s->pointer_y = at < 0 ? 0 : (at >= s->height ? s->height - 1 : at);
++        }
++        break;
++    }
++    case INPUT_EVENT_KIND_BTN:
++        btn = evt->u.btn.data;
++        if (btn->button == INPUT_BUTTON_LEFT) {
++            s->pointer_down = btn->down;
++        } else if (btn->button == INPUT_BUTTON_RIGHT) {
++            s->pointer_right = btn->down;
++        } else if (btn->button == INPUT_BUTTON_MIDDLE) {
++            s->pointer_middle = btn->down;
++        }
++        break;
++    default:
++        break;
++    }
++}
++
++static void esp_rgb_pointer_sync(DeviceState *dev)
++{
++    ESPRgbState *s = ESP_RGB(dev);
++    s->pointer_seq++;
++}
++
++static const QemuInputHandler esp_rgb_pointer = {
++    .name  = "ESP RGB mouse",
++    .mask  = INPUT_EVENT_MASK_BTN | INPUT_EVENT_MASK_ABS | INPUT_EVENT_MASK_REL,
++    .event = esp_rgb_pointer_event,
++    .sync  = esp_rgb_pointer_sync,
++};
++
++/* A key in the window, as its Linux keycode, onto the queue. When the queue
++ * is full the oldest goes, so a key's release is never the one lost. */
++static void esp_rgb_key_event(DeviceState *dev, QemuConsole *src,
++                              InputEvent *evt)
++{
++    ESPRgbState *s = ESP_RGB(dev);
++    InputKeyEvent *key;
++    int qcode;
++    uint32_t code, entry;
++
++    if (evt->type != INPUT_EVENT_KIND_KEY) {
++        return;
++    }
++    key = evt->u.key.data;
++    qcode = qemu_input_key_value_to_qcode(key->key);
++    if (qcode < 0 || qcode >= qemu_input_map_qcode_to_linux_len) {
++        return;
++    }
++    code = qemu_input_map_qcode_to_linux[qcode];
++    if (code == 0) {
++        return;
++    }
++    entry = FIELD_DP32(0, RGB_KEY, CODE, code);
++    entry = FIELD_DP32(entry, RGB_KEY, DOWN, key->down);
++    entry = FIELD_DP32(entry, RGB_KEY, VALID, 1);
++    if (s->key_count == ESP_RGB_KEY_FIFO) {
++        s->key_head = (s->key_head + 1) % ESP_RGB_KEY_FIFO;
++        s->key_count--;
++    }
++    s->keys[(s->key_head + s->key_count) % ESP_RGB_KEY_FIFO] = entry;
++    s->key_count++;
++}
++
++static const QemuInputHandler esp_rgb_keyboard = {
++    .name  = "ESP RGB keyboard",
++    .mask  = INPUT_EVENT_MASK_KEY,
++    .event = esp_rgb_key_event,
++};
++
+ static void esp_rgb_realize(DeviceState *dev, Error **errp)
+ {
+     ESPRgbState* s = ESP_RGB(dev);
+ 
++    s->pointer_handler = qemu_input_handler_register(dev, &esp_rgb_pointer);
++    qemu_input_handler_activate(s->pointer_handler);
++    s->key_handler = qemu_input_handler_register(dev, &esp_rgb_keyboard);
++    qemu_input_handler_activate(s->key_handler);
++
+     assert(s->intram != NULL);
+     /* Create an address space for internal RAM so that we can read data from it on GUI update */
+     address_space_init(&s->intram_as, s->intram, "esp.rgb.intram_as");
+diff --git a/include/hw/display/esp_rgb.h b/include/hw/display/esp_rgb.h
+index 8aec1c0..accb14c 100644
+--- a/include/hw/display/esp_rgb.h
++++ b/include/hw/display/esp_rgb.h
+@@ -2,6 +2,7 @@
+ 
+ #include "hw/hw.h"
+ #include "hw/registerfields.h"
++#include "ui/input.h"
+ 
+ 
+ #define TYPE_ESP_RGB "display.esp.rgb"
+@@ -21,6 +22,9 @@ typedef enum {
+     BPP_32 = 32
+ } BppEnum;
+ 
++/* How many key events wait for the guest at most. */
++#define ESP_RGB_KEY_FIFO (64)
++
+ typedef struct ESPRgbState {
+     SysBusDevice parent_obj;
+ 
+@@ -47,9 +51,26 @@ typedef struct ESPRgbState {
+ 
+     /* BPP */
+     BppEnum bpp;
++
++    /* The pointer over the window, in its pixels, which of its buttons are
++     * down, and a count of the events that changed any of it. */
++    uint32_t pointer_x;
++    uint32_t pointer_y;
++    bool pointer_down;
++    bool pointer_right;
++    bool pointer_middle;
++    uint32_t pointer_seq;
++    QemuInputHandlerState *pointer_handler;
++
++    /* Keys pressed and released in the window, oldest first, as Linux
++     * keycodes with bit 30 set for down. */
++    uint32_t keys[ESP_RGB_KEY_FIFO];
++    uint32_t key_head;
++    uint32_t key_count;
++    QemuInputHandlerState *key_handler;
+ } ESPRgbState;
+ 
+-#define ESP_RGB_IO_SIZE (A_RGB_BPP_VALUE + 4)
++#define ESP_RGB_IO_SIZE (A_RGB_KEY_COUNT + 4)
+ 
+ REG32(RGB_VERSION, 0x00)
+     FIELD(RGB_VERSION, MAJOR, 16, 16)
+@@ -77,4 +98,28 @@ REG32(RGB_UPDATE_STATUS, 0x14)
+      * Automatically cleared by the hardware after window update. */
+     FIELD(RGB_UPDATE_STATUS, ENA, 0, 1)
+ 
+-REG32(RGB_BPP_VALUE, 0x18)
+\ No newline at end of file
++REG32(RGB_BPP_VALUE, 0x18)
++
++/* The pointer over the window, in its pixels, and its buttons: DOWN the
++ * left, RIGHT and MIDDLE the other two (minor version 5 and up). */
++REG32(RGB_POINTER, 0x1c)
++    FIELD(RGB_POINTER, Y, 0, 14)
++    FIELD(RGB_POINTER, MIDDLE, 14, 1)
++    FIELD(RGB_POINTER, RIGHT, 15, 1)
++    FIELD(RGB_POINTER, X, 16, 15)
++    FIELD(RGB_POINTER, DOWN, 31, 1)
++
++/* How many pointer events there have been: a press and release between
++ * two reads of RGB_POINTER still changes it. */
++REG32(RGB_POINTER_SEQ, 0x20)
++
++/* Reading takes the oldest key event off the queue: bit 31 set when there
++ * was one, bit 30 when it is a key going down, bits 0-15 its Linux
++ * keycode. 0 when none waits. */
++REG32(RGB_KEY, 0x24)
++    FIELD(RGB_KEY, CODE, 0, 16)
++    FIELD(RGB_KEY, DOWN, 30, 1)
++    FIELD(RGB_KEY, VALID, 31, 1)
++
++/* How many key events wait. */
++REG32(RGB_KEY_COUNT, 0x28)
+\ No newline at end of file

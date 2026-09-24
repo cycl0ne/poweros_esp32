@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: MIT
+//! layers.library's functions: windows that share one display buffer.
+//! A layer is a rectangle of a display that something draws into without
+//! having to know what is in front of it. This library works out which
+//! pieces of each layer are visible and hands the answer to
+//! graphics.library as a clip target list on the layer's RastPort, so a
+//! layer draws in its own coordinates and graphics.library never learns
+//! what a window is. Open it with OpenLibrary("layers.library", 0).
+##include libs/exec/exec as exec
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/layers/layers as layers
+##basetype LayersBase
+##name layers.library
+##bias 4
+##public
+/// Every layer of one display. `rp` is the RastPort the display is drawn
+/// on - what CreateRastPortTagList answers with no tags - and it says how
+/// big the display is and where its pixels are. It is not taken over.
+/// Null if there is no memory or no display behind `rp`.
+?*layers.LayerInfo NewLayerInfo(*graphics.RastPort rp)
+/// Throw away a LayerInfo and every layer still in it. Null is ignored.
+void DisposeLayerInfo(?*layers.LayerInfo info)
+/// A new layer, in front of the others unless LATAG_Behind says otherwise.
+/// The tags are the LATAG_ block; LATAG_Bounds is required. Null if it
+/// could not be made, with the reason at LATAG_ErrorPtr if one was given.
+?*layers.Layer CreateLayerTagList(*layers.LayerInfo info, ?[*]const utility.TagItem tags)
+/// Take a layer away and give its RastPort back. What was behind it is
+/// uncovered, which damages the layers that were. Null is ignored.
+void DeleteLayer(?*layers.Layer layer)
+/// Put a layer in front of every other one.
+bool UpfrontLayer(*layers.Layer layer)
+/// Put a layer behind every other one.
+bool BehindLayer(*layers.Layer layer)
+/// Put `layer` directly in front of `other`, both being in the same
+/// LayerInfo.
+bool MoveLayerInFrontOf(*layers.Layer layer, *layers.Layer other)
+/// Which layer a point of the display is in - the frontmost one that
+/// covers it - or null for none.
+?*layers.Layer WhichLayer(*layers.LayerInfo info, i32 x, i32 y)
+/// Read a layer: bounds, flags, its RastPort, its damage, its last error,
+/// through the LATAG_Get names. Each ti_Data is a pointer to where the
+/// value goes.
+void GetLayerAttrs(*layers.Layer layer, ?[*]const utility.TagItem tags)
+/// Narrow a layer to a region of the caller's own, in the layer's
+/// coordinates, or null to take one off again. What was installed before
+/// comes back, for the caller to dispose of.
+?*graphics.Region InstallClipRegion(*layers.Layer layer, ?*graphics.Region region)
+/// Narrow a layer to what needs redrawing, so that drawing all of it
+/// touches only the damage. False if there was nothing to do.
+bool BeginUpdate(*layers.Layer layer)
+/// Put back what BeginUpdate narrowed. `done` true clears the damage,
+/// false keeps it for another go.
+void EndUpdate(*layers.Layer layer, bool done)
+/// Hold one layer still: its clipping cannot change while it is held, so
+/// a drawing call cannot have the ground move under it.
+void LockLayer(*layers.Layer layer)
+/// Let it go again.
+void UnlockLayer(*layers.Layer layer)
+/// Hold every layer of a LayerInfo still, in one go, without the deadlock
+/// that taking them one at a time would be.
+void LockLayers(*layers.LayerInfo info)
+/// Let them all go again.
+void UnlockLayers(*layers.LayerInfo info)
+/// Hold the list of layers itself still: which layers there are and in
+/// what order.
+void LockLayerInfo(*layers.LayerInfo info)
+/// Let it go again.
+void UnlockLayerInfo(*layers.LayerInfo info)
+/// Move a layer by a delta, carrying what is on the display with it where
+/// it can: the part that is visible before and after is copied to the new
+/// place, and only what could not be carried is a layer's to draw again.
+bool MoveLayer(*layers.Layer layer, i32 dx, i32 dy)
+/// Change a layer's size by a delta, its top-left staying where it is.
+/// What is still inside it is carried; what is newly inside it is not.
+bool SizeLayer(*layers.Layer layer, i32 dw, i32 dh)
+/// Move and resize in one go, which is one retile rather than two and one
+/// carry of the pixels rather than two.
+bool MoveSizeLayer(*layers.Layer layer, i32 dx, i32 dy, i32 dw, i32 dh)
+/// Move the window a LAYERSUPER layer shows of its own bitmap. What is on
+/// the display is put back into the bitmap first, so nothing drawn while
+/// it was shown is lost, and the newly shown part is copied out. The
+/// scroll is held inside the bitmap, so scrolling past its edge stops
+/// there rather than showing memory that is not its.
+bool ScrollLayer(*layers.Layer layer, i32 dx, i32 dy)
+/// Change what paints a part of a layer that has nothing in it yet, and
+/// answer what was there before. A `*Hook`, or 0 for the layer's own
+/// background pen, or LAYERS_NOBACKFILL for nothing at all - the same
+/// three things LATAG_BackFill takes. It paints nothing by itself; it
+/// says what the next painting will use.
+usize InstallLayerHook(*layers.Layer layer, usize hook)
+/// Call a hook once for each piece of a RastPort that may be drawn on,
+/// with the part of `area` that piece covers. What a layer can draw on is
+/// several rectangles, in more than one surface once it is covered, and
+/// this is how something that wants to work over them one at a time gets
+/// them without knowing any of that. The hook is called with the RastPort
+/// and a BackFillMsg whose area is in the RastPort's own coordinates.
+void DoHookClipRects(*utility.Hook hook, *graphics.RastPort rp, *const graphics.Rect area)
+/// What an LERR_ code means, in words. A code this library does not know
+/// is "unknown error" rather than null.
+[*:0]const u8 LayersErrorText(i32 code)
+##end

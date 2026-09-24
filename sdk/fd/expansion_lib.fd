@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+//! expansion.library's functions: the board this machine is, and the parts
+//! soldered on it. The board's ROM carries a description of it - the system
+//! tag list (sdk/libs/expansion/systemtags.zig) - and this library hands
+//! each part out as a BoardPart, so a module asks for its part rather than
+//! knowing any board. Open it with OpenLibrary("expansion.library", 1).
+##include libs/exec/exec as exec
+##include libs/utility/utility as utility
+##include libs/expansion/expansion as expansion
+##basetype ExpansionBase
+##name expansion.library
+##bias 4
+##public
+/// The next part after `old` (null: the first) whose kind is `kind` and
+/// whose chip is `chip`, in the order the board lists them. PARTKIND_ANY
+/// and CHIP_ANY match every kind and every chip. Null when there is none.
+?*const expansion.BoardPart FindBoardPart(?*const expansion.BoardPart old, u32 kind, u32 chip)
+/// The system tag list's root: the board's name, its memory and its
+/// console, and a SYSTAG_Part per part. Never null on a machine that
+/// started; the list lives as long as the machine does.
+[*]const utility.TagItem SystemTags()
+##end

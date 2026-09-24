@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+.{
+    .name = .poweros_userland,
+    .version = "0.1.0",
+    .fingerprint = 0x6982b193e0169ac3,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .poweros_sdk = .{ .path = "../../sdk" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "LICENSE", "tests.zig", "c", "classes", "devs", "handlers", "libs", "s" },
+}

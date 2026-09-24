@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT
+//! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
+//! multiplication and division, Latin-1 case, pack tables, named objects,
+//! unique IDs, pattern matching, strings and alignment. The reserved slots
+//! are kept free so that the slots after them stay where they are.
+##include libs/exec/exec as exec
+##include libs/utility/utility as utility
+##basetype UtilityBase
+##name utility.library
+##bias 4
+##public
+// Tag lists
+?*const utility.TagItem FindTagItem(utility.Tag tag_val, ?[*]const utility.TagItem tag_list)
+usize GetTagData(utility.Tag tag_val, usize default_value, ?[*]const utility.TagItem tag_list)
+u32 PackBoolTags(u32 initial_flags, ?[*]const utility.TagItem tag_list, ?[*]const utility.TagItem bool_map)
+?*const utility.TagItem NextTagItem(*?[*]const utility.TagItem tag_list_ptr)
+void FilterTagChanges(?[*]utility.TagItem change_list, ?[*]utility.TagItem original_list, u32 apply)
+void MapTags(?[*]utility.TagItem tag_list, ?[*]const utility.TagItem map_list, u32 map_type)
+?[*]utility.TagItem AllocateTagItems(u32 num_tags)
+?[*]utility.TagItem CloneTagItems(?[*]const utility.TagItem tag_list)
+void FreeTagItems(?[*]utility.TagItem tag_list)
+void RefreshTagItemClones(?[*]utility.TagItem clone, ?[*]const utility.TagItem original)
+bool TagInArray(utility.Tag tag_val, ?[*]const utility.Tag tag_array)
+u32 FilterTagItems(?[*]utility.TagItem tag_list, ?[*]const utility.Tag filter_array, u32 logic)
+// Hooks
+usize CallHookPkt(*utility.Hook hook, ?*anyopaque object, ?*anyopaque param_packet)
+##reserve 2
+// Dates
+void Amiga2Date(u32 seconds, *utility.ClockData result)
+u32 Date2Amiga(*const utility.ClockData clock_data)
+u32 CheckDate(*const utility.ClockData clock_data)
+// 32-bit multiplication and division
+i32 SMult32(i32 arg1, i32 arg2)
+u32 UMult32(u32 arg1, u32 arg2)
+utility.SDivMod32Result SDivMod32(i32 dividend, i32 divisor)
+utility.UDivMod32Result UDivMod32(u32 dividend, u32 divisor)
+// Case
+i32 Stricmp([*:0]const u8 string1, [*:0]const u8 string2)
+i32 Strnicmp([*:0]const u8 string1, [*:0]const u8 string2, i32 length)
+u8 ToUpper(u32 character)
+u8 ToLower(u32 character)
+// More tag lists
+void ApplyTagChanges(?[*]utility.TagItem list, ?[*]const utility.TagItem change_list)
+// Reserved
+##reserve 1
+// 64-bit multiplication
+i64 SMult64(i32 arg1, i32 arg2)
+u64 UMult64(u32 arg1, u32 arg2)
+// Pack tables
+u32 PackStructureTags(?*anyopaque structure, ?[*]const u32 pack_table, ?[*]const utility.TagItem tag_list)
+u32 UnpackStructureTags(?*const anyopaque structure, ?[*]const u32 pack_table, ?[*]const utility.TagItem tag_list)
+// Named objects
+bool AddNamedObject(?*utility.NamedObject name_space, ?*utility.NamedObject object)
+?*utility.NamedObject AllocNamedObjectA(?[*:0]const u8 name, ?[*]const utility.TagItem tag_list)
+i32 AttemptRemNamedObject(?*utility.NamedObject object)
+?*utility.NamedObject FindNamedObject(?*utility.NamedObject name_space, ?[*:0]const u8 name, ?*utility.NamedObject last_object)
+void FreeNamedObject(?*utility.NamedObject object)
+?[*:0]const u8 NamedObjectName(?*utility.NamedObject object)
+void ReleaseNamedObject(?*utility.NamedObject object)
+void RemNamedObject(?*utility.NamedObject object, ?*exec.Message message)
+// Unique IDs
+u32 GetUniqueID()
+// Reserved
+##reserve 4
+// Pattern matching
+/// Make a pattern into tokens for MatchPattern, in `dest` of `size` bytes
+/// (utility.parsedSize(len) is always enough). 1 if it has wildcards, 0
+/// if not; -1 with IoErr() ERROR_BAD_TEMPLATE or ERROR_LINE_TOO_LONG, and
+/// an empty pattern in dest.
+isize ParsePattern([*:0]const u8 source, [*]u8 dest, usize size)
+/// ParsePattern, upper-cased for MatchPatternNoCase (Latin-1).
+isize ParsePatternNoCase([*:0]const u8 source, [*]u8 dest, usize size)
+/// Whether the string matches a pattern from ParsePattern. False also on
+/// IoErr() ERROR_TOO_MANY_LEVELS or ERROR_NO_FREE_STORE.
+bool MatchPattern([*:0]const u8 pattern, [*:0]const u8 string)
+/// MatchPattern without case, for a pattern from ParsePatternNoCase.
+bool MatchPatternNoCase([*:0]const u8 pattern, [*:0]const u8 string)
+/// Make `*` a wildcard (like `#?`) for the patterns parsed from now on, or
+/// a character again; returns the old setting. Off at first.
+bool SetWildStar(bool on)
+// Strings
+/// Compare two strings, case included: < 0, 0 or > 0 as string1 sorts
+/// before, the same as or after string2.
+i32 Strcmp([*:0]const u8 string1, [*:0]const u8 string2)
+/// The length of a string, without its NUL.
+usize Strlen([*:0]const u8 string)
+// Alignment
+/// `offset` rounded up to the next multiple of `alignment`, a power of two.
+usize AlignUp(usize offset, usize alignment)
+/// `offset` rounded down to a multiple of `alignment`, a power of two.
+usize AlignDown(usize offset, usize alignment)
+// Strings
+/// Copy `source` into `dest` of `size` bytes: at most size - 1 of them,
+/// then a NUL. Returns the length of `source`, so a copy that was cut
+/// short answers size or more.
+usize Strlcpy([*]u8 dest, usize size, [*:0]const u8 source)
+/// The first `character` in `string`, or null; 0 finds the NUL.
+?[*:0]const u8 Strchr([*:0]const u8 string, u8 character)
+/// The last `character` in `string`, or null; 0 finds the NUL.
+?[*:0]const u8 Strrchr([*:0]const u8 string, u8 character)
+// Dates, by the day
+/// A day number as a date: the year, the month (1-12), the day of the
+/// month and the weekday, with the time fields zeroed. The count is days
+/// since 1 January 1978, so it reaches far past the year the seconds of
+/// `Amiga2Date` stop at.
+void DateSplit(u32 days, *utility.ClockData result)
+/// The day number a date comes to, counting from 1 January 1978, or -1
+/// when it is no date. Only the year, the month and the day of the month
+/// are read.
+i32 DateJoin(*const utility.ClockData date)
+##end
