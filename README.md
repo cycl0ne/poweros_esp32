@@ -244,7 +244,7 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 
     // Wait until the close gadget is used.
     while (true) {
-        _ = sys.Wait(port.sigMask());
+        _ = sys.WaitPort(port);
         while (sys.GetMsg(port)) |m| {
             const class = @as(*intuition.IntuiMessage, @ptrCast(@alignCast(m))).class;
             sys.ReplyMsg(m);
