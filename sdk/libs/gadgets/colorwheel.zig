@@ -9,7 +9,8 @@
 //! Hue 0 is red, at the top of the wheel, and goes round through yellow,
 //! green, cyan, blue and magenta. The wheel is shown at full brightness;
 //! `WHEEL_Brightness` is kept with the colour and counts in its red,
-//! green and blue.
+//! green and blue. A gradientslider.gadget given as `WHEEL_GradientSlider`
+//! is where the brightness is picked.
 //!
 //! A press on the wheel moves the dot there and holds it; the dot follows
 //! the pointer, and the target hears `WHEEL_Hue` and `WHEEL_Saturation`
@@ -65,3 +66,7 @@ pub const WHEEL_RGB = WHEEL_Dummy + 8;
 /// Bool, made only: the wheel in a button bevel, which fills the gadget's
 /// box, and pressed anywhere in it.
 pub const WHEEL_BevelBox = WHEEL_Dummy + 12;
+/// A gradientslider.gadget that is the wheel's brightness: set to
+/// 0xFFFF less the brightness whenever the brightness is set, and read
+/// back into it whenever the colour is read. Made and set.
+pub const WHEEL_GradientSlider = WHEEL_Dummy + 13;

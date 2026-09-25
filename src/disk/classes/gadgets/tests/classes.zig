@@ -34,6 +34,8 @@ const scroller = @import("../scroller/scroller.zig");
 const listview = @import("../listview/listview.zig");
 const palette = @import("../palette/palette.zig");
 const colorwheel = @import("../colorwheel/colorwheel.zig");
+const gradientslider = @import("../gradientslider/gradientslider.zig");
+const gs = sdk.gadgets.gradientslider;
 const cw = sdk.gadgets.colorwheel;
 const pa = sdk.gadgets.palette;
 const sr = sdk.gadgets.scroller;
@@ -833,5 +835,93 @@ test "colorwheel.gadget: the colour set and read both ways, a press picks, the r
     try testing.expectEqual(@as(u32, 0x80008000), out_hsb.brightness);
 
     ib.DisposeObject(wheel);
+    try rig.down();
+}
+
+test "gradientslider.gadget: the knob along the gradient, skips beside it, a drag, the right button" {
+    // The knob's place: 0 at the start, the largest value at the end.
+    var own = gradientslider.Data{ .max = 100, .knob_pixels = 5 };
+    const at_start = gradientslider.Layout.of(&own, 104, 16);
+    try testing.expectEqual(@as(i32, 0), at_start.pos);
+    own.current = 100;
+    const at_end = gradientslider.Layout.of(&own, 104, 16);
+    try testing.expectEqual(at_end.range - at_end.span, at_end.pos);
+    // And back from where the pointer drags it.
+    own.mouse_offset = 0;
+    try testing.expectEqual(@as(i32, 0), gradientslider.valueAt(&own, at_end, -10));
+    try testing.expectEqual(@as(i32, 100), gradientslider.valueAt(&own, at_end, 500));
+    // The gradient: the first pen at the start, the last at the end, a
+    // mix between.
+    const two = [_]sdk.graphics.Pen{ 0xFF000000, 0xFFFFFFFF };
+    try testing.expectEqual(@as(u32, 0xFF000000), gradientslider.shade(&two, 2, 0, 101));
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), gradientslider.shade(&two, 2, 100, 101));
+    const middle = gradientslider.shade(&two, 2, 50, 101);
+    try testing.expect(middle & 0xFF >= 0x7F and middle & 0xFF <= 0x80);
+
+    var heard = Heard{ .tag = gs.GRAD_CurVal, .ib = undefined };
+    var rig = try Rig.up(&gradientslider.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const pens = [_]sdk.graphics.Pen{ 0xFFFF8000, 0xFF000000, gs.GRAD_PEN_END };
+    const gradient = ib.NewObjectTagList(null, gs.GRAD_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 12 },
+        .{ .tag = gc.GA_Width, .data = 104 },
+        .{ .tag = gc.GA_Height, .data = 16 },
+        .{ .tag = gs.GRAD_MaxVal, .data = 100 },
+        .{ .tag = gs.GRAD_CurVal, .data = 50 },
+        .{ .tag = gs.GRAD_SkipVal, .data = 10 },
+        .{ .tag = gs.GRAD_PenArray, .data = @intFromPtr(&pens) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 50), attr(ib, gradient, gs.GRAD_CurVal));
+    // Past the end is the end.
+    _ = ib.SetAttrsTagList(gradient, &[_]TagItem{ .{ .tag = gs.GRAD_CurVal, .data = 999 }, .{} });
+    try testing.expectEqual(@as(usize, 100), attr(ib, gradient, gs.GRAD_CurVal));
+    _ = ib.SetAttrsTagList(gradient, &[_]TagItem{ .{ .tag = gs.GRAD_CurVal, .data = 50 }, .{} });
+
+    // Beside the knob: a skip that way, done at once, and told.
+    var termination: i32 = -1;
+    var before = input(gc.GM_GOACTIVE, &press, 4, 8, &termination);
+    try testing.expect(ib.SendMessage(gradient, @ptrCast(&before)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(usize, 40), attr(ib, gradient, gs.GRAD_CurVal));
+    try testing.expectEqual(@as(?usize, 40), heard.value);
+    try testing.expectEqual(@as(?usize, 12), heard.id);
+    var after = input(gc.GM_GOACTIVE, &press, 100, 8, &termination);
+    _ = ib.SendMessage(gradient, @ptrCast(&after));
+    try testing.expectEqual(@as(usize, 50), attr(ib, gradient, gs.GRAD_CurVal));
+
+    // On the knob: held, dragged to the end, then the right button puts
+    // the value back.
+    const cl = classes.objectClass(gradient);
+    const inst = classes.instData(gradientslider.Data, cl, gradient);
+    const knob = gradientslider.Layout.of(inst, 104, 16);
+    var grab = input(gc.GM_GOACTIVE, &press, 2 + knob.pos + 2, 8, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(gradient, @ptrCast(&grab)));
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var drag = input(gc.GM_HANDLEINPUT, &moving, 200, 8, &termination);
+    _ = ib.SendMessage(gradient, @ptrCast(&drag));
+    try testing.expectEqual(@as(usize, 100), attr(ib, gradient, gs.GRAD_CurVal));
+    const right = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON };
+    var undo = input(gc.GM_HANDLEINPUT, &right, 200, 8, &termination);
+    try testing.expect(ib.SendMessage(gradient, @ptrCast(&undo)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(usize, 50), attr(ib, gradient, gs.GRAD_CurVal));
+
+    // A wheel's brightness in the slider: 0xFFFF less it, set when the
+    // wheel's is, and read back from the gradient into the wheel.
+    const wheel_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &colorwheel.Library.resident_tag, null).?));
+    const brightness = ib.NewObjectTagList(null, gs.GRAD_CLASS, &[_]TagItem{.{}}).?;
+    const wheel = ib.NewObjectTagList(null, cw.WHEEL_CLASS, &[_]TagItem{
+        .{ .tag = cw.WHEEL_Brightness, .data = 0xC000C000 },
+        .{ .tag = cw.WHEEL_GradientSlider, .data = @intFromPtr(brightness) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0x3FFF), attr(ib, brightness, gs.GRAD_CurVal));
+    _ = ib.SetAttrsTagList(brightness, &[_]TagItem{ .{ .tag = gs.GRAD_CurVal, .data = 0xFFFF }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, wheel, cw.WHEEL_Brightness));
+
+    ib.DisposeObject(wheel);
+    ib.DisposeObject(brightness);
+    _ = kexec.SysBase.iface().RemLibrary(wheel_lib);
+    ib.DisposeObject(gradient);
     try rig.down();
 }

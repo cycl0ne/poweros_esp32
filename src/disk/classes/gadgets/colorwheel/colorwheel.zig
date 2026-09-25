@@ -44,6 +44,7 @@ const ie = sdk.devices.inputevent;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const cw = gadgets.colorwheel;
+const gs = gadgets.gradientslider;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -103,6 +104,8 @@ pub const Data = extern struct {
     picture_height: i32 = 0,
     /// The button bevel, with `WHEEL_BevelBox`.
     frame: ?*Object = null,
+    /// `WHEEL_GradientSlider`: where the brightness is picked.
+    gradient_slider: ?*Object = null,
 };
 
 // --- where the wheel is ------------------------------------------------------
@@ -296,8 +299,9 @@ fn redraw(base: *gadgets.Base, o: *Object, gi: ?*classusr.GadgetInfo, how: u32) 
 /// The colour's attributes among `tags`, and `WHEEL_BevelBox` when the
 /// gadget is made. Answers whether the hue or saturation changed - what
 /// the dot shows.
-fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
+fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool, gi: ?*classusr.GadgetInfo) bool {
     const ub = base.utility_base;
+    const was_brightness = own.brightness;
     const was_hue = own.hue;
     const was_saturation = own.saturation;
     var rgb: colour.Rgb = .{};
@@ -339,6 +343,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             cw.WHEEL_BevelBox => if (new) {
                 own.bevel = @intFromBool(item.data != 0);
             },
+            cw.WHEEL_GradientSlider => own.gradient_slider = @ptrFromInt(item.data),
             else => {},
         }
     }
@@ -353,7 +358,23 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
         own.saturation = hsb.saturation;
         own.brightness = hsb.brightness;
     }
+    // The slider follows the brightness: bright at its start.
+    if (own.brightness != was_brightness or new) {
+        if (own.gradient_slider) |slider| {
+            const value = [_]TagItem{ .{ .tag = gs.GRAD_CurVal, .data = 0xFFFF - own.brightness }, .{} };
+            var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &value, .gadget_info = gi };
+            _ = base.intuition_base.SendMessage(slider, @ptrCast(&set));
+        }
+    }
     return own.hue != was_hue or own.saturation != was_saturation;
+}
+
+/// The brightness as the slider has it, when there is one.
+fn brightnessFromSlider(base: *gadgets.Base, own: *Data) void {
+    const slider = own.gradient_slider orelse return;
+    var value: usize = 0;
+    if (base.intuition_base.GetAttr(gs.GRAD_CurVal, slider, &value) == 0) return;
+    own.brightness = 0xFFFF - @min(@as(u32, @truncate(value)), 0xFFFF);
 }
 
 fn get(own: *const Data, msg: *classusr.OpGet) bool {
@@ -440,7 +461,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
-            _ = setAttrs(base, own, new.attr_list, true);
+            _ = setAttrs(base, own, new.attr_list, true, null);
             if (own.bevel != 0) {
                 const frame_tags = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_BUTTON }, .{} };
                 own.frame = ib.NewObjectTagList(null, classusr.FRAMEICLASS, &frame_tags) orelse {
@@ -470,7 +491,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const changed = ib.SendSuperMessage(cl, o, msg);
-            const moved = setAttrs(base, classes.instData(Data, cl, o.?), set.attr_list, false);
+            const moved = setAttrs(base, classes.instData(Data, cl, o.?), set.attr_list, false, set.gadget_info);
             if (classes.objectClass(o.?) == cl and set.gadget_info != null) {
                 // The gadget's own attributes - being disabled - redraw it
                 // all; a new colour only the dot.
@@ -485,7 +506,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_GET => {
             const msg_get: *classusr.OpGet = @ptrCast(@alignCast(msg));
-            if (get(classes.instData(Data, cl, o.?), msg_get)) return 1;
+            const own = classes.instData(Data, cl, o.?);
+            brightnessFromSlider(base, own);
+            if (get(own, msg_get)) return 1;
             return ib.SendSuperMessage(cl, o, msg);
         },
         // Square at the least and as it looks right, as big as there is

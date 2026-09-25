@@ -4,11 +4,14 @@
 //!
 //!   ColorWheel BEVEL/S
 //!
-//! It opens colorwheel.gadget and text.gadget from `SYS:classes/gadgets/`
-//! and a window object on the default public screen holding one layout: a
-//! colour wheel, in a bevel with BEVEL, starting at orange; under it a
-//! text line with the colour as hue, saturation and brightness, and red,
-//! green and blue; and an OK button. Each time the dot is let go the line
+//! It opens colorwheel.gadget, gradientslider.gadget and text.gadget from
+//! `SYS:classes/gadgets/` and a window object on the default public screen
+//! holding one layout: a colour wheel, in a bevel with BEVEL, starting at
+//! orange, and beside it a gradient slider that is its brightness
+//! (`WHEEL_GradientSlider`), running from the colour at full brightness at
+//! the top to black; under them a text line with the colour's red, green
+//! and blue; and an OK button. Each time the dot is let go the slider's
+//! colours follow it; each time either is let go the line
 //! shows the new colour and it is printed - its red, green and blue once as
 //! the wheel says them and once worked out from its hue, saturation and
 //! brightness with the library's own ConvertHSBToRGB, which agree. OK, the
@@ -25,6 +28,9 @@ const wc = intuition.windowclass;
 const classusr = intuition.classusr;
 const cw = sdk.gadgets.colorwheel;
 const tx = sdk.gadgets.text;
+const gs = sdk.gadgets.gradientslider;
+const pg = intuition.propgclass;
+const graphics = sdk.graphics;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -34,7 +40,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ColorWheel";
-const VERSION_STRING = "\x00$VER: ColorWheel 1.0 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ColorWheel 1.1 (25.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "BEVEL/S";
@@ -50,19 +56,30 @@ const MSG_COLOUR = "Hue %04x saturation %04x brightness %04x: red %04x green %04
 const ID_WHEEL = 1;
 const ID_COLOUR = 2;
 const ID_OK = 3;
+const ID_BRIGHTNESS = 4;
 
 /// Orange, to start at.
 const orange = cw.ColorWheelRGB{ .red = 0xFFFFFFFF, .green = 0x80008000, .blue = 0 };
 
-const Shown = struct { layout: *Object, wheel: *Object, line: *Object };
+const Shown = struct { layout: *Object, wheel: *Object, line: *Object, brightness: *Object };
 
-fn build(ib: *IntuitionBase, bevel: bool) ?Shown {
+fn build(ib: *IntuitionBase, bevel: bool, shades: *const [3]graphics.Pen) ?Shown {
+    const brightness = ib.NewObjectTagList(null, gs.GRAD_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_BRIGHTNESS },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = gc.GA_Width, .data = 18 },
+        .{ .tag = gc.GA_Height, .data = 160 },
+        .{ .tag = gs.GRAD_PenArray, .data = @intFromPtr(shades) },
+        .{ .tag = gs.GRAD_KnobPixels, .data = 7 },
+        .{},
+    });
     const wheel = ib.NewObjectTagList(null, cw.WHEEL_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_WHEEL },
         .{ .tag = gc.GA_Width, .data = 160 },
         .{ .tag = gc.GA_Height, .data = 160 },
         .{ .tag = cw.WHEEL_RGB, .data = @intFromPtr(&orange) },
         .{ .tag = cw.WHEEL_BevelBox, .data = @intFromBool(bevel) },
+        .{ .tag = cw.WHEEL_GradientSlider, .data = @intFromPtr(brightness) },
         .{},
     });
     const line = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
@@ -79,13 +96,25 @@ fn build(ib: *IntuitionBase, bevel: bool) ?Shown {
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     });
-    const parts = [_]?*Object{ wheel, line, ok };
+    const pair = if (wheel != null and brightness != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wheel) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(brightness) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{},
+    }) else null;
+    if (pair == null) {
+        ib.DisposeObject(wheel);
+        ib.DisposeObject(brightness);
+    }
+    const parts = [_]?*Object{ pair, line, ok };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
         .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wheel) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(pair) },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(line) },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ok) },
@@ -96,7 +125,7 @@ fn build(ib: *IntuitionBase, bevel: bool) ?Shown {
         for (parts) |part| ib.DisposeObject(part);
         return null;
     };
-    return .{ .layout = made, .wheel = wheel.?, .line = line.? };
+    return .{ .layout = made, .wheel = wheel.?, .line = line.?, .brightness = brightness.? };
 }
 
 /// Four hex digits of the top of a 32-bit fraction into `into`.
@@ -142,6 +171,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(text_lib);
+    const slider_lib = sys.OpenLibrary(gs.GRAD_LIBRARY, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, gs.GRAD_LIBRARY)});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(slider_lib);
+    // The slider's colours: the wheel's colour at full brightness down to
+    // black. Changed in place as the colour changes.
+    var shades = [3]graphics.Pen{ graphics.penRGB(0xFF, 0x80, 0), graphics.penRGB(0, 0, 0), gs.GRAD_PEN_END };
 
     const screen = ib.LockPubScreen(null) orelse {
         _ = Printf(dl, MSG_NOSCREEN, .{});
@@ -149,7 +186,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer ib.UnlockPubScreen(null, screen);
 
-    const shown = build(ib, argv[arg_bevel] != 0) orelse {
+    const shown = build(ib, argv[arg_bevel] != 0, &shades) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
@@ -196,7 +233,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_OK => return dos.RETURN_OK,
-                    ID_WHEEL => {
+                    ID_WHEEL, ID_BRIGHTNESS => {
                         // The storage GetAttr fills is the structure itself.
                         var hsb: cw.ColorWheelHSB align(@alignOf(usize)) = .{};
                         var rgb: cw.ColorWheelRGB align(@alignOf(usize)) = .{};
@@ -216,6 +253,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         hex4(words[10..14], rgb.green);
                         hex4(words[18..22], rgb.blue);
                         _ = ib.SetGadgetAttrsTagList(shown.line, window, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&words) }, .{} });
+                        // The slider's top shade is the colour at full
+                        // brightness.
+                        var full: cw.ColorWheelRGB = .{};
+                        wheel_calls.ConvertHSBToRGB(&.{ .hue = hsb.hue, .saturation = hsb.saturation, .brightness = 0xFFFFFFFF }, &full);
+                        shades[0] = graphics.penRGB(@truncate(full.red >> 24), @truncate(full.green >> 24), @truncate(full.blue >> 24));
+                        _ = ib.SetGadgetAttrsTagList(shown.brightness, window, &[_]TagItem{ .{ .tag = gs.GRAD_PenArray, .data = @intFromPtr(&shades) }, .{} });
                     },
                     else => {},
                 },

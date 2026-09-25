@@ -142,7 +142,8 @@ cores.
   lines to type text or a number in, lines of text to show, sliders that
   show their level, scroll bars with arrows, scrolling lists of an exec
   list's nodes, colour palettes, and a colour wheel with its own
-  colour-conversion calls, built with the SDK's class library
+  colour-conversion calls and a gradient slider for its brightness,
+  built with the SDK's class library
   skeleton
   (`sdk.gadgets`).
 
