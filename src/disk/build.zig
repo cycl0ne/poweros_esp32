@@ -37,7 +37,7 @@ const tests = [_][]const u8{
     "hello",     "echoargs", "testlib",  "gfx",     "anim",
     "intuition", "console",  "keyboard", "touch",   "input",
     "lines",     "nyan",     "plasma",   "audio",   "fonts",
-    "screens",   "layout",   "classes",  "gadgets",
+    "screens",   "layout",   "classes",  "gadgets", "listview",
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -55,6 +55,8 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/string.gadget", .source = "classes/gadgets/string/string.zig", .name = "string.gadget" },
     .{ .disk = "classes/gadgets/text.gadget", .source = "classes/gadgets/text/text.zig", .name = "text.gadget" },
     .{ .disk = "classes/gadgets/slider.gadget", .source = "classes/gadgets/slider/slider.zig", .name = "slider.gadget" },
+    .{ .disk = "classes/gadgets/scroller.gadget", .source = "classes/gadgets/scroller/scroller.zig", .name = "scroller.gadget" },
+    .{ .disk = "classes/gadgets/listview.gadget", .source = "classes/gadgets/listview/listview.zig", .name = "listview.gadget" },
     .{ .disk = "devs/sd.device", .source = "devs/sd/sd.zig", .name = "sd.device" },
     .{ .disk = "handlers/fat-handler", .source = "handlers/fat/fat.zig", .name = "fat-handler" },
 };

@@ -30,6 +30,10 @@ const radiobutton = @import("../radiobutton/radiobutton.zig");
 const string = @import("../string/string.zig");
 const text = @import("../text/text.zig");
 const slider = @import("../slider/slider.zig");
+const scroller = @import("../scroller/scroller.zig");
+const listview = @import("../listview/listview.zig");
+const sr = sdk.gadgets.scroller;
+const lv = sdk.gadgets.listview;
 const st = sdk.gadgets.string;
 const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
@@ -445,4 +449,249 @@ test "slider.gadget: levels spread over the pot, the knob on its level, and the 
     try testing.expectEqualStrings("12%", std.mem.span(slider.levelText(sdk.gadgets.baseOf(classes.objectClass(shown)), own, shown)));
     ib.DisposeObject(shown);
     try rig.down();
+}
+
+const timer_tick = ie.InputEvent{ .class = ie.IECLASS_TIMER };
+
+test "scroller.gadget: the top kept in the view, arrows that step and repeat, pages" {
+    var heard = Heard{ .tag = sr.SCROLLER_Top, .ib = undefined };
+    var rig = try Rig.up(&scroller.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    const bar = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 6 },
+        .{ .tag = sr.SCROLLER_Total, .data = 200 },
+        .{ .tag = sr.SCROLLER_Visible, .data = 20 },
+        .{ .tag = sr.SCROLLER_Top, .data = 500 },
+        .{ .tag = sr.SCROLLER_Arrows, .data = 12 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    // Past the last full view is the last full view.
+    try testing.expectEqual(@as(usize, 180), attr(ib, bar, sr.SCROLLER_Top));
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = 0 }, .{} });
+    // Across, 100 of bar and two arrows of 12 at the right, 16 thick.
+    try testing.expectEqual(@as(usize, 124), attr(ib, bar, gc.GA_Width));
+    try testing.expectEqual(@as(usize, 16), attr(ib, bar, gc.GA_Height));
+
+    // The forward arrow: a step at the press, none for three ticks, then
+    // one at each.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 118, 8, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(bar, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, sr.SCROLLER_Top));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 6), heard.id);
+    var tick = input(gc.GM_HANDLEINPUT, &timer_tick, 118, 8, &termination);
+    for (0..3) |_| _ = ib.SendMessage(bar, @ptrCast(&tick));
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, sr.SCROLLER_Top));
+    _ = ib.SendMessage(bar, @ptrCast(&tick));
+    _ = ib.SendMessage(bar, @ptrCast(&tick));
+    try testing.expectEqual(@as(usize, 3), attr(ib, bar, sr.SCROLLER_Top));
+    // Off the arrow it holds still.
+    var off = input(gc.GM_HANDLEINPUT, &timer_tick, 40, 8, &termination);
+    _ = ib.SendMessage(bar, @ptrCast(&off));
+    try testing.expectEqual(@as(usize, 3), attr(ib, bar, sr.SCROLLER_Top));
+    // Let go: the top is the code.
+    var up = input(gc.GM_HANDLEINPUT, &release, 118, 8, &termination);
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 3), termination);
+
+    // The back arrow at the start does nothing.
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = 0 }, .{} });
+    var back = input(gc.GM_GOACTIVE, &press, 106, 8, &termination);
+    _ = ib.SendMessage(bar, @ptrCast(&back));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, sr.SCROLLER_Top));
+    var back_up = input(gc.GM_HANDLEINPUT, &release, 106, 8, &termination);
+    _ = ib.SendMessage(bar, @ptrCast(&back_up));
+
+    // A press in the bar beside the knob: a page, one line kept.
+    var page = input(gc.GM_GOACTIVE, &press, 90, 8, &termination);
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&page)) & gc.GMR_VERIFY != 0);
+    const paged = attr(ib, bar, sr.SCROLLER_Top);
+    try testing.expectEqual(@as(usize, 19), paged);
+    try testing.expectEqual(@as(i32, 19), termination);
+    try testing.expectEqual(@as(?usize, 19), heard.value);
+
+    ib.DisposeObject(bar);
+    try rig.down();
+}
+
+/// ramlib's part in opening a class library by its path, which the host
+/// tests do without: exec is asked for the name's tail.
+const ByTail = struct {
+    var old: ?*const anyopaque = null;
+
+    fn open(sys: *sdk.interface.exec.ExecBase, name: [*:0]const u8, version: u32) callconv(.c) ?*exec.Library {
+        var tail = name;
+        var i: usize = 0;
+        while (name[i] != 0) : (i += 1) {
+            if (name[i] == '/' or name[i] == ':') tail = name + i + 1;
+        }
+        const exec_open: *const fn (*sdk.interface.exec.ExecBase, [*:0]const u8, u32) callconv(.c) ?*exec.Library = @ptrCast(@alignCast(old.?));
+        return exec_open(sys, tail, version);
+    }
+
+    fn install() void {
+        const sys = kexec.SysBase.iface();
+        old = sys.SetFunction(@ptrCast(@alignCast(sys)), sdk.interface.exec.LVO.OpenLibrary, @ptrCast(&open));
+    }
+
+    fn remove() void {
+        const sys = kexec.SysBase.iface();
+        _ = sys.SetFunction(@ptrCast(@alignCast(sys)), sdk.interface.exec.LVO.OpenLibrary, old.?);
+    }
+};
+
+/// Hides line 3 of the test's list from selection.
+fn thirdDisabled(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const msg: *const lv.LVDrawMsg = @ptrCast(@alignCast(message.?));
+    if (msg.method_id == lv.LV_ISDISABLED and msg.line == 3) return lv.LVCB_DISABLED;
+    return lv.LVCB_UNKNOWN;
+}
+
+test "listview.gadget: top and selection, the view kept full, detach, disabled lines" {
+    var heard = Heard{ .tag = lv.LISTVIEW_Selected, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    // The scroller's library first, which the list view's opens.
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listview.Library.resident_tag, null).?));
+    const listener_class = ib.MakeClass(null, classusr.ROOTCLASS, null, 0).?;
+    listener_class.dispatcher.entry = &listen;
+    listener_class.user_data = @intFromPtr(&heard);
+    const listener = ib.NewObjectTagList(listener_class, null, null).?;
+
+    // Twenty lines.
+    var names: [20][8:0]u8 = undefined;
+    var nodes: [20]exec.Node = undefined;
+    var list: exec.List = .{};
+    list.init(.unknown);
+    for (&nodes, &names, 0..) |*node, *name, i| {
+        name.* = @splat(0);
+        name[0] = 'L';
+        name[1] = '0' + @as(u8, @intCast(i / 10));
+        name[2] = '0' + @as(u8, @intCast(i % 10));
+        node.* = .{ .name = name };
+        kexec.SysBase.iface().AddTail(&list, node);
+    }
+
+    var hook = utility.Hook{ .entry = &thirdDisabled };
+    const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 5 },
+        .{ .tag = gc.GA_Width, .data = 150 },
+        .{ .tag = gc.GA_Height, .data = 60 },
+        .{ .tag = lv.LISTVIEW_ItemHeight, .data = 10 },
+        .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) },
+        .{ .tag = lv.LISTVIEW_ShowSelected, .data = 1 },
+        .{ .tag = lv.LISTVIEW_CallBack, .data = @intFromPtr(&hook) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(listener) },
+        .{},
+    }).?;
+    const cl = classes.objectClass(view);
+    const own = classes.instData(listview.Data, cl, view);
+    const parts = listview.partsOf(sdk.gadgets.baseOf(cl), own, view, null);
+    const visible = parts.visible;
+    try testing.expect(visible >= 4);
+    try testing.expectEqual(lv.LISTVIEW_NONE, @as(u32, @truncate(attr(ib, view, lv.LISTVIEW_Selected))));
+
+    // The view is kept full: past the end is the last full view.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = 99 }, .{} });
+    try testing.expectEqual(@as(usize, 20 - visible), attr(ib, view, lv.LISTVIEW_Top));
+    // The scroller follows.
+    try testing.expectEqual(@as(usize, 20 - visible), attr(ib, own.scroller.?, sr.SCROLLER_Top));
+    // Made visible, moving as little as it can.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_MakeVisible, .data = 2 }, .{} });
+    try testing.expectEqual(@as(usize, 2), attr(ib, view, lv.LISTVIEW_Top));
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_MakeVisible, .data = 12 }, .{} });
+    try testing.expectEqual(@as(usize, 12 - visible + 1), attr(ib, view, lv.LISTVIEW_Top));
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = 0 }, .{} });
+
+    // A press on the second line shown selects it; let go, it is the code.
+    var termination: i32 = -1;
+    const second_y = parts.lines.top + parts.line_height + 2;
+    var down = input(gc.GM_GOACTIVE, &press, 10, second_y, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(view, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, view, lv.LISTVIEW_Selected));
+    // Dragged down a line, the selection follows.
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var drag = input(gc.GM_HANDLEINPUT, &moving, 10, second_y + parts.line_height, &termination);
+    _ = ib.SendMessage(view, @ptrCast(&drag));
+    try testing.expectEqual(@as(usize, 2), attr(ib, view, lv.LISTVIEW_Selected));
+    // Below the list, a line more at each tick.
+    const below_y = parts.lines.top + @as(i32, @intCast(visible)) * parts.line_height + 3;
+    var tick = input(gc.GM_HANDLEINPUT, &timer_tick, 10, below_y, &termination);
+    _ = ib.SendMessage(view, @ptrCast(&tick));
+    try testing.expectEqual(@as(usize, 1), attr(ib, view, lv.LISTVIEW_Top));
+    try testing.expectEqual(@as(usize, visible), attr(ib, view, lv.LISTVIEW_Selected));
+    var up = input(gc.GM_HANDLEINPUT, &release, 10, below_y, &termination);
+    try testing.expect(ib.SendMessage(view, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, @intCast(visible)), termination);
+    try testing.expectEqual(@as(?usize, visible), heard.value);
+    try testing.expectEqual(@as(?usize, 5), heard.id);
+
+    // Line 3 is disabled: a press on it selects nothing.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = 0 }, .{} });
+    termination = -1;
+    var on_third = input(gc.GM_GOACTIVE, &press, 10, parts.lines.top + 3 * parts.line_height + 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(view, @ptrCast(&on_third)));
+
+    // Detached while the list changes, and given back: from the top,
+    // nothing selected.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = lv.LISTVIEW_DETACH }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, view, lv.LISTVIEW_Labels));
+    var on_nothing = input(gc.GM_GOACTIVE, &press, 10, second_y, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(view, @ptrCast(&on_nothing)));
+    kexec.SysBase.iface().Remove(&nodes[19]);
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, view, lv.LISTVIEW_Top));
+    try testing.expectEqual(lv.LISTVIEW_NONE, @as(u32, @truncate(attr(ib, view, lv.LISTVIEW_Selected))));
+    try testing.expectEqual(@as(u32, 19), own.count);
+
+    ib.DisposeObject(view);
+    ib.DisposeObject(listener);
+    try testing.expect(ib.FreeClass(listener_class));
+    const sys = kexec.SysBase.iface();
+    // The list view first: it has the scroller's library open.
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(lv.LISTVIEW_CLASS) == null);
+    _ = sys.RemLibrary(scroller_lib);
+    try testing.expect(ib.FindClass(sr.SCROLLER_CLASS) == null);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "listview.gadget: read only, it selects nothing" {
+    var heard = Heard{ .tag = lv.LISTVIEW_Selected, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listview.Library.resident_tag, null).?));
+
+    var node = exec.Node{ .name = "only" };
+    var list: exec.List = .{};
+    list.init(.unknown);
+    kexec.SysBase.iface().AddTail(&list, &node);
+    const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) },
+        .{ .tag = lv.LISTVIEW_ReadOnly, .data = 1 },
+        .{},
+    }).?;
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 10, 5, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(view, @ptrCast(&down)));
+    try testing.expectEqual(lv.LISTVIEW_NONE, @as(u32, @truncate(attr(ib, view, lv.LISTVIEW_Selected))));
+
+    ib.DisposeObject(view);
+    const sys = kexec.SysBase.iface();
+    _ = sys.RemLibrary(lib);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
 }

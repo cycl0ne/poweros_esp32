@@ -5,12 +5,15 @@
 //!
 //! - The base: exec's library, the segments it was loaded from,
 //!   intuition.library, graphics.library, utility.library and the class.
-//! - The init opens the three, makes the class from its superclass by name
+//! - The init opens the three, and the libraries the class says it needs
+//!   (`opens`: another class library whose class it makes objects of),
+//!   makes the class from its superclass by name
 //!   (`MakeClass`), sets the dispatcher, keeps the base in the class's
 //!   `user_data` - where `baseOf` finds it - and puts the class on the
 //!   public list.
 //! - The expunge refuses while the library is open or the class has
-//!   objects or subclasses. Otherwise it frees the class, closes the three,
+//!   objects or subclasses. Otherwise it frees the class, closes what it
+//!   opened,
 //!   takes the library off exec's list, frees its memory and hands back
 //!   the segments.
 //! - The ROM tag, in `.resident`, the `$VER:` string, in `.version`, and a
@@ -53,7 +56,13 @@ pub const Spec = struct {
     /// The class's part of an object.
     Instance: type,
     dispatch: utility.hooks.HookFn,
+    /// Libraries the class needs open for as long as it is there, by
+    /// name: at most `max_opens`.
+    opens: []const [*:0]const u8 = &.{},
 };
+
+/// How many libraries a class library may open for its class.
+pub const max_opens = 4;
 
 /// A class library's base: what its dispatcher reaches through `baseOf`.
 pub const Base = extern struct {
@@ -65,6 +74,8 @@ pub const Base = extern struct {
     /// What LoadSeg made, handed to the init and back at the expunge.
     seg_list: ?*anyopaque = null,
     class: *Class,
+    /// The libraries of `Spec.opens`, in that order.
+    opened: [max_opens]?*exec.Library = @splat(null),
 };
 
 /// The base of the library a class is in, from the class a dispatcher is
@@ -74,6 +85,7 @@ pub fn baseOf(cl: *const Class) *Base {
 }
 
 pub fn ClassLibrary(comptime spec: Spec) type {
+    if (spec.opens.len > max_opens) @compileError("a class library opens at most max_opens libraries");
     return struct {
         pub const version_string = "\x00$VER: " ++ spec.name ++ " " ++
             std.fmt.comptimePrint("{d}.{d}", .{ spec.version, spec.revision }) ++
@@ -97,6 +109,13 @@ pub fn ClassLibrary(comptime spec: Spec) type {
             base.intuition_base = @ptrCast(intuition_lib);
             base.graphics_base = @ptrCast(graphics_lib);
             base.utility_base = @ptrCast(utility_lib);
+            base.opened = @splat(null);
+            for (spec.opens, 0..) |name, i| {
+                base.opened[i] = sys.OpenLibrary(name, 0) orelse {
+                    closeAll(base);
+                    return null;
+                };
+            }
             const ib = base.intuition_base;
             base.class = ib.MakeClass(spec.name, spec.super, null, @sizeOf(spec.Instance)) orelse {
                 closeAll(base);
@@ -110,6 +129,7 @@ pub fn ClassLibrary(comptime spec: Spec) type {
 
         fn closeAll(base: *Base) void {
             const sys = base.sys_base;
+            for (base.opened) |lib| sys.CloseLibrary(lib);
             sys.CloseLibrary(base.utility_base.lib());
             sys.CloseLibrary(base.graphics_base.lib());
             sys.CloseLibrary(base.intuition_base.lib());

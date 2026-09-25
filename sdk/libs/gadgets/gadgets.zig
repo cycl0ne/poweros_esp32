@@ -41,3 +41,5 @@ pub const radiobutton = @import("radiobutton.zig");
 pub const string = @import("string.zig");
 pub const text = @import("text.zig");
 pub const slider = @import("slider.zig");
+pub const scroller = @import("scroller.zig");
+pub const listview = @import("listview.zig");
