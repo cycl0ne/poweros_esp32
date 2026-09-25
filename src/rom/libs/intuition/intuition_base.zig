@@ -49,6 +49,13 @@ pub const IntuitionBase = extern struct {
     default_pub: ?*@import("screen/_screen.zig").Screen,
     /// `SetPubScreenModes`' bits.
     pub_modes: u32,
+    /// timer.device, opened the first time something waits (`_misc.wait`):
+    /// the request each wait copies.
+    timer_io: sdk.devices.timer.TimeRequest,
+    timer_open: bool,
+    /// The alert up, if one is; one at a time, under `alert_lock`.
+    alert: @import("misc/_misc.zig").AlertState,
+    alert_lock: exec.SignalSemaphore,
     /// The public classes, newest first. Each node is a class's
     /// dispatcher hook, which is the class's first field.
     class_list: exec.MinList,

@@ -2,7 +2,7 @@
 //! Intuition: what intuition.library has made of the display. Built
 //! against the SDK only.
 //!
-//!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S
+//!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S
 //!
 //! With nothing asked for it locks the default public screen - which opens
 //! it, the first time - prints its size, depth, title bar and pens, and
@@ -63,6 +63,12 @@
 //!
 //! CLOSE closes the default screen, which leaves the display black. It is
 //! refused while anything else holds it.
+//!
+//! BEEP flashes the display (DisplayBeep).
+//!
+//! ALERT puts up a recoverable alert (TimedDisplayAlert) and prints how it
+//! was answered: the left button or the left half of the display yes, the
+//! right ones no. Unanswered it comes down by itself after ten seconds.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -84,7 +90,7 @@ pub const COMMAND_NAME = "Intuition";
 const VERSION_STRING = "\x00$VER: Intuition 1.7 (22.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S";
+const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S";
 const arg_windows = 0;
 const arg_gadgets = 1;
 const arg_sliders = 2;
@@ -93,6 +99,8 @@ const arg_request = 4;
 const arg_menus = 5;
 const arg_requester = 6;
 const arg_close = 7;
+const arg_beep = 8;
+const arg_alert = 9;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
@@ -304,6 +312,8 @@ fn button(ib: *IntuitionBase, prev: ?*intuition.Object, id: usize, text: [*:0]co
 }
 
 const MSG_ANSWER = "Request    answered %ld\n";
+const MSG_ALERT = "Alert      answered %s\n";
+const MSG_ALERT_TEXT = "Recoverable Alert - a test of TimedDisplayAlert\nLeft button or left half: yes      Right button or right half: no\nIt goes away by itself in ten seconds";
 
 /// The same question until it is answered with the rightmost button.
 const question = intuition.EasyStruct{
@@ -1111,7 +1121,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [8]usize = @splat(0);
+    var argv: [10]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -1130,6 +1140,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     };
 
+    if (argv[arg_beep] != 0) {
+        ib.UnlockPubScreen(null, s);
+        ib.DisplayBeep(null);
+        return dos.RETURN_OK;
+    }
+    if (argv[arg_alert] != 0) {
+        ib.UnlockPubScreen(null, s);
+        const yes = ib.TimedDisplayAlert(exec.AT_Recovery, MSG_ALERT_TEXT, 0, 600);
+        _ = Printf(dl, MSG_ALERT, .{@as([*:0]const u8, if (yes) "yes" else "no")});
+        return dos.RETURN_OK;
+    }
     if (argv[arg_close] != 0) {
         ib.UnlockPubScreen(null, s);
         if (ib.CloseScreen(s)) {

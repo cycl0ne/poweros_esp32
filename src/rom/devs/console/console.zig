@@ -1055,6 +1055,12 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                     while (bytes[len] != 0) len += 1;
                 } else len = @intCast(std_io.length);
                 write(u, bytes[0..len]);
+                // A bell rings once the text is down: the window's screen
+                // flashes.
+                if (u.grid.takeBell()) {
+                    const screen: *intuition.Screen = @ptrFromInt(windowAttr(u.base, u.window, wn.WA_Screen));
+                    u.base.intuition_base.DisplayBeep(screen);
+                }
                 std_io.actual = len;
                 // What is left to write, and where it would go on from:
                 // a caller that loops on a partial write reads both back.

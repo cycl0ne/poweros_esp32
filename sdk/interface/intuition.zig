@@ -116,6 +116,10 @@ pub const LVO = struct {
     pub const AllocScreenBuffer = libraries.lvo(98);
     pub const ChangeScreenBuffer = libraries.lvo(99);
     pub const FreeScreenBuffer = libraries.lvo(100);
+    pub const DisplayBeep = libraries.lvo(101);
+    pub const CurrentTime = libraries.lvo(102);
+    pub const DisplayAlert = libraries.lvo(103);
+    pub const TimedDisplayAlert = libraries.lvo(104);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -218,6 +222,10 @@ pub const Fn = struct {
     pub const AllocScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, u32) callconv(.c) ?*intuition.screens.ScreenBuffer;
     pub const ChangeScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, *intuition.screens.ScreenBuffer) callconv(.c) bool;
     pub const FreeScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, ?*intuition.screens.ScreenBuffer) callconv(.c) void;
+    pub const DisplayBeep = *const fn (*IntuitionBase, ?*intuition.Screen) callconv(.c) void;
+    pub const CurrentTime = *const fn (*IntuitionBase, *u32, *u32) callconv(.c) void;
+    pub const DisplayAlert = *const fn (*IntuitionBase, u32, [*:0]const u8, u32) callconv(.c) bool;
+    pub const TimedDisplayAlert = *const fn (*IntuitionBase, u32, [*:0]const u8, u32, u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -805,5 +813,26 @@ pub const IntuitionBase = opaque {
     /// first if it was the one shown.
     pub fn FreeScreenBuffer(self: *IntuitionBase, screen: *intuition.Screen, buffer: ?*intuition.screens.ScreenBuffer) void {
         return libraries.call(self, LVO.FreeScreenBuffer, Fn.FreeScreenBuffer, .{ screen, buffer });
+    }
+
+    /// Flash a screen - every shown one for null - for a tenth of a second.
+    pub fn DisplayBeep(self: *IntuitionBase, screen: ?*intuition.Screen) void {
+        return libraries.call(self, LVO.DisplayBeep, Fn.DisplayBeep, .{screen});
+    }
+
+    /// The time of the latest input event.
+    pub fn CurrentTime(self: *IntuitionBase, seconds: *u32, micros: *u32) void {
+        return libraries.call(self, LVO.CurrentTime, Fn.CurrentTime, .{ seconds, micros });
+    }
+
+    /// An alert, alone on the display, until a button answers it: true for the
+    /// left one. Text lines parted by newlines; AT_DeadEnd returns at once.
+    pub fn DisplayAlert(self: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32) bool {
+        return libraries.call(self, LVO.DisplayAlert, Fn.DisplayAlert, .{ alert_number, text, height });
+    }
+
+    /// The same, given up after `frames` 60 Hz frames (false).
+    pub fn TimedDisplayAlert(self: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32, frames: u32) bool {
+        return libraries.call(self, LVO.TimedDisplayAlert, Fn.TimedDisplayAlert, .{ alert_number, text, height, frames });
     }
 };

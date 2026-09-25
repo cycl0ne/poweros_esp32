@@ -300,4 +300,13 @@ bool ChangeScreenBuffer(*intuition.Screen screen, *intuition.screens.ScreenBuffe
 /// Give back a buffer from AllocScreenBuffer, the screen's own shown again
 /// first if it was the one shown.
 void FreeScreenBuffer(*intuition.Screen screen, ?*intuition.screens.ScreenBuffer buffer)
+/// Flash a screen - every shown one for null - for a tenth of a second.
+void DisplayBeep(?*intuition.Screen screen)
+/// The time of the latest input event.
+void CurrentTime(*u32 seconds, *u32 micros)
+/// An alert, alone on the display, until a button answers it: true for the
+/// left one. Text lines parted by newlines; AT_DeadEnd returns at once.
+bool DisplayAlert(u32 alert_number, [*:0]const u8 text, u32 height)
+/// The same, given up after `frames` 60 Hz frames (false).
+bool TimedDisplayAlert(u32 alert_number, [*:0]const u8 text, u32 height, u32 frames)
 ##end

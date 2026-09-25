@@ -223,6 +223,7 @@ fn tearDown(ib: *IntuitionBase) !void {
     const rb: *krtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(ib.utility_base));
 
+    @import("misc/_misc.zig").close(ib);
     if (ib.rtg_base) |opened| kexec.CloseLibrary(kexec.SysBase, @ptrCast(@alignCast(opened)));
     const kb: *kkeymap.KeymapBase = @ptrCast(@alignCast(ib.keymap_base.?));
     kexec.CloseLibrary(kexec.SysBase, &kb.lib);
@@ -994,6 +995,64 @@ test "screens: the depth gadget in the bar, and the tags a screen opens with or 
     it.UnlockPubScreen(null, wb);
     try testing.expect(it.CloseScreen(wb));
 
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "DisplayBeep, CurrentTime, TimedDisplayAlert" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const screen = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const s: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    // Complemented and back: the picture is as it was.
+    const before = display.pixel(10, 30);
+    it.DisplayBeep(null);
+    try testing.expectEqual(before, display.pixel(10, 30));
+    it.DisplayBeep(screen);
+    try testing.expectEqual(before, display.pixel(10, 30));
+    // Flashed by showing another picture, and back to the screen's own.
+    try testing.expectEqual(s.bitmap, display.board.showing.?);
+
+    // The time of the last event handled.
+    const tick: ie.InputEvent = .{ .class = ie.IECLASS_TIMER, .time = .{ .secs = 12, .micro = 345 } };
+    _input.handle(ib, &tick);
+    var seconds: u32 = 0;
+    var micros: u32 = 0;
+    it.CurrentTime(&seconds, &micros);
+    try testing.expectEqual(@as(u32, 12), seconds);
+    try testing.expectEqual(@as(u32, 345), micros);
+
+    // No time at all shows nothing; a few frames unanswered come down
+    // again, the screen shown as before and the alert's picture given back.
+    try testing.expect(!it.TimedDisplayAlert(exec.AT_Recovery, "Nothing", 20, 0));
+    try testing.expect(!it.TimedDisplayAlert(exec.AT_Recovery, "Out of time\nTwo lines", 20, 3));
+    try testing.expectEqual(s.bitmap, display.board.showing.?);
+    try testing.expect(!ib.alert.active);
+
+    // While one is up, a press is its answer and goes nowhere else: the
+    // left button yes, the right one no, a touch on the right half no.
+    const press = struct {
+        fn at(base: *IntuitionBase, code: u32, x: i32) void {
+            const e: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = code, .x = x, .y = 5 };
+            _input.handle(base, &e);
+        }
+    }.at;
+    ib.alert = .{ .active = true, .half = 32 };
+    press(ib, ie.IECODE_LBUTTON, 10);
+    try testing.expectEqual(@import("misc/_misc.zig").Answer.yes, ib.alert.answer);
+    ib.alert = .{ .active = true, .half = 32 };
+    press(ib, ie.IECODE_RBUTTON, 10);
+    try testing.expectEqual(@import("misc/_misc.zig").Answer.no, ib.alert.answer);
+    ib.alert = .{ .active = true, .half = 32 };
+    press(ib, ie.IECODE_LBUTTON, 40);
+    try testing.expectEqual(@import("misc/_misc.zig").Answer.no, ib.alert.answer);
+    ib.alert = .{};
+
+    try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);
 }

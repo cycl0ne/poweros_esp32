@@ -112,6 +112,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.pub_screens.init(.unknown);
     ib.default_pub = null;
     ib.pub_modes = 0;
+    ib.timer_io = .{};
+    ib.timer_open = false;
+    ib.alert = .{};
+    sys_base.InitSemaphore(&ib.alert_lock);
     sys_base.InitSemaphore(&ib.screen_lock);
 
     ib.class_list.init();

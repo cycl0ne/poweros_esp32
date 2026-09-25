@@ -120,6 +120,10 @@ const ShowTitle = @import("screen/showtitle.zig").ShowTitle;
 const AllocScreenBuffer = @import("screen/allocscreenbuffer.zig").AllocScreenBuffer;
 const ChangeScreenBuffer = @import("screen/changescreenbuffer.zig").ChangeScreenBuffer;
 const FreeScreenBuffer = @import("screen/freescreenbuffer.zig").FreeScreenBuffer;
+const DisplayBeep = @import("misc/displaybeep.zig").DisplayBeep;
+const CurrentTime = @import("misc/currenttime.zig").CurrentTime;
+const DisplayAlert = @import("misc/displayalert.zig").DisplayAlert;
+const TimedDisplayAlert = @import("misc/timeddisplayalert.zig").TimedDisplayAlert;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -520,6 +524,18 @@ fn lvoChangeScreenBuffer(ib: *IntuitionBase, screen: *intuition.Screen, buffer: 
 fn lvoFreeScreenBuffer(ib: *IntuitionBase, screen: *intuition.Screen, buffer: ?*intuition.screens.ScreenBuffer) callconv(.c) void {
     FreeScreenBuffer(ib, @ptrCast(@alignCast(screen)), buffer);
 }
+fn lvoDisplayBeep(ib: *IntuitionBase, screen: ?*intuition.Screen) callconv(.c) void {
+    DisplayBeep(ib, @ptrCast(@alignCast(screen)));
+}
+fn lvoCurrentTime(ib: *IntuitionBase, seconds: *u32, micros: *u32) callconv(.c) void {
+    CurrentTime(ib, seconds, micros);
+}
+fn lvoDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32) callconv(.c) bool {
+    return DisplayAlert(ib, alert_number, text, height);
+}
+fn lvoTimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32, frames: u32) callconv(.c) bool {
+    return TimedDisplayAlert(ib, alert_number, text, height, frames);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -623,6 +639,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAllocScreenBuffer),
     vec(lvoChangeScreenBuffer),
     vec(lvoFreeScreenBuffer),
+    vec(lvoDisplayBeep),
+    vec(lvoCurrentTime),
+    vec(lvoDisplayAlert),
+    vec(lvoTimedDisplayAlert),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

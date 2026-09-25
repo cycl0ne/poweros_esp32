@@ -101,6 +101,8 @@ pub const Term = struct {
     saved_attr: Cell = .{},
     /// The next character would be past the right edge, so it wraps first.
     wrap_pending: bool = false,
+    /// A BEL came: the device rings it, and takes it with `takeBell`.
+    bell: bool = false,
     autowrap: bool = true,
     insert: bool = false,
     /// LNM: a line feed is a new line - it returns to column 0 as well, and
@@ -621,6 +623,13 @@ pub const Term = struct {
     /// has to be let in between the two - it is the one that has the
     /// memory. Nothing else stops it, so a caller that answers the
     /// requests each time round gets through the whole of it.
+    /// Whether a BEL came since the last time this was asked.
+    pub fn takeBell(t: *Term) bool {
+        const rang = t.bell;
+        t.bell = false;
+        return rang;
+    }
+
     pub fn writeSome(t: *Term, bytes: []const u8) usize {
         for (bytes, 0..) |c, i| {
             t.byte(c);
@@ -653,7 +662,7 @@ pub const Term = struct {
 
     fn control(t: *Term, c: u8) void {
         switch (c) {
-            0x07 => {}, // the bell is the device's to ring
+            0x07 => t.bell = true, // the device rings it
             0x08 => {
                 if (t.x > 0) t.x -= 1;
                 t.wrap_pending = false;

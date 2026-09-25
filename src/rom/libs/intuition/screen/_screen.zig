@@ -222,6 +222,9 @@ pub fn inUse(ib: *IntuitionBase, bitmap: *rtg.RtgBitMap) bool {
 /// with the list held but never under Forbid.
 pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
     const rb = ib.rtg_base orelse return;
+    // An alert up keeps the display; it shows the front screen when it
+    // comes down.
+    if (ib.alert.active) return;
     const wanted = if (frontOn(ib, board)) |s| s.shown else home;
     if (board.showing == wanted) return;
     _ = rb.ShowBitMap(board, wanted, 0, 0);

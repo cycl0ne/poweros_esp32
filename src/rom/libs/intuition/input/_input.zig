@@ -396,6 +396,8 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         st.x = e.x;
         st.y = e.y;
     }
+    // An alert up takes everything.
+    if (ib.alert.active) return @import("../misc/_misc.zig").alertInput(ib, e);
     // A menu session takes everything while it lasts, and so does a
     // window being asked whether it may be sized.
     verify.poll(ib);

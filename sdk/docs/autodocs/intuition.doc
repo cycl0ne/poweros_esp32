@@ -16,6 +16,9 @@ intuition.library/ClearMenuStrip
 intuition.library/CloseScreen
 intuition.library/CloseWindow
 intuition.library/CoerceMessage
+intuition.library/CurrentTime
+intuition.library/DisplayAlert
+intuition.library/DisplayBeep
 intuition.library/DisposeObject
 intuition.library/DoGadgetMethodA
 intuition.library/DoubleClick
@@ -88,6 +91,7 @@ intuition.library/SetWindowTitles
 intuition.library/ShowTitle
 intuition.library/SizeWindow
 intuition.library/SysReqHandler
+intuition.library/TimedDisplayAlert
 intuition.library/UnlockClassList
 intuition.library/UnlockIBase
 intuition.library/UnlockPubScreen
@@ -910,6 +914,144 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    const made = ib.CoerceMessage(cl, @ptrCast(cl), @ptrCast(&new_msg));
+intuition.library/CurrentTime                    intuition.library/CurrentTime
+
+   NAME
+	CurrentTime -- Answers the time of the latest input event.
+
+   SYNOPSIS
+	    fn CurrentTime(ib: *IntuitionBase, seconds: *u32, micros: *u32) void
+
+   SINCE
+	0.14. LVO -412.
+
+   INPUTS
+	- `seconds`, `micros` - where the time goes.
+
+   RESULT
+	Nothing; the time is where the two point.
+
+   BEHAVIOR
+	The time stamp of the input event intuition handled last, in the
+	system time's seconds and microseconds - the clock `DoubleClick` and
+	IDCMP messages are measured on. With input.device running a timer
+	event comes ten times a second, so it is never more than a tenth of a
+	second behind; before any event it is 0.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not held and not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	For a precise time, timer.device's `GetSysTime`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DoubleClick`
+
+   EXAMPLES
+	    var seconds: u32 = 0;
+	    var micros: u32 = 0;
+	    ib.CurrentTime(&seconds, &micros);
+intuition.library/DisplayAlert                  intuition.library/DisplayAlert
+
+   NAME
+	DisplayAlert -- Shows an alert and waits for an answer.
+
+   SYNOPSIS
+	    fn DisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32) bool
+
+   SINCE
+	0.14. LVO -416.
+
+   INPUTS
+	- `alert_number` - what the alert is; `AT_DeadEnd` set for one the
+	  system does not come back from.
+	- `text` - what it says, lines parted by `'\n'`, each centred.
+	- `height` - the least height of its box, in pixels.
+
+   RESULT
+	True for the left button or a touch on the left half of the display;
+	false for the right, when it could not be shown, and for a dead end.
+
+   BEHAVIOR
+	`TimedDisplayAlert` with no time-out worth the name: it stays up until
+	it is answered.
+
+   CONTEXT
+	- Waits: for the answer, and for an alert already up.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do; not intuition's input task.
+
+   OWNERSHIP
+	The text is read while the alert is up and not kept.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`TimedDisplayAlert`
+
+   EXAMPLES
+	    if (!ib.DisplayAlert(exec.AT_Recovery, "Out of memory.\nLeft: go on   Right: stop", 0)) return;
+intuition.library/DisplayBeep                    intuition.library/DisplayBeep
+
+   NAME
+	DisplayBeep -- Flashes a screen, to draw the eye without a requester.
+
+   SYNOPSIS
+	    fn DisplayBeep(ib: *IntuitionBase, screen: ?*Screen) void
+
+   SINCE
+	0.14. LVO -408.
+
+   INPUTS
+	- `screen` - the screen, or null for every screen that is shown.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	For a tenth of a second the display shows, in place of the screen, a
+	picture of one colour - the screen's background pen turned about, dark
+	for a light one and light for a dark one - and then the screen again.
+	Both changes are flips at a frame's start, so the whole display flashes
+	at once and nothing of the screen is drawn over. Only a screen in front
+	of its display flashes: one behind has nothing seen to flash. When the
+	display's memory has no room for the picture, only the screen's title
+	bar flashes.
+
+   CONTEXT
+	- Waits: for the screen list's semaphore, and a tenth of a second.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	It is for something that needs noticing and not answering.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisplayAlert`
+
+   EXAMPLES
+	    ib.DisplayBeep(null); // a key with nothing bound to it
 intuition.library/DisposeObject                intuition.library/DisposeObject
 
    NAME
@@ -4361,6 +4503,65 @@ intuition.library/ZipWindow
    EXAMPLES
 	    var answer = ib.SysReqHandler(req, null, true);
 	    while (answer == requesters.SYSREQ_PENDING) : (answer = ib.SysReqHandler(req, null, true)) {}
+intuition.library/TimedDisplayAlert        intuition.library/TimedDisplayAlert
+
+   NAME
+	TimedDisplayAlert -- Shows an alert and waits for an answer, or for the time to run out.
+
+   SYNOPSIS
+	    fn TimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32, frames: u32) bool
+
+   SINCE
+	0.14. LVO -420.
+
+   INPUTS
+	- `alert_number` - what the alert is; only its type counts here:
+	  `AT_DeadEnd` set for one the system does not come back from.
+	- `text` - what it says, lines parted by `'\n'`, each centred.
+	- `height` - the least height of its box, in pixels; the box grows to
+	  hold the lines.
+	- `frames` - how long it waits for an answer, in frames of a 60 Hz
+	  display; 0 shows nothing and answers false.
+
+   RESULT
+	True when the left button - or a touch on the left half of the display -
+	answered it; false for the right button or the right half, when the
+	time ran out, when it could not be shown, and always for a dead-end
+	alert.
+
+   BEHAVIOR
+	The alert is shown alone, on a black picture of the display's own: a
+	box across its top, amber - red for a dead end - with the text in it,
+	its border flashing. Everything else is kept as it is and shown again
+	when the alert comes down. While it is up, the input is its own:
+	nothing reaches a window, and presses made before it came up are not
+	taken for an answer. A dead-end alert stays up: this returns at once
+	and nothing takes it down. One alert at a time; a second waits for the
+	first.
+
+   CONTEXT
+	- Waits: for the answer or the time, and for an alert already up.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do; not intuition's input task, whose events
+	  answer it.
+
+   OWNERSHIP
+	The text is read while the alert is up and not kept.
+
+   NOTES
+	The picture comes out of the display's memory: when that has no room
+	for another one, the alert cannot be shown.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DisplayAlert`, `EasyRequestArgs`, exec's `Alert`
+
+   EXAMPLES
+	    // Six seconds to say whether to go on.
+	    const go_on = ib.TimedDisplayAlert(exec.AT_Recovery, "The disk went away.\nLeft: retry   Right: cancel", 60, 360);
 intuition.library/UnlockClassList            intuition.library/UnlockClassList
 
    NAME
