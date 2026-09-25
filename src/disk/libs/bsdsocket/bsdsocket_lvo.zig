@@ -52,6 +52,10 @@ const AddRouteTagList = @import("route/addroutetaglist.zig").AddRouteTagList;
 const DeleteRouteTagList = @import("route/deleteroutetaglist.zig").DeleteRouteTagList;
 const AddDomainNameServer = @import("names/adddomainnameserver.zig").AddDomainNameServer;
 const RemoveDomainNameServer = @import("names/removedomainnameserver.zig").RemoveDomainNameServer;
+const GetHostByName = @import("names/gethostbyname.zig").GetHostByName;
+const GetHostByAddr = @import("names/gethostbyaddr.zig").GetHostByAddr;
+const GetHostName = @import("names/gethostname.zig").GetHostName;
+const SetHostName = @import("names/sethostname.zig").SetHostName;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -113,6 +117,10 @@ const contract_files = [_][]const u8{
     @embedFile("route/deleteroutetaglist.zig"),
     @embedFile("names/adddomainnameserver.zig"),
     @embedFile("names/removedomainnameserver.zig"),
+    @embedFile("names/gethostbyname.zig"),
+    @embedFile("names/gethostbyaddr.zig"),
+    @embedFile("names/gethostname.zig"),
+    @embedFile("names/sethostname.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -223,6 +231,18 @@ fn lvoAddDomainNameServer(sb: *SocketBase, address: u32) callconv(.c) i32 {
 fn lvoRemoveDomainNameServer(sb: *SocketBase, address: u32) callconv(.c) i32 {
     return RemoveDomainNameServer(sb, address);
 }
+fn lvoGetHostByName(sb: *SocketBase, name: [*:0]const u8) callconv(.c) ?*bsd.hostent {
+    return GetHostByName(sb, name);
+}
+fn lvoGetHostByAddr(sb: *SocketBase, address: *const anyopaque, length: u32, address_type: i32) callconv(.c) ?*bsd.hostent {
+    return GetHostByAddr(sb, address, length, address_type);
+}
+fn lvoGetHostName(sb: *SocketBase, name: [*]u8, length: u32) callconv(.c) i32 {
+    return GetHostName(sb, name, length);
+}
+fn lvoSetHostName(sb: *SocketBase, name: [*:0]const u8) callconv(.c) i32 {
+    return SetHostName(sb, name);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -267,6 +287,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoDeleteRouteTagList),
     vec(lvoAddDomainNameServer),
     vec(lvoRemoveDomainNameServer),
+    vec(lvoGetHostByName),
+    vec(lvoGetHostByAddr),
+    vec(lvoGetHostName),
+    vec(lvoSetHostName),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

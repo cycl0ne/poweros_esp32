@@ -25,6 +25,7 @@ const _timer = @import("timer/_timer.zig");
 const _arp = @import("arp/_arp.zig");
 const reassembly = @import("ip/reassembly.zig");
 const _dhcp = @import("dhcp/_dhcp.zig");
+const _names = @import("names/_names.zig");
 const _frame = @import("frame/_frame.zig");
 const _netif = @import("netif/_netif.zig");
 const _route = @import("route/_route.zig");
@@ -130,8 +131,11 @@ pub const StackBase = extern struct {
     /// The name servers asked, in the chip's order, and how many there are.
     nameservers: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
     nameserver_count: u32 = 0,
-    /// The domain a name without dots is looked for in.
+    /// The domain a name without dots is looked for in, and the machine's
+    /// own name.
     domain: [64]u8 = @splat(0),
+    hostname: [64]u8 = "poweros".* ++ @as([57]u8, @splat(0)),
+    names: _names.Cache = .{},
     /// The ring sizes of a new TCP connection.
     tcp_send_space: u32 = 8 * 1024,
     tcp_recv_space: u32 = 8 * 1024,
@@ -198,6 +202,9 @@ pub const SocketBase = extern struct {
     text: [16]u8 = @splat(0),
     /// Where GetSocketEvents looks first.
     event_next: u32 = 0,
+    /// The last name lookup's error (SBTC_HERRNO), and what lookups answer.
+    h_errno: i32 = 0,
+    host: _names.HostBuffer = .{},
 };
 
 pub fn stackBase(lib: *exec.Library) *StackBase {

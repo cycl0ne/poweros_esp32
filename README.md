@@ -182,7 +182,9 @@ cores.
 - The network comes up at boot from `DEVS:NetInterfaces/`, a file per
   interface in the mountlist's keyword format (`Device`, `Configure =
   DHCP` or a fixed `Address` with `Gateway` and `NameServer`, ...), its
-  address from DHCP - a 169.254.x.y one while no server answers; `C:net/AddNetInterface` and
+  address from DHCP - a 169.254.x.y one while no server answers - and
+  names are looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS
+  (`GetHostByName`, `C:net/Resolve`); `C:net/AddNetInterface` and
   `RemNetInterface` bring one up and down by hand, and a program can do
   the same through the library's interface calls.
 - Board facts - which parts are fitted and how they are wired - are data

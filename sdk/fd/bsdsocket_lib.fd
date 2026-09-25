@@ -100,4 +100,15 @@ i32 DeleteRouteTagList(?[*]const utility.TagItem tags)
 i32 AddDomainNameServer(u32 address)
 /// A name server no longer asked: 0, or -1.
 i32 RemoveDomainNameServer(u32 address)
+/// The addresses a name has: from the hosts file, the cache or DNS. A
+/// hostent in the opener's buffer, or null (SBTC_HERRNO says why).
+?*bsd.hostent GetHostByName([*:0]const u8 name)
+/// The name an address has (`length` 4, `address_type` AF_INET): a
+/// hostent in the opener's buffer, or null.
+?*bsd.hostent GetHostByAddr(*const anyopaque address, u32 length, i32 address_type)
+/// The machine's name into `name`, at most `length` bytes with its NUL:
+/// 0, or -1.
+i32 GetHostName([*]u8 name, u32 length)
+/// The machine's name set: 0, or -1.
+i32 SetHostName([*:0]const u8 name)
 ##end

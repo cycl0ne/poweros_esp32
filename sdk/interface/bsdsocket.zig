@@ -54,6 +54,10 @@ pub const LVO = struct {
     pub const DeleteRouteTagList = libraries.lvo(37);
     pub const AddDomainNameServer = libraries.lvo(38);
     pub const RemoveDomainNameServer = libraries.lvo(39);
+    pub const GetHostByName = libraries.lvo(40);
+    pub const GetHostByAddr = libraries.lvo(41);
+    pub const GetHostName = libraries.lvo(42);
+    pub const SetHostName = libraries.lvo(43);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -95,6 +99,10 @@ pub const Fn = struct {
     pub const DeleteRouteTagList = *const fn (*SocketBase, ?[*]const utility.TagItem) callconv(.c) i32;
     pub const AddDomainNameServer = *const fn (*SocketBase, u32) callconv(.c) i32;
     pub const RemoveDomainNameServer = *const fn (*SocketBase, u32) callconv(.c) i32;
+    pub const GetHostByName = *const fn (*SocketBase, [*:0]const u8) callconv(.c) ?*bsd.hostent;
+    pub const GetHostByAddr = *const fn (*SocketBase, *const anyopaque, u32, i32) callconv(.c) ?*bsd.hostent;
+    pub const GetHostName = *const fn (*SocketBase, [*]u8, u32) callconv(.c) i32;
+    pub const SetHostName = *const fn (*SocketBase, [*:0]const u8) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -300,5 +308,28 @@ pub const SocketBase = opaque {
     /// A name server no longer asked: 0, or -1.
     pub fn RemoveDomainNameServer(self: *SocketBase, address: u32) i32 {
         return libraries.call(self, LVO.RemoveDomainNameServer, Fn.RemoveDomainNameServer, .{address});
+    }
+
+    /// The addresses a name has: from the hosts file, the cache or DNS. A
+    /// hostent in the opener's buffer, or null (SBTC_HERRNO says why).
+    pub fn GetHostByName(self: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
+        return libraries.call(self, LVO.GetHostByName, Fn.GetHostByName, .{name});
+    }
+
+    /// The name an address has (`length` 4, `address_type` AF_INET): a
+    /// hostent in the opener's buffer, or null.
+    pub fn GetHostByAddr(self: *SocketBase, address: *const anyopaque, length: u32, address_type: i32) ?*bsd.hostent {
+        return libraries.call(self, LVO.GetHostByAddr, Fn.GetHostByAddr, .{ address, length, address_type });
+    }
+
+    /// The machine's name into `name`, at most `length` bytes with its NUL:
+    /// 0, or -1.
+    pub fn GetHostName(self: *SocketBase, name: [*]u8, length: u32) i32 {
+        return libraries.call(self, LVO.GetHostName, Fn.GetHostName, .{ name, length });
+    }
+
+    /// The machine's name set: 0, or -1.
+    pub fn SetHostName(self: *SocketBase, name: [*:0]const u8) i32 {
+        return libraries.call(self, LVO.SetHostName, Fn.SetHostName, .{name});
     }
 };

@@ -20,6 +20,9 @@ Generated from the source by `./zig build autodoc`.
 - [DeleteRouteTagList](#deleteroutetaglist) - A route taken away: the one to a net or host, or the default route.
 - [Errno](#errno) - The error number of the opener's last call that failed.
 - [GetDTableSize](#getdtablesize) - How many sockets the opener may have open at once.
+- [GetHostByAddr](#gethostbyaddr) - The name an address has.
+- [GetHostByName](#gethostbyname) - The addresses a name has.
+- [GetHostName](#gethostname) - The machine's name, into the caller's buffer.
 - [GetPeerName](#getpeername) - The address and port the socket is connected to.
 - [GetSockName](#getsockname) - The address and port the socket is bound to.
 - [GetSockOpt](#getsockopt) - One of the socket's options read into `value`.
@@ -40,6 +43,7 @@ Generated from the source by `./zig build autodoc`.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
 - [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to; for a stream socket, `length` bytes written to its connection.
 - [SetErrnoPtr](#seterrnoptr) - A variable of the program's that gets the error number of every call that fails, besides Errno().
+- [SetHostName](#sethostname) - The machine's name set.
 - [SetSockOpt](#setsockopt) - One of the socket's options set.
 - [Shutdown](#shutdown) - No more receiving, no more sending, or neither, on a connection that otherwise stays.
 - [Socket](#socket) - A new socket, and the descriptor the other calls know it by.
@@ -748,6 +752,196 @@ None known.
 
 ```zig
 const most = sb.GetDTableSize();
+```
+
+## GetHostByAddr
+
+The name an address has.
+
+**SYNOPSIS**
+
+```zig
+fn GetHostByAddr(base: *SocketBase, address: *const anyopaque, length: u32, address_type: i32) ?*hostent
+```
+
+**SINCE**
+
+1.0. LVO -168.
+
+**INPUTS**
+
+- `address` - an IPv4 address, four bytes in network order, as
+  `in_addr` holds it.
+- `length` - 4.
+- `address_type` - `AF_INET`.
+
+**RESULT**
+
+A `hostent` with the name and the address, or null with `SBTC_HERRNO`
+saying why, as GetHostByName: also `NO_RECOVERY` for another length or
+family.
+
+**BEHAVIOR**
+
+The hosts file first, then a PTR question for
+`d.c.b.a.in-addr.arpa` to the name servers, as GetHostByName asks
+them. Reverse answers are not cached.
+
+**CONTEXT**
+
+- Waits: yes, for the name servers.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a process, to read the hosts file.
+
+**OWNERSHIP**
+
+As GetHostByName.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetHostByName`
+
+**EXAMPLES**
+
+```zig
+const address = sb.Inet_Addr("10.0.2.2");
+if (sb.GetHostByAddr(&address, 4, bsd.AF_INET)) |host| _ = Printf(dl, "%s\n", .{host.h_name.?});
+```
+
+## GetHostByName
+
+The addresses a name has.
+
+**SYNOPSIS**
+
+```zig
+fn GetHostByName(base: *SocketBase, name: [*:0]const u8) ?*hostent
+```
+
+**SINCE**
+
+1.0. LVO -164.
+
+**INPUTS**
+
+- `name` - a host's name, "www.example.org", or an address as dotted
+  text.
+
+**RESULT**
+
+A `hostent` - its name as the answer spelled it, and up to eight
+addresses in network order - or null, with SocketBaseTagList's
+`SBTC_HERRNO` saying why: `HOST_NOT_FOUND`, `NO_DATA` (a name without
+addresses), `TRY_AGAIN` (no server answered, or a break signal came),
+`NO_RECOVERY` (no name server to ask).
+
+**BEHAVIOR**
+
+Looked for in turn: dotted text, which is its own answer; the hosts
+file, `ENVARC:Sys/net/hosts`; `localhost`; the cache of earlier
+answers; and DNS - the name servers DHCP, the interface files and
+AddDomainNameServer gave, each asked three times, two seconds each. A
+name without dots is asked for in the stack's domain first. What DNS
+answers is cached for its time to live, between 30 s and an hour.
+
+**CONTEXT**
+
+- Waits: yes, for the name servers; the break signals end it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a process, to read the hosts file; a task goes without it.
+
+**OWNERSHIP**
+
+The hostent is in the opener's base: the next GetHostByName or
+GetHostByAddr overwrites it.
+
+**NOTES**
+
+An answer counts only if it comes from the server asked, from port
+53, with the random id asked with; every length in it is checked
+against the packet before it is read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetHostByAddr`, `AddDomainNameServer`, `SocketBaseTagList`
+
+**EXAMPLES**
+
+```zig
+const host = sb.GetHostByName("example.org") orelse return;
+var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(80) };
+to.sin_addr.s_addr = @as(*align(1) const u32, @ptrCast(host.h_addr_list.?[0].?)).*;
+```
+
+## GetHostName
+
+The machine's name, into the caller's buffer.
+
+**SYNOPSIS**
+
+```zig
+fn GetHostName(base: *SocketBase, name: [*]u8, length: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -172.
+
+**INPUTS**
+
+- `name` - where it goes.
+- `length` - the room there, its NUL included.
+
+**RESULT**
+
+0, or -1 with Errno() `EINVAL` when it does not fit.
+
+**BEHAVIOR**
+
+"poweros" until SetHostName says otherwise.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetHostName`
+
+**EXAMPLES**
+
+```zig
+var name: [64]u8 = undefined;
+_ = sb.GetHostName(&name, name.len);
 ```
 
 ## GetPeerName
@@ -2000,6 +2194,61 @@ var errno: i32 = 0;
 sb.SetErrnoPtr(&errno, @sizeOf(i32));
 ```
 
+## SetHostName
+
+The machine's name set.
+
+**SYNOPSIS**
+
+```zig
+fn SetHostName(base: *SocketBase, name: [*:0]const u8) i32
+```
+
+**SINCE**
+
+1.0. LVO -176.
+
+**INPUTS**
+
+- `name` - 1 to 63 characters.
+
+**RESULT**
+
+0, or -1 with Errno() `EINVAL` for an empty name or one too long.
+
+**BEHAVIOR**
+
+It holds for the whole stack, every opener, until set again.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The name is copied.
+
+**NOTES**
+
+What a later mDNS answers to, as `<name>.local`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetHostName`
+
+**EXAMPLES**
+
+```zig
+_ = sb.SetHostName("workbench");
+```
+
 ## SetSockOpt
 
 One of the socket's options set.
@@ -2232,6 +2481,8 @@ fn SocketBaseTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
   - `SBTC_BREAKMASK` - the signals that break a wait with `EINTR`;
   - `SBTC_SIGEVENTMASK` - the signal socket events are told with;
   - `SBTC_ERRNO` - the error number;
+  - `SBTC_HERRNO` - why the last name lookup failed (HOST_NOT_FOUND,
+    TRY_AGAIN, NO_RECOVERY, NO_DATA);
   - `SBTC_DTABLESIZE` - the size of the descriptor table, from 1 to
     `FD_SETSIZE`; set only while no socket is open;
   - `SBTC_LOGSTAT` - not 0 to have every call that fails logged, with

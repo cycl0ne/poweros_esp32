@@ -359,5 +359,40 @@ pub const InterfaceNode = extern struct {
 /// How many name servers the stack asks, at most.
 pub const NAMESERVERS_MAX = 4;
 
+// --- names ----------------------------------------------------------------------
+
+/// struct hostent: what GetHostByName and GetHostByAddr answer, in a
+/// buffer of the opener's base that the next such call overwrites.
+pub const hostent = extern struct {
+    /// h_name: the name, as the answer spelled it.
+    h_name: ?[*:0]u8 = null,
+    /// h_aliases: other names, a list ended by null.
+    h_aliases: ?[*]?[*:0]u8 = null,
+    /// h_addrtype: AF_INET.
+    h_addrtype: i32 = AF_INET,
+    /// h_length: the bytes of one address, 4.
+    h_length: i32 = 4,
+    /// h_addr_list: the addresses, each `h_length` bytes in network order,
+    /// a list ended by null.
+    h_addr_list: ?[*]?[*]u8 = null,
+};
+
+/// Why a name was not found, as SocketBaseTagList's SBTC_HERRNO reads it.
+pub const HOST_NOT_FOUND: i32 = 1;
+/// No answer in time: it may be found later.
+pub const TRY_AGAIN: i32 = 2;
+/// An answer that made no sense, or no name server to ask.
+pub const NO_RECOVERY: i32 = 3;
+/// The name is known, and has no address.
+pub const NO_DATA: i32 = 4;
+
+/// The error of the last name lookup that failed.
+pub const SBTC_HERRNO: u32 = 7;
+
+/// Where names are looked up first, and the name servers kept on the
+/// disk: files a program and a user edit.
+pub const HOSTS_FILE = "ENVARC:Sys/net/hosts";
+pub const NAMESERVERS_FILE = "ENVARC:Sys/net/nameservers";
+
 /// How long an interface's name may be.
 pub const IFNAMSIZ = 16;

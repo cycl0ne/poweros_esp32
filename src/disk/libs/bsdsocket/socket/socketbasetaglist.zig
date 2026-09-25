@@ -27,6 +27,8 @@ const Socket = _socket.Socket;
 ///   - `SBTC_BREAKMASK` - the signals that break a wait with `EINTR`;
 ///   - `SBTC_SIGEVENTMASK` - the signal socket events are told with;
 ///   - `SBTC_ERRNO` - the error number;
+///   - `SBTC_HERRNO` - why the last name lookup failed (HOST_NOT_FOUND,
+///     TRY_AGAIN, NO_RECOVERY, NO_DATA);
 ///   - `SBTC_DTABLESIZE` - the size of the descriptor table, from 1 to
 ///     `FD_SETSIZE`; set only while no socket is open;
 ///   - `SBTC_LOGSTAT` - not 0 to have every call that fails logged, with
@@ -95,6 +97,7 @@ fn read(sb: *SocketBase, code: u32) ?u32 {
         bsd.SBTC_BREAKMASK => sb.break_mask,
         bsd.SBTC_SIGEVENTMASK => sb.event_mask,
         bsd.SBTC_ERRNO => @bitCast(sb.errno),
+        bsd.SBTC_HERRNO => @bitCast(sb.h_errno),
         bsd.SBTC_LOGSTAT => sb.log,
         bsd.SBTC_DTABLESIZE => sb.table_size,
         else => null,
@@ -106,6 +109,7 @@ fn change(sb: *SocketBase, code: u32, value: u32) bool {
         bsd.SBTC_BREAKMASK => sb.break_mask = value,
         bsd.SBTC_SIGEVENTMASK => sb.event_mask = value,
         bsd.SBTC_ERRNO => _socket.setErrno(sb, @bitCast(value)),
+        bsd.SBTC_HERRNO => sb.h_errno = @bitCast(value),
         bsd.SBTC_LOGSTAT => sb.log = value,
         bsd.SBTC_DTABLESIZE => return resize(sb, value),
         else => return false,
