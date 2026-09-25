@@ -62,4 +62,13 @@ i32 SocketBaseTagList(?[*]const utility.TagItem tags)
 i32 AddInterfaceTagList([*:0]const u8 name, ?[*]const utility.TagItem tags)
 /// The interface called `name` taken down and its device closed: 0, or -1.
 i32 RemoveInterface([*:0]const u8 name)
+/// The next socket with events to tell of (SO_EVENTMASK), and which, into
+/// `events`: its descriptor, or -1 when none has any.
+i32 GetSocketEvents(*u32 events)
+/// The socket taken out of the opener's table and left with the stack
+/// under `id` (UNIQUE_ID: one the stack makes up): the id, or -1.
+i32 ReleaseSocket(i32 socket, i32 id)
+/// The socket left under `id`, taken into the opener's table: its
+/// descriptor, or -1.
+i32 ObtainSocket(i32 id, i32 domain, i32 socket_type, i32 protocol)
 ##end

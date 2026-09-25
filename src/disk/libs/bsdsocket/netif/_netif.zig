@@ -123,6 +123,16 @@ pub fn isOurs(stack: *StackBase, address: u32) bool {
     return false;
 }
 
+/// Whether `address` is sent to many: the limited broadcast, a net's
+/// broadcast, or a multicast group.
+pub fn isBroadcast(stack: *StackBase, address: u32) bool {
+    if (address == bsd.INADDR_BROADCAST or address >> 28 == 0xE) return true;
+    for (&stack.interfaces) |*interface| {
+        if (interface.used != 0 and address == interface.broadcast) return true;
+    }
+    return false;
+}
+
 /// `frame`, an IPv4 packet, out on `interface` to the station `next_hop`.
 /// The frame is the interface's from here: 0, or the errno of a packet
 /// that could not go.

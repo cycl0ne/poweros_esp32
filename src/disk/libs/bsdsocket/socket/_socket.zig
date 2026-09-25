@@ -40,7 +40,15 @@ pub const send_limit_default: u32 = 16 * 1024;
 pub const Socket = extern struct {
     /// On the stack's list of every socket.
     node: exec.Node = .{},
-    owner: *SocketBase,
+    /// The opener whose table it is in; null while it is handed over
+    /// (ReleaseSocket), waiting for ObtainSocket.
+    owner: ?*SocketBase,
+    /// The id it was handed over with.
+    release_id: i32 = 0,
+    /// The events the owner asked to be told of (SO_EVENTMASK), and the
+    /// ones that happened since GetSocketEvents last took them.
+    event_mask: u32 = 0,
+    events: u32 = 0,
     descriptor: i32 = -1,
     socket_type: i32 = 0,
     protocol: i32 = 0,
@@ -129,11 +137,15 @@ pub fn create(sb: *SocketBase, socket_type: i32, protocol: i32) ?*Socket {
 /// `socket` closed: what it had queued given back, and the socket freed.
 /// Under the lock.
 pub fn destroy(sb: *SocketBase, socket: *Socket) void {
-    const sys = sb.sys_base;
-    const stack = sb.stack;
+    sb.table.?[@intCast(socket.descriptor)] = null;
+    free(sb.stack, socket);
+}
+
+/// A socket freed, in anyone's table or none. Under the lock.
+pub fn free(stack: *StackBase, socket: *Socket) void {
+    const sys = stack.sys_base;
     while (sys.RemHead(&socket.receive)) |node| stack.frames.give(sys, @fieldParentPtr("node", node));
     sys.Remove(&socket.node);
-    sb.table.?[@intCast(socket.descriptor)] = null;
     sys.FreeMem(socket, @sizeOf(Socket));
 }
 
@@ -178,10 +190,23 @@ pub fn bindAnyPort(stack: *StackBase, socket: *Socket) bool {
 
 // --- readiness and waiting -------------------------------------------------------
 
-/// The socket's owner told that something changed for it.
-pub fn wake(socket: *Socket) void {
-    const owner = socket.owner;
-    owner.sys_base.Signal(owner.task, owner.ready_mask);
+/// The socket's owner told that something changed for it, and of the
+/// `events` (FD_*) it asked to be told of.
+pub fn wake(socket: *Socket, events: u32) void {
+    const owner = socket.owner orelse return;
+    var signals = owner.ready_mask;
+    const told = events & socket.event_mask;
+    if (told != 0) {
+        socket.events |= told;
+        signals |= owner.event_mask;
+    }
+    owner.sys_base.Signal(owner.task, signals);
+}
+
+/// An error from the network for `socket`, told at its next call.
+pub fn setError(socket: *Socket, errno: i32) void {
+    socket.pending_error = errno;
+    wake(socket, bsd.FD_ERROR | bsd.FD_READ);
 }
 
 /// Whether a receive would not wait.
@@ -191,7 +216,7 @@ pub fn readable(socket: *Socket) bool {
 
 /// Whether a send would not wait. A datagram is sent or refused at once.
 pub fn writable(socket: *Socket) bool {
-    return socket.socket_type == bsd.SOCK_DGRAM or socket.pending_error != 0;
+    return socket.socket_type != bsd.SOCK_STREAM or socket.pending_error != 0;
 }
 
 /// Why a wait ended.

@@ -15,6 +15,7 @@ const Socket = @import("socket/_socket.zig").Socket;
 const _socket = @import("socket/_socket.zig");
 const _netif = @import("netif/_netif.zig");
 const _arp = @import("arp/_arp.zig");
+const reassembly = @import("ip/reassembly.zig");
 const bsdsocket_lvo = @import("bsdsocket_lvo.zig");
 
 pub const LIBRARY_NAME = bsd.SOCKETNAME;
@@ -40,6 +41,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     stack.sockets.init(.unknown);
     stack.frames.init();
     _arp.init(stack);
+    reassembly.init(stack);
     _netif.addLoopback(stack);
     // The task's ports take messages from the start; the task gives them
     // its signals when it runs.
@@ -117,6 +119,10 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const stack = _base.stackBase(lib);
     const sys = stack.sys_base;
     const seg_list = stack.seg_list;
+    // What nobody holds any more: sockets handed over and never taken,
+    // datagrams half put together.
+    while (stack.sockets.first()) |node| _socket.free(stack, _socket.fromNode(node));
+    reassembly.deinit(stack);
     stack.frames.deinit(sys);
     if (stack.dos) |dos| sys.CloseLibrary(dos.lib());
     if (stack.utility) |utility| sys.CloseLibrary(utility.lib());

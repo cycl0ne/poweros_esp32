@@ -38,6 +38,9 @@ const Inet_Addr = @import("socket/inet_addr.zig").Inet_Addr;
 const SocketBaseTagList = @import("socket/socketbasetaglist.zig").SocketBaseTagList;
 const AddInterfaceTagList = @import("netif/addinterfacetaglist.zig").AddInterfaceTagList;
 const RemoveInterface = @import("netif/removeinterface.zig").RemoveInterface;
+const GetSocketEvents = @import("socket/getsocketevents.zig").GetSocketEvents;
+const ReleaseSocket = @import("socket/releasesocket.zig").ReleaseSocket;
+const ObtainSocket = @import("socket/obtainsocket.zig").ObtainSocket;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -85,6 +88,9 @@ const contract_files = [_][]const u8{
     @embedFile("socket/socketbasetaglist.zig"),
     @embedFile("netif/addinterfacetaglist.zig"),
     @embedFile("netif/removeinterface.zig"),
+    @embedFile("socket/getsocketevents.zig"),
+    @embedFile("socket/releasesocket.zig"),
+    @embedFile("socket/obtainsocket.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -153,6 +159,15 @@ fn lvoAddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const 
 fn lvoRemoveInterface(sb: *SocketBase, name: [*:0]const u8) callconv(.c) i32 {
     return RemoveInterface(sb, name);
 }
+fn lvoGetSocketEvents(sb: *SocketBase, events: *u32) callconv(.c) i32 {
+    return GetSocketEvents(sb, events);
+}
+fn lvoReleaseSocket(sb: *SocketBase, socket: i32, id: i32) callconv(.c) i32 {
+    return ReleaseSocket(sb, socket, id);
+}
+fn lvoObtainSocket(sb: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
+    return ObtainSocket(sb, id, domain, socket_type, protocol);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -183,6 +198,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSocketBaseTagList),
     vec(lvoAddInterfaceTagList),
     vec(lvoRemoveInterface),
+    vec(lvoGetSocketEvents),
+    vec(lvoReleaseSocket),
+    vec(lvoObtainSocket),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

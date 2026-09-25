@@ -19,8 +19,10 @@ const _lock = @import("../lock/_lock.zig");
 ///
 /// INPUTS:
 /// - `domain` - `PF_INET`, the only family there is.
-/// - `socket_type` - `SOCK_DGRAM`: datagrams, UDP.
-/// - `protocol` - 0 or `IPPROTO_UDP`.
+/// - `socket_type` - `SOCK_DGRAM`: datagrams, UDP; `SOCK_RAW`: ICMP
+///   messages as they are, for a program such as Ping.
+/// - `protocol` - 0 or `IPPROTO_UDP` for a datagram socket;
+///   `IPPROTO_ICMP` for a raw one.
 ///
 /// RESULT:
 /// The descriptor, from 0 up, or -1 with Errno(): `EAFNOSUPPORT` for
@@ -45,8 +47,10 @@ const _lock = @import("../lock/_lock.zig");
 /// library, which closes every socket still open.
 ///
 /// NOTES:
-/// Stream sockets (TCP) and raw sockets come with the protocols that
-/// serve them.
+/// A raw ICMP socket receives a copy of every ICMP message that comes
+/// in, its IPv4 header first; what it sends is the ICMP message, header
+/// and checksum made by the program, and the stack puts the IPv4 header
+/// in front. Stream sockets come with TCP.
 ///
 /// BUGS:
 /// None known.
@@ -63,10 +67,13 @@ const _lock = @import("../lock/_lock.zig");
 /// ```
 pub fn Socket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32 {
     if (domain != bsd.PF_INET) return _socket.fail(sb, bsd.EAFNOSUPPORT, "Socket");
-    if (socket_type != bsd.SOCK_DGRAM) return _socket.fail(sb, bsd.ESOCKTNOSUPPORT, "Socket");
-    if (protocol != 0 and protocol != bsd.IPPROTO_UDP) return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket");
+    const kind = switch (socket_type) {
+        bsd.SOCK_DGRAM => if (protocol == 0 or protocol == bsd.IPPROTO_UDP) bsd.IPPROTO_UDP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
+        bsd.SOCK_RAW => if (protocol == bsd.IPPROTO_ICMP) bsd.IPPROTO_ICMP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
+        else => return _socket.fail(sb, bsd.ESOCKTNOSUPPORT, "Socket"),
+    };
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
-    const socket = _socket.create(sb, socket_type, bsd.IPPROTO_UDP) orelse return _socket.fail(sb, sb.errno, "Socket");
+    const socket = _socket.create(sb, socket_type, kind) orelse return _socket.fail(sb, sb.errno, "Socket");
     return socket.descriptor;
 }

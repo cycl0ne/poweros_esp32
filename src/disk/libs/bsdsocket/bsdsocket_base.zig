@@ -23,6 +23,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const TimerBase = sdk.interface.timer.TimerBase;
 const _timer = @import("timer/_timer.zig");
 const _arp = @import("arp/_arp.zig");
+const reassembly = @import("ip/reassembly.zig");
 const _frame = @import("frame/_frame.zig");
 const _netif = @import("netif/_netif.zig");
 const _route = @import("route/_route.zig");
@@ -45,8 +46,12 @@ pub const Counts = extern struct {
     /// Headers that were not IPv4, too short, or longer than the packet.
     ip_bad_header: u32 = 0,
     ip_bad_checksum: u32 = 0,
-    /// Fragments, which are not put back together yet.
+    /// Fragments received, datagrams put back together from them, and
+    /// the ones given up on: too large, overlapping, out of room or out
+    /// of time.
     ip_fragments: u32 = 0,
+    ip_reassembled: u32 = 0,
+    ip_reassembly_dropped: u32 = 0,
     /// Packets for an address that is not this machine's.
     ip_not_ours: u32 = 0,
     /// Packets of a protocol nothing here speaks.
@@ -58,6 +63,11 @@ pub const Counts = extern struct {
     udp_no_port: u32 = 0,
     /// Datagrams dropped because their socket's queue was full.
     udp_full: u32 = 0,
+    icmp_received: u32 = 0,
+    icmp_bad: u32 = 0,
+    /// Echo requests answered, and errors sent for packets that came in.
+    icmp_echoes_answered: u32 = 0,
+    icmp_errors_sent: u32 = 0,
 };
 
 pub const StackBase = extern struct {
@@ -79,6 +89,9 @@ pub const StackBase = extern struct {
     counts: Counts = .{},
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
+    reassembly: reassembly.Slots = .{},
+    /// The id the next socket handed over with ReleaseSocket gets.
+    next_release_id: i32 = 1,
     /// dos.library, opened when the stack task is first needed.
     dos: ?*DosBase = null,
     /// The stack task: the process that keeps the reads on every device
@@ -138,6 +151,8 @@ pub const SocketBase = extern struct {
     pad2: [2]u8 = .{ 0, 0 },
     /// Inet_NtoA's answer.
     text: [16]u8 = @splat(0),
+    /// Where GetSocketEvents looks first.
+    event_next: u32 = 0,
 };
 
 pub fn stackBase(lib: *exec.Library) *StackBase {

@@ -39,6 +39,9 @@ pub const LVO = struct {
     pub const SocketBaseTagList = libraries.lvo(23);
     pub const AddInterfaceTagList = libraries.lvo(24);
     pub const RemoveInterface = libraries.lvo(25);
+    pub const GetSocketEvents = libraries.lvo(26);
+    pub const ReleaseSocket = libraries.lvo(27);
+    pub const ObtainSocket = libraries.lvo(28);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -66,6 +69,9 @@ pub const Fn = struct {
     pub const SocketBaseTagList = *const fn (*SocketBase, ?[*]const utility.TagItem) callconv(.c) i32;
     pub const AddInterfaceTagList = *const fn (*SocketBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) i32;
     pub const RemoveInterface = *const fn (*SocketBase, [*:0]const u8) callconv(.c) i32;
+    pub const GetSocketEvents = *const fn (*SocketBase, *u32) callconv(.c) i32;
+    pub const ReleaseSocket = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
+    pub const ObtainSocket = *const fn (*SocketBase, i32, i32, i32, i32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -192,5 +198,23 @@ pub const SocketBase = opaque {
     /// The interface called `name` taken down and its device closed: 0, or -1.
     pub fn RemoveInterface(self: *SocketBase, name: [*:0]const u8) i32 {
         return libraries.call(self, LVO.RemoveInterface, Fn.RemoveInterface, .{name});
+    }
+
+    /// The next socket with events to tell of (SO_EVENTMASK), and which, into
+    /// `events`: its descriptor, or -1 when none has any.
+    pub fn GetSocketEvents(self: *SocketBase, events: *u32) i32 {
+        return libraries.call(self, LVO.GetSocketEvents, Fn.GetSocketEvents, .{events});
+    }
+
+    /// The socket taken out of the opener's table and left with the stack
+    /// under `id` (UNIQUE_ID: one the stack makes up): the id, or -1.
+    pub fn ReleaseSocket(self: *SocketBase, socket: i32, id: i32) i32 {
+        return libraries.call(self, LVO.ReleaseSocket, Fn.ReleaseSocket, .{ socket, id });
+    }
+
+    /// The socket left under `id`, taken into the opener's table: its
+    /// descriptor, or -1.
+    pub fn ObtainSocket(self: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) i32 {
+        return libraries.call(self, LVO.ObtainSocket, Fn.ObtainSocket, .{ id, domain, socket_type, protocol });
     }
 };

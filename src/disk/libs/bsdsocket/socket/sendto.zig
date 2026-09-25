@@ -8,6 +8,7 @@ const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const _udp = @import("../udp/_udp.zig");
+const _icmp = @import("../icmp/_icmp.zig");
 
 /// A datagram of `length` bytes sent to `to`, or to the peer the socket is
 /// connected to.
@@ -21,8 +22,8 @@ const _udp = @import("../udp/_udp.zig");
 /// SINCE: 1.0. LVO -32.
 ///
 /// INPUTS:
-/// - `socket` - a datagram socket.
-/// - `message` - the data.
+/// - `socket` - a datagram socket, or a raw ICMP socket.
+/// - `message` - the data; for a raw socket, the whole ICMP message.
 /// - `length` - its bytes; 0 sends an empty datagram.
 /// - `flags` - 0; `MSG_DONTWAIT` is taken and changes nothing, since a
 ///   datagram is sent or refused at once.
@@ -93,7 +94,10 @@ pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, lengt
     }
     if (length > _udp.data_max) return _socket.fail(sb, bsd.EMSGSIZE, "SendTo");
     const data: [*]const u8 = @ptrCast(message);
-    const refused = _udp.output(stack, socket, destination, port, data[0..length]);
+    const refused = if (socket.socket_type == bsd.SOCK_RAW)
+        _icmp.output(stack, socket, destination, data[0..length])
+    else
+        _udp.output(stack, socket, destination, port, data[0..length]);
     if (refused != 0) return _socket.fail(sb, refused, "SendTo");
     return @intCast(length);
 }

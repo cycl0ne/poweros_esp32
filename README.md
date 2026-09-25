@@ -162,11 +162,15 @@ cores.
   address.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
-  IPv4 and UDP, ARP, the loopback interface, interfaces on network
-  devices (`AddInterfaceTagList`) served by a stack task that sleeps
-  until a frame or a deadline comes, and `WaitSelect`, which waits for
-  sockets and the program's own signals at once. `C:test/Udp` sends a
-  datagram and waits for its echo, over the network in QEMU.
+  IPv4 with fragments put back together, UDP, ICMP (echoes answered,
+  errors told to the socket they concern, raw sockets for a ping), ARP,
+  the loopback interface, and interfaces on network devices
+  (`AddInterfaceTagList`) served by a stack task that sleeps until a
+  frame or a deadline comes. `WaitSelect` waits for sockets and the
+  program's own signals at once; socket events tell of readiness on a
+  signal of the program's choosing; a socket can be handed to another
+  task. `C:test/Udp` sends a datagram and waits for its echo, or pings,
+  over the network in QEMU.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

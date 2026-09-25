@@ -2,7 +2,7 @@
 //! Udp: a datagram sent, and its echo waited for, through
 //! bsdsocket.library. Built against the SDK only.
 //!
-//!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S
+//!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S
 //!
 //! It sends TEXT ("hello") to TO:PORT (127.0.0.1:7) and prints what comes
 //! back within two seconds, and from where. When TO is a loopback
@@ -14,6 +14,8 @@
 //! first, on DEVICE (networks/openeth.device) with ADDRESS (10.0.2.15/24)
 //! and GATEWAY (10.0.2.2) - the addresses QEMU's user network gives - unless
 //! it is there already. REMOVE takes `eth0` down again and sends nothing.
+//! PING sends an ICMP echo request with TEXT to TO through a raw socket
+//! instead, and prints the echo that comes back.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -28,7 +30,7 @@ pub const COMMAND_NAME = "Udp";
 const VERSION_STRING = "\x00$VER: Udp 1.0 (25.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S";
+const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S";
 const arg_to = 0;
 const arg_port = 1;
 const arg_text = 2;
@@ -36,6 +38,7 @@ const arg_device = 3;
 const arg_address = 4;
 const arg_gateway = 5;
 const arg_remove = 6;
+const arg_ping = 7;
 
 const MSG_NOLIBRARY = "Can't open %s\n";
 const MSG_BADADDRESS = "%s is not an IPv4 address\n";
@@ -47,9 +50,57 @@ const MSG_NOANSWER = "No answer in two seconds\n";
 const MSG_BREAK = "***Break\n";
 const MSG_INTERFACE = "eth0 is %s on %s\n";
 const MSG_REMOVED = "eth0 is gone\n";
+const MSG_PINGED = "Echo request to %s, %d bytes\n";
+const MSG_ECHO = "Echo reply from %s: %s\n";
 
 /// How long the answer may take.
 const patience_secs = 2;
+
+/// An ICMP echo request with `text` to `to`, and the reply waited for.
+fn ping(dl: *DosBase, sb: *SocketBase, to: *bsd.sockaddr_in, to_text: [*:0]const u8, text: [*:0]const u8, text_length: u32) i32 {
+    const raw = sb.Socket(bsd.PF_INET, bsd.SOCK_RAW, bsd.IPPROTO_ICMP);
+    if (raw < 0) return failed(dl, sb, "Socket");
+    defer _ = sb.CloseSocket(raw);
+    var request: [8 + 64]u8 = @splat(0);
+    const length = 8 + @min(text_length, 64);
+    request[0] = 8; // echo request
+    request[4] = 0x50; // identifier
+    request[5] = 0x4F;
+    request[7] = 1; // sequence
+    for (0..length - 8) |at| request[8 + at] = text[at];
+    var sum: u32 = 0;
+    var at: usize = 0;
+    while (at < length) : (at += 2) sum += @as(u32, request[at]) << 8 | (if (at + 1 < length) request[at + 1] else 0);
+    while (sum >> 16 != 0) sum = (sum & 0xFFFF) + (sum >> 16);
+    const checksum = ~@as(u16, @truncate(sum));
+    request[2] = @truncate(checksum >> 8);
+    request[3] = @truncate(checksum);
+    const sent = sb.SendTo(raw, &request, length, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in));
+    if (sent < 0) return failed(dl, sb, "SendTo");
+    _ = Printf(dl, MSG_PINGED, .{ to_text, sent });
+    var patience: bsd.timeval = .{ .secs = patience_secs };
+    var buffer: [128]u8 = undefined;
+    while (true) {
+        var read: bsd.fd_set = .{};
+        read.set(raw);
+        const ready = sb.WaitSelect(raw + 1, &read, null, null, &patience, null);
+        if (ready < 0) return failed(dl, sb, "WaitSelect");
+        if (ready == 0) {
+            _ = Printf(dl, MSG_NOANSWER, .{});
+            return dos.RETURN_WARN;
+        }
+        var from: bsd.sockaddr_in = .{};
+        var from_length: u32 = @sizeOf(bsd.sockaddr_in);
+        const got = sb.RecvFrom(raw, &buffer, buffer.len - 1, 0, from.any(), &from_length);
+        if (got < 28) continue;
+        const header_length = @as(usize, buffer[0] & 0xF) * 4;
+        // Every ICMP message comes to a raw socket: only our echo's reply counts.
+        if (buffer[header_length] != 0 or buffer[header_length + 4] != 0x50 or buffer[header_length + 5] != 0x4F) continue;
+        buffer[@intCast(got)] = 0;
+        _ = Printf(dl, MSG_ECHO, .{ sb.Inet_NtoA(from.sin_addr.s_addr), @as([*:0]const u8, @ptrCast(&buffer[header_length + 8])) });
+        return dos.RETURN_OK;
+    }
+}
 
 fn argText(argv: []const usize, index: usize, default: [*:0]const u8) [*:0]const u8 {
     return if (argv[index] != 0) @ptrFromInt(argv[index]) else default;
@@ -80,7 +131,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [7]usize = @splat(0);
+    var argv: [8]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -118,6 +169,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (outcome < 0) return failed(dl, sb, "AddInterfaceTagList");
         if (outcome > 0) _ = Printf(dl, MSG_INTERFACE, .{ argText(&argv, arg_address, "10.0.2.15"), argText(&argv, arg_device, "networks/openeth.device") });
     }
+
+    if (argv[arg_ping] != 0) return ping(dl, sb, &to, to_text, text, text_length);
 
     // The echo, when the answer is to come from this machine.
     var echo: i32 = -1;

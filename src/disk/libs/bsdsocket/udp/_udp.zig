@@ -26,6 +26,7 @@ const Interface = _netif.Interface;
 const _route = @import("../route/_route.zig");
 const _ip = @import("../ip/_ip.zig");
 const _socket = @import("../socket/_socket.zig");
+const _icmp = @import("../icmp/_icmp.zig");
 const Socket = _socket.Socket;
 
 pub const header_bytes = 8;
@@ -47,8 +48,13 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     }
     const source_port = _ip.get16(datagram, 0);
     const destination_port = _ip.get16(datagram, 2);
-    const socket = find(stack, header.destination, destination_port, header.source, source_port) orelse
+    const socket = find(stack, header.destination, destination_port, header.source, source_port) orelse {
+        // Nobody is bound there: the sender is told, unless it sent to
+        // many.
+        _ = frame.push(header.header_length);
+        _icmp.sendUnreachable(stack, frame, header, _icmp.code_port);
         return drop(stack, frame, &stack.counts.udp_no_port);
+    };
     const data_length = length - header_bytes;
     if (socket.receive_bytes + data_length > socket.receive_limit) return drop(stack, frame, &stack.counts.udp_full);
     frame.trim(length);
@@ -58,7 +64,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     sys.AddTail(&socket.receive, &frame.node);
     socket.receive_bytes += data_length;
     stack.counts.udp_received += 1;
-    _socket.wake(socket);
+    _socket.wake(socket, bsd.FD_READ);
 }
 
 fn drop(stack: *StackBase, frame: *Frame, count: *u32) void {

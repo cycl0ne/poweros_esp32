@@ -79,6 +79,7 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         bsd.SO_RCVBUF => @intCast(socket.receive_limit),
         bsd.SO_SNDBUF => @intCast(socket.send_limit),
         bsd.SO_TYPE => socket.socket_type,
+        bsd.SO_EVENTMASK => @bitCast(socket.event_mask),
         bsd.SO_ERROR => blk: {
             const pending = socket.pending_error;
             socket.pending_error = 0;

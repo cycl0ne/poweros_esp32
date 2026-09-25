@@ -9,11 +9,14 @@ bsdsocket.library/GetDTableSize
 bsdsocket.library/GetPeerName
 bsdsocket.library/GetSockName
 bsdsocket.library/GetSockOpt
+bsdsocket.library/GetSocketEvents
 bsdsocket.library/Inet_Addr
 bsdsocket.library/Inet_NtoA
 bsdsocket.library/IoctlSocket
+bsdsocket.library/ObtainSocket
 bsdsocket.library/Recv
 bsdsocket.library/RecvFrom
+bsdsocket.library/ReleaseSocket
 bsdsocket.library/RemoveInterface
 bsdsocket.library/Send
 bsdsocket.library/SendTo
@@ -451,6 +454,56 @@ bsdsocket.library/WaitSelect
 	    var pending: i32 = 0;
 	    var size: u32 = @sizeOf(i32);
 	    _ = sb.GetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_ERROR, &pending, &size);
+bsdsocket.library/GetSocketEvents            bsdsocket.library/GetSocketEvents
+
+   NAME
+	GetSocketEvents -- The next of the opener's sockets that has events to tell of, and which.
+
+   SYNOPSIS
+	    fn GetSocketEvents(base: *SocketBase, events: *u32) i32
+
+   SINCE
+	1.0. LVO -108.
+
+   INPUTS
+	- `events` - gets the socket's events, FD_*.
+
+   RESULT
+	The socket's descriptor, or -1 when no socket has any.
+
+   BEHAVIOR
+	A socket tells of the events its `SO_EVENTMASK` names - `FD_READ` when
+	something comes to read, `FD_WRITE` when it can send, `FD_ERROR` when
+	the network reports an error for it - by raising the signal
+	`SBTC_SIGEVENTMASK` set, and keeps them until they are taken here. The
+	sockets are looked at in turn, starting after the one answered last,
+	so none is left waiting behind a busy one. A program serves any number
+	of sockets from its own Wait this way, beside its windows, without
+	WaitSelect.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands; the events are taken.
+
+   NOTES
+	Call it until it answers -1 each time the event signal comes: one
+	signal may stand for events on many sockets.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SetSockOpt`, `SocketBaseTagList`, `WaitSelect`
+
+   EXAMPLES
+	    var events: u32 = 0;
+	    var socket = sb.GetSocketEvents(&events);
+	    while (socket >= 0) : (socket = sb.GetSocketEvents(&events)) handle(socket, events);
 bsdsocket.library/Inet_Addr                        bsdsocket.library/Inet_Addr
 
    NAME
@@ -579,6 +632,51 @@ bsdsocket.library/WaitSelect
    EXAMPLES
 	    var never: i32 = 1;
 	    _ = sb.IoctlSocket(socket, bsd.FIONBIO, &never);
+bsdsocket.library/ObtainSocket                  bsdsocket.library/ObtainSocket
+
+   NAME
+	ObtainSocket -- The socket handed over under `id`, taken into the opener's table.
+
+   SYNOPSIS
+	    fn ObtainSocket(base: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) i32
+
+   SINCE
+	1.0. LVO -116.
+
+   INPUTS
+	- `id` - what ReleaseSocket answered.
+	- `domain` - `PF_INET`.
+	- `socket_type` - the socket's type, as a check.
+	- `protocol` - its protocol, or 0.
+
+   RESULT
+	Its descriptor in the opener's table, or -1 with Errno(): `EINVAL`
+	(nothing waits under that id, or not of that type), `EMFILE`.
+
+   BEHAVIOR
+	The socket is the opener's from now on: its readiness raises the
+	opener's signal, and closing the library closes it.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The socket becomes the opener's.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ReleaseSocket`
+
+   EXAMPLES
+	    const socket = sb.ObtainSocket(id, bsd.PF_INET, bsd.SOCK_DGRAM, 0);
 bsdsocket.library/Recv                                  bsdsocket.library/Recv
 
    NAME
@@ -682,6 +780,55 @@ bsdsocket.library/WaitSelect
 	    var from: bsd.sockaddr_in = .{};
 	    var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 	    const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
+bsdsocket.library/ReleaseSocket                bsdsocket.library/ReleaseSocket
+
+   NAME
+	ReleaseSocket -- The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
+
+   SYNOPSIS
+	    fn ReleaseSocket(base: *SocketBase, socket: i32, id: i32) i32
+
+   SINCE
+	1.0. LVO -112.
+
+   INPUTS
+	- `socket` - a descriptor from Socket.
+	- `id` - the id to hand it over by, or `UNIQUE_ID` for one the stack
+	  makes up.
+
+   RESULT
+	The id, or -1 with Errno(): `EBADF`, `EINVAL` (another socket waits
+	under that id already).
+
+   BEHAVIOR
+	The descriptor is free at once. The socket stays as it was - bound,
+	connected, with its queue - and keeps taking datagrams, but belongs to
+	nobody and tells nobody of them until a task takes it with
+	ObtainSocket. This is how a server hands a connection to a task of its
+	own, each with its own base.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The socket is the stack's until ObtainSocket; one that is never taken
+	goes when the library does.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ObtainSocket`
+
+   EXAMPLES
+	    const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
+	    // ... hand `id` to the task that will serve it
 bsdsocket.library/RemoveInterface            bsdsocket.library/RemoveInterface
 
    NAME
@@ -785,8 +932,8 @@ bsdsocket.library/WaitSelect
 	1.0. LVO -32.
 
    INPUTS
-	- `socket` - a datagram socket.
-	- `message` - the data.
+	- `socket` - a datagram socket, or a raw ICMP socket.
+	- `message` - the data; for a raw socket, the whole ICMP message.
 	- `length` - its bytes; 0 sends an empty datagram.
 	- `flags` - 0; `MSG_DONTWAIT` is taken and changes nothing, since a
 	  datagram is sent or refused at once.
@@ -890,7 +1037,8 @@ bsdsocket.library/WaitSelect
 	- `level` - `SOL_SOCKET`.
 	- `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
 	  `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
-	  `SO_SNDTIMEO` (a timeval; zero waits for ever).
+	  `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
+	  i32 of FD_* events to be told of with the event signal).
 	- `value` - the option's value.
 	- `value_length` - its size.
 
@@ -904,6 +1052,8 @@ bsdsocket.library/WaitSelect
 	the next is dropped; it is held to between 1 byte and 256 KiB.
 	`SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 	and changes nothing for a datagram socket, which never waits to send.
+	`SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
+	socket can always send.
 
    CONTEXT
 	- Waits: only for the stack's lock.
@@ -939,8 +1089,10 @@ bsdsocket.library/WaitSelect
 
    INPUTS
 	- `domain` - `PF_INET`, the only family there is.
-	- `socket_type` - `SOCK_DGRAM`: datagrams, UDP.
-	- `protocol` - 0 or `IPPROTO_UDP`.
+	- `socket_type` - `SOCK_DGRAM`: datagrams, UDP; `SOCK_RAW`: ICMP
+	  messages as they are, for a program such as Ping.
+	- `protocol` - 0 or `IPPROTO_UDP` for a datagram socket;
+	  `IPPROTO_ICMP` for a raw one.
 
    RESULT
 	The descriptor, from 0 up, or -1 with Errno(): `EAFNOSUPPORT` for
@@ -965,8 +1117,10 @@ bsdsocket.library/WaitSelect
 	library, which closes every socket still open.
 
    NOTES
-	Stream sockets (TCP) and raw sockets come with the protocols that
-	serve them.
+	A raw ICMP socket receives a copy of every ICMP message that comes
+	in, its IPv4 header first; what it sends is the ICMP message, header
+	and checksum made by the program, and the stack puts the IPv4 header
+	in front. Stream sockets come with TCP.
 
    BUGS
 	None known.

@@ -26,7 +26,8 @@ const buffer_max: u32 = 256 * 1024;
 /// - `level` - `SOL_SOCKET`.
 /// - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
 ///   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
-///   `SO_SNDTIMEO` (a timeval; zero waits for ever).
+///   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
+///   i32 of FD_* events to be told of with the event signal).
 /// - `value` - the option's value.
 /// - `value_length` - its size.
 ///
@@ -40,6 +41,8 @@ const buffer_max: u32 = 256 * 1024;
 /// the next is dropped; it is held to between 1 byte and 256 KiB.
 /// `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 /// and changes nothing for a datagram socket, which never waits to send.
+/// `SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
+/// socket can always send.
 ///
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
@@ -70,6 +73,12 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "SetSockOpt");
     if (level != bsd.SOL_SOCKET) return _socket.fail(sb, bsd.ENOPROTOOPT, "SetSockOpt");
     switch (option) {
+        bsd.SO_EVENTMASK => {
+            if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+            socket.event_mask = @bitCast(@as(*align(1) const i32, @ptrCast(value)).*);
+            socket.events &= socket.event_mask;
+            if (_socket.writable(socket)) _socket.wake(socket, bsd.FD_WRITE);
+        },
         bsd.SO_REUSEADDR, bsd.SO_BROADCAST, bsd.SO_RCVBUF, bsd.SO_SNDBUF => {
             if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
             const number = @as(*align(1) const i32, @ptrCast(value)).*;

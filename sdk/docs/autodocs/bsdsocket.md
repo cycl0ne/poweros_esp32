@@ -18,11 +18,14 @@ Generated from the source by `./zig build autodoc`.
 - [GetPeerName](#getpeername) - The address and port the socket is connected to.
 - [GetSockName](#getsockname) - The address and port the socket is bound to.
 - [GetSockOpt](#getsockopt) - One of the socket's options read into `value`.
+- [GetSocketEvents](#getsocketevents) - The next of the opener's sockets that has events to tell of, and which.
 - [Inet_Addr](#inet_addr) - Dotted text, "10.0.2.2", as an IPv4 address.
 - [Inet_NtoA](#inet_ntoa) - An IPv4 address as dotted text, "10.0.2.15".
 - [IoctlSocket](#ioctlsocket) - A socket's control requests.
+- [ObtainSocket](#obtainsocket) - The socket handed over under `id`, taken into the opener's table.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
 - [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from.
+- [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
 - [RemoveInterface](#removeinterface) - The interface called `name` taken down: off the routes, its device closed, its slot free.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
 - [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to.
@@ -596,6 +599,71 @@ var size: u32 = @sizeOf(i32);
 _ = sb.GetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_ERROR, &pending, &size);
 ```
 
+## GetSocketEvents
+
+The next of the opener's sockets that has events to tell of, and which.
+
+**SYNOPSIS**
+
+```zig
+fn GetSocketEvents(base: *SocketBase, events: *u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -108.
+
+**INPUTS**
+
+- `events` - gets the socket's events, FD_*.
+
+**RESULT**
+
+The socket's descriptor, or -1 when no socket has any.
+
+**BEHAVIOR**
+
+A socket tells of the events its `SO_EVENTMASK` names - `FD_READ` when
+something comes to read, `FD_WRITE` when it can send, `FD_ERROR` when
+the network reports an error for it - by raising the signal
+`SBTC_SIGEVENTMASK` set, and keeps them until they are taken here. The
+sockets are looked at in turn, starting after the one answered last,
+so none is left waiting behind a busy one. A program serves any number
+of sockets from its own Wait this way, beside its windows, without
+WaitSelect.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; the events are taken.
+
+**NOTES**
+
+Call it until it answers -1 each time the event signal comes: one
+signal may stand for events on many sockets.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetSockOpt`, `SocketBaseTagList`, `WaitSelect`
+
+**EXAMPLES**
+
+```zig
+var events: u32 = 0;
+var socket = sb.GetSocketEvents(&events);
+while (socket >= 0) : (socket = sb.GetSocketEvents(&events)) handle(socket, events);
+```
+
 ## Inet_Addr
 
 Dotted text, "10.0.2.2", as an IPv4 address.
@@ -769,6 +837,66 @@ var never: i32 = 1;
 _ = sb.IoctlSocket(socket, bsd.FIONBIO, &never);
 ```
 
+## ObtainSocket
+
+The socket handed over under `id`, taken into the opener's table.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainSocket(base: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -116.
+
+**INPUTS**
+
+- `id` - what ReleaseSocket answered.
+- `domain` - `PF_INET`.
+- `socket_type` - the socket's type, as a check.
+- `protocol` - its protocol, or 0.
+
+**RESULT**
+
+Its descriptor in the opener's table, or -1 with Errno(): `EINVAL`
+(nothing waits under that id, or not of that type), `EMFILE`.
+
+**BEHAVIOR**
+
+The socket is the opener's from now on: its readiness raises the
+opener's signal, and closing the library closes it.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The socket becomes the opener's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseSocket`
+
+**EXAMPLES**
+
+```zig
+const socket = sb.ObtainSocket(id, bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+```
+
 ## Recv
 
 The next datagram waiting on the socket, into `buffer`.
@@ -900,6 +1028,70 @@ var buffer: [512]u8 = undefined;
 var from: bsd.sockaddr_in = .{};
 var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
+```
+
+## ReleaseSocket
+
+The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseSocket(base: *SocketBase, socket: i32, id: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -112.
+
+**INPUTS**
+
+- `socket` - a descriptor from Socket.
+- `id` - the id to hand it over by, or `UNIQUE_ID` for one the stack
+  makes up.
+
+**RESULT**
+
+The id, or -1 with Errno(): `EBADF`, `EINVAL` (another socket waits
+under that id already).
+
+**BEHAVIOR**
+
+The descriptor is free at once. The socket stays as it was - bound,
+connected, with its queue - and keeps taking datagrams, but belongs to
+nobody and tells nobody of them until a task takes it with
+ObtainSocket. This is how a server hands a connection to a task of its
+own, each with its own base.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The socket is the stack's until ObtainSocket; one that is never taken
+goes when the library does.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainSocket`
+
+**EXAMPLES**
+
+```zig
+const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
+// ... hand `id` to the task that will serve it
 ```
 
 ## RemoveInterface
@@ -1039,8 +1231,8 @@ fn SendTo(base: *SocketBase, socket: i32, message: *const anyopaque, length: u32
 
 **INPUTS**
 
-- `socket` - a datagram socket.
-- `message` - the data.
+- `socket` - a datagram socket, or a raw ICMP socket.
+- `message` - the data; for a raw socket, the whole ICMP message.
 - `length` - its bytes; 0 sends an empty datagram.
 - `flags` - 0; `MSG_DONTWAIT` is taken and changes nothing, since a
   datagram is sent or refused at once.
@@ -1174,7 +1366,8 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 - `level` - `SOL_SOCKET`.
 - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
-  `SO_SNDTIMEO` (a timeval; zero waits for ever).
+  `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
+  i32 of FD_* events to be told of with the event signal).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -1190,6 +1383,8 @@ of the wrong size).
 the next is dropped; it is held to between 1 byte and 256 KiB.
 `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 and changes nothing for a datagram socket, which never waits to send.
+`SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
+socket can always send.
 
 **CONTEXT**
 
@@ -1238,8 +1433,10 @@ fn Socket(base: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
 **INPUTS**
 
 - `domain` - `PF_INET`, the only family there is.
-- `socket_type` - `SOCK_DGRAM`: datagrams, UDP.
-- `protocol` - 0 or `IPPROTO_UDP`.
+- `socket_type` - `SOCK_DGRAM`: datagrams, UDP; `SOCK_RAW`: ICMP
+  messages as they are, for a program such as Ping.
+- `protocol` - 0 or `IPPROTO_UDP` for a datagram socket;
+  `IPPROTO_ICMP` for a raw one.
 
 **RESULT**
 
@@ -1269,8 +1466,10 @@ library, which closes every socket still open.
 
 **NOTES**
 
-Stream sockets (TCP) and raw sockets come with the protocols that
-serve them.
+A raw ICMP socket receives a copy of every ICMP message that comes
+in, its IPv4 header first; what it sends is the ICMP message, header
+and checksum made by the program, and the stack puts the IPv4 header
+in front. Stream sockets come with TCP.
 
 **BUGS**
 

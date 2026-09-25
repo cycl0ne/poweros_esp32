@@ -7,8 +7,8 @@
 //! packet, the total length at least the header and at most the packet
 //! (a link may pad behind it, which is cut off), the header's checksum
 //! right, and the destination this machine. Anything else is dropped and
-//! counted. Fragments are counted and dropped: they are not put back
-//! together yet. This machine forwards nothing.
+//! counted. Fragments are put back together (`reassembly.zig`) before
+//! they go further. This machine forwards nothing.
 //!
 //! **Out**: a header of 20 bytes without options, the identification
 //! counted up, don't-fragment set - a packet larger than the interface's
@@ -23,6 +23,8 @@ const _netif = @import("../netif/_netif.zig");
 const Interface = _netif.Interface;
 const _route = @import("../route/_route.zig");
 const _udp = @import("../udp/_udp.zig");
+const _icmp = @import("../icmp/_icmp.zig");
+const reassembly = @import("reassembly.zig");
 
 pub const header_bytes = 20;
 /// IPv4's EtherType, the packet type a network device reads it by.
@@ -37,7 +39,16 @@ pub const Header = struct {
     source: u32,
     destination: u32,
     protocol: u8,
+    /// The header's own length, options included: how far in front of
+    /// the transport's header the packet starts.
+    header_length: u32,
+    identification: u16,
 };
+
+/// The fragment word: more fragments follow, and the offset in 8-byte
+/// units.
+pub const flag_more: u16 = 0x2000;
+pub const fragment_offset: u16 = 0x1FFF;
 
 // --- bytes in the network's order ---------------------------------------------
 
@@ -101,18 +112,24 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
         return drop(stack, frame, &stack.counts.ip_bad_header);
     }
     if (finish(sum(0, packet[0..header_length])) != 0) return drop(stack, frame, &stack.counts.ip_bad_checksum);
-    const fragment = get16(packet, 6);
-    if (fragment & (flag_more_fragments | offset_mask) != 0) return drop(stack, frame, &stack.counts.ip_fragments);
     const header: Header = .{
         .source = get32(packet, 12),
         .destination = get32(packet, 16),
         .protocol = packet[9],
+        .header_length = header_length,
+        .identification = get16(packet, 4),
     };
     if (!_netif.isOurs(stack, header.destination)) return drop(stack, frame, &stack.counts.ip_not_ours);
     frame.trim(total);
+    const fragment = get16(packet, 6);
+    if (fragment & (flag_more_fragments | offset_mask) != 0) {
+        stack.counts.ip_fragments += 1;
+        return reassembly.input(stack, interface, frame, header, fragment);
+    }
     frame.pull(header_length);
     switch (header.protocol) {
         @as(u8, @intCast(bsd.IPPROTO_UDP)) => _udp.input(stack, interface, frame, header),
+        @as(u8, @intCast(bsd.IPPROTO_ICMP)) => _icmp.input(stack, interface, frame, header),
         else => {
             stack.counts.ip_unknown_protocol += 1;
             stack.frames.give(sys, frame);

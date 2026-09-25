@@ -117,6 +117,21 @@ pub const SO_RCVTIMEO: i32 = 0x1006;
 pub const SO_ERROR: i32 = 0x1007;
 /// The socket's type, SOCK_* (get only).
 pub const SO_TYPE: i32 = 0x1008;
+/// The events (FD_*) the socket tells of with the opener's event signal
+/// (SBTC_SIGEVENTMASK), for GetSocketEvents.
+pub const SO_EVENTMASK: i32 = 0x2001;
+
+/// Socket events: something to read, room to write, an error.
+pub const FD_ACCEPT: u32 = 0x01;
+pub const FD_CONNECT: u32 = 0x02;
+pub const FD_OOB: u32 = 0x04;
+pub const FD_READ: u32 = 0x08;
+pub const FD_WRITE: u32 = 0x10;
+pub const FD_ERROR: u32 = 0x20;
+pub const FD_CLOSE: u32 = 0x40;
+
+/// ReleaseSocket's id for "give it one nobody has".
+pub const UNIQUE_ID: i32 = -1;
 
 /// IoctlSocket's requests: the bytes the next receive would get (an u32
 /// out), and whether the socket waits (an i32 in: not 0 for never).

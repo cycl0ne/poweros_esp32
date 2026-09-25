@@ -43,12 +43,23 @@ pub const Frame = extern struct {
     /// the station it goes to, kept while it waits for the device.
     link_type: u16 = 0,
     link_address: [6]u8 = @splat(0),
-    pad: [2]u8 = .{ 0, 0 },
+    /// A large frame, allocated to its size for one datagram and freed
+    /// when it is given back, rather than kept in the pool.
+    large: u8 = 0,
+    pad: u8 = 0,
+    /// The bytes `buffer` holds: `buffer_bytes`, more for a large frame.
+    capacity: u32 = buffer_bytes,
     buffer: [buffer_bytes]u8 = undefined,
+
+    /// The whole buffer, as far as it goes.
+    pub fn room(frame: *Frame) []u8 {
+        const whole: [*]u8 = @ptrCast(&frame.buffer);
+        return whole[0..frame.capacity];
+    }
 
     /// The valid bytes.
     pub fn bytes(frame: *Frame) []u8 {
-        return frame.buffer[frame.start..][0..frame.length];
+        return frame.room()[frame.start..][0..frame.length];
     }
 
     /// Room for `count` more bytes in front, which are now part of the
@@ -56,7 +67,7 @@ pub const Frame = extern struct {
     pub fn push(frame: *Frame, count: u32) []u8 {
         frame.start -= count;
         frame.length += count;
-        return frame.buffer[frame.start..][0..count];
+        return frame.room()[frame.start..][0..count];
     }
 
     /// The first `count` valid bytes taken off: a header read going in.
@@ -80,6 +91,8 @@ pub const Frame = extern struct {
 pub const Pool = extern struct {
     free: exec.List = .{},
     made: u32 = 0,
+    /// Large frames given out and not back yet.
+    large_out: u32 = 0,
 
     pub fn init(pool: *Pool) void {
         pool.* = .{};
@@ -101,10 +114,38 @@ pub const Pool = extern struct {
         frame.from_address = 0;
         frame.from_port = 0;
         frame.link_type = 0;
+        frame.large = 0;
+        frame.capacity = buffer_bytes;
         return frame;
     }
 
+    /// An empty large frame that holds `capacity` bytes, the headroom
+    /// included; null when there is no memory for it.
+    pub fn takeLarge(pool: *Pool, sys: *ExecBase, capacity: u32) ?*Frame {
+        const memory = sys.AllocMem(largeBytes(capacity), exec.MEMF_ANY) orelse return null;
+        const frame: *Frame = @ptrCast(@alignCast(memory));
+        frame.node = .{};
+        frame.start = headroom;
+        frame.length = 0;
+        frame.from_address = 0;
+        frame.from_port = 0;
+        frame.link_type = 0;
+        frame.large = 1;
+        frame.capacity = @max(capacity, buffer_bytes);
+        pool.large_out += 1;
+        return frame;
+    }
+
+    fn largeBytes(capacity: u32) usize {
+        return @offsetOf(Frame, "buffer") + @as(usize, @max(capacity, buffer_bytes));
+    }
+
     pub fn give(pool: *Pool, sys: *ExecBase, frame: *Frame) void {
+        if (frame.large != 0) {
+            pool.large_out -= 1;
+            sys.FreeMem(frame, largeBytes(frame.capacity));
+            return;
+        }
         sys.AddHead(&pool.free, &frame.node);
     }
 
@@ -113,7 +154,7 @@ pub const Pool = extern struct {
         var free: u32 = 0;
         var it = pool.free.iterator();
         while (it.next()) |_| free += 1;
-        return pool.made - free;
+        return pool.made - free + pool.large_out;
     }
 
     /// Every frame freed, when the library goes; all of them are back.
