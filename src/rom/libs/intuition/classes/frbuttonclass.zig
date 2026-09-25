@@ -108,8 +108,9 @@ fn redraw(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) void {
 }
 
 /// Its frame round what it shows: its image, or else its label in the font
-/// it is measured in (`gadgetclass.measureFont`); null with neither.
-fn framed(ib: *IntuitionBase, o: *Object, frame: *Object, gi: ?*classusr.GadgetInfo) ?ic.Box {
+/// it is measured in (`gadgetclass.measureFont`); null with neither. A
+/// plain button that made a frame of its own is measured the same way.
+pub fn framed(ib: *IntuitionBase, o: *Object, frame: *Object, gi: ?*classusr.GadgetInfo) ?ic.Box {
     const it = ib.iface();
     const g = gadgetclass.gadgetOf(ib, o);
     var contents = ic.Box{};

@@ -17,6 +17,7 @@
 //! in the same window.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const graphics = sdk.graphics;
 const layers = sdk.layers;
 const intuition = sdk.intuition;
@@ -216,38 +217,83 @@ pub fn renderAll(ib: *IntuitionBase, w: *Window) void {
     renderRange(ib, w, w.gadgets orelse return, -1);
 }
 
+/// `o`, and then every member of a group inside it, depth first: a
+/// gadget and all the gadgets it is made of, which is what joins a window
+/// or a requester with it and leaves with it.
+pub fn visit(ib: *IntuitionBase, o: *Object, context: anytype, comptime each: fn (@TypeOf(context), *Object) void) void {
+    each(context, o);
+    const list = groupgclass.memberList(ib, o) orelse return;
+    var state: ?*exec.MinNode = list.head;
+    while (ib.iface().NextObject(&state)) |member| visit(ib, member, context, each);
+}
+
+/// A gadget and what it is made of given to a window - and to one of its
+/// requesters, or none - or, with null, given back.
+pub fn claim(ib: *IntuitionBase, o: *Object, w: ?*Window, req: ?*intuition.Requester) void {
+    const Owner = struct {
+        ib: *IntuitionBase,
+        w: ?*Window,
+        req: ?*intuition.Requester,
+        fn each(owner: *const @This(), member: *Object) void {
+            const g = gadgetOf(owner.ib, member);
+            g.window = owner.w;
+            g.requester = owner.req;
+        }
+    };
+    const owner = Owner{ .ib = ib, .w = w, .req = req };
+    visit(ib, o, &owner, Owner.each);
+}
+
 /// The next gadget of this window that takes the keyboard, starting after
 /// `from` and coming round to it; null when no other does. `back` walks the
 /// list the other way, which is what a shifted Tab asks for.
 ///
+/// Every gadget of the list is looked at, and every member of a group in
+/// it where the group stands in the list: a line of text in a layout is
+/// reached as one of the window's own is.
+///
 /// The list is linked one way only, so backwards means walking it forwards
 /// and keeping the last one that qualified.
 pub fn tabFrom(ib: *IntuitionBase, w: *Window, from: *Object, back: bool) ?*Object {
-    var first: ?*Object = null;
-    var before: ?*Object = null;
-    var after: ?*Object = null;
-    var last: ?*Object = null;
-    var seen = false;
+    const Search = struct {
+        ib: *IntuitionBase,
+        from: *Object,
+        first: ?*Object = null,
+        before: ?*Object = null,
+        after: ?*Object = null,
+        last: ?*Object = null,
+        seen: bool = false,
 
+        fn each(search: *@This(), o: *Object) void {
+            if (o == search.from) {
+                search.seen = true;
+                return;
+            }
+            const g = gadgetOf(search.ib, o);
+            if (g.flags & gadgetclass.GFLG_TABCYCLE == 0) return;
+            if (g.flags & gadgetclass.GFLG_DISABLED != 0) return;
+            if (search.first == null) search.first = o;
+            search.last = o;
+            if (search.seen) {
+                if (search.after == null) search.after = o;
+            } else {
+                search.before = o;
+            }
+        }
+    };
+    var search = Search{ .ib = ib, .from = from };
     var next = listOf(ib, w, from);
-    while (next) |o| : (next = gadgetOf(ib, o).next) {
-        if (o == from) {
-            seen = true;
-            continue;
-        }
-        const g = gadgetOf(ib, o);
-        if (g.flags & gadgetclass.GFLG_TABCYCLE == 0) continue;
-        if (g.flags & gadgetclass.GFLG_DISABLED != 0) continue;
-        if (first == null) first = o;
-        last = o;
-        if (seen) {
-            if (after == null) after = o;
-        } else {
-            before = o;
-        }
-    }
+    while (next) |o| : (next = gadgetOf(ib, o).next) visit(ib, o, &search, Search.each);
     // Round the list either way, so Tab in the last one reaches the first.
-    return if (back) (before orelse last) else (after orelse first);
+    return if (back) (search.before orelse search.last) else (search.after orelse search.first);
+}
+
+/// The gadget that has the input when `o` has it: `o`, or the member of a
+/// group in it that its hit test handed the press to.
+pub fn innermost(ib: *IntuitionBase, o: *Object) *Object {
+    var at = o;
+    while (groupgclass.activeMember(ib, at)) |member| at = member;
+    return at;
 }
 
 /// A gadget told the room it is measured against has changed: when the
@@ -374,7 +420,7 @@ pub fn listOf(ib: *IntuitionBase, w: *Window, o: *Object) ?*Object {
 /// A window closing: its gadgets are the program's again.
 pub fn detach(ib: *IntuitionBase, w: *Window) void {
     var next = w.gadgets;
-    while (next) |o| : (next = gadgetOf(ib, o).next) gadgetOf(ib, o).window = null;
+    while (next) |o| : (next = gadgetOf(ib, o).next) claim(ib, o, null, null);
     w.gadgets = null;
 }
 

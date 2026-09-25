@@ -138,11 +138,7 @@ pub fn draw(ib: *IntuitionBase, w: *Window, req: *Requester) void {
 /// hears where it is measured.
 pub fn attach(ib: *IntuitionBase, w: *Window, req: *Requester) void {
     var next = req.gadgets;
-    while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) {
-        const g = gadgetclass.gadgetOf(ib, o);
-        g.window = w;
-        g.requester = req;
-    }
+    while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) _gadget.claim(ib, o, w, req);
     _gadget.layout(ib, w, req.gadgets, true);
 }
 
@@ -150,11 +146,9 @@ pub fn attach(ib: *IntuitionBase, w: *Window, req: *Requester) void {
 fn detach(ib: *IntuitionBase, req: *Requester) void {
     var next = req.gadgets;
     while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) {
-        const g = gadgetclass.gadgetOf(ib, o);
         // Whichever has the input is told it has lost it first.
-        @import("../input/_input.zig").forgetGadget(ib, o);
-        g.window = null;
-        g.requester = null;
+        @import("../input/_input.zig").forgetWithin(ib, o);
+        _gadget.claim(ib, o, null, null);
     }
 }
 

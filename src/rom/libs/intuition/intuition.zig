@@ -4085,6 +4085,139 @@ test "WA_Position: a window in the middle of its screen, or around the pointer a
     try tearDown(ib);
 }
 
+test "gadgets in a layout: Tab reaches them and goes round, ActivateGadget takes them, removal forgets them" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two lines of text in a layout, a button between them that does not
+    // take the keyboard, and a line of the window's own after the layout.
+    const first = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const second = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 60 },
+        .{ .tag = gc.GA_Height, .data = 28 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 1 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(first) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(framedButton(ib, "B", 3)) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(second) },
+        .{},
+    }).?;
+    const own = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 29 },
+        .{ .tag = gc.GA_Width, .data = 60 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(layout) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+
+    // Into the first by the pointer, then Tab and Tab again: past the
+    // button to the second, out of the layout to the window's own, and
+    // round to the first.
+    const f = boxOf(ib, first);
+    click(ib, f.left + 2, f.top + 2);
+    rawKey(ib, 0x20); // 'a'
+    rawKey(ib, 0x42); // Tab
+    rawKey(ib, 0x35); // 'b'
+    rawKey(ib, 0x42);
+    rawKey(ib, 0x33); // 'c'
+    rawKey(ib, 0x42);
+    try testing.expectEqual(ib.input.active.?, first);
+    try testing.expectEqual(@as(usize, 'a'), firstChar(ib, first));
+    try testing.expectEqual(@as(usize, 'b'), firstChar(ib, second));
+    try testing.expectEqual(@as(usize, 'c'), firstChar(ib, own));
+
+    // Back again with shift: from the first round to the window's own.
+    const ie = sdk.devices.inputevent;
+    const shifted: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = 0x42, .qualifier = ie.IEQUALIFIER_LSHIFT };
+    _input.handle(ib, &shifted);
+    try testing.expectEqual(ib.input.active.?, own);
+
+    // A member can be given the keys by call: it knows its window. Only
+    // with nothing else holding them - Return lets the window's own go.
+    rawKey(ib, 0x44);
+    try testing.expect(ib.input.active == null);
+    try testing.expect(it.ActivateGadget(second, w, null));
+    try testing.expectEqual(ib.input.active.?, second);
+
+    // Taken out with the keys in one of its members: the member lets go.
+    try testing.expectEqual(@as(i32, 0), it.RemoveGList(w, layout, 1));
+    try testing.expect(ib.input.active == null);
+    try testing.expect(gadgetclass.gadgetOf(ib, second).window == null);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(layout);
+    it.DisposeObject(own);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a plain button with a label is as small as its frame round the label" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const plain = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{ .{ .tag = gc.GA_Text, .data = @intFromPtr("OK") }, .{} }).?;
+    const framed = framedButton(ib, "OK", 1);
+    const wide = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("OK") },
+        .{ .tag = gc.GA_Width, .data = 70 },
+        .{ .tag = gc.GA_Height, .data = 3 },
+        .{},
+    }).?;
+    inline for (.{ gc.GDOMAIN_MINIMUM, gc.GDOMAIN_NOMINAL }) |which| {
+        var a = gc.GpDomain{ .which = which };
+        var b = gc.GpDomain{ .which = which };
+        try testing.expectEqual(@as(usize, 1), it.SendMessage(plain, @ptrCast(&a)));
+        _ = it.SendMessage(framed, @ptrCast(&b));
+        try testing.expectEqual(b.domain.width, a.domain.width);
+        try testing.expectEqual(b.domain.height, a.domain.height);
+        try testing.expect(a.domain.width < 80);
+    }
+    // Made with a size: that, where the label fits in it.
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    var looks = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = it.SendMessage(wide, @ptrCast(&least));
+    _ = it.SendMessage(wide, @ptrCast(&looks));
+    try testing.expectEqual(@as(i32, 70), looks.domain.width);
+    try testing.expectEqual(least.domain.height, looks.domain.height);
+    it.DisposeObject(plain);
+    it.DisposeObject(framed);
+    it.DisposeObject(wide);
+    try tearDown(ib);
+}
+
 test "sliders: what stands where, in things and in fractions" {
     const pg = intuition.propgclass;
 

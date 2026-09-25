@@ -76,8 +76,8 @@ pub fn RemoveGList(ib: *IntuitionBase, window: *Window, gadget: *Object, count: 
     gadgetOf(ib, last).next = null;
     var o: ?*Object = gadget;
     while (o) |g| : (o = gadgetOf(ib, g).next) {
-        @import("../input/_input.zig").forgetGadget(ib, g);
-        gadgetOf(ib, g).window = null;
+        @import("../input/_input.zig").forgetWithin(ib, g);
+        _gadget.claim(ib, g, null, null);
     }
     return at;
 }

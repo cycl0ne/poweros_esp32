@@ -71,7 +71,7 @@ pub fn AddGList(ib: *IntuitionBase, window: *Window, gadget: *Object, position: 
     const last = lastOf(ib, gadget, count);
     var o: ?*Object = gadget;
     while (o) |g| : (o = gadgetOf(ib, g).next) {
-        gadgetOf(ib, g).window = window;
+        _gadget.claim(ib, g, window, null);
         if (g == last) break;
     }
     // Where it goes: after `position` gadgets, or at the end.

@@ -172,6 +172,9 @@ const raw_home = 0x70;
 const raw_end = 0x71;
 const raw_delete = 0x46;
 const raw_help = 0x5F;
+/// The Tab key, read as a key rather than a character: shifted, the
+/// keymap makes it a string (CSI Z), which is no one character.
+const raw_tab = 0x42;
 
 /// A character in at the cursor, or over the one there; false when there is
 /// no room, or a fixed field has none to replace.
@@ -235,6 +238,12 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
             if (fixed or w.buffer_pos >= w.num_chars) return 1;
             workTake(w, w.buffer_pos);
             w.edit_op = sg.EO_DELFORWARD;
+            return 1;
+        },
+        raw_tab => {
+            const back = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+            w.code = 0x09;
+            w.actions |= sg.SGA_END | (if (back) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
             return 1;
         },
         raw_help => {

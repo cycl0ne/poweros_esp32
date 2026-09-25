@@ -337,6 +337,17 @@ pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     }
 }
 
+/// The same for a gadget and every gadget it is made of: a member of a
+/// group can have the input by itself, reached by Tab.
+pub fn forgetWithin(ib: *IntuitionBase, o: *Object) void {
+    const Each = struct {
+        fn each(base: *IntuitionBase, member: *Object) void {
+            forgetGadget(base, member);
+        }
+    };
+    _gadget.visit(ib, o, ib, Each.each);
+}
+
 /// The active gadget told it is done, not by its own choice.
 fn abort(ib: *IntuitionBase) void {
     const st = stateOf(ib);
@@ -490,13 +501,17 @@ fn feed(ib: *IntuitionBase, e: *const InputEvent) bool {
     };
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) return false;
+    // Where Tab goes on from: the gadget that had the keys, which is a
+    // member when `o` is a group - asked before the group is told it is
+    // done, which is when it forgets.
+    const from = _gadget.innermost(ib, o);
     finish(ib, w, o, result, termination);
 
     // Tab out of it: the keyboard goes to the next gadget of the window
     // that takes it, without the pointer being anywhere near.
     const tab = result & (gc.GMR_NEXTACTIVE | gc.GMR_PREVACTIVE);
     if (tab != 0) {
-        if (_gadget.tabFrom(ib, w, o, tab & gc.GMR_PREVACTIVE != 0)) |o2| {
+        if (_gadget.tabFrom(ib, w, from, tab & gc.GMR_PREVACTIVE != 0)) |o2| {
             activateGadget(ib, w, o2);
         }
         return false;

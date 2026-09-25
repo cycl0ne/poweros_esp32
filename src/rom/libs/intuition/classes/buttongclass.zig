@@ -30,12 +30,16 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
+const frbuttonclass = @import("frbuttonclass.zig");
 const d = @import("draw.zig");
 
 /// buttongclass's part of an object.
 pub const Data = extern struct {
     /// The frame it made for itself when it was given no image.
     frame: ?*Object = null,
+    /// Whether it was made with a size of its own (`GA_Width`, `GA_Height`),
+    /// which is then the size it looks right at, if its label fits.
+    sized: u32 = 0,
 };
 
 /// Make buttongclass, from gadgetclass, and put it on the public list.
@@ -195,6 +199,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     return 0;
                 };
                 classes.instData(Data, cl, obj).frame = frame;
+                classes.instData(Data, cl, obj).sized = @intFromBool(sized);
             }
             return made;
         },
@@ -213,6 +218,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return 0;
             }
             return changed;
+        },
+        // A plain button in its own frame is as small as the frame round
+        // its label - and looks right at that, or at the size it was made
+        // with if larger. One that shows an image is the image's size,
+        // which is the size it was given.
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            const p = classes.instData(Data, cl, o.?);
+            const frame = p.frame orelse return it.SendSuperMessage(cl, o, msg);
+            if (ask.which == gc.GDOMAIN_MAXIMUM) return it.SendSuperMessage(cl, o, msg);
+            const box = frbuttonclass.framed(ib, o.?, frame, ask.gadget_info) orelse return it.SendSuperMessage(cl, o, msg);
+            const g = gadgetclass.gadgetOf(ib, o.?);
+            ask.domain = if (ask.which == gc.GDOMAIN_NOMINAL and p.sized != 0)
+                .{ .width = @max(box.width, g.given_width), .height = @max(box.height, g.given_height) }
+            else
+                .{ .width = box.width, .height = box.height };
+            return 1;
         },
         gc.GM_HITTEST => {
             const ht: *gc.GpHitTest = @ptrCast(@alignCast(msg));

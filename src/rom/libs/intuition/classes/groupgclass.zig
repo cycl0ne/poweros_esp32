@@ -74,6 +74,16 @@ fn own(cl: *Class, o: *Object) *Data {
     return classes.instData(Data, cl, o);
 }
 
+/// A group's list of members, to be walked with `NextObject`; null for
+/// anything that is not a group.
+pub fn memberList(ib: *IntuitionBase, o: *Object) ?*exec.MinList {
+    var cl: ?*Class = classes.objectClass(o);
+    while (cl) |c| : (cl = c.super) {
+        if (c == ib.group_class) return &own(c, o).members;
+    }
+    return null;
+}
+
 /// The member of a group that has the input - the one the last hit test
 /// landed in, until it is done - or null, and null for anything that is
 /// not a group.
