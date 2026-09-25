@@ -123,6 +123,10 @@ pub const LVO = struct {
     pub const HelpControl = libraries.lvo(105);
     pub const SetEditHook = libraries.lvo(106);
     pub const GadgetMouse = libraries.lvo(107);
+    pub const CreateMenusA = libraries.lvo(108);
+    pub const FreeMenus = libraries.lvo(109);
+    pub const LayoutMenusA = libraries.lvo(110);
+    pub const LayoutMenuItemsA = libraries.lvo(111);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -232,6 +236,10 @@ pub const Fn = struct {
     pub const HelpControl = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) void;
     pub const SetEditHook = *const fn (*IntuitionBase, ?*utility.Hook) callconv(.c) *utility.Hook;
     pub const GadgetMouse = *const fn (*IntuitionBase, *intuition.Object, *intuition.GadgetInfo, *graphics.Point) callconv(.c) void;
+    pub const CreateMenusA = *const fn (*IntuitionBase, [*]const intuition.menus.NewMenu, ?[*]const utility.TagItem) callconv(.c) ?*intuition.Menu;
+    pub const FreeMenus = *const fn (*IntuitionBase, ?*intuition.Menu) callconv(.c) void;
+    pub const LayoutMenusA = *const fn (*IntuitionBase, *intuition.Menu, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const LayoutMenuItemsA = *const fn (*IntuitionBase, *intuition.MenuItem, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -857,5 +865,30 @@ pub const IntuitionBase = opaque {
     /// GadgetInfo describes.
     pub fn GadgetMouse(self: *IntuitionBase, gadget: *intuition.Object, info: *intuition.GadgetInfo, point: *graphics.Point) void {
         return libraries.call(self, LVO.GadgetMouse, Fn.GadgetMouse, .{ gadget, info, point });
+    }
+
+    /// A menu strip - or a panel's items, from a table that does not start
+    /// with a title - made from a NewMenu table in one allocation, with no
+    /// places yet: LayoutMenusA gives them. Null when the table is not a menu
+    /// or there is no memory; GTMN_SecondaryError says which.
+    pub fn CreateMenusA(self: *IntuitionBase, new_menu: [*]const intuition.menus.NewMenu, tags: ?[*]const utility.TagItem) ?*intuition.Menu {
+        return libraries.call(self, LVO.CreateMenusA, Fn.CreateMenusA, .{ new_menu, tags });
+    }
+
+    /// Give back what CreateMenusA made. Null does nothing.
+    pub fn FreeMenus(self: *IntuitionBase, menu: ?*intuition.Menu) void {
+        return libraries.call(self, LVO.FreeMenus, Fn.FreeMenus, .{menu});
+    }
+
+    /// Place a strip from CreateMenusA on a screen: its titles along the bar,
+    /// its items in columns under them, its subitems beside their items.
+    pub fn LayoutMenusA(self: *IntuitionBase, menu: *intuition.Menu, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.LayoutMenusA, Fn.LayoutMenusA, .{ menu, screen, tags });
+    }
+
+    /// Place one panel's items from CreateMenusA on a screen, under the title
+    /// GTMN_Menu names.
+    pub fn LayoutMenuItemsA(self: *IntuitionBase, first_item: *intuition.MenuItem, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.LayoutMenuItemsA, Fn.LayoutMenuItemsA, .{ first_item, screen, tags });
     }
 };

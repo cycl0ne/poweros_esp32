@@ -44,8 +44,9 @@
 //! screen, until its rightmost button is used, and prints each answer: 1
 //! and 2 for the buttons from the left, 0 for the rightmost.
 //!
-//! MENUS opens a window with menus (SetMenuStrip): Project with shortcuts
-//! and an item, Export, marked with » for the two subitems it opens,
+//! MENUS opens a window with menus made from a table (CreateMenusA,
+//! LayoutMenusA, SetMenuStrip): Project with shortcuts, a separator, and
+//! an item, Export, marked with » for the two subitems it opens,
 //! Options with two checkmarks that toggle and
 //! three that rule each other out, one of them disabled (OffMenu), and a
 //! third menu disabled whole. Each IDCMP_MENUPICK is printed item by item
@@ -89,7 +90,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.8 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.9 (25.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S";
@@ -369,120 +370,29 @@ const MSG_NOPICK = "  MENUPICK  nothing\n";
 const MSG_VERIFY = "  MENUVERIFY %s\n";
 const MSG_HELP = "  MENUHELP  menu %ld item %ld sub %ld\n";
 
-/// Every word the menus show, and which item each is.
-const Entry = struct {
-    word: [*:0]const u8,
-    /// Its menu, and its parent item for a subitem.
-    menu: u8,
-    parent: ?u8 = null,
-    flags: u32 = 0,
-    command: u8 = 0,
-    exclude: u32 = 0,
+/// The menus, as a table: CreateMenusA makes the strip of it and
+/// LayoutMenusA places it. Each item keeps its word as its user data,
+/// which is how a pick is named.
+const menu_table = [_]mn.NewMenu{
+    .{ .type = mn.NM_TITLE, .label = "Project" },
+    .{ .type = mn.NM_ITEM, .label = "Open...", .comm_key = "O", .user_data = @constCast("Open...") },
+    .{ .type = mn.NM_ITEM, .label = "Save", .comm_key = "S", .user_data = @constCast("Save") },
+    .{ .type = mn.NM_ITEM, .label = "Export" },
+    .{ .type = mn.NM_SUB, .label = "Text", .comm_key = "T", .user_data = @constCast("Text") },
+    .{ .type = mn.NM_SUB, .label = "Picture", .user_data = @constCast("Picture") },
+    .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL },
+    .{ .type = mn.NM_ITEM, .label = quit_word, .comm_key = "Q", .user_data = @constCast(quit_word) },
+    .{ .type = mn.NM_TITLE, .label = "Options" },
+    .{ .type = mn.NM_ITEM, .label = "Grid", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED, .user_data = @constCast("Grid") },
+    .{ .type = mn.NM_ITEM, .label = "Snap", .flags = mn.CHECKIT | mn.MENUTOGGLE, .user_data = @constCast("Snap") },
+    .{ .type = mn.NM_ITEM, .label = "Small", .flags = mn.CHECKIT, .mutual_exclude = 0b11000, .user_data = @constCast("Small") },
+    .{ .type = mn.NM_ITEM, .label = "Medium", .flags = mn.CHECKIT | mn.CHECKED, .mutual_exclude = 0b10100, .user_data = @constCast("Medium") },
+    .{ .type = mn.NM_ITEM, .label = "Large", .flags = mn.CHECKIT, .mutual_exclude = 0b01100, .user_data = @constCast("Large") },
+    .{ .type = mn.NM_TITLE, .label = "Disabled" },
+    .{ .type = mn.NM_ITEM, .label = "Nothing here", .user_data = @constCast("Nothing here") },
+    .{ .type = mn.NM_END },
 };
-
-const project_open = 0;
-const project_save = 1;
-const project_export = 2;
-const export_text = 3;
-const export_picture = 4;
-const project_quit = 5;
-const options_grid = 6;
-const options_snap = 7;
-const options_small = 8;
-const options_medium = 9;
-const options_large = 10;
-const other_nothing = 11;
-
-const entries = [_]Entry{
-    .{ .word = "Open...", .menu = 0, .flags = mn.COMMSEQ, .command = 'O' },
-    .{ .word = "Save", .menu = 0, .flags = mn.COMMSEQ, .command = 'S' },
-    .{ .word = "Export", .menu = 0 },
-    .{ .word = "Text", .menu = 0, .parent = project_export, .flags = mn.COMMSEQ, .command = 'T' },
-    .{ .word = "Picture", .menu = 0, .parent = project_export },
-    .{ .word = "Quit", .menu = 0, .flags = mn.COMMSEQ, .command = 'Q' },
-    .{ .word = "Grid", .menu = 1, .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
-    .{ .word = "Snap", .menu = 1, .flags = mn.CHECKIT | mn.MENUTOGGLE },
-    .{ .word = "Small", .menu = 1, .flags = mn.CHECKIT, .exclude = 0b11000 },
-    .{ .word = "Medium", .menu = 1, .flags = mn.CHECKIT | mn.CHECKED, .exclude = 0b10100 },
-    .{ .word = "Large", .menu = 1, .flags = mn.CHECKIT, .exclude = 0b01100 },
-    .{ .word = "Nothing here", .menu = 2 },
-};
-const menu_titles = [_][*:0]const u8{ "Project", "Options", "Disabled" };
-
-/// The strip, its items and their words, linked in place.
-const Strip = struct {
-    texts: [entries.len]intuition.IntuiText,
-    /// The mark at the right of an item that has subitems.
-    more: intuition.IntuiText,
-    items: [entries.len]intuition.MenuItem,
-    menus: [menu_titles.len]intuition.Menu,
-
-    /// `row` is how tall an item is: the screen's font and a row either
-    /// side.
-    fn make(strip: *Strip, ib: *IntuitionBase, dri: *sc.DrawInfo, row: i32) void {
-        const width: i32 = 140;
-        var last: [menu_titles.len]?*intuition.MenuItem = @splat(null);
-        var last_sub: ?*intuition.MenuItem = null;
-        var rows: [menu_titles.len]i32 = @splat(0);
-        var sub_rows: i32 = 0;
-        for (entries, 0..) |entry, i| {
-            const checkable = entry.flags & mn.CHECKIT != 0;
-            strip.texts[i] = .{
-                .front_pen = dri.pens[sc.BARDETAILPEN],
-                .left = if (checkable) mn.CHECKWIDTH else 4,
-                .top = 1,
-                .text = entry.word,
-            };
-            const item = &strip.items[i];
-            item.* = .{
-                .width = if (entry.parent != null) 100 else width,
-                .height = row,
-                .flags = mn.ITEMTEXT | mn.ITEMENABLED | mn.HIGHCOMP | entry.flags,
-                .mutual_exclude = entry.exclude,
-                .item_fill = &strip.texts[i],
-                .command = entry.command,
-            };
-            if (entry.parent) |parent| {
-                // Beside its item, a little way in.
-                item.left = width - 20;
-                item.top = sub_rows * row;
-                sub_rows += 1;
-                if (last_sub) |before| before.next_item = item else strip.items[parent].sub_item = item;
-                last_sub = item;
-                continue;
-            }
-            item.top = rows[entry.menu] * row;
-            rows[entry.menu] += 1;
-            if (last[entry.menu]) |before| before.next_item = item;
-            last[entry.menu] = item;
-        }
-        var left: i32 = 0;
-        for (menu_titles, 0..) |title, m| {
-            const measure = intuition.IntuiText{ .text = title, .font = dri.font };
-            const title_width = ib.IntuiTextLength(&measure) + 8;
-            strip.menus[m] = .{ .left = left, .width = title_width, .name = title, .next_menu = if (m + 1 < menu_titles.len) &strip.menus[m + 1] else null };
-            left += title_width + 8;
-        }
-        for (entries, 0..) |entry, i| {
-            if (entry.parent != null) continue;
-            if (strip.menus[entry.menu].first_item == null) strip.menus[entry.menu].first_item = &strip.items[i];
-        }
-        // An item with subitems says so at its right: a second run, », one
-        // character in from the edge.
-        strip.more = .{ .front_pen = dri.pens[sc.BARDETAILPEN], .left = width - 12, .top = 1, .text = "\xbb" };
-        for (&strip.items, 0..) |*item, i| {
-            if (item.sub_item != null) strip.texts[i].next = &strip.more;
-        }
-    }
-
-    /// Which entry an item is.
-    fn indexOf(strip: *Strip, item: *intuition.MenuItem) usize {
-        for (&strip.items, 0..) |*each, i| {
-            if (each == item) return i;
-        }
-        return 0;
-    }
-};
+const quit_word: [*:0]const u8 = "Quit";
 
 fn menusDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     const tags = [_]TagItem{
@@ -506,15 +416,15 @@ fn menusDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
         return dos.RETURN_FAIL;
     };
     defer ib.CloseWindow(w);
-    const dri = ib.GetScreenDrawInfo(s);
-    defer ib.FreeScreenDrawInfo(s, dri);
 
-    // The screen's title bar is its font and three rows more; an item is
-    // the font and one row above and below.
-    const font_height: i32 = @as(i32, @intCast(attr(ib, s, sc.SA_BarHeight))) - 3;
-    var strip: Strip = undefined;
-    strip.make(ib, dri, font_height + 2);
-    _ = ib.SetMenuStrip(w, &strip.menus[0]);
+    // Made from the table and placed for this screen.
+    const strip = ib.CreateMenusA(&menu_table, null) orelse {
+        _ = Printf(dl, MSG_NOWINDOWS, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer ib.FreeMenus(strip);
+    _ = ib.LayoutMenusA(strip, s, null);
+    _ = ib.SetMenuStrip(w, strip);
     defer ib.ClearMenuStrip(w);
     ib.OffMenu(w, mn.FULLMENUNUM(1, 4, mn.NOSUB));
     ib.OffMenu(w, mn.FULLMENUNUM(2, mn.NOITEM, mn.NOSUB));
@@ -537,11 +447,11 @@ fn menusDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
                     if (code == mn.MENUNULL) _ = Printf(dl, MSG_NOPICK, .{});
                     var number = code;
                     while (number != mn.MENUNULL) {
-                        const item = ib.ItemAddress(&strip.menus[0], number) orelse break;
-                        const which = strip.indexOf(item);
+                        const item = ib.ItemAddress(strip, number) orelse break;
+                        const word: [*:0]const u8 = if (mn.GTMENUITEM_USERDATA(item)) |data| @ptrCast(data) else "?";
                         const checked: [*:0]const u8 = if (item.flags & mn.CHECKIT == 0) "" else if (item.flags & mn.CHECKED != 0) " - checked" else " - not checked";
-                        _ = Printf(dl, MSG_PICK, .{ entries[which].word, @as(i64, mn.MENUNUM(number)), @as(i64, mn.ITEMNUM(number)), @as(i64, mn.SUBNUM(number)), checked });
-                        if (which == project_quit) running = false;
+                        _ = Printf(dl, MSG_PICK, .{ word, @as(i64, mn.MENUNUM(number)), @as(i64, mn.ITEMNUM(number)), @as(i64, mn.SUBNUM(number)), checked });
+                        if (word == quit_word) running = false;
                         number = item.next_select;
                     }
                 },

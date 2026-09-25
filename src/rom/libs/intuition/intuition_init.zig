@@ -58,9 +58,11 @@ pub const LIBRARY_VERSION = 0;
 /// from IntuiTexts, ActivateGadget and DoGadgetMethodA. 14:
 /// IDCMP_SIZEVERIFY, the verifies in a file of their own. 15:
 /// layoutgclass and GM_DOMAIN; a group's member reports in its own name.
-/// 16: windowclass, and WA_Position.
-pub const LIBRARY_REVISION = 16;
-const BUILD_DATE = "25.9.2026";
+/// 16: windowclass, and WA_Position. 17: the check box and radio button
+/// images, and menus made and laid out from a table (CreateMenusA,
+/// FreeMenus, LayoutMenusA, LayoutMenuItemsA).
+pub const LIBRARY_REVISION = 17;
+const BUILD_DATE = "25.09.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

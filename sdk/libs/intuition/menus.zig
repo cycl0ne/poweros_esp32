@@ -3,10 +3,12 @@
 //! menu button is held, each with a panel of items, and an item with a
 //! panel of subitems of its own.
 //!
-//! A program builds the strip itself - `Menu` headers linked through
-//! `next_menu`, each with its `MenuItem`s linked through `next_item`, an
-//! item's subitems through its `sub_item` - and hands it to the window with
-//! `SetMenuStrip`. The strip stays the program's: intuition.library reads
+//! A program makes the strip from a table of `NewMenu`s with
+//! `CreateMenusA` and places it for its screen with `LayoutMenusA` - or
+//! builds it itself: `Menu` headers linked through `next_menu`, each with
+//! its `MenuItem`s linked through `next_item`, an item's subitems through
+//! its `sub_item`, every place given by hand - and hands it to the window
+//! with `SetMenuStrip`. The strip stays the program's: intuition.library reads
 //! it and writes the few flags that say what is checked and drawn, and it
 //! must be taken off again with `ClearMenuStrip` before it is changed or
 //! freed, and before the window closes.
@@ -27,6 +29,8 @@
 //! `MENUNUM`, `ITEMNUM` and `SUBNUM` take it apart and `FULLMENUNUM` puts
 //! one together. A right-Amiga key with an item's `command` character
 //! picks that item without the menus being shown.
+
+const utility = @import("../utility/utility.zig");
 
 /// One title in the strip, and the items of its panel.
 pub const Menu = extern struct {
@@ -181,3 +185,102 @@ pub const MENUCANCEL: u32 = 0x0002;
 /// gets: another window's menus are about to be shown over it. It is told
 /// they are gone with IDCMP_MOUSEBUTTONS `MENUUP`.
 pub const MENUWAITING: u32 = 0x0003;
+
+// --- menus from a table ----------------------------------------------------------
+//
+// `CreateMenusA` makes a strip - or one panel's items - from an array of
+// `NewMenu`s, all of it in one allocation that `FreeMenus` gives back;
+// `LayoutMenusA` places the titles, items and subitems for a screen, and
+// `LayoutMenuItemsA` one panel's items. A program then hands the strip to
+// `SetMenuStrip` as it would one it built itself.
+
+/// One entry of the table: a title, an item or a subitem.
+pub const NewMenu = extern struct {
+    /// nm_Type: `NM_TITLE`, `NM_ITEM`, `NM_SUB`, `IM_ITEM`, `IM_SUB`, or
+    /// `NM_END` to end the table. `NM_IGNORE` or'd in skips the entry.
+    type: u8 = NM_END,
+    pad: [3]u8 = @splat(0),
+    /// nm_Label: the words - not copied - or for `IM_ITEM` and `IM_SUB` an
+    /// image object; `NM_BARLABEL` for a separator.
+    label: ?[*:0]const u8 = null,
+    /// nm_CommKey: the right-Amiga key that picks it, as a one-character
+    /// string; with `NM_COMMANDSTRING`, words shown at its right instead.
+    comm_key: ?[*:0]const u8 = null,
+    /// nm_Flags: for a title `NM_MENUDISABLED`; for an item `CHECKIT`,
+    /// `CHECKED`, `MENUTOGGLE`, `NM_ITEMDISABLED`, `NM_COMMANDSTRING`.
+    flags: u32 = 0,
+    /// nm_MutualExclude: the item's `mutual_exclude`.
+    mutual_exclude: u32 = 0,
+    /// nm_UserData: kept with the title or item, read with
+    /// `GTMENU_USERDATA` or `GTMENUITEM_USERDATA`.
+    user_data: ?*anyopaque = null,
+};
+
+/// `NewMenu.type`.
+pub const NM_END: u8 = 0;
+pub const NM_TITLE: u8 = 1;
+pub const NM_ITEM: u8 = 2;
+pub const NM_SUB: u8 = 3;
+/// Or'd into an item's or subitem's type: its label is an image object.
+pub const MENU_IMAGE: u8 = 128;
+pub const IM_ITEM: u8 = NM_ITEM | MENU_IMAGE;
+pub const IM_SUB: u8 = NM_SUB | MENU_IMAGE;
+/// Or'd into any type: the entry is skipped.
+pub const NM_IGNORE: u8 = 64;
+
+/// `NewMenu.label` for a separator: a rule across the panel that cannot
+/// be picked.
+pub const NM_BARLABEL: [*:0]const u8 = @ptrFromInt(~@as(usize, 0));
+
+/// `NewMenu.flags`: made disabled. The table says what is off, where a
+/// strip's flags say what is on.
+pub const NM_MENUDISABLED: u32 = MENUENABLED;
+pub const NM_ITEMDISABLED: u32 = ITEMENABLED;
+/// `comm_key` is words to show, not a key.
+pub const NM_COMMANDSTRING: u32 = COMMSEQ;
+
+/// The user data kept after a title or an item that `CreateMenusA` made.
+pub fn GTMENU_USERDATA(menu: *const Menu) ?*anyopaque {
+    const after: *const ?*anyopaque = @ptrCast(@alignCast(@as([*]const Menu, @ptrCast(menu)) + 1));
+    return after.*;
+}
+
+pub fn GTMENUITEM_USERDATA(item: *const MenuItem) ?*anyopaque {
+    const after: *const ?*anyopaque = @ptrCast(@alignCast(@as([*]const MenuItem, @ptrCast(item)) + 1));
+    return after.*;
+}
+
+// --- the tags ---------------------------------------------------------------------
+
+pub const GTMN_Dummy = utility.TAG_USER + 0x3C000;
+/// CreateMenusA, LayoutMenusA, LayoutMenuItemsA: the items' text colour, a
+/// `graphics.Pen`. The screen's `BARDETAILPEN` unless given.
+pub const GTMN_FrontPen = GTMN_Dummy + 0x01;
+/// CreateMenusA: bool, the table must be a whole strip - it starts with a
+/// title - and a fragment is refused with `GTMENU_INVALID`.
+pub const GTMN_FullMenu = GTMN_Dummy + 0x02;
+/// CreateMenusA: a `*u32` that is told `GTMENU_TRIMMED`, `GTMENU_INVALID`,
+/// `GTMENU_NOMEM` or 0.
+pub const GTMN_SecondaryError = GTMN_Dummy + 0x03;
+/// LayoutMenuItemsA: the `*Menu` whose panel the items are, which says
+/// where it starts and how wide it is at the least.
+pub const GTMN_Menu = GTMN_Dummy + 0x04;
+/// LayoutMenusA, LayoutMenuItemsA: the items' font, a
+/// `*graphics.TextFont`; the screen's unless given. Titles are always in
+/// the screen's font, as the bar is.
+pub const GTMN_Font = GTMN_Dummy + 0x05;
+/// LayoutMenusA, LayoutMenuItemsA: the checkmark and the Amiga key a
+/// window shows in place of the screen's (`WA_Checkmark`, `WA_AmigaKey`),
+/// image objects, for their widths.
+pub const GTMN_Checkmark = GTMN_Dummy + 0x06;
+pub const GTMN_AmigaKey = GTMN_Dummy + 0x07;
+
+/// What `GTMN_SecondaryError` is told.
+/// More titles, items or subitems than menu numbers can name: the strip is
+/// made without the ones past the limit.
+pub const GTMENU_TRIMMED: u32 = 1;
+/// The table is not a menu: a subitem right after a title, or a fragment
+/// with `GTMN_FullMenu`.
+pub const GTMENU_INVALID: u32 = 2;
+/// No memory for it.
+pub const GTMENU_NOMEM: u32 = 3;

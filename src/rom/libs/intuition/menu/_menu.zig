@@ -25,6 +25,8 @@ const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
 const Window = _window.Window;
+const _screen = @import("../screen/_screen.zig");
+const sc = intuition.screens;
 
 /// A panel's trim: how far its edge is from what its items take up,
 /// across and down.
@@ -255,5 +257,221 @@ pub fn layOut(ib: *IntuitionBase, w: *Window, strip: ?*Menu) void {
         m.jazz_y = panel.min_y;
         m.beat_x = panel.max_x;
         m.beat_y = panel.max_y;
+    }
+}
+
+// --- menus from a table ---------------------------------------------------------------
+//
+// What CreateMenusA keeps beside what it makes, and how LayoutMenusA and
+// LayoutMenuItemsA place it.
+
+/// After every title and item CreateMenusA makes: its user data, and for
+/// an item the left its image had when it was given, which each layout
+/// starts from again.
+pub const Extra = extern struct {
+    user_data: ?*anyopaque = null,
+    image_left: isize = 0,
+};
+
+/// The extra of a title or an item CreateMenusA made.
+pub fn extraOf(comptime T: type, it: *T) *Extra {
+    return @ptrCast(@alignCast(@as([*]T, @ptrCast(it)) + 1));
+}
+
+/// A separator is the one item whose highlighting is none: CreateMenusA
+/// makes it so, and nothing else there does.
+pub fn isBar(item: *const MenuItem) bool {
+    return item.flags & mn.ITEMTEXT == 0 and item.flags & mn.HIGHFLAGS == mn.HIGHNONE;
+}
+
+/// Pixels between the columns of a panel too tall for the screen.
+const multicolumn_gap = 8;
+
+/// What a layout needs to know of the screen and the tags.
+pub const Layout = struct {
+    ib: *IntuitionBase,
+    screen: *_screen.Screen,
+    /// The items' font, and one character's width and a line's height of
+    /// it.
+    font: *graphics.TextFont,
+    font_x: i32,
+    item_height: i32,
+    /// How wide the checkmark and the Amiga key are.
+    check_width: i32,
+    comm_width: i32,
+    front_pen: graphics.Pen,
+
+    pub fn of(ib: *IntuitionBase, s: *_screen.Screen, tags: ?[*]const TagItem) Layout {
+        const ub = ib.utility_base;
+        const font: *graphics.TextFont = @ptrFromInt(ub.GetTagData(mn.GTMN_Font, @intFromPtr(s.font), tags));
+        var extent = graphics.FontExtent{};
+        ib.graphics_base.FontExtent(font, &extent);
+        const check: ?*Object = @ptrFromInt(ub.GetTagData(mn.GTMN_Checkmark, @intFromPtr(s.draw_info.check_mark), tags));
+        const key: ?*Object = @ptrFromInt(ub.GetTagData(mn.GTMN_AmigaKey, @intFromPtr(s.draw_info.amiga_key), tags));
+        return .{
+            .ib = ib,
+            .screen = s,
+            .font = font,
+            .font_x = extent.width,
+            // Never less than eight rows and one, so the Amiga key is not
+            // crowded.
+            .item_height = @max(extent.height, 8) + 1,
+            .check_width = imageWidth(ib, check),
+            .comm_width = imageWidth(ib, key),
+            .front_pen = @truncate(ub.GetTagData(mn.GTMN_FrontPen, s.pens[sc.BARDETAILPEN], tags)),
+        };
+    }
+
+    fn textWidth(l: *const Layout, text: [*:0]const u8) i32 {
+        const run = IntuiText{ .font = l.font, .text = text };
+        return l.ib.iface().IntuiTextLength(&run);
+    }
+};
+
+/// Every item's height, font and pen, and every separator's pen, subitems
+/// too: what does not depend on where the items go.
+pub fn sizeItems(l: *const Layout, first: ?*MenuItem) void {
+    var item = first;
+    while (item) |entry| : (item = entry.next_item) {
+        if (entry.flags & mn.ITEMTEXT != 0) {
+            entry.height = l.item_height;
+            var run: ?*IntuiText = @ptrCast(@alignCast(entry.item_fill));
+            while (run) |each| : (run = each.next) {
+                each.font = l.font;
+                each.front_pen = l.front_pen;
+            }
+        } else if (isBar(entry)) {
+            entry.height = 6;
+            const pen = [_]TagItem{ .{ .tag = ic.IA_FGPen, .data = l.front_pen }, .{} };
+            _ = l.ib.iface().SetAttrsTagList(@ptrCast(entry.item_fill), &pen);
+        } else {
+            entry.height = imageHeight(l.ib, @ptrCast(entry.item_fill)) + 1;
+        }
+        sizeItems(l, entry.sub_item);
+    }
+}
+
+/// One column of a panel: how wide its items are, how tall together, how
+/// many fit, and the first item of the next column.
+const Column = struct {
+    width: i32 = 0,
+    height: i32 = 0,
+    count: u32 = 0,
+    next: ?*MenuItem = null,
+};
+
+/// The column that starts at `first`: as many items as fit in
+/// `max_height`, and as wide as the widest of them with room at its right
+/// for a shortcut, the words at its right, or the mark of its subitems.
+/// Each text's and image's place across is set on the way.
+fn aboutColumn(l: *const Layout, first: *MenuItem, max_height: i32) Column {
+    var column = Column{};
+    var item: ?*MenuItem = first;
+    while (item) |entry| : (item = entry.next_item) {
+        if (column.height + entry.height > max_height and column.count > 0) {
+            column.next = entry;
+            break;
+        }
+        column.height += entry.height;
+        column.count += 1;
+    }
+    var right_trim: i32 = 2;
+    var longest: i32 = 0;
+    item = first;
+    var n = column.count;
+    while (n > 0) : (n -= 1) {
+        const entry = item.?;
+        defer item = entry.next_item;
+        if (entry.flags & mn.COMMSEQ != 0) {
+            const chars = [2:0]u8{ entry.command, 0 };
+            right_trim = @max(right_trim, l.textWidth(&chars) + l.comm_width + l.font_x);
+        } else if (entry.flags & mn.ITEMTEXT != 0) {
+            const run: *const IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
+            if (run.next) |more| right_trim = @max(right_trim, l.textWidth(more.text.?) + l.font_x);
+        }
+        const check: i32 = if (entry.flags & mn.CHECKIT != 0) l.check_width else 0;
+        if (entry.flags & mn.ITEMTEXT != 0) {
+            const run: *IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
+            run.left = 2 + check;
+            longest = @max(longest, run.left + l.textWidth(run.text.?));
+        } else if (!isBar(entry)) {
+            const image: *Object = @ptrCast(entry.item_fill.?);
+            const left: i32 = @as(i32, @intCast(extraOf(MenuItem, entry).image_left)) + 2 + check;
+            const place = [_]TagItem{ .{ .tag = ic.IA_Left, .data = @bitCast(@as(isize, left)) }, .{} };
+            _ = l.ib.iface().SetAttrsTagList(image, &place);
+            longest = @max(longest, left + imageWidth(l.ib, image));
+        }
+    }
+    column.width = longest + right_trim;
+    return column;
+}
+
+/// A panel's items placed: in columns as tall as the screen allows, the
+/// panel at least `min_width` wide and moved left when it would run off
+/// the screen's right, each item's text at its right put against its
+/// edge, separators across it, and each item's subitems placed beside it.
+///
+/// `left` and `top` are where the items start from the panel's corner -
+/// for subitems, from their item's; `real_left` and `real_top` where that
+/// corner is on the screen.
+pub fn placeItems(l: *const Layout, first: ?*MenuItem, left_start: i32, top_start: i32, real_left: i32, real_top: i32, min_width: i32, is_sub: bool) void {
+    const head = first orelse return;
+    const s = l.screen;
+    var top_offset = top_start;
+    var left_offset = left_start;
+    const max_height = s.height - 2 - (top_offset + real_top);
+
+    // The whole panel: its columns side by side.
+    var panel_width: i32 = -multicolumn_gap;
+    var panel_height: i32 = 0;
+    var columns: i32 = 0;
+    var scan: ?*MenuItem = head;
+    while (scan) |start| {
+        const column = aboutColumn(l, start, max_height);
+        columns += 1;
+        panel_width += column.width + multicolumn_gap;
+        panel_height = @max(panel_height, column.height);
+        scan = column.next;
+    }
+    // A narrow panel is stretched to its title, or a third of its item.
+    const extra_width = @divTrunc(@max(min_width - panel_width, 0), columns) + 1;
+    panel_width += extra_width * columns;
+    // A panel of subitems starts a pixel above its item when it fits, and
+    // higher when that lets it fit without another column.
+    if (is_sub) top_offset = @min(-1, s.height - 2 - real_top - panel_height);
+    // Off the right of the screen: moved left, but never past the panel's
+    // own trim.
+    const over = real_left + panel_width - s.width + 4;
+    if (over > 0) left_offset -= @min(over, real_left - 4);
+
+    var column = Column{};
+    left_offset -= multicolumn_gap;
+    var item_top: i32 = top_offset;
+    var item: ?*MenuItem = head;
+    while (item) |entry| {
+        if (column.count == 0) {
+            item_top = top_offset;
+            left_offset += column.width + multicolumn_gap;
+            column = aboutColumn(l, entry, max_height);
+            column.width += extra_width;
+            continue;
+        }
+        column.count -= 1;
+        entry.top = item_top;
+        entry.left = left_offset;
+        entry.width = column.width;
+        if (entry.flags & mn.ITEMTEXT != 0) {
+            const run: *IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
+            if (run.next) |more| more.left = column.width - 2 - l.textWidth(more.text.?);
+        } else if (isBar(entry)) {
+            const size = [_]TagItem{ .{ .tag = ic.IA_Width, .data = @intCast(@max(column.width - 4, 1)) }, .{} };
+            _ = l.ib.iface().SetAttrsTagList(@ptrCast(entry.item_fill), &size);
+        }
+        // Subitems start three quarters of the way across their item.
+        const sub_min = column.width >> 2;
+        const sub_left = column.width - sub_min;
+        placeItems(l, entry.sub_item, sub_left, -1 - item_top, real_left + left_offset + sub_left, item_top + real_top, sub_min, true);
+        item_top += entry.height;
+        item = entry.next_item;
     }
 }

@@ -134,7 +134,9 @@ cores.
   showing that buffer; a screen can be double buffered, its frames
   flipped at the display's frame start. Public screens can be listed,
   chosen as the default and signal their owner when the last visitor
-  leaves; gadgets can live in a window's border.
+  leaves; gadgets can live in a window's border. Menus are made from a
+  table and laid out for the screen, in columns when a panel is taller
+  than the screen.
 - Gadget classes on the disk, each a library of its own in
   `SYS:classes/gadgets/`: check boxes, cycle buttons, radio buttons,
   lines to type text or a number in, lines of text to show, sliders that

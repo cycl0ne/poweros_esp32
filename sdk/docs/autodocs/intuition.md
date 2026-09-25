@@ -26,6 +26,7 @@ Generated from the source by `./zig build autodoc`.
 - [CloseScreen](#closescreen) - Closes a screen.
 - [CloseWindow](#closewindow) - Closes a window.
 - [CoerceMessage](#coercemessage) - Sends a message to an object as a given class would handle it.
+- [CreateMenusA](#createmenusa) - Makes a menu strip, or one panel's items, from a table.
 - [CurrentTime](#currenttime) - Answers the time of the latest input event.
 - [DisplayAlert](#displayalert) - Shows an alert and waits for an answer.
 - [DisplayBeep](#displaybeep) - Flashes a screen, to draw the eye without a requester.
@@ -41,6 +42,7 @@ Generated from the source by `./zig build autodoc`.
 - [EraseImage](#eraseimage) - Erases what an image covers.
 - [FindClass](#findclass) - Finds a public class by name.
 - [FreeClass](#freeclass) - Frees a class.
+- [FreeMenus](#freemenus) - Gives back a strip, or a panel's items, that CreateMenusA made.
 - [FreeScreenBuffer](#freescreenbuffer) - Gives back a buffer from `AllocScreenBuffer`.
 - [FreeScreenDrawInfo](#freescreendrawinfo) - Hands back a DrawInfo.
 - [FreeSysRequest](#freesysrequest) - Closes a requester and gives back what was made for it.
@@ -55,6 +57,8 @@ Generated from the source by `./zig build autodoc`.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
 - [IntuiTextLength](#intuitextlength) - How wide one run of text is, in pixels.
 - [ItemAddress](#itemaddress) - The item a menu number names.
+- [LayoutMenuItemsA](#layoutmenuitemsa) - Places the items of one panel, and their subitems, that CreateMenusA made from a table of items.
+- [LayoutMenusA](#layoutmenusa) - Places every title, item and subitem of a strip CreateMenusA made, for a screen.
 - [LendMenus](#lendmenus) - Makes one window's menu button show another window's menus.
 - [LockClassList](#lockclasslist) - Holds the public class list.
 - [LockIBase](#lockibase) - Holds the screens and windows still.
@@ -1168,6 +1172,89 @@ None known.
 const made = ib.CoerceMessage(cl, @ptrCast(cl), @ptrCast(&new_msg));
 ```
 
+## CreateMenusA
+
+Makes a menu strip, or one panel's items, from a table.
+
+**SYNOPSIS**
+
+```zig
+fn CreateMenusA(ib: *IntuitionBase, new_menu: [*]const NewMenu, tags: ?[*]const TagItem) ?*Menu
+```
+
+**SINCE**
+
+0.17. LVO -436.
+
+**INPUTS**
+
+- `new_menu` - the table, ended by an entry of type `NM_END`: titles
+  (`NM_TITLE`), each followed by its items (`NM_ITEM`, `IM_ITEM`), each
+  of those by its subitems (`NM_SUB`, `IM_SUB`). A table that starts
+  with an item is one panel's items.
+- `tags` - `GTMN_FrontPen`, the text's colour until a layout sets it;
+  `GTMN_FullMenu`, the table must start with a title;
+  `GTMN_SecondaryError`, where to say what went wrong.
+
+**RESULT**
+
+The first title, or for a table of items the first item (cast to it),
+with every title, item and subitem linked; null when the table is not
+a menu - a subitem right after a title, nothing in it, or a fragment
+under `GTMN_FullMenu` - or there is no memory. `GTMN_SecondaryError`
+is told `GTMENU_INVALID`, `GTMENU_NOMEM`, `GTMENU_TRIMMED` - more
+titles, items or subitems than menu numbers can name, the strip made
+without them - or 0.
+
+**BEHAVIOR**
+
+An item's words are an IntuiText of their own, one row down. A key in
+`comm_key` makes it `COMMSEQ`; with `NM_COMMANDSTRING` the words in
+`comm_key` are a second IntuiText, put at the item's right by the
+layout. The first subitem of a text item gives that item a second
+IntuiText, "»", at its right. `NM_BARLABEL` is a separator: a
+fillrectclass rule two rows high, neither picked nor highlighted.
+`IM_ITEM`'s image object is the item's, moved down a row; it is not
+copied. `NM_MENUDISABLED` and `NM_ITEMDISABLED` make it disabled; the
+rest of `flags` is the item's. Each title and item keeps the table's
+`user_data` right after it (`GTMENU_USERDATA`, `GTMENUITEM_USERDATA`).
+Nothing is placed: `LayoutMenusA` does that.
+
+**CONTEXT**
+
+- Waits: no; it allocates.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The strip is the caller's, given back with `FreeMenus` once it is off
+every window. The table's words and images are the caller's and must
+last as long as the strip.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FreeMenus`, `LayoutMenusA`, `LayoutMenuItemsA`, `SetMenuStrip`
+
+**EXAMPLES**
+
+```zig
+const table = [_]mn.NewMenu{
+    .{ .type = mn.NM_TITLE, .label = "Project" },
+    .{ .type = mn.NM_ITEM, .label = "Open...", .comm_key = "O" },
+    .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL },
+    .{ .type = mn.NM_ITEM, .label = "Quit", .comm_key = "Q" },
+    .{ .type = mn.NM_END },
+};
+const strip = ib.CreateMenusA(&table, null) orelse return;
+defer ib.FreeMenus(strip);
+```
+
 ## CurrentTime
 
 Answers the time of the latest input event.
@@ -2108,6 +2195,60 @@ None known.
 if (!ib.FreeClass(cl)) return null; // still in use: stay loaded
 ```
 
+## FreeMenus
+
+Gives back a strip, or a panel's items, that CreateMenusA made.
+
+**SYNOPSIS**
+
+```zig
+fn FreeMenus(ib: *IntuitionBase, menu: ?*Menu) void
+```
+
+**SINCE**
+
+0.17. LVO -440.
+
+**INPUTS**
+
+- `menu` - what CreateMenusA answered, or null, which does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The separators' rule images are disposed of and the one allocation
+given back. The table's words and images are not touched: they were
+never copied.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The strip is gone; it must be off every window first (`ClearMenuStrip`).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateMenusA`, `ClearMenuStrip`
+
+**EXAMPLES**
+
+```zig
+ib.ClearMenuStrip(window);
+ib.FreeMenus(strip);
+```
+
 ## FreeScreenBuffer
 
 Gives back a buffer from `AllocScreenBuffer`.
@@ -2977,6 +3118,140 @@ while (number != MENUNULL) {
     picked(number);
     number = item.next_select;
 }
+```
+
+## LayoutMenuItemsA
+
+Places the items of one panel, and their subitems, that CreateMenusA made from a table of items.
+
+**SYNOPSIS**
+
+```zig
+fn LayoutMenuItemsA(ib: *IntuitionBase, first_item: *MenuItem, screen: *Screen, tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+0.17. LVO -448.
+
+**INPUTS**
+
+- `first_item` - the first item, as CreateMenusA answered it.
+- `screen` - the screen whose windows will show it.
+- `tags` - `GTMN_Menu`, the title they are the panel of, which says
+  where the panel starts and how wide it is at the least; and those of
+  `LayoutMenusA`.
+
+**RESULT**
+
+True.
+
+**BEHAVIOR**
+
+As `LayoutMenusA` places a panel's items. Without `GTMN_Menu` the panel
+is taken to start at the bar's left and may be as narrow as its items.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The items are still the caller's; their places and the texts' fonts
+and colours are written.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LayoutMenusA`, `CreateMenusA`
+
+**EXAMPLES**
+
+```zig
+const items = ib.CreateMenusA(&more_items, null) orelse return;
+const first: *intuition.MenuItem = @ptrCast(@alignCast(items));
+menu.first_item = first;
+_ = ib.LayoutMenuItemsA(first, screen, &.{ .{ .tag = mn.GTMN_Menu, .data = @intFromPtr(menu) }, .{} });
+```
+
+## LayoutMenusA
+
+Places every title, item and subitem of a strip CreateMenusA made, for a screen.
+
+**SYNOPSIS**
+
+```zig
+fn LayoutMenusA(ib: *IntuitionBase, menu: *Menu, screen: *Screen, tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+0.17. LVO -444.
+
+**INPUTS**
+
+- `menu` - the first title of a strip from CreateMenusA.
+- `screen` - the screen whose windows will show it.
+- `tags` - `GTMN_Font`, the items' font, the screen's unless given;
+  `GTMN_FrontPen`, their colour, the screen's `BARDETAILPEN` unless
+  given; `GTMN_Checkmark` and `GTMN_AmigaKey`, a window's own images
+  in place of the screen's, for their widths.
+
+**RESULT**
+
+True.
+
+**BEHAVIOR**
+
+The titles go along the bar from its left, each as wide as its words
+in the screen's font and the bar's trim either side, a character apart.
+Each panel's items go in a column from under the bar at its title, as
+tall as a line of the font and a row (never less than nine), as wide as
+the widest item's words - in from the left by the checkmark's width for
+a `CHECKIT` item - and the widest shortcut, words at the right, or "»"
+with the Amiga key and a character's gap; separators six rows. A panel
+taller than the screen goes on in further columns, and one that would
+run off the screen's right is moved left. Subitems go beside their
+item, three quarters of the way across it and a row higher, higher
+still to fit on the screen.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The strip is still the caller's; its places and the texts' fonts and
+colours are written.
+
+**NOTES**
+
+Laid out again after a window's font or screen changes, before the
+strip is set again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateMenusA`, `LayoutMenuItemsA`, `SetMenuStrip`
+
+**EXAMPLES**
+
+```zig
+const strip = ib.CreateMenusA(&table, null) orelse return;
+_ = ib.LayoutMenusA(strip, screen, null);
+_ = ib.SetMenuStrip(window, strip);
 ```
 
 ## LendMenus

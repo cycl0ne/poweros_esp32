@@ -46,7 +46,7 @@ const RastPort = graphics.RastPort;
 const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
 
 pub const COMMAND_NAME = "Plasma";
-const VERSION_STRING = "\x00$VER: Plasma 1.0 (22.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Plasma 1.1 (25.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,WIDTH/K/N,HEIGHT/K/N";
@@ -57,6 +57,7 @@ const arg_height = 2;
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
 const MSG_NOWINDOW = "No window - the screen would not open one that size\n";
+const MSG_NOMENUS = "No memory for the menus\n";
 const MSG_NOMEMORY = "No memory for a %dx%d picture\n";
 const MSG_RUNNING = "Plasma %dx%d through 256 pens - the menu button for its menus, the close gadget or Ctrl-C stops it\n";
 const MSG_DONE = "%d frames\n";
@@ -162,59 +163,70 @@ const pause_entry = 0;
 const waves_entry = 1;
 const quit_entry = 2;
 
-/// The strip, linked in place: each choice of Palette and Speed rules out
-/// the others of its menu.
+/// The strip, made from a table (CreateMenusA) and placed for the screen
+/// (LayoutMenusA): each choice of Palette and Speed rules out the others
+/// of its menu.
 const Strip = struct {
-    texts: [entries.len]intuition.IntuiText,
-    items: [entries.len]intuition.MenuItem,
-    menus: [titles.len]intuition.Menu,
+    menus: *intuition.Menu,
+    items: [entries.len]*intuition.MenuItem,
 
-    fn make(strip: *Strip, ib: *IntuitionBase, dri: *intuition.DrawInfo) void {
-        const row: i32 = 10;
-        const width: i32 = 110;
-        var last: [titles.len]?*intuition.MenuItem = @splat(null);
-        var place: [titles.len]u5 = @splat(0);
-        var first_of: [titles.len]usize = @splat(0);
-        var count_of: [titles.len]u5 = @splat(0);
-        for (entries, 0..) |entry, i| {
-            if (count_of[entry.menu] == 0) first_of[entry.menu] = i;
-            count_of[entry.menu] += 1;
-        }
-        for (entries, 0..) |entry, i| {
-            strip.texts[i] = .{
-                .front_pen = dri.pens[intuition.screens.BARDETAILPEN],
-                .left = if (entry.flags & mn.CHECKIT != 0) mn.CHECKWIDTH else 4,
-                .top = 1,
-                .text = entry.word,
-            };
-            const at = place[entry.menu];
-            place[entry.menu] += 1;
-            const all: u32 = (@as(u32, 1) << count_of[entry.menu]) - 1;
-            strip.items[i] = .{
-                .top = @as(i32, at) * row,
-                .width = width,
-                .height = row,
-                .flags = mn.ITEMTEXT | mn.ITEMENABLED | mn.HIGHCOMP | entry.flags,
-                .mutual_exclude = if (entry.menu != project_menu) all & ~(@as(u32, 1) << at) else 0,
-                .item_fill = &strip.texts[i],
-                .command = entry.command,
-            };
-            if (last[entry.menu]) |before| before.next_item = &strip.items[i];
-            last[entry.menu] = &strip.items[i];
-        }
-        var left: i32 = 0;
+    /// The table the strip is made from: each title, then its entries, a
+    /// choice ruling out the other items of its menu.
+    const table = blk: {
+        var made: [titles.len + entries.len + 1]mn.NewMenu = undefined;
+        var n: usize = 0;
         for (titles, 0..) |title, m| {
-            const measure = intuition.IntuiText{ .text = title, .font = dri.font };
-            const title_width = ib.IntuiTextLength(&measure) + 8;
-            strip.menus[m] = .{
-                .left = left,
-                .width = title_width,
-                .name = title,
-                .first_item = &strip.items[first_of[m]],
-                .next_menu = if (m + 1 < titles.len) &strip.menus[m + 1] else null,
-            };
-            left += title_width + 8;
+            made[n] = .{ .type = mn.NM_TITLE, .label = title };
+            n += 1;
+            var count: u5 = 0;
+            for (entries) |entry| count += @intFromBool(entry.menu == m);
+            var at: u5 = 0;
+            for (entries) |entry| {
+                if (entry.menu != m) continue;
+                const all: u32 = (@as(u32, 1) << count) - 1;
+                const key = [_:0]u8{entry.command};
+                made[n] = .{
+                    .type = mn.NM_ITEM,
+                    .label = entry.word,
+                    .comm_key = if (entry.command != 0) &key else null,
+                    .flags = entry.flags & ~mn.COMMSEQ,
+                    .mutual_exclude = if (m != project_menu) all & ~(@as(u32, 1) << at) else 0,
+                };
+                n += 1;
+                at += 1;
+            }
         }
+        made[n] = .{ .type = mn.NM_END };
+        break :blk made;
+    };
+
+    // The items are found in the strip in the order of `entries`, which
+    // is so when the entries come menu by menu.
+    comptime {
+        for (entries[1..], 1..) |entry, i| {
+            if (entry.menu < entries[i - 1].menu) @compileError("entries must come menu by menu");
+        }
+    }
+
+    /// Made from the table and placed for the screen; false without
+    /// memory.
+    fn make(strip: *Strip, ib: *IntuitionBase, screen: *intuition.Screen) bool {
+        strip.menus = ib.CreateMenusA(&table, null) orelse return false;
+        _ = ib.LayoutMenusA(strip.menus, screen, null);
+        var i: usize = 0;
+        var menu: ?*intuition.Menu = strip.menus;
+        while (menu) |m| : (menu = m.next_menu) {
+            var item = m.first_item;
+            while (item) |each| : (item = each.next_item) {
+                strip.items[i] = each;
+                i += 1;
+            }
+        }
+        return true;
+    }
+
+    fn free(strip: *Strip, ib: *IntuitionBase) void {
+        ib.FreeMenus(strip.menus);
     }
 
     /// Check the choice of `menu` whose value is `value`, and no other.
@@ -238,7 +250,7 @@ const Strip = struct {
     }
 
     fn indexOf(strip: *Strip, item: *intuition.MenuItem) usize {
-        for (&strip.items, 0..) |*each, i| {
+        for (strip.items, 0..) |each, i| {
             if (each == item) return i;
         }
         return entries.len;
@@ -361,13 +373,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const rp: *RastPort = @ptrFromInt(wattr(ib, w, wn.WA_RastPort));
     const layer: *sdk.layers.Layer = @ptrFromInt(wattr(ib, w, wn.WA_Layer));
 
-    const dri = ib.GetScreenDrawInfo(screen);
-    defer ib.FreeScreenDrawInfo(screen, dri);
     var strip: Strip = undefined;
-    strip.make(ib, dri);
+    if (!strip.make(ib, screen)) {
+        _ = Printf(dl, MSG_NOMENUS, .{});
+        return dos.RETURN_FAIL;
+    }
+    // Freed after it is off the window: the defers run the other way.
+    defer strip.free(ib);
     strip.check(palette_menu, @intFromEnum(Palette.wheel));
     strip.check(speed_menu, 3);
-    _ = ib.SetMenuStrip(w, &strip.menus[0]);
+    _ = ib.SetMenuStrip(w, strip.menus);
     defer ib.ClearMenuStrip(w);
 
     var inner_w: i32 = @intCast(wattr(ib, w, wn.WA_InnerWidth));
@@ -397,7 +412,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             if (class != wn.IDCMP_MENUPICK) continue;
             var number = code;
             while (number != mn.MENUNULL) {
-                const item = ib.ItemAddress(&strip.menus[0], number) orelse break;
+                const item = ib.ItemAddress(strip.menus, number) orelse break;
                 if (strip.indexOf(item) == quit_entry) running = false;
                 number = item.next_select;
             }

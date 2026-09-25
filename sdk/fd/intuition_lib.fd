@@ -317,4 +317,17 @@ void HelpControl(*intuition.Window window, u32 flags)
 /// Where the pointer is, from a gadget's top-left corner, in the room its
 /// GadgetInfo describes.
 void GadgetMouse(*intuition.Object gadget, *intuition.GadgetInfo info, *graphics.Point point)
+/// A menu strip - or a panel's items, from a table that does not start
+/// with a title - made from a NewMenu table in one allocation, with no
+/// places yet: LayoutMenusA gives them. Null when the table is not a menu
+/// or there is no memory; GTMN_SecondaryError says which.
+?*intuition.Menu CreateMenusA([*]const intuition.menus.NewMenu new_menu, ?[*]const utility.TagItem tags)
+/// Give back what CreateMenusA made. Null does nothing.
+void FreeMenus(?*intuition.Menu menu)
+/// Place a strip from CreateMenusA on a screen: its titles along the bar,
+/// its items in columns under them, its subitems beside their items.
+bool LayoutMenusA(*intuition.Menu menu, *intuition.Screen screen, ?[*]const utility.TagItem tags)
+/// Place one panel's items from CreateMenusA on a screen, under the title
+/// GTMN_Menu names.
+bool LayoutMenuItemsA(*intuition.MenuItem first_item, *intuition.Screen screen, ?[*]const utility.TagItem tags)
 ##end

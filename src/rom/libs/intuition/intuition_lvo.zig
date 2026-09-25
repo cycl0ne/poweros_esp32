@@ -127,6 +127,10 @@ const TimedDisplayAlert = @import("misc/timeddisplayalert.zig").TimedDisplayAler
 const HelpControl = @import("gadget/helpcontrol.zig").HelpControl;
 const SetEditHook = @import("gadget/setedithook.zig").SetEditHook;
 const GadgetMouse = @import("gadget/gadgetmouse.zig").GadgetMouse;
+const CreateMenusA = @import("menu/createmenusa.zig").CreateMenusA;
+const FreeMenus = @import("menu/freemenus.zig").FreeMenus;
+const LayoutMenusA = @import("menu/layoutmenusa.zig").LayoutMenusA;
+const LayoutMenuItemsA = @import("menu/layoutmenuitemsa.zig").LayoutMenuItemsA;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -548,6 +552,18 @@ fn lvoSetEditHook(ib: *IntuitionBase, hook: ?*utility.Hook) callconv(.c) *utilit
 fn lvoGadgetMouse(ib: *IntuitionBase, gadget: *intuition.Object, info: *intuition.GadgetInfo, point: *graphics.Point) callconv(.c) void {
     GadgetMouse(ib, gadget, info, point);
 }
+fn lvoCreateMenusA(ib: *IntuitionBase, new_menu: [*]const intuition.menus.NewMenu, tags: ?[*]const utility.TagItem) callconv(.c) ?*intuition.Menu {
+    return CreateMenusA(ib, new_menu, tags);
+}
+fn lvoFreeMenus(ib: *IntuitionBase, menu: ?*intuition.Menu) callconv(.c) void {
+    FreeMenus(ib, menu);
+}
+fn lvoLayoutMenusA(ib: *IntuitionBase, menu: *intuition.Menu, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) bool {
+    return LayoutMenusA(ib, menu, screen, tags);
+}
+fn lvoLayoutMenuItemsA(ib: *IntuitionBase, first_item: *intuition.MenuItem, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) bool {
+    return LayoutMenuItemsA(ib, first_item, screen, tags);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -658,6 +674,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoHelpControl),
     vec(lvoSetEditHook),
     vec(lvoGadgetMouse),
+    vec(lvoCreateMenusA),
+    vec(lvoFreeMenus),
+    vec(lvoLayoutMenusA),
+    vec(lvoLayoutMenuItemsA),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
