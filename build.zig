@@ -171,7 +171,7 @@ pub fn build(b: *std.Build) void {
     const run_qemu = qemuRun(b, qemu, flash_image, &.{"-nographic"});
     b.step("qemu", "Boot the kernel in Espressif QEMU (quit with Ctrl-A X)").dependOn(&run_qemu.step);
 
-    const run_display = qemuRun(b, qemu, flash_image, &.{ "-display", "sdl,show-cursor=on", "-serial", "mon:stdio" });
+    const run_display = qemuRun(b, qemu, flash_image, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
     b.step("qemu-display", "Boot in QEMU with its virtual display in an SDL window").dependOn(&run_display.step);
 
     // The same, but on a flash image that keeps what the kernel writes:

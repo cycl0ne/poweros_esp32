@@ -12,6 +12,7 @@ prefix="$root/toolchain/qemu"
 core=target/xtensa/core-esp32s3.c
 rgb=include/hw/display/esp_rgb.h
 rgb_c=hw/display/esp_rgb.c
+sdl=ui/sdl2.c
 
 if [ ! -d "$src" ]; then
     git clone --depth 1 --branch "$tag" https://github.com/espressif/qemu.git "$src"
@@ -26,7 +27,7 @@ patch() {
         exit 1
     fi
 }
-git checkout -- "$core" "$rgb" "$rgb_c"
+git checkout -- "$core" "$rgb" "$rgb_c" "$sdl"
 patch "$core" 's/\.clock_freq_khz = 40000,/.clock_freq_khz = 240000,/' '\.clock_freq_khz = 240000,'
 # Virtual display: allow the Waveshare 7B's 1024x600 panel (stock max is 800).
 patch "$rgb" 's/#define ESP_RGB_MAX_WIDTH   (800)/#define ESP_RGB_MAX_WIDTH   (1024)/' 'ESP_RGB_MAX_WIDTH   (1024)'
@@ -35,6 +36,10 @@ patch "$rgb" 's/#define ESP_RGB_MAX_WIDTH   (800)/#define ESP_RGB_MAX_WIDTH   (1
 # the keys typed into it for keyboard.device (RGB_KEY, RGB_KEY_COUNT), and
 # the device's minor version raised to 5 so a guest can tell.
 git apply "$root/scripts/qemu/esp_rgb_input.patch"
+# The SDL window: with show-cursor=off and a pointer the guest is told the
+# position of, the host's cursor stays hidden over the window whether or
+# not it is grabbed - the guest draws its own pointer.
+git apply "$root/scripts/qemu/sdl_hide_cursor.patch"
 # Virtual display: twice the VRAM - four pictures of the largest window at
 # two bytes a pixel, so screens and their back buffers each have one - and
 # the minor version raised to 6 so a guest can tell.
