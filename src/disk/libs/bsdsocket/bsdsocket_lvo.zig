@@ -56,6 +56,7 @@ const GetHostByName = @import("names/gethostbyname.zig").GetHostByName;
 const GetHostByAddr = @import("names/gethostbyaddr.zig").GetHostByAddr;
 const GetHostName = @import("names/gethostname.zig").GetHostName;
 const SetHostName = @import("names/sethostname.zig").SetHostName;
+const GetNetworkStatistics = @import("status/getnetworkstatistics.zig").GetNetworkStatistics;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -243,6 +244,9 @@ fn lvoGetHostName(sb: *SocketBase, name: [*]u8, length: u32) callconv(.c) i32 {
 fn lvoSetHostName(sb: *SocketBase, name: [*:0]const u8) callconv(.c) i32 {
     return SetHostName(sb, name);
 }
+fn lvoGetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) callconv(.c) i32 {
+    return GetNetworkStatistics(sb, kind, buffer, size);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -291,6 +295,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetHostByAddr),
     vec(lvoGetHostName),
     vec(lvoSetHostName),
+    vec(lvoGetNetworkStatistics),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

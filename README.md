@@ -186,7 +186,11 @@ cores.
   names are looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS
   (`GetHostByName`, `C:net/Resolve`); `C:net/AddNetInterface` and
   `RemNetInterface` bring one up and down by hand, and a program can do
-  the same through the library's interface calls.
+  the same through the library's interface calls. `C:net/NetStatus`
+  shows the interfaces, routes, sockets, ARP cache and counters
+  (`GetNetworkStatistics`); `C:net/Offline` and `Online` take an
+  interface's device off its link and put it back, and a link that goes
+  or comes by itself is followed.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

@@ -299,6 +299,9 @@ pub const IFA_Domain: u32 = IFA_Dummy + 11;
 /// ti_Data: the ring sizes of every TCP connection made from now on.
 pub const IFA_TCPSendSpace: u32 = IFA_Dummy + 12;
 pub const IFA_TCPRecvSpace: u32 = IFA_Dummy + 13;
+/// ti_Data: ConfigureInterfaceTagList's IFSTATE_UP set puts the
+/// interface's device on line, clear takes it off.
+pub const IFA_State: u32 = IFA_Dummy + 14;
 
 pub const IFCONFIGURE_FIXED: u32 = 0;
 pub const IFCONFIGURE_DHCP: u32 = 1;
@@ -325,6 +328,10 @@ pub const IFQ_DeviceName: u32 = IFQ_Dummy + 11;
 pub const IFQ_DeviceUnit: u32 = IFQ_Dummy + 12;
 /// u64: the link's speed in bits per second.
 pub const IFQ_Speed: u32 = IFQ_Dummy + 13;
+/// u32s: the time servers DHCP named for the interface, in network
+/// order, or 0.
+pub const IFQ_TimeServer: u32 = IFQ_Dummy + 14;
+pub const IFQ_TimeServer2: u32 = IFQ_Dummy + 15;
 
 /// IFQ_State's bits.
 pub const IFSTATE_UP: u32 = 1 << 0;
@@ -336,7 +343,8 @@ pub const IFSTATE_BOUND: u32 = 1 << 3;
 pub const IFSTATE_LINKLOCAL: u32 = 1 << 4;
 
 /// ConfigureInterfaceTagList takes the IFA_ tags that make sense on a
-/// running interface: IFA_Address, IFA_NetMask, IFA_Gateway, IFA_MTU.
+/// running interface: IFA_Address, IFA_NetMask, IFA_Gateway, IFA_MTU,
+/// IFA_State.
 /// AddRouteTagList's and DeleteRouteTagList's tags, addresses in network
 /// order.
 pub const RTA_Dummy: u32 = TAG_USER + 0xB4000;
@@ -396,3 +404,141 @@ pub const NAMESERVERS_FILE = "ENVARC:Sys/net/nameservers";
 
 /// How long an interface's name may be.
 pub const IFNAMSIZ = 16;
+
+// --- statistics -----------------------------------------------------------------
+
+/// GetNetworkStatistics' kinds, and what each fills the buffer with.
+/// NETSTATUS_COUNTS: one NetCounts.
+pub const NETSTATUS_COUNTS: u32 = 1;
+/// NETSTATUS_ROUTES: a RouteInfo per route.
+pub const NETSTATUS_ROUTES: u32 = 2;
+/// NETSTATUS_SOCKETS: a SocketInfo per socket.
+pub const NETSTATUS_SOCKETS: u32 = 3;
+/// NETSTATUS_ARP: an ArpInfo per entry of the ARP cache.
+pub const NETSTATUS_ARP: u32 = 4;
+
+/// What the stack counts, since it started.
+pub const NetCounts = extern struct {
+    ip_received: u64 align(4) = 0,
+    ip_sent: u64 align(4) = 0,
+    /// Headers that were not IPv4, too short, or longer than the packet.
+    ip_bad_header: u32 = 0,
+    ip_bad_checksum: u32 = 0,
+    /// Fragments received, datagrams put back together from them, and
+    /// the ones given up on: too large, overlapping, out of room or out
+    /// of time.
+    ip_fragments: u32 = 0,
+    ip_reassembled: u32 = 0,
+    ip_reassembly_dropped: u32 = 0,
+    /// Packets for an address that is not this machine's.
+    ip_not_ours: u32 = 0,
+    /// Packets of a protocol nothing here speaks.
+    ip_unknown_protocol: u32 = 0,
+    udp_received: u64 align(4) = 0,
+    udp_sent: u64 align(4) = 0,
+    udp_bad: u32 = 0,
+    /// Datagrams to a port nothing is bound to.
+    udp_no_port: u32 = 0,
+    /// Datagrams dropped because their socket's queue was full.
+    udp_full: u32 = 0,
+    icmp_received: u32 = 0,
+    icmp_bad: u32 = 0,
+    /// Echo requests answered, and errors sent for packets that came in.
+    icmp_echoes_answered: u32 = 0,
+    icmp_errors_sent: u32 = 0,
+    tcp_received: u64 align(4) = 0,
+    tcp_sent: u64 align(4) = 0,
+    /// Segments too short, with a data offset past their end, or a bad
+    /// checksum.
+    tcp_bad: u32 = 0,
+    tcp_resets_sent: u32 = 0,
+    /// SYNs a listener's full queue let go unanswered.
+    tcp_backlog_full: u32 = 0,
+    /// Segments sent again after a timeout, and after three duplicate
+    /// acknowledgements; windows probed; connections given up.
+    tcp_retransmits: u32 = 0,
+    tcp_fast_retransmits: u32 = 0,
+    tcp_window_probes: u32 = 0,
+    tcp_timeouts: u32 = 0,
+    /// Challenge ACKs sent, and the ones the limit held back; segments
+    /// the fast path took.
+    tcp_challenges: u32 = 0,
+    tcp_challenges_dropped: u32 = 0,
+    tcp_predicted: u64 align(4) = 0,
+    /// ARP: questions sent, answers given, packets that were no ARP, and
+    /// packets dropped while their address went unanswered.
+    arp_requests_sent: u32 = 0,
+    arp_replies_sent: u32 = 0,
+    arp_bad: u32 = 0,
+    arp_dropped: u32 = 0,
+};
+
+/// A route: addresses in network order.
+pub const RouteInfo = extern struct {
+    destination: u32 = 0,
+    netmask: u32 = 0,
+    /// The station packets go through, or 0 for a net the interface is on.
+    gateway: u32 = 0,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// A TCP connection's state, SocketInfo's `tcp_state`.
+pub const TCPS_CLOSED: u8 = 0;
+pub const TCPS_LISTEN: u8 = 1;
+pub const TCPS_SYN_SENT: u8 = 2;
+pub const TCPS_SYN_RECEIVED: u8 = 3;
+pub const TCPS_ESTABLISHED: u8 = 4;
+pub const TCPS_FIN_WAIT_1: u8 = 5;
+pub const TCPS_FIN_WAIT_2: u8 = 6;
+pub const TCPS_CLOSE_WAIT: u8 = 7;
+pub const TCPS_CLOSING: u8 = 8;
+pub const TCPS_LAST_ACK: u8 = 9;
+pub const TCPS_TIME_WAIT: u8 = 10;
+
+/// SocketInfo's flags: handed over and waiting for ObtainSocket; closed
+/// by its program and still finishing its connection; a connection a
+/// listener took that Accept has not yet.
+pub const SOCKINFO_RELEASED: u8 = 1 << 0;
+pub const SOCKINFO_CLOSING: u8 = 1 << 1;
+pub const SOCKINFO_UNACCEPTED: u8 = 1 << 2;
+
+/// A socket: addresses in network order, ports in the chip's.
+pub const SocketInfo = extern struct {
+    /// Its descriptor in its owner's table, or -1.
+    descriptor: i32 = -1,
+    socket_type: i32 = 0,
+    protocol: i32 = 0,
+    local_address: u32 = 0,
+    remote_address: u32 = 0,
+    local_port: u16 = 0,
+    remote_port: u16 = 0,
+    /// TCPS_* for a stream socket, else 0.
+    tcp_state: u8 = 0,
+    /// SOCKINFO_*.
+    flags: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
+    /// The bytes waiting to be read, and the bytes sent and not yet
+    /// acknowledged or not yet sent.
+    receive_queued: u32 = 0,
+    send_queued: u32 = 0,
+    /// The name of the task whose socket it is; empty when it has none.
+    owner: [32]u8 = @splat(0),
+};
+
+/// An ArpInfo's state: a question out, an answer known, the answer being
+/// checked again, an address that went unanswered and is left alone for
+/// a while.
+pub const ARPSTATE_PENDING: u8 = 1;
+pub const ARPSTATE_RESOLVED: u8 = 2;
+pub const ARPSTATE_CHECKING: u8 = 3;
+pub const ARPSTATE_HELD: u8 = 4;
+
+/// An entry of the ARP cache: its address in network order.
+pub const ArpInfo = extern struct {
+    address: u32 = 0,
+    hardware: [6]u8 = @splat(0),
+    /// ARPSTATE_*.
+    state: u8 = 0,
+    pad: u8 = 0,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};

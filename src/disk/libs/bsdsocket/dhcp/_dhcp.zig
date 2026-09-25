@@ -116,6 +116,8 @@ pub const Client = extern struct {
     lease_start: u64 align(4) = 0,
     /// The link-local address being probed or held.
     link_local: u32 = 0,
+    /// The time servers the last ACK named (option 42).
+    time_servers: [2]u32 = .{ 0, 0 },
 };
 
 pub const Clients = extern struct {
@@ -130,6 +132,12 @@ pub const Clients = extern struct {
 fn clientOf(stack: *StackBase, interface: *Interface) *Client {
     const index = (@intFromPtr(interface) - @intFromPtr(&stack.interfaces[0])) / @sizeOf(Interface);
     return &stack.dhcp.clients[index];
+}
+
+/// The time servers DHCP named for `interface`, or zeros.
+pub fn timeServers(stack: *StackBase, interface: *Interface) [2]u32 {
+    if (interface.dhcp == 0) return .{ 0, 0 };
+    return clientOf(stack, interface).time_servers;
 }
 
 fn interfaceOf(stack: *StackBase, client: *Client) *Interface {
@@ -180,6 +188,24 @@ fn later(stack: *StackBase, client: *Client, now: u64) void {
     const jitter = @as(u64, random(stack) % 2_000_000);
     client.tries +|= 1;
     _ = _timer.set(stack, &client.timer, now + wait - 1_000_000 + jitter);
+}
+
+/// The interface's link back after it was off: a lease there is renewed
+/// with its server at once, and without one DHCP starts again.
+pub fn linkUp(stack: *StackBase, interface: *Interface) void {
+    if (interface.dhcp == 0) return;
+    const client = clientOf(stack, interface);
+    const now = _timer.systemTime(stack);
+    switch (client.state) {
+        .bound, .renewing, .rebinding => {
+            client.state = .renewing;
+            client.tries = 0;
+            send(stack, client, request);
+            renewLater(stack, client, now, client.lease_start + client.lease_us * 7 / 8);
+        },
+        .idle => {},
+        else => begin(stack, client, now),
+    }
 }
 
 /// The interface going: the lease given back, the client stopped. Under
@@ -276,6 +302,7 @@ const Reply = struct {
     dns: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
     dns_count: usize = 0,
     domain: []const u8 = &.{},
+    time_servers: [2]u32 = .{ 0, 0 },
 };
 
 /// A datagram to port 68 on `interface`, the frame starting at its data.
@@ -342,6 +369,7 @@ fn take(client: *Client, reply: *const Reply, now: u64) void {
     client.router = reply.router;
     client.lease_us = @as(u64, if (reply.lease == 0) 3600 else reply.lease) * 1_000_000;
     client.lease_start = now;
+    client.time_servers = reply.time_servers;
 }
 
 /// A server's reply to us, or null when it is none: too short, not a
@@ -391,6 +419,12 @@ fn parse(data: []const u8, xid: u32, hardware: *const [6]u8) ?Reply {
                 }
             },
             option_domain => reply.domain = value,
+            option_ntp => {
+                var index: usize = 0;
+                while (index + 4 <= length and index / 4 < reply.time_servers.len) : (index += 4) {
+                    reply.time_servers[index / 4] = _ip.get32(value, index);
+                }
+            },
             else => {},
         }
         at += 2 + length;

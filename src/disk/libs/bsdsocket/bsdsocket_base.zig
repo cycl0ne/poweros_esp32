@@ -42,54 +42,7 @@ pub const table_size_default = 64;
 pub const stack_pri: i8 = 5;
 
 /// What the stack counts, for NetStatus.
-pub const Counts = extern struct {
-    ip_received: u64 align(4) = 0,
-    ip_sent: u64 align(4) = 0,
-    /// Headers that were not IPv4, too short, or longer than the packet.
-    ip_bad_header: u32 = 0,
-    ip_bad_checksum: u32 = 0,
-    /// Fragments received, datagrams put back together from them, and
-    /// the ones given up on: too large, overlapping, out of room or out
-    /// of time.
-    ip_fragments: u32 = 0,
-    ip_reassembled: u32 = 0,
-    ip_reassembly_dropped: u32 = 0,
-    /// Packets for an address that is not this machine's.
-    ip_not_ours: u32 = 0,
-    /// Packets of a protocol nothing here speaks.
-    ip_unknown_protocol: u32 = 0,
-    udp_received: u64 align(4) = 0,
-    udp_sent: u64 align(4) = 0,
-    udp_bad: u32 = 0,
-    /// Datagrams to a port nothing is bound to.
-    udp_no_port: u32 = 0,
-    /// Datagrams dropped because their socket's queue was full.
-    udp_full: u32 = 0,
-    icmp_received: u32 = 0,
-    icmp_bad: u32 = 0,
-    /// Echo requests answered, and errors sent for packets that came in.
-    icmp_echoes_answered: u32 = 0,
-    icmp_errors_sent: u32 = 0,
-    tcp_received: u64 align(4) = 0,
-    tcp_sent: u64 align(4) = 0,
-    /// Segments too short, with a data offset past their end, or a bad
-    /// checksum.
-    tcp_bad: u32 = 0,
-    tcp_resets_sent: u32 = 0,
-    /// SYNs a listener's full queue let go unanswered.
-    tcp_backlog_full: u32 = 0,
-    /// Segments sent again after a timeout, and after three duplicate
-    /// acknowledgements; windows probed; connections given up.
-    tcp_retransmits: u32 = 0,
-    tcp_fast_retransmits: u32 = 0,
-    tcp_window_probes: u32 = 0,
-    tcp_timeouts: u32 = 0,
-    /// Challenge ACKs sent, and the ones the limit held back; segments
-    /// the fast path took.
-    tcp_challenges: u32 = 0,
-    tcp_challenges_dropped: u32 = 0,
-    tcp_predicted: u64 align(4) = 0,
-};
+pub const Counts = bsd.NetCounts;
 
 pub const StackBase = extern struct {
     lib: exec.Library,

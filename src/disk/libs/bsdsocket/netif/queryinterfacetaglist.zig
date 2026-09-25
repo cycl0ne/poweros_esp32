@@ -11,6 +11,7 @@ const _lock = @import("../lock/_lock.zig");
 const _netif = @import("_netif.zig");
 const _route = @import("../route/_route.zig");
 const device = @import("device.zig");
+const _dhcp = @import("../dhcp/_dhcp.zig");
 
 /// What an interface is, each answer where its tag points.
 ///
@@ -28,7 +29,9 @@ const device = @import("device.zig");
 ///   (u32, network order), `IFQ_MTU`, `IFQ_State` (IFSTATE_*),
 ///   `IFQ_DeviceUnit`, `IFQ_PacketsDropped` (u32), `IFQ_PacketsSent`,
 ///   `IFQ_PacketsReceived`, `IFQ_Speed` (u64), `IFQ_HardwareAddress`
-///   ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0).
+///   ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0),
+///   `IFQ_TimeServer`, `IFQ_TimeServer2` (u32, network order: the time
+///   servers DHCP named, or 0).
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (a tag
@@ -86,6 +89,8 @@ pub fn QueryInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]con
             bsd.IFQ_PacketsSent => long.* = interface.sent,
             bsd.IFQ_PacketsReceived => long.* = interface.received,
             bsd.IFQ_Speed => long.* = if (link) |dev| dev.bps() else 0,
+            bsd.IFQ_TimeServer => word.* = bsd.htonl(_dhcp.timeServers(stack, interface)[0]),
+            bsd.IFQ_TimeServer2 => word.* = bsd.htonl(_dhcp.timeServers(stack, interface)[1]),
             bsd.IFQ_HardwareAddress => @as(*align(1) [6]u8, @ptrFromInt(item.data)).* = interface.hardware,
             bsd.IFQ_DeviceName => @as(*align(1) ?[*:0]const u8, @ptrFromInt(item.data)).* = if (link) |dev| @ptrCast(&dev.name) else null,
             else => return _socket.fail(sb, bsd.EINVAL, "QueryInterfaceTagList"),

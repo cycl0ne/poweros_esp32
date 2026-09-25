@@ -14,6 +14,7 @@ bsdsocket.library/GetDTableSize
 bsdsocket.library/GetHostByAddr
 bsdsocket.library/GetHostByName
 bsdsocket.library/GetHostName
+bsdsocket.library/GetNetworkStatistics
 bsdsocket.library/GetPeerName
 bsdsocket.library/GetSockName
 bsdsocket.library/GetSockOpt
@@ -350,7 +351,7 @@ bsdsocket.library/WaitSelect
 bsdsocket.library/ConfigureInterfaceTagList bsdsocket.library/ConfigureInterfaceTagList
 
    NAME
-	ConfigureInterfaceTagList -- A running interface changed: its address, its net, the default route through it, its MTU.
+	ConfigureInterfaceTagList -- A running interface changed: its address, its net, the default route through it, its MTU, whether its device is on its link.
 
    SYNOPSIS
 	    fn ConfigureInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
@@ -361,11 +362,13 @@ bsdsocket.library/WaitSelect
    INPUTS
 	- `name` - the interface, as it was added.
 	- `tags` - `IFA_Address`, `IFA_NetMask` (network order), `IFA_Gateway`
-	  (made the default route), `IFA_MTU`. What is not given stays.
+	  (made the default route), `IFA_MTU`, `IFA_State` (`IFSTATE_UP` set
+	  or clear). What is not given stays.
 
    RESULT
 	0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, or
-	a gateway on no interface's net).
+	a gateway on no interface's net), `EIO` (the device would not go on
+	or off its link), `ENOMEM`.
 
    BEHAVIOR
 	A new address or netmask replaces the route to the interface's own
@@ -373,11 +376,18 @@ bsdsocket.library/WaitSelect
 	MTU cannot go above what the link takes. Sockets bound to the old
 	address stay, and send from an address the interface no longer has.
 
+	`IFA_State` without `IFSTATE_UP` sends the device S2_OFFLINE: the
+	interface is down, nothing goes out of it and nothing comes in, and
+	it keeps its address and routes. With `IFSTATE_UP` the device gets
+	S2_ONLINE and the interface is up again; if its address is DHCP's,
+	the lease is renewed at once, since the link may be another one now.
+	A device already in the state asked for is left as it is.
+
    CONTEXT
-	- Waits: only for the stack's lock.
+	- Waits: for the stack's lock, and for the device with `IFA_State`.
 	- Interrupts: no.
 	- Forbid: not held.
-	- Process: a Task will do.
+	- Process: a Task will do; `IFA_State` makes a message port.
 
    OWNERSHIP
 	The tags are read and not kept.
@@ -724,6 +734,58 @@ bsdsocket.library/WaitSelect
    EXAMPLES
 	    var name: [64]u8 = undefined;
 	    _ = sb.GetHostName(&name, name.len);
+bsdsocket.library/GetNetworkStatistics  bsdsocket.library/GetNetworkStatistics
+
+   NAME
+	GetNetworkStatistics -- The stack's counters, its routes, its sockets or its ARP cache, as they are now.
+
+   SYNOPSIS
+	    fn GetNetworkStatistics(base: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) i32
+
+   SINCE
+	1.0. LVO -180.
+
+   INPUTS
+	- `kind` - `NETSTATUS_COUNTS` (a `NetCounts`), `NETSTATUS_ROUTES` (a
+	  `RouteInfo` per route), `NETSTATUS_SOCKETS` (a `SocketInfo` per
+	  socket) or `NETSTATUS_ARP` (an `ArpInfo` per entry).
+	- `buffer` - where they go; may be null when `size` is 0.
+	- `size` - the bytes `buffer` holds.
+
+   RESULT
+	How many there are - 1 for the counters - even when `buffer` held
+	fewer; or -1 with Errno() `EINVAL` for a kind there is not.
+
+   BEHAVIOR
+	As many whole entries as fit in `size` are written, in the stack's
+	order: routes as they were added, sockets newest first, the ARP
+	entries in use. Everything is copied under the stack's lock, so the
+	entries belong together; what changes afterwards does not change
+	them.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer is the caller's; nothing is allocated.
+
+   NOTES
+	A caller that wants every entry asks with a size of 0 first, or with a
+	buffer large enough for what it expects and again when the answer is
+	larger.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`QueryInterfaceTagList`, `ObtainInterfaceList`
+
+   EXAMPLES
+	    var routes: [16]bsd.RouteInfo = undefined;
+	    const count = sb.GetNetworkStatistics(bsd.NETSTATUS_ROUTES, &routes, @sizeOf(@TypeOf(routes)));
 bsdsocket.library/GetPeerName                    bsdsocket.library/GetPeerName
 
    NAME
@@ -1204,7 +1266,9 @@ bsdsocket.library/WaitSelect
 	  (u32, network order), `IFQ_MTU`, `IFQ_State` (IFSTATE_*),
 	  `IFQ_DeviceUnit`, `IFQ_PacketsDropped` (u32), `IFQ_PacketsSent`,
 	  `IFQ_PacketsReceived`, `IFQ_Speed` (u64), `IFQ_HardwareAddress`
-	  ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0).
+	  ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0),
+	  `IFQ_TimeServer`, `IFQ_TimeServer2` (u32, network order: the time
+	  servers DHCP named, or 0).
 
    RESULT
 	0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (a tag

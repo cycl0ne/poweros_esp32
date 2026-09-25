@@ -294,6 +294,51 @@ test "a connection opens, carries data both ways, and closes from either side" {
     try rig.deinit();
 }
 
+test "GetNetworkStatistics tells of the sockets, the routes and the counters" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 80);
+    const b = rig.b.sb;
+    try testing.expectEqual(@as(i32, 5), rig.a.sb.Send(pair.client, "hello", 5, 0));
+    rig.pump();
+
+    // Asked with no room: how many there are.
+    try testing.expectEqual(@as(i32, 2), b.GetNetworkStatistics(bsd.NETSTATUS_SOCKETS, null, 0));
+    var sockets: [4]bsd.SocketInfo = undefined;
+    try testing.expectEqual(@as(i32, 2), b.GetNetworkStatistics(bsd.NETSTATUS_SOCKETS, &sockets, @sizeOf(@TypeOf(sockets))));
+    var listening: ?bsd.SocketInfo = null;
+    var established: ?bsd.SocketInfo = null;
+    for (sockets[0..2]) |info| {
+        if (info.tcp_state == bsd.TCPS_LISTEN) listening = info;
+        if (info.tcp_state == bsd.TCPS_ESTABLISHED) established = info;
+    }
+    try testing.expectEqual(pair.listener, listening.?.descriptor);
+    try testing.expectEqual(@as(u16, 80), listening.?.local_port);
+    try testing.expectEqual(pair.server, established.?.descriptor);
+    try testing.expectEqual(bsd.htonl(address_a), established.?.remote_address);
+    try testing.expectEqual(@as(u32, 5), established.?.receive_queued);
+    try testing.expectEqual(@as(u8, 0), established.?.flags);
+    // Room for one: one written, both counted.
+    try testing.expectEqual(@as(i32, 2), b.GetNetworkStatistics(bsd.NETSTATUS_SOCKETS, &sockets, @sizeOf(bsd.SocketInfo) + 3));
+
+    var routes: [4]bsd.RouteInfo = undefined;
+    const route_count = b.GetNetworkStatistics(bsd.NETSTATUS_ROUTES, &routes, @sizeOf(@TypeOf(routes)));
+    try testing.expectEqual(@as(i32, 2), route_count);
+    try testing.expectEqualStrings("lo0", std.mem.sliceTo(&routes[0].interface, 0));
+    try testing.expectEqual(bsd.htonl(address_b & 0xFFFF_FF00), routes[1].destination);
+    try testing.expectEqual(@as(u32, 0), routes[1].gateway);
+
+    var counts: bsd.NetCounts = .{};
+    try testing.expectEqual(@as(i32, 1), b.GetNetworkStatistics(bsd.NETSTATUS_COUNTS, &counts, @sizeOf(bsd.NetCounts)));
+    try testing.expect(counts.tcp_received >= 3);
+    try testing.expectEqual(counts.tcp_received, counts.ip_received);
+    try testing.expectEqual(@as(i32, 0), b.GetNetworkStatistics(bsd.NETSTATUS_ARP, null, 0));
+    try testing.expectEqual(@as(i32, -1), b.GetNetworkStatistics(99, null, 0));
+    try testing.expectEqual(bsd.EINVAL, b.Errno());
+
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
 test "a connection to a port nobody listens on is refused" {
     var rig = try Rig.init();
     const a = rig.a.sb;

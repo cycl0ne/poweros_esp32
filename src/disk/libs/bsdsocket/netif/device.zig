@@ -17,6 +17,14 @@
 //! beyond that is refused with `ENOBUFS`. A read that finds no frame free
 //! waits idle until one is.
 //!
+//! **On and off the link.** One S2_ONEVENT is kept waiting on the device
+//! for the state the link is not in, so a link that goes away or comes
+//! back - by ConfigureInterfaceTagList's IFA_State or by itself - is
+//! seen. While it is off, the interface is down: nothing is sent, and a
+//! read the device answers with S2ERR_OUTOFSERVICE waits idle instead of
+//! going back at once. When it comes back the reads go out again and DHCP
+//! renews its lease.
+//!
 //! All the answers come to the stack task's port, where `complete` takes
 //! them under the lock.
 
@@ -42,7 +50,7 @@ pub const queue_max = 64;
 pub const reads_max = 32;
 pub const writes_max = 16;
 
-pub const Kind = enum(u8) { read_ip, read_arp, write };
+pub const Kind = enum(u8) { read_ip, read_arp, write, event };
 
 /// One request to the device, and what it carries.
 pub const Request = extern struct {
@@ -71,7 +79,10 @@ pub const Device = extern struct {
     in_flight: u32 = 0,
     /// Being taken down: nothing more is sent.
     going: u8 = 0,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// The device is off its link; the S2_ONEVENT is out.
+    offline: u8 = 0,
+    event_armed: u8 = 0,
+    pad: u8 = 0,
     /// What the device said its link is: the most bytes of one packet,
     /// its speed, and the Ethernet address it runs with.
     mtu: u32 = 0,
@@ -82,6 +93,8 @@ pub const Device = extern struct {
     /// The device's name and unit, as the interface was added with them.
     name: [64]u8 = @splat(0),
     unit: u32 = 0,
+    /// The S2_ONEVENT that waits for the link to change.
+    event: Request = .{},
 
     pub fn bps(link: *const Device) u64 {
         return @as(u64, link.bps_high) << 32 | link.bps_low;
@@ -149,6 +162,31 @@ pub fn start(stack: *StackBase, device: *Device, port: *exec.MsgPort) void {
             sys.AddTail(&device.idle_writes, &request.req.req.message.node);
         }
     }
+    device.event = .{ .req = device.opened, .kind = .event, .device = device };
+    device.event.req.req.message.reply_port = port;
+    device.event.req.req.message.length = @sizeOf(net.IOSana2Req);
+    watch(stack, device);
+}
+
+/// The S2_ONEVENT sent, for the state the link is not in now.
+fn watch(stack: *StackBase, device: *Device) void {
+    const req = &device.event.req;
+    req.req.command = net.S2_ONEVENT;
+    req.req.flags = 0;
+    req.wire_error = if (device.offline != 0) net.S2EVENT_ONLINE else net.S2EVENT_OFFLINE;
+    device.event_armed = 1;
+    device.in_flight += 1;
+    stack.sys_base.SendIO(&req.req);
+}
+
+/// The link on or off: the interface up or down with it, and on the way
+/// up DHCP renewing. Under the lock.
+pub fn setLink(stack: *StackBase, device: *Device, online: bool) void {
+    if (online == (device.offline == 0)) return;
+    const interface = device.interface;
+    device.offline = @intFromBool(!online);
+    interface.up = @intFromBool(online);
+    if (online) @import("../dhcp/_dhcp.zig").linkUp(stack, interface);
 }
 
 /// `request` sent to read the next packet of its type, with a new frame;
@@ -174,7 +212,7 @@ fn read(stack: *StackBase, request: *Request) void {
 /// The reads that waited for a frame, sent now that frames may be free.
 pub fn retryReads(stack: *StackBase, device: *Device) void {
     const sys = stack.sys_base;
-    if (device.going != 0) return;
+    if (device.going != 0 or device.offline != 0) return;
     while (sys.RemHead(&device.idle_reads)) |node| {
         const request = requestOf(node);
         read(stack, request);
@@ -187,7 +225,8 @@ pub fn retryReads(stack: *StackBase, device: *Device) void {
 pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *const [6]u8, packet_type: u16) i32 {
     const sys = stack.sys_base;
     const device: *Device = @ptrCast(@alignCast(interface.device.?));
-    if (device.going != 0) {
+    if (device.going != 0 or device.offline != 0) {
+        interface.dropped += 1;
         stack.frames.give(sys, frame);
         return bsd.ENETDOWN;
     }
@@ -232,6 +271,15 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
     const device = request.device.?;
     const interface = device.interface;
     device.in_flight -= 1;
+    if (request.kind == .event) {
+        device.event_armed = 0;
+        if (device.going != 0) return;
+        // A device that cannot tell of events is not asked again.
+        if (request.req.req.err != 0) return;
+        if (request.req.wire_error & net.S2EVENT_OFFLINE != 0) setLink(stack, device, false);
+        if (request.req.wire_error & net.S2EVENT_ONLINE != 0) setLink(stack, device, true);
+        return watch(stack, device);
+    }
     const frame = request.frame.?;
     request.frame = null;
     const req = &request.req;
@@ -239,6 +287,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
         .read_ip, .read_arp => {
             if (req.req.err != 0 or device.going != 0) {
                 stack.frames.give(sys, frame);
+                if (req.req.err == net.S2ERR_OUTOFSERVICE) setLink(stack, device, false);
             } else {
                 interface.received += 1;
                 if (request.kind == .read_arp) {
@@ -252,6 +301,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 }
             }
             if (device.going != 0) return;
+            if (device.offline != 0) return sys.AddTail(&device.idle_reads, &request.req.req.message.node);
             read(stack, request);
         },
         .write => {
@@ -265,6 +315,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 sys.AddTail(&device.idle_writes, &request.req.req.message.node);
             }
         },
+        .event => unreachable,
     }
 }
 
@@ -278,6 +329,11 @@ pub fn drain(stack: *StackBase, device: *Device) void {
         if (request.frame == null) continue;
         if (request.kind != .write) _ = sys.AbortIO(&request.req.req);
         _ = sys.WaitIO(&request.req.req);
+    }
+    if (device.event_armed != 0) {
+        _ = sys.AbortIO(&device.event.req.req);
+        _ = sys.WaitIO(&device.event.req.req);
+        device.event_armed = 0;
     }
     const held = @import("../lock/_lock.zig").take(stack);
     defer @import("../lock/_lock.zig").give(stack, held);

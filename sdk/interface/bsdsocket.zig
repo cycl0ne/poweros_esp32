@@ -58,6 +58,7 @@ pub const LVO = struct {
     pub const GetHostByAddr = libraries.lvo(41);
     pub const GetHostName = libraries.lvo(42);
     pub const SetHostName = libraries.lvo(43);
+    pub const GetNetworkStatistics = libraries.lvo(44);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -103,6 +104,7 @@ pub const Fn = struct {
     pub const GetHostByAddr = *const fn (*SocketBase, *const anyopaque, u32, i32) callconv(.c) ?*bsd.hostent;
     pub const GetHostName = *const fn (*SocketBase, [*]u8, u32) callconv(.c) i32;
     pub const SetHostName = *const fn (*SocketBase, [*:0]const u8) callconv(.c) i32;
+    pub const GetNetworkStatistics = *const fn (*SocketBase, u32, ?*anyopaque, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -331,5 +333,11 @@ pub const SocketBase = opaque {
     /// The machine's name set: 0, or -1.
     pub fn SetHostName(self: *SocketBase, name: [*:0]const u8) i32 {
         return libraries.call(self, LVO.SetHostName, Fn.SetHostName, .{name});
+    }
+
+    /// The stack's counters (NETSTATUS_COUNTS), routes, sockets or ARP
+    /// cache, into `buffer`: how many there are, or -1.
+    pub fn GetNetworkStatistics(self: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) i32 {
+        return libraries.call(self, LVO.GetNetworkStatistics, Fn.GetNetworkStatistics, .{ kind, buffer, size });
     }
 };

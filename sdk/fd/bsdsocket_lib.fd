@@ -111,4 +111,7 @@ i32 RemoveDomainNameServer(u32 address)
 i32 GetHostName([*]u8 name, u32 length)
 /// The machine's name set: 0, or -1.
 i32 SetHostName([*:0]const u8 name)
+/// The stack's counters (NETSTATUS_COUNTS), routes, sockets or ARP
+/// cache, into `buffer`: how many there are, or -1.
+i32 GetNetworkStatistics(u32 kind, ?*anyopaque buffer, u32 size)
 ##end

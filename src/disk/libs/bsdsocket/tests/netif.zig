@@ -123,6 +123,33 @@ test "an interface says what it is, and is changed while it runs" {
     try rig.deinit();
 }
 
+test "an interface taken down and up again, and its ARP entries told of" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const down = [_]TagItem{ .{ .tag = bsd.IFA_State, .data = 0 }, .{} };
+    const up = [_]TagItem{ .{ .tag = bsd.IFA_State, .data = bsd.IFSTATE_UP }, .{} };
+    var state: u32 = 0;
+    const query = [_]TagItem{ .{ .tag = bsd.IFQ_State, .data = @intFromPtr(&state) }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("eth0", &down));
+    try testing.expectEqual(@as(i32, 0), sb.QueryInterfaceTagList("eth0", &query));
+    try testing.expectEqual(@as(u32, 0), state & bsd.IFSTATE_UP);
+    // Down: no route goes through it, and it keeps its address.
+    try testing.expectEqual(@as(?_route.Hop, null), _route.lookup(rig.stack, 0xC0A8_0101));
+    try testing.expectEqual(@as(u32, 0xC0A8_0114), rig.stack.interfaces[1].address);
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("eth0", &up));
+    try testing.expect(_route.lookup(rig.stack, 0xC0A8_0101) != null);
+
+    // An address asked for is in the cache, pending.
+    const frame = rig.stack.frames.take(rig.stack.sys_base).?;
+    _ = _netif.output(rig.stack, _netif.named(rig.stack, "eth0").?, frame, 0xC0A8_0101);
+    var entries: [2]bsd.ArpInfo = undefined;
+    try testing.expectEqual(@as(i32, 1), sb.GetNetworkStatistics(bsd.NETSTATUS_ARP, &entries, @sizeOf(@TypeOf(entries))));
+    try testing.expectEqual(bsd.htonl(0xC0A8_0101), entries[0].address);
+    try testing.expectEqual(bsd.ARPSTATE_PENDING, entries[0].state);
+    try testing.expectEqualStrings("eth0", std.mem.sliceTo(&entries[0].interface, 0));
+    try rig.deinit();
+}
+
 test "the list of interfaces, routes by hand, and name servers" {
     var rig = try Rig.init();
     const sb = rig.sb;
