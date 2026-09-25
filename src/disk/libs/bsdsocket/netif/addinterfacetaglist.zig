@@ -165,6 +165,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     sys.Permit();
     device.start(stack, link, &stack.port);
     if (address != 0) _arp.announce(stack, slot);
+    if (dhcp) @import("../dhcp/_dhcp.zig").start(stack, slot);
     return 0;
 }
 

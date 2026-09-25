@@ -2,15 +2,14 @@
  * brings up as eth0. The startup-sequence brings up every file here.
  *
  * This one is QEMU's Ethernet, with the emulator's user network behind
- * it: its gateway is 10.0.2.2 and its name server 10.0.2.3. On a board
+ * it, whose DHCP server hands out 10.0.2.15 with the gateway 10.0.2.2
+ * and the name server 10.0.2.3. A fixed address instead would be
+ *   Configure = FIXED; Address = 10.0.2.15; NetMask = 255.255.255.0
+ *   Gateway = 10.0.2.2; NameServer = 10.0.2.3 On a board
  * without that device the interface is not added, and nothing is said.
  * A keyword this file does not know is an error, with its line and
  * column; see C:net/AddNetInterface for the list.
  */
 Device     = networks/openeth.device
 Unit       = 0
-Configure  = FIXED
-Address    = 10.0.2.15
-NetMask    = 255.255.255.0
-Gateway    = 10.0.2.2
-NameServer = 10.0.2.3
+Configure  = DHCP

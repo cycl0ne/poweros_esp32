@@ -24,6 +24,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const _timer = @import("timer/_timer.zig");
 const _arp = @import("arp/_arp.zig");
 const reassembly = @import("ip/reassembly.zig");
+const _dhcp = @import("dhcp/_dhcp.zig");
 const _frame = @import("frame/_frame.zig");
 const _netif = @import("netif/_netif.zig");
 const _route = @import("route/_route.zig");
@@ -109,6 +110,7 @@ pub const StackBase = extern struct {
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
     reassembly: reassembly.Slots = .{},
+    dhcp: _dhcp.Clients = .{},
     /// The key initial sequence numbers are hashed with.
     isn_key: [16]u8 = @splat(0),
     /// Challenge ACKs sent in the second that began at `challenge_since`.

@@ -213,6 +213,8 @@ fn remove(stack: *StackBase, interface: *Interface) void {
     {
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
+        // The lease given back while the device still sends.
+        @import("../dhcp/_dhcp.zig").stop(stack, interface);
         link.going = 1;
         interface.up = 0;
         _route.removeAll(stack, interface);

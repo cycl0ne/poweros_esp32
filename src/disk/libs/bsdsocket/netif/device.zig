@@ -269,13 +269,14 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
 }
 
 /// Every request still in flight taken back, on the stack task, without
-/// the lock: each is aborted and waited for, and its frame handed back
-/// under the lock. What waited in the queue goes too.
+/// the lock: a read is aborted, a write let finish - the last thing sent,
+/// a DHCP release, should reach the wire - and each waited for, its frame
+/// handed back under the lock. What waited in the queue goes too.
 pub fn drain(stack: *StackBase, device: *Device) void {
     const sys = stack.sys_base;
     for (device.requests[0 .. device.reads + device.writes]) |*request| {
         if (request.frame == null) continue;
-        _ = sys.AbortIO(&request.req.req);
+        if (request.kind != .write) _ = sys.AbortIO(&request.req.req);
         _ = sys.WaitIO(&request.req.req);
     }
     const held = @import("../lock/_lock.zig").take(stack);

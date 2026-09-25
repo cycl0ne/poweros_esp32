@@ -45,6 +45,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     _arp.init(stack);
     @import("tcp/isn.zig").makeKey(stack);
     reassembly.init(stack);
+    @import("dhcp/_dhcp.zig").init(stack);
     _netif.addLoopback(stack);
     // The task's ports take messages from the start; the task gives them
     // its signals when it runs.

@@ -27,6 +27,7 @@ const _route = @import("../route/_route.zig");
 const _ip = @import("../ip/_ip.zig");
 const _socket = @import("../socket/_socket.zig");
 const _icmp = @import("../icmp/_icmp.zig");
+const _dhcp = @import("../dhcp/_dhcp.zig");
 const Socket = _socket.Socket;
 
 pub const header_bytes = 8;
@@ -36,7 +37,6 @@ const protocol: u8 = @intCast(bsd.IPPROTO_UDP);
 pub const data_max: u32 = 65535 - _ip.header_bytes - header_bytes;
 
 pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _ip.Header) void {
-    _ = interface;
     const sys = stack.sys_base;
     const datagram = frame.bytes();
     if (datagram.len < header_bytes) return drop(stack, frame, &stack.counts.udp_bad);
@@ -48,6 +48,11 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     }
     const source_port = _ip.get16(datagram, 0);
     const destination_port = _ip.get16(datagram, 2);
+    if (destination_port == _dhcp.client_port and source_port == _dhcp.server_port and
+        _dhcp.input(stack, interface, datagram[header_bytes..length]))
+    {
+        return stack.frames.give(stack.sys_base, frame);
+    }
     const socket = find(stack, header.destination, destination_port, header.source, source_port) orelse {
         // Nobody is bound there: the sender is told, unless it sent to
         // many.

@@ -177,6 +177,18 @@ fn ask(stack: *StackBase, entry: *Entry, to: *const [6]u8) void {
 /// An ARP packet of `operation` from `interface`, to the station `to`,
 /// about `target_hardware` and `target_address`.
 fn send(stack: *StackBase, interface: *Interface, operation: u16, to: *const [6]u8, target_hardware: *const [6]u8, target_address: u32) void {
+    sendFrom(stack, interface, interface.address, operation, to, target_hardware, target_address);
+}
+
+/// An ARP probe for `address` (RFC 5227): a question from 0.0.0.0, so
+/// nobody learns anything from it, that only a station which has the
+/// address answers.
+pub fn probe(stack: *StackBase, interface: *Interface, address: u32) void {
+    sendFrom(stack, interface, 0, request, &broadcast, &(@as([6]u8, @splat(0))), address);
+    stack.arp.requests_sent += 1;
+}
+
+fn sendFrom(stack: *StackBase, interface: *Interface, sender_address: u32, operation: u16, to: *const [6]u8, target_hardware: *const [6]u8, target_address: u32) void {
     const frame = stack.frames.take(stack.sys_base) orelse return;
     const packet = frame.buffer[frame.start..][0..packet_bytes];
     frame.length = packet_bytes;
@@ -186,7 +198,7 @@ fn send(stack: *StackBase, interface: *Interface, operation: u16, to: *const [6]
     packet[5] = 4;
     _ip.put16(packet, 6, operation);
     packet[8..14].* = interface.hardware;
-    _ip.put32(packet, 14, interface.address);
+    _ip.put32(packet, 14, sender_address);
     packet[18..24].* = target_hardware.*;
     _ip.put32(packet, 24, target_address);
     _ = _netif.transmit(stack, interface, frame, to, ethertype);
@@ -214,6 +226,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, now: u64) 
     const sender_hardware: [6]u8 = packet[8..14].*;
     const sender_address = _ip.get32(packet, 14);
     const target_address = _ip.get32(packet, 24);
+    @import("../dhcp/_dhcp.zig").arpSeen(stack, interface, sender_address, &sender_hardware, target_address);
     // A probe (sender 0.0.0.0) teaches nothing.
     if (sender_address != 0) {
         if (find(stack, interface, sender_address)) |entry| {

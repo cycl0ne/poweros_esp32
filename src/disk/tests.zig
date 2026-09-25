@@ -13,6 +13,7 @@ test {
     _ = @import("libs/bsdsocket/tests/icmp.zig");
     _ = @import("libs/bsdsocket/tests/tcp.zig");
     _ = @import("libs/bsdsocket/tests/netif.zig");
+    _ = @import("libs/bsdsocket/tests/dhcp.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("handlers/fat/_fat.zig");
     _ = @import("handlers/fat/testmedia.zig");
