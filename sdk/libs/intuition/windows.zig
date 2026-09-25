@@ -298,6 +298,15 @@ pub const WA_Layer = WA_Dummy + 0x108;
 /// Drawing is cut to it anyway, so a program may draw everything; this is
 /// for one that would rather skip what is not in it.
 pub const WA_Damage = WA_Dummy + 0x109;
+/// Where it opens, worked out from its size and border once they are
+/// known: `WPOS_CENTERSCREEN` in the middle of its screen,
+/// `WPOS_CENTERMOUSE` with the pointer in its middle - kept on the screen
+/// either way. Given `WA_Left` or `WA_Top`, this is not looked at.
+pub const WA_Position = WA_Dummy + 0x10A;
+
+/// `WA_Position`'s values.
+pub const WPOS_CENTERSCREEN: u32 = 1;
+pub const WPOS_CENTERMOUSE: u32 = 2;
 
 // --- IDCMP ------------------------------------------------------------------------
 //

@@ -34,6 +34,7 @@ pub const FILLRECTCLASS = "fillrectclass";
 pub const ITEXTICLASS = "itexticlass";
 pub const STRGCLASS = "strgclass";
 pub const LAYOUTGCLASS = "layoutgclass";
+pub const WINDOWCLASS = "windowclass";
 
 // --- the methods every object has ---------------------------------------
 

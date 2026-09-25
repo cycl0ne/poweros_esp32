@@ -31,6 +31,7 @@ const fillrectclass = @import("classes/fillrectclass.zig");
 const itexticlass = @import("classes/itexticlass.zig");
 const strgclass = @import("classes/strgclass.zig");
 const layoutgclass = @import("classes/layoutgclass.zig");
+const windowclass = @import("classes/windowclass.zig");
 
 /// The version of utility.library the hook and pack calls are taken from.
 const UTILITY_VERSION = 1;
@@ -57,7 +58,8 @@ pub const LIBRARY_VERSION = 0;
 /// from IntuiTexts, ActivateGadget and DoGadgetMethodA. 14:
 /// IDCMP_SIZEVERIFY, the verifies in a file of their own. 15:
 /// layoutgclass and GM_DOMAIN; a group's member reports in its own name.
-pub const LIBRARY_REVISION = 15;
+/// 16: windowclass, and WA_Position.
+pub const LIBRARY_REVISION = 16;
 const BUILD_DATE = "25.9.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -141,6 +143,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.itext_class = if (ib.fillrect_class != null) itexticlass.make(ib) else null;
     ib.string_class = if (ib.itext_class != null) strgclass.make(ib) else null;
     ib.layout_class = if (ib.string_class != null) layoutgclass.make(ib) else null;
+    ib.window_class = if (ib.layout_class != null) windowclass.make(ib) else null;
     ib.active_window = null;
     ib.input = .{};
     @import("input/menus.zig").init(ib);
@@ -149,7 +152,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.double_seconds = 1;
     ib.double_micros = 500_000;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
-    if (ib.layout_class == null) {
+    if (ib.window_class == null) {
+        _ = ib.iface().FreeClass(ib.layout_class);
         _ = ib.iface().FreeClass(ib.string_class);
         _ = ib.iface().FreeClass(ib.itext_class);
         _ = ib.iface().FreeClass(ib.fillrect_class);

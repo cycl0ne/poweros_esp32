@@ -61,7 +61,8 @@ const zoom_width = _window.zoom_width;
 /// SINCE: 0.5. LVO -132.
 ///
 /// INPUTS:
-/// - `tags` - the `WA_` names. Where: `WA_Left`, `WA_Top`, `WA_Width`,
+/// - `tags` - the `WA_` names. Where: `WA_Left`, `WA_Top` (or
+///   `WA_Position`, centred), `WA_Width`,
 ///   `WA_Height` (or `WA_InnerWidth`/`WA_InnerHeight`), `WA_MinWidth` and
 ///   the other limits. On what: `WA_CustomScreen`, `WA_PubScreen`,
 ///   `WA_PubScreenName`, or by default the default public screen. How:
@@ -78,7 +79,9 @@ const zoom_width = _window.zoom_width;
 ///
 /// BEHAVIOR:
 /// It is a layer of its screen, made to fit: sized down to the screen and
-/// moved onto it when asked for more. Its border is drawn - a frame, a
+/// moved onto it when asked for more. With `WA_Position` and no `WA_Left`
+/// or `WA_Top` it goes in the middle of the screen, or with the pointer in
+/// its middle, worked out from its size with the border counted. Its border is drawn - a frame, a
 /// title bar the font's height and a little, and the images of the border
 /// gadgets it asked for - and the part inside is the screen's background
 /// pen. Its RastPort draws in `TEXTPEN` on `BACKGROUNDPEN` in the screen's
@@ -220,6 +223,18 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     if (ub.FindTagItem(wn.WA_InnerHeight, tags)) |item| height = @as(i32, @intCast(item.data)) + bt + bb;
     var left: i32 = @intCast(ub.GetTagData(wn.WA_Left, 0, tags));
     var top: i32 = @intCast(ub.GetTagData(wn.WA_Top, 0, tags));
+    // Centred, now that its size is known, border and all.
+    if (!placed) switch (ub.GetTagData(wn.WA_Position, 0, tags)) {
+        wn.WPOS_CENTERSCREEN => {
+            left = @divTrunc(s.width - width, 2);
+            top = @divTrunc(s.height - height, 2);
+        },
+        wn.WPOS_CENTERMOUSE => {
+            left = ib.input.x - @divTrunc(width, 2);
+            top = ib.input.y - @divTrunc(height, 2);
+        },
+        else => {},
+    };
     if (auto_adjust) {
         // Squeezed to the screen and then moved onto it.
         width = @max(@min(width, s.width), bl + br + 1);

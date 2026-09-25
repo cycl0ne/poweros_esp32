@@ -4,18 +4,19 @@
 //!
 //!   Layout MARGIN/N,SPACING/N
 //!
-//! It opens a window on the default public screen holding one layout: a
-//! column of a line to type a name in and a slider, each labelled; a row
-//! of three buttons that takes whatever height is spare; and OK and
-//! Cancel along the bottom, kept at least two lines of the screen's font
-//! high so that a finger finds them. Nothing in it is given a place: the
-//! window opens at half the screen or the layout's own nominal size,
-//! whichever is larger, and everything is placed again as the window is
-//! sized - which it cannot be smaller than the layout fits in.
+//! It opens a window on the default public screen through windowclass,
+//! holding one layout: a column of a line to type a name in and a slider,
+//! each labelled; a row of three buttons that takes whatever height is
+//! spare; and OK and Cancel along the bottom, kept at least two lines of
+//! the screen's font high so that a finger finds them. Nothing in it is
+//! given a place: the window opens in the middle of the screen at half its
+//! size (a `WA_` tag handed on to the window) or the layout's nominal
+//! size, whichever is larger, and everything is placed again as the window
+//! is sized - which it cannot be smaller than the layout fits in.
 //!
-//! Every IDCMP_GADGETUP is printed with the ID of the gadget it came from,
-//! the button itself and not the layout it is in. OK prints the name and
-//! ends it; Cancel, the close gadget or Ctrl-C end it too. MARGIN and
+//! Every gadget let go is printed with its ID - the button itself, not
+//! the layout it is in - as WM_HANDLEINPUT answers it. OK prints the name
+//! and ends it; Cancel, the close gadget or Ctrl-C end it too. MARGIN and
 //! SPACING are the layout's, in pixels (6 and 4 unless given).
 
 const sdk = @import("sdk");
@@ -28,6 +29,7 @@ const wn = intuition.windows;
 const gc = intuition.gadgetclass;
 const pg = intuition.propgclass;
 const lg = intuition.layoutgclass;
+const wc = intuition.windowclass;
 const classusr = intuition.classusr;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -38,7 +40,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Layout";
-const VERSION_STRING = "\x00$VER: Layout 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Layout 1.1 (25.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "MARGIN/N,SPACING/N";
@@ -166,12 +168,6 @@ fn screenAttr(ib: *IntuitionBase, screen: *intuition.Screen, tag: sdk.utility.Ta
     return value;
 }
 
-fn windowAttr(ib: *IntuitionBase, window: *intuition.Window, tag: sdk.utility.Tag) i32 {
-    var value: usize = 0;
-    ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} });
-    return @intCast(value);
-}
-
 fn nameOf(id: usize) [*:0]const u8 {
     return switch (id) {
         ID_NAME => "Name",
@@ -231,15 +227,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    // After the window has closed, which gives the gadgets back.
-    defer ib.DisposeObject(gadgets.layout);
 
     // Half the screen, or what the layout looks right at if that is more.
     var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
     _ = ib.SendMessage(gadgets.layout, @ptrCast(&nominal));
     const width: usize = @intCast(@max(nominal.domain.width, @as(i32, @intCast(screenAttr(ib, screen, sc.SA_Width) / 2))));
     const height: usize = @intCast(@max(nominal.domain.height, @as(i32, @intCast(screenAttr(ib, screen, sc.SA_Height) / 2))));
-    const w = ib.OpenWindowTagList(&[_]TagItem{
+    const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Layout") },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
         .{ .tag = wn.WA_InnerWidth, .data = width },
@@ -249,56 +243,53 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_GADGETUP },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(gadgets.layout) },
         .{},
     }) orelse {
-        _ = Printf(dl, MSG_NOWINDOW, .{});
+        ib.DisposeObject(gadgets.layout);
+        _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    defer ib.CloseWindow(w);
+    // The window, the layout and every gadget in it.
+    defer ib.DisposeObject(object);
 
-    // The layout fills the inside of the window, whatever size that is.
-    const left = windowAttr(ib, w, wn.WA_BorderLeft);
-    const top = windowAttr(ib, w, wn.WA_BorderTop);
-    const right = windowAttr(ib, w, wn.WA_BorderRight);
-    const bottom = windowAttr(ib, w, wn.WA_BorderBottom);
-    _ = ib.SetAttrsTagList(gadgets.layout, &[_]TagItem{
-        .{ .tag = gc.GA_Left, .data = @bitCast(@as(isize, left)) },
-        .{ .tag = gc.GA_Top, .data = @bitCast(@as(isize, top)) },
-        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -(left + right))) },
-        .{ .tag = gc.GA_RelHeight, .data = @bitCast(@as(isize, -(top + bottom))) },
-        .{},
-    });
-    _ = ib.AddGList(w, gadgets.layout, -1, 1);
-    ib.RefreshGList(gadgets.layout, w, 1);
+    var open = wc.WmOpen{};
+    const window: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
+    if (@intFromPtr(window) == 0) {
+        _ = Printf(dl, MSG_NOWINDOW, .{});
+        return dos.RETURN_FAIL;
+    }
     _ = Printf(dl, MSG_HELLO, .{});
 
+    var handle = wc.WmHandleInput{};
     while (true) {
-        const got = ib.WaitIMsg(w, exec.SIGBREAKF_CTRL_C);
+        const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
-        while (ib.GetIMsg(w)) |im| {
-            const class = im.class;
-            const gadget: ?*Object = @ptrCast(im.iaddress);
-            ib.ReplyIMsg(im);
-            if (class == wn.IDCMP_CLOSEWINDOW) return dos.RETURN_OK;
-            if (class != wn.IDCMP_GADGETUP) continue;
-            var id: usize = 0;
-            _ = ib.GetAttr(gc.GA_ID, gadget, &id);
-            switch (id) {
-                ID_VOLUME => {
-                    var at: usize = 0;
-                    _ = ib.GetAttr(pg.PGA_Top, gadgets.volume, &at);
-                    _ = Printf(dl, MSG_SLIDER, .{ @as(u64, id), "Volume", @as(u64, at) });
+        while (true) {
+            const word = ib.SendMessage(object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) break;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
+                wc.WMHI_GADGETUP => {
+                    const id = word & wc.WMHI_GADGETMASK;
+                    switch (id) {
+                        ID_VOLUME => {
+                            var at: usize = 0;
+                            _ = ib.GetAttr(pg.PGA_Top, gadgets.volume, &at);
+                            _ = Printf(dl, MSG_SLIDER, .{ @as(u64, id), "Volume", @as(u64, at) });
+                        },
+                        ID_OK => {
+                            var text: usize = 0;
+                            _ = ib.GetAttr(gc.STRINGA_TextVal, gadgets.name, &text);
+                            const shown: [*:0]const u8 = if (text != 0) @ptrFromInt(text) else "";
+                            _ = Printf(dl, MSG_NAME, .{shown});
+                            return dos.RETURN_OK;
+                        },
+                        ID_CANCEL => return dos.RETURN_OK,
+                        else => _ = Printf(dl, MSG_GADGET, .{ @as(u64, id), nameOf(id) }),
+                    }
                 },
-                ID_OK => {
-                    var text: usize = 0;
-                    _ = ib.GetAttr(gc.STRINGA_TextVal, gadgets.name, &text);
-                    const shown: [*:0]const u8 = if (text != 0) @ptrFromInt(text) else "";
-                    _ = Printf(dl, MSG_NAME, .{shown});
-                    return dos.RETURN_OK;
-                },
-                ID_CANCEL => return dos.RETURN_OK,
-                else => _ = Printf(dl, MSG_GADGET, .{ @as(u64, id), nameOf(id) }),
+                else => {},
             }
         }
     }

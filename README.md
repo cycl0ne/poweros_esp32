@@ -126,12 +126,13 @@ cores.
 - intuition.library: screens, windows, menus, requesters, and an object
   system of classes for gadgets and images (buttons, sliders, string
   fields, groups, and layouts that size and place their gadgets to fit
-  the window, whichever display it is on). Several screens share a
-  display, each in a buffer of its own, brought forward by showing that
-  buffer; a screen can be double buffered, its frames flipped at the
-  display's frame start. Public screens can be listed, chosen as the
-  default and signal their owner when the last visitor leaves; gadgets
-  can live in a window's border.
+  the window, whichever display it is on), and window objects that open
+  a window round a layout and hand over its messages. Several screens
+  share a display, each in a buffer of its own, brought forward by
+  showing that buffer; a screen can be double buffered, its frames
+  flipped at the display's frame start. Public screens can be listed,
+  chosen as the default and signal their owner when the last visitor
+  leaves; gadgets can live in a window's border.
 
 **Devices**
 - Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,
@@ -297,11 +298,96 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 }
 ```
 
+### Buttons in a window
+
+A window of gadgets is described rather than built: a layout
+(`layoutgclass`) sizes and places the buttons, and a window object
+(`windowclass`) opens a window around it - as big as the layout looks
+right at, in the middle of the screen, no smaller than the layout fits
+in - and hands over each message as one word, already replied:
+
+```zig
+// buttons.zig
+const sdk = @import("sdk");
+const dos = sdk.dos;
+const intuition = sdk.intuition;
+const wn = intuition.windows;
+const gc = intuition.gadgetclass;
+const lg = intuition.layoutgclass;
+const wc = intuition.windowclass;
+const classusr = intuition.classusr;
+const TagItem = sdk.utility.TagItem;
+const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+
+fn button(ib: *IntuitionBase, text: [*:0]const u8, id: usize) ?*intuition.Object {
+    return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(text) },
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    });
+}
+
+export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
+    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(dos_lib);
+    const dl: *DosBase = @ptrCast(dos_lib);
+    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(int_lib);
+    const ib: *IntuitionBase = @ptrCast(int_lib);
+
+    // Two buttons in a row, sized and placed by the layout; the window
+    // around them sized, placed and taken down by the window object.
+    const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button(ib, "Hello", 1)) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button(ib, "Goodbye", 2)) },
+        .{},
+    }) orelse return dos.RETURN_FAIL;
+    const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("Buttons") },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(row) },
+        .{},
+    }) orelse return dos.RETURN_FAIL;
+    defer ib.DisposeObject(object); // the window, the layout, the buttons
+
+    var open = wc.WmOpen{};
+    const window: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
+    if (@intFromPtr(window) == 0) return dos.RETURN_FAIL;
+
+    // Each message as one word: what happened, and which gadget.
+    var handle = wc.WmHandleInput{};
+    while (true) {
+        _ = ib.WaitIMsg(window, 0);
+        while (true) {
+            const word = ib.SendMessage(object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) break;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
+                wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                    1 => _ = dos.stdio.Printf(dl, "Hello!\n", .{}),
+                    else => return dos.RETURN_OK,
+                },
+                else => {},
+            }
+        }
+    }
+}
+```
+
 Each gets its own `addProgram` in `build.zig`, as `hello` above, and
-`zig build` makes `zig-out/bin/hello.seg` and `window.seg`. Put them on
-the disk with `-Dextra=c/hello=path/to/hello.seg` (or drop them into the
-tree's `disk/c/`), and run them from the shell: `hello`, or `run window`
-so the shell stays free while the window is open.
+`zig build` makes `zig-out/bin/hello.seg`, `window.seg` and
+`buttons.seg`. Put them on the disk with
+`-Dextra=c/hello=path/to/hello.seg` (or drop them into the tree's
+`disk/c/`), and run them from the shell: `hello`, or `run window` so the
+shell stays free while the window is open.
 
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`

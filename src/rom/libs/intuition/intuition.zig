@@ -203,6 +203,7 @@ fn setUp() !*IntuitionBase {
 /// Nothing here expunges itself, so the test gives back every class, every
 /// open and every library.
 fn tearDown(ib: *IntuitionBase) !void {
+    try testing.expect(ib.iface().FreeClass(ib.window_class));
     try testing.expect(ib.iface().FreeClass(ib.layout_class));
     try testing.expect(ib.iface().FreeClass(ib.string_class));
     try testing.expect(ib.iface().FreeClass(ib.itext_class));
@@ -279,7 +280,7 @@ test "intuition.library: made from its tag, with its classes public" {
     try testing.expectEqual(ib.button_class.?, ib.iface().FindClass(classusr.BUTTONGCLASS).?);
     try testing.expectEqual(ib.root_class.?, ib.gadget_class.?.super.?);
     try testing.expectEqual(ib.gadget_class.?, ib.button_class.?.super.?);
-    try testing.expectEqual(@as(u32, 3), ib.root_class.?.subclass_count);
+    try testing.expectEqual(@as(u32, 4), ib.root_class.?.subclass_count);
     try testing.expect(ib.root_class.?.super == null);
 
     // And the rest of them, each from the one it is a kind of.
@@ -297,6 +298,8 @@ test "intuition.library: made from its tag, with its classes public" {
     try testing.expectEqual(ib.gadget_class.?, ib.string_class.?.super.?);
     try testing.expectEqual(ib.layout_class.?, ib.iface().FindClass(classusr.LAYOUTGCLASS).?);
     try testing.expectEqual(ib.group_class.?, ib.layout_class.?.super.?);
+    try testing.expectEqual(ib.window_class.?, ib.iface().FindClass(classusr.WINDOWCLASS).?);
+    try testing.expectEqual(ib.root_class.?, ib.window_class.?.super.?);
 
     try testing.expectEqual(&ib.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, intuition_init.LIBRARY_VERSION).?);
     kexec.CloseLibrary(kexec.SysBase, &ib.lib);
@@ -3945,6 +3948,139 @@ test "layoutgclass: in a window, its smallest size, and a button that reports by
     it.CloseWindow(w);
     try testing.expect(it.CloseScreen(screen));
     it.DisposeObject(layout);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "windowclass: opened at its layout's size in the middle, answered a word at a time, closed and opened again" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    const ok = framedButton(ib, "OK", 1);
+    const cancel = framedButton(ib, "No", 2);
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ok) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(cancel) },
+        .{},
+    }).?;
+    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = it.SendMessage(layout, @ptrCast(&nominal));
+
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("W") },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, object, wc.WINDOWA_Window));
+
+    // Opened: as big inside as the layout looks right at, in the middle of
+    // the screen, the layout filling it.
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    try testing.expectEqual(@intFromPtr(w), getAttr(ib, object, wc.WINDOWA_Window));
+    try testing.expectEqual(@intFromPtr(w), it.SendMessage(object, @ptrCast(&open)));
+    try testing.expect(getAttr(ib, object, wc.WINDOWA_SigMask) != 0);
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    try testing.expectEqual(@as(usize, @intCast(nominal.domain.width)), windowAttr(ib, w, wn.WA_InnerWidth));
+    try testing.expectEqual(@as(usize, @intCast(nominal.domain.height)), windowAttr(ib, w, wn.WA_InnerHeight));
+    try testing.expectEqual(@divTrunc(112 - win.width, 2), win.left);
+    try testing.expectEqual(@divTrunc(56 - win.height, 2), win.top);
+    const bl: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderLeft));
+    const bt: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderTop));
+    try testing.expectEqual(bl + 2, boxOf(ib, ok).left);
+    try testing.expectEqual(bt + 2, boxOf(ib, ok).top);
+
+    // A press, answered as a word: which class, which gadget, its code;
+    // then nothing more.
+    var code: u32 = 99;
+    var handle = wc.WmHandleInput{ .code = &code };
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+    const c = boxOf(ib, cancel);
+    click(ib, win.left + c.left + 2, win.top + c.top + 2);
+    try testing.expectEqual(wc.WMHI_GADGETUP | 2, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(@as(u32, 0), code);
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+
+    // Its title set while it is open.
+    _ = it.SetAttrsTagList(object, &[_]TagItem{ .{ .tag = wn.WA_Title, .data = @intFromPtr("V") }, .{} });
+    try testing.expectEqualStrings("V", std.mem.span(@as([*:0]const u8, @ptrFromInt(windowAttr(ib, w, wn.WA_Title)))));
+
+    // Closed and kept; opened again, the layout in it again.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    try testing.expect(it.LockPubScreen(null) == screen); // held open past the window
+    var shut = wc.WmClose{};
+    try testing.expectEqual(@as(usize, 1), it.SendMessage(object, @ptrCast(&shut)));
+    try testing.expectEqual(@as(usize, 0), it.SendMessage(object, @ptrCast(&shut)));
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, object, wc.WINDOWA_Window));
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+    const again: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    const win2: *_window.Window = @ptrCast(@alignCast(again));
+    const c2 = boxOf(ib, cancel);
+    click(ib, win2.left + c2.left + 2, win2.top + c2.top + 2);
+    try testing.expectEqual(wc.WMHI_GADGETUP | 2, it.SendMessage(object, @ptrCast(&handle)));
+
+    // Disposed while open: the window closes, the layout and its gadgets go.
+    it.DisposeObject(object);
+    it.UnlockPubScreen(null, screen);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "WA_Position: a window in the middle of its screen, or around the pointer and kept on the screen" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const middle = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Position, .data = wn.WPOS_CENTERSCREEN },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(i32, 22), @as(*_window.Window, @ptrCast(@alignCast(middle))).left);
+    try testing.expectEqual(@as(i32, 15), @as(*_window.Window, @ptrCast(@alignCast(middle))).top);
+
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 30, 20);
+    const pointer = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Position, .data = wn.WPOS_CENTERMOUSE },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(i32, 20), @as(*_window.Window, @ptrCast(@alignCast(pointer))).left);
+    try testing.expectEqual(@as(i32, 15), @as(*_window.Window, @ptrCast(@alignCast(pointer))).top);
+
+    // Near the corner: the pointer is not in its middle, the window stays
+    // on the screen.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 62, 38);
+    const edge = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Position, .data = wn.WPOS_CENTERMOUSE },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(i32, 44), @as(*_window.Window, @ptrCast(@alignCast(edge))).left);
+    try testing.expectEqual(@as(i32, 30), @as(*_window.Window, @ptrCast(@alignCast(edge))).top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, middle, wn.WA_Screen));
+    it.CloseWindow(edge);
+    it.CloseWindow(pointer);
+    it.CloseWindow(middle);
+    try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);
 }
