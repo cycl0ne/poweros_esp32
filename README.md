@@ -179,6 +179,11 @@ cores.
   task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
   `C:net/Tcp` fetches a page over HTTP or echoes a connection - over the
   network in QEMU.
+- The network comes up at boot from `DEVS:NetInterfaces/`, a file per
+  interface in the mountlist's keyword format (`Device`, `Address`,
+  `Gateway`, `NameServer`, ...); `C:net/AddNetInterface` and
+  `RemNetInterface` bring one up and down by hand, and a program can do
+  the same through the library's interface calls.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

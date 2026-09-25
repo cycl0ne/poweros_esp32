@@ -20,6 +20,8 @@ pub const hardblocks = @import("hardblocks.zig");
 pub const flashfs = @import("flashfs.zig");
 pub const fat = @import("fat.zig");
 pub const workfile = @import("workfile.zig");
+/// Keyword files: the mountlist format, read a token at a time.
+pub const keywords = @import("keywords.zig");
 
 /// The library's name, for OpenLibrary.
 pub const DOSNAME = "dos.library";

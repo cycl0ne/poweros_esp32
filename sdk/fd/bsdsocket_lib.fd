@@ -6,6 +6,7 @@
 ##include libs/bsdsocket/bsdsocket as bsd
 ##include devices/timer as timer
 ##include libs/utility/utility as utility
+##include libs/exec/exec as exec
 ##basetype SocketBase
 ##name bsdsocket.library
 ##bias 4
@@ -79,4 +80,24 @@ i32 Listen(i32 socket, i32 backlog)
 i32 Accept(i32 socket, ?*bsd.sockaddr address, ?*u32 address_length)
 /// No more receiving (SHUT_RD), sending (SHUT_WR) or either: 0, or -1.
 i32 Shutdown(i32 socket, i32 how)
+/// The interface called `name` changed while it runs: IFA_Address,
+/// IFA_NetMask, IFA_Gateway, IFA_MTU. 0, or -1.
+i32 ConfigureInterfaceTagList([*:0]const u8 name, ?[*]const utility.TagItem tags)
+/// What the interface called `name` is, into where each IFQ_ tag points:
+/// 0, or -1.
+i32 QueryInterfaceTagList([*:0]const u8 name, ?[*]const utility.TagItem tags)
+/// A list of every interface's name (InterfaceNode), the caller's until
+/// ReleaseInterfaceList; null when there is no memory.
+?*exec.List ObtainInterfaceList()
+/// A list ObtainInterfaceList made, freed.
+void ReleaseInterfaceList(?*exec.List list)
+/// A route (RTA_ tags) added: 0, or -1.
+i32 AddRouteTagList(?[*]const utility.TagItem tags)
+/// The route to RTA_Destination with RTA_NetMask, or the default route
+/// with RTA_DefaultGateway, taken away: 0, or -1.
+i32 DeleteRouteTagList(?[*]const utility.TagItem tags)
+/// A name server to ask, in network order: 0, or -1.
+i32 AddDomainNameServer(u32 address)
+/// A name server no longer asked: 0, or -1.
+i32 RemoveDomainNameServer(u32 address)
 ##end

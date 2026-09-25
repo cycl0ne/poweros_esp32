@@ -11,6 +11,7 @@ const libraries = @import("../libs/exec/libraries.zig");
 const bsd = @import("../libs/bsdsocket/bsdsocket.zig");
 const timer = @import("../devices/timer.zig");
 const utility = @import("../libs/utility/utility.zig");
+const exec = @import("../libs/exec/exec.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "bsdsocket.library";
@@ -45,6 +46,14 @@ pub const LVO = struct {
     pub const Listen = libraries.lvo(29);
     pub const Accept = libraries.lvo(30);
     pub const Shutdown = libraries.lvo(31);
+    pub const ConfigureInterfaceTagList = libraries.lvo(32);
+    pub const QueryInterfaceTagList = libraries.lvo(33);
+    pub const ObtainInterfaceList = libraries.lvo(34);
+    pub const ReleaseInterfaceList = libraries.lvo(35);
+    pub const AddRouteTagList = libraries.lvo(36);
+    pub const DeleteRouteTagList = libraries.lvo(37);
+    pub const AddDomainNameServer = libraries.lvo(38);
+    pub const RemoveDomainNameServer = libraries.lvo(39);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -78,6 +87,14 @@ pub const Fn = struct {
     pub const Listen = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
     pub const Accept = *const fn (*SocketBase, i32, ?*bsd.sockaddr, ?*u32) callconv(.c) i32;
     pub const Shutdown = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
+    pub const ConfigureInterfaceTagList = *const fn (*SocketBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const QueryInterfaceTagList = *const fn (*SocketBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const ObtainInterfaceList = *const fn (*SocketBase) callconv(.c) ?*exec.List;
+    pub const ReleaseInterfaceList = *const fn (*SocketBase, ?*exec.List) callconv(.c) void;
+    pub const AddRouteTagList = *const fn (*SocketBase, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const DeleteRouteTagList = *const fn (*SocketBase, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const AddDomainNameServer = *const fn (*SocketBase, u32) callconv(.c) i32;
+    pub const RemoveDomainNameServer = *const fn (*SocketBase, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -239,5 +256,49 @@ pub const SocketBase = opaque {
     /// No more receiving (SHUT_RD), sending (SHUT_WR) or either: 0, or -1.
     pub fn Shutdown(self: *SocketBase, socket: i32, how: i32) i32 {
         return libraries.call(self, LVO.Shutdown, Fn.Shutdown, .{ socket, how });
+    }
+
+    /// The interface called `name` changed while it runs: IFA_Address,
+    /// IFA_NetMask, IFA_Gateway, IFA_MTU. 0, or -1.
+    pub fn ConfigureInterfaceTagList(self: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.ConfigureInterfaceTagList, Fn.ConfigureInterfaceTagList, .{ name, tags });
+    }
+
+    /// What the interface called `name` is, into where each IFQ_ tag points:
+    /// 0, or -1.
+    pub fn QueryInterfaceTagList(self: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.QueryInterfaceTagList, Fn.QueryInterfaceTagList, .{ name, tags });
+    }
+
+    /// A list of every interface's name (InterfaceNode), the caller's until
+    /// ReleaseInterfaceList; null when there is no memory.
+    pub fn ObtainInterfaceList(self: *SocketBase) ?*exec.List {
+        return libraries.call(self, LVO.ObtainInterfaceList, Fn.ObtainInterfaceList, .{});
+    }
+
+    /// A list ObtainInterfaceList made, freed.
+    pub fn ReleaseInterfaceList(self: *SocketBase, list: ?*exec.List) void {
+        return libraries.call(self, LVO.ReleaseInterfaceList, Fn.ReleaseInterfaceList, .{list});
+    }
+
+    /// A route (RTA_ tags) added: 0, or -1.
+    pub fn AddRouteTagList(self: *SocketBase, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.AddRouteTagList, Fn.AddRouteTagList, .{tags});
+    }
+
+    /// The route to RTA_Destination with RTA_NetMask, or the default route
+    /// with RTA_DefaultGateway, taken away: 0, or -1.
+    pub fn DeleteRouteTagList(self: *SocketBase, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.DeleteRouteTagList, Fn.DeleteRouteTagList, .{tags});
+    }
+
+    /// A name server to ask, in network order: 0, or -1.
+    pub fn AddDomainNameServer(self: *SocketBase, address: u32) i32 {
+        return libraries.call(self, LVO.AddDomainNameServer, Fn.AddDomainNameServer, .{address});
+    }
+
+    /// A name server no longer asked: 0, or -1.
+    pub fn RemoveDomainNameServer(self: *SocketBase, address: u32) i32 {
+        return libraries.call(self, LVO.RemoveDomainNameServer, Fn.RemoveDomainNameServer, .{address});
     }
 };

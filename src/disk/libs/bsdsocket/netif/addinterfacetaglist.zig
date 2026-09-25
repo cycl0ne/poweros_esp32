@@ -30,14 +30,18 @@ const _task = @import("../task/_task.zig");
 /// - `name` - what the interface is called, "eth0": up to 15 characters,
 ///   not a name another interface has.
 /// - `tags` - `IFA_Device` (required) and `IFA_Unit`: the network device
-///   in DEVS:; `IFA_Address` (required), `IFA_NetMask`, `IFA_Gateway`: the
-///   interface's address on its net, the net's mask (255.255.255.0 unless
-///   given) and a gateway made the default route; `IFA_Reads`,
-///   `IFA_Writes`: how many requests the stack keeps with the device.
+///   in DEVS:; `IFA_Address` (required unless `IFA_Configure` is
+///   `IFCONFIGURE_DHCP`), `IFA_NetMask`, `IFA_Gateway`: the interface's
+///   address on its net, the net's mask (255.255.255.0 unless given) and
+///   a gateway made the default route; `IFA_MTU`: less than the link
+///   takes; `IFA_Reads`, `IFA_Writes`: how many requests the stack keeps
+///   with the device. Stack-wide: `IFA_NameServer` (any number),
+///   `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
-/// `EADDRINUSE` (the name is taken), `ENOBUFS` (no interface free),
+/// `EADDRINUSE` (the name is taken, or the device's unit has an
+/// interface already), `ENOBUFS` (no interface free),
 /// `ENXIO` (the device would not open, or would not go on line),
 /// `EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
 ///
@@ -89,17 +93,24 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     const address = bsd.ntohl(@truncate(ub.GetTagData(bsd.IFA_Address, 0, tags)));
     const netmask = bsd.ntohl(@truncate(ub.GetTagData(bsd.IFA_NetMask, bsd.htonl(0xFFFF_FF00), tags)));
     const gateway = bsd.ntohl(@truncate(ub.GetTagData(bsd.IFA_Gateway, 0, tags)));
+    const dhcp = ub.GetTagData(bsd.IFA_Configure, bsd.IFCONFIGURE_FIXED, tags) == bsd.IFCONFIGURE_DHCP;
+    const mtu: u32 = @truncate(ub.GetTagData(bsd.IFA_MTU, 0, tags));
     var name_length: usize = 0;
     while (name[name_length] != 0) name_length += 1;
-    if (device_name == null or address == 0 or name_length == 0 or name_length >= bsd.IFNAMSIZ) {
+    var device_length: usize = 0;
+    if (device_name) |text| {
+        while (text[device_length] != 0) device_length += 1;
+    }
+    if (device_name == null or device_length >= 64 or (address == 0 and !dhcp) or name_length == 0 or name_length >= bsd.IFNAMSIZ) {
         return _socket.fail(sb, bsd.EINVAL, "AddInterfaceTagList");
     }
     {
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
-        if (_netif.named(stack, name) != null) return _socket.fail(sb, bsd.EADDRINUSE, "AddInterfaceTagList");
+        if (_netif.named(stack, name) != null or onDevice(stack, device_name.?, unit)) return _socket.fail(sb, bsd.EADDRINUSE, "AddInterfaceTagList");
         if (_netif.free(stack) == null) return _socket.fail(sb, bsd.ENOBUFS, "AddInterfaceTagList");
     }
+    settings(stack, tags);
     if (!_task.start(stack)) return _socket.fail(sb, bsd.ENOMEM, "AddInterfaceTagList");
 
     const memory = sys.AllocMem(@sizeOf(device.Device), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
@@ -116,6 +127,8 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         sys.FreeMem(memory, @sizeOf(device.Device));
         return _socket.fail(sb, refused, "AddInterfaceTagList");
     }
+    @memcpy(link.name[0..device_length], device_name.?[0..device_length]);
+    link.unit = unit;
     const bps = link.bps();
     link.reads = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Reads, if (bps >= 100_000_000) 16 else if (bps >= 10_000_000) 8 else 4, tags))), device.reads_max);
     link.writes = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Writes, if (bps >= 100_000_000) 8 else if (bps >= 10_000_000) 4 else 2, tags))), device.writes_max);
@@ -124,7 +137,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
 
     const held = _lock.take(stack);
     defer _lock.give(stack, held);
-    const interface = if (_netif.named(stack, name) == null) _netif.free(stack) else null;
+    const interface = if (_netif.named(stack, name) == null and !onDevice(stack, device_name.?, unit)) _netif.free(stack) else null;
     const slot = interface orelse {
         sys.CloseDevice(&link.opened.req);
         sys.FreeMem(memory, @sizeOf(device.Device));
@@ -134,24 +147,62 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         .address = address,
         .netmask = netmask,
         .broadcast = address | ~netmask,
-        .mtu = link.mtu,
+        .mtu = if (mtu != 0) @min(mtu, link.mtu) else link.mtu,
         .used = 1,
         .up = 1,
+        .dhcp = @intFromBool(dhcp),
         .hardware = link.station,
         .transmit = &device.transmit,
         .device = link,
     };
     @memcpy(slot.name[0..name_length], name[0..name_length]);
     link.interface = slot;
-    _ = _route.add(stack, address, netmask, 0, slot);
-    if (gateway != 0) _ = _route.add(stack, 0, 0, gateway, slot);
+    if (address != 0) _ = _route.add(stack, address, netmask, 0, slot);
+    if (gateway != 0) _ = _route.setDefault(stack, gateway);
     // The interface keeps the library, so the task and the code stay.
     sys.Forbid();
     stack.lib.open_cnt += 1;
     sys.Permit();
     device.start(stack, link, &stack.port);
-    _arp.announce(stack, slot);
+    if (address != 0) _arp.announce(stack, slot);
     return 0;
+}
+
+/// Whether an interface runs on `device_name`'s `unit` already: one link,
+/// one interface.
+fn onDevice(stack: *StackBase, device_name: [*:0]const u8, unit: u32) bool {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0) continue;
+        const link: *device.Device = @ptrCast(@alignCast(interface.device orelse continue));
+        if (link.unit != unit) continue;
+        var at: usize = 0;
+        while (at < link.name.len and link.name[at] == device_name[at] and device_name[at] != 0) at += 1;
+        if (at < link.name.len and link.name[at] == device_name[at]) return true;
+    }
+    return false;
+}
+
+/// The stack-wide settings an interface's tags carry: name servers, the
+/// domain, the TCP ring sizes.
+fn settings(stack: *StackBase, tags: ?[*]const utility.TagItem) void {
+    const ub = stack.utility.?;
+    const held = _lock.take(stack);
+    defer _lock.give(stack, held);
+    var walk = tags;
+    while (ub.NextTagItem(&walk)) |item| {
+        switch (item.tag) {
+            bsd.IFA_NameServer => _ = @import("../names/_names.zig").addServer(stack, bsd.ntohl(@truncate(item.data))),
+            bsd.IFA_Domain => {
+                const text: [*:0]const u8 = @ptrFromInt(item.data);
+                var at: usize = 0;
+                while (at + 1 < stack.domain.len and text[at] != 0) : (at += 1) stack.domain[at] = text[at];
+                stack.domain[at] = 0;
+            },
+            bsd.IFA_TCPSendSpace => stack.tcp_send_space = @truncate(item.data),
+            bsd.IFA_TCPRecvSpace => stack.tcp_recv_space = @truncate(item.data),
+            else => {},
+        }
+    }
 }
 
 /// The device opened with the stack's copy calls, asked what it is, and

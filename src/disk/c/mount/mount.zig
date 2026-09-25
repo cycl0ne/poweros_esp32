@@ -104,9 +104,6 @@ const Keyword = enum(i32) {
     ehandler,
 };
 
-/// The longest a value or a name may be.
-const max_token = 128;
-
 const MSG_NOENTRY = "%s: no entry for %s in %s\n";
 const MSG_OPEN = "%s: can't open %s\n";
 const MSG_MOUNTED = "%s: %s is already mounted\n";
@@ -139,136 +136,10 @@ const Entry = struct {
 
 // --- reading the file -------------------------------------------------------
 
-const Kind = enum { word, string, number };
-
-/// The file, a character at a time, with where in it each token began.
-const Scanner = struct {
-    dl: *DosBase,
-    file: *dos.FileHandle,
-    last: u8 = ' ',
-    line: u32 = 1,
-    column: u32 = 0,
-    token: [max_token:0]u8 = @splat(0),
-    len: usize = 0,
-    kind: Kind = .word,
-    quoted: bool = false,
-    token_line: u32 = 1,
-    token_column: u32 = 0,
-    number: i32 = 0,
-
-    fn getCh(s: *Scanner) u8 {
-        const c = s.dl.FGetC(s.file);
-        if (s.last == '\n') {
-            s.line += 1;
-            s.column = 0;
-        }
-        s.column += 1;
-        s.last = if (c < 0) 0 else @intCast(c);
-        return s.last;
-    }
-
-    fn put(s: *Scanner, c: u8) void {
-        if (s.len < max_token) {
-            s.token[s.len] = c;
-            s.len += 1;
-        }
-    }
-
-    /// The next token. False at the end of the file.
-    fn next(s: *Scanner) bool {
-        s.len = 0;
-        s.quoted = false;
-        var c = s.last;
-        while (c == '\t' or c == ' ' or c == '\n' or c == '\r' or c == ';') {
-            while (c == '\t' or c == ' ' or c == '\n' or c == '\r' or c == ';') c = s.getCh();
-            // /* a comment, which may hold comments */
-            if (c == '/') {
-                s.token_line = s.line;
-                s.token_column = s.column;
-                c = s.getCh();
-                if (c == '*') {
-                    var deep: u32 = 1;
-                    var before: u8 = ' ';
-                    while (deep != 0 and c != 0) {
-                        c = s.getCh();
-                        if (c == '/' and before == '*') {
-                            deep -= 1;
-                            before = ' ';
-                        } else if (c == '*' and before == '/') {
-                            deep += 1;
-                            before = ' ';
-                        } else before = c;
-                    }
-                    c = s.getCh();
-                } else {
-                    s.put('/');
-                }
-            }
-        }
-        if (s.len == 0) {
-            s.token_line = s.line;
-            s.token_column = s.column;
-        }
-        if (c == '"') {
-            c = s.getCh();
-            while (c != '"' and c != '\n' and c != 0) {
-                s.put(c);
-                c = s.getCh();
-            }
-            if (c == '"') {
-                _ = s.getCh();
-                s.quoted = true;
-            }
-            s.kind = .string;
-        } else if (c == '=') {
-            s.put('=');
-            _ = s.getCh();
-            s.kind = .string;
-        } else {
-            while (c != '\t' and c != ' ' and c != '\n' and c != '\r' and c != ';' and c != '=' and c != 0) {
-                s.put(c);
-                c = s.getCh();
-            }
-            s.kind = if (s.len > 0 and s.asNumber()) .number else .word;
-        }
-        s.token[s.len] = 0;
-        return s.len > 0 or s.quoted;
-    }
-
-    /// Whether the token is a number, and what it is. Decimal, or
-    /// hexadecimal after `0x`, with a sign either way.
-    fn asNumber(s: *Scanner) bool {
-        if (s.quoted) return false;
-        var i: usize = 0;
-        var negate = false;
-        if (s.token[0] == '-') {
-            negate = true;
-            i = 1;
-        }
-        var base: u32 = 10;
-        if (s.token[i] == '0' and (s.token[i + 1] == 'x' or s.token[i + 1] == 'X')) {
-            base = 16;
-            i += 2;
-        }
-        var value: u32 = 0;
-        var digits: usize = 0;
-        while (i < s.len) : (i += 1) {
-            const c = s.token[i];
-            const d: u32 = switch (c) {
-                '0'...'9' => c - '0',
-                'a'...'f' => if (base == 16) c - 'a' + 10 else return false,
-                'A'...'F' => if (base == 16) c - 'A' + 10 else return false,
-                else => return false,
-            };
-            value = value *% base +% d;
-            digits += 1;
-        }
-        if (digits == 0) return false;
-        s.number = @bitCast(value);
-        if (negate) s.number = -s.number;
-        return true;
-    }
-};
+/// The file, a token at a time (sdk/libs/dos/keywords.zig).
+const Scanner = dos.keywords.Scanner;
+/// The longest a value or a name may be.
+const max_token = dos.keywords.max_token;
 
 /// The words a handshake is written with, and the letter each becomes.
 const handshakes = [_]struct { name: []const u8, letter: u8 }{
@@ -547,7 +418,7 @@ fn mountOne(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, file: [*:0]const 
     wanted[n] = ':';
     wanted[n + 1] = 0;
 
-    var s: Scanner = .{ .dl = dl, .file = fh };
+    var s = Scanner.ofFile(dl, fh);
     var entry: Entry = .{};
     var state: Scan = if (named) .device else .keyword;
     var found = !named;

@@ -42,6 +42,12 @@ pub const Interface = extern struct {
     /// tests' link between two stacks: every frame goes to `transmit` as
     /// it is.
     no_arp: u8 = 0,
+    /// The address comes from DHCP, one is bound now, or a link-local one
+    /// stands in while DHCP gets no answer.
+    dhcp: u8 = 0,
+    bound: u8 = 0,
+    link_local: u8 = 0,
+    pad3: u8 = 0,
     /// Its Ethernet address, for an interface on a device.
     hardware: [6]u8 = @splat(0),
     pad2: [2]u8 = .{ 0, 0 },

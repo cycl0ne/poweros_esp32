@@ -10,10 +10,14 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [Accept](#accept) - The next connection a listener took, as a socket of the caller's own, and the address it came from.
+- [AddDomainNameServer](#adddomainnameserver) - A name server added to the ones the resolver asks.
 - [AddInterfaceTagList](#addinterfacetaglist) - An interface on a network device, up and with its routes.
+- [AddRouteTagList](#addroutetaglist) - A route added: to a net or a host through a gateway, or the default route.
 - [Bind](#bind) - The local address and port a socket takes datagrams on and sends from.
 - [CloseSocket](#closesocket) - The socket closed and its descriptor free for the next Socket.
+- [ConfigureInterfaceTagList](#configureinterfacetaglist) - A running interface changed: its address, its net, the default route through it, its MTU.
 - [Connect](#connect) - A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
+- [DeleteRouteTagList](#deleteroutetaglist) - A route taken away: the one to a net or host, or the default route.
 - [Errno](#errno) - The error number of the opener's last call that failed.
 - [GetDTableSize](#getdtablesize) - How many sockets the opener may have open at once.
 - [GetPeerName](#getpeername) - The address and port the socket is connected to.
@@ -24,10 +28,14 @@ Generated from the source by `./zig build autodoc`.
 - [Inet_NtoA](#inet_ntoa) - An IPv4 address as dotted text, "10.0.2.15".
 - [IoctlSocket](#ioctlsocket) - A socket's control requests.
 - [Listen](#listen) - A stream socket made a listener: connections to its port are taken and wait for Accept.
+- [ObtainInterfaceList](#obtaininterfacelist) - A list of every interface's name, the caller's to walk.
 - [ObtainSocket](#obtainsocket) - The socket handed over under `id`, taken into the opener's table.
+- [QueryInterfaceTagList](#queryinterfacetaglist) - What an interface is, each answer where its tag points.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
 - [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from; for a stream socket, what has come on its connection.
+- [ReleaseInterfaceList](#releaseinterfacelist) - A list of interface names freed.
 - [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
+- [RemoveDomainNameServer](#removedomainnameserver) - A name server taken off the ones the resolver asks.
 - [RemoveInterface](#removeinterface) - The interface called `name` taken down: off the routes, its device closed, its slot free.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
 - [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to; for a stream socket, `length` bytes written to its connection.
@@ -104,6 +112,63 @@ var size: u32 = @sizeOf(bsd.sockaddr_in);
 const connection = sb.Accept(server, peer.any(), &size);
 ```
 
+## AddDomainNameServer
+
+A name server added to the ones the resolver asks.
+
+**SYNOPSIS**
+
+```zig
+fn AddDomainNameServer(base: *SocketBase, address: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -156.
+
+**INPUTS**
+
+- `address` - the server, in network order.
+
+**RESULT**
+
+0, or -1 with Errno(): `EINVAL` (0.0.0.0), `ENOBUFS` (there are
+`NAMESERVERS_MAX` already).
+
+**BEHAVIOR**
+
+The servers are asked in the order they were added; one that is on
+the list already stays where it is.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+DHCP and the interface files' `NameServer` add theirs the same way.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemoveDomainNameServer`, `GetHostByName`
+
+**EXAMPLES**
+
+```zig
+_ = sb.AddDomainNameServer(sb.Inet_Addr("10.0.2.3"));
+```
+
 ## AddInterfaceTagList
 
 An interface on a network device, up and with its routes.
@@ -123,15 +188,19 @@ fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const T
 - `name` - what the interface is called, "eth0": up to 15 characters,
   not a name another interface has.
 - `tags` - `IFA_Device` (required) and `IFA_Unit`: the network device
-  in DEVS:; `IFA_Address` (required), `IFA_NetMask`, `IFA_Gateway`: the
-  interface's address on its net, the net's mask (255.255.255.0 unless
-  given) and a gateway made the default route; `IFA_Reads`,
-  `IFA_Writes`: how many requests the stack keeps with the device.
+  in DEVS:; `IFA_Address` (required unless `IFA_Configure` is
+  `IFCONFIGURE_DHCP`), `IFA_NetMask`, `IFA_Gateway`: the interface's
+  address on its net, the net's mask (255.255.255.0 unless given) and
+  a gateway made the default route; `IFA_MTU`: less than the link
+  takes; `IFA_Reads`, `IFA_Writes`: how many requests the stack keeps
+  with the device. Stack-wide: `IFA_NameServer` (any number),
+  `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
 
 **RESULT**
 
 0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
-`EADDRINUSE` (the name is taken), `ENOBUFS` (no interface free),
+`EADDRINUSE` (the name is taken, or the device's unit has an
+interface already), `ENOBUFS` (no interface free),
 `ENXIO` (the device would not open, or would not go on line),
 `EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
 
@@ -180,6 +249,68 @@ const tags = [_]TagItem{
     .{},
 };
 if (sb.AddInterfaceTagList("eth0", &tags) < 0) return sb.Errno();
+```
+
+## AddRouteTagList
+
+A route added: to a net or a host through a gateway, or the default route.
+
+**SYNOPSIS**
+
+```zig
+fn AddRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -148.
+
+**INPUTS**
+
+- `tags` - `RTA_DefaultGateway` alone; or `RTA_Destination`,
+  `RTA_NetMask` (a host unless given) and `RTA_Gateway`. Addresses in
+  network order.
+
+**RESULT**
+
+0, or -1 with Errno(): `EINVAL` (no destination or no gateway),
+`ENETUNREACH` (the gateway is on no interface's net), `ENOBUFS` (the
+route list is full).
+
+**BEHAVIOR**
+
+A route goes out of the interface whose net holds its gateway. A
+default route replaces the one there was. Of the routes that hold an
+address, the one with the longest netmask is taken.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The tags are read and not kept.
+
+**NOTES**
+
+The routes to an interface's own net come and go with it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DeleteRouteTagList`, `AddInterfaceTagList`
+
+**EXAMPLES**
+
+```zig
+const tags = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway, .data = sb.Inet_Addr("10.0.2.2") }, .{} };
+_ = sb.AddRouteTagList(&tags);
 ```
 
 ## Bind
@@ -312,6 +443,69 @@ None known.
 defer _ = sb.CloseSocket(socket);
 ```
 
+## ConfigureInterfaceTagList
+
+A running interface changed: its address, its net, the default route through it, its MTU.
+
+**SYNOPSIS**
+
+```zig
+fn ConfigureInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -132.
+
+**INPUTS**
+
+- `name` - the interface, as it was added.
+- `tags` - `IFA_Address`, `IFA_NetMask` (network order), `IFA_Gateway`
+  (made the default route), `IFA_MTU`. What is not given stays.
+
+**RESULT**
+
+0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, or
+a gateway on no interface's net).
+
+**BEHAVIOR**
+
+A new address or netmask replaces the route to the interface's own
+net, and a new address is announced to the net (a gratuitous ARP). The
+MTU cannot go above what the link takes. Sockets bound to the old
+address stay, and send from an address the interface no longer has.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The tags are read and not kept.
+
+**NOTES**
+
+What DHCP does to an interface it has an address for, a program can do
+with this by hand.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddInterfaceTagList`, `QueryInterfaceTagList`, `AddRouteTagList`
+
+**EXAMPLES**
+
+```zig
+const tags = [_]TagItem{ .{ .tag = bsd.IFA_Address, .data = sb.Inet_Addr("10.0.2.16") }, .{} };
+_ = sb.ConfigureInterfaceTagList("eth0", &tags);
+```
+
 ## Connect
 
 A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
@@ -385,6 +579,64 @@ None known.
 ```zig
 var peer: bsd.sockaddr_in = .{ .sin_port = bsd.htons(7), .sin_addr = .{ .s_addr = sb.Inet_Addr("10.0.2.2") } };
 if (sb.Connect(socket, peer.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return sb.Errno();
+```
+
+## DeleteRouteTagList
+
+A route taken away: the one to a net or host, or the default route.
+
+**SYNOPSIS**
+
+```zig
+fn DeleteRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -152.
+
+**INPUTS**
+
+- `tags` - `RTA_Destination` and `RTA_NetMask` (a host unless given);
+  or `RTA_DefaultGateway`, with any value, for the default route.
+
+**RESULT**
+
+0, or -1 with Errno(): `EINVAL` (no destination), `ENXIO` (there is no
+such route).
+
+**BEHAVIOR**
+
+The route is found by its destination and netmask, as it was added.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The tags are read and not kept.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddRouteTagList`
+
+**EXAMPLES**
+
+```zig
+const tags = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway, .data = 0 }, .{} };
+_ = sb.DeleteRouteTagList(&tags);
 ```
 
 ## Errno
@@ -989,6 +1241,67 @@ _ = sb.Bind(server, here.anyConst(), @sizeOf(bsd.sockaddr_in));
 if (sb.Listen(server, 4) < 0) return sb.Errno();
 ```
 
+## ObtainInterfaceList
+
+A list of every interface's name, the caller's to walk.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainInterfaceList(base: *SocketBase) ?*List
+```
+
+**SINCE**
+
+1.0. LVO -140.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+A list of `InterfaceNode`s - lo0 first, then the others in the order
+they were added - or null with Errno() `ENOMEM`.
+
+**BEHAVIOR**
+
+The list is a copy made at the call: interfaces added or taken away
+afterwards do not change it. Each node's `ln_Name` points at its
+`name`.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller's, until ReleaseInterfaceList frees it.
+
+**NOTES**
+
+QueryInterfaceTagList tells about each name.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseInterfaceList`, `QueryInterfaceTagList`
+
+**EXAMPLES**
+
+```zig
+const list = sb.ObtainInterfaceList() orelse return;
+defer sb.ReleaseInterfaceList(list);
+var it = list.iterator();
+while (it.next()) |node| _ = Printf(dl, "%s\n", .{node.name.?});
+```
+
 ## ObtainSocket
 
 The socket handed over under `id`, taken into the opener's table.
@@ -1047,6 +1360,71 @@ None known.
 
 ```zig
 const socket = sb.ObtainSocket(id, bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+```
+
+## QueryInterfaceTagList
+
+What an interface is, each answer where its tag points.
+
+**SYNOPSIS**
+
+```zig
+fn QueryInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -136.
+
+**INPUTS**
+
+- `name` - the interface: "lo0", or as it was added.
+- `tags` - each an `IFQ_*` tag with a pointer to where its answer
+  goes: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Broadcast`, `IFQ_Gateway`
+  (u32, network order), `IFQ_MTU`, `IFQ_State` (IFSTATE_*),
+  `IFQ_DeviceUnit`, `IFQ_PacketsDropped` (u32), `IFQ_PacketsSent`,
+  `IFQ_PacketsReceived`, `IFQ_Speed` (u64), `IFQ_HardwareAddress`
+  ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0).
+
+**RESULT**
+
+0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (a tag
+there is not, or one with no pointer).
+
+**BEHAVIOR**
+
+The answers are taken together, under the stack's lock, so they
+belong to one moment.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`IFQ_DeviceName`'s string is the interface's, good while it is there.
+
+**NOTES**
+
+How AddNetInterface learns the address DHCP got.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainInterfaceList`, `ConfigureInterfaceTagList`
+
+**EXAMPLES**
+
+```zig
+var address: u32 = 0;
+const tags = [_]TagItem{ .{ .tag = bsd.IFQ_Address, .data = @intFromPtr(&address) }, .{} };
+if (sb.QueryInterfaceTagList("eth0", &tags) == 0) _ = Printf(dl, "%s\n", .{sb.Inet_NtoA(address)});
 ```
 
 ## Recv
@@ -1185,6 +1563,61 @@ var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
 ```
 
+## ReleaseInterfaceList
+
+A list of interface names freed.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseInterfaceList(base: *SocketBase, list: ?*List) void
+```
+
+**SINCE**
+
+1.0. LVO -144.
+
+**INPUTS**
+
+- `list` - what ObtainInterfaceList answered, or null.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list and its nodes are one block, freed at once.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone; its names with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainInterfaceList`
+
+**EXAMPLES**
+
+```zig
+sb.ReleaseInterfaceList(list);
+```
+
 ## ReleaseSocket
 
 The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
@@ -1247,6 +1680,61 @@ None known.
 ```zig
 const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
 // ... hand `id` to the task that will serve it
+```
+
+## RemoveDomainNameServer
+
+A name server taken off the ones the resolver asks.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveDomainNameServer(base: *SocketBase, address: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -160.
+
+**INPUTS**
+
+- `address` - the server, in network order.
+
+**RESULT**
+
+0, or -1 with Errno() `ENXIO`: it was not on the list.
+
+**BEHAVIOR**
+
+The servers after it move up.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddDomainNameServer`
+
+**EXAMPLES**
+
+```zig
+_ = sb.RemoveDomainNameServer(sb.Inet_Addr("10.0.2.3"));
 ```
 
 ## RemoveInterface

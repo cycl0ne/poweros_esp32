@@ -45,8 +45,10 @@ const image_dirs = [_][]const u8{
     "classes",
     "classes/gadgets",
     "devs",
-    // The network drivers, opened as networks/<name>.device.
+    // The network drivers, opened as networks/<name>.device, and the
+    // interfaces C:net/AddNetInterface brings up.
     "devs/networks",
+    "devs/NetInterfaces",
     // HANDLERS: - what a device is, for Mount to read, and the handlers
     // that are not in the ROM.
     "handlers",

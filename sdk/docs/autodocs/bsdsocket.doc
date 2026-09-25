@@ -1,10 +1,14 @@
 TABLE OF CONTENTS
 
 bsdsocket.library/Accept
+bsdsocket.library/AddDomainNameServer
 bsdsocket.library/AddInterfaceTagList
+bsdsocket.library/AddRouteTagList
 bsdsocket.library/Bind
 bsdsocket.library/CloseSocket
+bsdsocket.library/ConfigureInterfaceTagList
 bsdsocket.library/Connect
+bsdsocket.library/DeleteRouteTagList
 bsdsocket.library/Errno
 bsdsocket.library/GetDTableSize
 bsdsocket.library/GetPeerName
@@ -15,10 +19,14 @@ bsdsocket.library/Inet_Addr
 bsdsocket.library/Inet_NtoA
 bsdsocket.library/IoctlSocket
 bsdsocket.library/Listen
+bsdsocket.library/ObtainInterfaceList
 bsdsocket.library/ObtainSocket
+bsdsocket.library/QueryInterfaceTagList
 bsdsocket.library/Recv
 bsdsocket.library/RecvFrom
+bsdsocket.library/ReleaseInterfaceList
 bsdsocket.library/ReleaseSocket
+bsdsocket.library/RemoveDomainNameServer
 bsdsocket.library/RemoveInterface
 bsdsocket.library/Send
 bsdsocket.library/SendTo
@@ -79,6 +87,48 @@ bsdsocket.library/WaitSelect
 	    var peer: bsd.sockaddr_in = .{};
 	    var size: u32 = @sizeOf(bsd.sockaddr_in);
 	    const connection = sb.Accept(server, peer.any(), &size);
+bsdsocket.library/AddDomainNameServer    bsdsocket.library/AddDomainNameServer
+
+   NAME
+	AddDomainNameServer -- A name server added to the ones the resolver asks.
+
+   SYNOPSIS
+	    fn AddDomainNameServer(base: *SocketBase, address: u32) i32
+
+   SINCE
+	1.0. LVO -156.
+
+   INPUTS
+	- `address` - the server, in network order.
+
+   RESULT
+	0, or -1 with Errno(): `EINVAL` (0.0.0.0), `ENOBUFS` (there are
+	`NAMESERVERS_MAX` already).
+
+   BEHAVIOR
+	The servers are asked in the order they were added; one that is on
+	the list already stays where it is.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	DHCP and the interface files' `NameServer` add theirs the same way.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RemoveDomainNameServer`, `GetHostByName`
+
+   EXAMPLES
+	    _ = sb.AddDomainNameServer(sb.Inet_Addr("10.0.2.3"));
 bsdsocket.library/AddInterfaceTagList    bsdsocket.library/AddInterfaceTagList
 
    NAME
@@ -94,14 +144,18 @@ bsdsocket.library/WaitSelect
 	- `name` - what the interface is called, "eth0": up to 15 characters,
 	  not a name another interface has.
 	- `tags` - `IFA_Device` (required) and `IFA_Unit`: the network device
-	  in DEVS:; `IFA_Address` (required), `IFA_NetMask`, `IFA_Gateway`: the
-	  interface's address on its net, the net's mask (255.255.255.0 unless
-	  given) and a gateway made the default route; `IFA_Reads`,
-	  `IFA_Writes`: how many requests the stack keeps with the device.
+	  in DEVS:; `IFA_Address` (required unless `IFA_Configure` is
+	  `IFCONFIGURE_DHCP`), `IFA_NetMask`, `IFA_Gateway`: the interface's
+	  address on its net, the net's mask (255.255.255.0 unless given) and
+	  a gateway made the default route; `IFA_MTU`: less than the link
+	  takes; `IFA_Reads`, `IFA_Writes`: how many requests the stack keeps
+	  with the device. Stack-wide: `IFA_NameServer` (any number),
+	  `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
 
    RESULT
 	0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
-	`EADDRINUSE` (the name is taken), `ENOBUFS` (no interface free),
+	`EADDRINUSE` (the name is taken, or the device's unit has an
+	interface already), `ENOBUFS` (no interface free),
 	`ENXIO` (the device would not open, or would not go on line),
 	`EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
 
@@ -142,6 +196,53 @@ bsdsocket.library/WaitSelect
 	        .{},
 	    };
 	    if (sb.AddInterfaceTagList("eth0", &tags) < 0) return sb.Errno();
+bsdsocket.library/AddRouteTagList            bsdsocket.library/AddRouteTagList
+
+   NAME
+	AddRouteTagList -- A route added: to a net or a host through a gateway, or the default route.
+
+   SYNOPSIS
+	    fn AddRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
+
+   SINCE
+	1.0. LVO -148.
+
+   INPUTS
+	- `tags` - `RTA_DefaultGateway` alone; or `RTA_Destination`,
+	  `RTA_NetMask` (a host unless given) and `RTA_Gateway`. Addresses in
+	  network order.
+
+   RESULT
+	0, or -1 with Errno(): `EINVAL` (no destination or no gateway),
+	`ENETUNREACH` (the gateway is on no interface's net), `ENOBUFS` (the
+	route list is full).
+
+   BEHAVIOR
+	A route goes out of the interface whose net holds its gateway. A
+	default route replaces the one there was. Of the routes that hold an
+	address, the one with the longest netmask is taken.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The tags are read and not kept.
+
+   NOTES
+	The routes to an interface's own net come and go with it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteRouteTagList`, `AddInterfaceTagList`
+
+   EXAMPLES
+	    const tags = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway, .data = sb.Inet_Addr("10.0.2.2") }, .{} };
+	    _ = sb.AddRouteTagList(&tags);
 bsdsocket.library/Bind                                  bsdsocket.library/Bind
 
    NAME
@@ -242,6 +343,54 @@ bsdsocket.library/WaitSelect
 
    EXAMPLES
 	    defer _ = sb.CloseSocket(socket);
+bsdsocket.library/ConfigureInterfaceTagList bsdsocket.library/ConfigureInterfaceTagList
+
+   NAME
+	ConfigureInterfaceTagList -- A running interface changed: its address, its net, the default route through it, its MTU.
+
+   SYNOPSIS
+	    fn ConfigureInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
+
+   SINCE
+	1.0. LVO -132.
+
+   INPUTS
+	- `name` - the interface, as it was added.
+	- `tags` - `IFA_Address`, `IFA_NetMask` (network order), `IFA_Gateway`
+	  (made the default route), `IFA_MTU`. What is not given stays.
+
+   RESULT
+	0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, or
+	a gateway on no interface's net).
+
+   BEHAVIOR
+	A new address or netmask replaces the route to the interface's own
+	net, and a new address is announced to the net (a gratuitous ARP). The
+	MTU cannot go above what the link takes. Sockets bound to the old
+	address stay, and send from an address the interface no longer has.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The tags are read and not kept.
+
+   NOTES
+	What DHCP does to an interface it has an address for, a program can do
+	with this by hand.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddInterfaceTagList`, `QueryInterfaceTagList`, `AddRouteTagList`
+
+   EXAMPLES
+	    const tags = [_]TagItem{ .{ .tag = bsd.IFA_Address, .data = sb.Inet_Addr("10.0.2.16") }, .{} };
+	    _ = sb.ConfigureInterfaceTagList("eth0", &tags);
 bsdsocket.library/Connect                            bsdsocket.library/Connect
 
    NAME
@@ -302,6 +451,49 @@ bsdsocket.library/WaitSelect
    EXAMPLES
 	    var peer: bsd.sockaddr_in = .{ .sin_port = bsd.htons(7), .sin_addr = .{ .s_addr = sb.Inet_Addr("10.0.2.2") } };
 	    if (sb.Connect(socket, peer.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return sb.Errno();
+bsdsocket.library/DeleteRouteTagList      bsdsocket.library/DeleteRouteTagList
+
+   NAME
+	DeleteRouteTagList -- A route taken away: the one to a net or host, or the default route.
+
+   SYNOPSIS
+	    fn DeleteRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
+
+   SINCE
+	1.0. LVO -152.
+
+   INPUTS
+	- `tags` - `RTA_Destination` and `RTA_NetMask` (a host unless given);
+	  or `RTA_DefaultGateway`, with any value, for the default route.
+
+   RESULT
+	0, or -1 with Errno(): `EINVAL` (no destination), `ENXIO` (there is no
+	such route).
+
+   BEHAVIOR
+	The route is found by its destination and netmask, as it was added.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The tags are read and not kept.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddRouteTagList`
+
+   EXAMPLES
+	    const tags = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway, .data = 0 }, .{} };
+	    _ = sb.DeleteRouteTagList(&tags);
 bsdsocket.library/Errno                                bsdsocket.library/Errno
 
    NAME
@@ -754,6 +946,52 @@ bsdsocket.library/WaitSelect
 	    var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(23) };
 	    _ = sb.Bind(server, here.anyConst(), @sizeOf(bsd.sockaddr_in));
 	    if (sb.Listen(server, 4) < 0) return sb.Errno();
+bsdsocket.library/ObtainInterfaceList    bsdsocket.library/ObtainInterfaceList
+
+   NAME
+	ObtainInterfaceList -- A list of every interface's name, the caller's to walk.
+
+   SYNOPSIS
+	    fn ObtainInterfaceList(base: *SocketBase) ?*List
+
+   SINCE
+	1.0. LVO -140.
+
+   INPUTS
+	None.
+
+   RESULT
+	A list of `InterfaceNode`s - lo0 first, then the others in the order
+	they were added - or null with Errno() `ENOMEM`.
+
+   BEHAVIOR
+	The list is a copy made at the call: interfaces added or taken away
+	afterwards do not change it. Each node's `ln_Name` points at its
+	`name`.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's, until ReleaseInterfaceList frees it.
+
+   NOTES
+	QueryInterfaceTagList tells about each name.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ReleaseInterfaceList`, `QueryInterfaceTagList`
+
+   EXAMPLES
+	    const list = sb.ObtainInterfaceList() orelse return;
+	    defer sb.ReleaseInterfaceList(list);
+	    var it = list.iterator();
+	    while (it.next()) |node| _ = Printf(dl, "%s\n", .{node.name.?});
 bsdsocket.library/ObtainSocket                  bsdsocket.library/ObtainSocket
 
    NAME
@@ -799,6 +1037,56 @@ bsdsocket.library/WaitSelect
 
    EXAMPLES
 	    const socket = sb.ObtainSocket(id, bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+bsdsocket.library/QueryInterfaceTagList bsdsocket.library/QueryInterfaceTagList
+
+   NAME
+	QueryInterfaceTagList -- What an interface is, each answer where its tag points.
+
+   SYNOPSIS
+	    fn QueryInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
+
+   SINCE
+	1.0. LVO -136.
+
+   INPUTS
+	- `name` - the interface: "lo0", or as it was added.
+	- `tags` - each an `IFQ_*` tag with a pointer to where its answer
+	  goes: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Broadcast`, `IFQ_Gateway`
+	  (u32, network order), `IFQ_MTU`, `IFQ_State` (IFSTATE_*),
+	  `IFQ_DeviceUnit`, `IFQ_PacketsDropped` (u32), `IFQ_PacketsSent`,
+	  `IFQ_PacketsReceived`, `IFQ_Speed` (u64), `IFQ_HardwareAddress`
+	  ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0).
+
+   RESULT
+	0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (a tag
+	there is not, or one with no pointer).
+
+   BEHAVIOR
+	The answers are taken together, under the stack's lock, so they
+	belong to one moment.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`IFQ_DeviceName`'s string is the interface's, good while it is there.
+
+   NOTES
+	How AddNetInterface learns the address DHCP got.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ObtainInterfaceList`, `ConfigureInterfaceTagList`
+
+   EXAMPLES
+	    var address: u32 = 0;
+	    const tags = [_]TagItem{ .{ .tag = bsd.IFQ_Address, .data = @intFromPtr(&address) }, .{} };
+	    if (sb.QueryInterfaceTagList("eth0", &tags) == 0) _ = Printf(dl, "%s\n", .{sb.Inet_NtoA(address)});
 bsdsocket.library/Recv                                  bsdsocket.library/Recv
 
    NAME
@@ -905,6 +1193,46 @@ bsdsocket.library/WaitSelect
 	    var from: bsd.sockaddr_in = .{};
 	    var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 	    const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
+bsdsocket.library/ReleaseInterfaceList  bsdsocket.library/ReleaseInterfaceList
+
+   NAME
+	ReleaseInterfaceList -- A list of interface names freed.
+
+   SYNOPSIS
+	    fn ReleaseInterfaceList(base: *SocketBase, list: ?*List) void
+
+   SINCE
+	1.0. LVO -144.
+
+   INPUTS
+	- `list` - what ObtainInterfaceList answered, or null.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The list and its nodes are one block, freed at once.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The list is gone; its names with it.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ObtainInterfaceList`
+
+   EXAMPLES
+	    sb.ReleaseInterfaceList(list);
 bsdsocket.library/ReleaseSocket                bsdsocket.library/ReleaseSocket
 
    NAME
@@ -954,6 +1282,46 @@ bsdsocket.library/WaitSelect
    EXAMPLES
 	    const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
 	    // ... hand `id` to the task that will serve it
+bsdsocket.library/RemoveDomainNameServer bsdsocket.library/RemoveDomainNameServer
+
+   NAME
+	RemoveDomainNameServer -- A name server taken off the ones the resolver asks.
+
+   SYNOPSIS
+	    fn RemoveDomainNameServer(base: *SocketBase, address: u32) i32
+
+   SINCE
+	1.0. LVO -160.
+
+   INPUTS
+	- `address` - the server, in network order.
+
+   RESULT
+	0, or -1 with Errno() `ENXIO`: it was not on the list.
+
+   BEHAVIOR
+	The servers after it move up.
+
+   CONTEXT
+	- Waits: only for the stack's lock.
+	- Interrupts: no.
+	- Forbid: not held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddDomainNameServer`
+
+   EXAMPLES
+	    _ = sb.RemoveDomainNameServer(sb.Inet_Addr("10.0.2.3"));
 bsdsocket.library/RemoveInterface            bsdsocket.library/RemoveInterface
 
    NAME

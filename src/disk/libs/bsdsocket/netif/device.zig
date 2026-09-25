@@ -79,6 +79,9 @@ pub const Device = extern struct {
     bps_high: u32 = 0,
     station: [6]u8 = @splat(0),
     pad2: [2]u8 = .{ 0, 0 },
+    /// The device's name and unit, as the interface was added with them.
+    name: [64]u8 = @splat(0),
+    unit: u32 = 0,
 
     pub fn bps(link: *const Device) u64 {
         return @as(u64, link.bps_high) << 32 | link.bps_low;

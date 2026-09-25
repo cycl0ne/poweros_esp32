@@ -242,14 +242,16 @@ pub fn create(stack: *StackBase, socket: *Socket) bool {
     tcb.timer_retransmit.fire = &timers.retransmitExpired;
     tcb.timer_delack.fire = &timers.delackExpired;
     tcb.timer_long.fire = &timers.longExpired;
-    if (!tcb.send.allocate(sys, ring_default) or !tcb.receive.allocate(sys, ring_default)) {
+    const send_size = @max(ring_min, @min(stack.tcp_send_space, ring_max));
+    const receive_size = @max(ring_min, @min(stack.tcp_recv_space, ring_max));
+    if (!tcb.send.allocate(sys, send_size) or !tcb.receive.allocate(sys, receive_size)) {
         tcb.send.free(sys);
         sys.FreeMem(memory, @sizeOf(Tcb));
         return false;
     }
     socket.tcb = tcb;
-    socket.receive_limit = ring_default;
-    socket.send_limit = ring_default;
+    socket.receive_limit = receive_size;
+    socket.send_limit = send_size;
     return true;
 }
 

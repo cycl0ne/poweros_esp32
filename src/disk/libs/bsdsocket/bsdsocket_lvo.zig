@@ -44,6 +44,14 @@ const ObtainSocket = @import("socket/obtainsocket.zig").ObtainSocket;
 const Listen = @import("socket/listen.zig").Listen;
 const Accept = @import("socket/accept.zig").Accept;
 const Shutdown = @import("socket/shutdown.zig").Shutdown;
+const ConfigureInterfaceTagList = @import("netif/configureinterfacetaglist.zig").ConfigureInterfaceTagList;
+const QueryInterfaceTagList = @import("netif/queryinterfacetaglist.zig").QueryInterfaceTagList;
+const ObtainInterfaceList = @import("netif/obtaininterfacelist.zig").ObtainInterfaceList;
+const ReleaseInterfaceList = @import("netif/releaseinterfacelist.zig").ReleaseInterfaceList;
+const AddRouteTagList = @import("route/addroutetaglist.zig").AddRouteTagList;
+const DeleteRouteTagList = @import("route/deleteroutetaglist.zig").DeleteRouteTagList;
+const AddDomainNameServer = @import("names/adddomainnameserver.zig").AddDomainNameServer;
+const RemoveDomainNameServer = @import("names/removedomainnameserver.zig").RemoveDomainNameServer;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -97,6 +105,14 @@ const contract_files = [_][]const u8{
     @embedFile("socket/listen.zig"),
     @embedFile("socket/accept.zig"),
     @embedFile("socket/shutdown.zig"),
+    @embedFile("netif/configureinterfacetaglist.zig"),
+    @embedFile("netif/queryinterfacetaglist.zig"),
+    @embedFile("netif/obtaininterfacelist.zig"),
+    @embedFile("netif/releaseinterfacelist.zig"),
+    @embedFile("route/addroutetaglist.zig"),
+    @embedFile("route/deleteroutetaglist.zig"),
+    @embedFile("names/adddomainnameserver.zig"),
+    @embedFile("names/removedomainnameserver.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -183,6 +199,30 @@ fn lvoAccept(sb: *SocketBase, socket: i32, address: ?*bsd.sockaddr, address_leng
 fn lvoShutdown(sb: *SocketBase, socket: i32, how: i32) callconv(.c) i32 {
     return Shutdown(sb, socket, how);
 }
+fn lvoConfigureInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
+    return ConfigureInterfaceTagList(sb, name, tags);
+}
+fn lvoQueryInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
+    return QueryInterfaceTagList(sb, name, tags);
+}
+fn lvoObtainInterfaceList(sb: *SocketBase) callconv(.c) ?*exec.List {
+    return ObtainInterfaceList(sb);
+}
+fn lvoReleaseInterfaceList(sb: *SocketBase, list: ?*exec.List) callconv(.c) void {
+    return ReleaseInterfaceList(sb, list);
+}
+fn lvoAddRouteTagList(sb: *SocketBase, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
+    return AddRouteTagList(sb, tags);
+}
+fn lvoDeleteRouteTagList(sb: *SocketBase, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
+    return DeleteRouteTagList(sb, tags);
+}
+fn lvoAddDomainNameServer(sb: *SocketBase, address: u32) callconv(.c) i32 {
+    return AddDomainNameServer(sb, address);
+}
+fn lvoRemoveDomainNameServer(sb: *SocketBase, address: u32) callconv(.c) i32 {
+    return RemoveDomainNameServer(sb, address);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -219,6 +259,14 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoListen),
     vec(lvoAccept),
     vec(lvoShutdown),
+    vec(lvoConfigureInterfaceTagList),
+    vec(lvoQueryInterfaceTagList),
+    vec(lvoObtainInterfaceList),
+    vec(lvoReleaseInterfaceList),
+    vec(lvoAddRouteTagList),
+    vec(lvoDeleteRouteTagList),
+    vec(lvoAddDomainNameServer),
+    vec(lvoRemoveDomainNameServer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

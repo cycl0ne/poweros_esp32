@@ -125,6 +125,14 @@ pub const StackBase = extern struct {
     pad3: [2]u8 = .{ 0, 0 },
     /// The time, for a stack without its task.
     fixed_time: u64 align(4) = 0,
+    /// The name servers asked, in the chip's order, and how many there are.
+    nameservers: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
+    nameserver_count: u32 = 0,
+    /// The domain a name without dots is looked for in.
+    domain: [64]u8 = @splat(0),
+    /// The ring sizes of a new TCP connection.
+    tcp_send_space: u32 = 8 * 1024,
+    tcp_recv_space: u32 = 8 * 1024,
     /// dos.library, opened when the stack task is first needed.
     dos: ?*DosBase = null,
     /// The stack task: the process that keeps the reads on every device

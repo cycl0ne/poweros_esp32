@@ -286,5 +286,78 @@ pub const IFA_Gateway: u32 = IFA_Dummy + 5;
 pub const IFA_Reads: u32 = IFA_Dummy + 6;
 pub const IFA_Writes: u32 = IFA_Dummy + 7;
 
+/// ti_Data: how the interface gets its address: IFCONFIGURE_FIXED (the
+/// default, IFA_Address) or IFCONFIGURE_DHCP.
+pub const IFA_Configure: u32 = IFA_Dummy + 8;
+/// ti_Data: the most bytes of IP one packet may carry, below the link's.
+pub const IFA_MTU: u32 = IFA_Dummy + 9;
+/// ti_Data: a name server to ask, in network order; may be given more
+/// than once.
+pub const IFA_NameServer: u32 = IFA_Dummy + 10;
+/// ti_Data: the domain a name without dots is looked for in, a C string.
+pub const IFA_Domain: u32 = IFA_Dummy + 11;
+/// ti_Data: the ring sizes of every TCP connection made from now on.
+pub const IFA_TCPSendSpace: u32 = IFA_Dummy + 12;
+pub const IFA_TCPRecvSpace: u32 = IFA_Dummy + 13;
+
+pub const IFCONFIGURE_FIXED: u32 = 0;
+pub const IFCONFIGURE_DHCP: u32 = 1;
+
+/// QueryInterfaceTagList's tags: ti_Data points at where the answer goes.
+pub const IFQ_Dummy: u32 = TAG_USER + 0xB3000;
+/// u32s, addresses in network order.
+pub const IFQ_Address: u32 = IFQ_Dummy + 1;
+pub const IFQ_NetMask: u32 = IFQ_Dummy + 2;
+pub const IFQ_Broadcast: u32 = IFQ_Dummy + 3;
+/// The default route's gateway if it goes through this interface, else 0.
+pub const IFQ_Gateway: u32 = IFQ_Dummy + 4;
+pub const IFQ_MTU: u32 = IFQ_Dummy + 5;
+/// IFSTATE_* bits.
+pub const IFQ_State: u32 = IFQ_Dummy + 6;
+/// [6]u8: the link's hardware address; zeros for lo0.
+pub const IFQ_HardwareAddress: u32 = IFQ_Dummy + 7;
+/// u64s: packets out, packets in; u32: packets that could not go.
+pub const IFQ_PacketsSent: u32 = IFQ_Dummy + 8;
+pub const IFQ_PacketsReceived: u32 = IFQ_Dummy + 9;
+pub const IFQ_PacketsDropped: u32 = IFQ_Dummy + 10;
+/// [*:0]const u8, and u32: the network device and unit, or null for lo0.
+pub const IFQ_DeviceName: u32 = IFQ_Dummy + 11;
+pub const IFQ_DeviceUnit: u32 = IFQ_Dummy + 12;
+/// u64: the link's speed in bits per second.
+pub const IFQ_Speed: u32 = IFQ_Dummy + 13;
+
+/// IFQ_State's bits.
+pub const IFSTATE_UP: u32 = 1 << 0;
+pub const IFSTATE_LOOPBACK: u32 = 1 << 1;
+/// The address comes from DHCP; and DHCP has one bound now.
+pub const IFSTATE_DHCP: u32 = 1 << 2;
+pub const IFSTATE_BOUND: u32 = 1 << 3;
+/// The address is a link-local one, taken while DHCP gets no answer.
+pub const IFSTATE_LINKLOCAL: u32 = 1 << 4;
+
+/// ConfigureInterfaceTagList takes the IFA_ tags that make sense on a
+/// running interface: IFA_Address, IFA_NetMask, IFA_Gateway, IFA_MTU.
+/// AddRouteTagList's and DeleteRouteTagList's tags, addresses in network
+/// order.
+pub const RTA_Dummy: u32 = TAG_USER + 0xB4000;
+/// The net or host the route is to, and its netmask (a host unless
+/// given).
+pub const RTA_Destination: u32 = RTA_Dummy + 1;
+pub const RTA_NetMask: u32 = RTA_Dummy + 2;
+/// The station on an interface's net the packets go through.
+pub const RTA_Gateway: u32 = RTA_Dummy + 3;
+/// The default route, through this gateway.
+pub const RTA_DefaultGateway: u32 = RTA_Dummy + 4;
+
+/// ObtainInterfaceList's nodes: each interface's name, in a list that is
+/// the caller's until ReleaseInterfaceList.
+pub const InterfaceNode = extern struct {
+    node: @import("../exec/nodes.zig").Node = .{},
+    name: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// How many name servers the stack asks, at most.
+pub const NAMESERVERS_MAX = 4;
+
 /// How long an interface's name may be.
 pub const IFNAMSIZ = 16;

@@ -12,6 +12,8 @@ test {
     _ = @import("libs/bsdsocket/tests/arp.zig");
     _ = @import("libs/bsdsocket/tests/icmp.zig");
     _ = @import("libs/bsdsocket/tests/tcp.zig");
+    _ = @import("libs/bsdsocket/tests/netif.zig");
+    _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("handlers/fat/_fat.zig");
     _ = @import("handlers/fat/testmedia.zig");
     _ = @import("handlers/fat/cache.zig");

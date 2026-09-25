@@ -43,6 +43,43 @@ pub fn add(stack: *StackBase, destination: u32, netmask: u32, gateway: u32, inte
     return false;
 }
 
+/// The route to `destination` with `netmask` taken away; false if there
+/// is none.
+pub fn remove(stack: *StackBase, destination: u32, netmask: u32) bool {
+    for (&stack.routes) |*route| {
+        if (route.used != 0 and route.destination == destination & netmask and route.netmask == netmask) {
+            route.* = .{};
+            return true;
+        }
+    }
+    return false;
+}
+
+/// The default route through `gateway`, in place of any there was; false
+/// when no interface is on the gateway's net, or the list is full.
+pub fn setDefault(stack: *StackBase, gateway: u32) bool {
+    const interface = onNet(stack, gateway) orelse return false;
+    _ = remove(stack, 0, 0);
+    return add(stack, 0, 0, gateway, interface);
+}
+
+/// The interface, not lo0, whose net holds `address`.
+pub fn onNet(stack: *StackBase, address: u32) ?*Interface {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0 or interface.loopback != 0 or interface.address == 0) continue;
+        if (interface.holds(address)) return interface;
+    }
+    return null;
+}
+
+/// The default route's gateway, if it goes through `interface`.
+pub fn defaultThrough(stack: *StackBase, interface: *Interface) u32 {
+    for (&stack.routes) |*route| {
+        if (route.used != 0 and route.netmask == 0 and route.interface == interface) return route.gateway;
+    }
+    return 0;
+}
+
 /// Every route through `interface` taken away, when it goes.
 pub fn removeAll(stack: *StackBase, interface: *Interface) void {
     for (&stack.routes) |*route| {

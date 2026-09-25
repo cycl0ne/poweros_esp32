@@ -40,7 +40,7 @@ const tests = [_][]const u8{
     "screens",    "layout",   "classes",  "gadgets", "listview",
     "colorwheel", "tapedeck", "pointer",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface" };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
@@ -97,6 +97,7 @@ pub const files = [_]File{
     .{ .disk = "s/startup-sequence", .source = "s/startup-sequence" },
     .{ .disk = "s/shell-startup", .source = "s/shell-startup" },
     .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
 };
 
 pub fn build(b: *std.Build) void {
