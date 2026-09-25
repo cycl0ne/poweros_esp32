@@ -235,10 +235,15 @@ pub fn blitInto(
         // A surface moved over itself has to be walked away from where it
         // is going, or it would read pixels it has already written - the
         // reason a memmove exists. Which surface this is depends on the
-        // piece, so the question is asked per piece.
+        // piece, so the question is asked per piece. Where the pixels go
+        // is asked on the surface itself: a row `y` of the destination is
+        // the surface's row `y + r.dy`, and it is read from the source's
+        // row `y - dy`. `dy` alone is not the answer - the destination is
+        // counted in the RastPort and the source in the surface, and a
+        // window's RastPort starts wherever the window is.
         const same = src.pixels.? == r.surface.pixels.?;
-        const back_rows = same and dy > 0;
-        const back_cols = same and dx > 0;
+        const back_rows = same and r.dy + dy > 0;
+        const back_cols = same and r.dx + dx > 0;
 
         var i: i32 = 0;
         while (i < r.rect.height()) : (i += 1) {

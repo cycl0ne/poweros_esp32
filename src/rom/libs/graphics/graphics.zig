@@ -2549,9 +2549,29 @@ test "a scroll reads through the clip, so a window moves its own pixels" {
     try testing.expectEqual(@as(u16, 0), pixelAt(&display, 0, 0));
     try testing.expectEqual(@as(u16, 0), pixelAt(&display, 12, 2));
 
-    // Down by one, which reads its rows from the end.
+    // Down by one, which reads its rows from the end. Every row moves, the
+    // last one too: a copy walked the wrong way would smear the first row
+    // down through the others.
+    for (pens, 0..) |pen, row| {
+        const one = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = pen }, .{} };
+        base(gb).SetRPAttrs(rp, &one);
+        base(gb).RectFill(rp, &.{ .min_x = 0, .min_y = @intCast(row), .max_x = 8, .max_y = @intCast(row + 1) });
+    }
     try testing.expect(base(gb).ScrollRaster(rp, 0, -1, &.{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = 4 }));
-    try testing.expectEqual(green, pixelAt(&display, 4, 3));
+    try testing.expectEqual(red, pixelAt(&display, 4, 3));
+    try testing.expectEqual(green, pixelAt(&display, 4, 4));
+    try testing.expectEqual(blue, pixelAt(&display, 4, 5));
+    // And across: right by one, read from the end of each row.
+    const across = [_]u32{ graphics.penRGB(255, 0, 0), graphics.penRGB(0, 255, 0), graphics.penRGB(0, 0, 255) };
+    for (across, 0..) |pen, column| {
+        const one = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = pen }, .{} };
+        base(gb).SetRPAttrs(rp, &one);
+        base(gb).RectFill(rp, &.{ .min_x = @intCast(column), .min_y = 0, .max_x = @intCast(column + 1), .max_y = 4 });
+    }
+    try testing.expect(base(gb).ScrollRaster(rp, -1, 0, &.{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = 4 }));
+    try testing.expectEqual(red, pixelAt(&display, 5, 2));
+    try testing.expectEqual(green, pixelAt(&display, 6, 2));
+    try testing.expectEqual(blue, pixelAt(&display, 7, 2));
 
     // Covered: a window kept in two places moves both halves, and each
     // half comes from where it is kept.
