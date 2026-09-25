@@ -203,6 +203,7 @@ pub fn setUp() !*IntuitionBase {
 /// Nothing here expunges itself, so the test gives back every class, every
 /// open and every library.
 pub fn tearDown(ib: *IntuitionBase) !void {
+    try testing.expect(ib.iface().FreeClass(ib.pointer_class));
     try testing.expect(ib.iface().FreeClass(ib.window_class));
     try testing.expect(ib.iface().FreeClass(ib.layout_class));
     try testing.expect(ib.iface().FreeClass(ib.string_class));
@@ -280,7 +281,7 @@ test "intuition.library: made from its tag, with its classes public" {
     try testing.expectEqual(ib.button_class.?, ib.iface().FindClass(classusr.BUTTONGCLASS).?);
     try testing.expectEqual(ib.root_class.?, ib.gadget_class.?.super.?);
     try testing.expectEqual(ib.gadget_class.?, ib.button_class.?.super.?);
-    try testing.expectEqual(@as(u32, 4), ib.root_class.?.subclass_count);
+    try testing.expectEqual(@as(u32, 5), ib.root_class.?.subclass_count);
     try testing.expect(ib.root_class.?.super == null);
 
     // And the rest of them, each from the one it is a kind of.
@@ -300,6 +301,8 @@ test "intuition.library: made from its tag, with its classes public" {
     try testing.expectEqual(ib.group_class.?, ib.layout_class.?.super.?);
     try testing.expectEqual(ib.window_class.?, ib.iface().FindClass(classusr.WINDOWCLASS).?);
     try testing.expectEqual(ib.root_class.?, ib.window_class.?.super.?);
+    try testing.expectEqual(ib.pointer_class.?, ib.iface().FindClass(classusr.POINTERCLASS).?);
+    try testing.expectEqual(ib.root_class.?, ib.pointer_class.?.super.?);
 
     try testing.expectEqual(&ib.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, intuition_init.LIBRARY_VERSION).?);
     kexec.CloseLibrary(kexec.SysBase, &ib.lib);
@@ -6592,6 +6595,151 @@ test "IDCMP_SIZEVERIFY: sizing waits for the reply, is given up by letting go or
     try testing.expectEqual(@as(i32, 30), wnd.width);
     try testing.expect(drainMessages(ib, w, &got) >= 1);
     try testing.expectEqual(wn.IDCMP_NEWSIZE, got[0].class);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "the pointer: seen once a mouse is, the active window's, busy now or after a while" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const pc = intuition.pointerclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const log = &display.state.log;
+    const pointer = @import("input/pointer.zig");
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 4 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const kw: *_window.Window = @ptrCast(@alignCast(w));
+    // The default picture on the board, not shown: nothing but a finger
+    // has pointed yet.
+    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
+    try testing.expect(log.pointer_image != null);
+    try testing.expect(!log.pointer_shown);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 20);
+    try testing.expect(!log.pointer_shown);
+    // Placed by its point, which is the arrow's top left.
+    try testing.expectEqual(@as(i32, 10), log.pointer_left);
+    try testing.expectEqual(@as(i32, 20), log.pointer_top);
+
+    // A mouse: shown from the next pointer event on.
+    pointer.mouseSeen(ib);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 11, 21);
+    try testing.expect(log.pointer_shown);
+
+    // A picture of the window's own: a 2 by 2 square with its point in
+    // the bottom right.
+    var pixels = [_]u32{ 0xFF0000FF, 0xFF0000FF, 0xFF0000FF, 0xFF0000FF };
+    const picture = sdk.rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 2, .height = 2, .pitch = 8, .format = .rgba32 };
+    const own = it.NewObjectTagList(null, pc.POINTERCLASS, &[_]TagItem{
+        .{ .tag = pc.POINTERA_BitMap, .data = @intFromPtr(&picture) },
+        .{ .tag = pc.POINTERA_XOffset, .data = @bitCast(@as(isize, -1)) },
+        .{ .tag = pc.POINTERA_YOffset, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    }).?;
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_Pointer, .data = @intFromPtr(own) }, .{} });
+    try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
+    try testing.expectEqual(@as(u32, 2), log.pointer_image.?.width);
+    try testing.expectEqual(@as(i32, 10), log.pointer_left);
+    try testing.expectEqual(@as(i32, 20), log.pointer_top);
+
+    // Busy at once, then the default again with no tags.
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_BusyPointer, .data = 1 }, .{} });
+    try testing.expectEqual(pointer.Kind.busy, ib.pointer.kind);
+    // The ring's point is its middle, 8 in from its corner.
+    try testing.expectEqual(@as(i32, 3), log.pointer_left);
+    try testing.expectEqual(@as(i32, 13), log.pointer_top);
+    it.SetWindowPointerA(w, null);
+    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
+
+    // Busy after three ticks, and a change before then calls it off.
+    const delayed = [_]TagItem{ .{ .tag = wn.WA_BusyPointer, .data = 1 }, .{ .tag = wn.WA_PointerDelay, .data = 1 }, .{} };
+    it.SetWindowPointerA(w, &delayed);
+    tickEvent(ib);
+    tickEvent(ib);
+    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
+    tickEvent(ib);
+    try testing.expectEqual(pointer.Kind.busy, ib.pointer.kind);
+    it.SetWindowPointerA(w, null);
+    it.SetWindowPointerA(w, &delayed);
+    tickEvent(ib);
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_Pointer, .data = @intFromPtr(own) }, .{} });
+    tickEvent(ib);
+    tickEvent(ib);
+    tickEvent(ib);
+    try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
+
+    // Another window active has its own, the default; back again, this
+    // one's.
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 40 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_BusyPointer, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(pointer.Kind.busy, ib.pointer.kind);
+    it.ActivateWindow(w);
+    try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
+    // Closing the active window leaves none active, and the default.
+    it.ActivateWindow(other);
+    it.CloseWindow(other);
+    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
+    it.ActivateWindow(w);
+    try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
+
+    // Hidden: not shown while this window is active, the picture left as
+    // it was; shown again with the next pointer, and hidden only here.
+    const sets = log.pointer_sets;
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_HidePointer, .data = 1 }, .{ .tag = wn.WA_Pointer, .data = @intFromPtr(own) }, .{} });
+    try testing.expectEqual(pointer.Kind.hidden, ib.pointer.kind);
+    try testing.expect(!log.pointer_shown);
+    try testing.expectEqual(sets, log.pointer_sets);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 12, 22);
+    try testing.expect(!log.pointer_shown);
+    const shown_there = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 40 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    try testing.expect(log.pointer_shown);
+    it.ActivateWindow(w);
+    try testing.expect(!log.pointer_shown);
+    it.CloseWindow(shown_there);
+    // Hidden after the delay, like any other change.
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_Pointer, .data = @intFromPtr(own) }, .{} });
+    try testing.expect(log.pointer_shown);
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_HidePointer, .data = 1 }, .{ .tag = wn.WA_PointerDelay, .data = 1 }, .{} });
+    tickEvent(ib);
+    tickEvent(ib);
+    try testing.expect(log.pointer_shown);
+    tickEvent(ib);
+    try testing.expect(!log.pointer_shown);
+    it.SetWindowPointerA(w, &[_]TagItem{ .{ .tag = wn.WA_Pointer, .data = @intFromPtr(own) }, .{} });
+    try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
+    try testing.expect(log.pointer_shown);
+
+    // Disposed of: off the window, and the default up.
+    it.DisposeObject(own);
+    try testing.expect(kw.pointer == null);
+    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);

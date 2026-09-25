@@ -25,6 +25,9 @@
 //!     take every event until they are gone.
 //!   - the tick: IDCMP_INTUITICKS to the active window, one at a time.
 //!
+//! The mouse pointer is `pointer.zig`'s: it follows in the handler itself,
+//! and its picture follows the active window.
+//!
 //! Every message a window gets carries where the pointer is in the window's
 //! own coordinates, the qualifiers and the time of the event being handled.
 //! `handle` is the work for one event, so the host tests drive it directly.
@@ -48,6 +51,7 @@ const Window = _window.Window;
 const _gadget = @import("../gadget/_gadget.zig");
 const menus = @import("menus.zig");
 const verify = @import("verify.zig");
+const pointer = @import("pointer.zig");
 const _requester = @import("../requester/_requester.zig");
 const rq = sdk.intuition.requesters;
 const gadgetclass = @import("../classes/gadgetclass.zig");
@@ -144,7 +148,14 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     var e = events;
     while (e) |ev| : (e = ev.next) {
         switch (ev.class) {
-            ie.IECLASS_RAWKEY, ie.IECLASS_NEWPOINTERPOS, ie.IECLASS_TIMER => {},
+            // The pointer event after it came from a mouse, not a finger.
+            ie.IECLASS_RAWMOUSE => {
+                pointer.mouseSeen(ib);
+                continue;
+            },
+            // The pointer follows here, while the task may be busy.
+            ie.IECLASS_NEWPOINTERPOS => pointer.moved(ib, ev.x, ev.y),
+            ie.IECLASS_RAWKEY, ie.IECLASS_TIMER => {},
             else => continue,
         }
         if (push(st, ev)) any = true;
@@ -417,7 +428,9 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     if (e.class == ie.IECLASS_NEWPOINTERPOS) {
         st.x = e.x;
         st.y = e.y;
+        pointer.followed(ib);
     }
+    if (e.class == ie.IECLASS_TIMER) pointer.tick(ib);
     // An alert up takes everything.
     if (ib.alert.active) return @import("../misc/_misc.zig").alertInput(ib, e);
     // A menu session takes everything while it lasts, and so does a

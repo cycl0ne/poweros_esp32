@@ -330,4 +330,9 @@ bool LayoutMenusA(*intuition.Menu menu, *intuition.Screen screen, ?[*]const util
 /// Place one panel's items from CreateMenusA on a screen, under the title
 /// GTMN_Menu names.
 bool LayoutMenuItemsA(*intuition.MenuItem first_item, *intuition.Screen screen, ?[*]const utility.TagItem tags)
+/// The pointer a window has while it is active: WA_Pointer (a
+/// pointerclass object, or null for the default), WA_BusyPointer,
+/// WA_HidePointer for none at all, and WA_PointerDelay to put the change
+/// off a little. No tags: the default.
+void SetWindowPointerA(*intuition.Window window, ?[*]const utility.TagItem tags)
 ##end

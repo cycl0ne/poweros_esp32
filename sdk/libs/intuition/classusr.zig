@@ -35,6 +35,7 @@ pub const ITEXTICLASS = "itexticlass";
 pub const STRGCLASS = "strgclass";
 pub const LAYOUTGCLASS = "layoutgclass";
 pub const WINDOWCLASS = "windowclass";
+pub const POINTERCLASS = "pointerclass";
 
 // --- the methods every object has ---------------------------------------
 

@@ -70,6 +70,8 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
             s.title = s.default_title;
             _screen.drawBar(ib, s);
         }
+        // The default pointer, with no window active.
+        @import("../input/pointer.zig").update(ib);
     }
     @import("../requester/_requester.zig").takeAll(ib, w);
     @import("../input/_input.zig").forget(ib, w);

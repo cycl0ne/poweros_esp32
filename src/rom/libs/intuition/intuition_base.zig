@@ -96,6 +96,8 @@ pub const IntuitionBase = extern struct {
     layout_class: ?*Class,
     /// windowclass, a window described by an object.
     window_class: ?*Class,
+    /// pointerclass, a mouse pointer a window can have.
+    pointer_class: ?*Class,
     /// The height of the ROM font a screen opens with when it is given
     /// none, and what `IntuiTextLength` measures a run without a font in.
     /// It starts at `default_font_height`.
@@ -105,6 +107,8 @@ pub const IntuitionBase = extern struct {
     /// The handler on input.device's chain, its task, and what the pointer
     /// is doing.
     input: _input.State,
+    /// The mouse pointer: the picture its board has, and whether it shows.
+    pointer: @import("input/pointer.zig").State,
     /// The menu session: what it is waiting for, and what it shows.
     menu: _menus.State,
     /// The verify out to a window, and where its reply comes back.

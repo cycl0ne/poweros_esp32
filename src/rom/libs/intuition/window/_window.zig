@@ -144,6 +144,19 @@ pub const Window = extern struct {
     /// and both say the same kind of thing over again.
     rpt_pending: u32 = 0,
     rpt_limit: u32 = wn.DEFAULTRPTQUEUE,
+    /// Its pointer while it is active: a pointerclass object or null for
+    /// the default one, the busy pointer in place of either, or none at
+    /// all (`WA_HidePointer`) in place of every one.
+    pointer: ?*Object = null,
+    pointer_busy: u8 = 0,
+    pointer_hidden: u8 = 0,
+    /// A change put off with `WA_PointerDelay`: what it will be, and the
+    /// ticks left until it is made - 0 when none is waiting.
+    deferred_busy: u8 = 0,
+    deferred_hidden: u8 = 0,
+    deferred_ticks: u8 = 0,
+    pad_pointer: [3]u8 = .{ 0, 0, 0 },
+    deferred_pointer: ?*Object = null,
     /// How its layer paints a part with nothing in it yet - when it opens,
     /// grows, or is uncovered without keeping what was there: the screen's
     /// background pen, whatever pens the program has set on its RastPort.
@@ -734,6 +747,7 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
     }
     w.flags |= WF_ACTIVE;
     drawBorder(ib, w);
+    @import("../input/pointer.zig").update(ib);
     send(ib, w, wn.IDCMP_ACTIVEWINDOW, 0);
     @import("../input/_input.zig").windowEvent(ib, w, ie.IECLASS_ACTIVEWINDOW, 0);
 }

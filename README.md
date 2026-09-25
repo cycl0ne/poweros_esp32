@@ -136,7 +136,10 @@ cores.
   chosen as the default and signal their owner when the last visitor
   leaves; gadgets can live in a window's border. Menus are made from a
   table and laid out for the screen, in columns when a panel is taller
-  than the screen.
+  than the screen. A mouse pointer, shown once a mouse is used, follows
+  the active window: its own picture (a pointer object), the busy
+  pointer, or the default arrow, laid over the picture by the display
+  board on its way to the glass.
 - Gadget classes on the disk, each a library of its own in
   `SYS:classes/gadgets/`: check boxes, cycle buttons, radio buttons,
   lines to type text or a number in, lines of text to show, sliders that
@@ -180,8 +183,10 @@ Espressif Zig toolchain (`0.16.0-xtensa`) into `toolchain/` on first use.
 
 For the display in QEMU, build the patched QEMU once with
 `scripts/build-qemu.sh` (into `toolchain/qemu/`): it adds the 1024×600
-display with keyboard and mouse and room in it for four pictures, and runs
-the core at 240 MHz. An older build still runs, with room for two.
+display with keyboard and mouse and room in it for four pictures, keeps
+the host's cursor hidden over the window so only PowerOS's own pointer is
+seen, and runs the core at 240 MHz. An older build still runs, with room for two and no
+mouse pointer drawn.
 
 More build steps and options:
 

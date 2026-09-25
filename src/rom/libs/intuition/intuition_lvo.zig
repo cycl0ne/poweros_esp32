@@ -131,6 +131,7 @@ const CreateMenusA = @import("menu/createmenusa.zig").CreateMenusA;
 const FreeMenus = @import("menu/freemenus.zig").FreeMenus;
 const LayoutMenusA = @import("menu/layoutmenusa.zig").LayoutMenusA;
 const LayoutMenuItemsA = @import("menu/layoutmenuitemsa.zig").LayoutMenuItemsA;
+const SetWindowPointerA = @import("window/setwindowpointera.zig").SetWindowPointerA;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -238,6 +239,7 @@ const contract_files = [_][]const u8{
     @embedFile("request/autorequesttaglist.zig"),
     @embedFile("request/buildsysrequesttaglist.zig"),
     @embedFile("input/doubleclick.zig"),
+    @embedFile("window/setwindowpointera.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -564,6 +566,9 @@ fn lvoLayoutMenusA(ib: *IntuitionBase, menu: *intuition.Menu, screen: *intuition
 fn lvoLayoutMenuItemsA(ib: *IntuitionBase, first_item: *intuition.MenuItem, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) bool {
     return LayoutMenuItemsA(ib, first_item, screen, tags);
 }
+fn lvoSetWindowPointerA(ib: *IntuitionBase, window: *intuition.Window, tags: ?[*]const utility.TagItem) callconv(.c) void {
+    SetWindowPointerA(ib, @ptrCast(@alignCast(window)), tags);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -678,6 +683,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFreeMenus),
     vec(lvoLayoutMenusA),
     vec(lvoLayoutMenuItemsA),
+    vec(lvoSetWindowPointerA),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

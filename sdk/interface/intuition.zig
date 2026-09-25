@@ -127,6 +127,7 @@ pub const LVO = struct {
     pub const FreeMenus = libraries.lvo(109);
     pub const LayoutMenusA = libraries.lvo(110);
     pub const LayoutMenuItemsA = libraries.lvo(111);
+    pub const SetWindowPointerA = libraries.lvo(112);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -240,6 +241,7 @@ pub const Fn = struct {
     pub const FreeMenus = *const fn (*IntuitionBase, ?*intuition.Menu) callconv(.c) void;
     pub const LayoutMenusA = *const fn (*IntuitionBase, *intuition.Menu, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const LayoutMenuItemsA = *const fn (*IntuitionBase, *intuition.MenuItem, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const SetWindowPointerA = *const fn (*IntuitionBase, *intuition.Window, ?[*]const utility.TagItem) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -890,5 +892,13 @@ pub const IntuitionBase = opaque {
     /// GTMN_Menu names.
     pub fn LayoutMenuItemsA(self: *IntuitionBase, first_item: *intuition.MenuItem, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) bool {
         return libraries.call(self, LVO.LayoutMenuItemsA, Fn.LayoutMenuItemsA, .{ first_item, screen, tags });
+    }
+
+    /// The pointer a window has while it is active: WA_Pointer (a
+    /// pointerclass object, or null for the default), WA_BusyPointer,
+    /// WA_HidePointer for none at all, and WA_PointerDelay to put the change
+    /// off a little. No tags: the default.
+    pub fn SetWindowPointerA(self: *IntuitionBase, window: *intuition.Window, tags: ?[*]const utility.TagItem) void {
+        return libraries.call(self, LVO.SetWindowPointerA, Fn.SetWindowPointerA, .{ window, tags });
     }
 };

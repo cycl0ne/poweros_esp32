@@ -70,8 +70,10 @@ const zoom_width = _window.zoom_width;
 ///   `WA_SizeGadget`, `WA_DragBar`, `WA_Borderless`, `WA_Backdrop`,
 ///   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
 ///   `WA_Activate`, and `WA_IDCMP` for a message port. Its menus:
-///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. May
-///   be null.
+///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
+///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
+///   `WA_PointerDelay`, as
+///   `SetWindowPointerA` takes them. May be null.
 ///
 /// RESULT:
 /// The window, or null: no screen to open it on (the default one could not
@@ -456,6 +458,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     if (ub.GetTagData(wn.WA_Gadgets, 0, tags) != 0) {
         _ = it.AddGList(@ptrCast(w), @ptrFromInt(ub.GetTagData(wn.WA_Gadgets, 0, tags)), -1, -1);
     }
+    // Its pointer, before it is active and shows it.
+    it.SetWindowPointerA(@ptrCast(w), tags);
     if (ub.GetTagData(wn.WA_Activate, 0, tags) != 0) {
         activate(ib, w);
     } else {

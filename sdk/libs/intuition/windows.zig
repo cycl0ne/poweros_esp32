@@ -186,6 +186,16 @@ pub const WA_HelpGroup = WA_Dummy + 0x38;
 /// The help group of this window, which must be open: joining it without
 /// knowing its number.
 pub const WA_HelpGroupWindow = WA_Dummy + 0x39;
+/// The window's own pointer while it is active: a `pointerclass` object,
+/// the caller's, or null for the default one. `OpenWindowTagList` and
+/// `SetWindowPointerA`.
+pub const WA_Pointer = WA_Dummy + 0x34;
+/// True: the standard busy pointer in place of `WA_Pointer`'s.
+pub const WA_BusyPointer = WA_Dummy + 0x35;
+/// True: the change waits three of intuition's ticks - three tenths of a
+/// second - and another `SetWindowPointerA` before then calls it off. So
+/// a busy pointer put up for work that ends at once never shows.
+pub const WA_PointerDelay = WA_Dummy + 0x36;
 
 /// `HelpControl`: gadget help on.
 pub const HC_GADGETHELP: u32 = 1;
@@ -303,6 +313,11 @@ pub const WA_Damage = WA_Dummy + 0x109;
 /// `WPOS_CENTERMOUSE` with the pointer in its middle - kept on the screen
 /// either way. Given `WA_Left` or `WA_Top`, this is not looked at.
 pub const WA_Position = WA_Dummy + 0x10A;
+/// True: no pointer at all while the window is active - for a program
+/// that draws its own, or wants none over its picture. It is taken before
+/// `WA_Pointer` and `WA_BusyPointer`; the mouse still moves and the window
+/// still hears it. `OpenWindowTagList` and `SetWindowPointerA`.
+pub const WA_HidePointer = WA_Dummy + 0x10B;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

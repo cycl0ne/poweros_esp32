@@ -32,6 +32,7 @@ const itexticlass = @import("classes/itexticlass.zig");
 const strgclass = @import("classes/strgclass.zig");
 const layoutgclass = @import("classes/layoutgclass.zig");
 const windowclass = @import("classes/windowclass.zig");
+const pointerclass = @import("classes/pointerclass.zig");
 
 /// The version of utility.library the hook and pack calls are taken from.
 const UTILITY_VERSION = 1;
@@ -60,8 +61,9 @@ pub const LIBRARY_VERSION = 0;
 /// layoutgclass and GM_DOMAIN; a group's member reports in its own name.
 /// 16: windowclass, and WA_Position. 17: the check box and radio button
 /// images, and menus made and laid out from a table (CreateMenusA,
-/// FreeMenus, LayoutMenusA, LayoutMenuItemsA).
-pub const LIBRARY_REVISION = 17;
+/// FreeMenus, LayoutMenusA, LayoutMenuItemsA). 18: the mouse pointer,
+/// pointerclass and SetWindowPointerA.
+pub const LIBRARY_REVISION = 18;
 const BUILD_DATE = "25.09.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -146,15 +148,18 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.string_class = if (ib.itext_class != null) strgclass.make(ib) else null;
     ib.layout_class = if (ib.string_class != null) layoutgclass.make(ib) else null;
     ib.window_class = if (ib.layout_class != null) windowclass.make(ib) else null;
+    ib.pointer_class = if (ib.window_class != null) pointerclass.make(ib) else null;
     ib.active_window = null;
     ib.input = .{};
+    ib.pointer = .{};
     @import("input/menus.zig").init(ib);
     @import("input/verify.zig").init(ib);
     // A second and a half, until there is a preference that says otherwise.
     ib.double_seconds = 1;
     ib.double_micros = 500_000;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
-    if (ib.window_class == null) {
+    if (ib.pointer_class == null) {
+        _ = ib.iface().FreeClass(ib.window_class);
         _ = ib.iface().FreeClass(ib.layout_class);
         _ = ib.iface().FreeClass(ib.string_class);
         _ = ib.iface().FreeClass(ib.itext_class);
