@@ -46,3 +46,4 @@ pub const listview = @import("listview.zig");
 pub const palette = @import("palette.zig");
 pub const colorwheel = @import("colorwheel.zig");
 pub const gradientslider = @import("gradientslider.zig");
+pub const tapedeck = @import("tapedeck.zig");

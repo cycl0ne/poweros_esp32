@@ -36,6 +36,8 @@ const palette = @import("../palette/palette.zig");
 const colorwheel = @import("../colorwheel/colorwheel.zig");
 const gradientslider = @import("../gradientslider/gradientslider.zig");
 const gs = sdk.gadgets.gradientslider;
+const tapedeck = @import("../tapedeck/tapedeck.zig");
+const td = sdk.gadgets.tapedeck;
 const cw = sdk.gadgets.colorwheel;
 const pa = sdk.gadgets.palette;
 const sr = sdk.gadgets.scroller;
@@ -923,5 +925,90 @@ test "gradientslider.gadget: the knob along the gradient, skips beside it, a dra
     ib.DisposeObject(brightness);
     _ = kexec.SysBase.iface().RemLibrary(wheel_lib);
     ib.DisposeObject(gradient);
+    try rig.down();
+}
+
+test "tapedeck.gadget: a tape deck's modes and pause, an animation control's buttons and frames" {
+    var heard = Heard{ .tag = td.TDECK_Mode, .ib = undefined };
+    var rig = try Rig.up(&tapedeck.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    var termination: i32 = -1;
+
+    // A tape deck: 202 by 16, five buttons.
+    const deck = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 13 },
+        .{ .tag = td.TDECK_Tape, .data = 1 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 202), attr(ib, deck, gc.GA_Width));
+    try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, deck, td.TDECK_Mode));
+    // Play: the mode, done at once, and the code.
+    var play = input(gc.GM_GOACTIVE, &press, 40, 7, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(deck, @ptrCast(&play)));
+    try testing.expectEqual(@as(i32, td.BUT_PLAY), termination);
+    try testing.expectEqual(@as(?usize, td.BUT_PLAY), heard.value);
+    try testing.expectEqual(@as(?usize, 13), heard.id);
+    // Pause turns over, and the mode stays with the paused code added.
+    var pause = input(gc.GM_GOACTIVE, &press, 170, 7, &termination);
+    _ = ib.SendMessage(deck, @ptrCast(&pause));
+    try testing.expectEqual(@as(i32, td.BUT_PLAY | td.TDECK_PAUSED_CODE), termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, deck, td.TDECK_Paused));
+    _ = ib.SendMessage(deck, @ptrCast(&pause));
+    try testing.expectEqual(@as(usize, 0), attr(ib, deck, td.TDECK_Paused));
+    _ = ib.SetAttrsTagList(deck, &[_]TagItem{ .{ .tag = td.TDECK_Mode, .data = td.BUT_FORWARD }, .{} });
+    try testing.expectEqual(@as(usize, td.BUT_FORWARD), attr(ib, deck, td.TDECK_Mode));
+    ib.DisposeObject(deck);
+
+    // An animation control, 202 wide: rewind 27, play 48, fast forward 27,
+    // the frames in the rest.
+    const buttons = tapedeck.Buttons.of(false, 202, 16);
+    try testing.expectEqual(@as(i32, 27), buttons.boxes[0].width);
+    try testing.expectEqual(@as(i32, 48), buttons.boxes[1].width);
+    try testing.expectEqual(@as(i32, 102), buttons.boxes[3].left);
+    // Narrower than 80: no rewind nor fast forward.
+    try testing.expectEqual(@as(i32, 0), tapedeck.Buttons.of(false, 70, 16).boxes[0].width);
+
+    const anim = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 14 },
+        .{ .tag = td.TDECK_Frames, .data = 50 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    // Rewind is the mode while it is held, and stops when let go.
+    var rewind = input(gc.GM_GOACTIVE, &press, 10, 7, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(anim, @ptrCast(&rewind)));
+    try testing.expectEqual(@as(usize, td.BUT_REWIND), attr(ib, anim, td.TDECK_Mode));
+    try testing.expectEqual(@as(?usize, td.BUT_REWIND), heard.value);
+    var off = input(gc.GM_HANDLEINPUT, &moving, 60, 7, &termination);
+    _ = ib.SendMessage(anim, @ptrCast(&off));
+    try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, anim, td.TDECK_Mode));
+    var back_on = input(gc.GM_HANDLEINPUT, &moving, 10, 7, &termination);
+    _ = ib.SendMessage(anim, @ptrCast(&back_on));
+    try testing.expectEqual(@as(usize, td.BUT_REWIND), attr(ib, anim, td.TDECK_Mode));
+    var let_go = input(gc.GM_HANDLEINPUT, &release, 10, 7, &termination);
+    try testing.expect(ib.SendMessage(anim, @ptrCast(&let_go)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, td.BUT_STOP), termination);
+    // Play stays when let go; pressed again while playing, it stops.
+    var play_down = input(gc.GM_GOACTIVE, &press, 50, 7, &termination);
+    _ = ib.SendMessage(anim, @ptrCast(&play_down));
+    var play_up = input(gc.GM_HANDLEINPUT, &release, 50, 7, &termination);
+    _ = ib.SendMessage(anim, @ptrCast(&play_up));
+    try testing.expectEqual(@as(i32, td.BUT_PLAY), termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(anim, @ptrCast(&play_down)));
+    try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, anim, td.TDECK_Mode));
+
+    // The frame slider: a press past its knob pages to a later frame, and
+    // the code is the frame with the frame code added.
+    _ = ib.SetAttrsTagList(anim, &[_]TagItem{ .{ .tag = td.TDECK_CurrentFrame, .data = 0 }, .{} });
+    termination = -1;
+    var frames = input(gc.GM_GOACTIVE, &press, 190, 7, &termination);
+    try testing.expect(ib.SendMessage(anim, @ptrCast(&frames)) & gc.GMR_VERIFY != 0);
+    const frame = attr(ib, anim, td.TDECK_CurrentFrame);
+    try testing.expect(frame > 0);
+    try testing.expectEqual(@as(i32, @intCast(td.TDECK_FRAME_CODE | frame)), termination);
+
+    ib.DisposeObject(anim);
     try rig.down();
 }
