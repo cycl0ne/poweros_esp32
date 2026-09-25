@@ -52,6 +52,14 @@
 //!   task gets the break signals from now on.
 //! - DISK_INFO: an InfoData with ID_CON or ID_RAWCON and the open count.
 //! - IS_FILESYSTEM: DOSFALSE; anything else ERROR_ACTION_NOT_KNOWN.
+//! - DIE: the console ends - its node let go, so the next Open of it
+//!   starts a new one - once no handle is open; with one open,
+//!   ERROR_OBJECT_IN_USE. It is how whoever added a node for one session
+//!   takes it away again.
+//!
+//! **A stream that ends.** A device read answered with IOERR_ENDOFSTREAM
+//! - a network connection whose peer has gone - is the end of the input,
+//! as Ctrl-\ is: no read goes out again, and what waits to read gets 0.
 //!
 //! Ctrl-C to Ctrl-F signal the CHANGE_SIGNAL task, else the last reader's,
 //! and the last writer's if another.
@@ -155,6 +163,9 @@ pub fn Handler(comptime Io: type) type {
         reader: ?*MsgPort = null,
         writer: ?*MsgPort = null,
         signal_port: ?*MsgPort = null,
+        /// A DIE this console has taken: it ends, and the answer goes
+        /// when it is gone.
+        dying: ?*DosPacket = null,
 
         pub fn init(io: *Io, raw: bool) Self {
             return .{ .io = io, .ed = .{ .sink = .{ .ctx = io, .write = &Io.sinkWrite }, .raw = raw }, .raw_default = raw };
@@ -218,6 +229,10 @@ pub fn Handler(comptime Io: type) type {
                     h.io.reply(pkt, dos.DOSTRUE, 0);
                 },
                 .is_filesystem => h.io.reply(pkt, dos.DOSFALSE, 0),
+                .die => {
+                    if (h.opens != 0) return h.io.reply(pkt, dos.DOSFALSE, dos.ERROR_OBJECT_IN_USE);
+                    h.dying = pkt;
+                },
                 else => h.io.reply(pkt, dos.DOSFALSE, dos.ERROR_ACTION_NOT_KNOWN),
             }
         }
@@ -418,6 +433,8 @@ const Unit = struct {
     write: serial.IOExtSer = .{},
     byte: u8 = 0,
     open: bool = false,
+    /// Its stream has ended (IOERR_ENDOFSTREAM): no read is out.
+    ended: bool = false,
 };
 
 /// Handler's Io on the real machine: either a console.device unit in a
@@ -647,10 +664,13 @@ const DeviceIo = struct {
         if (io.waitPending()) return;
         for (&io.units) |*u| {
             if (!u.open) continue;
-            _ = io.sys.AbortIO(&u.read.io_ser.req);
-            _ = io.sys.WaitIO(&u.read.io_ser.req);
+            if (!u.ended) {
+                _ = io.sys.AbortIO(&u.read.io_ser.req);
+                _ = io.sys.WaitIO(&u.read.io_ser.req);
+            }
             io.sys.CloseDevice(&u.read.io_ser.req);
             u.open = false;
+            u.ended = false;
         }
         io.closeWindow();
     }
@@ -761,9 +781,15 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
             h.input(editor.END_OF_INPUT);
         }
         for (&st.io.units) |*u| {
-            if (!u.open or sb.CheckIO(&u.read.io_ser.req) == null) continue;
+            if (!u.open or u.ended or sb.CheckIO(&u.read.io_ser.req) == null) continue;
             any = true;
-            const got = sb.WaitIO(&u.read.io_ser.req) == 0 and u.read.io_ser.actual == 1;
+            const err = sb.WaitIO(&u.read.io_ser.req);
+            if (err == exec.IOERR_ENDOFSTREAM) {
+                u.ended = true;
+                h.input(editor.END_OF_INPUT);
+                continue;
+            }
+            const got = err == 0 and u.read.io_ser.actual == 1;
             const c = u.byte;
             st.io.readNext(u);
             if (got) h.input(c);
@@ -793,6 +819,16 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         // stays however often it is opened and closed - it must, or the
         // next name asked of it would reach a process that is gone.
         if (st.io.inWindow() and st.io.finished and !st.io.waitPending() and h.held_count == 0) break;
+        // Told to DIE with no handle open: the node is let go first, so
+        // no Open reaches this process from here on.
+        if (h.dying != null) {
+            if (node) |n| {
+                sb.Forbid();
+                if (n.task == &me.msg_port) n.task = null;
+                sb.Permit();
+            }
+            break;
+        }
         if (!any) {
             const window_bits = if (st.io.user_port) |p| p.sigMask() else 0;
             _ = sb.Wait(me.msg_port.sigMask() | port.sigMask() | window_bits);
@@ -802,8 +838,10 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         for (0..max_waits) |slot| st.io.stopTimer(slot);
         sb.CloseDevice(&st.io.timers[0].node);
     }
+    const die = st.handler.dying;
     sb.FreeVec(block);
     sb.DeleteMsgPort(port);
+    if (die) |pkt| dl.ReplyPkt(pkt, dos.DOSTRUE, 0);
     sb.CloseLibrary(lib);
 }
 
@@ -1092,6 +1130,25 @@ test "the handler: opens, pending READs, partial lines, END" {
     var end2 = DosPacket.init(.end, .{ .file = .{ .fh = &other } });
     h.packet(&end2);
     try testing.expectEqual(@as(u32, 1), io.closed); // the last: devices closed
+}
+
+test "the handler: DIE waits for the last handle, then ends it unanswered until it is gone" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    var fh: dos.FileHandle = .{};
+    var find = DosPacket.init(.findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "TELNET0:" } });
+    h.packet(&find);
+    var die = DosPacket.init(.die, .{ .raw = @splat(0) });
+    h.packet(&die);
+    try testing.expectEqual(dos.DOSFALSE, die.res1);
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, die.res2);
+    try testing.expectEqual(@as(?*DosPacket, null), h.dying);
+    var end = DosPacket.init(.end, .{ .file = .{ .fh = &fh } });
+    h.packet(&end);
+    const before = io.replies;
+    h.packet(&die);
+    try testing.expectEqual(before, io.replies);
+    try testing.expectEqual(@as(?*DosPacket, &die), h.dying);
 }
 
 test "the handler: WAIT_CHAR, SCREEN_MODE, breaks, CHANGE_SIGNAL, DISK_INFO, the rest" {

@@ -147,6 +147,7 @@ pub const IOERR_BADADDRESS = devices.IOERR_BADADDRESS;
 pub const IOERR_UNITBUSY = devices.IOERR_UNITBUSY;
 pub const IOERR_SELFTEST = devices.IOERR_SELFTEST;
 pub const IOERR_NOREPLYPORT = devices.IOERR_NOREPLYPORT;
+pub const IOERR_ENDOFSTREAM = devices.IOERR_ENDOFSTREAM;
 pub const CMD_INVALID = devices.CMD_INVALID;
 pub const CMD_RESET = devices.CMD_RESET;
 pub const CMD_READ = devices.CMD_READ;

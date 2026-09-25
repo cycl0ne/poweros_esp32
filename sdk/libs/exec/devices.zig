@@ -29,6 +29,9 @@ pub const IOERR_UNITBUSY: i8 = -6;
 pub const IOERR_SELFTEST: i8 = -7;
 /// WaitIO on a request without a reply port.
 pub const IOERR_NOREPLYPORT: i8 = -8;
+/// A stream device's read: the stream has ended - the peer has gone -
+/// and nothing more will come. A console on it ends its input.
+pub const IOERR_ENDOFSTREAM: i8 = -9;
 
 /// io_Command: the standard commands.
 pub const CMD_INVALID: u16 = 0;
