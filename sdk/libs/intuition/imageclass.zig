@@ -42,6 +42,9 @@ pub const IA_LineWidth = IA_Dummy + 0x08;
 pub const IA_ShadowPen = IA_Dummy + 0x09;
 pub const IA_HighlightPen = IA_Dummy + 0x0A;
 pub const IA_Pens = IA_Dummy + 0x0E;
+/// sysiclass: a `*const [NUMDRIPENS]graphics.Pen` it is drawn in, in place
+/// of the DrawInfo's.
+pub const SYSIA_Pens = IA_Pens;
 pub const IA_Resolution = IA_Dummy + 0x0F;
 pub const IA_Font = IA_Dummy + 0x13;
 pub const IA_Outline = IA_Dummy + 0x14;

@@ -171,6 +171,8 @@ pub const Data = extern struct {
     which: u32 = no_image,
     /// SYSIA_DrawInfo, or null for the default pens.
     draw_info: ?*sc.DrawInfo = null,
+    /// SYSIA_Pens: pens of its own, in place of the DrawInfo's.
+    pens: ?[*]const Pen = null,
     /// Each state as drawn, at `drawn_width` by `drawn_height`; null until
     /// it is first wanted.
     drawn: [3]?*rtg.Surface = .{ null, null, null },
@@ -334,7 +336,7 @@ fn stateImage(ib: *IntuitionBase, sd: *Data, design: *const Design, state: usize
         gb.FreeBitMap(surface);
         return null;
     }
-    render(gb, rp, design, state, w, h, d.pensOf(dri));
+    render(gb, rp, design, state, w, h, sd.pens orelse d.pensOf(dri));
     _ = gb.InitArea(rp, 0);
     sd.drawn[state] = surface;
     return surface;
@@ -362,6 +364,7 @@ fn setAttrs(ib: *IntuitionBase, sd: *Data, tags: ?[*]const TagItem) void {
     const ub = ib.utility_base;
     sd.which = @intCast(ub.GetTagData(ic.SYSIA_Which, sd.which, tags));
     if (ub.FindTagItem(ic.SYSIA_DrawInfo, tags)) |item| sd.draw_info = @ptrFromInt(item.data);
+    if (ub.FindTagItem(ic.SYSIA_Pens, tags)) |item| sd.pens = @ptrFromInt(item.data);
     // New pens or a new image: what was drawn is out of date.
     forget(ib, sd);
 }

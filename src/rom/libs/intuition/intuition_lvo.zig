@@ -124,6 +124,9 @@ const DisplayBeep = @import("misc/displaybeep.zig").DisplayBeep;
 const CurrentTime = @import("misc/currenttime.zig").CurrentTime;
 const DisplayAlert = @import("misc/displayalert.zig").DisplayAlert;
 const TimedDisplayAlert = @import("misc/timeddisplayalert.zig").TimedDisplayAlert;
+const HelpControl = @import("gadget/helpcontrol.zig").HelpControl;
+const SetEditHook = @import("gadget/setedithook.zig").SetEditHook;
+const GadgetMouse = @import("gadget/gadgetmouse.zig").GadgetMouse;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -536,6 +539,15 @@ fn lvoDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, h
 fn lvoTimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32, frames: u32) callconv(.c) bool {
     return TimedDisplayAlert(ib, alert_number, text, height, frames);
 }
+fn lvoHelpControl(ib: *IntuitionBase, window: *intuition.Window, flags: u32) callconv(.c) void {
+    HelpControl(ib, @ptrCast(@alignCast(window)), flags);
+}
+fn lvoSetEditHook(ib: *IntuitionBase, hook: ?*utility.Hook) callconv(.c) *utility.Hook {
+    return SetEditHook(ib, hook);
+}
+fn lvoGadgetMouse(ib: *IntuitionBase, gadget: *intuition.Object, info: *intuition.GadgetInfo, point: *graphics.Point) callconv(.c) void {
+    GadgetMouse(ib, gadget, info, point);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -643,6 +655,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCurrentTime),
     vec(lvoDisplayAlert),
     vec(lvoTimedDisplayAlert),
+    vec(lvoHelpControl),
+    vec(lvoSetEditHook),
+    vec(lvoGadgetMouse),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

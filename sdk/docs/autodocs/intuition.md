@@ -44,12 +44,14 @@ Generated from the source by `./zig build autodoc`.
 - [FreeScreenBuffer](#freescreenbuffer) - Gives back a buffer from `AllocScreenBuffer`.
 - [FreeScreenDrawInfo](#freescreendrawinfo) - Hands back a DrawInfo.
 - [FreeSysRequest](#freesysrequest) - Closes a requester and gives back what was made for it.
+- [GadgetMouse](#gadgetmouse) - Answers where the pointer is, measured from a gadget's top-left corner.
 - [GetAttr](#getattr) - Reads one attribute of an object.
 - [GetDefaultPubScreen](#getdefaultpubscreen) - Names the default public screen.
 - [GetIMsg](#getimsg) - Takes the next message off a window's port.
 - [GetScreenAttrs](#getscreenattrs) - Reads a screen.
 - [GetScreenDrawInfo](#getscreendrawinfo) - The pens and font a screen's parts are drawn in.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
+- [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
 - [IntuiTextLength](#intuitextlength) - How wide one run of text is, in pixels.
 - [ItemAddress](#itemaddress) - The item a menu number names.
@@ -93,6 +95,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetAttrsTagList](#setattrstaglist) - Changes an object's attributes.
 - [SetDMRequest](#setdmrequest) - The requester a double-click of the menu button puts up.
 - [SetDefaultPubScreen](#setdefaultpubscreen) - Chooses the public screen windows open on by default.
+- [SetEditHook](#setedithook) - Puts the global edit hook every string gadget's keys go through first.
 - [SetGadgetAttrsTagList](#setgadgetattrstaglist) - Changes a gadget's attributes, and lets it show the change.
 - [SetMenuStrip](#setmenustrip) - Gives a window its menus.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
@@ -2281,6 +2284,70 @@ None known.
 ib.FreeSysRequest(req);
 ```
 
+## GadgetMouse
+
+Answers where the pointer is, measured from a gadget's top-left corner.
+
+**SYNOPSIS**
+
+```zig
+fn GadgetMouse(ib: *IntuitionBase, gadget: *Object, info: *GadgetInfo, point: *graphics.Point) void
+```
+
+**SINCE**
+
+0.14. LVO -432.
+
+**INPUTS**
+
+- `gadget` - the gadget.
+- `info` - the GadgetInfo its method was handed: which window, and the
+  room the gadget is measured in.
+- `point` - where the answer goes.
+
+**RESULT**
+
+Nothing; the position is in `point`, negative or past the gadget's size
+when the pointer is outside it.
+
+**BEHAVIOR**
+
+The pointer as intuition last saw it, taken into the window, into the
+gadget's room (the interior of a GimmeZeroZero window, a requester) and
+then to the gadget's box as it is now - right- and bottom-relative ones
+worked out against that room.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do; a class calls it from its dispatcher.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+The methods that get input are handed this already, as their `mouse`;
+this is for one that is not, such as `GM_RENDER` following the pointer.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+gadgetclass (`GpInput`)
+
+**EXAMPLES**
+
+```zig
+var at = graphics.Point{};
+ib.GadgetMouse(o, gi, &at);
+```
+
 ## GetAttr
 
 Reads one attribute of an object.
@@ -2657,6 +2724,70 @@ None known.
 var port: usize = 0;
 const ask = [_]TagItem{ .{ .tag = WA_UserPort, .data = @intFromPtr(&port) }, .{} };
 ib.GetWindowAttrs(window, &ask);
+```
+
+## HelpControl
+
+Turns gadget help on or off for a window and its help group.
+
+**SYNOPSIS**
+
+```zig
+fn HelpControl(ib: *IntuitionBase, window: *Window, flags: u32) void
+```
+
+**SINCE**
+
+0.14. LVO -424.
+
+**INPUTS**
+
+- `window` - the window.
+- `flags` - `HC_GADGETHELP` for on, 0 for off.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Every window of the window's help group (`WA_HelpGroup`) is changed
+with it. With help on, while one of them is active, each time the
+pointer comes to rest somewhere new the window under it is sent
+IDCMP_GADGETHELP: the help-aware gadget there (`GA_GadgetHelp`), or the
+window itself; and the active window is sent one with a null address
+when the pointer is over no window of the group. Only a window whose
+IDCMP asks for IDCMP_GADGETHELP hears it.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+"Rest" is the pointer having moved no more than six pixels across and
+three down between two of intuition's timer events, which come ten
+times a second.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenWindowTagList` (`WA_HelpGroup`), `ModifyIDCMP`
+
+**EXAMPLES**
+
+```zig
+ib.HelpControl(window, wn.HC_GADGETHELP); // the Help key was pressed
 ```
 
 ## InitRequester
@@ -5367,6 +5498,72 @@ None known.
 
 ```zig
 ib.SetDefaultPubScreen("PAINT");
+```
+
+## SetEditHook
+
+Puts the global edit hook every string gadget's keys go through first.
+
+**SYNOPSIS**
+
+```zig
+fn SetEditHook(ib: *IntuitionBase, hook: ?*Hook) *Hook
+```
+
+**SINCE**
+
+0.14. LVO -428.
+
+**INPUTS**
+
+- `hook` - the new global hook, or null for intuition's own editing
+  again.
+
+**RESULT**
+
+The hook it replaces - intuition's own the first time.
+
+**BEHAVIOR**
+
+For every key typed into a strgclass gadget, the global hook is called
+with the `SGWork` and `SGH_KEY` (`sghooks.zig`) before the gadget's own
+hook. It *is* the editing: a hook that calls none other decides alone
+what every key does. A hook that means to add to intuition's editing
+rather than replace it calls the hook this answered for the keys it
+leaves alone, with the same object and message, through
+`CallHookPkt`.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do. The hook is called on intuition's input
+  task: it must not wait, nor draw.
+
+**OWNERSHIP**
+
+The hook stays the caller's, and must stay where it is until it is
+replaced again.
+
+**NOTES**
+
+It changes every string gadget of every program. For one gadget, give
+that gadget `STRINGA_EditHook` instead.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+strgclass (`STRINGA_EditHook`), utility.library's `CallHookPkt`
+
+**EXAMPLES**
+
+```zig
+var upper = utility.Hook{ .entry = &upperCase };
+previous = ib.SetEditHook(&upper); // upperCase calls `previous` for the rest
 ```
 
 ## SetGadgetAttrsTagList

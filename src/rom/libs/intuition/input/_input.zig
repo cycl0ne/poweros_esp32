@@ -67,8 +67,10 @@ const ring_size = 64;
 /// gadget pressed, `active` a gadget of the window's own being fed input,
 /// `verify` the window being asked IDCMP_SIZEVERIFY before `part` - its
 /// size gadget pressed or its zoom gadget used - goes ahead,
-/// `screen_depth` the depth gadget in a screen's title bar pressed.
-const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth };
+/// `screen_depth` the depth gadget in a screen's title bar pressed,
+/// `sys_gadget` a gadget standing for the window's close, depth or zoom
+/// gadget (`GA_SysGadget`) held.
+const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth, sys_gadget };
 
 /// Where on a window a point is.
 pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, size };
@@ -116,6 +118,15 @@ pub const State = extern struct {
     active: ?*Object = null,
     /// The screen whose depth gadget is pressed, in `mode` screen_depth.
     screen: ?*Screen = null,
+    /// Gadget help: where the pointer was at the last timer event, where
+    /// help was last worked out, and what it said - the address and code
+    /// last sent, which are sent again only when they change.
+    help_last_x: i32 = 0,
+    help_last_y: i32 = 0,
+    help_x: i32 = -1,
+    help_y: i32 = -1,
+    help_target: ?*anyopaque = null,
+    help_code: usize = 0,
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -427,6 +438,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
                 return;
             }
         }
+        followMouse(ib, e);
         const reuse = feed(ib, e);
         if (e.class == ie.IECLASS_TIMER) {
             if (ib.active_window) |w| _window.tick(ib, w);
@@ -451,7 +463,10 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
             }
         },
         ie.IECLASS_RAWKEY => if (ib.active_window) |w| key(ib, w, e),
-        ie.IECLASS_TIMER => if (ib.active_window) |w| _window.tick(ib, w),
+        ie.IECLASS_TIMER => if (ib.active_window) |w| {
+            _window.tick(ib, w);
+            helpTick(ib, w);
+        },
         else => {},
     }
 }
@@ -623,6 +638,7 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     if (w.first_request == null and (part == .inside or part == .border or part == .drag)) {
         switch (_gadget.hit(ib, w, st.x - w.left, st.y - w.top)) {
             .gadget => |o| {
+                if (sysPartOf(ib, o)) |stands_for| return pressSysGadget(ib, w, o, stands_for);
                 pressGadget(ib, w, o, e);
                 return;
             },
@@ -818,18 +834,14 @@ fn release(ib: *IntuitionBase) void {
     if (mode == .screen_depth) return releaseScreenDepth(ib);
     const w = st.window orelse return;
     st.window = null;
+    if (mode == .sys_gadget) return releaseSysGadget(ib, w);
     switch (mode) {
         .gadget => {
             if (st.over != 0) _window.drawGadget(ib, w, gadgetOf(st.part), false);
             if (partAt(w, st.x - w.left, st.y - w.top) != st.part) return;
             switch (st.part) {
                 .close => _window.send(ib, w, wn.IDCMP_CLOSEWINDOW, 0),
-                .depth => {
-                    var in_front: usize = 0;
-                    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&in_front) }, .{} };
-                    ib.layers_base.GetLayerAttrs(w.layer, &ask);
-                    if (in_front == 0) ib.iface().WindowToBack(@ptrCast(w)) else ib.iface().WindowToFront(@ptrCast(w));
-                },
+                .depth => depthToggle(ib, w),
                 .zoom => {
                     if (w.idcmp & wn.IDCMP_SIZEVERIFY == 0) return ib.iface().ZipWindow(@ptrCast(w));
                     st.mode = .verify;
@@ -850,6 +862,163 @@ fn release(ib: *IntuitionBase) void {
         .inside => _window.send(ib, w, wn.IDCMP_MOUSEBUTTONS, wn.SELECTUP),
         else => {},
     }
+}
+
+/// A window to the back when it is in front of every other, else to the
+/// front: what its depth gadget does.
+fn depthToggle(ib: *IntuitionBase, w: *Window) void {
+    var in_front: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&in_front) }, .{} };
+    ib.layers_base.GetLayerAttrs(w.layer, &ask);
+    if (in_front == 0) ib.iface().WindowToBack(@ptrCast(w)) else ib.iface().WindowToFront(@ptrCast(w));
+}
+
+/// Which of the window's own gadgets a gadget stands for (`GA_SysGadget`,
+/// `GA_SysGType`), if it stands for one.
+fn sysPartOf(ib: *IntuitionBase, o: *Object) ?Part {
+    const g = gadgetclass.gadgetOf(ib, o);
+    if (g.flags & gadgetclass.GFLG_SYSGADGET == 0) return null;
+    return switch (g.sys_type) {
+        gc.GTYP_WDRAGGING => .drag,
+        gc.GTYP_SIZING => .size,
+        gc.GTYP_CLOSE => .close,
+        gc.GTYP_WDEPTH => .depth,
+        gc.GTYP_WZOOM => .zoom,
+        else => null,
+    };
+}
+
+/// A press on a gadget standing for one of the window's own: a drag or a
+/// sizing as from the window's own, or the gadget held, selected, until it
+/// is let go.
+fn pressSysGadget(ib: *IntuitionBase, w: *Window, o: *Object, part: Part) void {
+    const st = stateOf(ib);
+    st.window = w;
+    st.part = part;
+    st.grab_x = st.x;
+    st.grab_y = st.y;
+    st.box_left = w.left;
+    st.box_top = w.top;
+    st.box_width = w.width;
+    st.box_height = w.height;
+    switch (part) {
+        .drag => st.mode = .drag,
+        .size => st.mode = .size,
+        else => {
+            st.mode = .sys_gadget;
+            st.active = o;
+            selectGadget(ib, w, o, true);
+        },
+    }
+}
+
+fn selectGadget(ib: *IntuitionBase, w: *Window, o: *Object, on: bool) void {
+    const g = gadgetclass.gadgetOf(ib, o);
+    if (on) g.flags |= gadgetclass.GFLG_SELECTED else g.flags &= ~gadgetclass.GFLG_SELECTED;
+    _gadget.render(ib, w, o, gc.GREDRAW_UPDATE);
+}
+
+/// Such a gadget let go: over it still, it does what it stands for.
+fn releaseSysGadget(ib: *IntuitionBase, w: *Window) void {
+    const st = stateOf(ib);
+    const o = st.active orelse return;
+    st.active = null;
+    selectGadget(ib, w, o, false);
+    switch (_gadget.hit(ib, w, st.x - w.left, st.y - w.top)) {
+        .gadget => |hit| if (hit != o) return,
+        else => return,
+    }
+    switch (st.part) {
+        .close => _window.send(ib, w, wn.IDCMP_CLOSEWINDOW, 0),
+        .depth => depthToggle(ib, w),
+        .zoom => ib.iface().ZipWindow(@ptrCast(w)),
+        else => {},
+    }
+}
+
+/// A move while a gadget of `GA_FollowMouse` has the input: its window is
+/// told, when it listens for the pointer's moves.
+fn followMouse(ib: *IntuitionBase, e: *const InputEvent) void {
+    if (e.class != ie.IECLASS_NEWPOINTERPOS or e.code != ie.IECODE_NOBUTTON) return;
+    const st = stateOf(ib);
+    const o = st.active orelse return;
+    const w = st.window orelse return;
+    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_FOLLOWMOUSE == 0) return;
+    _window.send(ib, w, wn.IDCMP_MOUSEMOVE, 0);
+}
+
+/// Gadget help at a timer event: when the active window has it on and the
+/// pointer has come to rest somewhere new, what is under the pointer is
+/// told to the window it belongs to - or, over no window of the active
+/// one's help group, a null to the active window. Only a change is sent.
+fn helpTick(ib: *IntuitionBase, active: *Window) void {
+    const st = stateOf(ib);
+    const x = st.x;
+    const y = st.y;
+    defer {
+        st.help_last_x = x;
+        st.help_last_y = y;
+    }
+    if (active.more_flags & _window.WMF_GADGETHELP == 0) return;
+    const resting = @abs(x - st.help_last_x) <= 6 and @abs(y - st.help_last_y) <= 3;
+    if (!resting or (x == st.help_x and y == st.help_y)) return;
+    st.help_x = x;
+    st.help_y = y;
+
+    var told = active;
+    var target: ?*anyopaque = null;
+    var code: usize = gc.GMR_HELPHIT;
+    if (screenAt(ib)) |s| {
+        if (windowAt(ib, s, x, y)) |w| {
+            if (w.help_group == active.help_group) {
+                told = w;
+                target = w;
+                if (helpHit(ib, w, x, y)) |hit| {
+                    target = hit.gadget;
+                    code = hit.code;
+                }
+            }
+        }
+    }
+    if (target == st.help_target and code == st.help_code) return;
+    st.help_target = target;
+    st.help_code = code;
+    // All ones, or the gadget's own code in the low sixteen bits.
+    const message_code: u32 = if (code == gc.GMR_HELPHIT) 0xFFFF_FFFF else @truncate(code & 0xFFFF);
+    _ = _window.sendWith(ib, told, wn.IDCMP_GADGETHELP, message_code, target);
+}
+
+/// The help-aware gadget under (x, y) in a window - its requester's when
+/// the point is on one - and what it answered GM_HELPTEST; null when none
+/// has anything to say there.
+fn helpHit(ib: *IntuitionBase, w: *Window, x: i32, y: i32) ?struct { gadget: *Object, code: usize } {
+    var first = w.gadgets;
+    const layer = ib.layers_base.WhichLayer(w.screen.layer_info, x, y);
+    var req = w.first_request;
+    while (req) |r| : (req = r.older) {
+        if (r.layer != null and r.layer == layer) {
+            first = r.gadgets;
+            break;
+        }
+    }
+    var next = first;
+    while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) {
+        const g = gadgetclass.gadgetOf(ib, o);
+        if (g.flags & gadgetclass.GFLG_GADGETHELP == 0) continue;
+        var gi = _gadget.infoFor(ib, w, o);
+        // Its own bounding box when it has one: the label beside it too.
+        const b = if (g.flags & gadgetclass.GFLG_BOUNDS != 0)
+            _gadget.Box{ .left = g.bounds.left, .top = g.bounds.top, .width = g.bounds.width, .height = g.bounds.height }
+        else
+            _gadget.boxIn(g, gi.domain_width, gi.domain_height);
+        const at_x = x - w.left - gi.domain_left;
+        const at_y = y - w.top - gi.domain_top;
+        if (at_x < b.left or at_y < b.top or at_x >= b.left + b.width or at_y >= b.top + b.height) continue;
+        var msg = gc.GpHitTest{ .method_id = gc.GM_HELPTEST, .gadget_info = &gi, .mouse = .{ .x = at_x - b.left, .y = at_y - b.top } };
+        const answer = ib.iface().SendMessage(o, @ptrCast(&msg));
+        if (answer != gc.GMR_NOHELPHIT) return .{ .gadget = o, .code = answer };
+    }
+    return null;
 }
 
 /// The screen's depth gadget let go: over it, the screen goes to the back

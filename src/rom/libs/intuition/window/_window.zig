@@ -106,6 +106,9 @@ pub const Window = extern struct {
     menu_lend: ?*Window = null,
     /// `WMF_` bits: this library's own, beside `flags`.
     more_flags: u32 = 0,
+    /// Its help group: every window with the same number shares gadget
+    /// help (`WA_HelpGroup`).
+    help_group: u32 = 0,
     /// The requesters up in it, the newest - the one whose gadgets are
     /// pressed - first, linked through each one's `older`; how many.
     first_request: ?*intuition.Requester = null,
@@ -221,6 +224,8 @@ pub const WMF_NEEDMENUCLEAR: u32 = 1 << 1;
 /// Opened on a public screen found by name or as the default: it holds a
 /// visit to the screen until it closes.
 pub const WMF_VISITOR: u32 = 1 << 2;
+/// Gadget help is on for it (`HelpControl`).
+pub const WMF_GADGETHELP: u32 = 1 << 3;
 /// Inside BeginRefresh, so EndRefresh has an update to end.
 pub const WF_IN_REFRESH = wn.WFLG_WINDOWREFRESH;
 /// An IDCMP_INTUITICKS is waiting; no second is sent until it is replied.
@@ -550,6 +555,33 @@ pub fn tick(ib: *IntuitionBase, w: *Window) void {
     if (w.flags & WF_TICK_SENT != 0) return;
     w.flags |= WF_TICK_SENT;
     send(ib, w, wn.IDCMP_INTUITICKS, 0);
+}
+
+/// Every open window, each screen's in turn, for a walk that has to see
+/// them all.
+pub fn eachWindow(ib: *IntuitionBase, context: anytype, comptime visit: fn (@TypeOf(context), *Window) void) void {
+    var screen_node = ib.screen_list.head;
+    while (screen_node) |sn| : (screen_node = sn.succ) {
+        if (sn.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(sn));
+        var node = s.windows.head;
+        while (node) |n| : (node = n.succ) {
+            if (n.succ == null) break;
+            visit(context, @ptrCast(@alignCast(n)));
+        }
+    }
+}
+
+/// Whether some window of a help group has gadget help on.
+pub fn groupHasHelp(ib: *IntuitionBase, group: u32) bool {
+    const Seen = struct { group: u32, on: bool = false };
+    var seen = Seen{ .group = group };
+    eachWindow(ib, &seen, struct {
+        fn visit(context: *Seen, w: *Window) void {
+            if (w.help_group == context.group and w.more_flags & WMF_GADGETHELP != 0) context.on = true;
+        }
+    }.visit);
+    return seen.on;
 }
 
 /// The border gadgets, for `drawGadget`.

@@ -178,6 +178,17 @@ pub const WA_MenuHelp = WA_Dummy + 0x2F;
 /// window's are, so the tag changes nothing; `WFLG_NEWLOOKMENUS` reads it
 /// back.
 pub const WA_NewLookMenus = WA_Dummy + 0x30;
+/// The help group the window is in, a number from utility.library's
+/// `GetUniqueID`: while the active window has gadget help on, every window
+/// of its group is helped too, and `HelpControl` on one is on all. A group
+/// of its own by default.
+pub const WA_HelpGroup = WA_Dummy + 0x38;
+/// The help group of this window, which must be open: joining it without
+/// knowing its number.
+pub const WA_HelpGroupWindow = WA_Dummy + 0x39;
+
+/// `HelpControl`: gadget help on.
+pub const HC_GADGETHELP: u32 = 1;
 // --- what a window is ------------------------------------------------------
 //
 // The bits `WA_Flags` carries, and what `GetWindowAttrs` reports. Each has a
@@ -358,6 +369,13 @@ pub const IDCMP_VANILLAKEY: u32 = 0x0020_0000;
 pub const IDCMP_IDCMPUPDATE: u32 = 0x0080_0000;
 /// It was moved or sized.
 pub const IDCMP_CHANGEWINDOW: u32 = 0x0200_0000;
+/// Gadget help is on (`HelpControl`) and the pointer has come to rest
+/// somewhere new: IAddress is the help-aware gadget under it, or the
+/// window when it is over the window and no such gadget, or null when it
+/// is over no window of the active window's help group - which is then
+/// the window told. Code is all ones, or the code a gadget answered
+/// GM_HELPTEST with (`GMR_HELPCODE`).
+pub const IDCMP_GADGETHELP: u32 = 0x0400_0000;
 /// A requester went up in it (`Request`, or a double-click of the menu
 /// button): `iaddress` the requester.
 pub const IDCMP_REQSET: u32 = 0x0000_0080;

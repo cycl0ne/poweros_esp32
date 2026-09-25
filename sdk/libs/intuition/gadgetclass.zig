@@ -55,6 +55,53 @@ pub const GA_RelHeight = GA_Dummy + 0x08;
 pub const GA_Text = GA_Dummy + 0x09;
 /// An image object that is the gadget's look.
 pub const GA_Image = GA_Dummy + 0x0A;
+/// An image drawn in place of `GA_Image` while the gadget is selected,
+/// when `GA_Highlight` says `GFLG_GADGHIMAGE`.
+pub const GA_SelectRender = GA_Dummy + 0x0C;
+/// How a selected gadget shows it (`GFLG_GADGH*`): `GFLG_GADGHCOMP`, the
+/// default, is the gadget's own pressed look - its image or frame in the
+/// selected state; `GFLG_GADGHBOX` its normal look with the box outlined
+/// the other way round; `GFLG_GADGHIMAGE` the `GA_SelectRender` image;
+/// `GFLG_GADGHNONE` no change at all.
+pub const GA_Highlight = GA_Dummy + 0x0D;
+/// True: while the gadget is held, its window is told of the pointer's
+/// moves (IDCMP_MOUSEMOVE, when it listens for them), whether or not it
+/// reports the mouse otherwise.
+pub const GA_FollowMouse = GA_Dummy + 0x17;
+/// True, with `GA_SysGType`: the gadget does what one of the window's own
+/// does - drags the window, sizes it, closes it, changes its depth or
+/// zooms it - wherever it is placed.
+pub const GA_SysGadget = GA_Dummy + 0x1D;
+/// Which of the window's own gadgets it stands for: `GTYP_WDRAGGING`,
+/// `GTYP_SIZING`, `GTYP_CLOSE`, `GTYP_WDEPTH` or `GTYP_WZOOM`.
+pub const GA_SysGType = GA_Dummy + 0x1E;
+/// The gadget that comes after this one in its list.
+pub const GA_Next = GA_Dummy + 0x20;
+/// The label as a chain of `IntuiText`s, in place of `GA_Text`, drawn in
+/// the middle of the gadget.
+pub const GA_IntuiText = GA_Dummy + 0x22;
+/// The label as an image, in place of `GA_Text`, drawn in the middle of
+/// the gadget in the gadget's state.
+pub const GA_LabelImage = GA_Dummy + 0x23;
+/// A `*const Box`: a box larger than the gadget's own that still counts as
+/// the gadget for gadget help - a label beside it, say. Copied.
+pub const GA_Bounds = GA_Dummy + 0x26;
+
+/// `GA_Highlight`'s values.
+pub const GFLG_GADGHCOMP: u32 = 0x0000;
+pub const GFLG_GADGHBOX: u32 = 0x0001;
+pub const GFLG_GADGHIMAGE: u32 = 0x0002;
+pub const GFLG_GADGHNONE: u32 = 0x0003;
+
+/// `GA_SysGType`'s values: which of the window's own gadgets it is.
+pub const GTYP_SIZING: u32 = 0x0010;
+pub const GTYP_WDRAGGING: u32 = 0x0020;
+pub const GTYP_WDEPTH: u32 = 0x0040;
+pub const GTYP_WZOOM: u32 = 0x0060;
+pub const GTYP_CLOSE: u32 = 0x0080;
+
+/// A box, x/y/width/height.
+pub const Box = extern struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0 };
 /// Not to be pressed: drawn as such, and GM_GOACTIVE is never sent.
 pub const GA_Disabled = GA_Dummy + 0x0E;
 /// A number the program chooses, to tell its gadgets apart.
@@ -99,6 +146,10 @@ pub const GA_BottomBorder = GA_Dummy + 0x1B;
 /// text answers Tab with `GMR_NEXTACTIVE`, and the next gadget of the
 /// window that has this set takes over.
 pub const GA_TabCycle = GA_Dummy + 0x24;
+/// True: the gadget has something to say when gadget help is on and the
+/// pointer rests over it - its window is sent IDCMP_GADGETHELP with the
+/// gadget as the address (`HelpControl`).
+pub const GA_GadgetHelp = GA_Dummy + 0x25;
 /// The pens to draw with, for a class that wants them when it is made.
 pub const GA_DrawInfo = GA_Dummy + 0x21;
 
@@ -215,6 +266,9 @@ pub const STRINGA_Buffer = STRINGA_Dummy + 0x02;
 /// Room to keep what the text was when it was activated, so that Escape
 /// puts it back. One of its own if the gadget made its buffer.
 pub const STRINGA_UndoBuffer = STRINGA_Dummy + 0x03;
+/// Open only: where an edit hook's work goes, as long as the buffer. The
+/// gadget takes its own when it is not given one.
+pub const STRINGA_WorkBuffer = STRINGA_Dummy + 0x04;
 /// Where the cursor is, counted in characters.
 pub const STRINGA_BufferPos = STRINGA_Dummy + 0x05;
 /// Which character is the first one shown, for a line longer than the box.
@@ -233,6 +287,17 @@ pub const STRINGA_Pens = STRINGA_Dummy + 0x09;
 pub const STRINGA_ActivePens = STRINGA_Dummy + 0x0A;
 /// True types over what is there rather than pushing it along.
 pub const STRINGA_ReplaceMode = STRINGA_Dummy + 0x0D;
+/// The gadget's own edit hook, a `*utility.Hook` called for each key after
+/// the global one, with the `SGWork` as its object (`sghooks.zig`).
+pub const STRINGA_EditHook = STRINGA_Dummy + 0x0B;
+/// All the `SGM_` modes at once.
+pub const STRINGA_EditModes = STRINGA_Dummy + 0x0C;
+/// True: the text keeps its length - `SGM_FIXEDFIELD`.
+pub const STRINGA_FixedFieldMode = STRINGA_Dummy + 0x0E;
+/// True: control characters go into the text - `SGM_NOFILTER`.
+pub const STRINGA_NoFilterMode = STRINGA_Dummy + 0x0F;
+/// True: the Help key ends the gadget with a code of 0x5F - `SGM_EXITHELP`.
+pub const STRINGA_ExitHelp = STRINGA_Dummy + 0x13;
 /// Where the text sits in its box: `GACT_STRINGLEFT`, `GACT_STRINGCENTER`
 /// or `GACT_STRINGRIGHT`.
 pub const STRINGA_Justification = STRINGA_Dummy + 0x10;

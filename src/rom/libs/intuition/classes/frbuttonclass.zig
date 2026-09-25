@@ -65,19 +65,21 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     // Drawn last, over everything the gadget shows, whichever way it ends.
     defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
 
+    const drawn = gadgetclass.drawnState(g, state(g, gi));
+    defer gadgetclass.drawHighlightBox(ib, g, rp, b.left, b.top, b.width, b.height);
     // The frame first, then what the gadget shows inside it.
     if (own.frame) |frame| {
         var draw = ic.ImpDraw{
             .method_id = ic.IM_DRAWFRAME,
             .rast_port = rp,
             .offset = .{ .x = b.left, .y = b.top },
-            .state = state(g, gi),
+            .state = drawn,
             .draw_info = dri,
             .dimensions = .{ .width = b.width, .height = b.height },
         };
         _ = it.SendMessage(frame, @ptrCast(&draw));
     }
-    if (g.image) |image| {
+    if (gadgetclass.shownImage(g)) |image| {
         var width: usize = 0;
         var height: usize = 0;
         _ = ib.iface().GetAttr(ic.IA_Width, image, &width);
@@ -87,26 +89,11 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
             image,
             b.left + @divTrunc(b.width - @as(i32, @intCast(width)), 2),
             b.top + @divTrunc(b.height - @as(i32, @intCast(height)), 2),
-            state(g, gi),
+            if (image == g.image) drawn else ic.IDS_NORMAL,
             dri,
         );
     }
-    const text = g.text orelse return;
-    const n = textLen(text);
-    var height: u32 = 0;
-    var baseline: u32 = 0;
-    const metric = [_]TagItem{
-        .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) },
-        .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
-        .{},
-    };
-    gb.GetRPAttrs(rp, &metric);
-    const width: i32 = @intCast(gb.TextLength(rp, text, n));
-    const pens = dri.pens;
-    const ink = if (g.flags & gadgetclass.GFLG_SELECTED != 0) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN];
-    d.pen(gb, rp, ink);
-    gb.Move(rp, b.left + @divTrunc(b.width - width, 2), b.top + @divTrunc(b.height - @as(i32, @intCast(height)), 2) + @as(i32, @intCast(baseline)));
-    gb.Text(rp, text, n);
+    gadgetclass.drawLabel(ib, g, rp, b.left, b.top, b.width, b.height, dri, drawn);
 }
 
 /// Drawn again, if it is in a window. Every class refreshes what it drew
@@ -134,16 +121,14 @@ fn sizeToContents(ib: *IntuitionBase, cl: *Class, o: *Object, frame: *Object) vo
         _ = it.GetAttr(ic.IA_Height, image, &height);
         contents.width = @intCast(width);
         contents.height = @intCast(height);
-    } else if (g.text) |text| {
+    } else if (g.text != null or g.itext != null or g.label_image != null) {
         const gb = ib.graphics_base;
         const given: ?*graphics.TextFont = if (g.draw_info) |dri| dri.font else null;
         const font = given orelse gb.OpenFont(graphics.POSPAZNAME, ib.font_height) orelse return;
         defer if (given == null) gb.CloseFont(font);
-        const run = intuition.IntuiText{ .font = font, .text = text };
-        var extent = graphics.FontExtent{};
-        gb.FontExtent(font, &extent);
-        contents.width = it.IntuiTextLength(&run);
-        contents.height = extent.height;
+        const size = gadgetclass.labelSize(ib, g, null, font);
+        contents.width = size.width;
+        contents.height = size.height;
     } else return;
 
     var box = ic.Box{};

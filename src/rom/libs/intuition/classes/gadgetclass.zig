@@ -22,6 +22,9 @@ const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
 const icc = intuition.icclass;
+const ic = intuition.imageclass;
+const sc = intuition.screens;
+const graphics = sdk.graphics;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -47,7 +50,19 @@ pub const Data = extern struct {
     id: u32 = 0,
     user_data: usize = 0,
     image: ?*Object = null,
+    /// What it shows while selected, for `GFLG_GADGHIMAGE`.
+    select_render: ?*Object = null,
+    /// Its label: one of the three at a time - a string, a chain of
+    /// IntuiTexts, or an image.
     text: ?[*:0]const u8 = null,
+    itext: ?*const intuition.IntuiText = null,
+    label_image: ?*Object = null,
+    /// `GFLG_GADGH*`: how it shows being selected.
+    highlight: u32 = gc.GFLG_GADGHCOMP,
+    /// `GA_Bounds`, when `GFLG_BOUNDS`.
+    bounds: gc.Box = .{},
+    /// `GTYP_*` of the window gadget it stands for, when `GA_SysGadget`.
+    sys_type: u32 = 0,
     draw_info: ?*intuition.DrawInfo = null,
     /// ICA_TARGET, ICA_MAP (not copied), and how deep in telling it is.
     target: usize = 0,
@@ -72,6 +87,12 @@ pub const GFLG_TABCYCLE: u32 = 1 << 6;
 /// It belongs to the border of a GimmeZeroZero window, not to the part
 /// inside it.
 pub const GFLG_GZZGADGET: u32 = 1 << 7;
+/// It has something to say under gadget help (`GA_GadgetHelp`).
+pub const GFLG_GADGETHELP: u32 = 1 << 8;
+/// It has a bounding box of its own (`GA_Bounds`).
+pub const GFLG_BOUNDS: u32 = 1 << 9;
+/// It stands for one of the window's own gadgets (`GA_SysGadget`).
+pub const GFLG_SYSGADGET: u32 = 1 << 10;
 
 pub const GACT_IMMEDIATE: u32 = 1 << 0;
 pub const GACT_RELVERIFY: u32 = 1 << 1;
@@ -86,6 +107,105 @@ pub const GACT_LEFTBORDER: u32 = 1 << 5;
 pub const GACT_TOPBORDER: u32 = 1 << 6;
 pub const GACT_BOTTOMBORDER: u32 = 1 << 7;
 pub const GACT_BORDER: u32 = GACT_RIGHTBORDER | GACT_LEFTBORDER | GACT_TOPBORDER | GACT_BOTTOMBORDER;
+/// While held, the window hears the pointer's moves (`GA_FollowMouse`).
+pub const GACT_FOLLOWMOUSE: u32 = 1 << 8;
+
+/// The state a gadget of `highlight` is drawn in: its own selected look
+/// for `GFLG_GADGHCOMP` and `GFLG_GADGHIMAGE`, its normal one for
+/// `GFLG_GADGHBOX` and `GFLG_GADGHNONE`, which show being selected some
+/// other way or not at all.
+pub fn drawnState(g: *const Data, state: u32) u32 {
+    if (g.highlight != gc.GFLG_GADGHBOX and g.highlight != gc.GFLG_GADGHNONE) return state;
+    return switch (state) {
+        ic.IDS_SELECTED => ic.IDS_NORMAL,
+        ic.IDS_INACTIVESELECTED => ic.IDS_INACTIVENORMAL,
+        else => state,
+    };
+}
+
+/// The image a gadget shows: `GA_SelectRender` while it is selected and
+/// highlights so, else `GA_Image`.
+pub fn shownImage(g: *const Data) ?*Object {
+    if (g.flags & GFLG_SELECTED != 0 and g.highlight == gc.GFLG_GADGHIMAGE) {
+        if (g.select_render) |other| return other;
+    }
+    return g.image;
+}
+
+/// A selected gadget of `GFLG_GADGHBOX`: its box outlined the other way
+/// round.
+pub fn drawHighlightBox(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, left: i32, top: i32, width: i32, height: i32) void {
+    if (g.highlight != gc.GFLG_GADGHBOX or g.flags & GFLG_SELECTED == 0) return;
+    const gb = ib.graphics_base;
+    var mode: u32 = 0;
+    const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) }, .{} };
+    gb.GetRPAttrs(rp, &ask);
+    const complement = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_COMPLEMENT }, .{} };
+    gb.SetRPAttrs(rp, &complement);
+    gb.DrawRect(rp, &.{ .min_x = left, .min_y = top, .max_x = left + width, .max_y = top + height });
+    const put = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = mode }, .{} };
+    gb.SetRPAttrs(rp, &put);
+}
+
+/// How big a gadget's label is: its string in the RastPort's font, its
+/// IntuiTexts, or its image; zero without one.
+pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, font: ?*graphics.TextFont) struct { width: i32, height: i32 } {
+    const it = ib.iface();
+    if (g.label_image) |image| {
+        var width: usize = 0;
+        var height: usize = 0;
+        _ = it.GetAttr(ic.IA_Width, image, &width);
+        _ = it.GetAttr(ic.IA_Height, image, &height);
+        return .{ .width = @intCast(width), .height = @intCast(height) };
+    }
+    const gb = ib.graphics_base;
+    var height: u32 = 0;
+    if (rp) |port| {
+        const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) }, .{} };
+        gb.GetRPAttrs(port, &metric);
+    } else if (font) |f| {
+        var extent = graphics.FontExtent{};
+        gb.FontExtent(f, &extent);
+        height = @intCast(extent.height);
+    }
+    if (g.itext) |run| return .{ .width = it.IntuiTextLength(run), .height = @intCast(height) };
+    if (g.text) |text| {
+        const run = intuition.IntuiText{ .font = font, .text = text };
+        const width: i32 = if (rp) |port| @intCast(gb.TextLength(port, text, textLen(text))) else it.IntuiTextLength(&run);
+        return .{ .width = width, .height = @intCast(height) };
+    }
+    return .{ .width = 0, .height = 0 };
+}
+
+fn textLen(s: [*:0]const u8) u32 {
+    var n: u32 = 0;
+    while (s[n] != 0) n += 1;
+    return n;
+}
+
+/// The label in the middle of the box: a string in the text pen - the
+/// fill-text pen while selected - IntuiTexts in their own pens, an image
+/// in the gadget's state.
+pub fn drawLabel(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, left: i32, top: i32, width: i32, height: i32, dri: *intuition.DrawInfo, state: u32) void {
+    const it = ib.iface();
+    const gb = ib.graphics_base;
+    const size = labelSize(ib, g, rp, null);
+    const x = left + @divTrunc(width - size.width, 2);
+    const y = top + @divTrunc(height - size.height, 2);
+    if (g.label_image) |image| return it.DrawImageState(rp, image, x, y, state, dri);
+    if (g.itext) |run| return it.PrintIText(rp, run, x, y);
+    const text = g.text orelse return;
+    var baseline: u32 = 0;
+    const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) }, .{} };
+    gb.GetRPAttrs(rp, &metric);
+    const pens = dri.pens;
+    const selected = state == ic.IDS_SELECTED or state == ic.IDS_INACTIVESELECTED;
+    const ink = if (selected) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN];
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
+    gb.SetRPAttrs(rp, &tags);
+    gb.Move(rp, x, y + @as(i32, @intCast(baseline)));
+    gb.Text(rp, text, textLen(text));
+}
 
 /// Make gadgetclass, from rootclass, and put it on the public list.
 pub fn make(ib: *IntuitionBase) ?*Class {
@@ -146,8 +266,40 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             },
             gc.GA_Text => {
                 g.text = @ptrFromInt(v);
+                g.itext = null;
+                g.label_image = null;
                 changed = 1;
             },
+            gc.GA_IntuiText => {
+                g.itext = @ptrFromInt(v);
+                g.text = null;
+                g.label_image = null;
+                changed = 1;
+            },
+            gc.GA_LabelImage => {
+                g.label_image = @ptrFromInt(v);
+                g.text = null;
+                g.itext = null;
+                changed = 1;
+            },
+            gc.GA_SelectRender => {
+                g.select_render = @ptrFromInt(v);
+                changed = 1;
+            },
+            gc.GA_Highlight => {
+                g.highlight = @as(u32, @truncate(v)) & 3;
+                changed = 1;
+            },
+            gc.GA_Bounds => if (v != 0) {
+                g.bounds = @as(*const gc.Box, @ptrFromInt(v)).*;
+                g.flags |= GFLG_BOUNDS;
+            } else {
+                g.flags &= ~GFLG_BOUNDS;
+            },
+            gc.GA_Next => g.next = @ptrFromInt(v),
+            gc.GA_SysGadget => setFlag(&g.flags, GFLG_SYSGADGET, v != 0),
+            gc.GA_SysGType => g.sys_type = @truncate(v),
+            gc.GA_FollowMouse => setFlag(&g.activation, GACT_FOLLOWMOUSE, v != 0),
             gc.GA_Image => {
                 g.image = @ptrFromInt(v);
                 changed = 1;
@@ -162,6 +314,7 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             },
             gc.GA_TabCycle => setFlag(&g.flags, GFLG_TABCYCLE, v != 0),
             gc.GA_GZZGadget => setFlag(&g.flags, GFLG_GZZGADGET, v != 0),
+            gc.GA_GadgetHelp => setFlag(&g.flags, GFLG_GADGETHELP, v != 0),
             gc.GA_ToggleSelect => setFlag(&g.activation, GACT_TOGGLESELECT, v != 0),
             gc.GA_EndGadget => setFlag(&g.activation, GACT_ENDGADGET, v != 0),
             gc.GA_RightBorder => setFlag(&g.activation, GACT_RIGHTBORDER, v != 0),
@@ -189,6 +342,15 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Selected => out.* = @intFromBool(g.flags & GFLG_SELECTED != 0),
         gc.GA_Disabled => out.* = @intFromBool(g.flags & GFLG_DISABLED != 0),
         gc.GA_Text => out.* = @intFromPtr(g.text),
+        gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
+        gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
+        gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
+        gc.GA_Highlight => out.* = g.highlight,
+        gc.GA_Next => out.* = @intFromPtr(g.next),
+        gc.GA_SysGadget => out.* = @intFromBool(g.flags & GFLG_SYSGADGET != 0),
+        gc.GA_SysGType => out.* = g.sys_type,
+        gc.GA_FollowMouse => out.* = @intFromBool(g.activation & GACT_FOLLOWMOUSE != 0),
+        gc.GA_GadgetHelp => out.* = @intFromBool(g.flags & GFLG_GADGETHELP != 0),
         gc.GA_Image => out.* = @intFromPtr(g.image),
         gc.GA_Left, gc.GA_RelRight => out.* = @bitCast(@as(isize, g.left)),
         gc.GA_Top, gc.GA_RelBottom => out.* = @bitCast(@as(isize, g.top)),

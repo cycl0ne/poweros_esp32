@@ -90,8 +90,12 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     // Drawn last, over everything the gadget shows, whichever way it ends.
     defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
 
-    if (g.image) |image| {
-        it.DrawImageState(rp, image, b.left, b.top, state(g, gi), dri);
+    const drawn = gadgetclass.drawnState(g, state(g, gi));
+    defer gadgetclass.drawHighlightBox(ib, g, rp, b.left, b.top, b.width, b.height);
+    if (gadgetclass.shownImage(g)) |image| {
+        // The select render is the selected look itself, drawn as it is.
+        const image_state = if (image == g.image) drawn else ic.IDS_NORMAL;
+        it.DrawImageState(rp, image, b.left, b.top, image_state, dri);
         return;
     }
     const frame = own.frame orelse return;
@@ -99,28 +103,12 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
         .method_id = ic.IM_DRAWFRAME,
         .rast_port = rp,
         .offset = .{ .x = b.left, .y = b.top },
-        .state = state(g, gi),
+        .state = drawn,
         .draw_info = dri,
         .dimensions = .{ .width = b.width, .height = b.height },
     };
     _ = it.SendMessage(frame, @ptrCast(&draw));
-
-    const text = g.text orelse return;
-    const n = textLen(text);
-    var height: u32 = 0;
-    var baseline: u32 = 0;
-    const metric = [_]TagItem{
-        .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) },
-        .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
-        .{},
-    };
-    gb.GetRPAttrs(rp, &metric);
-    const width: i32 = @intCast(gb.TextLength(rp, text, n));
-    const pens = dri.pens;
-    const ink = if (g.flags & gadgetclass.GFLG_SELECTED != 0) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN];
-    d.pen(gb, rp, ink);
-    gb.Move(rp, b.left + @divTrunc(b.width - width, 2), b.top + @divTrunc(b.height - @as(i32, @intCast(height)), 2) + @as(i32, @intCast(baseline)));
-    gb.Text(rp, text, n);
+    gadgetclass.drawLabel(ib, g, rp, b.left, b.top, b.width, b.height, dri, drawn);
 }
 
 /// Drawn again, if it is in a window: a change of state that shows.

@@ -116,6 +116,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.timer_open = false;
     ib.alert = .{};
     sys_base.InitSemaphore(&ib.alert_lock);
+    ib.default_edit_hook = .{ .entry = &strgclass.defaultEdit };
+    ib.edit_hook = &ib.default_edit_hook;
     sys_base.InitSemaphore(&ib.screen_lock);
 
     ib.class_list.init();

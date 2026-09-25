@@ -16,6 +16,13 @@
 //! Keys arrive as raw key events and are read through keymap.library, so
 //! the keymap in force is the one the rest of the machine uses, and a
 //! gadget may name another with `STRINGA_AltKeyMap`.
+//!
+//! A key is edited in two steps (`sghooks.zig`): the text is copied into
+//! the work buffer, the global edit hook - `defaultEdit` here, until
+//! `SetEditHook` puts another - makes of the key what it will there, and
+//! the gadget's own hook (`STRINGA_EditHook`) may change that. Then what
+//! the `SGWork`'s actions say is done: the work taken as the text, the
+//! gadget ended, the screen flashed.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -24,6 +31,7 @@ const intuition = sdk.intuition;
 const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
+const sg = intuition.sghooks;
 const sc = intuition.screens;
 const ie = sdk.devices.inputevent;
 const km = sdk.keymap;
@@ -49,8 +57,13 @@ pub const Data = extern struct {
     long_val: i32 = 0,
     /// GACT_STRING: which edge the text sits against.
     justification: u32 = gc.GACT_STRINGLEFT,
-    /// True while a key replaces the character at the cursor.
-    replace: u8 = 0,
+    /// `SGM_` modes: replace, fixed field, no filter, exit on Help.
+    modes: u32 = 0,
+    /// The work buffer an edit is made in, as long as the buffer.
+    work: ?[*]u8 = null,
+    owns_work: u8 = 0,
+    /// `STRINGA_EditHook`: called for each key after the global hook.
+    edit_hook: ?*utility.Hook = null,
     /// The gadget took its own buffer and gives it back.
     owns_buffer: u8 = 0,
     /// The same for the undo room, which it may own without owning the
@@ -126,88 +139,180 @@ fn scrollTo(p: *Data, room: u32) void {
     if (p.disp_pos > p.num_chars) p.disp_pos = p.num_chars;
 }
 
-fn insert(p: *Data, c: u8) bool {
-    const buffer = p.buffer orelse return false;
-    if (p.replace != 0 and p.buffer_pos < p.num_chars) {
-        buffer[p.buffer_pos] = c;
-        p.buffer_pos += 1;
-        textChanged(p);
+// --- the default edit ------------------------------------------------------------
+
+/// Raw keys the edit reads as they are: they make no one character.
+const raw_left = 0x4F;
+const raw_right = 0x4E;
+const raw_home = 0x70;
+const raw_end = 0x71;
+const raw_delete = 0x46;
+const raw_help = 0x5F;
+
+/// A character in at the cursor, or over the one there; false when there is
+/// no room, or a fixed field has none to replace.
+fn workPut(w: *sg.SGWork, c: u8) bool {
+    const replacing = w.modes & (sg.SGM_REPLACE | sg.SGM_FIXEDFIELD) != 0;
+    if (replacing and w.buffer_pos < w.num_chars) {
+        w.work_buffer[w.buffer_pos] = c;
+        w.buffer_pos += 1;
+        w.edit_op = sg.EO_REPLACECHAR;
         return true;
     }
-    if (p.num_chars + 1 >= p.max_chars) return false;
-    var i = p.num_chars;
-    while (i > p.buffer_pos) : (i -= 1) buffer[i] = buffer[i - 1];
-    buffer[p.buffer_pos] = c;
-    buffer[p.num_chars + 1] = 0;
-    p.buffer_pos += 1;
-    textChanged(p);
+    if (w.modes & sg.SGM_FIXEDFIELD != 0) return false;
+    if (w.num_chars + 1 >= w.max_chars) return false;
+    var i = w.num_chars;
+    while (i > w.buffer_pos) : (i -= 1) w.work_buffer[i] = w.work_buffer[i - 1];
+    w.work_buffer[w.buffer_pos] = c;
+    w.num_chars += 1;
+    w.work_buffer[w.num_chars] = 0;
+    w.buffer_pos += 1;
+    w.edit_op = sg.EO_INSERTCHAR;
     return true;
 }
 
-fn remove(p: *Data, at: u32) bool {
-    const buffer = p.buffer orelse return false;
-    if (at >= p.num_chars) return false;
+/// The character at `at` taken out.
+fn workTake(w: *sg.SGWork, at: u32) void {
+    if (at >= w.num_chars) return;
     var i = at;
-    while (i + 1 <= p.num_chars) : (i += 1) buffer[i] = buffer[i + 1];
-    textChanged(p);
-    return true;
+    while (i < w.num_chars) : (i += 1) w.work_buffer[i] = w.work_buffer[i + 1];
+    w.num_chars -= 1;
 }
 
-/// What a key does. True when something changed and the gadget is to be
-/// drawn again; `done` when it has finished with the input.
-const Acted = struct { changed: bool = false, done: bool = false, cancelled: bool = false, tab: bool = false };
-
-fn key(ib: *IntuitionBase, p: *Data, e: *const ie.InputEvent) Acted {
-    if (e.code & ie.IECODE_UP_PREFIX != 0) return .{};
-    const kb = ib.keymap_base orelse return .{};
-    var text: [16]u8 = undefined;
-    const n = kb.MapRawKey(e, &text, text.len, p.key_map);
-    if (n <= 0) return .{};
-    const made = text[0..@intCast(n)];
-
-    // The keys that move and take away arrive as the sequences every
-    // console on this machine sends.
-    if (made.len >= 3 and made[0] == 0x1B and made[1] == '[') {
-        switch (made[2]) {
-            'D' => {
-                if (p.buffer_pos > 0) p.buffer_pos -= 1;
-                return .{ .changed = true };
-            },
-            'C' => {
-                if (p.buffer_pos < p.num_chars) p.buffer_pos += 1;
-                return .{ .changed = true };
-            },
-            'H' => {
-                p.buffer_pos = 0;
-                return .{ .changed = true };
-            },
-            'F' => {
-                p.buffer_pos = p.num_chars;
-                return .{ .changed = true };
-            },
-            '3' => return .{ .changed = remove(p, p.buffer_pos) },
-            else => return .{},
-        }
+/// Intuition's own editing: the global edit hook until `SetEditHook` puts
+/// another. It edits the work for `SGH_KEY` and answers 0 for anything
+/// else. What the keys do: the cursor keys, Home and End move; Backspace
+/// and Delete take a character out; a character goes in, or over the one
+/// at the cursor in replace mode; Return ends the gadget, Tab ends it and
+/// moves on (Shift-Tab back), Escape puts back what was there when it was
+/// activated and ends it; Help ends it in `SGM_EXITHELP`. A fixed field
+/// keeps its length: characters only replace, Backspace only moves back.
+pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    const w: *sg.SGWork = @ptrCast(@alignCast(object orelse return 0));
+    const command: *const u32 = @ptrCast(@alignCast(message orelse return 0));
+    if (command.* != sg.SGH_KEY) return 0;
+    const e = w.event;
+    const fixed = w.modes & sg.SGM_FIXEDFIELD != 0;
+    w.edit_op = sg.EO_NOOP;
+    switch (e.code) {
+        raw_left, raw_right, raw_home, raw_end => {
+            w.buffer_pos = switch (e.code) {
+                raw_left => w.buffer_pos -| 1,
+                raw_right => @min(w.buffer_pos + 1, w.num_chars),
+                raw_home => 0,
+                else => w.num_chars,
+            };
+            w.edit_op = sg.EO_MOVECURSOR;
+            w.actions |= sg.SGA_REDISPLAY;
+            return 1;
+        },
+        raw_delete => {
+            if (fixed or w.buffer_pos >= w.num_chars) return 1;
+            workTake(w, w.buffer_pos);
+            w.edit_op = sg.EO_DELFORWARD;
+            return 1;
+        },
+        raw_help => {
+            if (w.modes & sg.SGM_EXITHELP == 0) return 1;
+            w.code = raw_help;
+            w.actions |= sg.SGA_END;
+            return 1;
+        },
+        else => {},
     }
-    if (made.len != 1) return .{};
-    switch (made[0]) {
-        0x0D, 0x0A => return .{ .done = true },
-        0x1B => return .{ .done = true, .cancelled = true },
+    const c = w.code;
+    if (c == 0) return 1;
+    switch (c) {
+        0x0D, 0x0A => {
+            w.edit_op = sg.EO_ENTER;
+            w.code = e.code;
+            w.actions |= sg.SGA_END;
+        },
+        0x1B => {
+            // Back to what it was when it was activated.
+            var i: u32 = 0;
+            while (i + 1 < w.max_chars and w.undo_buffer[i] != 0) : (i += 1) w.work_buffer[i] = w.undo_buffer[i];
+            w.work_buffer[i] = 0;
+            w.num_chars = i;
+            w.buffer_pos = @min(w.buffer_pos, i);
+            w.edit_op = sg.EO_RESET;
+            w.code = e.code;
+            w.actions |= sg.SGA_END;
+        },
+        0x09 => {
+            // Tab finishes the field and hands the keyboard on, rather than
+            // going into the text: a tab in a line of text is not a
+            // character anybody wants there.
+            const back = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+            w.code = e.code;
+            w.actions |= sg.SGA_END | (if (back) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
+        },
         0x08 => {
-            if (p.buffer_pos == 0) return .{};
-            p.buffer_pos -= 1;
-            return .{ .changed = remove(p, p.buffer_pos) };
+            if (w.buffer_pos == 0) return 1;
+            w.buffer_pos -= 1;
+            if (fixed) {
+                w.edit_op = sg.EO_MOVECURSOR;
+                w.actions |= sg.SGA_REDISPLAY;
+            } else {
+                workTake(w, w.buffer_pos);
+                w.edit_op = sg.EO_DELBACKWARD;
+            }
         },
-        0x7F => return .{ .changed = remove(p, p.buffer_pos) },
-        // Tab finishes the field and hands the keyboard on, rather than
-        // going into the text: a tab in a line of text is not a character
-        // anybody wants there.
-        0x09 => return .{ .done = true, .tab = true },
-        else => |c| {
-            if (c < 0x20) return .{};
-            return .{ .changed = insert(p, c) };
+        0x7F => {
+            if (fixed or w.buffer_pos >= w.num_chars) return 1;
+            workTake(w, w.buffer_pos);
+            w.edit_op = sg.EO_DELFORWARD;
+        },
+        else => {
+            if (c < 0x20 and w.modes & sg.SGM_NOFILTER == 0) return 1;
+            if (!workPut(w, @truncate(c))) w.actions |= sg.SGA_BEEP;
         },
     }
+    w.long_int = numberOf(w.work_buffer, w.num_chars);
+    return 1;
+}
+
+/// An edit in progress, for the gadget: its text in the work buffer.
+fn startWork(o: *Object, p: *Data, e: *const ie.InputEvent, code: u32, gi: ?*classusr.GadgetInfo) ?sg.SGWork {
+    const buffer = p.buffer orelse return null;
+    const work = p.work orelse return null;
+    var i: u32 = 0;
+    while (i < p.num_chars) : (i += 1) work[i] = buffer[i];
+    work[p.num_chars] = 0;
+    return .{
+        .gadget = o,
+        .work_buffer = work,
+        .prev_buffer = buffer,
+        .undo_buffer = p.undo orelse buffer,
+        .max_chars = p.max_chars,
+        .modes = p.modes,
+        .event = e,
+        .code = code,
+        .buffer_pos = p.buffer_pos,
+        .num_chars = p.num_chars,
+        .actions = sg.SGA_USE,
+        .long_int = p.long_val,
+        .gadget_info = gi,
+        .edit_op = sg.EO_NOOP,
+    };
+}
+
+/// The work taken as the text, if the edit said to use it; true when the
+/// text or the cursor changed.
+fn useWork(p: *Data, w: *const sg.SGWork) bool {
+    if (w.actions & sg.SGA_USE == 0) return false;
+    const buffer = p.buffer orelse return false;
+    var changed = w.buffer_pos != p.buffer_pos or w.num_chars != p.num_chars;
+    var i: u32 = 0;
+    while (i <= w.num_chars and i < p.max_chars) : (i += 1) {
+        if (buffer[i] != w.work_buffer[i]) changed = true;
+        buffer[i] = w.work_buffer[i];
+    }
+    buffer[@min(w.num_chars, p.max_chars - 1)] = 0;
+    p.buffer_pos = w.buffer_pos;
+    textChanged(p);
+    return changed;
 }
 
 fn boxOf(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) _gadget.Box {
@@ -402,7 +507,17 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
                 p.font = @ptrFromInt(item.data);
                 changed = true;
             },
-            gc.STRINGA_ReplaceMode => p.replace = @intFromBool(item.data != 0),
+            gc.STRINGA_ReplaceMode => setMode(p, sg.SGM_REPLACE, item.data != 0),
+            gc.STRINGA_FixedFieldMode => setMode(p, sg.SGM_FIXEDFIELD | sg.SGM_REPLACE, item.data != 0),
+            gc.STRINGA_NoFilterMode => setMode(p, sg.SGM_NOFILTER, item.data != 0),
+            gc.STRINGA_ExitHelp => setMode(p, sg.SGM_EXITHELP, item.data != 0),
+            gc.STRINGA_EditModes => p.modes = @truncate(item.data),
+            gc.STRINGA_EditHook => p.edit_hook = @ptrFromInt(item.data),
+            // At birth only, as the buffer is.
+            gc.STRINGA_WorkBuffer => if (at_birth and item.data != 0) {
+                p.work = @ptrFromInt(item.data);
+                p.owns_work = 0;
+            },
             gc.STRINGA_Justification => {
                 p.justification = @truncate(item.data);
                 changed = true;
@@ -460,6 +575,70 @@ fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) voi
     p.buffer_pos = @min(p.disp_pos + @as(u32, @intCast(@max(at, 0))), p.num_chars);
 }
 
+fn setMode(p: *Data, bits: u32, on: bool) void {
+    if (on) p.modes |= bits else p.modes &= ~bits;
+}
+
+/// What the gadget allocated for itself, given back.
+fn freeOwn(ib: *IntuitionBase, p: *Data) void {
+    if (p.owns_buffer != 0) {
+        if (p.buffer) |b| ib.sys_base.FreeVec(b);
+    }
+    if (p.owns_undo != 0) {
+        if (p.undo) |u| ib.sys_base.FreeVec(u);
+    }
+    if (p.owns_work != 0) {
+        if (p.work) |w| ib.sys_base.FreeVec(w);
+    }
+    p.buffer = null;
+    p.undo = null;
+    p.work = null;
+}
+
+/// A key edited: the global hook and then the gadget's own on the work,
+/// and what they asked for done.
+fn editKey(ib: *IntuitionBase, cl: *Class, o: *Object, p: *Data, in: *gc.GpInput, e: *const ie.InputEvent) usize {
+    var code: u32 = 0;
+    if (ib.keymap_base) |kb| {
+        var text: [16]u8 = undefined;
+        if (kb.MapRawKey(e, &text, text.len, p.key_map) == 1) code = text[0];
+    }
+    var w = startWork(o, p, e, code, in.gadget_info) orelse return gc.GMR_MEACTIVE;
+    var command: u32 = sg.SGH_KEY;
+    const ub = ib.utility_base;
+    _ = ub.CallHookPkt(ib.edit_hook, &w, &command);
+    if (p.edit_hook) |hook| _ = ub.CallHookPkt(hook, &w, &command);
+
+    const changed = useWork(p, &w);
+    if (w.actions & sg.SGA_BEEP != 0) {
+        if (in.gadget_info) |gi| ib.iface().DisplayBeep(gi.screen);
+    }
+    if (w.actions & sg.SGA_END != 0) {
+        p.active = 0;
+        redraw(ib, o, in.gadget_info);
+        tell(ib, cl, o, in.gadget_info, 0);
+        in.termination.* = @bitCast(w.code);
+        if (w.actions & sg.SGA_PREVACTIVE != 0) return gc.GMR_PREVACTIVE;
+        if (w.actions & sg.SGA_NEXTACTIVE != 0) return gc.GMR_NEXTACTIVE;
+        const reuse: usize = if (w.actions & sg.SGA_REUSE != 0) gc.GMR_REUSE else gc.GMR_NOREUSE;
+        return reuse | gc.GMR_VERIFY;
+    }
+    if (changed or w.actions & sg.SGA_REDISPLAY != 0) redraw(ib, o, in.gadget_info);
+    if (changed) tell(ib, cl, o, in.gadget_info, classusr.OPUF_INTERIM);
+    return gc.GMR_MEACTIVE;
+}
+
+/// A press has put the cursor where it landed: the gadget's own hook may
+/// put it elsewhere.
+fn clickHook(ib: *IntuitionBase, o: *Object, p: *Data, e: ?*const ie.InputEvent, gi: ?*classusr.GadgetInfo) void {
+    const hook = p.edit_hook orelse return;
+    const event = e orelse return;
+    var w = startWork(o, p, event, 0, gi) orelse return;
+    var command: u32 = sg.SGH_CLICK;
+    if (ib.utility_base.CallHookPkt(hook, &w, &command) == 0) return;
+    if (w.actions & sg.SGA_USE != 0) p.buffer_pos = @min(w.buffer_pos, p.num_chars);
+}
+
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
     const ib: *IntuitionBase = @ptrFromInt(cl.user_data);
@@ -510,19 +689,21 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 p.undo = @ptrCast(memory);
                 p.owns_undo = 1;
             }
+            // And the room a key is edited in before it counts.
+            if (p.work == null) {
+                const memory = ib.sys_base.AllocVec(p.max_chars, sdk.exec.MEMF_ANY | sdk.exec.MEMF_CLEAR) orelse {
+                    freeOwn(ib, p);
+                    _ = it.SendSuperMessage(cl, obj, &gone);
+                    return 0;
+                };
+                p.work = @ptrCast(memory);
+                p.owns_work = 1;
+            }
             textChanged(p);
             return made;
         },
         classusr.OM_DISPOSE => {
-            const p = own(cl, o orelse return 0);
-            if (p.owns_buffer != 0) {
-                if (p.buffer) |b| ib.sys_base.FreeVec(b);
-            }
-            if (p.owns_undo != 0) {
-                if (p.undo) |u| ib.sys_base.FreeVec(u);
-            }
-            p.buffer = null;
-            p.undo = null;
+            freeOwn(ib, own(cl, o orelse return 0));
             return it.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
@@ -546,7 +727,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 gc.STRINGA_DispPos => get.storage.* = p.disp_pos,
                 gc.STRINGA_LongVal => get.storage.* = @bitCast(@as(isize, p.long_val)),
                 gc.STRINGA_Justification => get.storage.* = p.justification,
-                gc.STRINGA_ReplaceMode => get.storage.* = p.replace,
+                gc.STRINGA_ReplaceMode => get.storage.* = @intFromBool(p.modes & sg.SGM_REPLACE != 0),
+                gc.STRINGA_FixedFieldMode => get.storage.* = @intFromBool(p.modes & sg.SGM_FIXEDFIELD != 0),
+                gc.STRINGA_NoFilterMode => get.storage.* = @intFromBool(p.modes & sg.SGM_NOFILTER != 0),
+                gc.STRINGA_ExitHelp => get.storage.* = @intFromBool(p.modes & sg.SGM_EXITHELP != 0),
+                gc.STRINGA_EditModes => get.storage.* = p.modes,
+                gc.STRINGA_EditHook => get.storage.* = @intFromPtr(p.edit_hook),
+                gc.STRINGA_WorkBuffer => get.storage.* = @intFromPtr(p.work),
                 gc.STRINGA_Font => get.storage.* = @intFromPtr(p.font),
                 else => return it.SendSuperMessage(cl, o, msg),
             }
@@ -570,7 +757,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             keepUndo(p);
             // A press puts the cursor where it landed; being activated
             // without one leaves it where it was.
-            if (in.event != null and in.mouse.x >= 0) cursorTo(ib, p, in.gadget_info, in.mouse.x);
+            if (in.event != null and in.mouse.x >= 0) {
+                cursorTo(ib, p, in.gadget_info, in.mouse.x);
+                clickHook(ib, o.?, p, in.event, in.gadget_info);
+            }
             redraw(ib, o.?, in.gadget_info);
             return gc.GMR_MEACTIVE;
         },
@@ -592,27 +782,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 // Pressed again inside itself: the cursor goes where the
                 // pointer is, which is what a press in a line of text means.
                 cursorTo(ib, p, in.gadget_info, in.mouse.x);
+                clickHook(ib, o.?, p, e, in.gadget_info);
                 redraw(ib, o.?, in.gadget_info);
                 return gc.GMR_MEACTIVE;
             }
             if (e.class != ie.IECLASS_RAWKEY) return gc.GMR_MEACTIVE;
-            const acted = key(ib, p, e);
-            if (acted.cancelled) restoreUndo(p);
-            if (acted.changed or acted.done) {
-                if (acted.done) p.active = 0;
-                redraw(ib, o.?, in.gadget_info);
-            }
-            if (acted.done) {
-                tell(ib, cl, o.?, in.gadget_info, 0);
-                in.termination.* = @bitCast(@as(u32, e.code));
-                if (acted.tab) {
-                    const back = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
-                    return if (back) gc.GMR_PREVACTIVE else gc.GMR_NEXTACTIVE;
-                }
-                return gc.GMR_NOREUSE | gc.GMR_VERIFY;
-            }
-            if (acted.changed) tell(ib, cl, o.?, in.gadget_info, classusr.OPUF_INTERIM);
-            return gc.GMR_MEACTIVE;
+            if (e.code & ie.IECODE_UP_PREFIX != 0) return gc.GMR_MEACTIVE;
+            return editKey(ib, cl, o.?, p, in, e);
         },
         gc.GM_GOINACTIVE => {
             const gi: *gc.GpGoInactive = @ptrCast(@alignCast(msg));

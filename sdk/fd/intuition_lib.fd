@@ -309,4 +309,12 @@ void CurrentTime(*u32 seconds, *u32 micros)
 bool DisplayAlert(u32 alert_number, [*:0]const u8 text, u32 height)
 /// The same, given up after `frames` 60 Hz frames (false).
 bool TimedDisplayAlert(u32 alert_number, [*:0]const u8 text, u32 height, u32 frames)
+/// Gadget help on (HC_GADGETHELP) or off for a window and its help group.
+void HelpControl(*intuition.Window window, u32 flags)
+/// Put the global edit hook string gadgets' keys go through first; null
+/// for intuition's own. Answers the hook it replaces.
+*utility.Hook SetEditHook(?*utility.Hook hook)
+/// Where the pointer is, from a gadget's top-left corner, in the room its
+/// GadgetInfo describes.
+void GadgetMouse(*intuition.Object gadget, *intuition.GadgetInfo info, *graphics.Point point)
 ##end

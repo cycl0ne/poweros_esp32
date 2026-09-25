@@ -447,6 +447,15 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         drawBorder(ib, w);
     }
     _gadget.renderAll(ib, w);
+    // Its help group: the one asked for, a window's, or one of its own;
+    // it has gadget help if the group does.
+    w.help_group = @truncate(ub.GetTagData(wn.WA_HelpGroup, 0, tags));
+    if (ub.GetTagData(wn.WA_HelpGroupWindow, 0, tags) != 0) {
+        const other: *Window = @ptrFromInt(ub.GetTagData(wn.WA_HelpGroupWindow, 0, tags));
+        w.help_group = other.help_group;
+    }
+    if (w.help_group == 0) w.help_group = ub.GetUniqueID();
+    if (_window.groupHasHelp(ib, w.help_group)) w.more_flags |= _window.WMF_GADGETHELP;
     if (target.locked) {
         visiting = true;
         w.more_flags |= _window.WMF_VISITOR;

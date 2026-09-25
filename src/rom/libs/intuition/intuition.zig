@@ -1057,6 +1057,242 @@ test "DisplayBeep, CurrentTime, TimedDisplayAlert" {
     try tearDown(ib);
 }
 
+test "gadget help: the gadget, the window, or nothing, told as the pointer comes to rest" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const button = it.NewObjectTagList(null, intuition.classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{ .tag = gc.GA_GadgetHelp, .data = 1 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETHELP },
+        .{},
+    }).?;
+    it.HelpControl(w, wn.HC_GADGETHELP);
+    // A window joining its group has help on as well.
+    const joined = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 48 },
+        .{ .tag = wn.WA_Width, .data = 10 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_HelpGroupWindow, .data = @intFromPtr(w) },
+        .{},
+    }).?;
+    const joined_w: *_window.Window = @ptrCast(@alignCast(joined));
+    try testing.expect(joined_w.more_flags & _window.WMF_GADGETHELP != 0);
+
+    const tick = struct {
+        fn twice(base: *IntuitionBase) void {
+            const e: ie.InputEvent = .{ .class = ie.IECLASS_TIMER };
+            _input.handle(base, &e);
+            _input.handle(base, &e);
+        }
+    }.twice;
+    var got: [4]intuition.IntuiMessage = undefined;
+    // Resting over the gadget: the gadget, with a code of all ones.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 8, 8);
+    tick(ib);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETHELP, got[0].class);
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(button)), got[0].iaddress);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), got[0].code);
+    // Resting there again: nothing new, nothing sent.
+    tick(ib);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // Over the window but no gadget: the window.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 30, 20);
+    tick(ib);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(w)), got[0].iaddress);
+    // Over no window of the group: a null, to the active window.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 45, 35);
+    tick(ib);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(?*anyopaque, null), got[0].iaddress);
+    // Off: nothing more.
+    it.HelpControl(w, 0);
+    try testing.expect(joined_w.more_flags & _window.WMF_GADGETHELP == 0);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 8, 8);
+    tick(ib);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(joined);
+    it.CloseWindow(w);
+    it.DisposeObject(button);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "gadget tags: select render, label image, system gadgets, follow mouse, bounds, GadgetMouse, SYSIA_Pens" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const sc = intuition.screens;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const fill = struct {
+        fn make(base: *IntuitionBase, pen: graphics.Pen, size: usize) *Object {
+            return base.iface().NewObjectTagList(null, classusr.FILLRECTCLASS, &[_]TagItem{
+                .{ .tag = ic.IA_Width, .data = size },
+                .{ .tag = ic.IA_Height, .data = size },
+                .{ .tag = ic.IA_FGPen, .data = pen },
+                .{},
+            }).?;
+        }
+    }.make;
+    const red = fill(ib, graphics.penRGB(0xFF, 0, 0), 10);
+    const green = fill(ib, graphics.penRGB(0, 0xFF, 0), 10);
+    const blue = fill(ib, graphics.penRGB(0, 0, 0xFF), 6);
+
+    // A button showing the select render while it is held.
+    const button = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Image, .data = @intFromPtr(red) },
+        .{ .tag = gc.GA_SelectRender, .data = @intFromPtr(green) },
+        .{ .tag = gc.GA_Highlight, .data = gc.GFLG_GADGHIMAGE },
+        .{ .tag = gc.GA_FollowMouse, .data = 1 },
+        .{ .tag = gc.GA_GadgetHelp, .data = 1 },
+        .{ .tag = gc.GA_Bounds, .data = @intFromPtr(&gc.Box{ .left = 0, .top = 0, .width = 40, .height = 30 }) },
+        .{},
+    }).?;
+    // Two standing for the window's own: a drag bar and a close gadget.
+    const drag = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 20 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{ .tag = gc.GA_SysGadget, .data = 1 },
+        .{ .tag = gc.GA_SysGType, .data = gc.GTYP_WDRAGGING },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(button) },
+        .{},
+    }).?;
+    const close = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 18 },
+        .{ .tag = gc.GA_Width, .data = 8 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{ .tag = gc.GA_SysGadget, .data = 1 },
+        .{ .tag = gc.GA_SysGType, .data = gc.GTYP_CLOSE },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(drag) },
+        .{},
+    }).?;
+    // GA_Next links as GA_Previous does.
+    try testing.expectEqual(@intFromPtr(drag), getAttr(ib, button, gc.GA_Next));
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_MOUSEMOVE | wn.IDCMP_GADGETHELP },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var got: [8]intuition.IntuiMessage = undefined;
+
+    // Held: the select render; the moves while it is held reach the window.
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(6, 6));
+    pointerEvent(ib, ie.IECODE_LBUTTON, 6, 7);
+    try testing.expectEqual(@as(u16, 0x07E0), display.pixel(6, 6));
+    // Where the pointer is, from the gadget's corner.
+    var gi = @import("gadget/_gadget.zig").infoFor(ib, win, button);
+    var at = graphics.Point{};
+    it.GadgetMouse(button, &gi, &at);
+    try testing.expectEqual(@as(i32, 2), at.x);
+    try testing.expectEqual(@as(i32, 3), at.y);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 7, 7);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_MOUSEMOVE, got[0].class);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 7, 7);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(6, 6));
+    _ = drainMessages(ib, w, &got);
+
+    // Its bounds reach past its box for gadget help.
+    it.HelpControl(w, wn.HC_GADGETHELP);
+    const timer_event: ie.InputEvent = .{ .class = ie.IECLASS_TIMER };
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 35, 25);
+    _input.handle(ib, &timer_event);
+    _input.handle(ib, &timer_event);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(button)), got[0].iaddress);
+    it.HelpControl(w, 0);
+
+    // The drag gadget drags the window; the close gadget asks to close it.
+    pointerEvent(ib, ie.IECODE_LBUTTON, 24, 6);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 29, 9);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 29, 9);
+    try testing.expectEqual(@as(usize, 5), windowAttr(ib, w, wn.WA_Left));
+    try testing.expectEqual(@as(usize, 3), windowAttr(ib, w, wn.WA_Top));
+    _ = drainMessages(ib, w, &got);
+    click(ib, 5 + 6, 3 + 20);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_CLOSEWINDOW, got[0].class);
+
+    // A framed button labelled with an image: the image in its middle.
+    const labelled = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_LabelImage, .data = @intFromPtr(blue) },
+        .{},
+    }).?;
+    const frame_w: i32 = @intCast(getAttr(ib, labelled, gc.GA_Width));
+    try testing.expect(frame_w >= 6);
+    const rp: *graphics.RastPort = @ptrFromInt(windowAttr(ib, w, wn.WA_RastPort));
+    var render_gi = @import("gadget/_gadget.zig").infoFor(ib, win, labelled);
+    var paint = gc.GpRender{ .gadget_info = &render_gi, .rast_port = rp, .redraw = gc.GREDRAW_REDRAW };
+    ib.layers_base.LockLayer(win.layer);
+    _ = it.SendMessage(labelled, @ptrCast(&paint));
+    ib.layers_base.UnlockLayer(win.layer);
+    const frame_h: i32 = @intCast(getAttr(ib, labelled, gc.GA_Height));
+    try testing.expectEqual(@as(u16, 0x001F), display.pixel(@intCast(5 + @divTrunc(frame_w, 2)), @intCast(3 + @divTrunc(frame_h, 2))));
+
+    // A system image in pens of its own: its ground is their fill pen.
+    var pens = _kscreen.default_pens;
+    pens[sc.FILLPEN] = graphics.penRGB(0xFF, 0, 0);
+    const image = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.DEPTHIMAGE },
+        .{ .tag = ic.SYSIA_Pens, .data = @intFromPtr(&pens) },
+        .{},
+    }).?;
+    ib.layers_base.LockLayer(win.layer);
+    it.DrawImageState(rp, image, 10, 10, ic.IDS_NORMAL, null);
+    ib.layers_base.UnlockLayer(win.layer);
+    var reds: u32 = 0;
+    for (15..35) |x| {
+        for (14..23) |y| {
+            if (display.pixel(x, y) == 0xF800) reds += 1;
+        }
+    }
+    try testing.expect(reds > 10);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    for ([_]*Object{ button, drag, close, labelled, image, red, green, blue }) |o| it.DisposeObject(o);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "ShowTitle: the bar behind a screen-filling backdrop window, and in front of it again" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -2086,6 +2322,120 @@ test "a string gadget: a right-aligned cursor stays inside the field" {
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     ib.iface().CloseWindow(w);
     try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// A gadget's own edit hook: what the default edit put in, made upper case.
+fn upperCase(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    const w: *intuition.SGWork = @ptrCast(@alignCast(object.?));
+    const command: *const u32 = @ptrCast(@alignCast(message.?));
+    if (command.* != intuition.sghooks.SGH_KEY) return 0;
+    if (w.edit_op == intuition.sghooks.EO_INSERTCHAR) {
+        const c = &w.work_buffer[w.buffer_pos - 1];
+        if (c.* >= 'a' and c.* <= 'z') c.* -= 32;
+    }
+    return 1;
+}
+
+/// A global edit hook: the key `d` refused, every other left to the hook it
+/// replaced, which its data holds.
+fn noD(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const w: *intuition.SGWork = @ptrCast(@alignCast(object.?));
+    if (w.code == 'd') {
+        w.actions &= ~intuition.sghooks.SGA_USE;
+        return 1;
+    }
+    const previous: *utility.Hook = @ptrCast(@alignCast(hook.data.?));
+    return previous.entry.?(previous, object, message);
+}
+
+test "a string gadget's edit: its own hook, a global one, fixed field, no filter, Help" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    var own_hook = utility.Hook{ .entry = &upperCase };
+    var text = [_]u8{0} ** 16;
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 12 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = text.len },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&text) },
+        .{ .tag = gc.STRINGA_EditHook, .data = @intFromPtr(&own_hook) },
+        .{ .tag = gc.STRINGA_ExitHelp, .data = 1 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP },
+        .{},
+    }).?;
+
+    // The gadget's own hook after the default edit: upper case.
+    click(ib, 4, 6);
+    rawKey(ib, 0x20); // a
+    rawKey(ib, 0x21); // s
+    try testing.expectEqualStrings("AS", text[0..2]);
+
+    // A global hook in front: `d` refused, the rest edited as before.
+    var global = utility.Hook{ .entry = &noD };
+    const previous = it.SetEditHook(&global);
+    global.data = previous;
+    rawKey(ib, 0x22); // d
+    rawKey(ib, 0x20); // a
+    try testing.expectEqualStrings("ASA", std.mem.sliceTo(&text, 0));
+    try testing.expectEqual(&global, it.SetEditHook(null));
+
+    // Help ends it, with a code of 0x5F.
+    var got: [4]intuition.IntuiMessage = undefined;
+    rawKey(ib, 0x5F);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETUP, got[0].class);
+    try testing.expectEqual(@as(u32, 0x5F), got[0].code);
+
+    // Fixed field: a key replaces, Backspace only moves back.
+    _ = it.SetGadgetAttrsTagList(field, w, &[_]TagItem{
+        .{ .tag = gc.STRINGA_EditHook, .data = 0 },
+        .{ .tag = gc.STRINGA_FixedFieldMode, .data = 1 },
+        .{},
+    });
+    click(ib, 4, 6);
+    rawKey(ib, 0x21); // s over the A
+    try testing.expectEqualStrings("sSA", std.mem.sliceTo(&text, 0));
+    rawKey(ib, 0x41); // Backspace
+    try testing.expectEqualStrings("sSA", std.mem.sliceTo(&text, 0));
+    rawKey(ib, 0x20); // a, where the cursor went back to
+    try testing.expectEqualStrings("aSA", std.mem.sliceTo(&text, 0));
+
+    // No filter: a control character goes in.
+    _ = it.SetGadgetAttrsTagList(field, w, &[_]TagItem{
+        .{ .tag = gc.STRINGA_FixedFieldMode, .data = 0 },
+        .{ .tag = gc.STRINGA_NoFilterMode, .data = 1 },
+        .{},
+    });
+    const ctrl_a: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = 0x20, .qualifier = ie.IEQUALIFIER_CONTROL };
+    _input.handle(ib, &ctrl_a);
+    try testing.expectEqual(@as(u8, 0x01), text[1]);
+    rawKey(ib, 0x45); // Escape
+    _ = drainMessages(ib, w, &got);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
     it.DisposeObject(field);
     display.down(ib);
     try tearDown(ib);

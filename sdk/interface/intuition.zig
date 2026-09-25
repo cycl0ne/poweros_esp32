@@ -120,6 +120,9 @@ pub const LVO = struct {
     pub const CurrentTime = libraries.lvo(102);
     pub const DisplayAlert = libraries.lvo(103);
     pub const TimedDisplayAlert = libraries.lvo(104);
+    pub const HelpControl = libraries.lvo(105);
+    pub const SetEditHook = libraries.lvo(106);
+    pub const GadgetMouse = libraries.lvo(107);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -226,6 +229,9 @@ pub const Fn = struct {
     pub const CurrentTime = *const fn (*IntuitionBase, *u32, *u32) callconv(.c) void;
     pub const DisplayAlert = *const fn (*IntuitionBase, u32, [*:0]const u8, u32) callconv(.c) bool;
     pub const TimedDisplayAlert = *const fn (*IntuitionBase, u32, [*:0]const u8, u32, u32) callconv(.c) bool;
+    pub const HelpControl = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) void;
+    pub const SetEditHook = *const fn (*IntuitionBase, ?*utility.Hook) callconv(.c) *utility.Hook;
+    pub const GadgetMouse = *const fn (*IntuitionBase, *intuition.Object, *intuition.GadgetInfo, *graphics.Point) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -834,5 +840,22 @@ pub const IntuitionBase = opaque {
     /// The same, given up after `frames` 60 Hz frames (false).
     pub fn TimedDisplayAlert(self: *IntuitionBase, alert_number: u32, text: [*:0]const u8, height: u32, frames: u32) bool {
         return libraries.call(self, LVO.TimedDisplayAlert, Fn.TimedDisplayAlert, .{ alert_number, text, height, frames });
+    }
+
+    /// Gadget help on (HC_GADGETHELP) or off for a window and its help group.
+    pub fn HelpControl(self: *IntuitionBase, window: *intuition.Window, flags: u32) void {
+        return libraries.call(self, LVO.HelpControl, Fn.HelpControl, .{ window, flags });
+    }
+
+    /// Put the global edit hook string gadgets' keys go through first; null
+    /// for intuition's own. Answers the hook it replaces.
+    pub fn SetEditHook(self: *IntuitionBase, hook: ?*utility.Hook) *utility.Hook {
+        return libraries.call(self, LVO.SetEditHook, Fn.SetEditHook, .{hook});
+    }
+
+    /// Where the pointer is, from a gadget's top-left corner, in the room its
+    /// GadgetInfo describes.
+    pub fn GadgetMouse(self: *IntuitionBase, gadget: *intuition.Object, info: *intuition.GadgetInfo, point: *graphics.Point) void {
+        return libraries.call(self, LVO.GadgetMouse, Fn.GadgetMouse, .{ gadget, info, point });
     }
 };
