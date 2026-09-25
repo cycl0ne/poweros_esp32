@@ -19,6 +19,10 @@ const bsd = sdk.bsdsocket;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const DosBase = sdk.interface.dos.DosBase;
+const TimerBase = sdk.interface.timer.TimerBase;
+const _timer = @import("timer/_timer.zig");
+const _arp = @import("arp/_arp.zig");
 const _frame = @import("frame/_frame.zig");
 const _netif = @import("netif/_netif.zig");
 const _route = @import("route/_route.zig");
@@ -73,6 +77,31 @@ pub const StackBase = extern struct {
     ip_id: u16 = 1,
     next_port: u16 = port_first,
     counts: Counts = .{},
+    timers: _timer.Heap = .{},
+    arp: _arp.Cache = .{},
+    /// dos.library, opened when the stack task is first needed.
+    dos: ?*DosBase = null,
+    /// The stack task: the process that keeps the reads on every device
+    /// outstanding and runs the timers. There from the first interface on
+    /// a device until the last one goes.
+    task: ?*exec.Task = null,
+    /// Where the devices answer, and where commands for the task come.
+    port: exec.MsgPort = .{},
+    commands: exec.MsgPort = .{},
+    /// The signal that tells the task the earliest deadline changed.
+    rethink_mask: u32 = 0,
+    /// timer.device, as the task opened it: the system time.
+    timer_base: ?*TimerBase = null,
+    /// The one who started the task, waiting until it is ready.
+    starter: ?*exec.Task = null,
+    start_signal: i8 = -1,
+    pad: [3]u8 = .{ 0, 0, 0 },
+
+    /// The stack task told that the earliest deadline changed.
+    pub fn rethink(stack: *StackBase) void {
+        const task = stack.task orelse return;
+        if (stack.rethink_mask != 0) stack.sys_base.Signal(task, stack.rethink_mask);
+    }
 };
 
 /// The ports handed out to sockets that did not ask for one.

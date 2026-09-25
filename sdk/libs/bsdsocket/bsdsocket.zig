@@ -188,6 +188,7 @@ pub const SBTC_LOGSTAT: u32 = 10;
 pub const EPERM: i32 = 1;
 pub const EINTR: i32 = 4;
 pub const EIO: i32 = 5;
+pub const ENXIO: i32 = 6;
 pub const EBADF: i32 = 9;
 pub const ENOMEM: i32 = 12;
 pub const EACCES: i32 = 13;
@@ -224,3 +225,26 @@ pub const ETIMEDOUT: i32 = 60;
 pub const ECONNREFUSED: i32 = 61;
 pub const EHOSTDOWN: i32 = 64;
 pub const EHOSTUNREACH: i32 = 65;
+
+// --- interfaces ------------------------------------------------------------------
+
+/// AddInterfaceTagList's tags. Addresses are in network order, as
+/// `in_addr.s_addr` and Inet_Addr have them.
+pub const IFA_Dummy: u32 = TAG_USER + 0xB2000;
+/// ti_Data: the network device's name, "networks/openeth.device".
+pub const IFA_Device: u32 = IFA_Dummy + 1;
+/// ti_Data: its unit; 0 unless given.
+pub const IFA_Unit: u32 = IFA_Dummy + 2;
+/// ti_Data: the interface's address.
+pub const IFA_Address: u32 = IFA_Dummy + 3;
+/// ti_Data: the netmask of its net; 255.255.255.0 unless given.
+pub const IFA_NetMask: u32 = IFA_Dummy + 4;
+/// ti_Data: a gateway on its net, made the default route.
+pub const IFA_Gateway: u32 = IFA_Dummy + 5;
+/// ti_Data: the reads kept outstanding and the writes in flight on the
+/// device; set from the link's speed unless given.
+pub const IFA_Reads: u32 = IFA_Dummy + 6;
+pub const IFA_Writes: u32 = IFA_Dummy + 7;
+
+/// How long an interface's name may be.
+pub const IFNAMSIZ = 16;

@@ -14,6 +14,7 @@ const SocketBase = _base.SocketBase;
 const Socket = @import("socket/_socket.zig").Socket;
 const _socket = @import("socket/_socket.zig");
 const _netif = @import("netif/_netif.zig");
+const _arp = @import("arp/_arp.zig");
 const bsdsocket_lvo = @import("bsdsocket_lvo.zig");
 
 pub const LIBRARY_NAME = bsd.SOCKETNAME;
@@ -38,7 +39,14 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&stack.lock);
     stack.sockets.init(.unknown);
     stack.frames.init();
+    _arp.init(stack);
     _netif.addLoopback(stack);
+    // The task's ports take messages from the start; the task gives them
+    // its signals when it runs.
+    stack.port = .{ .flags = exec.PA_IGNORE };
+    stack.port.msg_list.init(.message);
+    stack.commands = .{ .flags = exec.PA_IGNORE };
+    stack.commands.msg_list.init(.message);
     return lib;
 }
 
@@ -110,6 +118,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const sys = stack.sys_base;
     const seg_list = stack.seg_list;
     stack.frames.deinit(sys);
+    if (stack.dos) |dos| sys.CloseLibrary(dos.lib());
     if (stack.utility) |utility| sys.CloseLibrary(utility.lib());
     sys.Remove(&lib.node);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);

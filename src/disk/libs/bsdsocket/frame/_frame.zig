@@ -39,7 +39,11 @@ pub const Frame = extern struct {
     /// taken its header off.
     from_address: u32 = 0,
     from_port: u16 = 0,
-    pad: u16 = 0,
+    /// Going out on a network device: the type of what it carries, and
+    /// the station it goes to, kept while it waits for the device.
+    link_type: u16 = 0,
+    link_address: [6]u8 = @splat(0),
+    pad: [2]u8 = .{ 0, 0 },
     buffer: [buffer_bytes]u8 = undefined,
 
     /// The valid bytes.
@@ -96,6 +100,7 @@ pub const Pool = extern struct {
         frame.length = 0;
         frame.from_address = 0;
         frame.from_port = 0;
+        frame.link_type = 0;
         return frame;
     }
 

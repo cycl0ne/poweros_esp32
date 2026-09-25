@@ -2,13 +2,18 @@
 //! Udp: a datagram sent, and its echo waited for, through
 //! bsdsocket.library. Built against the SDK only.
 //!
-//!   Udp TO/K,PORT/K/N,TEXT/K
+//!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S
 //!
 //! It sends TEXT ("hello") to TO:PORT (127.0.0.1:7) and prints what comes
 //! back within two seconds, and from where. When TO is a loopback
 //! address, the program is its own echo as well: a second socket bound to
 //! PORT takes the datagram, WaitSelect wakes it, and it sends the text
 //! back - both ends in one program, over `lo0`, with no network device.
+//!
+//! Any other TO goes out on the network: the interface `eth0` is added
+//! first, on DEVICE (networks/openeth.device) with ADDRESS (10.0.2.15/24)
+//! and GATEWAY (10.0.2.2) - the addresses QEMU's user network gives - unless
+//! it is there already. REMOVE takes `eth0` down again and sends nothing.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -23,10 +28,14 @@ pub const COMMAND_NAME = "Udp";
 const VERSION_STRING = "\x00$VER: Udp 1.0 (25.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TO/K,PORT/K/N,TEXT/K";
+const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S";
 const arg_to = 0;
 const arg_port = 1;
 const arg_text = 2;
+const arg_device = 3;
+const arg_address = 4;
+const arg_gateway = 5;
+const arg_remove = 6;
 
 const MSG_NOLIBRARY = "Can't open %s\n";
 const MSG_BADADDRESS = "%s is not an IPv4 address\n";
@@ -36,9 +45,28 @@ const MSG_ECHOED = "Echoed %d bytes from port %u\n";
 const MSG_ANSWER = "Answer from %s port %u: %s\n";
 const MSG_NOANSWER = "No answer in two seconds\n";
 const MSG_BREAK = "***Break\n";
+const MSG_INTERFACE = "eth0 is %s on %s\n";
+const MSG_REMOVED = "eth0 is gone\n";
 
 /// How long the answer may take.
 const patience_secs = 2;
+
+fn argText(argv: []const usize, index: usize, default: [*:0]const u8) [*:0]const u8 {
+    return if (argv[index] != 0) @ptrFromInt(argv[index]) else default;
+}
+
+/// `eth0` on the network device: 1 when it was added, 0 when it was there
+/// already, -1 when it could not be.
+fn addInterface(sb: *SocketBase, argv: []const usize) i32 {
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = bsd.IFA_Device, .data = @intFromPtr(argText(argv, arg_device, "networks/openeth.device")) },
+        .{ .tag = bsd.IFA_Address, .data = sb.Inet_Addr(argText(argv, arg_address, "10.0.2.15")) },
+        .{ .tag = bsd.IFA_Gateway, .data = sb.Inet_Addr(argText(argv, arg_gateway, "10.0.2.2")) },
+        .{},
+    };
+    if (sb.AddInterfaceTagList("eth0", &tags) == 0) return 1;
+    return if (sb.Errno() == bsd.EADDRINUSE) 0 else -1;
+}
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
     _ = Printf(dl, MSG_FAILED, .{ what, sb.Errno() });
@@ -52,7 +80,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [7]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -65,6 +93,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(socket_lib);
     const sb: *SocketBase = @ptrCast(socket_lib);
+
+    if (argv[arg_remove] != 0) {
+        if (sb.RemoveInterface("eth0") < 0) return failed(dl, sb, "RemoveInterface");
+        _ = Printf(dl, MSG_REMOVED, .{});
+        return dos.RETURN_OK;
+    }
 
     const to_text: [*:0]const u8 = if (argv[arg_to] != 0) @ptrFromInt(argv[arg_to]) else "127.0.0.1";
     const port: u16 = if (argv[arg_port] != 0) @truncate(@as(u32, @bitCast(@as(*const i32, @ptrFromInt(argv[arg_port])).*))) else 7;
@@ -79,6 +113,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port), .sin_addr = .{ .s_addr = address } };
     const loopback = bsd.ntohl(address) >> 24 == 127;
+    if (!loopback) {
+        const outcome = addInterface(sb, &argv);
+        if (outcome < 0) return failed(dl, sb, "AddInterfaceTagList");
+        if (outcome > 0) _ = Printf(dl, MSG_INTERFACE, .{ argText(&argv, arg_address, "10.0.2.15"), argText(&argv, arg_device, "networks/openeth.device") });
+    }
 
     // The echo, when the answer is to come from this machine.
     var echo: i32 = -1;

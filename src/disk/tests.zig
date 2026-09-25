@@ -9,6 +9,7 @@ test {
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/openeth.zig");
     _ = @import("libs/bsdsocket/tests/bsdsocket.zig");
+    _ = @import("libs/bsdsocket/tests/arp.zig");
     _ = @import("handlers/fat/_fat.zig");
     _ = @import("handlers/fat/testmedia.zig");
     _ = @import("handlers/fat/cache.zig");

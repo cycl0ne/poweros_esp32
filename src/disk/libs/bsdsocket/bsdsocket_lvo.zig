@@ -36,6 +36,8 @@ const SetErrnoPtr = @import("socket/seterrnoptr.zig").SetErrnoPtr;
 const Inet_NtoA = @import("socket/inet_ntoa.zig").Inet_NtoA;
 const Inet_Addr = @import("socket/inet_addr.zig").Inet_Addr;
 const SocketBaseTagList = @import("socket/socketbasetaglist.zig").SocketBaseTagList;
+const AddInterfaceTagList = @import("netif/addinterfacetaglist.zig").AddInterfaceTagList;
+const RemoveInterface = @import("netif/removeinterface.zig").RemoveInterface;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -81,6 +83,8 @@ const contract_files = [_][]const u8{
     @embedFile("socket/inet_ntoa.zig"),
     @embedFile("socket/inet_addr.zig"),
     @embedFile("socket/socketbasetaglist.zig"),
+    @embedFile("netif/addinterfacetaglist.zig"),
+    @embedFile("netif/removeinterface.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -143,6 +147,12 @@ fn lvoInet_Addr(sb: *SocketBase, text: [*:0]const u8) callconv(.c) u32 {
 fn lvoSocketBaseTagList(sb: *SocketBase, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
     return SocketBaseTagList(sb, tags);
 }
+fn lvoAddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) callconv(.c) i32 {
+    return AddInterfaceTagList(sb, name, tags);
+}
+fn lvoRemoveInterface(sb: *SocketBase, name: [*:0]const u8) callconv(.c) i32 {
+    return RemoveInterface(sb, name);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -171,6 +181,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoInet_NtoA),
     vec(lvoInet_Addr),
     vec(lvoSocketBaseTagList),
+    vec(lvoAddInterfaceTagList),
+    vec(lvoRemoveInterface),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -3,8 +3,10 @@
 //! name, an address with its netmask, and an MTU. The loopback interface,
 //! `lo0` at 127.0.0.1/8, is always there: what it sends comes straight
 //! back in, under the same holding of the lock, with no device and no
-//! link header. An interface on a network device is added by
-//! AddInterfaceTagList.
+//! link header. An interface on a network device (`device.zig`) has an
+//! Ethernet address, and sends through its `transmit`: a packet for a
+//! station on its net goes to the Ethernet address ARP finds for it, a
+//! broadcast to every station.
 //!
 //! Addresses are kept in the chip's order, as numbers to mask and compare;
 //! they are turned into the network's order only where a header is
@@ -16,6 +18,13 @@ const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const Frame = @import("../frame/_frame.zig").Frame;
 const _ip = @import("../ip/_ip.zig");
+const _arp = @import("../arp/_arp.zig");
+const _timer = @import("../timer/_timer.zig");
+
+/// Hands `frame` to the link, to the station `to`, as a packet of
+/// `packet_type`: 0, or the errno of a frame that could not go. The frame
+/// is the link's either way.
+pub const TransmitFn = *const fn (stack: *StackBase, interface: *Interface, frame: *Frame, to: *const [6]u8, packet_type: u16) i32;
 
 pub const Interface = extern struct {
     /// "lo0", or the name the interface was added as.
@@ -30,13 +39,25 @@ pub const Interface = extern struct {
     up: u8 = 0,
     loopback: u8 = 0,
     pad: u8 = 0,
-    /// Packets out and in.
+    /// Its Ethernet address, for an interface on a device.
+    hardware: [6]u8 = @splat(0),
+    pad2: [2]u8 = .{ 0, 0 },
+    /// How a frame goes out, and what it goes out through.
+    transmit: ?TransmitFn = null,
+    device: ?*anyopaque = null,
+    /// Packets out and in, and the ones that could not go.
     sent: u64 align(4) = 0,
     received: u64 align(4) = 0,
+    dropped: u32 = 0,
 
     /// Whether `address` is on the interface's own net.
     pub fn holds(interface: *const Interface, address: u32) bool {
         return address & interface.netmask == interface.address & interface.netmask;
+    }
+
+    /// Its name, as a C string.
+    pub fn nameText(interface: *const Interface) [*:0]const u8 {
+        return @ptrCast(&interface.name);
     }
 };
 
@@ -71,6 +92,25 @@ pub fn owning(stack: *StackBase, address: u32) ?*Interface {
     return null;
 }
 
+/// The interface called `name`, if there is one.
+pub fn named(stack: *StackBase, name: [*:0]const u8) ?*Interface {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0) continue;
+        var at: usize = 0;
+        while (at < interface.name.len and interface.name[at] == name[at] and name[at] != 0) at += 1;
+        if (at < interface.name.len and interface.name[at] == name[at]) return interface;
+    }
+    return null;
+}
+
+/// A free interface slot, if there is one.
+pub fn free(stack: *StackBase) ?*Interface {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0) return interface;
+    }
+    return null;
+}
+
 /// Whether a packet to `address` is for this machine: one of its
 /// addresses, the limited broadcast, or the broadcast of one of its nets.
 pub fn isOurs(stack: *StackBase, address: u32) bool {
@@ -84,14 +124,27 @@ pub fn isOurs(stack: *StackBase, address: u32) bool {
 }
 
 /// `frame`, an IPv4 packet, out on `interface` to the station `next_hop`.
-/// The frame is the interface's from here: sent and given back, or
-/// dropped.
-pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop: u32) void {
-    _ = next_hop;
+/// The frame is the interface's from here: 0, or the errno of a packet
+/// that could not go.
+pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop: u32) i32 {
     interface.sent += 1;
     if (interface.loopback != 0) {
         interface.received += 1;
-        return _ip.input(stack, interface, frame);
+        _ip.input(stack, interface, frame);
+        return 0;
     }
-    stack.frames.give(stack.sys_base, frame);
+    if (next_hop == bsd.INADDR_BROADCAST or next_hop == interface.broadcast) {
+        return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
+    }
+    return _arp.resolve(stack, interface, next_hop, frame, _timer.systemTime(stack));
+}
+
+/// `frame` handed to the interface's link for the station `to`.
+pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *const [6]u8, packet_type: u16) i32 {
+    const send = interface.transmit orelse {
+        interface.dropped += 1;
+        stack.frames.give(stack.sys_base, frame);
+        return bsd.ENETDOWN;
+    };
+    return send(stack, interface, frame, to, packet_type);
 }

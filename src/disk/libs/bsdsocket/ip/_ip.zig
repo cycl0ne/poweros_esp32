@@ -25,6 +25,8 @@ const _route = @import("../route/_route.zig");
 const _udp = @import("../udp/_udp.zig");
 
 pub const header_bytes = 20;
+/// IPv4's EtherType, the packet type a network device reads it by.
+pub const ethertype: u16 = 0x0800;
 pub const default_ttl: u8 = 64;
 const flag_dont_fragment: u16 = 0x4000;
 const flag_more_fragments: u16 = 0x2000;
@@ -124,8 +126,9 @@ fn drop(stack: *StackBase, frame: *Frame, count: *u32) void {
 }
 
 /// `frame`, holding a transport's header and data, given an IPv4 header
-/// and sent on its way by `hop`. The frame goes with it.
-pub fn output(stack: *StackBase, frame: *Frame, source: u32, destination: u32, protocol: u8, hop: _route.Hop) void {
+/// and sent on its way by `hop`. The frame goes with it. 0, or the errno
+/// of a packet that could not go.
+pub fn output(stack: *StackBase, frame: *Frame, source: u32, destination: u32, protocol: u8, hop: _route.Hop) i32 {
     const header = frame.push(header_bytes);
     header[0] = 0x45;
     header[1] = 0;
@@ -140,5 +143,5 @@ pub fn output(stack: *StackBase, frame: *Frame, source: u32, destination: u32, p
     put32(header, 16, destination);
     put16(header, 10, finish(sum(0, header)));
     stack.counts.ip_sent += 1;
-    _netif.output(stack, hop.interface, frame, hop.next_hop);
+    return _netif.output(stack, hop.interface, frame, hop.next_hop);
 }

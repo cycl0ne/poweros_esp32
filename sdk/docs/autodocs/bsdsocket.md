@@ -9,6 +9,7 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [AddInterfaceTagList](#addinterfacetaglist) - An interface on a network device, up and with its routes.
 - [Bind](#bind) - The local address and port a socket takes datagrams on and sends from.
 - [CloseSocket](#closesocket) - The socket closed and its descriptor free for the next Socket.
 - [Connect](#connect) - The peer a datagram socket sends to by default, and the only one it takes datagrams from.
@@ -22,6 +23,7 @@ Generated from the source by `./zig build autodoc`.
 - [IoctlSocket](#ioctlsocket) - A socket's control requests.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
 - [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from.
+- [RemoveInterface](#removeinterface) - The interface called `name` taken down: off the routes, its device closed, its slot free.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
 - [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to.
 - [SetErrnoPtr](#seterrnoptr) - A variable of the program's that gets the error number of every call that fails, besides Errno().
@@ -29,6 +31,84 @@ Generated from the source by `./zig build autodoc`.
 - [Socket](#socket) - A new socket, and the descriptor the other calls know it by.
 - [SocketBaseTagList](#socketbasetaglist) - The opener's settings, read and changed by a tag list.
 - [WaitSelect](#waitselect) - Until a socket in the sets is ready, one of the caller's own signals comes, or the timeout passes.
+
+## AddInterfaceTagList
+
+An interface on a network device, up and with its routes.
+
+**SYNOPSIS**
+
+```zig
+fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -100.
+
+**INPUTS**
+
+- `name` - what the interface is called, "eth0": up to 15 characters,
+  not a name another interface has.
+- `tags` - `IFA_Device` (required) and `IFA_Unit`: the network device
+  in DEVS:; `IFA_Address` (required), `IFA_NetMask`, `IFA_Gateway`: the
+  interface's address on its net, the net's mask (255.255.255.0 unless
+  given) and a gateway made the default route; `IFA_Reads`,
+  `IFA_Writes`: how many requests the stack keeps with the device.
+
+**RESULT**
+
+0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
+`EADDRINUSE` (the name is taken), `ENOBUFS` (no interface free),
+`ENXIO` (the device would not open, or would not go on line),
+`EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
+
+**BEHAVIOR**
+
+The device is opened with the stack's copy calls, asked what its link
+is, and put on line with the address it came with, unless it is on
+line already. The first interface on a device starts the stack task,
+which keeps reads outstanding on it from then on - a quarter of them
+for ARP, the rest for IPv4 - as many as the link's speed calls for
+unless the tags say. A route to the interface's own net is added, and
+the default route through the gateway if there is one, and every
+station on the net is told where the address is (a gratuitous ARP).
+
+**CONTEXT**
+
+- Waits: yes: the device is opened and asked, and the task started.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a process, to load the device from DEVS:.
+
+**OWNERSHIP**
+
+The interface is the stack's until RemoveInterface; while it is there
+the library stays in memory. The tags are read and not kept.
+
+**NOTES**
+
+Only Ethernet links for now.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemoveInterface`, sdk/devices/network.zig
+
+**EXAMPLES**
+
+```zig
+const tags = [_]TagItem{
+    .{ .tag = bsd.IFA_Device, .data = @intFromPtr("networks/openeth.device") },
+    .{ .tag = bsd.IFA_Address, .data = sb.Inet_Addr("10.0.2.15") },
+    .{ .tag = bsd.IFA_Gateway, .data = sb.Inet_Addr("10.0.2.2") },
+    .{},
+};
+if (sb.AddInterfaceTagList("eth0", &tags) < 0) return sb.Errno();
+```
 
 ## Bind
 
@@ -820,6 +900,67 @@ var buffer: [512]u8 = undefined;
 var from: bsd.sockaddr_in = .{};
 var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
+```
+
+## RemoveInterface
+
+The interface called `name` taken down: off the routes, its device closed, its slot free.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveInterface(base: *SocketBase, name: [*:0]const u8) i32
+```
+
+**SINCE**
+
+1.0. LVO -104.
+
+**INPUTS**
+
+- `name` - an interface AddInterfaceTagList added.
+
+**RESULT**
+
+0, or -1 with Errno() `ENXIO`: there is no such interface, or it is
+`lo0`, which cannot go.
+
+**BEHAVIOR**
+
+The stack task does the work, since only it can wait for the device to
+give back its requests: the routes through the interface and its ARP
+entries go at once, then every request is taken back from the device,
+what waited to be sent is dropped, and the device is closed. When it
+was the last interface on a device, the task ends as well.
+
+**CONTEXT**
+
+- Waits: yes, until the task has done it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The interface no longer holds the library in memory.
+
+**NOTES**
+
+Sockets bound to the interface's address stay; what they send from
+then on has no route and fails with `ENETUNREACH`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddInterfaceTagList`
+
+**EXAMPLES**
+
+```zig
+_ = sb.RemoveInterface("eth0");
 ```
 
 ## Send

@@ -37,6 +37,8 @@ pub const LVO = struct {
     pub const Inet_NtoA = libraries.lvo(21);
     pub const Inet_Addr = libraries.lvo(22);
     pub const SocketBaseTagList = libraries.lvo(23);
+    pub const AddInterfaceTagList = libraries.lvo(24);
+    pub const RemoveInterface = libraries.lvo(25);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -62,6 +64,8 @@ pub const Fn = struct {
     pub const Inet_NtoA = *const fn (*SocketBase, u32) callconv(.c) [*:0]const u8;
     pub const Inet_Addr = *const fn (*SocketBase, [*:0]const u8) callconv(.c) u32;
     pub const SocketBaseTagList = *const fn (*SocketBase, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const AddInterfaceTagList = *const fn (*SocketBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const RemoveInterface = *const fn (*SocketBase, [*:0]const u8) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -177,5 +181,16 @@ pub const SocketBase = opaque {
     /// position of the first tag it could not take, from 1.
     pub fn SocketBaseTagList(self: *SocketBase, tags: ?[*]const utility.TagItem) i32 {
         return libraries.call(self, LVO.SocketBaseTagList, Fn.SocketBaseTagList, .{tags});
+    }
+
+    /// An interface called `name` on a network device (IFA_Device, IFA_Unit),
+    /// with its address, netmask and gateway: 0, or -1.
+    pub fn AddInterfaceTagList(self: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.AddInterfaceTagList, Fn.AddInterfaceTagList, .{ name, tags });
+    }
+
+    /// The interface called `name` taken down and its device closed: 0, or -1.
+    pub fn RemoveInterface(self: *SocketBase, name: [*:0]const u8) i32 {
+        return libraries.call(self, LVO.RemoveInterface, Fn.RemoveInterface, .{name});
     }
 };

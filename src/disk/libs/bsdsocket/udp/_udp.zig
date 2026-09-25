@@ -118,6 +118,5 @@ pub fn output(stack: *StackBase, socket: *Socket, destination: u32, port: u16, d
     if (checksum == 0) checksum = 0xFFFF;
     _ip.put16(header, 6, checksum);
     stack.counts.udp_sent += 1;
-    _ip.output(stack, frame, source, destination, protocol, hop);
-    return 0;
+    return _ip.output(stack, frame, source, destination, protocol, hop);
 }

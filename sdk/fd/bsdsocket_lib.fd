@@ -57,4 +57,9 @@ u32 Inet_Addr([*:0]const u8 text)
 /// The opener's settings (SBTM_SETVAL/SBTM_GETREF of SBTC_*): 0, or the
 /// position of the first tag it could not take, from 1.
 i32 SocketBaseTagList(?[*]const utility.TagItem tags)
+/// An interface called `name` on a network device (IFA_Device, IFA_Unit),
+/// with its address, netmask and gateway: 0, or -1.
+i32 AddInterfaceTagList([*:0]const u8 name, ?[*]const utility.TagItem tags)
+/// The interface called `name` taken down and its device closed: 0, or -1.
+i32 RemoveInterface([*:0]const u8 name)
 ##end
