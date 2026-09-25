@@ -4450,6 +4450,79 @@ test "sysiclass: it refuses an image it has no design for, and knows its own siz
     try tearDown(ib);
 }
 
+test "sysiclass: a check box and a radio button, in each state" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const it = ib.iface();
+    var canvas: Canvas = .{};
+    const rp = canvas.up(ib);
+    const white: u32 = 0xFFFFFFFF;
+    const black: u32 = 0xFF000000;
+    const grey: u32 = 0xFFAAAAAA;
+    const blue: u32 = 0xFF6688BB;
+
+    // A check box: its own size, a bevel with sides two pixels thick on
+    // the background pen, and a tick in the text pen only when selected -
+    // disabled or not, since the gadget ghosts over it.
+    const check = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.CHECKIMAGE },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 26), getAttr(ib, check, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 11), getAttr(ib, check, ic.IA_Height));
+    const Tick = struct {
+        fn count(c: *const Canvas) usize {
+            var n: usize = 0;
+            for (2..24) |x| {
+                for (1..10) |y| n += @intFromBool(c.px(x, y) == 0xFF000000);
+            }
+            return n;
+        }
+    };
+    for ([_]u32{ ic.IDS_NORMAL, ic.IDS_INACTIVENORMAL, ic.IDS_DISABLED }) |state| {
+        it.DrawImageState(rp, check, 0, 0, state, null);
+        try testing.expectEqual(@as(usize, 0), Tick.count(&canvas));
+        try testing.expectEqual(grey, canvas.px(4, 5));
+    }
+    for ([_]u32{ ic.IDS_SELECTED, ic.IDS_INACTIVESELECTED, ic.IDS_SELECTEDDISABLED }) |state| {
+        it.DrawImageState(rp, check, 0, 0, state, null);
+        try testing.expect(Tick.count(&canvas) > 10);
+        try testing.expectEqual(black, canvas.px(12, 7));
+        try testing.expectEqual(grey, canvas.px(4, 5));
+        // The bevel stays raised.
+        try testing.expectEqual(white, canvas.px(5, 0));
+        try testing.expectEqual(white, canvas.px(1, 5));
+        try testing.expectEqual(black, canvas.px(24, 5));
+        try testing.expectEqual(black, canvas.px(5, 10));
+    }
+    it.DisposeObject(check);
+
+    // A radio button: lit from the top left, the other way round with a
+    // dot in the fill pen when selected.
+    const mx = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.MXIMAGE },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 17), getAttr(ib, mx, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 9), getAttr(ib, mx, ic.IA_Height));
+    it.DrawImageState(rp, mx, 0, 0, ic.IDS_NORMAL, null);
+    try testing.expectEqual(white, canvas.px(0, 4));
+    try testing.expectEqual(white, canvas.px(8, 0));
+    try testing.expectEqual(black, canvas.px(16, 4));
+    try testing.expectEqual(black, canvas.px(8, 8));
+    try testing.expectEqual(grey, canvas.px(8, 4));
+    it.DrawImageState(rp, mx, 0, 0, ic.IDS_SELECTED, null);
+    try testing.expectEqual(black, canvas.px(0, 4));
+    try testing.expectEqual(black, canvas.px(8, 0));
+    try testing.expectEqual(white, canvas.px(16, 4));
+    try testing.expectEqual(white, canvas.px(8, 8));
+    try testing.expectEqual(blue, canvas.px(8, 4));
+    it.DisposeObject(mx);
+
+    ib.graphics_base.FreeRastPort(rp);
+    try tearDown(ib);
+}
+
 test "images: a chain is drawn as one, and a button is as big as what it shows" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -34,7 +34,9 @@
 //! and a row of imageclass images with DrawImage, each the same one-bit
 //! arrow in a different pair of the screen's own pens, which is the whole
 //! path from a class to the glass: NewObjectTagList, the image's
-//! attributes, IM_DRAW through its dispatcher, BltTemplate. It reads the
+//! attributes, IM_DRAW through its dispatcher, BltTemplate. Under them, a
+//! check box and a radio button of sysiclass's (CHECKIMAGE, MXIMAGE), each
+//! plain and selected, with DrawImageState. It reads the
 //! screen's size with LockIBase held, and its close gadget or Ctrl-C ends
 //! it.
 //!
@@ -87,7 +89,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.7 (22.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.8 (25.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S";
@@ -106,7 +108,7 @@ const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
 const MSG_SCREEN = "Screen     %s, %dx%d, %d bits a pixel, title bar %d rows\n";
 const MSG_PEN = "  %-16s %08lx\n";
-const MSG_IMAGES = "Images     %d drawn with DrawImage\n";
+const MSG_IMAGES = "Images     %d drawn with DrawImage and DrawImageState\n";
 const MSG_WINDOWS = "Windows    3 open - each closes with its close gadget, Ctrl-C closes the rest\n";
 const MSG_NOWINDOWS = "Windows    could not open them\n";
 const MSG_MESSAGE = "  %s\n";
@@ -170,6 +172,30 @@ fn drawImages(ib: *IntuitionBase, rp: *graphics.RastPort, dri: *sc.DrawInfo, lef
     return drawn;
 }
 
+/// A check box and a radio button, each plain and then selected, in a row
+/// from (left, top), in the screen's pens.
+fn drawSystemImages(ib: *IntuitionBase, rp: *graphics.RastPort, dri: *sc.DrawInfo, left: i32, top: i32) u32 {
+    var drawn: u32 = 0;
+    var x = left;
+    for ([_]u32{ ic.CHECKIMAGE, ic.MXIMAGE }) |which| {
+        const tags = [_]TagItem{
+            .{ .tag = ic.SYSIA_Which, .data = which },
+            .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(dri) },
+            .{},
+        };
+        const image = ib.NewObjectTagList(null, intuition.classusr.SYSICLASS, &tags) orelse continue;
+        var width: usize = 0;
+        _ = ib.GetAttr(ic.IA_Width, image, &width);
+        for ([_]u32{ ic.IDS_NORMAL, ic.IDS_SELECTED }) |state| {
+            ib.DrawImageState(rp, image, x, top, state, dri);
+            x += @as(i32, @intCast(width)) + 8;
+            drawn += 1;
+        }
+        ib.DisposeObject(image);
+    }
+    return drawn;
+}
+
 /// A window of its own with two runs of text in it, a box around the first
 /// that is exactly as wide as IntuiTextLength says, a row of images under
 /// them, and the screen's size read with the screens held. Open until its
@@ -184,7 +210,7 @@ fn textDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scre
         .{ .tag = wn.WA_Left, .data = 300 },
         .{ .tag = wn.WA_Top, .data = 200 },
         .{ .tag = wn.WA_Width, .data = 320 },
-        .{ .tag = wn.WA_Height, .data = 120 },
+        .{ .tag = wn.WA_Height, .data = 150 },
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Text") },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
@@ -244,6 +270,7 @@ fn textDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scre
         ib.PrintIText(rp, &first, left, top);
         ib.DrawBorder(rp, &box, left, top);
         drawn = drawImages(ib, rp, dri, left, top + 44);
+        drawn += drawSystemImages(ib, rp, dri, left, top + 72);
     }
 
     const held = ib.LockIBase(0);

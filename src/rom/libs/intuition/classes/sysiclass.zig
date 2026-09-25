@@ -22,6 +22,13 @@
 //! that follow its font), drawn in the bar pens
 //! on the panel's ground with no edge.
 //!
+//! Two are for gadgets on a window's ground rather than in its border: a
+//! check box (`CHECKIMAGE`, 26 by 11), a bevel with thick sides and a tick
+//! in the text pen when selected, and a radio button (`MXIMAGE`, 17 by 9),
+//! a raised ring that sinks and shows a dot in the fill pen when selected.
+//! Both are on the background pen in every state; a disabled state is
+//! drawn as its plain one, and the gadget ghosts itself over it.
+//!
 //! The edge follows where the image sits: raised on its own for the size
 //! gadget in the corner; for close, at the left of the title bar, raised
 //! with a line of shine down its right side where the bar begins; for
@@ -69,7 +76,7 @@ const Vector = struct {
 
 /// Where the image sits, which decides its edge: a border gadget's, or
 /// none for one on a menu panel.
-const Edge = enum { left_of_bar, right_of_bar, corner, in_menu, in_screen_bar };
+const Edge = enum { left_of_bar, right_of_bar, corner, in_menu, in_screen_bar, thick_bevel, none };
 
 const Design = struct {
     /// The grid the vectors are on.
@@ -97,6 +104,12 @@ const mcheck1 = [_]u8{ 14, 0, 12, 0, 6, 6, 5, 6, 3, 4, 0, 4, 1, 4, 4, 7, 6, 7, 1
 const mamiga1 = [_]u8{ 6, 0, 38, 0, 44, 2, 44, 12, 38, 14, 6, 14, 0, 12, 0, 2, 6, 0 };
 const mamiga2 = [_]u8{ 16, 12, 16, 11, 12, 11, 28, 3, 30, 3, 30, 11, 28, 11, 28, 12, 38, 12, 38, 11, 34, 11, 34, 2, 27, 2, 9, 11, 6, 11, 6, 12, 16, 12 };
 const mamiga3 = [_]u8{ 14, 9, 30, 10 };
+const check1 = [_]u8{ 19, 2, 17, 2, 12, 7, 11, 7, 9, 5, 7, 5, 10, 8, 12, 8, 18, 2 };
+const mx1 = [_]u8{ 2, 0, 0, 2, 0, 6, 2, 8, 3, 8, 1, 6, 1, 2, 3, 0, 2, 0 };
+const mx2 = [_]u8{ 14, 8, 16, 6, 16, 2, 14, 0, 13, 0, 15, 2, 15, 6, 13, 8, 14, 8 };
+const mx3 = [_]u8{ 3, 0, 13, 0 };
+const mx4 = [_]u8{ 3, 8, 13, 8 };
+const mx5 = [_]u8{ 5, 2, 11, 2, 12, 3, 12, 5, 11, 6, 5, 6, 4, 5, 4, 3, 5, 2 };
 
 const depth_design = Design{ .width = 24, .height = 11, .edge = .right_of_bar, .vectors = &.{
     .{ .shape = .fill_rect, .pen = sc.BACKGROUNDPEN, .states = S_N | S_S, .points = &wdepth1 },
@@ -141,6 +154,26 @@ const amigakey_design = Design{ .width = 45, .height = 15, .edge = .in_menu, .na
     .{ .shape = .fill_rect, .pen = sc.BARBLOCKPEN, .states = S_ALL, .points = &mamiga3 },
 } };
 
+// The two a gadget on the window's ground shows. A window that is not
+// active draws them as it would when active: S_I goes with S_N.
+const check_design = Design{ .width = 26, .height = 11, .edge = .thick_bevel, .vectors = &.{
+    .{ .shape = .fill_poly, .pen = sc.TEXTPEN, .states = S_S, .points = &check1 },
+} };
+// The ring is lit from the top left when raised - its left arc and top in
+// shine, its right arc and bottom in shadow - and the other way round when
+// selected, with the dot inside.
+const mx_design = Design{ .width = 17, .height = 9, .edge = .none, .vectors = &.{
+    .{ .shape = .fill_poly, .pen = sc.SHINEPEN, .states = S_N | S_I, .points = &mx1 },
+    .{ .shape = .fill_poly, .pen = sc.SHADOWPEN, .states = S_N | S_I, .points = &mx2 },
+    .{ .shape = .line_poly, .pen = sc.SHINEPEN, .states = S_N | S_I, .points = &mx3 },
+    .{ .shape = .line_poly, .pen = sc.SHADOWPEN, .states = S_N | S_I, .points = &mx4 },
+    .{ .shape = .fill_poly, .pen = sc.SHADOWPEN, .states = S_S, .points = &mx1 },
+    .{ .shape = .fill_poly, .pen = sc.SHINEPEN, .states = S_S, .points = &mx2 },
+    .{ .shape = .line_poly, .pen = sc.SHADOWPEN, .states = S_S, .points = &mx3 },
+    .{ .shape = .line_poly, .pen = sc.SHINEPEN, .states = S_S, .points = &mx4 },
+    .{ .shape = .fill_poly, .pen = sc.FILLPEN, .states = S_S, .points = &mx5 },
+} };
+
 fn designOf(which: u32) ?*const Design {
     return switch (which) {
         ic.DEPTHIMAGE => &depth_design,
@@ -150,6 +183,8 @@ fn designOf(which: u32) ?*const Design {
         ic.SDEPTHIMAGE => &sdepth_design,
         ic.MENUCHECK => &menucheck_design,
         ic.AMIGAKEY => &amigakey_design,
+        ic.CHECKIMAGE => &check_design,
+        ic.MXIMAGE => &mx_design,
         else => null,
     };
 }
@@ -225,11 +260,12 @@ fn line(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen, x: i32, y0: i32, 
 /// filled shapes the caller has made.
 fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen) void {
     // The ground: a menu panel's own for an image on one; the background
-    // pen for one in a box of its own - a screen's depth gadget - and in an
-    // inactive window border; the fill pen in an active one.
+    // pen for one in a box of its own - a screen's depth gadget - for one
+    // on the window's ground, and in an inactive window border; the fill
+    // pen in an active one.
     const ground = if (design.edge == .in_menu)
         pens[sc.BARBLOCKPEN]
-    else if (design.edge == .in_screen_bar or state == INACTIVE)
+    else if (design.edge == .in_screen_bar or design.edge == .thick_bevel or design.edge == .none or state == INACTIVE)
         pens[sc.BACKGROUNDPEN]
     else
         pens[sc.FILLPEN];
@@ -274,7 +310,9 @@ fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, stat
     // The edge, by where the image sits.
     const raised = state != SELECTED;
     switch (design.edge) {
-        .in_menu => {},
+        .in_menu, .none => {},
+        // Raised in every state: a check box does not press in.
+        .thick_bevel => d.bevel(gb, rp, 0, 0, w, h, pens[sc.SHINEPEN], pens[sc.SHADOWPEN], 2, .angled),
         .in_screen_bar => edge3d(gb, rp, pens, raised, 0, w, h),
         .corner => {
             edge3d(gb, rp, pens, raised, 0, w, h);
@@ -348,8 +386,9 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     // OM_NEW refused anything with no design, so there is one.
     const design = designOf(sd.which) orelse return 0;
     if (im.width < 4 or im.height < 4) return 0;
+    // A disabled state is its plain one: the gadget ghosts over it.
     const state: usize = switch (msg.state) {
-        ic.IDS_SELECTED, ic.IDS_INACTIVESELECTED => SELECTED,
+        ic.IDS_SELECTED, ic.IDS_INACTIVESELECTED, ic.IDS_SELECTEDDISABLED => SELECTED,
         ic.IDS_INACTIVENORMAL, ic.IDS_INACTIVEDISABLED => INACTIVE,
         else => NORMAL,
     };

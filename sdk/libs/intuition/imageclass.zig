@@ -101,7 +101,7 @@ pub const FRAME_ICONDROPBOX: u32 = 3;
 // --- sysiclass: the system's own images ---------------------------------------
 
 /// Which image: `DEPTHIMAGE`, `ZOOMIMAGE`, `SIZEIMAGE`, `CLOSEIMAGE`,
-/// `SDEPTHIMAGE`, `MENUCHECK` or `AMIGAKEY`.
+/// `SDEPTHIMAGE`, `CHECKIMAGE`, `MXIMAGE`, `MENUCHECK` or `AMIGAKEY`.
 pub const SYSIA_Which = IA_Dummy + 0x0D;
 /// The screen's DrawInfo, whose pens it is drawn in. Without one it uses
 /// the default pens.
@@ -117,6 +117,12 @@ pub const CLOSEIMAGE: u32 = 0x03;
 /// Two screens, one over the other: a screen's depth gadget, at the right
 /// end of its title bar.
 pub const SDEPTHIMAGE: u32 = 0x05;
+/// A check box: a bevel with thick sides, a tick in it when selected.
+/// 26 by 11 unless IA_Width and IA_Height say otherwise.
+pub const CHECKIMAGE: u32 = 0x0E;
+/// A radio button: a raised ring, sunk with a dot in it when selected.
+/// 17 by 9 unless IA_Width and IA_Height say otherwise.
+pub const MXIMAGE: u32 = 0x0F;
 /// A tick: what a checked menu item shows at its left. Sized to the
 /// DrawInfo's font unless IA_Width and IA_Height say otherwise.
 pub const MENUCHECK: u32 = 0x10;
