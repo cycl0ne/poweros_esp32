@@ -196,6 +196,58 @@ pub fn turnedBand(
     }
 }
 
+/// A band already filled, and where it lies: its panel rows and columns,
+/// and the size of the picture it was taken from.
+pub const Band = struct {
+    first_row: u32,
+    rows: u32,
+    first_column: u32,
+    columns: u32,
+    picture_width: u32,
+    picture_height: u32,
+    turn: Turn,
+};
+
+/// The pointer laid over a band, the way the bus sends it, high byte
+/// first: every pixel of its image that is the pointer's and falls in the
+/// band. The image's top left is at (`left`, `top`) of the picture, which
+/// may put part of it off the picture.
+///
+/// Its pixels are placed one at a time through the turn, so an upright
+/// band and a turned one are the same code: the pointer is at most
+/// `RTG_POINTER_MAX` each way, and most of a band holds none of it.
+pub fn layPointer(into: []u8, band: Band, image: *const @import("sdk").rtg.RtgPointerImage, left: i32, top: i32) void {
+    const pixels: [*]const u8 = image.pixels;
+    for (0..image.height) |iy| {
+        const py = top + @as(i32, @intCast(iy));
+        if (py < 0 or py >= band.picture_height) continue;
+        for (0..image.width) |ix| {
+            const px = left + @as(i32, @intCast(ix));
+            if (px < 0 or px >= band.picture_width) continue;
+            if (!image.opaqueAt(@intCast(ix), @intCast(iy))) continue;
+            const x: u32 = @intCast(px);
+            const y: u32 = @intCast(py);
+            // Where on the panel: a turned picture's rows are its columns.
+            const column = switch (band.turn) {
+                .none => x,
+                .clockwise => band.picture_height - 1 - y,
+                .counter_clockwise => y,
+            };
+            const row = switch (band.turn) {
+                .none => y,
+                .clockwise => x,
+                .counter_clockwise => band.picture_width - 1 - x,
+            };
+            if (row < band.first_row or row >= band.first_row + band.rows) continue;
+            if (column < band.first_column or column >= band.first_column + band.columns) continue;
+            const at = ((row - band.first_row) * band.columns + (column - band.first_column)) * 2;
+            const from = pixels + iy * image.pitch + ix * 2;
+            into[at] = from[1];
+            into[at + 1] = from[0];
+        }
+    }
+}
+
 test "steps: walked in order, and a short one refused" {
     const bytes = step(0xF1, 0, .{0x00}) ++ step(0x11, 120, .{}) ++ step(0x2A, 0, .{ 0x00, 0x00, 0x01, 0x3F });
     try std.testing.expect(valid(&bytes));
@@ -351,4 +403,41 @@ test "a turned band of one row, and of the whole panel" {
         turnedRow(rows[j * height * 2 ..][0 .. height * 2], picture, @intCast(j), 0, height);
     }
     try std.testing.expectEqualSlices(u8, &rows, &all);
+}
+
+test "the pointer laid over a band, upright and turned, where the picture is" {
+    const rtg = @import("sdk").rtg;
+    // Two by one: a pixel of the pointer, then one clear.
+    const pixels = [_]u16{ 0x1234, 0xFFFF };
+    const mask = [_]u8{0x80};
+    const image = rtg.RtgPointerImage{ .pixels = @ptrCast(&pixels), .mask = &mask, .width = 2, .height = 1, .pitch = 4, .mask_pitch = 1, .hot_x = 0, .hot_y = 0, .format = .rgb565 };
+
+    // Upright, a picture 4 by 3 in one band: the pixel at (2, 1), high
+    // byte first, and nothing else touched.
+    var band: [4 * 3 * 2]u8 = @splat(0);
+    const upright = Band{ .first_row = 0, .rows = 3, .first_column = 0, .columns = 4, .picture_width = 4, .picture_height = 3, .turn = .none };
+    layPointer(&band, upright, &image, 2, 1);
+    try std.testing.expectEqual(@as(u8, 0x12), band[(1 * 4 + 2) * 2]);
+    try std.testing.expectEqual(@as(u8, 0x34), band[(1 * 4 + 2) * 2 + 1]);
+    try std.testing.expectEqual(@as(u8, 0), band[(1 * 4 + 3) * 2]);
+    // Off the picture's left edge: nothing.
+    band = @splat(0);
+    layPointer(&band, upright, &image, -1, 1);
+    for (band) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+
+    // Turned clockwise, the picture 4 by 3 on a panel 3 by 4: picture
+    // (2, 1) is panel column 3 - 1 - 1 = 1, row 2.
+    var turned: [3 * 4 * 2]u8 = @splat(0);
+    const clockwise = Band{ .first_row = 0, .rows = 4, .first_column = 0, .columns = 3, .picture_width = 4, .picture_height = 3, .turn = .clockwise };
+    layPointer(&turned, clockwise, &image, 2, 1);
+    try std.testing.expectEqual(@as(u8, 0x12), turned[(2 * 3 + 1) * 2]);
+    // Counter-clockwise: column 1, row 4 - 1 - 2 = 1.
+    turned = @splat(0);
+    const counter = Band{ .first_row = 0, .rows = 4, .first_column = 0, .columns = 3, .picture_width = 4, .picture_height = 3, .turn = .counter_clockwise };
+    layPointer(&turned, counter, &image, 2, 1);
+    try std.testing.expectEqual(@as(u8, 0x12), turned[(1 * 3 + 1) * 2]);
+    // A band that holds other rows gets none of it.
+    var other: [3 * 1 * 2]u8 = @splat(0);
+    layPointer(&other, .{ .first_row = 3, .rows = 1, .first_column = 0, .columns = 3, .picture_width = 4, .picture_height = 3, .turn = .counter_clockwise }, &image, 2, 1);
+    for (other) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
 }

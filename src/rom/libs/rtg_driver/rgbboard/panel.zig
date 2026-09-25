@@ -40,6 +40,7 @@ const cpu = @import("sdk").hardware.cpu;
 const systimer = sdk.hardware.systimer;
 const config = @import("config.zig");
 const stream = @import("stream.zig");
+const pointer = @import("pointer.zig");
 
 const MODULE_NAME = "rtg-rgb";
 
@@ -123,6 +124,20 @@ pub const Panel = struct {
 
     /// Everything the board reports about how the stream is doing.
     stats: rtg.RtgBoardStats = .{},
+
+    /// The pointer (`pointer.zig`): the image the library made, where its
+    /// top left is, and whether it is laid over the picture.
+    pointer: ?*const rtg.RtgPointerImage = null,
+    pointer_left: i32 = 0,
+    pointer_top: i32 = 0,
+    pointer_shown: bool = false,
+    /// The copy last started - into which buffer, of which stretch - and
+    /// whether the pointer is owed to it when it ends; the copy channel's
+    /// interrupt that lays it.
+    paint_pending: bool = false,
+    copy_into: u32 = 0,
+    copy_stretch: u32 = 0,
+    copy_done: exec.Interrupt = .{},
 };
 
 /// How many pictures' chains are kept: every frame there is, and one over
@@ -301,6 +316,16 @@ pub fn bringUp(panel: *Panel) i32 {
     };
     lcd.intClear(lcd.INT_VSYNC);
     sys.AddIntServer(intbits.INTB_LCD_CAM, &panel.vblank);
+
+    // The copy's end, for a stretch the pointer crosses: enabled only for
+    // those (`pointer.zig`).
+    panel.copy_done = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
+        .data = @ptrCast(panel),
+        .code = @ptrCast(&pointer.copyServer),
+    };
+    db.EnableDMAInts(copy_ch, dmares.DMA_IN, 0);
+    sys.AddIntServer(dmares.dmaIntNumber(copy_ch, dmares.DMA_IN), &panel.copy_done);
     return err.RTGERR_OK;
 }
 
@@ -432,6 +457,11 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
             sys.RemIntServer(dmares.dmaIntNumber(panel.channel, dmares.DMA_OUT), &panel.buffer_done);
             panel.buffer_done.code = null;
         }
+        if (panel.copy_done.code != null) {
+            db.EnableDMAInts(panel.copy_channel, dmares.DMA_IN, 0);
+            sys.RemIntServer(dmares.dmaIntNumber(panel.copy_channel, dmares.DMA_IN), &panel.copy_done);
+            panel.copy_done.code = null;
+        }
         if (panel.has_channels) {
             db.StopDMA(panel.channel, dmares.DMA_OUT);
             db.StopDMA(panel.copy_channel, dmares.DMA_OUT);
@@ -544,10 +574,19 @@ pub fn startCopy(panel: *Panel, into: u32, from: u32) void {
         panel.stats.late_refills +%= 1;
         waitCopy(panel);
     }
+    // The pointer owed to the copy before, which has ended: laid here if
+    // that copy's own interrupt has not got to it yet.
+    if (panel.paint_pending) pointer.painted(panel);
     db.ClearDMAInts(panel.copy_channel, dmares.DMA_IN, dmares.DMAINTF_IN_SUC_EOF);
     _ = db.StartDMA(panel.copy_channel, dmares.DMA_IN, panel.fill_into[into].?);
     _ = db.StartDMA(panel.copy_channel, dmares.DMA_OUT, chains[from].?);
     panel.stats.refills +%= 1;
+    panel.copy_into = into;
+    panel.copy_stretch = from;
+    if (pointer.crosses(panel, from)) {
+        panel.paint_pending = true;
+        db.EnableDMAInts(panel.copy_channel, dmares.DMA_IN, dmares.DMAINTF_IN_SUC_EOF);
+    }
 }
 
 /// Wait for the copy in flight, which is only ever done while the panel is

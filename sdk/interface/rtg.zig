@@ -70,6 +70,9 @@ pub const LVO = struct {
     pub const MirrorBoard = libraries.lvo(51);
     pub const SwapBoardAxes = libraries.lvo(52);
     pub const SetBoardGap = libraries.lvo(53);
+    pub const SetBoardPointer = libraries.lvo(54);
+    pub const MoveBoardPointer = libraries.lvo(55);
+    pub const ShowBoardPointer = libraries.lvo(56);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -125,6 +128,9 @@ pub const Fn = struct {
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SwapBoardAxes = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
     pub const SetBoardGap = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32) callconv(.c) i32;
+    pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
+    pub const MoveBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
+    pub const ShowBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -427,5 +433,24 @@ pub const RtgBase = opaque {
     /// not start where the controller's does.
     pub fn SetBoardGap(self: *RtgBase, board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) i32 {
         return libraries.call(self, LVO.SetBoardGap, Fn.SetBoardGap, .{ board, gap_x, gap_y });
+    }
+
+    /// The pointer's image: a surface with an alpha channel, whose pixel
+    /// (hot_x, hot_y) is the point. Converted once, into the board's format
+    /// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
+    /// the board lays a pointer over its picture (RTGBC_POINTER).
+    pub fn SetBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32 {
+        return libraries.call(self, LVO.SetBoardPointer, Fn.SetBoardPointer, .{ board, image, hot_x, hot_y });
+    }
+
+    /// Put the pointer's point at (x, y), in the coordinates a caller draws
+    /// in. Never waits; called on every pointer event.
+    pub fn MoveBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
+        return libraries.call(self, LVO.MoveBoardPointer, Fn.MoveBoardPointer, .{ board, x, y });
+    }
+
+    /// Lay the pointer over the picture, or stop.
+    pub fn ShowBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
+        return libraries.call(self, LVO.ShowBoardPointer, Fn.ShowBoardPointer, .{ board, show });
     }
 };

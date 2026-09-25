@@ -69,6 +69,9 @@ const RtgErrorText = @import("errors/rtgerrortext.zig").RtgErrorText;
 const MirrorBoard = @import("display/mirrorboard.zig").MirrorBoard;
 const SwapBoardAxes = @import("display/swapboardaxes.zig").SwapBoardAxes;
 const SetBoardGap = @import("display/setboardgap.zig").SetBoardGap;
+const SetBoardPointer = @import("pointer/setboardpointer.zig").SetBoardPointer;
+const MoveBoardPointer = @import("pointer/moveboardpointer.zig").MoveBoardPointer;
+const ShowBoardPointer = @import("pointer/showboardpointer.zig").ShowBoardPointer;
 
 /// rtg.library's interface, as the SDK generates it from sdk/fd/rtg_lib.fd.
 const interface = sdk.interface.rtg;
@@ -149,6 +152,9 @@ const contract_files = [_][]const u8{
     @embedFile("display/mirrorboard.zig"),
     @embedFile("display/swapboardaxes.zig"),
     @embedFile("display/setboardgap.zig"),
+    @embedFile("pointer/setboardpointer.zig"),
+    @embedFile("pointer/moveboardpointer.zig"),
+    @embedFile("pointer/showboardpointer.zig"),
 };
 
 fn lvoAddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {
@@ -301,6 +307,15 @@ fn lvoSwapBoardAxes(rb: *RtgBase, board: *rtg.RtgBoard, swap: bool) callconv(.c)
 fn lvoSetBoardGap(rb: *RtgBase, board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) callconv(.c) i32 {
     return SetBoardGap(rb, board, gap_x, gap_y);
 }
+fn lvoSetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) callconv(.c) i32 {
+    return SetBoardPointer(rb, board, image, hot_x, hot_y);
+}
+fn lvoMoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) callconv(.c) void {
+    MoveBoardPointer(rb, board, x, y);
+}
+fn lvoShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    return ShowBoardPointer(rb, board, show);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -359,6 +374,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMirrorBoard),
     vec(lvoSwapBoardAxes),
     vec(lvoSetBoardGap),
+    vec(lvoSetBoardPointer),
+    vec(lvoMoveBoardPointer),
+    vec(lvoShowBoardPointer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -366,7 +384,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 54), vectors.len);
+    try testing.expectEqual(@as(usize, 57), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

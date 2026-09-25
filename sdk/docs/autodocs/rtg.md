@@ -39,6 +39,7 @@ Generated from the source by `./zig build autodoc`.
 - [InvertRect](#invertrect) - Complements every pixel of a rectangle with the board's engine.
 - [LockRtgDrivers](#lockrtgdrivers) - Holds the driver list still, so it can be walked.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
+- [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [NextBoardMode](#nextboardmode) - Walks a board's modes.
 - [NextRtgDriver](#nextrtgdriver) - Walks the driver list.
@@ -53,7 +54,9 @@ Generated from the source by `./zig build autodoc`.
 - [SetBoardDisplay](#setboarddisplay) - Switches a board's display on or off.
 - [SetBoardGap](#setboardgap) - Sets the offset added to every coordinate a board sends.
 - [SetBoardMode](#setboardmode) - Puts a board in a mode.
+- [SetBoardPointer](#setboardpointer) - Gives a board the image its pointer is drawn with.
 - [ShowBitMap](#showbitmap) - Shows a buffer on a board's display.
+- [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [SignalRtgEvent](#signalrtgevent) - Tells a board's servers that one of its events happened.
 - [SwapBoardAxes](#swapboardaxes) - Exchanges a board's axes.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
@@ -1564,6 +1567,67 @@ None known.
 _ = rb.MirrorBoard(board, true, false);
 ```
 
+## MoveBoardPointer
+
+Puts the pointer's point at a place on the picture.
+
+**SYNOPSIS**
+
+```zig
+fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
+```
+
+**SINCE**
+
+1.1. LVO -224.
+
+**INPUTS**
+
+- `board` - the board.
+- `x`, `y` - where the point goes, in the coordinates a caller draws
+  in. Anywhere: the part of the image off the picture is not shown.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The position is kept whether or not the board has a pointer, an image
+or the pointer shown, so an image set or shown later appears where the
+pointer is. The image's point is put here, which is its hot spot and
+not its corner. Nothing is done for the same place twice.
+
+A board that turns its picture itself (`MirrorBoard`, `SwapBoardAxes`,
+`SetBoardGap`) turns the pointer with it: the driver lays the pointer
+into the picture's own order on its way out, before the turn.
+
+**CONTEXT**
+
+- Waits: no. Made for an input handler, on every pointer event.
+- Interrupts: no. A driver may send the rows the pointer left over a
+  bus.
+- Forbid: taken for the moment it takes the driver to move it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetBoardPointer`, `ShowBoardPointer`
+
+**EXAMPLES**
+
+```zig
+rb.MoveBoardPointer(board, event.x, event.y);
+```
+
 ## NextBoard
 
 Walks the list of boards.
@@ -2330,6 +2394,83 @@ None known.
 if (rb.SetBoardMode(board, null) != rtg.errors.RTGERR_OK) return error.NoMode;
 ```
 
+## SetBoardPointer
+
+Gives a board the image its pointer is drawn with.
+
+**SYNOPSIS**
+
+```zig
+fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32
+```
+
+**SINCE**
+
+1.1. LVO -220.
+
+**INPUTS**
+
+- `board` - the board.
+- `image` - a surface (an `RtgBitMap` is one by pointer) in `rgba32`, `bgra32` or `argb1555`, at most `RTG_POINTER_MAX`
+  pixels each way; null takes the image away and shows nothing.
+- `hot_x`, `hot_y` - the pixel of the image that is the pointer's
+  point, inside it.
+
+**RESULT**
+
+`RTGERR_OK`; `RTGERR_NOT_SUPPORTED` for a board without
+`RTGBC_POINTER`; `RTGERR_BAD_FORMAT` for an image with no alpha, or a
+board whose format a pixel is not whole bytes of; `RTGERR_BAD_ARG` for
+an image too large, empty, or with its point outside it;
+`RTGERR_NO_MEMORY`; or what the driver answered. On any failure the
+board keeps the image it had.
+
+**BEHAVIOR**
+
+The image is converted here and not again: every pixel into the
+board's format, and its alpha into a mask of one bit a pixel - an
+alpha of 128 or more is the pointer, anything less the picture showing
+through. So what a driver does on the way to the glass, often from an
+interrupt, is a masked copy of a fixed size. The point stays where
+MoveBoardPointer last put it, and the new image is placed around it.
+Whether it is seen is ShowBoardPointer's business.
+
+**CONTEXT**
+
+- Waits: no. A driver's pointer ops never wait.
+- Interrupts: no. It allocates.
+- Forbid: taken while the driver changes images, so a move cannot come
+  between.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller's image is read and not kept; it may be freed on return.
+The converted one is the library's - in internal memory for a driver
+whose interrupts read its handles (`RTGDF_INTERNAL_INSTANCE`) - freed by the
+next SetBoardPointer or by DeleteBoard.
+
+**NOTES**
+
+A board with no alpha in its own format still gets a mask: the mask is
+the whole of the pointer's shape, and the pixels behind a clear bit are
+never read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MoveBoardPointer`, `ShowBoardPointer`, `GetBoardInfo`
+
+**EXAMPLES**
+
+```zig
+if (rb.SetBoardPointer(board, arrow, 0, 0) == rtg.errors.RTGERR_OK)
+    _ = rb.ShowBoardPointer(board, true);
+```
+
 ## ShowBitMap
 
 Shows a buffer on a board's display.
@@ -2391,6 +2532,62 @@ None known.
 
 ```zig
 _ = rb.ShowBitMap(board, buffer, 0, 0);
+```
+
+## ShowBoardPointer
+
+Shows a board's pointer, or hides it.
+
+**SYNOPSIS**
+
+```zig
+fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32
+```
+
+**SINCE**
+
+1.1. LVO -228.
+
+**INPUTS**
+
+- `board` - the board.
+- `show` - true to lay the pointer over the picture, false to stop.
+
+**RESULT**
+
+`RTGERR_OK`, `RTGERR_NOT_SUPPORTED` for a board without
+`RTGBC_POINTER`, or what the driver answered.
+
+**BEHAVIOR**
+
+The picture itself never holds the pointer: the board lays it in on
+the way to the glass, so hiding it leaves the picture exactly as it was
+drawn. Shown with no image set, nothing appears until one is.
+`RTGBF_POINTER` in `RtgBoardInfo.flags` says which it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. A driver may send the pointer's rows over a bus.
+- Forbid: taken while the driver changes it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetBoardPointer`, `MoveBoardPointer`, `GetBoardInfo`
+
+**EXAMPLES**
+
+```zig
+_ = rb.ShowBoardPointer(board, false);
 ```
 
 ## SignalRtgEvent

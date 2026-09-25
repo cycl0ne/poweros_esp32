@@ -157,4 +157,14 @@ i32 SwapBoardAxes(*rtg.RtgBoard board, bool swap)
 /// The offset added to every coordinate, for glass whose visible area does
 /// not start where the controller's does.
 i32 SetBoardGap(*rtg.RtgBoard board, u32 gap_x, u32 gap_y)
+/// The pointer's image: a surface with an alpha channel, whose pixel
+/// (hot_x, hot_y) is the point. Converted once, into the board's format
+/// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
+/// the board lays a pointer over its picture (RTGBC_POINTER).
+i32 SetBoardPointer(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u32 hot_y)
+/// Put the pointer's point at (x, y), in the coordinates a caller draws
+/// in. Never waits; called on every pointer event.
+void MoveBoardPointer(*rtg.RtgBoard board, i32 x, i32 y)
+/// Lay the pointer over the picture, or stop.
+i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
 ##end

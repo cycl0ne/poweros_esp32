@@ -67,6 +67,15 @@ pub const Log = struct {
     last_gap_y: u32 = 0,
     display_on: bool = false,
     brightness: u32 = 0,
+    /// The pointer as the board has it: the image it was last given,
+    /// where that image's top left is, and whether it is laid over the
+    /// picture.
+    pointer_sets: u32 = 0,
+    pointer_moves: u32 = 0,
+    pointer_image: ?*const rtg.RtgPointerImage = null,
+    pointer_left: i32 = 0,
+    pointer_top: i32 = 0,
+    pointer_shown: bool = false,
 };
 
 /// Everything this driver has that changes, allocated by `create`.
@@ -261,6 +270,27 @@ fn setGap(board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.pointer_sets += 1;
+    log.pointer_image = image;
+    return err.RTGERR_OK;
+}
+
+fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const log = &stateOfBoard(board).log;
+    log.pointer_moves += 1;
+    log.pointer_left = left;
+    log.pointer_top = top;
+}
+
+fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    stateOfBoard(board).log.pointer_shown = show;
+    return err.RTGERR_OK;
+}
+
 /// rgb565 only: what a board's engine would do, done by hand so the tests
 /// can compare bytes.
 fn rows16(bitmap: *rtg.RtgBitMap, y: u32) []u16 {
@@ -355,6 +385,9 @@ const full_ops = rtg.RtgBoardOps{
     .mirror = &mirror,
     .swap_xy = &swapXy,
     .set_gap = &setGap,
+    .set_pointer = &setPointer,
+    .move_pointer = &movePointer,
+    .show_pointer = &showPointer,
 };
 
 /// A board with no engine: it can be shown and refreshed and no more.

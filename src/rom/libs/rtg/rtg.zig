@@ -124,6 +124,9 @@ test {
     _ = @import("transport/rxparam.zig");
     _ = @import("transport/txcolor.zig");
     _ = @import("transport/txparam.zig");
+    _ = @import("pointer/setboardpointer.zig");
+    _ = @import("pointer/moveboardpointer.zig");
+    _ = @import("pointer/showboardpointer.zig");
 }
 
 /// The kernel's exec and utility, to set up and tear down around it.
@@ -783,6 +786,94 @@ test "a board whose pixels go out as they are written will not turn" {
     try testing.expectEqual(@as(u32, 0), info.gap_x);
     try testing.expectEqual(@as(u32, 0), fk.log.mirrors);
 
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the pointer: converted once, placed by its point, shown and hidden" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_POINTER != 0);
+
+    // Three by two, rgba32: a red pixel, a clear one, a green one, and a
+    // row of blue with a half-clear pixel in the middle.
+    var pixels = [_]u32{ 0xFF0000FF, 0x12345600, 0x00FF00FF, 0x0000FFFF, 0x0000FF7F, 0x0000FFFF };
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 3, .height = 2, .pitch = 12, .format = .rgba32 };
+
+    // Placed before there is an image: the image arrives there.
+    base(rb).MoveBoardPointer(board, 20, 30);
+    try testing.expectEqual(@as(u32, 0), fk.log.pointer_moves);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 1, 1));
+    const made = fk.log.pointer_image.?;
+    try testing.expectEqual(made, board.pointer.?);
+    try testing.expectEqual(rtg.PixelFormat.rgb565, made.format);
+    try testing.expect(made.opaqueAt(0, 0) and !made.opaqueAt(1, 0) and made.opaqueAt(2, 0));
+    try testing.expect(made.opaqueAt(0, 1) and !made.opaqueAt(1, 1) and made.opaqueAt(2, 1));
+    const row0: [*]const u16 = @ptrCast(@alignCast(made.pixels));
+    const row1: [*]const u16 = @ptrCast(@alignCast(made.pixels + made.pitch));
+    try testing.expectEqual(@as(u16, 0xF800), row0[0]);
+    try testing.expectEqual(@as(u16, 0x07E0), row0[2]);
+    try testing.expectEqual(@as(u16, 0x001F), row1[0]);
+    // The top left, from the point.
+    try testing.expectEqual(@as(i32, 19), fk.log.pointer_left);
+    try testing.expectEqual(@as(i32, 29), fk.log.pointer_top);
+
+    base(rb).MoveBoardPointer(board, -1, 5);
+    try testing.expectEqual(@as(i32, -2), fk.log.pointer_left);
+    try testing.expectEqual(@as(i32, 4), fk.log.pointer_top);
+    // The same place again is no move.
+    const moves = fk.log.pointer_moves;
+    base(rb).MoveBoardPointer(board, -1, 5);
+    try testing.expectEqual(moves, fk.log.pointer_moves);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expect(fk.log.pointer_shown);
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.flags & rtg.boards.RTGBF_POINTER != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    try testing.expect(!fk.log.pointer_shown);
+
+    // What will not do leaves the image it had.
+    var opaque_only = [_]u16{ 0xF800, 0x001F };
+    const no_alpha = rtg.Surface{ .pixels = @ptrCast(&opaque_only), .width = 2, .height = 1, .pitch = 4, .format = .rgb565 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).SetBoardPointer(board, &no_alpha, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).SetBoardPointer(board, &image, 3, 0));
+    const huge = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = rtg.boards.RTG_POINTER_MAX + 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).SetBoardPointer(board, &huge, 0, 0));
+    try testing.expectEqual(made, board.pointer.?);
+
+    // A second image replaces the first; null takes it away.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
+    try testing.expectEqual(@as(u32, 2), fk.log.pointer_sets);
+    try testing.expectEqual(@as(i32, -1), fk.log.pointer_left);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expect(board.pointer == null);
+    try testing.expect(fk.log.pointer_image == null);
+
+    // An image still set when the board goes is freed with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a board with no pointer says so" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    fakeOf(rb).without_engine = true;
+    const board = try makeBoard(rb);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_POINTER);
+    var pixel = [_]u32{0xFFFFFFFF};
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixel), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardPointer(board, &image, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ShowBoardPointer(board, true));
+    base(rb).MoveBoardPointer(board, 3, 3);
     base(rb).DeleteBoard(board);
     try tearDown(rb);
 }

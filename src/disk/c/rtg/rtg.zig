@@ -29,7 +29,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.0 (17.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.1 (25.09.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -354,6 +354,7 @@ const state_words = [_]Named{
     .{ .bit = rtg.boards.RTGBF_SHOWING, .word = "showing" },
     .{ .bit = rtg.boards.RTGBF_STREAMING, .word = "streaming" },
     .{ .bit = rtg.boards.RTGBF_ADOPTED, .word = "adopted" },
+    .{ .bit = rtg.boards.RTGBF_POINTER, .word = "pointer-shown" },
 };
 
 const mode_words = [_]Named{
@@ -376,6 +377,7 @@ const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_MIRROR, .word = "mirror" },
     .{ .bit = rtg.boards.RTGBC_SWAP_XY, .word = "swap-axes" },
     .{ .bit = rtg.boards.RTGBC_GAP, .word = "gap" },
+    .{ .bit = rtg.boards.RTGBC_POINTER, .word = "pointer" },
     .{ .bit = rtg.boards.RTGBC_FILL_RECT, .word = "fill" },
     .{ .bit = rtg.boards.RTGBC_COPY_RECT, .word = "copy" },
     .{ .bit = rtg.boards.RTGBC_INVERT_RECT, .word = "invert" },

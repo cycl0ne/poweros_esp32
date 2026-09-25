@@ -58,6 +58,7 @@ pub const RtgBoard = boards.RtgBoard;
 pub const RtgBoardInfo = boards.RtgBoardInfo;
 pub const RtgBoardStats = boards.RtgBoardStats;
 pub const RtgBoardOps = boards.RtgBoardOps;
+pub const RtgPointerImage = boards.RtgPointerImage;
 pub const RtgDriver = boards.RtgDriver;
 pub const RtgDriverOps = boards.RtgDriverOps;
 

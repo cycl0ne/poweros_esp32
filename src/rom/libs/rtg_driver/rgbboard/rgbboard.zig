@@ -39,12 +39,13 @@ const config = @import("config.zig");
 const panels = @import("panel.zig");
 const Panel = panels.Panel;
 const lcd = @import("lcd.zig");
+const pointer = @import("pointer.zig");
 
 const MODULE_NAME = "rtg-rgb";
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "17.9.2026";
+const REVISION = 1;
+const BUILD_DATE = "25.9.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -240,6 +241,18 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     };
 }
 
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    return pointer.setPointer(panelOf(board), image);
+}
+
+fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    pointer.movePointer(panelOf(board), left, top);
+}
+
+fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    return pointer.showPointer(panelOf(board), show);
+}
+
 /// What this board has. Every engine slot is null: this chip has nothing
 /// that draws, so a caller that wants a rectangle filled fills it itself.
 const ops = rtg.RtgBoardOps{
@@ -252,6 +265,9 @@ const ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
+    .set_pointer = &setPointer,
+    .move_pointer = &movePointer,
+    .show_pointer = &showPointer,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };

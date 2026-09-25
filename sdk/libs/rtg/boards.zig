@@ -142,6 +142,9 @@ pub const RTGBF_STREAMING: u32 = 1 << 4;
 /// It took over a display that was already running, rather than bringing
 /// one up itself.
 pub const RTGBF_ADOPTED: u32 = 1 << 5;
+/// Its pointer is shown (ShowBoardPointer). What is on the glass also
+/// needs an image set (SetBoardPointer).
+pub const RTGBF_POINTER: u32 = 1 << 6;
 
 /// RtgBoardInfo.caps: which ops the driver filled in.
 pub const RTGBC_SET_MODE: u32 = 1 << 0;
@@ -159,6 +162,10 @@ pub const RTGBC_CONTROL: u32 = 1 << 8;
 pub const RTGBC_MIRROR: u32 = 1 << 9;
 pub const RTGBC_SWAP_XY: u32 = 1 << 10;
 pub const RTGBC_GAP: u32 = 1 << 11;
+/// It lays a pointer over the picture on the way to the glass
+/// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
+/// picture holding it.
+pub const RTGBC_POINTER: u32 = 1 << 12;
 pub const RTGBC_FILL_RECT: u32 = 1 << 16;
 pub const RTGBC_COPY_RECT: u32 = 1 << 17;
 pub const RTGBC_INVERT_RECT: u32 = 1 << 18;
@@ -216,6 +223,39 @@ pub const RtgBoardStats = extern struct {
     underruns: u32 = 0,
 };
 
+/// A pointer as a board is handed it: made by SetBoardPointer out of the
+/// caller's image, once, in the board's own pixel format and with a
+/// mask of one bit a pixel beside it, so laying it over the picture is a
+/// masked copy and nothing more. For a driver with
+/// `RTGDF_INTERNAL_INSTANCE` it is in internal memory, where an interrupt
+/// reads it without waiting on the display's own memory.
+pub const RtgPointerImage = extern struct {
+    /// `height` rows `pitch` bytes apart, in `format`.
+    pixels: [*]const u8,
+    /// One bit a pixel, the leftmost in the most significant bit of a
+    /// byte, `height` rows `mask_pitch` bytes apart. A set bit is a pixel
+    /// of the pointer, a clear one the picture showing through.
+    mask: [*]const u8,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    mask_pitch: u32,
+    /// The pixel of the image that is the pointer's point.
+    hot_x: u32,
+    hot_y: u32,
+    format: PixelFormat,
+    pad: [3]u8 = .{ 0, 0, 0 },
+
+    /// Whether pixel (x, y) of the image is the pointer's.
+    pub inline fn opaqueAt(image: *const RtgPointerImage, x: u32, y: u32) bool {
+        return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
+    }
+};
+
+/// The largest pointer SetBoardPointer takes, each way: a driver lays it
+/// in from an interrupt, and the time that takes has to stay small.
+pub const RTG_POINTER_MAX: u32 = 64;
+
 /// A board. What the driver keeps for itself is `instance`, which the
 /// library allocates, clears and frees with the handle.
 pub const RtgBoard = extern struct {
@@ -242,6 +282,12 @@ pub const RtgBoard = extern struct {
     /// and cleared when the board was made, and frees with it.
     instance: ?*anyopaque = null,
     instance_size: u32 = 0,
+    /// The pointer: the image SetBoardPointer made, or null, and where
+    /// its point is (MoveBoardPointer), in the coordinates a caller draws
+    /// in. The library's; a driver reads them and writes neither.
+    pointer: ?*RtgPointerImage = null,
+    pointer_x: i32 = 0,
+    pointer_y: i32 = 0,
 };
 
 /// What a driver fills in. Every slot may be null; a null slot is an
@@ -303,6 +349,25 @@ pub const RtgBoardOps = extern struct {
     /// Add an offset to every coordinate, for glass whose visible area
     /// does not start where the controller's does.
     set_gap: ?*const fn (*RtgBoard, u32, u32) callconv(.c) i32 = null,
+
+    // --- the pointer. A board that can lay a small image over the
+    // picture on the way to the glass - into a copy the picture passes
+    // through anyway - fills in all three; the picture itself never holds
+    // the pointer. The coordinates are those a caller draws in, before
+    // any turn the board gives the picture, so an overlay laid into the
+    // picture's own order is turned with it. ---
+
+    /// Take this image from now on, or none for null. It stays the
+    /// library's and stays valid until the next set_pointer has returned
+    /// or the board is destroyed; the driver has stopped reading the one
+    /// before when it returns.
+    set_pointer: ?*const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32 = null,
+    /// The image's top left is now at (x, y), which may be partly or
+    /// wholly off the picture. Called on every pointer event: it never
+    /// waits, and it takes no longer than the rows it touches.
+    move_pointer: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
+    /// Lay it over the picture, or stop.
+    show_pointer: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
 };
 
 /// BoardControl's `what`. Everything below RTGCTRL_DRIVER means the same

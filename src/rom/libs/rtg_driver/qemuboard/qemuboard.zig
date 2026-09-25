@@ -15,6 +15,17 @@
 //! version of that one - the two have almost nothing in common below the
 //! board interface, which is the point of having the interface.
 //!
+//! The pointer is laid over the picture in a frame of its own. The
+//! doorbell copies at the window's next refresh, not when it is rung, so
+//! the pointer cannot be put into the shown buffer, rung and taken out
+//! again. While a pointer is shown the window is fed from a composed frame
+//! in the VRAM past the board's buffers instead: the shown buffer's rows
+//! copied in as they are refreshed, and the pointer laid over them. A move
+//! puts back the pointer's old rectangle from the shown buffer and lays it
+//! at the new one, so it costs the pointer's size and not the picture's.
+//! With no pointer shown the window reads the shown buffer itself, as it
+//! always did, and nothing is copied.
+//!
 //! It exists so that the layers above it can be looked at before anything
 //! is flashed. A board here means rtg.library lists a display,
 //! graphics.library finds a View, and what is drawn can be seen - in the
@@ -40,8 +51,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "17.9.2026";
+const REVISION = 1;
+const BUILD_DATE = "25.9.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -80,6 +91,16 @@ const Screen = struct {
     /// request each wait copies.
     timer_io: timer.TimeRequest = .{},
     timer_open: bool = false,
+    /// The frame the window is fed from while a pointer is shown, past
+    /// the board's buffers in VRAM; null when there was no room, and the
+    /// board then has no pointer.
+    composed: ?[*]u8 = null,
+    /// The pointer: its image (the library's), where the image's top left
+    /// is, and whether it is shown.
+    pointer: ?*const rtg.RtgPointerImage = null,
+    pointer_left: i32 = 0,
+    pointer_top: i32 = 0,
+    pointer_shown: bool = false,
 };
 
 /// A frame of the panel the window stands in for, at 60 a second.
@@ -137,8 +158,119 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 /// - Process: a Task will do.
 fn present(screen: *Screen) void {
     const shown = screen.showing orelse return;
-    qemu_rgb.update(@intFromPtr(shown.pixels), @intCast(screen.width), @intCast(screen.height));
+    const from = if (composing(screen)) screen.composed.? else shown.pixels.?;
+    qemu_rgb.update(@intFromPtr(from), @intCast(screen.width), @intCast(screen.height));
     screen.updates +%= 1;
+}
+
+// --- the pointer, in the composed frame -----------------------------------
+
+/// Whether the window is fed from the composed frame: a pointer with an
+/// image is shown over a picture.
+fn composing(screen: *Screen) bool {
+    return screen.pointer_shown and screen.pointer != null and screen.composed != null and screen.showing != null;
+}
+
+/// Rows `top` to `end` of the shown buffer into the composed frame.
+fn copyRows(screen: *Screen, top: u32, end: u32) void {
+    const shown = screen.showing orelse return;
+    const composed = screen.composed orelse return;
+    if (top >= end) return;
+    const pitch = screen.width * bytes_per_pixel;
+    screen.sys.CopyMem(shown.pixels.? + top * pitch, composed + top * pitch, (end - top) * pitch);
+}
+
+/// The part of the image's rectangle at (left, top) that is on the
+/// picture, as columns and rows; null when none of it is.
+const Clip = struct { x0: u32, y0: u32, x1: u32, y1: u32 };
+
+fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i32) ?Clip {
+    const x0 = @max(left, 0);
+    const y0 = @max(top, 0);
+    const x1 = @min(left + @as(i32, @intCast(image.width)), @as(i32, @intCast(screen.width)));
+    const y1 = @min(top + @as(i32, @intCast(image.height)), @as(i32, @intCast(screen.height)));
+    if (x0 >= x1 or y0 >= y1) return null;
+    return .{ .x0 = @intCast(x0), .y0 = @intCast(y0), .x1 = @intCast(x1), .y1 = @intCast(y1) };
+}
+
+/// The picture back where the pointer was: its rectangle copied from the
+/// shown buffer.
+fn restore(screen: *Screen) void {
+    const image = screen.pointer orelse return;
+    const clip = clipOf(screen, image, screen.pointer_left, screen.pointer_top) orelse return;
+    const shown = screen.showing orelse return;
+    const composed = screen.composed orelse return;
+    const pitch = screen.width * bytes_per_pixel;
+    var y = clip.y0;
+    while (y < clip.y1) : (y += 1) {
+        const at = y * pitch + clip.x0 * bytes_per_pixel;
+        screen.sys.CopyMem(shown.pixels.? + at, composed + at, (clip.x1 - clip.x0) * bytes_per_pixel);
+    }
+}
+
+/// The pointer laid over the composed frame: a masked copy of its image,
+/// cut to the picture.
+fn lay(screen: *Screen) void {
+    const image = screen.pointer orelse return;
+    const clip = clipOf(screen, image, screen.pointer_left, screen.pointer_top) orelse return;
+    const composed = screen.composed orelse return;
+    if (image.format != .rgb565) return;
+    const pitch = screen.width * bytes_per_pixel;
+    var y = clip.y0;
+    while (y < clip.y1) : (y += 1) {
+        const image_y: u32 = @intCast(@as(i32, @intCast(y)) - screen.pointer_top);
+        const from: [*]const u16 = @ptrCast(@alignCast(image.pixels + image_y * image.pitch));
+        const into: [*]u16 = @ptrCast(@alignCast(composed + y * pitch));
+        var x = clip.x0;
+        while (x < clip.x1) : (x += 1) {
+            const image_x: u32 = @intCast(@as(i32, @intCast(x)) - screen.pointer_left);
+            if (image.opaqueAt(image_x, image_y)) into[x] = from[image_x];
+        }
+    }
+}
+
+/// The whole picture into the composed frame, with the pointer over it:
+/// when composing starts, and when another buffer is shown.
+fn rebuild(screen: *Screen) void {
+    if (!composing(screen)) return;
+    copyRows(screen, 0, screen.height);
+    lay(screen);
+}
+
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    const was = composing(screen);
+    if (was) restore(screen);
+    screen.pointer = image;
+    if (!was) {
+        rebuild(screen);
+    } else if (composing(screen)) {
+        lay(screen);
+    }
+    present(screen);
+    return err.RTGERR_OK;
+}
+
+fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const screen = screenOf(board);
+    const on = composing(screen);
+    if (on) restore(screen);
+    screen.pointer_left = left;
+    screen.pointer_top = top;
+    if (!on) return;
+    lay(screen);
+    present(screen);
+}
+
+fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    const screen = screenOf(board);
+    screen.pointer_shown = show;
+    rebuild(screen);
+    present(screen);
+    return err.RTGERR_OK;
 }
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
@@ -179,13 +311,15 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (room == 0) return err.RTGERR_BAD_ARG;
     const asked: u32 = @truncate(state.rtg_base.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list));
     const frames = @min(@max(asked, 1), room);
+    // A frame more, if there is one, to compose the pointer in.
+    if (frames < room) screen.composed = @ptrFromInt(qemu_rgb.vram + frames * frame);
     board.region = .{
         .base = @ptrFromInt(qemu_rgb.vram),
         .size = frames * frame,
         .alignment = bytes_per_pixel,
         .flags = rtg.boards.RTGRF_DISPLAYABLE,
     };
-    board.ops = &ops;
+    board.ops = if (screen.composed != null) &pointer_ops else &ops;
     board.info.buffers = frames;
     state.board = board;
     return err.RTGERR_OK;
@@ -234,6 +368,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     // start, under the display module's Forbid.
     const flip = screen.showing != null and bitmap != null and screen.showing != bitmap;
     screen.showing = bitmap;
+    rebuild(screen);
     if (bitmap != null) present(screen);
     if (flip) pace(screen, 1);
     return err.RTGERR_OK;
@@ -242,13 +377,19 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// Rows were written by the CPU. They are already in the device's memory,
 /// so this is the doorbell and nothing more.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
-    _ = y;
-    _ = rows;
     const screen = screenOf(board);
     // Refreshing a buffer that is not the one being shown is not an error
     // - it is a program drawing ahead into another buffer - but there is
     // nothing to hand to the window.
     if (screen.showing != bitmap) return err.RTGERR_OK;
+    // With a pointer shown, the rows go into the composed frame first, and
+    // the pointer back over them where they cross it.
+    if (composing(screen)) {
+        const top = @min(y, screen.height);
+        const end = if (rows == 0) screen.height else @min(y +| rows, screen.height);
+        copyRows(screen, if (rows == 0) 0 else top, end);
+        lay(screen);
+    }
     present(screen);
     return err.RTGERR_OK;
 }
@@ -273,6 +414,19 @@ const ops = rtg.boards.RtgBoardOps{
     .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
+};
+
+/// The same with the pointer, for a board with a frame to compose it in.
+const pointer_ops = rtg.boards.RtgBoardOps{
+    .destroy = &destroy,
+    .set_mode = &setMode,
+    .show_bitmap = &showBitMap,
+    .wait_vblank = &waitVBlank,
+    .refresh = &refresh,
+    .stats = &stats,
+    .set_pointer = &setPointer,
+    .move_pointer = &movePointer,
+    .show_pointer = &showPointer,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

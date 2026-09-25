@@ -151,6 +151,9 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.mirror != null) caps |= rtg.boards.RTGBC_MIRROR;
     if (ops.swap_xy != null) caps |= rtg.boards.RTGBC_SWAP_XY;
     if (ops.set_gap != null) caps |= rtg.boards.RTGBC_GAP;
+    // A pointer is all three or none: one that could be set but not moved
+    // is no pointer.
+    if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;
     return caps;
 }
 

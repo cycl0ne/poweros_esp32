@@ -22,6 +22,11 @@
 //! Nothing is sent that nobody asked for: there is no stream, so the board
 //! reports no RTGBF_STREAMING, and a buffer that is not being shown is
 //! not sent at all until it is.
+//!
+//! The pointer is laid into each band after it is turned round and before
+//! it goes, so the picture in PSRAM never holds it. Moving it sends the
+//! rows it left and the rows it came to, which the picture supplies again
+//! with the pointer in its new place.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -43,8 +48,8 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "22.9.2026";
+const REVISION = 1;
+const BUILD_DATE = "25.9.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -121,6 +126,13 @@ const Panel = struct {
     /// on and sent with the wrong pixels in it: the two look the same on
     /// the glass and have nothing else to tell them apart.
     asked: [rows_marked / 8]u8 = @splat(0),
+
+    /// The pointer: the image the library made, where its top left is on
+    /// the picture, and whether it is laid into what is sent.
+    pointer: ?*const rtg.RtgPointerImage = null,
+    pointer_left: i32 = 0,
+    pointer_top: i32 = 0,
+    pointer_shown: bool = false,
 };
 
 /// The rows the marks cover, which is more than any mode this board has.
@@ -411,6 +423,15 @@ fn sendUpright(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
                 const into: [*]align(4) u8 = @alignCast(band + i * row_bytes);
                 sequence.swapPixels(into[0..row_bytes], from[0..row_bytes]);
             }
+            layPointer(panel, band[0 .. count * row_bytes], .{
+                .first_row = row,
+                .rows = count,
+                .first_column = 0,
+                .columns = bm.width,
+                .picture_width = bm.width,
+                .picture_height = bm.height,
+                .turn = .none,
+            });
             break :band_done writeBand(panel, rb, &columns, &lines, band, count * row_bytes);
         };
         if (!goesOn(code)) return code;
@@ -491,7 +512,77 @@ fn oneBand(
     panel.sys.Forbid();
     defer panel.sys.Permit();
     sequence.turnedBand(band[0 .. count * row_bytes], picture, row, count, first_column, count_columns);
+    // A turned picture's width is the panel's height.
+    layPointer(panel, band[0 .. count * row_bytes], .{
+        .first_row = row,
+        .rows = count,
+        .first_column = first_column,
+        .columns = count_columns,
+        .picture_width = picture.panel_height,
+        .picture_height = picture.panel_width,
+        .turn = picture.turn,
+    });
     return writeBand(panel, rb, columns, lines, band, count * row_bytes);
+}
+
+/// The pointer over a band, if one is shown.
+fn layPointer(panel: *Panel, into: []u8, band: sequence.Band) void {
+    if (!panel.pointer_shown) return;
+    const image = panel.pointer orelse return;
+    sequence.layPointer(into, band, image, panel.pointer_left, panel.pointer_top);
+}
+
+/// The picture rows the pointer covers at (`top`), with `image`, sent
+/// again: what is on the glass there follows the pointer.
+fn sendPointerRows(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage, top: i32) void {
+    const panel = panelOf(board);
+    const shown = board.showing orelse return;
+    const one = image orelse return;
+    const first = @max(top, 0);
+    const end = @min(top + @as(i32, @intCast(one.height)), @as(i32, @intCast(shown.height)));
+    if (first >= end) return;
+    _ = send(panel, shown, @intCast(first), @intCast(end - first));
+}
+
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const panel = panelOf(board);
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    const old = panel.pointer;
+    panel.pointer = image;
+    if (panel.pointer_shown) {
+        sendPointerRows(board, old, panel.pointer_top);
+        sendPointerRows(board, image, panel.pointer_top);
+    }
+    return err.RTGERR_OK;
+}
+
+/// The rows it left and the rows it came to; one send when they overlap.
+fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const panel = panelOf(board);
+    const old_top = panel.pointer_top;
+    panel.pointer_left = left;
+    panel.pointer_top = top;
+    if (!panel.pointer_shown) return;
+    const image = panel.pointer orelse return;
+    const height: i32 = @intCast(image.height);
+    if (top < old_top + height and old_top < top + height) {
+        const shown = board.showing orelse return;
+        const first = @max(@min(top, old_top), 0);
+        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(shown.height)));
+        if (first < end) _ = send(panel, shown, @intCast(first), @intCast(end - first));
+        return;
+    }
+    sendPointerRows(board, image, old_top);
+    sendPointerRows(board, image, top);
+}
+
+fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
+    const panel = panelOf(board);
+    panel.pointer_shown = show;
+    sendPointerRows(board, panel.pointer, panel.pointer_top);
+    return err.RTGERR_OK;
 }
 
 /// How often a band whose transfer ran dry is sent again before its rows
@@ -611,6 +702,9 @@ const ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
+    .set_pointer = &setPointer,
+    .move_pointer = &movePointer,
+    .show_pointer = &showPointer,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };

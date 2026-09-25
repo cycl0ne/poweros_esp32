@@ -78,6 +78,9 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     if (gone.ops) |ops| {
         if (ops.destroy) |destroy| destroy(gone);
     }
+    // The driver is gone, so nothing reads the pointer's image any more.
+    if (gone.pointer) |image| sys.FreeVec(image);
+    gone.pointer = null;
 
     sys.ObtainSemaphore(&rb.board_lock);
     sys.Remove(&gone.node);
