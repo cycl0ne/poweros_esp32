@@ -9,9 +9,10 @@ const SocketBase = _base.SocketBase;
 const Frame = @import("../frame/_frame.zig").Frame;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
+const tcp_user = @import("../tcp/user.zig");
 
 /// The next datagram waiting on the socket, into `buffer`, and the address
-/// it came from.
+/// it came from; for a stream socket, what has come on its connection.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -32,14 +33,17 @@ const _lock = @import("../lock/_lock.zig");
 ///   when `from` is.
 ///
 /// RESULT:
-/// The bytes put in `buffer`, or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
+/// The bytes put in `buffer` - 0 at the end of a stream, once the peer
+/// has closed and everything before it is read - or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
 /// (nothing waiting and the socket does not wait, or `SO_RCVTIMEO`
 /// passed), `EINTR` (a break signal came), or an error the network
 /// reported for the socket.
 ///
 /// BEHAVIOR:
 /// A datagram is read whole or not at all: what does not fit in `buffer`
-/// is lost. With nothing waiting, the call waits - without holding the
+/// is lost. A stream gives as much as there is, up to `length`; reading
+/// opens the window again, and the peer is told at once when it had shut
+/// or opens by a segment or more. With nothing waiting, the call waits - without holding the
 /// stack - until a datagram comes, one of the opener's break signals
 /// (SIGBREAKF_CTRL_C unless SocketBaseTagList changed them) comes, or
 /// `SO_RCVTIMEO` passes. A break signal is taken.
@@ -87,7 +91,13 @@ pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u3
             socket.pending_error = 0;
             return _socket.fail(sb, errno, "RecvFrom");
         }
-        if (socket.receive.first()) |node| {
+        if (socket.socket_type == bsd.SOCK_STREAM) {
+            const into: [*]u8 = @ptrCast(buffer);
+            if (tcp_user.receive(stack, socket, into[0..length], flags & bsd.MSG_PEEK != 0)) |taken| {
+                if (from) |address| _socket.addressOut(socket.remote_address, socket.remote_port, address, from_length.?);
+                return @intCast(taken);
+            }
+        } else if (socket.receive.first()) |node| {
             const frame: *Frame = @fieldParentPtr("node", node);
             const data = frame.bytes();
             const taken: u32 = @min(length, @as(u32, @intCast(data.len)));

@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT
+//! TCP going out: what the window lets a connection send, cut into
+//! segments of at most the peer's MSS, the FIN once every byte before it
+//! has gone, and the acknowledgements and resets that carry no data.
+//!
+//! A segment is built from the send ring into a fresh frame each time it
+//! is sent, so nothing is kept per segment: sending again after a loss
+//! reads the same bytes from the ring once more.
+
+const sdk = @import("sdk");
+const bsd = sdk.bsdsocket;
+const _base = @import("../bsdsocket_base.zig");
+const StackBase = _base.StackBase;
+const Frame = @import("../frame/_frame.zig").Frame;
+const _ip = @import("../ip/_ip.zig");
+const _route = @import("../route/_route.zig");
+const _socket = @import("../socket/_socket.zig");
+const Socket = _socket.Socket;
+const _tcp = @import("_tcp.zig");
+const Tcb = _tcp.Tcb;
+
+const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
+
+/// The window to offer: the room in the receive ring, as much of it as
+/// 16 bits say.
+pub fn window(tcb: *const Tcb) u32 {
+    return @min(tcb.receive.space(), 65535);
+}
+
+/// One segment of `connection`: `length` bytes from `ring_offset` in the
+/// send ring, with `flags`, and the MSS option on a SYN. 0, or the errno
+/// that says why it could not go.
+pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offset: u32, length: u32) i32 {
+    const socket = tcb.socket;
+    const hop = _route.lookup(stack, socket.remote_address) orelse return bsd.EHOSTUNREACH;
+    const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
+    if (length > 0) tcb.send.copyOut(ring_offset, frame.room()[frame.start..][0..length]);
+    frame.length = length;
+    const with_mss = flags & _tcp.SYN != 0;
+    const header_length: u32 = _tcp.header_bytes + @as(u32, if (with_mss) 4 else 0);
+    const offered = window(tcb);
+    const header = frame.push(header_length);
+    _ip.put16(header, 0, socket.local_port);
+    _ip.put16(header, 2, socket.remote_port);
+    _ip.put32(header, 4, sequence);
+    _ip.put32(header, 8, if (flags & _tcp.ACK != 0) tcb.rcv_nxt else 0);
+    header[12] = @intCast((header_length / 4) << 4);
+    header[13] = flags;
+    _ip.put16(header, 14, @intCast(offered));
+    _ip.put16(header, 16, 0);
+    _ip.put16(header, 18, 0);
+    if (with_mss) {
+        header[20] = _tcp.option_mss;
+        header[21] = 4;
+        _ip.put16(header, 22, @intCast(localMss(hop.interface.mtu)));
+    }
+    const total = frame.length;
+    const checksum = _ip.finish(_ip.sum(_ip.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes()));
+    _ip.put16(header, 16, checksum);
+    if (flags & _tcp.ACK != 0) {
+        tcb.rcv_adv = tcb.rcv_nxt +% offered;
+        tcb.flags &= ~_tcp.ack_now;
+    }
+    stack.counts.tcp_sent += 1;
+    return _ip.output(stack, frame, socket.local_address, socket.remote_address, protocol, hop);
+}
+
+/// The MSS an interface of `mtu` takes: its MTU less the IPv4 and TCP
+/// headers.
+pub fn localMss(mtu: u32) u32 {
+    return mtu - 40;
+}
+
+/// Everything the connection may send now, sent: data as far as the
+/// window goes, the FIN once the data before it has gone, and an
+/// acknowledgement if one is owed and nothing else carried it.
+pub fn output(stack: *StackBase, tcb: *Tcb) void {
+    switch (tcb.state) {
+        .closed, .listen, .syn_sent, .time_wait => {
+            if (tcb.state == .time_wait and tcb.flags & _tcp.ack_now != 0) _ = segment(stack, tcb, tcb.snd_nxt, _tcp.ACK, 0, 0);
+            return;
+        },
+        else => {},
+    }
+    while (true) {
+        // Nothing but an acknowledgement goes before our SYN is.
+        const synced = _tcp.atOrAfter(tcb.snd_una, tcb.ring_seq);
+        const offset = tcb.snd_nxt -% tcb.ring_seq;
+        const unsent: u32 = if (!synced or tcb.flags & _tcp.fin_sent != 0 or offset > tcb.send.count) 0 else tcb.send.count - offset;
+        const in_flight = tcb.snd_nxt -% tcb.snd_una;
+        const usable: u32 = if (tcb.snd_wnd > in_flight) tcb.snd_wnd - in_flight else 0;
+        const length: u32 = @min(unsent, @min(usable, tcb.mss));
+        const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and tcb.flags & _tcp.fin_sent == 0 and length == unsent;
+        if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) return;
+        var flags: u8 = _tcp.ACK;
+        if (length > 0 and length == unsent) flags |= _tcp.PSH;
+        if (send_fin) flags |= _tcp.FIN;
+        // The segment is counted as sent before it goes: over lo0 its
+        // answer comes back to this connection before `segment` returns,
+        // and must find SND.NXT past it.
+        const sequence = tcb.snd_nxt;
+        tcb.snd_nxt +%= length + @intFromBool(send_fin);
+        if (_tcp.after(tcb.snd_nxt, tcb.snd_max)) tcb.snd_max = tcb.snd_nxt;
+        if (send_fin) {
+            tcb.flags |= _tcp.fin_sent;
+            tcb.state = switch (tcb.state) {
+                .syn_received, .established => .fin_wait_1,
+                .close_wait => .last_ack,
+                else => tcb.state,
+            };
+        }
+        const refused = segment(stack, tcb, sequence, flags, offset, length);
+        if (refused != 0) {
+            tcb.socket.pending_error = refused;
+            return;
+        }
+        if (length == 0) return;
+    }
+}
+
+/// A SYN, or a SYN and ACK answering one: ISS, and the MSS option.
+pub fn sendSyn(stack: *StackBase, tcb: *Tcb) i32 {
+    const flags: u8 = if (tcb.state == .syn_received) _tcp.SYN | _tcp.ACK else _tcp.SYN;
+    return segment(stack, tcb, tcb.iss, flags, 0, 0);
+}
+
+/// A reset for a segment that has no connection to go to, or that a
+/// connection refuses. `header` is the IPv4 header of the segment, `seq`
+/// and `ack` its numbers, `length` what it occupies of the sequence
+/// space, `flags` its flags.
+pub fn sendReset(stack: *StackBase, header: _ip.Header, local_port: u16, remote_port: u16, seq: u32, ack: u32, length: u32, flags: u8) void {
+    if (flags & _tcp.RST != 0) return;
+    const hop = _route.lookup(stack, header.source) orelse return;
+    const frame = stack.frames.take(stack.sys_base) orelse return;
+    const out = frame.push(_tcp.header_bytes);
+    _ip.put16(out, 0, local_port);
+    _ip.put16(out, 2, remote_port);
+    if (flags & _tcp.ACK != 0) {
+        _ip.put32(out, 4, ack);
+        _ip.put32(out, 8, 0);
+        out[13] = _tcp.RST;
+    } else {
+        _ip.put32(out, 4, 0);
+        _ip.put32(out, 8, seq +% length);
+        out[13] = _tcp.RST | _tcp.ACK;
+    }
+    out[12] = (_tcp.header_bytes / 4) << 4;
+    _ip.put16(out, 14, 0);
+    _ip.put16(out, 16, 0);
+    _ip.put16(out, 18, 0);
+    _ip.put16(out, 16, _ip.finish(_ip.sum(_ip.pseudoSum(header.destination, header.source, protocol, _tcp.header_bytes), out)));
+    stack.counts.tcp_resets_sent += 1;
+    _ = _ip.output(stack, frame, header.destination, header.source, protocol, hop);
+}

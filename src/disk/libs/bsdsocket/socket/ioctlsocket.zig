@@ -8,6 +8,7 @@ const SocketBase = _base.SocketBase;
 const Frame = @import("../frame/_frame.zig").Frame;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
+const _tcp = @import("../tcp/_tcp.zig");
 
 /// A socket's control requests.
 ///
@@ -22,7 +23,8 @@ const _lock = @import("../lock/_lock.zig");
 /// - `socket` - a descriptor from Socket.
 /// - `request` - `FIONBIO`: `argument` is an i32, not 0 for a socket
 ///   whose calls never wait, 0 for one that does; `FIONREAD`: `argument`
-///   is an u32 that gets the bytes of the next datagram, 0 if none.
+///   is an u32 that gets the bytes of the next datagram, 0 if none - on a
+///   stream socket, every byte there is to read.
 /// - `argument` - as the request says.
 ///
 /// RESULT:
@@ -69,7 +71,9 @@ pub fn IoctlSocket(sb: *SocketBase, descriptor: i32, request: u32, argument: *an
         },
         bsd.FIONREAD => {
             var next: u32 = 0;
-            if (socket.receive.first()) |node| next = @as(*Frame, @fieldParentPtr("node", node)).length;
+            if (socket.socket_type == bsd.SOCK_STREAM) {
+                next = _tcp.of(socket).receive.count;
+            } else if (socket.receive.first()) |node| next = @as(*Frame, @fieldParentPtr("node", node)).length;
             @as(*align(1) u32, @ptrCast(argument)).* = next;
         },
         else => return _socket.fail(sb, bsd.EINVAL, "IoctlSocket"),

@@ -106,7 +106,11 @@ pub const SOL_SOCKET: i32 = 0xFFFF;
 
 /// The socket's options. Each takes an i32 unless it says otherwise.
 pub const SO_REUSEADDR: i32 = 0x0004;
+/// A stream socket probes a connection that has been idle for long.
+pub const SO_KEEPALIVE: i32 = 0x0008;
 pub const SO_BROADCAST: i32 = 0x0020;
+/// What CloseSocket does with data not yet sent: a `linger`.
+pub const SO_LINGER: i32 = 0x0080;
 /// The bytes of data a socket buffers for sending and receiving.
 pub const SO_SNDBUF: i32 = 0x1001;
 pub const SO_RCVBUF: i32 = 0x1002;
@@ -132,6 +136,27 @@ pub const FD_CLOSE: u32 = 0x40;
 
 /// ReleaseSocket's id for "give it one nobody has".
 pub const UNIQUE_ID: i32 = -1;
+
+/// struct linger: SO_LINGER's value. With `l_onoff` set, CloseSocket of a
+/// stream socket waits up to `l_linger` seconds for what is still to be
+/// sent to be acknowledged; with it set and `l_linger` 0, it resets the
+/// connection at once.
+pub const linger = extern struct {
+    l_onoff: i32 = 0,
+    l_linger: i32 = 0,
+};
+
+/// SetSockOpt's level for TCP's own options, and its one option: send a
+/// small segment at once rather than wait for what is in flight.
+pub const TCP_NODELAY: i32 = 0x01;
+
+/// Shutdown's `how`: no more receiving, no more sending, neither.
+pub const SHUT_RD: i32 = 0;
+pub const SHUT_WR: i32 = 1;
+pub const SHUT_RDWR: i32 = 2;
+
+/// The longest queue Listen gives a listener.
+pub const SOMAXCONN: i32 = 8;
 
 /// IoctlSocket's requests: the bytes the next receive would get (an u32
 /// out), and whether the socket waits (an i32 in: not 0 for never).

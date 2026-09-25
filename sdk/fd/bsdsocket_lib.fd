@@ -71,4 +71,12 @@ i32 ReleaseSocket(i32 socket, i32 id)
 /// The socket left under `id`, taken into the opener's table: its
 /// descriptor, or -1.
 i32 ObtainSocket(i32 id, i32 domain, i32 socket_type, i32 protocol)
+/// A stream socket made to take connections, `backlog` of them waiting
+/// for Accept at most: 0, or -1.
+i32 Listen(i32 socket, i32 backlog)
+/// The next connection a listener took, as a socket of the caller's, and
+/// its peer: the descriptor, or -1.
+i32 Accept(i32 socket, ?*bsd.sockaddr address, ?*u32 address_length)
+/// No more receiving (SHUT_RD), sending (SHUT_WR) or either: 0, or -1.
+i32 Shutdown(i32 socket, i32 how)
 ##end

@@ -32,6 +32,8 @@ pub const connected: u32 = 1 << 1;
 pub const nonblocking: u32 = 1 << 2;
 pub const broadcast_allowed: u32 = 1 << 3;
 pub const reuse_address: u32 = 1 << 4;
+/// A stream socket its program closed, still finishing its connection.
+pub const orphan: u32 = 1 << 5;
 
 /// What a new socket buffers.
 pub const receive_limit_default: u32 = 16 * 1024;
@@ -68,6 +70,10 @@ pub const Socket = extern struct {
     /// How long a receive and a send may wait; zero is for ever.
     receive_timeout: timer.TimeVal = .{},
     send_timeout: timer.TimeVal = .{},
+    /// A stream socket's connection block (tcp/_tcp.zig).
+    tcb: ?*anyopaque = null,
+    /// SO_LINGER.
+    linger: bsd.linger = .{},
 };
 
 pub fn fromNode(node: *exec.Node) *Socket {
@@ -109,7 +115,6 @@ pub fn lookup(sb: *SocketBase, descriptor: i32) ?*Socket {
 /// the table is full (EMFILE) or there is no memory (ENOMEM). Under the
 /// lock.
 pub fn create(sb: *SocketBase, socket_type: i32, protocol: i32) ?*Socket {
-    const sys = sb.sys_base;
     const table = sb.table.?;
     var index: u32 = 0;
     while (index < sb.table_size and table[index] != null) index += 1;
@@ -117,20 +122,29 @@ pub fn create(sb: *SocketBase, socket_type: i32, protocol: i32) ?*Socket {
         setErrno(sb, bsd.EMFILE);
         return null;
     }
-    const memory = sys.AllocMem(@sizeOf(Socket), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+    const socket = createIn(sb.stack, sb, socket_type, protocol) orelse {
         setErrno(sb, bsd.ENOMEM);
         return null;
     };
+    socket.descriptor = @intCast(index);
+    table[index] = socket;
+    return socket;
+}
+
+/// A new socket of `owner`'s that is in no table yet: a connection a
+/// listener made, until Accept takes it. Null when there is no memory.
+/// Under the lock.
+pub fn createIn(stack: *StackBase, owner: *SocketBase, socket_type: i32, protocol: i32) ?*Socket {
+    const sys = stack.sys_base;
+    const memory = sys.AllocMem(@sizeOf(Socket), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const socket: *Socket = @ptrCast(@alignCast(memory));
     socket.* = .{
-        .owner = sb,
-        .descriptor = @intCast(index),
+        .owner = owner,
         .socket_type = socket_type,
         .protocol = protocol,
     };
     socket.receive.init(.unknown);
-    sys.AddTail(&sb.stack.sockets, &socket.node);
-    table[index] = socket;
+    sys.AddTail(&stack.sockets, &socket.node);
     return socket;
 }
 
@@ -149,12 +163,18 @@ pub fn free(stack: *StackBase, socket: *Socket) void {
     sys.FreeMem(socket, @sizeOf(Socket));
 }
 
-/// Every socket of the opener closed, when it closes the library.
+/// Every socket of the opener closed, when it closes the library: a
+/// connection is closed as CloseSocket closes it, and finishes on its own.
 pub fn destroyAll(sb: *SocketBase) void {
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
     for (0..sb.table_size) |index| {
-        if (sb.table.?[index]) |socket| destroy(sb, socket);
+        const socket = sb.table.?[index] orelse continue;
+        if (socket.socket_type == bsd.SOCK_STREAM) {
+            @import("../tcp/user.zig").close(sb.stack, socket);
+        } else {
+            destroy(sb, socket);
+        }
     }
 }
 
@@ -209,14 +229,19 @@ pub fn setError(socket: *Socket, errno: i32) void {
     wake(socket, bsd.FD_ERROR | bsd.FD_READ);
 }
 
-/// Whether a receive would not wait.
+/// Whether a receive would not wait - or an Accept, on a listener.
 pub fn readable(socket: *Socket) bool {
-    return socket.pending_error != 0 or !socket.receive.isEmpty();
+    if (socket.pending_error != 0) return true;
+    if (socket.socket_type == bsd.SOCK_STREAM) return @import("../tcp/user.zig").readable(socket);
+    return !socket.receive.isEmpty();
 }
 
-/// Whether a send would not wait. A datagram is sent or refused at once.
+/// Whether a send would not wait. A datagram is sent or refused at once;
+/// a stream socket needs its connection standing and room in its ring.
 pub fn writable(socket: *Socket) bool {
-    return socket.socket_type != bsd.SOCK_STREAM or socket.pending_error != 0;
+    if (socket.pending_error != 0) return true;
+    if (socket.socket_type == bsd.SOCK_STREAM) return @import("../tcp/user.zig").writable(socket);
+    return true;
 }
 
 /// Why a wait ended.

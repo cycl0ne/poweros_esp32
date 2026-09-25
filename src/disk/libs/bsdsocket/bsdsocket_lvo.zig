@@ -41,6 +41,9 @@ const RemoveInterface = @import("netif/removeinterface.zig").RemoveInterface;
 const GetSocketEvents = @import("socket/getsocketevents.zig").GetSocketEvents;
 const ReleaseSocket = @import("socket/releasesocket.zig").ReleaseSocket;
 const ObtainSocket = @import("socket/obtainsocket.zig").ObtainSocket;
+const Listen = @import("socket/listen.zig").Listen;
+const Accept = @import("socket/accept.zig").Accept;
+const Shutdown = @import("socket/shutdown.zig").Shutdown;
 
 /// bsdsocket.library's interface, as the SDK generates it from
 /// sdk/fd/bsdsocket_lib.fd.
@@ -91,6 +94,9 @@ const contract_files = [_][]const u8{
     @embedFile("socket/getsocketevents.zig"),
     @embedFile("socket/releasesocket.zig"),
     @embedFile("socket/obtainsocket.zig"),
+    @embedFile("socket/listen.zig"),
+    @embedFile("socket/accept.zig"),
+    @embedFile("socket/shutdown.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -168,6 +174,15 @@ fn lvoReleaseSocket(sb: *SocketBase, socket: i32, id: i32) callconv(.c) i32 {
 fn lvoObtainSocket(sb: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
     return ObtainSocket(sb, id, domain, socket_type, protocol);
 }
+fn lvoListen(sb: *SocketBase, socket: i32, backlog: i32) callconv(.c) i32 {
+    return Listen(sb, socket, backlog);
+}
+fn lvoAccept(sb: *SocketBase, socket: i32, address: ?*bsd.sockaddr, address_length: ?*u32) callconv(.c) i32 {
+    return Accept(sb, socket, address, address_length);
+}
+fn lvoShutdown(sb: *SocketBase, socket: i32, how: i32) callconv(.c) i32 {
+    return Shutdown(sb, socket, how);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -201,6 +216,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetSocketEvents),
     vec(lvoReleaseSocket),
     vec(lvoObtainSocket),
+    vec(lvoListen),
+    vec(lvoAccept),
+    vec(lvoShutdown),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -38,7 +38,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     stack.utility = @ptrCast(utility_lib);
     sys_base.InitSemaphore(&stack.lock);
+    sys_base.InitSemaphore(&stack.start_lock);
     stack.sockets.init(.unknown);
+    stack.loopback_queue.init(.unknown);
     stack.frames.init();
     _arp.init(stack);
     reassembly.init(stack);
@@ -126,7 +128,9 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     stack.frames.deinit(sys);
     if (stack.dos) |dos| sys.CloseLibrary(dos.lib());
     if (stack.utility) |utility| sys.CloseLibrary(utility.lib());
-    sys.Remove(&lib.node);
+    // A stack made without being added - a second one, in the tests - is
+    // on no list.
+    if (lib.node.pred != null) sys.Remove(&lib.node);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

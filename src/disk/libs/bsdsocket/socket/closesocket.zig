@@ -7,6 +7,7 @@ const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
+const tcp_user = @import("../tcp/user.zig");
 
 /// The socket closed and its descriptor free for the next Socket.
 ///
@@ -25,7 +26,11 @@ const _lock = @import("../lock/_lock.zig");
 ///
 /// BEHAVIOR:
 /// The datagrams still waiting on it are dropped, and its port is free
-/// again. A call of another task waiting on the socket finds it gone and
+/// again. A stream socket's connection is not cut: what was written is
+/// still sent, then FIN, and the connection finishes on its own - TIME_WAIT
+/// included - while the library stays in memory for it. With `SO_LINGER`
+/// on and a time of 0 it is reset instead. A listener resets the
+/// connections it had not had accepted. A call of another task waiting on the socket finds it gone and
 /// answers `EBADF`.
 ///
 /// CONTEXT:
@@ -55,6 +60,10 @@ pub fn CloseSocket(sb: *SocketBase, descriptor: i32) i32 {
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "CloseSocket");
-    _socket.destroy(sb, socket);
+    if (socket.socket_type == bsd.SOCK_STREAM) {
+        tcp_user.close(sb.stack, socket);
+    } else {
+        _socket.destroy(sb, socket);
+    }
     return 0;
 }

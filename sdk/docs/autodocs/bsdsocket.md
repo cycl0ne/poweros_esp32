@@ -9,10 +9,11 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [Accept](#accept) - The next connection a listener took, as a socket of the caller's own, and the address it came from.
 - [AddInterfaceTagList](#addinterfacetaglist) - An interface on a network device, up and with its routes.
 - [Bind](#bind) - The local address and port a socket takes datagrams on and sends from.
 - [CloseSocket](#closesocket) - The socket closed and its descriptor free for the next Socket.
-- [Connect](#connect) - The peer a datagram socket sends to by default, and the only one it takes datagrams from.
+- [Connect](#connect) - A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
 - [Errno](#errno) - The error number of the opener's last call that failed.
 - [GetDTableSize](#getdtablesize) - How many sockets the opener may have open at once.
 - [GetPeerName](#getpeername) - The address and port the socket is connected to.
@@ -22,18 +23,86 @@ Generated from the source by `./zig build autodoc`.
 - [Inet_Addr](#inet_addr) - Dotted text, "10.0.2.2", as an IPv4 address.
 - [Inet_NtoA](#inet_ntoa) - An IPv4 address as dotted text, "10.0.2.15".
 - [IoctlSocket](#ioctlsocket) - A socket's control requests.
+- [Listen](#listen) - A stream socket made a listener: connections to its port are taken and wait for Accept.
 - [ObtainSocket](#obtainsocket) - The socket handed over under `id`, taken into the opener's table.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
-- [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from.
+- [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from; for a stream socket, what has come on its connection.
 - [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
 - [RemoveInterface](#removeinterface) - The interface called `name` taken down: off the routes, its device closed, its slot free.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
-- [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to.
+- [SendTo](#sendto) - A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to; for a stream socket, `length` bytes written to its connection.
 - [SetErrnoPtr](#seterrnoptr) - A variable of the program's that gets the error number of every call that fails, besides Errno().
 - [SetSockOpt](#setsockopt) - One of the socket's options set.
+- [Shutdown](#shutdown) - No more receiving, no more sending, or neither, on a connection that otherwise stays.
 - [Socket](#socket) - A new socket, and the descriptor the other calls know it by.
 - [SocketBaseTagList](#socketbasetaglist) - The opener's settings, read and changed by a tag list.
 - [WaitSelect](#waitselect) - Until a socket in the sets is ready, one of the caller's own signals comes, or the timeout passes.
+
+## Accept
+
+The next connection a listener took, as a socket of the caller's own, and the address it came from.
+
+**SYNOPSIS**
+
+```zig
+fn Accept(base: *SocketBase, socket: i32, address: ?*sockaddr, address_length: ?*u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -124.
+
+**INPUTS**
+
+- `socket` - a listener (Listen).
+- `address` - where the peer's `sockaddr_in` goes, or null.
+- `address_length` - in, the room at `address`; out, the address's
+  size. Null when `address` is.
+
+**RESULT**
+
+The new connection's descriptor, or -1 with Errno(): `EBADF`,
+`EINVAL` (not a listener), `EMFILE` (the table is full; the
+connection keeps waiting), `EWOULDBLOCK` (none waits, and the socket
+does not wait), `EINTR`.
+
+**BEHAVIOR**
+
+With no connection waiting, the call waits for one, for a break
+signal, or for `SO_RCVTIMEO`. The new socket is connected, bound to
+the listener's port, and waits in its calls as the listener does; the
+listener goes on listening.
+
+**CONTEXT**
+
+- Waits: yes, unless the listener does not wait.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do; the one that opened the base.
+
+**OWNERSHIP**
+
+The connection is the caller's, to CloseSocket.
+
+**NOTES**
+
+To serve it on another task, hand it over with ReleaseSocket.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Listen`, `ReleaseSocket`, `WaitSelect`
+
+**EXAMPLES**
+
+```zig
+var peer: bsd.sockaddr_in = .{};
+var size: u32 = @sizeOf(bsd.sockaddr_in);
+const connection = sb.Accept(server, peer.any(), &size);
+```
 
 ## AddInterfaceTagList
 
@@ -204,7 +273,11 @@ fn CloseSocket(base: *SocketBase, socket: i32) i32
 **BEHAVIOR**
 
 The datagrams still waiting on it are dropped, and its port is free
-again. A call of another task waiting on the socket finds it gone and
+again. A stream socket's connection is not cut: what was written is
+still sent, then FIN, and the connection finishes on its own - TIME_WAIT
+included - while the library stays in memory for it. With `SO_LINGER`
+on and a time of 0 it is reset instead. A listener resets the
+connections it had not had accepted. A call of another task waiting on the socket finds it gone and
 answers `EBADF`.
 
 **CONTEXT**
@@ -239,7 +312,7 @@ defer _ = sb.CloseSocket(socket);
 
 ## Connect
 
-The peer a datagram socket sends to by default, and the only one it takes datagrams from.
+A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
 
 **SYNOPSIS**
 
@@ -261,11 +334,22 @@ fn Connect(base: *SocketBase, socket: i32, address: *const sockaddr, address_len
 **RESULT**
 
 0, or -1 with Errno(): `EBADF`, `EINVAL`, `EAFNOSUPPORT`,
-`EADDRNOTAVAIL` (no port of its own could be had).
+`EADDRNOTAVAIL` (no port of its own could be had, or an address that
+is none or for many); for a stream socket also `EINPROGRESS` (it does
+not wait, and the connection is on its way), `EALREADY`, `EISCONN`,
+`ENETUNREACH`, `ECONNREFUSED` (the peer reset it), `ETIMEDOUT`,
+`EINTR`.
 
 **BEHAVIOR**
 
-Nothing is sent: a datagram socket only remembers the peer. From then
+A stream socket sends its SYN, bound first to a port of its own and
+to the address of the interface the route picks, and waits until the
+connection stands or is refused, or `SO_SNDTIMEO` passes. One that does
+not wait answers `EINPROGRESS` at once; WaitSelect then says it is
+writable when the connection stands, and `SO_ERROR` why it failed if
+it did.
+
+A datagram socket sends nothing: it only remembers the peer. From then
 on Send needs no address, SendTo refuses one (`EISCONN`), and
 datagrams from anyone else are left to other sockets or dropped. A
 socket not yet bound is bound to a port of its own. Connecting again
@@ -273,7 +357,7 @@ replaces the peer.
 
 **CONTEXT**
 
-- Waits: only for the stack's lock.
+- Waits: for a stream socket, yes, unless it does not wait.
 - Interrupts: no.
 - Forbid: not held.
 - Process: a Task will do.
@@ -795,7 +879,8 @@ fn IoctlSocket(base: *SocketBase, socket: i32, request: u32, argument: *anyopaqu
 - `socket` - a descriptor from Socket.
 - `request` - `FIONBIO`: `argument` is an i32, not 0 for a socket
   whose calls never wait, 0 for one that does; `FIONREAD`: `argument`
-  is an u32 that gets the bytes of the next datagram, 0 if none.
+  is an u32 that gets the bytes of the next datagram, 0 if none - on a
+  stream socket, every byte there is to read.
 - `argument` - as the request says.
 
 **RESULT**
@@ -835,6 +920,71 @@ None known.
 ```zig
 var never: i32 = 1;
 _ = sb.IoctlSocket(socket, bsd.FIONBIO, &never);
+```
+
+## Listen
+
+A stream socket made a listener: connections to its port are taken and wait for Accept.
+
+**SYNOPSIS**
+
+```zig
+fn Listen(base: *SocketBase, socket: i32, backlog: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -120.
+
+**INPUTS**
+
+- `socket` - a stream socket, not connected.
+- `backlog` - how many connections may wait for Accept, from 1 to
+  `SOMAXCONN` (8); more is taken as 8.
+
+**RESULT**
+
+0, or -1 with Errno(): `EBADF`, `EOPNOTSUPP` (not a stream socket),
+`EINVAL` (connecting or connected), `EADDRNOTAVAIL`.
+
+**BEHAVIOR**
+
+A socket not bound yet is bound to a port nobody has, which
+GetSockName tells. A SYN to the port makes a connection at once and
+answers it; the connection waits, once it stands, until Accept takes
+it. When `backlog` connections wait already, further SYNs are left
+unanswered, and their senders try again. Calling Listen again changes
+the backlog.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+WaitSelect says a listener is ready to read when a connection waits.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Accept`, `Bind`, `Socket`
+
+**EXAMPLES**
+
+```zig
+var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(23) };
+_ = sb.Bind(server, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+if (sb.Listen(server, 4) < 0) return sb.Errno();
 ```
 
 ## ObtainSocket
@@ -958,7 +1108,7 @@ const got = sb.Recv(socket, &buffer, buffer.len, 0);
 
 ## RecvFrom
 
-The next datagram waiting on the socket, into `buffer`, and the address it came from.
+The next datagram waiting on the socket, into `buffer`, and the address it came from; for a stream socket, what has come on its connection.
 
 **SYNOPSIS**
 
@@ -984,7 +1134,8 @@ fn RecvFrom(base: *SocketBase, socket: i32, buffer: *anyopaque, length: u32, fla
 
 **RESULT**
 
-The bytes put in `buffer`, or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
+The bytes put in `buffer` - 0 at the end of a stream, once the peer
+has closed and everything before it is read - or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
 (nothing waiting and the socket does not wait, or `SO_RCVTIMEO`
 passed), `EINTR` (a break signal came), or an error the network
 reported for the socket.
@@ -992,7 +1143,9 @@ reported for the socket.
 **BEHAVIOR**
 
 A datagram is read whole or not at all: what does not fit in `buffer`
-is lost. With nothing waiting, the call waits - without holding the
+is lost. A stream gives as much as there is, up to `length`; reading
+opens the window again, and the peer is told at once when it had shut
+or opens by a segment or more. With nothing waiting, the call waits - without holding the
 stack - until a datagram comes, one of the opener's break signals
 (SIGBREAKF_CTRL_C unless SocketBaseTagList changed them) comes, or
 `SO_RCVTIMEO` passes. A break signal is taken.
@@ -1216,7 +1369,7 @@ _ = sb.Send(socket, "ping", 4, 0);
 
 ## SendTo
 
-A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to.
+A datagram of `length` bytes sent to `to`, or to the peer the socket is connected to; for a stream socket, `length` bytes written to its connection.
 
 **SYNOPSIS**
 
@@ -1231,17 +1384,23 @@ fn SendTo(base: *SocketBase, socket: i32, message: *const anyopaque, length: u32
 
 **INPUTS**
 
-- `socket` - a datagram socket, or a raw ICMP socket.
+- `socket` - a datagram socket, a raw ICMP socket, or a connected
+  stream socket.
 - `message` - the data; for a raw socket, the whole ICMP message.
 - `length` - its bytes; 0 sends an empty datagram.
-- `flags` - 0; `MSG_DONTWAIT` is taken and changes nothing, since a
-  datagram is sent or refused at once.
-- `to` - a `sockaddr_in`, or null on a connected socket.
+- `flags` - 0, or `MSG_DONTWAIT`: a stream socket takes what fits
+  now and does not wait for the rest. A datagram is sent or refused at
+  once either way.
+- `to` - a `sockaddr_in`, or null on a connected socket; null on a
+  stream socket.
 - `to_length` - its size.
 
 **RESULT**
 
-`length`, or -1 with Errno(): `EBADF`, `EDESTADDRREQ` (no address and
+`length` - for a stream socket that does not wait, what fitted in its
+ring - or -1 with Errno(): `EPIPE` (the stream was shut for writing or
+has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
+does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 not connected), `EISCONN` (an address on a connected socket),
 `EAFNOSUPPORT`, `EINVAL`, `EMSGSIZE` (more than the interface takes),
 `ENETUNREACH` (no route), `EACCES` (a broadcast without
@@ -1257,9 +1416,14 @@ in its receiver's queue by then. A socket that is not bound is bound
 to a port of its own first. Nothing is fragmented: a datagram larger
 than the interface's MTU less 28 bytes of headers is refused.
 
+A stream socket copies the bytes into its send ring - waiting for room
+while the peer's window is shut, unless it does not wait - and sends
+them as the window and the peer's MSS allow; they may still be on
+their way when this returns.
+
 **CONTEXT**
 
-- Waits: only for the stack's lock.
+- Waits: for a stream socket, while its ring is full.
 - Interrupts: no.
 - Forbid: not held.
 - Process: a Task will do.
@@ -1367,7 +1531,9 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
-  i32 of FD_* events to be told of with the event signal).
+  i32 of FD_* events to be told of with the event signal),
+  `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
+  `linger`); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -1380,7 +1546,9 @@ of the wrong size).
 **BEHAVIOR**
 
 `SO_RCVBUF` is how many bytes of datagrams wait on the socket before
-the next is dropped; it is held to between 1 byte and 256 KiB.
+the next is dropped; it is held to between 1 byte and 256 KiB. On a
+stream socket it and `SO_SNDBUF` are the sizes of its rings, from 1 KiB
+to 64 KiB, and change only while the ring is empty (`EINVAL` else).
 `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 and changes nothing for a datagram socket, which never waits to send.
 `SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
@@ -1416,6 +1584,67 @@ const on: i32 = 1;
 _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_BROADCAST, &on, @sizeOf(i32));
 ```
 
+## Shutdown
+
+No more receiving, no more sending, or neither, on a connection that otherwise stays.
+
+**SYNOPSIS**
+
+```zig
+fn Shutdown(base: *SocketBase, socket: i32, how: i32) i32
+```
+
+**SINCE**
+
+1.0. LVO -128.
+
+**INPUTS**
+
+- `socket` - a connected stream socket.
+- `how` - `SHUT_RD`, `SHUT_WR` or `SHUT_RDWR`.
+
+**RESULT**
+
+0, or -1 with Errno(): `EBADF`, `EINVAL` (another `how`), `ENOTCONN`
+(not connected), `EOPNOTSUPP` (not a stream socket).
+
+**BEHAVIOR**
+
+`SHUT_WR` sends FIN after what is still to be sent: the peer reads to
+the end of the stream, and can still send. `SHUT_RD` drops what waits
+to be read, and what comes later is taken and dropped; a receive
+answers 0. The socket stays open until CloseSocket.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+How a program says "that is all" and still reads the answer.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloseSocket`, `SendTo`, `RecvFrom`
+
+**EXAMPLES**
+
+```zig
+_ = sb.Send(connection, request, request_length, 0);
+_ = sb.Shutdown(connection, bsd.SHUT_WR);
+```
+
 ## Socket
 
 A new socket, and the descriptor the other calls know it by.
@@ -1433,10 +1662,11 @@ fn Socket(base: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
 **INPUTS**
 
 - `domain` - `PF_INET`, the only family there is.
-- `socket_type` - `SOCK_DGRAM`: datagrams, UDP; `SOCK_RAW`: ICMP
-  messages as they are, for a program such as Ping.
-- `protocol` - 0 or `IPPROTO_UDP` for a datagram socket;
-  `IPPROTO_ICMP` for a raw one.
+- `socket_type` - `SOCK_STREAM`: a connection, TCP; `SOCK_DGRAM`:
+  datagrams, UDP; `SOCK_RAW`: ICMP messages as they are, for a program
+  such as Ping.
+- `protocol` - 0, or `IPPROTO_TCP` for a stream socket, `IPPROTO_UDP`
+  for a datagram socket; `IPPROTO_ICMP` for a raw one.
 
 **RESULT**
 
@@ -1469,7 +1699,9 @@ library, which closes every socket still open.
 A raw ICMP socket receives a copy of every ICMP message that comes
 in, its IPv4 header first; what it sends is the ICMP message, header
 and checksum made by the program, and the stack puts the IPv4 header
-in front. Stream sockets come with TCP.
+in front. A stream socket has two rings of 8 KiB, one each way, which
+SO_SNDBUF and SO_RCVBUF resize, and its first one starts the stack
+task, which runs its timers.
 
 **BUGS**
 

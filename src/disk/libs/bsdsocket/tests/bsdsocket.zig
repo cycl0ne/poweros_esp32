@@ -119,7 +119,7 @@ test "two openers exchange a datagram over lo0" {
 test "what the calls refuse, and why" {
     var rig = try Rig.init();
     const sb = try rig.open();
-    try testing.expectEqual(@as(i32, -1), sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0));
+    try testing.expectEqual(@as(i32, -1), sb.Socket(bsd.PF_INET, 5, 0));
     try testing.expectEqual(bsd.ESOCKTNOSUPPORT, sb.Errno());
     try testing.expectEqual(@as(i32, -1), sb.CloseSocket(5));
     try testing.expectEqual(bsd.EBADF, sb.Errno());

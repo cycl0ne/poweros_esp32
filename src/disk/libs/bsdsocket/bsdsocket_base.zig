@@ -68,6 +68,14 @@ pub const Counts = extern struct {
     /// Echo requests answered, and errors sent for packets that came in.
     icmp_echoes_answered: u32 = 0,
     icmp_errors_sent: u32 = 0,
+    tcp_received: u64 align(4) = 0,
+    tcp_sent: u64 align(4) = 0,
+    /// Segments too short, with a data offset past their end, or a bad
+    /// checksum.
+    tcp_bad: u32 = 0,
+    tcp_resets_sent: u32 = 0,
+    /// SYNs a listener's full queue let go unanswered.
+    tcp_backlog_full: u32 = 0,
 };
 
 pub const StackBase = extern struct {
@@ -90,8 +98,17 @@ pub const StackBase = extern struct {
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
     reassembly: reassembly.Slots = .{},
+    /// Counted up for every initial sequence number.
+    isn_count: u32 = 0,
     /// The id the next socket handed over with ReleaseSocket gets.
     next_release_id: i32 = 1,
+    /// Packets lo0 has yet to deliver, and whether it is delivering.
+    loopback_queue: exec.List = .{},
+    looping: u8 = 0,
+    /// Run without the stack task: whoever made the stack runs its timers
+    /// itself - the host tests, which say what time it is.
+    no_task: u8 = 0,
+    pad3: [2]u8 = .{ 0, 0 },
     /// dos.library, opened when the stack task is first needed.
     dos: ?*DosBase = null,
     /// The stack task: the process that keeps the reads on every device
@@ -105,6 +122,8 @@ pub const StackBase = extern struct {
     rethink_mask: u32 = 0,
     /// timer.device, as the task opened it: the system time.
     timer_base: ?*TimerBase = null,
+    /// One caller at a time starts the task.
+    start_lock: exec.SignalSemaphore = .{},
     /// The one who started the task, waiting until it is ready.
     starter: ?*exec.Task = null,
     start_signal: i8 = -1,

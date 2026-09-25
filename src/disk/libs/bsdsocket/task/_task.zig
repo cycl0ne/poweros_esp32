@@ -5,15 +5,21 @@
 //! commands, a changed deadline, its timer - and does nothing else, so
 //! an idle network costs nothing.
 //!
-//! It is started by the first interface on a device (loopback needs no
-//! task) and ends with the last one: removing an interface is a command
-//! to it, since only the task can wait for the device's answers on its own
-//! port. Its last act is to answer that command under Forbid, so it is
-//! gone before the library can be expunged under it.
+//! **Its life.** It is started when there is work only it can do: the
+//! first interface on a device, or the first stream socket, whose timers
+//! it runs. It ends when there is neither any more - no device
+//! interface, no TCP connection, not even one its program has closed and
+//! that is still saying goodbye. While it runs it holds the library open,
+//! and it lets go of that last, under Forbid, so the library cannot be
+//! expunged under code that is still running.
+//!
+//! Removing an interface is a command to it, since only the task can
+//! wait for the device's answers on its own port.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
+const bsd = sdk.bsdsocket;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -26,6 +32,7 @@ const Interface = _netif.Interface;
 const device = @import("../netif/device.zig");
 const _route = @import("../route/_route.zig");
 const _arp = @import("../arp/_arp.zig");
+const _socket = @import("../socket/_socket.zig");
 
 const task_name = "bsdsocket.library";
 const stack_bytes = 8192;
@@ -37,9 +44,13 @@ pub const Command = extern struct {
 };
 
 /// The task started, if it is not running; false if it could not be.
-/// On the caller's task, which waits until the task is ready.
+/// On the caller's task, which waits until the task is ready. One caller
+/// at a time starts it.
 pub fn start(stack: *StackBase) bool {
     const sys = stack.sys_base;
+    if (stack.no_task != 0) return true;
+    sys.ObtainSemaphore(&stack.start_lock);
+    defer sys.ReleaseSemaphore(&stack.start_lock);
     if (stack.task != null) return true;
     const dos_base = stack.dos orelse blk: {
         const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return false;
@@ -86,6 +97,19 @@ fn claimPort(sys: *ExecBase, port: *exec.MsgPort, task: ?*exec.Task, signal: i8)
     }
 }
 
+/// Whether the task has work: an interface on a device, or a stream
+/// socket. Under the lock.
+fn busy(stack: *StackBase) bool {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used != 0 and interface.device != null) return true;
+    }
+    var it = stack.sockets.iterator();
+    while (it.next()) |node| {
+        if (_socket.fromNode(node).socket_type == bsd.SOCK_STREAM) return true;
+    }
+    return false;
+}
+
 fn stackTask(sys: *ExecBase) callconv(.c) void {
     const me = sys.FindTask(null).?;
     const stack: *StackBase = @ptrCast(@alignCast(me.user_data orelse return));
@@ -102,6 +126,10 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
     claimPort(sys, &stack.port, me, port_signal);
     claimPort(sys, &stack.commands, me, command_signal);
     stack.rethink_mask = @as(u32, 1) << @intCast(rethink_signal);
+    // The library stays while the task runs.
+    sys.Forbid();
+    stack.lib.open_cnt += 1;
+    sys.Permit();
     stack.task = me;
     started(stack);
 
@@ -115,7 +143,7 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
             armed = false;
         }
 
-        const held = _lock.take(stack);
+        var held = _lock.take(stack);
         const now = _timer.systemTime(stack);
         _timer.run(stack, now);
         while (sys.GetMsg(&stack.port)) |message| device.complete(stack, &message.node, now);
@@ -145,35 +173,35 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
         while (sys.GetMsg(&stack.commands)) |message| {
             const command: *Command = @fieldParentPtr("message", message);
             remove(stack, command.interface.?);
-            if (devicesLeft(stack)) {
-                sys.ReplyMsg(message);
-                continue;
-            }
-            // The last one: the task goes, and says so under Forbid, so it
-            // is gone before anything can unload the code it runs.
-            if (armed) {
-                _ = sys.AbortIO(&clock.node);
-                _ = sys.WaitIO(&clock.node);
-            }
-            sys.CloseDevice(&clock.node);
-            sys.DeleteMsgPort(timer_port);
+            sys.ReplyMsg(message);
+        }
+
+        // Nothing left to do: the task goes. It gives up its ports and
+        // its place under the lock, so a caller that needs a task from
+        // here on starts a new one.
+        held = _lock.take(stack);
+        const idle = !busy(stack);
+        if (idle) {
             claimPort(sys, &stack.port, null, -1);
             claimPort(sys, &stack.commands, null, -1);
-            sys.Forbid();
+            stack.rethink_mask = 0;
             stack.timer_base = null;
             stack.task = null;
-            stack.rethink_mask = 0;
-            sys.ReplyMsg(message);
-            return;
         }
+        _lock.give(stack, held);
+        if (!idle) continue;
+        if (armed) {
+            _ = sys.AbortIO(&clock.node);
+            _ = sys.WaitIO(&clock.node);
+        }
+        sys.CloseDevice(&clock.node);
+        sys.DeleteMsgPort(timer_port);
+        // The last thing, under Forbid: the library may go once this
+        // count is down, and nothing of the task runs after it.
+        sys.Forbid();
+        stack.lib.open_cnt -= 1;
+        return;
     }
-}
-
-fn devicesLeft(stack: *StackBase) bool {
-    for (&stack.interfaces) |*interface| {
-        if (interface.used != 0 and interface.device != null) return true;
-    }
-    return false;
 }
 
 /// `interface` taken down, on the task: off the routes and the ARP cache

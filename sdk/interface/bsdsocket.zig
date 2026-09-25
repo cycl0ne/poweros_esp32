@@ -42,6 +42,9 @@ pub const LVO = struct {
     pub const GetSocketEvents = libraries.lvo(26);
     pub const ReleaseSocket = libraries.lvo(27);
     pub const ObtainSocket = libraries.lvo(28);
+    pub const Listen = libraries.lvo(29);
+    pub const Accept = libraries.lvo(30);
+    pub const Shutdown = libraries.lvo(31);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -72,6 +75,9 @@ pub const Fn = struct {
     pub const GetSocketEvents = *const fn (*SocketBase, *u32) callconv(.c) i32;
     pub const ReleaseSocket = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
     pub const ObtainSocket = *const fn (*SocketBase, i32, i32, i32, i32) callconv(.c) i32;
+    pub const Listen = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
+    pub const Accept = *const fn (*SocketBase, i32, ?*bsd.sockaddr, ?*u32) callconv(.c) i32;
+    pub const Shutdown = *const fn (*SocketBase, i32, i32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -216,5 +222,22 @@ pub const SocketBase = opaque {
     /// descriptor, or -1.
     pub fn ObtainSocket(self: *SocketBase, id: i32, domain: i32, socket_type: i32, protocol: i32) i32 {
         return libraries.call(self, LVO.ObtainSocket, Fn.ObtainSocket, .{ id, domain, socket_type, protocol });
+    }
+
+    /// A stream socket made to take connections, `backlog` of them waiting
+    /// for Accept at most: 0, or -1.
+    pub fn Listen(self: *SocketBase, socket: i32, backlog: i32) i32 {
+        return libraries.call(self, LVO.Listen, Fn.Listen, .{ socket, backlog });
+    }
+
+    /// The next connection a listener took, as a socket of the caller's, and
+    /// its peer: the descriptor, or -1.
+    pub fn Accept(self: *SocketBase, socket: i32, address: ?*bsd.sockaddr, address_length: ?*u32) i32 {
+        return libraries.call(self, LVO.Accept, Fn.Accept, .{ socket, address, address_length });
+    }
+
+    /// No more receiving (SHUT_RD), sending (SHUT_WR) or either: 0, or -1.
+    pub fn Shutdown(self: *SocketBase, socket: i32, how: i32) i32 {
+        return libraries.call(self, LVO.Shutdown, Fn.Shutdown, .{ socket, how });
     }
 };

@@ -38,7 +38,10 @@ pub const Interface = extern struct {
     used: u8 = 0,
     up: u8 = 0,
     loopback: u8 = 0,
-    pad: u8 = 0,
+    /// A link that needs no ARP - SLIP, a point-to-point link, the host
+    /// tests' link between two stacks: every frame goes to `transmit` as
+    /// it is.
+    no_arp: u8 = 0,
     /// Its Ethernet address, for an interface on a device.
     hardware: [6]u8 = @splat(0),
     pad2: [2]u8 = .{ 0, 0 },
@@ -138,15 +141,32 @@ pub fn isBroadcast(stack: *StackBase, address: u32) bool {
 /// that could not go.
 pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop: u32) i32 {
     interface.sent += 1;
-    if (interface.loopback != 0) {
-        interface.received += 1;
-        _ip.input(stack, interface, frame);
-        return 0;
-    }
+    if (interface.loopback != 0) return loop(stack, interface, frame);
+    if (interface.no_arp != 0) return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
     if (next_hop == bsd.INADDR_BROADCAST or next_hop == interface.broadcast) {
         return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
     }
     return _arp.resolve(stack, interface, next_hop, frame, _timer.systemTime(stack));
+}
+
+/// `frame` back in on lo0. The outermost of these delivers; a packet sent
+/// while it runs - TCP answering a segment with one - waits in the queue
+/// and is delivered by the same loop after it, so nothing recurses.
+fn loop(stack: *StackBase, interface: *Interface, frame: *Frame) i32 {
+    const sys = stack.sys_base;
+    if (stack.looping != 0) {
+        sys.AddTail(&stack.loopback_queue, &frame.node);
+        return 0;
+    }
+    stack.looping = 1;
+    defer stack.looping = 0;
+    var next: ?*Frame = frame;
+    while (next) |packet| {
+        interface.received += 1;
+        _ip.input(stack, interface, packet);
+        next = if (sys.RemHead(&stack.loopback_queue)) |node| @fieldParentPtr("node", node) else null;
+    }
+    return 0;
 }
 
 /// `frame` handed to the interface's link for the station `to`.

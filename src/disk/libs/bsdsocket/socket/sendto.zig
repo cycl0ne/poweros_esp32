@@ -9,9 +9,11 @@ const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const _udp = @import("../udp/_udp.zig");
 const _icmp = @import("../icmp/_icmp.zig");
+const tcp_user = @import("../tcp/user.zig");
 
 /// A datagram of `length` bytes sent to `to`, or to the peer the socket is
-/// connected to.
+/// connected to; for a stream socket, `length` bytes written to its
+/// connection.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -22,16 +24,22 @@ const _icmp = @import("../icmp/_icmp.zig");
 /// SINCE: 1.0. LVO -32.
 ///
 /// INPUTS:
-/// - `socket` - a datagram socket, or a raw ICMP socket.
+/// - `socket` - a datagram socket, a raw ICMP socket, or a connected
+///   stream socket.
 /// - `message` - the data; for a raw socket, the whole ICMP message.
 /// - `length` - its bytes; 0 sends an empty datagram.
-/// - `flags` - 0; `MSG_DONTWAIT` is taken and changes nothing, since a
-///   datagram is sent or refused at once.
-/// - `to` - a `sockaddr_in`, or null on a connected socket.
+/// - `flags` - 0, or `MSG_DONTWAIT`: a stream socket takes what fits
+///   now and does not wait for the rest. A datagram is sent or refused at
+///   once either way.
+/// - `to` - a `sockaddr_in`, or null on a connected socket; null on a
+///   stream socket.
 /// - `to_length` - its size.
 ///
 /// RESULT:
-/// `length`, or -1 with Errno(): `EBADF`, `EDESTADDRREQ` (no address and
+/// `length` - for a stream socket that does not wait, what fitted in its
+/// ring - or -1 with Errno(): `EPIPE` (the stream was shut for writing or
+/// has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
+/// does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 /// not connected), `EISCONN` (an address on a connected socket),
 /// `EAFNOSUPPORT`, `EINVAL`, `EMSGSIZE` (more than the interface takes),
 /// `ENETUNREACH` (no route), `EACCES` (a broadcast without
@@ -46,8 +54,13 @@ const _icmp = @import("../icmp/_icmp.zig");
 /// to a port of its own first. Nothing is fragmented: a datagram larger
 /// than the interface's MTU less 28 bytes of headers is refused.
 ///
+/// A stream socket copies the bytes into its send ring - waiting for room
+/// while the peer's window is shut, unless it does not wait - and sends
+/// them as the window and the peer's MSS allow; they may still be on
+/// their way when this returns.
+///
 /// CONTEXT:
-/// - Waits: only for the stack's lock.
+/// - Waits: for a stream socket, while its ring is full.
 /// - Interrupts: no.
 /// - Forbid: not held.
 /// - Process: a Task will do.
@@ -72,15 +85,20 @@ const _icmp = @import("../icmp/_icmp.zig");
 /// _ = sb.SendTo(socket, text, text.len, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in));
 /// ```
 pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, length: u32, flags: u32, to: ?*const bsd.sockaddr, to_length: u32) i32 {
-    _ = flags;
     const stack = sb.stack;
-    const held = _lock.take(stack);
+    defer _socket.stopTimer(sb);
+    var held = _lock.take(stack);
     defer _lock.give(stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "SendTo");
     if (socket.pending_error != 0) {
         const errno = socket.pending_error;
         socket.pending_error = 0;
         return _socket.fail(sb, errno, "SendTo");
+    }
+    const bytes: [*]const u8 = @ptrCast(message);
+    if (socket.socket_type == bsd.SOCK_STREAM) {
+        if (to != null) return _socket.fail(sb, bsd.EISCONN, "SendTo");
+        return sendStream(sb, descriptor, socket, bytes[0..length], flags, &held);
     }
     var destination: u32 = socket.remote_address;
     var port: u16 = socket.remote_port;
@@ -100,4 +118,36 @@ pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, lengt
         _udp.output(stack, socket, destination, port, data[0..length]);
     if (refused != 0) return _socket.fail(sb, refused, "SendTo");
     return @intCast(length);
+}
+
+/// Bytes into a connection's send ring, waiting for room as often as it
+/// takes, unless the socket or the call does not wait: then as much as
+/// there is room for.
+fn sendStream(sb: *SocketBase, descriptor: i32, socket: *_socket.Socket, bytes: []const u8, flags: u32, held: *@import("../lock/_lock.zig").Held) i32 {
+    const sys = sb.sys_base;
+    const waits = socket.flags & _socket.nonblocking == 0 and flags & bsd.MSG_DONTWAIT == 0;
+    var sent: u32 = 0;
+    _ = sys.SetSignal(0, sb.ready_mask);
+    while (true) {
+        const current = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "SendTo");
+        if (current != socket) return _socket.fail(sb, bsd.EBADF, "SendTo");
+        if (socket.pending_error != 0 and sent == 0) {
+            const errno = socket.pending_error;
+            socket.pending_error = 0;
+            return _socket.fail(sb, errno, "SendTo");
+        }
+        switch (tcp_user.send(sb.stack, socket, bytes[sent..])) {
+            .errno => |errno| return if (sent > 0) @intCast(sent) else _socket.fail(sb, errno, "SendTo"),
+            .taken => |taken| sent += taken,
+        }
+        if (sent == bytes.len) return @intCast(sent);
+        if (!waits) return if (sent > 0) @intCast(sent) else _socket.fail(sb, bsd.EWOULDBLOCK, "SendTo");
+        if (sb.timer_armed == 0 and !_socket.isZero(socket.send_timeout)) _ = _socket.startTimer(sb, socket.send_timeout);
+        var came: u32 = 0;
+        switch (_socket.wait(sb, held, 0, &came)) {
+            .broken => return if (sent > 0) @intCast(sent) else _socket.fail(sb, bsd.EINTR, "SendTo"),
+            .timed_out => return if (sent > 0) @intCast(sent) else _socket.fail(sb, bsd.EWOULDBLOCK, "SendTo"),
+            .changed, .signalled => {},
+        }
+    }
 }

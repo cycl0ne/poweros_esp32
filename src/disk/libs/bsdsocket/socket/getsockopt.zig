@@ -8,6 +8,7 @@ const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
+const _tcp = @import("../tcp/_tcp.zig");
 
 /// One of the socket's options read into `value`.
 ///
@@ -62,8 +63,20 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "GetSockOpt");
+    if (level == bsd.IPPROTO_TCP and socket.socket_type == bsd.SOCK_STREAM and option == bsd.TCP_NODELAY) {
+        if (value_length.* < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
+        @as(*align(1) i32, @ptrCast(value)).* = @intFromBool(_tcp.of(socket).flags & _tcp.no_delay != 0);
+        value_length.* = @sizeOf(i32);
+        return 0;
+    }
     if (level != bsd.SOL_SOCKET) return _socket.fail(sb, bsd.ENOPROTOOPT, "GetSockOpt");
     switch (option) {
+        bsd.SO_LINGER => {
+            if (value_length.* < @sizeOf(bsd.linger)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
+            @as(*align(1) bsd.linger, @ptrCast(value)).* = socket.linger;
+            value_length.* = @sizeOf(bsd.linger);
+            return 0;
+        },
         bsd.SO_RCVTIMEO, bsd.SO_SNDTIMEO => {
             if (value_length.* < @sizeOf(timer.TimeVal)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
             @as(*align(1) timer.TimeVal, @ptrCast(value)).* = if (option == bsd.SO_RCVTIMEO) socket.receive_timeout else socket.send_timeout;
@@ -80,6 +93,7 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         bsd.SO_SNDBUF => @intCast(socket.send_limit),
         bsd.SO_TYPE => socket.socket_type,
         bsd.SO_EVENTMASK => @bitCast(socket.event_mask),
+        bsd.SO_KEEPALIVE => if (socket.socket_type == bsd.SOCK_STREAM) @intFromBool(_tcp.of(socket).flags & _tcp.keep_alive != 0) else 0,
         bsd.SO_ERROR => blk: {
             const pending = socket.pending_error;
             socket.pending_error = 0;

@@ -39,6 +39,7 @@ const tests = [_][]const u8{
     "lines",      "nyan",     "plasma",   "audio",   "fonts",
     "screens",    "layout",   "classes",  "gadgets", "listview",
     "colorwheel", "tapedeck", "pointer",  "net",     "udp",
+    "tcp",
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a

@@ -24,6 +24,7 @@ const Interface = _netif.Interface;
 const _route = @import("../route/_route.zig");
 const _udp = @import("../udp/_udp.zig");
 const _icmp = @import("../icmp/_icmp.zig");
+const _tcp_input = @import("../tcp/input.zig");
 const reassembly = @import("reassembly.zig");
 
 pub const header_bytes = 20;
@@ -130,6 +131,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
     switch (header.protocol) {
         @as(u8, @intCast(bsd.IPPROTO_UDP)) => _udp.input(stack, interface, frame, header),
         @as(u8, @intCast(bsd.IPPROTO_ICMP)) => _icmp.input(stack, interface, frame, header),
+        @as(u8, @intCast(bsd.IPPROTO_TCP)) => _tcp_input.input(stack, interface, frame, header),
         else => {
             stack.counts.ip_unknown_protocol += 1;
             stack.frames.give(sys, frame);
