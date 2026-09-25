@@ -29,6 +29,8 @@ const _socket = @import("../socket/_socket.zig");
 const Socket = _socket.Socket;
 const _timer = @import("../timer/_timer.zig");
 const Timer = _timer.Timer;
+const timers = @import("timers.zig");
+const reorder = @import("reorder.zig");
 
 pub const header_bytes = 20;
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
@@ -82,6 +84,9 @@ pub const keep_alive: u32 = 1 << 5;
 pub const read_shut: u32 = 1 << 6;
 /// Made by a listener for a SYN, not by Connect.
 pub const passive: u32 = 1 << 7;
+/// A window probe's byte is out, one past SND.MAX: an acknowledgement
+/// that covers it takes it as sent.
+pub const probing: u32 = 1 << 8;
 
 // --- sequence numbers --------------------------------------------------------
 
@@ -191,8 +196,34 @@ pub const Tcb = extern struct {
     accept_queue: exec.List = .{},
     backlog: u32 = 0,
     queued: u32 = 0,
-    /// TIME_WAIT's end.
+    /// Retransmission, or persist; the delayed acknowledgement; keepalive,
+    /// or TIME_WAIT's end.
+    timer_retransmit: Timer = .{},
+    timer_delack: Timer = .{},
     timer_long: Timer = .{},
+    /// The round trip and the timeout, in microseconds (timers.zig); how
+    /// often in a row the timer ran out; the one segment being timed.
+    srtt: u32 = 0,
+    rttvar: u32 = 0,
+    rto: u32 = timers.rto_initial_us,
+    retries: u8 = 0,
+    timing: u8 = 0,
+    probes: u8 = 0,
+    pad2: u8 = 0,
+    rtt_seq: u32 = 0,
+    rtt_start: u64 align(4) = 0,
+    /// The congestion window and its threshold, and duplicate
+    /// acknowledgements in a row.
+    cwnd: u32 = 0,
+    ssthresh: u32 = 0xFFFF_FFFF,
+    dupacks: u32 = 0,
+    /// In-order segments not acknowledged yet.
+    unacked_segments: u32 = 0,
+    /// Segments that came before their turn (reorder.zig), and their bytes.
+    held: exec.List = .{},
+    held_bytes: u32 = 0,
+    /// When a segment last came, for keepalive.
+    last_heard: u64 align(4) = 0,
 };
 
 pub fn of(socket: *Socket) *Tcb {
@@ -207,7 +238,10 @@ pub fn create(stack: *StackBase, socket: *Socket) bool {
     const tcb: *Tcb = @ptrCast(@alignCast(memory));
     tcb.* = .{ .socket = socket };
     tcb.accept_queue.init(.unknown);
-    tcb.timer_long.fire = &longExpired;
+    tcb.held.init(.unknown);
+    tcb.timer_retransmit.fire = &timers.retransmitExpired;
+    tcb.timer_delack.fire = &timers.delackExpired;
+    tcb.timer_long.fire = &timers.longExpired;
     if (!tcb.send.allocate(sys, ring_default) or !tcb.receive.allocate(sys, ring_default)) {
         tcb.send.free(sys);
         sys.FreeMem(memory, @sizeOf(Tcb));
@@ -235,7 +269,8 @@ pub fn resize(stack: *StackBase, ring: *Ring, size: u32) bool {
 pub fn free(stack: *StackBase, socket: *Socket) void {
     const sys = stack.sys_base;
     const tcb = of(socket);
-    _timer.cancel(stack, &tcb.timer_long);
+    cancelTimers(stack, tcb);
+    reorder.clear(stack, tcb);
     tcb.send.free(sys);
     tcb.receive.free(sys);
     sys.FreeMem(tcb, @sizeOf(Tcb));
@@ -274,7 +309,7 @@ pub fn find(stack: *StackBase, local_address: u32, local_port: u16, remote_addre
 pub fn close(stack: *StackBase, socket: *Socket, errno: i32) void {
     const tcb = of(socket);
     tcb.state = .closed;
-    _timer.cancel(stack, &tcb.timer_long);
+    cancelTimers(stack, tcb);
     if (tcb.listener) |listener| {
         stack.sys_base.Remove(&tcb.accept_node);
         of(listener).queued -= 1;
@@ -300,16 +335,18 @@ pub fn release(stack: *StackBase, socket: *Socket) void {
     }
 }
 
-/// TIME_WAIT is over.
-fn longExpired(stack: *StackBase, fired: *Timer, now: u64) void {
-    _ = now;
-    const tcb: *Tcb = @fieldParentPtr("timer_long", fired);
-    if (tcb.state == .time_wait) close(stack, tcb.socket, 0);
+fn cancelTimers(stack: *StackBase, tcb: *Tcb) void {
+    _timer.cancel(stack, &tcb.timer_retransmit);
+    _timer.cancel(stack, &tcb.timer_delack);
+    _timer.cancel(stack, &tcb.timer_long);
 }
 
-/// TIME_WAIT begun, or begun again by a FIN sent once more.
+/// TIME_WAIT begun, or begun again by a FIN sent once more: nothing is in
+/// flight any more, and only the end of TIME_WAIT is waited for.
 pub fn timeWait(stack: *StackBase, tcb: *Tcb) void {
     tcb.state = .time_wait;
+    _timer.cancel(stack, &tcb.timer_retransmit);
+    _timer.cancel(stack, &tcb.timer_delack);
     _ = _timer.set(stack, &tcb.timer_long, _timer.systemTime(stack) + 2 * msl_us);
 }
 

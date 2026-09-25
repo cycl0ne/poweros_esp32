@@ -40,6 +40,9 @@ const Socket = _socket.Socket;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
 const output = @import("output.zig");
+const timers = @import("timers.zig");
+const reorder = @import("reorder.zig");
+const _timer = @import("../timer/_timer.zig");
 
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
 
@@ -198,6 +201,8 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _ip.Header
         tcb.snd_wl1 = seg.seq;
         tcb.snd_wl2 = seg.ack;
         tcb.flags |= _tcp.ack_now;
+        timers.established(stack, tcb);
+        timers.restart(stack, tcb, _timer.systemTime(stack));
         _socket.wake(socket, bsd.FD_CONNECT | bsd.FD_WRITE);
         // Data or a FIN that came with the SYN is taken as if it came
         // after it.
@@ -233,6 +238,8 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         return;
     }
     trim(tcb, &seg, window);
+    const now = _timer.systemTime(stack);
+    timers.heard(stack, tcb, now);
 
     // Second: RST.
     if (seg.flags & _tcp.RST != 0) {
@@ -263,10 +270,19 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         tcb.max_snd_wnd = @max(tcb.max_snd_wnd, seg.window);
         tcb.snd_wl1 = seg.seq;
         tcb.snd_wl2 = seg.ack;
+        timers.established(stack, tcb);
         if (tcb.listener) |listener| {
             _socket.wake(listener, bsd.FD_ACCEPT | bsd.FD_READ);
         } else {
             _socket.wake(socket, bsd.FD_CONNECT | bsd.FD_WRITE);
+        }
+    }
+    // The peer took a window probe's byte: it was sent after all.
+    if (tcb.flags & _tcp.probing != 0) {
+        tcb.flags &= ~_tcp.probing;
+        if (seg.ack == tcb.snd_max +% 1 and tcb.snd_nxt == tcb.snd_max) {
+            tcb.snd_nxt = seg.ack;
+            tcb.snd_max = seg.ack;
         }
     }
     if (_tcp.after(seg.ack, tcb.snd_max)) {
@@ -274,7 +290,13 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         output.output(stack, tcb);
         return;
     }
-    if (_tcp.after(seg.ack, tcb.snd_una)) acknowledged(stack, tcb, seg.ack);
+    if (_tcp.after(seg.ack, tcb.snd_una)) {
+        acknowledged(stack, tcb, seg.ack, now);
+    } else if (seg.ack == tcb.snd_una and seg.data.len == 0 and seg.flags & (_tcp.SYN | _tcp.FIN) == 0 and
+        seg.window == tcb.snd_wnd and tcb.snd_una != tcb.snd_max)
+    {
+        timers.duplicate(stack, tcb);
+    }
     // The send window, from the newest segment only.
     if (_tcp.before(tcb.snd_wl1, seg.seq) or (tcb.snd_wl1 == seg.seq and _tcp.atOrBefore(tcb.snd_wl2, seg.ack))) {
         tcb.snd_wnd = seg.window;
@@ -352,10 +374,22 @@ fn trim(tcb: *const Tcb, seg: *Segment, window: u32) void {
     }
 }
 
-/// The peer acknowledged everything before `ack`: that much of the send
-/// ring let go of, and the program told there is room.
-fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32) void {
-    _ = stack;
+/// The peer acknowledged everything before `ack`: the round trip timed
+/// if it was the segment being timed, the congestion window grown (or
+/// recovery ended), that much of the send ring let go of, the program
+/// told there is room, and the retransmission timer started again for
+/// what is still in flight.
+fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32, now: u64) void {
+    if (tcb.timing != 0 and _tcp.after(ack, tcb.rtt_seq)) {
+        timers.measured(tcb, now -| tcb.rtt_start);
+        tcb.timing = 0;
+    }
+    tcb.retries = 0;
+    if (tcb.dupacks > 0) {
+        timers.recovered(tcb);
+    } else {
+        timers.grow(tcb, ack -% tcb.snd_una);
+    }
     tcb.snd_una = ack;
     if (_tcp.after(ack, tcb.ring_seq)) {
         const data_acked: u32 = @min(ack -% tcb.ring_seq, tcb.send.count);
@@ -363,8 +397,8 @@ fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32) void {
         tcb.ring_seq +%= data_acked;
         if (data_acked > 0) _socket.wake(tcb.socket, bsd.FD_WRITE);
     }
-    if (_tcp.after(tcb.snd_nxt, tcb.snd_una)) return;
-    tcb.snd_nxt = tcb.snd_una;
+    if (_tcp.before(tcb.snd_nxt, tcb.snd_una)) tcb.snd_nxt = tcb.snd_una;
+    timers.restart(stack, tcb, now);
 }
 
 /// The segment's data, if it is next, into the receive ring; its FIN, if
@@ -378,7 +412,9 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
     }
     if (seg.data.len > 0) {
         if (seg.seq != tcb.rcv_nxt) {
-            // Before its turn: asked for again.
+            // Before its turn: held until the hole is filled, and the peer
+            // told at once what is missing.
+            if (_tcp.after(seg.seq, tcb.rcv_nxt) and tcb.flags & _tcp.read_shut == 0) reorder.hold(stack, tcb, seg.seq, seg.data);
             tcb.flags |= _tcp.ack_now;
             return true;
         }
@@ -393,9 +429,13 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
         } else {
             const taken = tcb.receive.write(seg.data);
             tcb.rcv_nxt +%= taken;
+            if (tcb.held_bytes > 0 and reorder.release(stack, tcb) > 0) {
+                // A hole filled: said at once.
+                tcb.flags |= _tcp.ack_now;
+            }
             if (taken > 0) _socket.wake(socket, bsd.FD_READ);
         }
-        tcb.flags |= _tcp.ack_now;
+        timers.owe(stack, tcb, _timer.systemTime(stack));
     }
     const data_end = seg.seq +% @as(u32, @intCast(seg.data.len));
     if (seg.flags & _tcp.FIN != 0 and data_end == tcb.rcv_nxt and tcb.flags & _tcp.fin_received == 0) {

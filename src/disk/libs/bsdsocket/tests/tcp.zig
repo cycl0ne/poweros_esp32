@@ -131,10 +131,62 @@ const Rig = struct {
         }
     }
 
-    /// Both stacks' timers run to `now`.
+    /// Only the first packet on the wire delivered.
+    fn pumpOne(rig: *Rig) void {
+        const packet = wire[0];
+        std.mem.copyForwards(Packet, wire[0 .. wire_count - 1], wire[1..wire_count]);
+        wire_count -= 1;
+        rig.deliver(&packet);
+    }
+
+    /// Both stacks' clocks set to `now`, and their timers run.
     fn advance(rig: *Rig, now: u64) void {
+        rig.a.stack.fixed_time = now;
+        rig.b.stack.fixed_time = now;
         _timer.run(rig.a.stack, now);
         _timer.run(rig.b.stack, now);
+    }
+
+    /// The earliest deadline of either stack.
+    fn earliest(rig: *Rig) ?u64 {
+        const a = _timer.earliest(rig.a.stack);
+        const b = _timer.earliest(rig.b.stack);
+        if (a == null) return b;
+        if (b == null) return a;
+        return @min(a.?, b.?);
+    }
+
+    /// One pass over what is on the wire now: each packet dropped,
+    /// delivered, delivered twice, or held back behind the next, as the
+    /// link's odds say. What the deliveries send waits for the next pass.
+    fn pumpLossy(rig: *Rig, link: *Lossy) void {
+        var batch: [128]Packet = undefined;
+        const count = wire_count;
+        @memcpy(batch[0..count], wire[0..count]);
+        wire_count = 0;
+        var index: usize = 0;
+        while (index < count) : (index += 1) {
+            if (link.chance(link.reorder) and index + 1 < count) {
+                const held = batch[index];
+                batch[index] = batch[index + 1];
+                batch[index + 1] = held;
+            }
+            const packet = batch[index];
+            if (link.chance(link.loss)) {
+                link.dropped += 1;
+                continue;
+            }
+            rig.deliver(&packet);
+            if (link.chance(link.duplicate)) rig.deliver(&packet);
+        }
+    }
+
+    fn deliver(rig: *Rig, packet: *const Packet) void {
+        const target = if (packet.to_b) &rig.b else &rig.a;
+        const frame = target.stack.frames.take(target.stack.sys_base) orelse return;
+        @memcpy(frame.room()[frame.start..][0..packet.length], packet.bytes[0..packet.length]);
+        frame.length = @intCast(packet.length);
+        _ip.input(target.stack, target.interface, frame);
     }
 
     fn deinit(rig: *Rig) !void {
@@ -157,6 +209,21 @@ fn socketOf(side: *Side, descriptor: i32) *@import("../socket/_socket.zig").Sock
     const opener = _base.socketBase(side.sb.lib());
     return opener.table.?[@intCast(descriptor)].?;
 }
+
+/// A link's odds, in percent, and the generator that rolls them: the
+/// same seed gives the same losses every run.
+const Lossy = struct {
+    loss: u32 = 0,
+    duplicate: u32 = 0,
+    reorder: u32 = 0,
+    state: u32 = 0x1234_5678,
+    dropped: u32 = 0,
+
+    fn chance(link: *Lossy, percent: u32) bool {
+        link.state = link.state *% 1_103_515_245 +% 12345;
+        return (link.state >> 16) % 100 < percent;
+    }
+};
 
 fn stream(sb: *SocketBase) !i32 {
     const socket = sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
@@ -361,5 +428,205 @@ test "a connection over lo0 to the stack itself" {
     rig.advance(2 * _tcp.msl_us);
     _ = a.CloseSocket(listener);
     try testing.expectEqual(@as(usize, 0), wire_count);
+    try rig.deinit();
+}
+
+// --- a link that loses --------------------------------------------------------------
+
+/// Sends `data` from A to B over a link with `link`'s odds, reading at B
+/// as it comes and moving time on whenever the wire is quiet, until B has
+/// it all or `limit` of simulated time has passed: what B got.
+fn transfer(rig: *Rig, pair: anytype, data: []const u8, got: []u8, link: *Lossy, limit: u64) usize {
+    var now: u64 = rig.a.stack.fixed_time;
+    var sent: usize = 0;
+    var received: usize = 0;
+    while (received < data.len and now < limit) {
+        if (sent < data.len) {
+            const taken = rig.a.sb.Send(pair.client, data[sent..].ptr, @intCast(data.len - sent), 0);
+            if (taken > 0) sent += @intCast(taken);
+        }
+        rig.pumpLossy(link);
+        while (true) {
+            const taken = rig.b.sb.Recv(pair.server, got[received..].ptr, @intCast(got.len - received), 0);
+            if (taken <= 0) break;
+            received += @intCast(taken);
+        }
+        // A millisecond per round trip; when nothing is on its way, on to
+        // the next deadline.
+        now += 1000;
+        if (wire_count == 0) {
+            if (rig.earliest()) |deadline| now = @max(now, deadline);
+        }
+        rig.advance(now);
+    }
+    return received;
+}
+
+test "a transfer arrives whole and in order over a link that loses, doubles and reorders" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 90);
+    const data = try testing.allocator.alloc(u8, 256 * 1024);
+    defer testing.allocator.free(data);
+    const got = try testing.allocator.alloc(u8, data.len);
+    defer testing.allocator.free(got);
+    for (data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% index / 256);
+    var link: Lossy = .{ .loss = 10, .duplicate = 2, .reorder = 5 };
+    const received = transfer(&rig, pair, data, got, &link, 600_000_000);
+    try testing.expectEqual(data.len, received);
+    try testing.expectEqualSlices(u8, data, got);
+    try testing.expect(link.dropped > 0);
+    const counts = rig.a.stack.counts;
+    try testing.expect(counts.tcp_retransmits + counts.tcp_fast_retransmits > 0);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+test "a dead link backs the timeout off and ends in ETIMEDOUT" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 91);
+    _ = rig.a.sb.Send(pair.client, "lost", 4, 0);
+    wire_count = 0;
+    const tcb = _tcp.of(socketOf(&rig.a, pair.client));
+    var last_rto: u32 = 0;
+    var rounds: usize = 0;
+    while (tcb.state != .closed and rounds < 40) : (rounds += 1) {
+        try testing.expect(tcb.rto >= last_rto);
+        last_rto = tcb.rto;
+        rig.advance(rig.earliest() orelse break);
+        wire_count = 0;
+    }
+    try testing.expectEqual(_tcp.State.closed, tcb.state);
+    try testing.expectEqual(@as(u32, 60_000_000), last_rto);
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, -1), rig.a.sb.Recv(pair.client, &buffer, buffer.len, 0));
+    try testing.expectEqual(bsd.ETIMEDOUT, rig.a.sb.Errno());
+    // B's end: the peer is gone; it is reset when it next speaks.
+    _ = rig.a.sb.CloseSocket(pair.client);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+test "a lost SYN is sent again, and the connection stands" {
+    var rig = try Rig.init();
+    const listener = try stream(rig.b.sb);
+    var here = at(address_b, 92);
+    _ = rig.b.sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    _ = rig.b.sb.Listen(listener, 2);
+    const client = try stream(rig.a.sb);
+    _ = rig.a.sb.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    wire_count = 0;
+    rig.advance(rig.earliest().?);
+    rig.pump();
+    try testing.expectEqual(_tcp.State.established, _tcp.of(socketOf(&rig.a, client)).state);
+    const server = rig.b.sb.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+    closeAll(&rig, .{ .client = client, .server = server, .listener = listener });
+    try rig.deinit();
+}
+
+test "a shut window is probed, and a lost window update does not stall it" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 93);
+    const small: i32 = 1024;
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &small, @sizeOf(i32));
+    _ = rig.b.sb.Send(pair.server, "w", 1, 0);
+    rig.pump();
+    var one: [1]u8 = undefined;
+    _ = rig.a.sb.Recv(pair.client, &one, 1, 0);
+    var data: [4096]u8 = undefined;
+    for (&data, 0..) |*byte, index| byte.* = @truncate(index * 5);
+    _ = rig.a.sb.Send(pair.client, &data, data.len, 0);
+    rig.pump();
+    // B's delayed acknowledgement says the window is shut.
+    rig.advance(rig.b.stack.fixed_time + 200_000);
+    rig.pump();
+    try testing.expectEqual(@as(u32, 0), _tcp.of(socketOf(&rig.a, pair.client)).snd_wnd);
+    // B's ring is full; B reads it all, and the window update is lost.
+    var got: [4096]u8 = undefined;
+    var received: usize = @intCast(rig.b.sb.Recv(pair.server, &got, got.len, 0));
+    wire_count = 0;
+    var rounds: usize = 0;
+    while (received < data.len and rounds < 50) : (rounds += 1) {
+        rig.advance(rig.earliest() orelse break);
+        rig.pump();
+        const taken = rig.b.sb.Recv(pair.server, got[received..].ptr, @intCast(got.len - received), 0);
+        if (taken > 0) received += @intCast(taken);
+        rig.pump();
+    }
+    try testing.expectEqual(data.len, received);
+    try testing.expectEqualSlices(u8, &data, &got);
+    try testing.expect(rig.a.stack.counts.tcp_window_probes > 0);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+test "TIME_WAIT answers a FIN sent again, then goes" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 94);
+    _ = rig.a.sb.CloseSocket(pair.client);
+    rig.pump();
+    _ = rig.b.sb.CloseSocket(pair.server);
+    // B's FIN reaches A, and A's last acknowledgement is lost.
+    rig.pumpOne();
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    wire_count = 0;
+    const b_counts = &rig.b.stack.counts;
+    rig.advance(rig.b.stack.fixed_time + 1_000_000);
+    try testing.expect(b_counts.tcp_retransmits > 0);
+    rig.pump();
+    // B has its acknowledgement and is gone; A waits out TIME_WAIT.
+    try testing.expectEqual(@as(u16, 1), rig.b.lib.open_cnt);
+    try testing.expectEqual(@as(u16, 2), rig.a.lib.open_cnt);
+    rig.advance(rig.a.stack.fixed_time + 2 * _tcp.msl_us);
+    try testing.expectEqual(@as(u16, 1), rig.a.lib.open_cnt);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    try rig.deinit();
+}
+
+/// Both ends closed and the connection let finish, TIME_WAIT included.
+fn closeAll(rig: *Rig, pair: anytype) void {
+    _ = rig.a.sb.CloseSocket(pair.client);
+    _ = rig.b.sb.CloseSocket(pair.server);
+    var rounds: usize = 0;
+    while (rounds < 100) : (rounds += 1) {
+        rig.pump();
+        const next = rig.earliest() orelse break;
+        rig.advance(next);
+    }
+    _ = rig.b.sb.CloseSocket(pair.listener);
+}
+
+test "keepalive keeps a quiet connection whose peer answers, and ends one whose peer is gone" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 95);
+    const on: i32 = 1;
+    try testing.expectEqual(@as(i32, 0), rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_KEEPALIVE, &on, @sizeOf(i32)));
+    const tcb = _tcp.of(socketOf(&rig.a, pair.client));
+    // Two hours of quiet: A asks, B answers, and it goes on.
+    rig.advance(rig.earliest().?);
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    rig.pump();
+    try testing.expectEqual(_tcp.State.established, tcb.state);
+    // B gone: nine probes unanswered, and the connection ends.
+    var rounds: usize = 0;
+    while (tcb.state == .established and rounds < 20) : (rounds += 1) {
+        rig.advance(rig.earliest().?);
+        wire_count = 0;
+    }
+    try testing.expectEqual(_tcp.State.closed, tcb.state);
+    var buffer: [4]u8 = undefined;
+    try testing.expectEqual(@as(i32, -1), rig.a.sb.Recv(pair.client, &buffer, buffer.len, 0));
+    try testing.expectEqual(bsd.ETIMEDOUT, rig.a.sb.Errno());
+    _ = rig.a.sb.CloseSocket(pair.client);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    wire_count = 0;
     try rig.deinit();
 }

@@ -18,6 +18,8 @@ const _socket = @import("../socket/_socket.zig");
 const Socket = _socket.Socket;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
+const timers = @import("timers.zig");
+const _timer = @import("../timer/_timer.zig");
 
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
 
@@ -60,6 +62,7 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     if (flags & _tcp.ACK != 0) {
         tcb.rcv_adv = tcb.rcv_nxt +% offered;
         tcb.flags &= ~_tcp.ack_now;
+        timers.paid(stack, tcb);
     }
     stack.counts.tcp_sent += 1;
     return _ip.output(stack, frame, socket.local_address, socket.remote_address, protocol, hop);
@@ -72,8 +75,11 @@ pub fn localMss(mtu: u32) u32 {
 }
 
 /// Everything the connection may send now, sent: data as far as the
-/// window goes, the FIN once the data before it has gone, and an
-/// acknowledgement if one is owed and nothing else carried it.
+/// peer's window and the congestion window go - a small tail waits while
+/// data is in flight, unless TCP_NODELAY (Nagle) - the FIN once the data
+/// before it has gone, and an acknowledgement if one is owed and nothing
+/// else carried it. After a timeout SND.NXT is back at SND.UNA, and the
+/// same loop sends everything again, FIN included.
 pub fn output(stack: *StackBase, tcb: *Tcb) void {
     switch (tcb.state) {
         .closed, .listen, .syn_sent, .time_wait => {
@@ -82,16 +88,21 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         },
         else => {},
     }
+    const now = _timer.systemTime(stack);
     while (true) {
         // Nothing but an acknowledgement goes before our SYN is.
         const synced = _tcp.atOrAfter(tcb.snd_una, tcb.ring_seq);
+        const data_end = tcb.ring_seq +% tcb.send.count;
+        const unsent: u32 = if (!synced or _tcp.after(tcb.snd_nxt, data_end)) 0 else data_end -% tcb.snd_nxt;
         const offset = tcb.snd_nxt -% tcb.ring_seq;
-        const unsent: u32 = if (!synced or tcb.flags & _tcp.fin_sent != 0 or offset > tcb.send.count) 0 else tcb.send.count - offset;
         const in_flight = tcb.snd_nxt -% tcb.snd_una;
-        const usable: u32 = if (tcb.snd_wnd > in_flight) tcb.snd_wnd - in_flight else 0;
-        const length: u32 = @min(unsent, @min(usable, tcb.mss));
-        const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and tcb.flags & _tcp.fin_sent == 0 and length == unsent;
-        if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) return;
+        const allowed = @min(tcb.snd_wnd, tcb.cwnd);
+        const usable: u32 = if (allowed > in_flight) allowed - in_flight else 0;
+        var length: u32 = @min(unsent, @min(usable, tcb.mss));
+        const small_tail = length > 0 and length < tcb.mss and length == unsent and in_flight > 0;
+        if (small_tail and tcb.flags & (_tcp.no_delay | _tcp.fin_wanted) == 0) length = 0;
+        const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and length == unsent and tcb.snd_nxt +% length == data_end;
+        if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) break;
         var flags: u8 = _tcp.ACK;
         if (length > 0 and length == unsent) flags |= _tcp.PSH;
         if (send_fin) flags |= _tcp.FIN;
@@ -99,9 +110,10 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         // answer comes back to this connection before `segment` returns,
         // and must find SND.NXT past it.
         const sequence = tcb.snd_nxt;
+        const fresh = _tcp.atOrAfter(sequence, tcb.snd_max);
         tcb.snd_nxt +%= length + @intFromBool(send_fin);
         if (_tcp.after(tcb.snd_nxt, tcb.snd_max)) tcb.snd_max = tcb.snd_nxt;
-        if (send_fin) {
+        if (send_fin and tcb.flags & _tcp.fin_sent == 0) {
             tcb.flags |= _tcp.fin_sent;
             tcb.state = switch (tcb.state) {
                 .syn_received, .established => .fin_wait_1,
@@ -109,19 +121,29 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
                 else => tcb.state,
             };
         }
+        // One segment's round trip timed at a time, never one sent again.
+        if (length > 0 and fresh and tcb.timing == 0) {
+            tcb.timing = 1;
+            tcb.rtt_seq = sequence;
+            tcb.rtt_start = now;
+        }
         const refused = segment(stack, tcb, sequence, flags, offset, length);
         if (refused != 0) {
             tcb.socket.pending_error = refused;
-            return;
+            break;
         }
-        if (length == 0) return;
+        if (length > 0 or send_fin) timers.arm(stack, tcb, now);
+        if (length == 0) break;
     }
+    timers.persist(stack, tcb, now);
 }
 
 /// A SYN, or a SYN and ACK answering one: ISS, and the MSS option.
 pub fn sendSyn(stack: *StackBase, tcb: *Tcb) i32 {
     const flags: u8 = if (tcb.state == .syn_received) _tcp.SYN | _tcp.ACK else _tcp.SYN;
-    return segment(stack, tcb, tcb.iss, flags, 0, 0);
+    const refused = segment(stack, tcb, tcb.iss, flags, 0, 0);
+    timers.arm(stack, tcb, _timer.systemTime(stack));
+    return refused;
 }
 
 /// A reset for a segment that has no connection to go to, or that a

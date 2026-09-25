@@ -125,7 +125,9 @@ fn down(heap: *Heap, from: u32) void {
 }
 
 /// The system time in microseconds, or 0 before the stack has a timer.
+/// A stack that runs without its task has the time its runner says.
 pub fn systemTime(stack: *StackBase) u64 {
+    if (stack.no_task != 0) return stack.fixed_time;
     const timer_base = stack.timer_base orelse return 0;
     var time: timer.TimeVal = .{};
     timer_base.GetSysTime(&time);

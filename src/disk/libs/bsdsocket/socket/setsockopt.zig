@@ -92,7 +92,15 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
             if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
             if (socket.socket_type != bsd.SOCK_STREAM) return _socket.fail(sb, bsd.ENOPROTOOPT, "SetSockOpt");
             const tcb = _tcp.of(socket);
-            if (@as(*align(1) const i32, @ptrCast(value)).* != 0) tcb.flags |= _tcp.keep_alive else tcb.flags &= ~_tcp.keep_alive;
+            const timers = @import("../tcp/timers.zig");
+            const _timer = @import("../timer/_timer.zig");
+            if (@as(*align(1) const i32, @ptrCast(value)).* != 0) {
+                tcb.flags |= _tcp.keep_alive;
+                timers.keepalive(sb.stack, tcb, _timer.systemTime(sb.stack));
+            } else {
+                tcb.flags &= ~_tcp.keep_alive;
+                if (tcb.state != .time_wait) _timer.cancel(sb.stack, &tcb.timer_long);
+            }
         },
         bsd.SO_EVENTMASK => {
             if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");

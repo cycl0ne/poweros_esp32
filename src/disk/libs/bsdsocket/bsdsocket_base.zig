@@ -76,6 +76,12 @@ pub const Counts = extern struct {
     tcp_resets_sent: u32 = 0,
     /// SYNs a listener's full queue let go unanswered.
     tcp_backlog_full: u32 = 0,
+    /// Segments sent again after a timeout, and after three duplicate
+    /// acknowledgements; windows probed; connections given up.
+    tcp_retransmits: u32 = 0,
+    tcp_fast_retransmits: u32 = 0,
+    tcp_window_probes: u32 = 0,
+    tcp_timeouts: u32 = 0,
 };
 
 pub const StackBase = extern struct {
@@ -109,6 +115,8 @@ pub const StackBase = extern struct {
     /// itself - the host tests, which say what time it is.
     no_task: u8 = 0,
     pad3: [2]u8 = .{ 0, 0 },
+    /// The time, for a stack without its task.
+    fixed_time: u64 align(4) = 0,
     /// dos.library, opened when the stack task is first needed.
     dos: ?*DosBase = null,
     /// The stack task: the process that keeps the reads on every device
