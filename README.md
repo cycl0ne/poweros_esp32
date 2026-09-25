@@ -154,6 +154,12 @@ cores.
 - Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,
   input, console and four-channel audio; watchdog, DMA, GPIO and platform
   resources.
+- Network devices with one request set for every kind of link (SANA-II:
+  reads by packet type, orphan reads, events, multicast groups,
+  statistics, the opener's own buffers filled through its copy calls).
+  `DEVS:networks/openeth.device` drives QEMU's Ethernet, with the
+  emulator's network behind it; `C:test/Net` asks the link who has an
+  address.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 
@@ -199,6 +205,8 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
+| `-Dnet=none` | the `qemu*` steps without a network; any other value is a QEMU `-nic` backend, e.g. `tap,ifname=tap0,script=no,downscript=no` (default: QEMU's user network, NAT to the host's) |
+| `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, in a file Wireshark reads |
 
 On a board the serial console is the chip's USB port
 (e.g. `tio /dev/ttyACM0`); the display comes up with a shell window.

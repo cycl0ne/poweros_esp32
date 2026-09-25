@@ -43,6 +43,8 @@ const image_dirs = [_][]const u8{
     "classes",
     "classes/gadgets",
     "devs",
+    // The network drivers, opened as networks/<name>.device.
+    "devs/networks",
     // HANDLERS: - what a device is, for Mount to read, and the handlers
     // that are not in the ROM.
     "handlers",
@@ -62,6 +64,11 @@ pub fn build(b: *std.Build) void {
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
+    const network = qemuNetwork(
+        b,
+        b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)"),
+        b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file"),
+    );
     const disk_offset = disk_offset_kib * 1024;
     if (disk_offset % mmu_page != 0 or disk_offset == 0 or disk_offset >= flash_size) {
         std.debug.panic("-Ddisk-offset={d}: the disk has to start on a 64 KiB page inside the {d} KiB of flash", .{ disk_offset_kib, flash_size / 1024 });
@@ -168,10 +175,10 @@ pub fn build(b: *std.Build) void {
     const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
-    const run_qemu = qemuRun(b, qemu, flash_image, &.{"-nographic"});
+    const run_qemu = qemuRun(b, qemu, flash_image, network, &.{"-nographic"});
     b.step("qemu", "Boot the kernel in Espressif QEMU (quit with Ctrl-A X)").dependOn(&run_qemu.step);
 
-    const run_display = qemuRun(b, qemu, flash_image, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
+    const run_display = qemuRun(b, qemu, flash_image, network, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
     b.step("qemu-display", "Boot in QEMU with its virtual display in an SDL window").dependOn(&run_display.step);
 
     // The same, but on a flash image that keeps what the kernel writes:
@@ -191,7 +198,7 @@ pub fn build(b: *std.Build) void {
     keep.addFileArg(emulated.image);
     keep.addFileArg(disk_bin);
     keep.has_side_effects = true;
-    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, &.{"-nographic"});
+    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, &.{"-nographic"});
     run_disk.step.dependOn(&keep.step);
     b.step("qemu-disk", "Boot in QEMU on a flash image that keeps what is written to the disk").dependOn(&run_disk.step);
     // Target-independent code, tested on the host.
@@ -549,13 +556,29 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
 
 /// A QEMU run on a throw-away copy of the image: -snapshot keeps the
 /// kernel's writes out of it.
-fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, extra: []const []const u8) *std.Build.Step.Run {
-    return qemuRunPath(b, qemu, flash_image, true, extra);
+fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, network: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
+    return qemuRunPath(b, qemu, flash_image, true, network, extra);
+}
+
+/// The emulator's network, as QEMU's arguments. Without them QEMU gives
+/// the machine's Ethernet MAC its user network: NAT to the host's, with a
+/// gateway and DHCP server at 10.0.2.2 and DNS at 10.0.2.3. `net` names another
+/// backend for the MAC (a tap device puts the machine on the real
+/// network) or `none`; `dump` writes every frame to a pcap file, which
+/// needs the backend to have a name, so it makes the user network explicit.
+fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8) []const []const u8 {
+    if (net) |backend| {
+        if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
+    }
+    if (net == null and dump == null) return &.{};
+    const nic = b.fmt("{s},id=net0,model=open_eth", .{net orelse "user"});
+    const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
+    return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
 }
 
 /// `snapshot` false lets the kernel write the image, so a disk on it keeps
 /// what is written from one boot to the next.
-fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, snapshot: bool, extra: []const []const u8) *std.Build.Step.Run {
+fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, snapshot: bool, network: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
     // Like the board's N16R8 module: 8 MB octal PSRAM (-m is the PSRAM size).
     const run = b.addSystemCommand(&.{
         qemu,                                            "-machine", "esp32s3",
@@ -563,6 +586,7 @@ fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath,
         "driver=ssi_psram,property=is_octal,value=true",
     });
     if (snapshot) run.addArg("-snapshot");
+    run.addArgs(network);
     run.addArgs(extra);
     run.addArg("-drive");
     run.addPrefixedFileArg("if=mtd,format=raw,file=", flash_image);

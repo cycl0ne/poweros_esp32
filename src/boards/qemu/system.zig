@@ -2,7 +2,8 @@
 //! Espressif QEMU's ESP32-S3 machine: 16 MB of flash, 8 MB of octal PSRAM,
 //! UART0 on the emulator's terminal, and its virtual RGB display, which
 //! gives its window's pointer and the keys typed into it as well
-//! (scripts/qemu/esp_rgb_input.patch). It has no I2C parts, no touch panel,
+//! (scripts/qemu/esp_rgb_input.patch), and an OpenCores Ethernet MAC with
+//! the emulator's network behind it. It has no I2C parts, no touch panel,
 //! no codec and no card slot, so its list has none.
 //!
 //! What is true of the board is written down here once, as the system tag
@@ -73,6 +74,23 @@ const mouse = [_]Tag{
     .done,
 };
 
+// --- the network -------------------------------------------------------------
+
+/// Where the Ethernet MAC's registers are; its descriptors are 0x400 past
+/// them, and it raises the Wi-Fi MAC's interrupt source.
+const ethernet_registers: usize = 0x600C_D000;
+
+/// The OpenCores Ethernet MAC, with the emulator's user network (or
+/// whatever `-Dnet` gives it) on the other side.
+const ethernet = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_OPENETH),
+    .pointer(st.PART_ChipName, "opencores ethernet"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, ethernet_registers),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -87,6 +105,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &keyboard),
     .pointer(st.SYSTAG_Part, &mouse),
+    .pointer(st.SYSTAG_Part, &ethernet),
     .done,
 };
 

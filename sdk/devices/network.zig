@@ -139,7 +139,9 @@ pub const S2_CopyToBuff: u32 = S2_Dummy + 1;
 pub const S2_CopyFromBuff: u32 = S2_Dummy + 2;
 /// ti_Data: a Hook called before a packet is copied to a read, with the
 /// request as the object and the packet in the driver's memory as the
-/// message; it answers 0 to leave the packet to the next read.
+/// message; it answers 0 to leave the packet to the next read. It runs on
+/// the driver's task while the driver holds its queues, so it only looks
+/// and never waits.
 pub const S2_PacketFilter: u32 = S2_Dummy + 3;
 
 /// S2_CopyToBuff's and S2_CopyFromBuff's call: copies `length` bytes and

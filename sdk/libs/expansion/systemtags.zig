@@ -143,6 +143,8 @@ pub const PARTKIND_BATTERY: u32 = 9;
 pub const PARTKIND_KEYBOARD: u32 = 10;
 /// A pointer that moves and has buttons: a mouse, or a window's pointer.
 pub const PARTKIND_MOUSE: u32 = 11;
+/// A network interface: a MAC, and the link behind it.
+pub const PARTKIND_NET: u32 = 12;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -161,6 +163,8 @@ pub const CHIP_RGB_PANEL: u32 = 8;
 /// keys as well: the display, the keyboard and the mouse parts of the
 /// qemu board are all this one.
 pub const CHIP_QEMU_DISPLAY: u32 = 9;
+/// The emulator's OpenCores Ethernet MAC.
+pub const CHIP_OPENETH: u32 = 10;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
