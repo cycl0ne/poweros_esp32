@@ -57,6 +57,7 @@ pub const intuition_library_tag = intuition_init.intuition_library_tag;
 
 const testing = std.testing;
 const _window = @import("window/_window.zig");
+const _kscreen = @import("screen/_screen.zig");
 const _gadget = @import("gadget/_gadget.zig");
 const _input = @import("input/_input.zig");
 const _menus = @import("input/menus.zig");
@@ -222,6 +223,7 @@ fn tearDown(ib: *IntuitionBase) !void {
     const rb: *krtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(ib.utility_base));
 
+    if (ib.rtg_base) |opened| kexec.CloseLibrary(kexec.SysBase, @ptrCast(@alignCast(opened)));
     const kb: *kkeymap.KeymapBase = @ptrCast(@alignCast(ib.keymap_base.?));
     kexec.CloseLibrary(kexec.SysBase, &kb.lib);
     kexec.Remove(kexec.SysBase, &kb.lib.node);
@@ -756,8 +758,11 @@ const Display = struct {
         fake.destroy(d.state);
     }
 
+    /// A pixel of what the display shows: the buffer it was brought up
+    /// with, or whichever screen's is now in front.
     fn pixel(d: Display, x: usize, y: usize) u16 {
-        const row = d.bitmap.pixels.? + y * d.bitmap.pitch;
+        const shown = d.board.showing orelse d.bitmap;
+        const row = shown.pixels.? + y * shown.pitch;
         return @as([*]const u16, @ptrCast(@alignCast(row)))[x];
     }
 };
@@ -797,7 +802,7 @@ test "screens: none without a display, one to a display, and closed again" {
     // The ground in the background pen, the bar in its fill, the trim line
     // under it - rgb565: grey 0xAAAAAA is 0xAD55, white 0xFFFF, black 0.
     try testing.expectEqual(@as(u16, 0xAD55), display.pixel(10, 30));
-    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(63, 1));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(40, 1));
     try testing.expectEqual(@as(u16, 0x0000), display.pixel(20, 10));
     // Some of the title is drawn, in black, somewhere in the bar.
     var ink: usize = 0;
@@ -814,13 +819,209 @@ test "screens: none without a display, one to a display, and closed again" {
     try testing.expectEqual(graphics.penRGB(0x66, 0x88, 0xBB), dri.pens[sc.FILLPEN]);
     try testing.expectEqual(@as(u32, 16), dri.depth);
 
-    // A second screen on the same display is refused.
-    try testing.expect(ib.iface().OpenScreenTagList(&with_code) == null);
+    // A second screen: a buffer of its own, in front, and shown.
+    const it = ib.iface();
+    const first: *_kscreen.Screen = @ptrCast(@alignCast(s));
+    try testing.expectEqual(display.bitmap, first.bitmap);
+    const two = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_ShowTitle, .data = 0 }, .{} }).?;
+    const second: *_kscreen.Screen = @ptrCast(@alignCast(two));
+    try testing.expect(second.own_bitmap);
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    // Its ground, with no bar over it.
+    try testing.expectEqual(@as(u16, 0xAD55), display.pixel(40, 1));
+    // Behind, the first is shown again as it was; forward, the second.
+    it.ScreenToBack(two);
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(40, 1));
+    it.ScreenDepth(two, sc.SDEPTH_TOFRONT);
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    it.ScreenToFront(s);
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    // One opened behind is not shown; the display's memory holds three.
+    const three = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Behind, .data = 1 }, .{} }).?;
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    try testing.expect(it.OpenScreenTagList(&with_code) == null);
     try testing.expectEqual(sc.OSERR_NOTAVAILABLE, why);
+    // Closing the one in front shows the one behind it.
+    it.ScreenToFront(two);
+    try testing.expect(it.CloseScreen(two));
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    try testing.expect(it.CloseScreen(three));
 
     try testing.expect(ib.iface().CloseScreen(s));
     try testing.expectEqual(@as(u16, 0), display.pixel(10, 30));
     try testing.expect(ib.iface().CloseScreen(null));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "screen buffers: a second buffer drawn and shown, the screen's own again, refused under menus" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const screen = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const s: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    const front = it.AllocScreenBuffer(screen, sc.SB_SCREEN_BITMAP).?;
+    try testing.expectEqual(s.bitmap, front.bitmap);
+    // A copy of what the screen shows: its bar's white is there too.
+    const back = it.AllocScreenBuffer(screen, sc.SB_COPY_BITMAP).?;
+    try testing.expect(back.bitmap != s.bitmap);
+
+    // Drawn into the back buffer, unseen; shown, it is what the display has.
+    @import("screen/_screen.zig").setPen(ib, back.rast_port, graphics.penRGB(0xFF, 0, 0));
+    ib.graphics_base.RectFill(back.rast_port, &.{ .min_x = 0, .min_y = 20, .max_x = 64, .max_y = 30 });
+    try testing.expectEqual(@as(u16, 0xAD55), display.pixel(10, 25));
+    try testing.expect(it.ChangeScreenBuffer(screen, back));
+    try testing.expectEqual(back.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(10, 25));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(40, 1));
+
+    // Not while menus are up: they are drawn in the screen's own buffer.
+    ib.menu.stage = .shown;
+    try testing.expect(!it.ChangeScreenBuffer(screen, front));
+    ib.menu.stage = .idle;
+    try testing.expect(it.ChangeScreenBuffer(screen, front));
+    try testing.expectEqual(s.bitmap, display.board.showing.?);
+
+    // Given back while shown: the screen's own is shown again first.
+    try testing.expect(it.ChangeScreenBuffer(screen, back));
+    it.FreeScreenBuffer(screen, back);
+    try testing.expectEqual(s.bitmap, display.board.showing.?);
+    it.FreeScreenBuffer(screen, front);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// Paints what it is asked to in red: a screen's own background hook.
+fn redGround(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const ib: *IntuitionBase = @ptrCast(@alignCast(hook.data.?));
+    const rp: *graphics.RastPort = @ptrCast(object.?);
+    const msg: *sdk.layers.BackFillMsg = @ptrCast(@alignCast(message.?));
+    _kscreen.setPen(ib, rp, graphics.penRGB(0xFF, 0, 0));
+    ib.graphics_base.RectFill(rp, &msg.area);
+    return 0;
+}
+
+test "screens: the depth gadget in the bar, and the tags a screen opens with or answers" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const one = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Title, .data = @intFromPtr("One") }, .{} }).?;
+    var ground = utility.Hook{ .entry = &redGround, .data = ib };
+    const two = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_BackFill, .data = @intFromPtr(&ground) },
+        .{ .tag = sc.SA_DetailPen, .data = graphics.penRGB(1, 2, 3) },
+        .{ .tag = sc.SA_BlockPen, .data = graphics.penRGB(4, 5, 6) },
+        .{ .tag = sc.SA_PubName, .data = @intFromPtr("Two") },
+        .{ .tag = sc.SA_Type, .data = sc.CUSTOMSCREEN },
+        .{},
+    }).?;
+    const first: *_kscreen.Screen = @ptrCast(@alignCast(one));
+    const second: *_kscreen.Screen = @ptrCast(@alignCast(two));
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    // Its ground is the hook's; its pens say what they were told; a
+    // custom screen with a name is still private.
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(10, 30));
+    const dri = it.GetScreenDrawInfo(two);
+    try testing.expectEqual(graphics.penRGB(1, 2, 3), dri.pens[sc.DETAILPEN]);
+    try testing.expectEqual(graphics.penRGB(4, 5, 6), dri.pens[sc.BLOCKPEN]);
+    it.FreeScreenDrawInfo(two, dri);
+    try testing.expectEqual(@as(usize, 0), screenAttr(ib, two, sc.SA_PubName));
+    try testing.expectEqual(@as(usize, sc.CUSTOMSCREEN), screenAttr(ib, two, sc.SA_Type));
+
+    // The depth gadget at the bar's right end: the one in front goes back.
+    try testing.expect(second.depth_image != null);
+    const gx: i32 = 63 - 3;
+    pointerEvent(ib, ie.IECODE_LBUTTON, gx, 3);
+    try testing.expect(second.depth_pressed);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, gx, 3);
+    try testing.expect(!second.depth_pressed);
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    // Let go somewhere else, it does nothing.
+    pointerEvent(ib, ie.IECODE_LBUTTON, gx, 3);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 10, 30);
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+    // And the first, in front now, goes back the same way.
+    pointerEvent(ib, ie.IECODE_LBUTTON, gx, 3);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, gx, 3);
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    // Shift sends it to the back as well.
+    const shifted: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON, .qualifier = ie.IEQUALIFIER_LSHIFT, .x = gx, .y = 3 };
+    _input.handle(ib, &shifted);
+    const up: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, .qualifier = ie.IEQUALIFIER_LSHIFT, .x = gx, .y = 3 };
+    _input.handle(ib, &up);
+    try testing.expectEqual(first.bitmap, display.board.showing.?);
+
+    // What a program sizes its windows by, and the rest it can read back.
+    try testing.expectEqual(@as(usize, 8 + 3), screenAttr(ib, one, sc.SA_WBorTop));
+    try testing.expectEqual(@as(usize, 4), screenAttr(ib, one, sc.SA_WBorLeft));
+    try testing.expectEqual(@as(usize, 4), screenAttr(ib, one, sc.SA_WBorRight));
+    try testing.expectEqual(@as(usize, 2), screenAttr(ib, one, sc.SA_WBorBottom));
+    try testing.expectEqual(@as(usize, 1), screenAttr(ib, one, sc.SA_BarVBorder));
+    try testing.expectEqual(@as(usize, 5), screenAttr(ib, one, sc.SA_BarHBorder));
+    try testing.expectEqualStrings("One", std.mem.span(@as([*:0]const u8, @ptrFromInt(screenAttr(ib, one, sc.SA_DefaultTitle)))));
+    try testing.expectEqual(@as(usize, @intCast(gx)), screenAttr(ib, one, sc.SA_MouseX));
+    try testing.expectEqual(@as(usize, 3), screenAttr(ib, one, sc.SA_MouseY));
+    try testing.expect(it.CloseScreen(two));
+    try testing.expect(it.CloseScreen(one));
+
+    // A system font in place of the one given; like the Workbench screen,
+    // its pens.
+    const given = ib.graphics_base.OpenFont(graphics.POSPAZNAME, 16).?;
+    defer ib.graphics_base.CloseFont(given);
+    const sys_font = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Font, .data = @intFromPtr(given) },
+        .{ .tag = sc.SA_SysFont, .data = 0 },
+        .{},
+    }).?;
+    try testing.expect(screenAttr(ib, sys_font, sc.SA_Font) != @intFromPtr(given));
+    try testing.expect(it.CloseScreen(sys_font));
+    const wb = it.LockPubScreen(null).?;
+    const like = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_LikeWorkbench, .data = 1 }, .{} }).?;
+    const like_s: *_kscreen.Screen = @ptrCast(@alignCast(like));
+    const wb_s: *_kscreen.Screen = @ptrCast(@alignCast(wb));
+    try testing.expectEqualSlices(graphics.Pen, &wb_s.pens, &like_s.pens);
+    try testing.expectEqual(screenAttr(ib, wb, sc.SA_WBorTop), screenAttr(ib, like, sc.SA_WBorTop));
+    try testing.expect(it.CloseScreen(like));
+    it.UnlockPubScreen(null, wb);
+    try testing.expect(it.CloseScreen(wb));
+
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "ShowTitle: the bar behind a screen-filling backdrop window, and in front of it again" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Backdrop, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    // rgb565: the bar's fill white, the window's ground grey.
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(40, 1));
+    it.ShowTitle(screen, false);
+    try testing.expectEqual(@as(u16, 0xAD55), display.pixel(40, 1));
+    it.ShowTitle(screen, true);
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(40, 1));
+
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);
 }
@@ -867,6 +1068,87 @@ test "public screens: the default opened on first use, locks keep it open" {
     try testing.expectEqual(sc.OSERR_BADNAME, why);
     try testing.expect(ib.iface().CloseScreen(mine));
 
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "public screens: private until opened to visitors, the list, the default, and the owner told" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const sys = ib.sys_base;
+    const display = try Display.up(ib);
+
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    defer sys.FreeSignal(bit);
+    const mask = @as(u32, 1) << @intCast(bit);
+    const mine = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_PubName, .data = @intFromPtr("Mine") },
+        .{ .tag = sc.SA_PubSig, .data = @intCast(bit) },
+        .{},
+    }).?;
+
+    // Private until its owner says otherwise; then found in any case.
+    try testing.expect(it.LockPubScreen("Mine") == null);
+    try testing.expectEqual(@as(u32, 1), it.PubScreenStatus(mine, 0));
+    try testing.expectEqual(mine, it.LockPubScreen("MINE").?);
+
+    // On the list, with its one visitor.
+    {
+        const list = it.LockPubScreenList();
+        defer it.UnlockPubScreenList();
+        const psn: *sc.PubScreenNode = @ptrCast(@alignCast(list.head.?));
+        try testing.expectEqualStrings("Mine", std.mem.span(psn.node.name.?));
+        try testing.expectEqual(mine, psn.screen);
+        try testing.expectEqual(@as(u32, 0), psn.flags);
+        try testing.expectEqual(@as(u32, 1), psn.visitor_count);
+        try testing.expect(psn.node.succ.?.succ == null);
+    }
+
+    // Round and round: the only one comes after itself.
+    var name: [32]u8 = undefined;
+    try testing.expectEqualStrings("Mine", std.mem.span(it.NextPubScreen(null, &name).?));
+    try testing.expectEqualStrings("Mine", std.mem.span(it.NextPubScreen(mine, &name).?));
+
+    // The default: Workbench until chosen, then this one.
+    try testing.expect(it.GetDefaultPubScreen(&name) == null);
+    try testing.expectEqualStrings(sc.WBENCHNAME, std.mem.span(@as([*:0]const u8, @ptrCast(&name))));
+    it.SetDefaultPubScreen("mine");
+    try testing.expectEqual(mine, it.GetDefaultPubScreen(&name).?);
+    try testing.expectEqualStrings("Mine", std.mem.span(@as([*:0]const u8, @ptrCast(&name))));
+    try testing.expectEqual(mine, it.LockPubScreen(null).?);
+
+    // A window opened on it by name is a visitor too, until it closes.
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_PubScreenName, .data = @intFromPtr("Mine") },
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{},
+    }).?;
+    // Visitors keep it public and open.
+    try testing.expectEqual(@as(u32, 0), it.PubScreenStatus(mine, sc.PSNF_PRIVATE));
+    try testing.expect(!it.CloseScreen(mine));
+    _ = sys.SetSignal(0, mask);
+    it.UnlockPubScreen(null, mine);
+    it.UnlockPubScreen(null, mine);
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, 0) & mask);
+    // The last visitor goes: the owner is told.
+    it.CloseWindow(w);
+    try testing.expectEqual(mask, sys.SetSignal(0, mask) & mask);
+
+    // Private again, it is no longer the default.
+    try testing.expectEqual(@as(u32, 1), it.PubScreenStatus(mine, sc.PSNF_PRIVATE));
+    try testing.expect(it.GetDefaultPubScreen(null) == null);
+    try testing.expect(it.LockPubScreen("Mine") == null);
+
+    try testing.expectEqual(@as(u32, 0), it.SetPubScreenModes(sc.POPPUBSCREEN));
+    try testing.expectEqual(sc.POPPUBSCREEN, it.SetPubScreenModes(0));
+
+    try testing.expect(it.CloseScreen(mine));
+    try testing.expect(it.NextPubScreen(null, &name) == null);
     display.down(ib);
     try tearDown(ib);
 }
@@ -2299,6 +2581,158 @@ test "GetIMsg, ReplyIMsg, WaitIMsg: a window's messages typed, and other signals
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "MoveWindowInFrontOf, ScrollWindowRaster, SetMouseQueue, ReportMouse" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const gb = ib.graphics_base;
+    const display = try Display.up(ib);
+
+    // Three windows on the same spot, each opened in front of the last.
+    var open: [3]*intuition.Window = undefined;
+    for (&open) |*w| w.* = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_MOUSEMOVE },
+        .{},
+    }).?;
+    const a: *_window.Window = @ptrCast(@alignCast(open[0]));
+    const b: *_window.Window = @ptrCast(@alignCast(open[1]));
+    const c: *_window.Window = @ptrCast(@alignCast(open[2]));
+    const info = a.screen.layer_info;
+    try testing.expectEqual(c.layer, ib.layers_base.WhichLayer(info, 10, 10).?);
+    // The oldest in front of the newest: now on top.
+    it.MoveWindowInFrontOf(open[0], open[2]);
+    try testing.expectEqual(a.layer, ib.layers_base.WhichLayer(info, 10, 10).?);
+    // The newest just in front of the middle one: still behind the oldest.
+    it.MoveWindowInFrontOf(open[2], open[1]);
+    try testing.expectEqual(a.layer, ib.layers_base.WhichLayer(info, 10, 10).?);
+    it.WindowToBack(open[0]);
+    try testing.expectEqual(c.layer, ib.layers_base.WhichLayer(info, 10, 10).?);
+    _ = b;
+
+    // Two red bands in the window on top, scrolled up by five rows: both
+    // move, and the five rows at the bottom they left are cleared.
+    const red = graphics.penRGB(0xFF, 0, 0);
+    const rp = c.rp;
+    ib.layers_base.LockLayer(c.layer);
+    @import("screen/_screen.zig").setPen(ib, rp, red);
+    gb.RectFill(rp, &.{ .min_x = 0, .min_y = 10, .max_x = 64, .max_y = 13 });
+    gb.RectFill(rp, &.{ .min_x = 0, .min_y = 36, .max_x = 64, .max_y = 40 });
+    ib.layers_base.UnlockLayer(c.layer);
+    const red565: u16 = 0xF800;
+    try testing.expect(it.ScrollWindowRaster(open[2], 0, 5, &.{ .max_x = 64, .max_y = 40 }));
+    try testing.expectEqual(red565, display.pixel(1, 5));
+    try testing.expect(display.pixel(1, 10) != red565);
+    try testing.expectEqual(red565, display.pixel(1, 31));
+    try testing.expect(display.pixel(1, 37) != red565);
+    // Further than the area is high: all of it cleared, nothing moved.
+    try testing.expect(it.ScrollWindowRaster(open[2], 0, 40, &.{ .max_x = 64, .max_y = 40 }));
+    try testing.expect(display.pixel(1, 5) != red565);
+
+    // The mouse queue: the old length back, the new one kept to.
+    try testing.expectEqual(@as(u32, wn.DEFAULTMOUSEQUEUE), it.SetMouseQueue(open[2], 2));
+    var sent: u32 = 0;
+    for (0..10) |_| {
+        if (_window.sendWith(ib, c, wn.IDCMP_MOUSEMOVE, 0, null)) sent += 1;
+    }
+    try testing.expectEqual(@as(u32, 2), sent);
+    try testing.expectEqual(@as(u32, 2), it.SetMouseQueue(open[2], 0));
+    var got: [16]intuition.IntuiMessage = undefined;
+    _ = drainMessages(ib, open[2], &got);
+
+    // Moves with no button held reach the active window only once it asks.
+    it.ActivateWindow(open[2]);
+    _ = drainMessages(ib, open[2], &got);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 20, 20);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, open[2], &got));
+    it.ReportMouse(open[2], true);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 21, 20);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, open[2], &got));
+    it.ReportMouse(open[2], false);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 22, 20);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, open[2], &got));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, open[0], wn.WA_Screen));
+    for (open) |w| it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "border gadgets: the border made deep enough, drawn with the border, in a GimmeZeroZero window's outer layer" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A framed button down the right edge, ten pixels in from it.
+    const button = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_RelRight, .data = @bitCast(@as(isize, -9)) },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_RightBorder, .data = 1 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 10), windowAttr(ib, w, wn.WA_BorderRight));
+
+    // The button's shine along its top, in the border.
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(56, 14));
+    // Another window taken active: the border is drawn again, inactive,
+    // and the button with it.
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Top, .data = 28 },
+        .{ .tag = wn.WA_Width, .data = 12 },
+        .{ .tag = wn.WA_Height, .data = 12 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Active));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(56, 14));
+    // Below it, the border's inactive fill: the background pen.
+    try testing.expectEqual(@as(u16, 0xAD55), display.pixel(56, 30));
+    it.CloseWindow(other);
+    it.CloseWindow(w);
+
+    // In a GimmeZeroZero window it belongs to the outer layer, measured
+    // from the window's corner.
+    const gzz = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(gzz));
+    const gi = @import("gadget/_gadget.zig").infoFor(ib, win, button);
+    try testing.expectEqual(win.layer, gi.layer.?);
+    try testing.expectEqual(@as(i32, 0), gi.domain_left);
+    try testing.expectEqual(@as(i32, 64), gi.domain_width);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, gzz, wn.WA_Screen));
+    it.CloseWindow(gzz);
+    it.DisposeObject(button);
     try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);

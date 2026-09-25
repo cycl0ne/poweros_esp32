@@ -36,6 +36,7 @@ const tests = [_][]const u8{
     "hello",     "echoargs", "testlib",  "gfx",   "anim",
     "intuition", "console",  "keyboard", "touch", "input",
     "lines",     "nyan",     "plasma",   "audio", "fonts",
+    "screens",
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a

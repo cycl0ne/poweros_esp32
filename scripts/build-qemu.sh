@@ -35,6 +35,11 @@ patch "$rgb" 's/#define ESP_RGB_MAX_WIDTH   (800)/#define ESP_RGB_MAX_WIDTH   (1
 # the keys typed into it for keyboard.device (RGB_KEY, RGB_KEY_COUNT), and
 # the device's minor version raised to 5 so a guest can tell.
 git apply "$root/scripts/qemu/esp_rgb_input.patch"
+# Virtual display: twice the VRAM - four pictures of the largest window at
+# two bytes a pixel, so screens and their back buffers each have one - and
+# the minor version raised to 6 so a guest can tell.
+patch "$rgb" 's/#define ESP_RGB_MAX_VRAM_SIZE   (ESP_RGB_MAX_WIDTH \* ESP_RGB_MAX_HEIGHT \* 4)/#define ESP_RGB_MAX_VRAM_SIZE   (ESP_RGB_MAX_WIDTH * ESP_RGB_MAX_HEIGHT * 8)/' 'ESP_RGB_MAX_HEIGHT \* 8)'
+patch "$rgb_c" 's/#define RGB_VERSION_MINOR 5/#define RGB_VERSION_MINOR 6/' 'RGB_VERSION_MINOR 6'
 
 # Espressif's release flags (.github/workflows/scripts/configure-native.sh),
 # minus -Werror. SDL provides the window for the virtual display. Newer glibc turns const-qualifier mismatches in

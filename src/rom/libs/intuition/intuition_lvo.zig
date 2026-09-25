@@ -104,6 +104,22 @@ const DoubleClick = @import("input/doubleclick.zig").DoubleClick;
 const GetIMsg = @import("window/getimsg.zig").GetIMsg;
 const ReplyIMsg = @import("window/replyimsg.zig").ReplyIMsg;
 const WaitIMsg = @import("window/waitimsg.zig").WaitIMsg;
+const MoveWindowInFrontOf = @import("window/movewindowinfrontof.zig").MoveWindowInFrontOf;
+const ScrollWindowRaster = @import("window/scrollwindowraster.zig").ScrollWindowRaster;
+const SetMouseQueue = @import("window/setmousequeue.zig").SetMouseQueue;
+const ReportMouse = @import("window/reportmouse.zig").ReportMouse;
+const LockPubScreenList = @import("screen/lockpubscreenlist.zig").LockPubScreenList;
+const UnlockPubScreenList = @import("screen/unlockpubscreenlist.zig").UnlockPubScreenList;
+const NextPubScreen = @import("screen/nextpubscreen.zig").NextPubScreen;
+const SetDefaultPubScreen = @import("screen/setdefaultpubscreen.zig").SetDefaultPubScreen;
+const GetDefaultPubScreen = @import("screen/getdefaultpubscreen.zig").GetDefaultPubScreen;
+const SetPubScreenModes = @import("screen/setpubscreenmodes.zig").SetPubScreenModes;
+const PubScreenStatus = @import("screen/pubscreenstatus.zig").PubScreenStatus;
+const ScreenDepth = @import("screen/screendepth.zig").ScreenDepth;
+const ShowTitle = @import("screen/showtitle.zig").ShowTitle;
+const AllocScreenBuffer = @import("screen/allocscreenbuffer.zig").AllocScreenBuffer;
+const ChangeScreenBuffer = @import("screen/changescreenbuffer.zig").ChangeScreenBuffer;
+const FreeScreenBuffer = @import("screen/freescreenbuffer.zig").FreeScreenBuffer;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -456,6 +472,54 @@ fn lvoReplyIMsg(ib: *IntuitionBase, msg: *intuition.IntuiMessage) callconv(.c) v
 fn lvoWaitIMsg(ib: *IntuitionBase, window: *intuition.Window, others: u32) callconv(.c) u32 {
     return WaitIMsg(ib, @ptrCast(@alignCast(window)), others);
 }
+fn lvoMoveWindowInFrontOf(ib: *IntuitionBase, window: *intuition.Window, behind: *intuition.Window) callconv(.c) void {
+    MoveWindowInFrontOf(ib, @ptrCast(@alignCast(window)), @ptrCast(@alignCast(behind)));
+}
+fn lvoScrollWindowRaster(ib: *IntuitionBase, window: *intuition.Window, dx: i32, dy: i32, area: *const graphics.Rect) callconv(.c) bool {
+    return ScrollWindowRaster(ib, @ptrCast(@alignCast(window)), dx, dy, area);
+}
+fn lvoSetMouseQueue(ib: *IntuitionBase, window: *intuition.Window, length: u32) callconv(.c) u32 {
+    return SetMouseQueue(ib, @ptrCast(@alignCast(window)), length);
+}
+fn lvoReportMouse(ib: *IntuitionBase, window: *intuition.Window, on: bool) callconv(.c) void {
+    ReportMouse(ib, @ptrCast(@alignCast(window)), on);
+}
+fn lvoLockPubScreenList(ib: *IntuitionBase) callconv(.c) *exec.List {
+    return LockPubScreenList(ib);
+}
+fn lvoUnlockPubScreenList(ib: *IntuitionBase) callconv(.c) void {
+    UnlockPubScreenList(ib);
+}
+fn lvoNextPubScreen(ib: *IntuitionBase, screen: ?*intuition.Screen, name_buffer: *[32]u8) callconv(.c) ?[*:0]u8 {
+    return NextPubScreen(ib, @ptrCast(@alignCast(screen)), name_buffer);
+}
+fn lvoSetDefaultPubScreen(ib: *IntuitionBase, name: ?[*:0]const u8) callconv(.c) void {
+    SetDefaultPubScreen(ib, name);
+}
+fn lvoGetDefaultPubScreen(ib: *IntuitionBase, name_buffer: ?*[32]u8) callconv(.c) ?*intuition.Screen {
+    return @ptrCast(GetDefaultPubScreen(ib, name_buffer));
+}
+fn lvoSetPubScreenModes(ib: *IntuitionBase, modes: u32) callconv(.c) u32 {
+    return SetPubScreenModes(ib, modes);
+}
+fn lvoPubScreenStatus(ib: *IntuitionBase, screen: *intuition.Screen, flags: u32) callconv(.c) u32 {
+    return PubScreenStatus(ib, @ptrCast(@alignCast(screen)), flags);
+}
+fn lvoScreenDepth(ib: *IntuitionBase, screen: *intuition.Screen, flags: u32) callconv(.c) void {
+    ScreenDepth(ib, @ptrCast(@alignCast(screen)), flags);
+}
+fn lvoShowTitle(ib: *IntuitionBase, screen: *intuition.Screen, show: bool) callconv(.c) void {
+    ShowTitle(ib, @ptrCast(@alignCast(screen)), show);
+}
+fn lvoAllocScreenBuffer(ib: *IntuitionBase, screen: *intuition.Screen, flags: u32) callconv(.c) ?*intuition.screens.ScreenBuffer {
+    return AllocScreenBuffer(ib, @ptrCast(@alignCast(screen)), flags);
+}
+fn lvoChangeScreenBuffer(ib: *IntuitionBase, screen: *intuition.Screen, buffer: *intuition.screens.ScreenBuffer) callconv(.c) bool {
+    return ChangeScreenBuffer(ib, @ptrCast(@alignCast(screen)), buffer);
+}
+fn lvoFreeScreenBuffer(ib: *IntuitionBase, screen: *intuition.Screen, buffer: ?*intuition.screens.ScreenBuffer) callconv(.c) void {
+    FreeScreenBuffer(ib, @ptrCast(@alignCast(screen)), buffer);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -543,6 +607,22 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetIMsg),
     vec(lvoReplyIMsg),
     vec(lvoWaitIMsg),
+    vec(lvoMoveWindowInFrontOf),
+    vec(lvoScrollWindowRaster),
+    vec(lvoSetMouseQueue),
+    vec(lvoReportMouse),
+    vec(lvoLockPubScreenList),
+    vec(lvoUnlockPubScreenList),
+    vec(lvoNextPubScreen),
+    vec(lvoSetDefaultPubScreen),
+    vec(lvoGetDefaultPubScreen),
+    vec(lvoSetPubScreenModes),
+    vec(lvoPubScreenStatus),
+    vec(lvoScreenDepth),
+    vec(lvoShowTitle),
+    vec(lvoAllocScreenBuffer),
+    vec(lvoChangeScreenBuffer),
+    vec(lvoFreeScreenBuffer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -7,6 +7,7 @@ const utility = sdk.utility;
 const graphics = sdk.graphics;
 const layers = sdk.layers;
 const intuition = sdk.intuition;
+const gadgetclass = @import("../classes/gadgetclass.zig");
 const sc = intuition.screens;
 const wn = intuition.windows;
 const ic = intuition.imageclass;
@@ -123,7 +124,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
 
     const target = targetScreen(ib, tags) orelse return null;
     const s = target.screen;
-    defer if (target.locked) it.UnlockPubScreen(null, @ptrCast(s));
+    // A window opened on a public screen by name is a visitor: the lock it
+    // was found with is kept until it closes. One that fails gives it back.
+    var visiting = false;
+    defer if (target.locked and !visiting) it.UnlockPubScreen(null, @ptrCast(s));
 
     lock(ib);
     defer unlock(ib);
@@ -189,9 +193,29 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         bb = if (at_bottom) size_height else bottom_border;
     }
 
+    // A border is deep enough for the gadgets that live in it, even in a
+    // window that has no border otherwise. A right or bottom one placed
+    // from that edge needs as much as it reaches in from it; one placed
+    // from the left or top, as much as it reaches in from the size the
+    // window asks for.
+    const asked_w: i32 = @intCast(ub.GetTagData(wn.WA_Width, 200, tags));
+    const asked_h: i32 = @intCast(ub.GetTagData(wn.WA_Height, 100, tags));
+    var next: ?*intuition.Object = @ptrFromInt(ub.GetTagData(wn.WA_Gadgets, 0, tags));
+    while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) {
+        const g = gadgetclass.gadgetOf(ib, o);
+        const rel_w: i32 = if (g.flags & gadgetclass.GFLG_RELWIDTH != 0) asked_w else 0;
+        const rel_h: i32 = if (g.flags & gadgetclass.GFLG_RELHEIGHT != 0) asked_h else 0;
+        if (g.activation & gadgetclass.GACT_LEFTBORDER != 0) bl = @max(bl, g.left + g.width + rel_w);
+        if (g.activation & gadgetclass.GACT_TOPBORDER != 0) bt = @max(bt, g.top + g.height + rel_h);
+        if (g.activation & gadgetclass.GACT_RIGHTBORDER != 0)
+            br = @max(br, if (g.flags & gadgetclass.GFLG_RELRIGHT != 0) 1 - g.left else asked_w - g.left);
+        if (g.activation & gadgetclass.GACT_BOTTOMBORDER != 0)
+            bb = @max(bb, if (g.flags & gadgetclass.GFLG_RELBOTTOM != 0) 1 - g.top else asked_h - g.top);
+    }
+
     // Where and how big, kept on the screen.
-    var width: i32 = @intCast(ub.GetTagData(wn.WA_Width, 200, tags));
-    var height: i32 = @intCast(ub.GetTagData(wn.WA_Height, 100, tags));
+    var width: i32 = asked_w;
+    var height: i32 = asked_h;
     if (ub.FindTagItem(wn.WA_InnerWidth, tags)) |item| width = @as(i32, @intCast(item.data)) + bl + br;
     if (ub.FindTagItem(wn.WA_InnerHeight, tags)) |item| height = @as(i32, @intCast(item.data)) + bt + bb;
     var left: i32 = @intCast(ub.GetTagData(wn.WA_Left, 0, tags));
@@ -261,9 +285,11 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     };
     // A new backdrop layer goes behind every other, the screen's ground
     // included; a backdrop window belongs just in front of the ground,
-    // behind the title bar and every ordinary window.
+    // behind the title bar and every ordinary window - or in front of the
+    // bar, when `ShowTitle` has put the bar behind the backdrop windows.
     if (flags & WF_BACKDROP != 0) {
-        if (s.ground) |ground| _ = lb.MoveLayerInFrontOf(layer, ground);
+        const behind = if (s.show_title) s.ground else (s.bar orelse s.ground);
+        if (behind) |under| _ = lb.MoveLayerInFrontOf(layer, under);
     }
     var where: usize = 0;
     const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&where) }, .{} };
@@ -421,5 +447,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         drawBorder(ib, w);
     }
     _gadget.renderAll(ib, w);
+    if (target.locked) {
+        visiting = true;
+        w.more_flags |= _window.WMF_VISITOR;
+        if (ib.pub_modes & sc.POPPUBSCREEN != 0) it.ScreenToFront(@ptrCast(s));
+    }
     return @ptrCast(w);
 }

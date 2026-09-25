@@ -109,6 +109,9 @@ const Panel = struct {
     frame: ?[*]u8 = null,
     frame_memory: ?*anyopaque = null,
     frame_bytes: usize = 0,
+    /// How many pictures the display memory holds: several when there was
+    /// room, so one can be drawn while another is on the glass.
+    frames: u32 = 0,
     band: ?[*]align(4) u8 = null,
     band_rows: u32 = 0,
     stats: rtg.RtgBoardStats = .{},
@@ -185,11 +188,17 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
     panel.frame_bytes = @as(usize, width) * height * 2;
     const line = sdk.hardware.DCACHE_LINE_SIZE;
-    const asked: u32 = @intCast(panel.frame_bytes + line);
-    const frame = sys.AllocVec(asked, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR) orelse
-        sys.AllocVec(asked, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        giveBack(panel);
-        return err.RTGERR_NO_MEMORY;
+    // As many pictures as the board asks for (`RTGA_Buffers`), or as many
+    // fewer as there is room for; one may live anywhere.
+    panel.frames = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
+    const frame = while (true) : (panel.frames -= 1) {
+        const asked: u32 = @intCast(panel.frames * panel.frame_bytes + line);
+        if (sys.AllocVec(asked, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR)) |memory| break memory;
+        if (panel.frames > 1) continue;
+        break sys.AllocVec(asked, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            giveBack(panel);
+            return err.RTGERR_NO_MEMORY;
+        };
     };
     panel.frame_memory = frame;
     panel.frame = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(frame), line));
@@ -228,12 +237,12 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
 
     board.region = .{
         .base = panel.frame,
-        .size = panel.frame_bytes,
+        .size = panel.frames * panel.frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
     };
     board.ops = &ops;
-    board.info.buffers = 1;
+    board.info.buffers = panel.frames;
     board.info.brightness = 0;
     return err.RTGERR_OK;
 }

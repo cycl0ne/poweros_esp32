@@ -1769,10 +1769,14 @@ rtg.library/WaitVBlank
 
    BEHAVIOR
 	The buffer shown before is no longer marked showing, so it can be
-	freed; the new one is, so it cannot.
+	freed; the new one is, so it cannot. A display that is already showing
+	takes the new buffer up whole, at the start of a frame, and this
+	returns when it has: the one shown before is no longer read and may be
+	drawn into - which is how a program shows a frame while it draws the
+	next.
 
    CONTEXT
-	- Waits: only if the driver does.
+	- Waits: for the display's next frame, where the board streams one.
 	- Interrupts: no. The driver may wait on its bus.
 	- Forbid: must not be held: a driver may wait.
 	- Process: a Task will do.

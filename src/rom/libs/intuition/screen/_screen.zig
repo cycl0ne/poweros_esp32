@@ -15,19 +15,28 @@
 //! keeps nothing and draws nothing else, so its damage is dropped after
 //! every repair.
 //!
-//! One screen to a display: the display's buffer is the screen's, and the
-//! surface a RastPort on it draws into is what tells two displays apart.
+//! **Buffers.** A screen draws in a buffer of its display's memory, the
+//! display's size. The first screen of a display takes the buffer the
+//! display was brought up showing - its *home* - and every further one is
+//! given a buffer of its own. The base's list of screens is in depth order,
+//! front first, and a display shows the buffer of its frontmost screen:
+//! bringing a screen forward is showing its buffer, which the driver does
+//! at a frame's start, so nothing is copied and nothing tears. When a
+//! display's last screen closes, its home is shown again, black.
+//!
 //! The list of screens and every public screen's lock count are guarded by
 //! one semaphore in the base, which nests, so LockPubScreen can open the
 //! default screen while it holds it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const rtg = sdk.rtg;
 const utility = sdk.utility;
 const graphics = sdk.graphics;
 const layers = sdk.layers;
 const intuition = sdk.intuition;
 const sc = intuition.screens;
+const ic = intuition.imageclass;
 const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
@@ -36,10 +45,29 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 pub const Screen = extern struct {
     /// On the base's list of screens.
     node: exec.MinNode = .{},
-    /// Over the whole display, under no layer.
+    /// Over the whole screen, under no layer.
     rp: *graphics.RastPort,
-    /// The display's surface: what makes this screen this display's.
+    /// The buffer it draws in, as a surface.
     surface: usize,
+    /// Its display, the buffer it draws in, and the display's home buffer.
+    /// `own_bitmap` when the buffer was allocated for it, rather than being
+    /// the home it took over.
+    board: *rtg.RtgBoard,
+    bitmap: *rtg.RtgBitMap,
+    home: *rtg.RtgBitMap,
+    own_bitmap: bool = false,
+    /// What it shows while it is in front: `bitmap`, or a buffer of its
+    /// own that `ChangeScreenBuffer` made the one shown.
+    shown: *rtg.RtgBitMap,
+    /// Whether its bar is in front of its backdrop windows (`ShowTitle`).
+    show_title: bool = true,
+    /// The depth gadget at the bar's right end, how wide it is, and whether
+    /// it is drawn pressed. None without a bar.
+    depth_image: ?*intuition.Object = null,
+    depth_width: i32 = 0,
+    depth_pressed: bool = false,
+    /// `SA_Type`: `CUSTOMSCREEN` or `PUBLICSCREEN`.
+    screen_type: u32 = sc.CUSTOMSCREEN,
     /// Its windows' layers, and the bar's.
     layer_info: *layers.LayerInfo,
     /// The title bar, or null without one.
@@ -64,11 +92,13 @@ pub const Screen = extern struct {
     bar_height: i32 = 0,
     pens: [sc.NUMDRIPENS]Pen,
     draw_info: sc.DrawInfo,
-    /// Nonzero for a public screen: its name is in `pub_name`.
+    /// Nonzero for a public screen: its name is in `pub_name`, and
+    /// `pub_node` is on the base's list of public screens.
     public: bool = false,
     pub_name: [sc.MAXPUBSCREENNAME + 1]u8 = @splat(0),
-    /// How many LockPubScreens are outstanding. It cannot close until 0.
-    visitors: u32 = 0,
+    /// Its entry on that list: whether it is private, and how many locks
+    /// and visitor windows are outstanding - it cannot close until none.
+    pub_node: sc.PubScreenNode,
     /// Its windows, oldest first. It cannot close while it has any.
     windows: exec.MinList = .{},
 };
@@ -106,14 +136,6 @@ pub fn nameLen(s: [*:0]const u8) usize {
     return n;
 }
 
-fn sameName(a: [*:0]const u8, b: [*:0]const u8) bool {
-    var i: usize = 0;
-    while (a[i] == b[i]) : (i += 1) {
-        if (a[i] == 0) return true;
-    }
-    return false;
-}
-
 /// The height of the ROM's font intuition starts with, for a screen given
 /// none and for `IntuiTextLength` without a font: 16, the size that reads
 /// at full height on a panel whose pixels are square.
@@ -127,26 +149,91 @@ pub fn unlock(ib: *IntuitionBase) void {
     ib.sys_base.ReleaseSemaphore(&ib.screen_lock);
 }
 
-/// The public screen of that name, with the list held.
+/// The public screen of that name, private or not, with the list held.
+/// Names are told apart without regard to case.
 pub fn findPublic(ib: *IntuitionBase, name: [*:0]const u8) ?*Screen {
-    var node = ib.screen_list.head;
+    var node = ib.pub_screens.head;
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
-        const s: *Screen = @ptrCast(@alignCast(n));
-        if (s.public and sameName(@ptrCast(&s.pub_name), name)) return s;
+        const psn: *sc.PubScreenNode = @ptrCast(@alignCast(n));
+        if (ib.utility_base.Stricmp(psn.node.name.?, name) == 0) return @ptrCast(@alignCast(psn.screen));
     }
     return null;
 }
 
-/// Whether some screen already has the display this surface belongs to.
-pub fn displayTaken(ib: *IntuitionBase, surface: usize) bool {
+/// The same, only when it is open to visitors.
+pub fn findVisitable(ib: *IntuitionBase, name: [*:0]const u8) ?*Screen {
+    const s = findPublic(ib, name) orelse return null;
+    return if (s.pub_node.flags & sc.PSNF_PRIVATE != 0) null else s;
+}
+
+/// One visitor more, with the list held.
+pub fn visit(s: *Screen) void {
+    s.pub_node.visitor_count += 1;
+}
+
+/// One visitor fewer, with the list held. The last to go tells the owner,
+/// if it asked to be told, so it can try to close the screen again.
+pub fn leave(ib: *IntuitionBase, s: *Screen) void {
+    const psn = &s.pub_node;
+    if (psn.visitor_count == 0) return;
+    psn.visitor_count -= 1;
+    if (psn.visitor_count != 0) return;
+    const task = psn.sig_task orelse return;
+    ib.sys_base.Signal(task, @as(u32, 1) << @as(u5, @truncate(psn.sig_bit)));
+}
+
+/// The frontmost screen of a display, or null when it has none.
+pub fn frontOn(ib: *IntuitionBase, board: *rtg.RtgBoard) ?*Screen {
     var node = ib.screen_list.head;
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
         const s: *Screen = @ptrCast(@alignCast(n));
-        if (s.surface == surface) return true;
+        if (s.board == board) return s;
+    }
+    return null;
+}
+
+/// The display's home buffer: the one it was showing when intuition first
+/// put a screen on it, which every screen of the display remembers.
+pub fn homeOf(ib: *IntuitionBase, board: *rtg.RtgBoard, showing: *rtg.RtgBitMap) *rtg.RtgBitMap {
+    var node = ib.screen_list.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(n));
+        if (s.board == board) return s.home;
+    }
+    return showing;
+}
+
+/// Whether a screen draws in this buffer.
+pub fn inUse(ib: *IntuitionBase, bitmap: *rtg.RtgBitMap) bool {
+    var node = ib.screen_list.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(n));
+        if (s.bitmap == bitmap) return true;
     }
     return false;
+}
+
+/// The display shows its frontmost screen, or its home when it has none.
+/// Showing a buffer waits for the frame it starts on, so this is called
+/// with the list held but never under Forbid.
+pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
+    const rb = ib.rtg_base orelse return;
+    const wanted = if (frontOn(ib, board)) |s| s.shown else home;
+    if (board.showing == wanted) return;
+    _ = rb.ShowBitMap(board, wanted, 0, 0);
+}
+
+/// A screen to the front of the list, or to the back, and its display
+/// showing whichever is now its front.
+pub fn restack(ib: *IntuitionBase, s: *Screen, to_front: bool) void {
+    const sys = ib.sys_base;
+    sys.Remove(@ptrCast(&s.node));
+    if (to_front) sys.AddHead(@ptrCast(&ib.screen_list), @ptrCast(&s.node)) else sys.AddTail(@ptrCast(&ib.screen_list), @ptrCast(&s.node));
+    showFront(ib, s.board, s.home);
 }
 
 pub fn setPen(ib: *IntuitionBase, rp: *graphics.RastPort, pen: Pen) void {
@@ -176,6 +263,7 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     setPen(ib, rp, s.pens[sc.BARTRIMPEN]);
     gb.DrawHLine(rp, 0, s.bar_height - 1, s.width);
 
+    defer drawDepthOn(ib, s, rp);
     const title = s.title orelse return;
     graphics.SetFont(gb, rp, s.font);
     var baseline: u32 = 0;
@@ -184,6 +272,36 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     setPen(ib, rp, s.pens[sc.BARDETAILPEN]);
     gb.Move(rp, bar_left, bar_border + @as(i32, @intCast(baseline)));
     gb.Text(rp, title, @intCast(nameLen(title)));
+}
+
+/// The bar's depth gadget, pressed or not. Drawn after the title, so a
+/// title that runs that far is covered by it.
+fn drawDepthOn(ib: *IntuitionBase, s: *Screen, rp: *graphics.RastPort) void {
+    const image = s.depth_image orelse return;
+    const state: u32 = if (s.depth_pressed) ic.IDS_SELECTED else ic.IDS_NORMAL;
+    ib.iface().DrawImageState(rp, image, s.width - s.depth_width, 0, state, &s.draw_info);
+}
+
+/// The depth gadget drawn again, pressed or let go.
+pub fn drawDepth(ib: *IntuitionBase, s: *Screen, pressed: bool) void {
+    const bar = s.bar orelse return;
+    s.depth_pressed = pressed;
+    var where: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&where) }, .{} };
+    ib.layers_base.GetLayerAttrs(bar, &ask);
+    if (where == 0) return;
+    ib.layers_base.LockLayer(bar);
+    defer ib.layers_base.UnlockLayer(bar);
+    drawDepthOn(ib, s, @ptrFromInt(where));
+}
+
+/// Whether (x, y) is on the bar's depth gadget where it shows - no window
+/// in front of it there.
+pub fn onDepthGadget(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) bool {
+    const bar = s.bar orelse return false;
+    if (s.depth_image == null) return false;
+    if (x < s.width - s.depth_width or x >= s.width or y < 0 or y >= s.bar_height - 1) return false;
+    return ib.layers_base.WhichLayer(s.layer_info, x, y) == bar;
 }
 
 /// The ground's backfill: the area in the background pen, through the

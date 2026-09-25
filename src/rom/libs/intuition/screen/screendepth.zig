@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! ScreenToFront: brings a screen to the front of its display.
+//! ScreenDepth: a screen to the front of its display or to the back.
 
+const sdk = @import("sdk");
+const sc = sdk.intuition.screens;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("_screen.zig");
 const Screen = _screen.Screen;
@@ -8,26 +10,25 @@ const lock = _screen.lock;
 const restack = _screen.restack;
 const unlock = _screen.unlock;
 
-/// Brings a screen to the front of its display.
+/// Moves a screen to the front of its display or to the back.
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn ScreenToFront(ib: *IntuitionBase, screen: *Screen) void
+/// fn ScreenDepth(ib: *IntuitionBase, screen: *Screen, flags: u32) void
 /// ```
 ///
-/// SINCE: 0.4. LVO -108.
+/// SINCE: 0.14. LVO -388.
 ///
 /// INPUTS:
 /// - `screen` - the screen.
+/// - `flags` - `SDEPTH_TOFRONT` or `SDEPTH_TOBACK`.
 ///
 /// RESULT:
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// It goes in front of every other screen of its display, and the display
-/// shows it from the start of the next frame: its buffer is shown in place
-/// of the one that was, whole, and nothing is copied. Its windows keep
-/// whatever they had; the active window stays the one it was.
+/// `ScreenToFront` or `ScreenToBack`, chosen by a value - for a gadget or
+/// a key that flips between the two.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and for the display to take
@@ -40,20 +41,20 @@ const unlock = _screen.unlock;
 /// Nothing changes hands.
 ///
 /// NOTES:
-/// The pointer and the menu button reach the screen in front.
+/// None.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `ScreenToBack`, `ScreenDepth`, `OpenScreenTagList` (`SA_Behind`)
+/// `ScreenToFront`, `ScreenToBack`
 ///
 /// EXAMPLES:
 /// ```zig
-/// ib.ScreenToFront(screen);
+/// ib.ScreenDepth(screen, sc.SDEPTH_TOBACK);
 /// ```
-pub fn ScreenToFront(ib: *IntuitionBase, screen: *Screen) void {
+pub fn ScreenDepth(ib: *IntuitionBase, screen: *Screen, flags: u32) void {
     lock(ib);
     defer unlock(ib);
-    restack(ib, screen, true);
+    restack(ib, screen, flags & sc.SDEPTH_TOBACK == 0);
 }

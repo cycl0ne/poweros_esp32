@@ -100,6 +100,22 @@ pub const LVO = struct {
     pub const GetIMsg = libraries.lvo(82);
     pub const ReplyIMsg = libraries.lvo(83);
     pub const WaitIMsg = libraries.lvo(84);
+    pub const MoveWindowInFrontOf = libraries.lvo(85);
+    pub const ScrollWindowRaster = libraries.lvo(86);
+    pub const SetMouseQueue = libraries.lvo(87);
+    pub const ReportMouse = libraries.lvo(88);
+    pub const LockPubScreenList = libraries.lvo(89);
+    pub const UnlockPubScreenList = libraries.lvo(90);
+    pub const NextPubScreen = libraries.lvo(91);
+    pub const SetDefaultPubScreen = libraries.lvo(92);
+    pub const GetDefaultPubScreen = libraries.lvo(93);
+    pub const SetPubScreenModes = libraries.lvo(94);
+    pub const PubScreenStatus = libraries.lvo(95);
+    pub const ScreenDepth = libraries.lvo(96);
+    pub const ShowTitle = libraries.lvo(97);
+    pub const AllocScreenBuffer = libraries.lvo(98);
+    pub const ChangeScreenBuffer = libraries.lvo(99);
+    pub const FreeScreenBuffer = libraries.lvo(100);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -186,6 +202,22 @@ pub const Fn = struct {
     pub const GetIMsg = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) ?*intuition.IntuiMessage;
     pub const ReplyIMsg = *const fn (*IntuitionBase, *intuition.IntuiMessage) callconv(.c) void;
     pub const WaitIMsg = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) u32;
+    pub const MoveWindowInFrontOf = *const fn (*IntuitionBase, *intuition.Window, *intuition.Window) callconv(.c) void;
+    pub const ScrollWindowRaster = *const fn (*IntuitionBase, *intuition.Window, i32, i32, *const graphics.Rect) callconv(.c) bool;
+    pub const SetMouseQueue = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) u32;
+    pub const ReportMouse = *const fn (*IntuitionBase, *intuition.Window, bool) callconv(.c) void;
+    pub const LockPubScreenList = *const fn (*IntuitionBase) callconv(.c) *exec.List;
+    pub const UnlockPubScreenList = *const fn (*IntuitionBase) callconv(.c) void;
+    pub const NextPubScreen = *const fn (*IntuitionBase, ?*intuition.Screen, *[32]u8) callconv(.c) ?[*:0]u8;
+    pub const SetDefaultPubScreen = *const fn (*IntuitionBase, ?[*:0]const u8) callconv(.c) void;
+    pub const GetDefaultPubScreen = *const fn (*IntuitionBase, ?*[32]u8) callconv(.c) ?*intuition.Screen;
+    pub const SetPubScreenModes = *const fn (*IntuitionBase, u32) callconv(.c) u32;
+    pub const PubScreenStatus = *const fn (*IntuitionBase, *intuition.Screen, u32) callconv(.c) u32;
+    pub const ScreenDepth = *const fn (*IntuitionBase, *intuition.Screen, u32) callconv(.c) void;
+    pub const ShowTitle = *const fn (*IntuitionBase, *intuition.Screen, bool) callconv(.c) void;
+    pub const AllocScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, u32) callconv(.c) ?*intuition.screens.ScreenBuffer;
+    pub const ChangeScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, *intuition.screens.ScreenBuffer) callconv(.c) bool;
+    pub const FreeScreenBuffer = *const fn (*IntuitionBase, *intuition.Screen, ?*intuition.screens.ScreenBuffer) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -683,5 +715,95 @@ pub const IntuitionBase = opaque {
     /// and answer the signals received.
     pub fn WaitIMsg(self: *IntuitionBase, window: *intuition.Window, others: u32) u32 {
         return libraries.call(self, LVO.WaitIMsg, Fn.WaitIMsg, .{ window, others });
+    }
+
+    /// Put a window just in front of another of the same screen and kind.
+    pub fn MoveWindowInFrontOf(self: *IntuitionBase, window: *intuition.Window, behind: *intuition.Window) void {
+        return libraries.call(self, LVO.MoveWindowInFrontOf, Fn.MoveWindowInFrontOf, .{ window, behind });
+    }
+
+    /// Move part of what a window shows by dx, dy and clear what it leaves.
+    /// False when it could not be moved: the whole area is cleared then.
+    pub fn ScrollWindowRaster(self: *IntuitionBase, window: *intuition.Window, dx: i32, dy: i32, area: *const graphics.Rect) bool {
+        return libraries.call(self, LVO.ScrollWindowRaster, Fn.ScrollWindowRaster, .{ window, dx, dy, area });
+    }
+
+    /// How many pointer moves a window may have waiting; answers the old one.
+    pub fn SetMouseQueue(self: *IntuitionBase, window: *intuition.Window, length: u32) u32 {
+        return libraries.call(self, LVO.SetMouseQueue, Fn.SetMouseQueue, .{ window, length });
+    }
+
+    /// Whether a window is told of the pointer's moves with no button held.
+    pub fn ReportMouse(self: *IntuitionBase, window: *intuition.Window, on: bool) void {
+        return libraries.call(self, LVO.ReportMouse, Fn.ReportMouse, .{ window, on });
+    }
+
+    /// Hold the list of public screens (PubScreenNodes) and answer it; nothing
+    /// opens, closes or changes status until UnlockPubScreenList.
+    pub fn LockPubScreenList(self: *IntuitionBase) *exec.List {
+        return libraries.call(self, LVO.LockPubScreenList, Fn.LockPubScreenList, .{});
+    }
+
+    /// Let the list of public screens go.
+    pub fn UnlockPubScreenList(self: *IntuitionBase) void {
+        return libraries.call(self, LVO.UnlockPubScreenList, Fn.UnlockPubScreenList, .{});
+    }
+
+    /// The name of the public screen after `screen` (the first for null or a
+    /// private one), round and round, into `name_buffer`; null when none.
+    pub fn NextPubScreen(self: *IntuitionBase, screen: ?*intuition.Screen, name_buffer: *[32]u8) ?[*:0]u8 {
+        return libraries.call(self, LVO.NextPubScreen, Fn.NextPubScreen, .{ screen, name_buffer });
+    }
+
+    /// Make the named public screen the default one; null for Workbench.
+    pub fn SetDefaultPubScreen(self: *IntuitionBase, name: ?[*:0]const u8) void {
+        return libraries.call(self, LVO.SetDefaultPubScreen, Fn.SetDefaultPubScreen, .{name});
+    }
+
+    /// The default public screen (null for Workbench), its name into
+    /// `name_buffer` if given. The screen is not locked.
+    pub fn GetDefaultPubScreen(self: *IntuitionBase, name_buffer: ?*[32]u8) ?*intuition.Screen {
+        return libraries.call(self, LVO.GetDefaultPubScreen, Fn.GetDefaultPubScreen, .{name_buffer});
+    }
+
+    /// The public screen modes (POPPUBSCREEN); answers the old ones.
+    pub fn SetPubScreenModes(self: *IntuitionBase, modes: u32) u32 {
+        return libraries.call(self, LVO.SetPubScreenModes, Fn.SetPubScreenModes, .{modes});
+    }
+
+    /// Open a public screen to visitors (0) or close it to them
+    /// (PSNF_PRIVATE). 1 when done, 0 when not public or visitors remain.
+    pub fn PubScreenStatus(self: *IntuitionBase, screen: *intuition.Screen, flags: u32) u32 {
+        return libraries.call(self, LVO.PubScreenStatus, Fn.PubScreenStatus, .{ screen, flags });
+    }
+
+    /// A screen to the front of its display (SDEPTH_TOFRONT) or to the back
+    /// (SDEPTH_TOBACK).
+    pub fn ScreenDepth(self: *IntuitionBase, screen: *intuition.Screen, flags: u32) void {
+        return libraries.call(self, LVO.ScreenDepth, Fn.ScreenDepth, .{ screen, flags });
+    }
+
+    /// A screen's title bar in front of its backdrop windows, or behind them.
+    pub fn ShowTitle(self: *IntuitionBase, screen: *intuition.Screen, show: bool) void {
+        return libraries.call(self, LVO.ShowTitle, Fn.ShowTitle, .{ screen, show });
+    }
+
+    /// One more buffer for a screen to show: SB_SCREEN_BITMAP for its own, 0
+    /// or SB_COPY_BITMAP for a new one in its display's memory. Null without
+    /// room.
+    pub fn AllocScreenBuffer(self: *IntuitionBase, screen: *intuition.Screen, flags: u32) ?*intuition.screens.ScreenBuffer {
+        return libraries.call(self, LVO.AllocScreenBuffer, Fn.AllocScreenBuffer, .{ screen, flags });
+    }
+
+    /// Show one of a screen's buffers from the display's next frame on;
+    /// returns when it is shown. False while its menus are up.
+    pub fn ChangeScreenBuffer(self: *IntuitionBase, screen: *intuition.Screen, buffer: *intuition.screens.ScreenBuffer) bool {
+        return libraries.call(self, LVO.ChangeScreenBuffer, Fn.ChangeScreenBuffer, .{ screen, buffer });
+    }
+
+    /// Give back a buffer from AllocScreenBuffer, the screen's own shown again
+    /// first if it was the one shown.
+    pub fn FreeScreenBuffer(self: *IntuitionBase, screen: *intuition.Screen, buffer: ?*intuition.screens.ScreenBuffer) void {
+        return libraries.call(self, LVO.FreeScreenBuffer, Fn.FreeScreenBuffer, .{ screen, buffer });
     }
 };

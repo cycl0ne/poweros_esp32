@@ -25,6 +25,15 @@ const bpp_value = regs + 0x18;
 /// Framebuffer RAM provided by the device.
 pub const vram = 0x2000_0000;
 
+/// How much of it there is: the largest window at four bytes a pixel, or
+/// twice that in our build from version 0.6 (scripts/build-qemu.sh) -
+/// room for four pictures of the largest window at two bytes a pixel.
+pub fn vramSize() usize {
+    const v = reg(version_reg).*;
+    const doubled = (v >> 16) > 0 or (v & 0xFFFF) >= 6;
+    return @as(usize, 1024) * 600 * 4 * @as(usize, if (doubled) 2 else 1);
+}
+
 /// Size the window; false if QEMU clamped it (stock QEMU stops at 800 px).
 pub fn init(width: u16, height: u16) bool {
     const size = @as(u32, width) << 16 | height;
@@ -33,11 +42,13 @@ pub fn init(width: u16, height: u16) bool {
     return reg(win_size).* == size;
 }
 
-/// Copy the whole framebuffer to the window on QEMU's next screen refresh.
-pub fn update(width: u16, height: u16) void {
+/// Copy the picture at `pixels` - packed rows, in VRAM - to the window on
+/// QEMU's next screen refresh. Whatever address it is given is what it
+/// reads, so showing another picture is naming another address.
+pub fn update(pixels: usize, width: u16, height: u16) void {
     reg(update_from).* = 0;
     reg(update_to).* = @as(u32, width) << 16 | height;
-    reg(update_content).* = vram; // CPU address of the pixels
+    reg(update_content).* = @truncate(pixels); // CPU address of the pixels
     reg(update_status).* = 1;
 }
 

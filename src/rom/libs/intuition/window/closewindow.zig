@@ -31,7 +31,9 @@ const unlock = _window.unlock;
 /// BEHAVIOR:
 /// Its layer goes, so what it covered is uncovered and any simple-refresh
 /// window underneath is repaired. Messages still waiting on its port are
-/// freed with the port. If it was active, no window is.
+/// freed with the port. If it was active, no window is. A window opened on
+/// a public screen by name, or on the default one, ends its visit, which
+/// may be the last the screen's owner is waiting for.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -83,6 +85,8 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     w.inner_rp = null;
     ib.layers_base.DeleteLayer(w.layer);
     disposeParts(ib, w);
+    const visitor = w.more_flags & _window.WMF_VISITOR != 0;
     ib.sys_base.FreeMem(w, @sizeOf(Window));
     repairScreen(ib, s);
+    if (visitor) _screen.leave(ib, s);
 }

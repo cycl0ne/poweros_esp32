@@ -128,7 +128,9 @@ pub const WA_MaxHeight = WA_Dummy + 0x12;
 pub const WA_InnerWidth = WA_Dummy + 0x13;
 pub const WA_InnerHeight = WA_Dummy + 0x14;
 /// A public screen to open on, by name. The default public screen when
-/// neither this nor WA_CustomScreen nor WA_PubScreen is given.
+/// neither this nor WA_CustomScreen nor WA_PubScreen is given. A window
+/// opened either way is a visitor: the screen cannot close, or go
+/// private, until the window closes.
 pub const WA_PubScreenName = WA_Dummy + 0x15;
 /// A public screen to open on, by pointer, which the caller holds locked.
 pub const WA_PubScreen = WA_Dummy + 0x16;

@@ -14,10 +14,12 @@ Generated from the source by `./zig build autodoc`.
 - [ActivateWindow](#activatewindow) - Makes a window the active one.
 - [AddClass](#addclass) - Makes a class public.
 - [AddGList](#addglist) - Puts gadgets into a window.
+- [AllocScreenBuffer](#allocscreenbuffer) - Makes one more buffer for a screen to show.
 - [AutoRequestTagList](#autorequesttaglist) - Asks with two buttons made from IntuiTexts and waits.
 - [BeginRefresh](#beginrefresh) - Begins redrawing what a window lost.
 - [BuildEasyRequestArgs](#buildeasyrequestargs) - Opens a requester and hands it back to be answered.
 - [BuildSysRequestTagList](#buildsysrequesttaglist) - A two-button requester from IntuiTexts, handed back.
+- [ChangeScreenBuffer](#changescreenbuffer) - Shows one of a screen's buffers.
 - [ChangeWindowBox](#changewindowbox) - Moves and sizes a window at once.
 - [ClearDMRequest](#cleardmrequest) - No double-click requester any more.
 - [ClearMenuStrip](#clearmenustrip) - Takes a window's menus away.
@@ -36,9 +38,11 @@ Generated from the source by `./zig build autodoc`.
 - [EraseImage](#eraseimage) - Erases what an image covers.
 - [FindClass](#findclass) - Finds a public class by name.
 - [FreeClass](#freeclass) - Frees a class.
+- [FreeScreenBuffer](#freescreenbuffer) - Gives back a buffer from `AllocScreenBuffer`.
 - [FreeScreenDrawInfo](#freescreendrawinfo) - Hands back a DrawInfo.
 - [FreeSysRequest](#freesysrequest) - Closes a requester and gives back what was made for it.
 - [GetAttr](#getattr) - Reads one attribute of an object.
+- [GetDefaultPubScreen](#getdefaultpubscreen) - Names the default public screen.
 - [GetIMsg](#getimsg) - Takes the next message off a window's port.
 - [GetScreenAttrs](#getscreenattrs) - Reads a screen.
 - [GetScreenDrawInfo](#getscreendrawinfo) - The pens and font a screen's parts are drawn in.
@@ -50,11 +54,14 @@ Generated from the source by `./zig build autodoc`.
 - [LockClassList](#lockclasslist) - Holds the public class list.
 - [LockIBase](#lockibase) - Holds the screens and windows still.
 - [LockPubScreen](#lockpubscreen) - Locks a public screen, opening the default one if needed.
+- [LockPubScreenList](#lockpubscreenlist) - Holds the list of public screens, and answers it.
 - [MakeClass](#makeclass) - Makes a class.
 - [ModifyIDCMP](#modifyidcmp) - Changes which messages a window gets.
 - [MoveWindow](#movewindow) - Moves a window.
+- [MoveWindowInFrontOf](#movewindowinfrontof) - Puts a window just in front of another.
 - [NewObjectTagList](#newobjecttaglist) - Makes an object.
 - [NextObject](#nextobject) - Walks a list of objects.
+- [NextPubScreen](#nextpubscreen) - Names the public screen after a given one, going round.
 - [ObtainGIRPort](#obtaingirport) - The RastPort a gadget draws into, for a moment.
 - [OffGadget](#offgadget) - Keeps a gadget from being pressed, and shows it so.
 - [OffMenu](#offmenu) - Keeps a menu, an item or a subitem from being picked.
@@ -64,28 +71,37 @@ Generated from the source by `./zig build autodoc`.
 - [OpenWindowTagList](#openwindowtaglist) - Opens a window.
 - [PointInImage](#pointinimage) - Whether a point is inside an image.
 - [PrintIText](#printitext) - Draws a run of text and the runs linked after it.
+- [PubScreenStatus](#pubscreenstatus) - Opens a public screen to visitors, or closes it to them.
 - [RefreshGList](#refreshglist) - Draws gadgets of a window.
 - [RefreshWindowFrame](#refreshwindowframe) - Draws a window's border again.
 - [ReleaseGIRPort](#releasegirport) - Gives back a RastPort from `ObtainGIRPort`.
 - [RemoveClass](#removeclass) - Takes a class off the public list.
 - [RemoveGList](#removeglist) - Takes gadgets out of a window.
 - [ReplyIMsg](#replyimsg) - Hands a message from `GetIMsg` back.
+- [ReportMouse](#reportmouse) - Turns the reports of the pointer's moves to a window on or off.
 - [Request](#request) - Puts a requester up in a window.
 - [ResetMenuStrip](#resetmenustrip) - Gives a window back a strip it already had.
+- [ScreenDepth](#screendepth) - Moves a screen to the front of its display or to the back.
 - [ScreenToBack](#screentoback) - Puts a screen behind the others on its display.
 - [ScreenToFront](#screentofront) - Brings a screen to the front of its display.
+- [ScrollWindowRaster](#scrollwindowraster) - Moves part of what a window shows, and clears what it leaves.
 - [SendMessage](#sendmessage) - Sends a message to an object.
 - [SendSuperMessage](#sendsupermessage) - Sends a message on to a class's superclass.
 - [SetAttrsTagList](#setattrstaglist) - Changes an object's attributes.
 - [SetDMRequest](#setdmrequest) - The requester a double-click of the menu button puts up.
+- [SetDefaultPubScreen](#setdefaultpubscreen) - Chooses the public screen windows open on by default.
 - [SetGadgetAttrsTagList](#setgadgetattrstaglist) - Changes a gadget's attributes, and lets it show the change.
 - [SetMenuStrip](#setmenustrip) - Gives a window its menus.
+- [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
+- [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
 - [SetWindowTitles](#setwindowtitles) - Changes a window's title and the screen title it shows while active.
+- [ShowTitle](#showtitle) - Puts a screen's title bar in front of its backdrop windows, or behind them.
 - [SizeWindow](#sizewindow) - Sizes a window.
 - [SysReqHandler](#sysreqhandler) - Reads what arrived at a requester.
 - [UnlockClassList](#unlockclasslist) - Lets the public class list go.
 - [UnlockIBase](#unlockibase) - Lets the screens and windows go again.
 - [UnlockPubScreen](#unlockpubscreen) - Unlocks a public screen.
+- [UnlockPubScreenList](#unlockpubscreenlist) - Lets the list of public screens go.
 - [WaitIMsg](#waitimsg) - Waits until a window has a message, or one of some other signals comes.
 - [WindowLimits](#windowlimits) - Sets how small and how large a window may be sized.
 - [WindowToBack](#windowtoback) - Puts a window at the back.
@@ -351,6 +367,73 @@ None known.
 ```zig
 _ = ib.AddGList(window, ok_button, -1, 1);
 ib.RefreshGList(ok_button, window, 1);
+```
+
+## AllocScreenBuffer
+
+Makes one more buffer for a screen to show.
+
+**SYNOPSIS**
+
+```zig
+fn AllocScreenBuffer(ib: *IntuitionBase, screen: *Screen, flags: u32) ?*ScreenBuffer
+```
+
+**SINCE**
+
+0.14. LVO -396.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `flags` - `SB_SCREEN_BITMAP` for the screen's own buffer, else 0 or
+  `SB_COPY_BITMAP` for a new one.
+
+**RESULT**
+
+The buffer, or null: no memory, or no room in the display's memory for
+another picture.
+
+**BEHAVIOR**
+
+A new buffer is a picture the screen's size in its display's memory,
+black - or a copy of the screen's own with `SB_COPY_BITMAP` - with a
+RastPort over the whole of it. With `SB_SCREEN_BITMAP` nothing is
+allocated: the buffer is the screen's own, the one its bar, windows and
+menus are drawn in, and its RastPort the screen's. Two buffers, drawn
+and shown in turn with `ChangeScreenBuffer`, are double buffering.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer is the caller's, to give back with `FreeScreenBuffer` before
+the screen closes.
+
+**NOTES**
+
+A display's memory holds a few pictures, and each open screen takes
+one: on a display with room for two, one screen and one more buffer is
+all there is.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ChangeScreenBuffer`, `FreeScreenBuffer`
+
+**EXAMPLES**
+
+```zig
+const front = ib.AllocScreenBuffer(screen, sc.SB_SCREEN_BITMAP) orelse return;
+const back = ib.AllocScreenBuffer(screen, 0) orelse return;
 ```
 
 ## AutoRequestTagList
@@ -648,6 +731,74 @@ const req = ib.BuildSysRequestTagList(null, &[_]TagItem{
 defer ib.FreeSysRequest(req);
 ```
 
+## ChangeScreenBuffer
+
+Shows one of a screen's buffers.
+
+**SYNOPSIS**
+
+```zig
+fn ChangeScreenBuffer(ib: *IntuitionBase, screen: *Screen, buffer: *ScreenBuffer) bool
+```
+
+**SINCE**
+
+0.14. LVO -400.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `buffer` - one of its buffers from `AllocScreenBuffer`.
+
+**RESULT**
+
+True when it is shown. False while the screen's menus are up: they are
+drawn in the screen's own buffer, and taking it away would leave them
+working unseen. Try again with the next frame.
+
+**BEHAVIOR**
+
+The display takes the buffer up at the start of its next frame, whole,
+and this returns when it has: the buffer shown before is no longer read
+and the next frame can be drawn into it. A screen that is not in front
+shows the buffer when it is brought forward.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and for the display's next
+  frame - which paces a program drawing a frame at a time to the display.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+The screen's bar, windows and menus are in its own buffer
+(`SB_SCREEN_BITMAP`) and are seen while that one is shown.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocScreenBuffer`, `FreeScreenBuffer`
+
+**EXAMPLES**
+
+```zig
+var buffers = [2]*sc.ScreenBuffer{ front, back };
+var drawing: usize = 1;
+while (running) {
+    drawFrame(buffers[drawing].rast_port);
+    if (ib.ChangeScreenBuffer(screen, buffers[drawing])) drawing ^= 1;
+}
+```
+
 ## ChangeWindowBox
 
 Moves and sizes a window at once.
@@ -854,8 +1005,10 @@ open, while a public screen is locked by anyone.
 
 **BEHAVIOR**
 
-Its bar and LayerInfo go, the display is left black, and a font the
-screen opened for itself is closed.
+Its bar and LayerInfo go, and a font the screen opened for itself is
+closed. Its display shows the screen behind it, or - when it was the
+last - goes black. The buffer it drew in is given back to the display's
+memory for another screen.
 
 **CONTEXT**
 
@@ -913,7 +1066,9 @@ Nothing.
 
 Its layer goes, so what it covered is uncovered and any simple-refresh
 window underneath is repaired. Messages still waiting on its port are
-freed with the port. If it was active, no window is.
+freed with the port. If it was active, no window is. A window opened on
+a public screen by name, or on the default one, ends its visit, which
+may be the last the screen's owner is waiting for.
 
 **CONTEXT**
 
@@ -1763,6 +1918,65 @@ None known.
 if (!ib.FreeClass(cl)) return null; // still in use: stay loaded
 ```
 
+## FreeScreenBuffer
+
+Gives back a buffer from `AllocScreenBuffer`.
+
+**SYNOPSIS**
+
+```zig
+fn FreeScreenBuffer(ib: *IntuitionBase, screen: *Screen, buffer: ?*ScreenBuffer) void
+```
+
+**SINCE**
+
+0.14. LVO -404.
+
+**INPUTS**
+
+- `screen` - the screen it was made for.
+- `buffer` - the buffer, or null.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A buffer being shown is replaced by the screen's own first, so the
+screen shows its bar and windows again. A buffer made with
+`SB_SCREEN_BITMAP` is the screen's and stays; only its record goes.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and for the display's next
+  frame when the buffer was shown.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer and its RastPort are gone.
+
+**NOTES**
+
+Every buffer of a screen is given back before the screen closes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocScreenBuffer`, `ChangeScreenBuffer`
+
+**EXAMPLES**
+
+```zig
+ib.FreeScreenBuffer(screen, back);
+```
+
 ## FreeScreenDrawInfo
 
 Hands back a DrawInfo.
@@ -1942,6 +2156,66 @@ var width: usize = 0;
 _ = ib.GetAttr(IA_Width, image, &width);
 ```
 
+## GetDefaultPubScreen
+
+Names the default public screen.
+
+**SYNOPSIS**
+
+```zig
+fn GetDefaultPubScreen(ib: *IntuitionBase, name_buffer: ?*[32]u8) ?*Screen
+```
+
+**SINCE**
+
+0.14. LVO -376.
+
+**INPUTS**
+
+- `name_buffer` - where its name is written, NUL-terminated, or null.
+
+**RESULT**
+
+The screen `SetDefaultPubScreen` chose, or null when that is the
+Workbench screen; `name_buffer` gets `WBENCHNAME` then.
+
+**BEHAVIOR**
+
+Only the name is safe to keep: the screen answered is not locked and
+may close at any moment. It is for comparing with a screen the caller
+holds, to tell whether that one is the default.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands. The name is a copy in the caller's buffer.
+
+**NOTES**
+
+To open a window on the default screen there is no need for its name:
+`LockPubScreen(null)` does that.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetDefaultPubScreen`, `LockPubScreen`
+
+**EXAMPLES**
+
+```zig
+var name: [sc.MAXPUBSCREENNAME + 1]u8 = undefined;
+const is_default = ib.GetDefaultPubScreen(&name) == my_screen;
+```
+
 ## GetIMsg
 
 Takes the next message off a window's port.
@@ -2027,10 +2301,13 @@ fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen,
 
 - `screen` - the screen.
 - `tags` - which values, each tag's data a `*usize` the value goes to:
-  `SA_Width`, `SA_Height`, `SA_Depth`, `SA_Title`, `SA_Font`,
-  `SA_PubName` (0 for a private screen), `SA_ShowTitle`,
-  `SA_RastPort`, `SA_LayerInfo`, `SA_BarHeight`. A tag it does not
-  know, or a null data, is passed over.
+  `SA_Width`, `SA_Height`, `SA_Depth`, `SA_Title` (what the bar shows
+  now), `SA_DefaultTitle`, `SA_Font`, `SA_PubName` (0 for a private
+  screen), `SA_Type`, `SA_ShowTitle`, `SA_RastPort`, `SA_LayerInfo`,
+  `SA_BarHeight`, `SA_BarVBorder`, `SA_BarHBorder`, `SA_MouseX`,
+  `SA_MouseY`, `SA_WBorTop`, `SA_WBorLeft`, `SA_WBorRight`,
+  `SA_WBorBottom`. A tag it does not know, or a null data, is passed
+  over.
 
 **RESULT**
 
@@ -2589,19 +2866,22 @@ fn LockPubScreen(ib: *IntuitionBase, name: ?[*:0]const u8) ?*Screen
 
 **INPUTS**
 
-- `name` - the public screen's name, or null for the default public
-  screen, `WBENCHNAME`.
+- `name` - the public screen's name, in any case, or null for the
+  default public screen: the one `SetDefaultPubScreen` chose, or else
+  `WBENCHNAME`.
 
 **RESULT**
 
-The screen, locked, or null: no public screen of that name, or - for
-null - the default screen could not be opened (no display, or the
-display already shows another screen).
+The screen, locked, or null: no public screen of that name, or it is
+private, or - for null - the Workbench screen could not be opened (no
+display, or the display already shows another screen).
 
 **BEHAVIOR**
 
 The screen cannot close until each lock has its `UnlockPubScreen`. Null
-opens the Workbench screen the first time; a name opens nothing.
+opens the Workbench screen the first time, public at once; a name opens
+nothing. A screen its owner has not yet opened to visitors with
+`PubScreenStatus` is not found.
 
 **CONTEXT**
 
@@ -2632,6 +2912,73 @@ None known.
 ```zig
 const screen = ib.LockPubScreen(null) orelse return;
 defer ib.UnlockPubScreen(null, screen);
+```
+
+## LockPubScreenList
+
+Holds the list of public screens, and answers it.
+
+**SYNOPSIS**
+
+```zig
+fn LockPubScreenList(ib: *IntuitionBase) *exec.List
+```
+
+**SINCE**
+
+0.14. LVO -360.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+The list, whose nodes are `PubScreenNode`s, oldest first.
+
+**BEHAVIOR**
+
+Until `UnlockPubScreenList`, no screen opens, closes, or changes its
+status or visitors. Each node names its screen, whether it is private,
+and how many visitors it has.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do; while it holds the list it must not wait for
+  anything that opens, closes or draws on a screen.
+
+**OWNERSHIP**
+
+The list stays intuition's; copy what is wanted out of it and let it go
+soon.
+
+**NOTES**
+
+This is for a program that shows the screens and lets someone choose
+one; a program that only wants to open a window uses `LockPubScreen`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnlockPubScreenList`, `NextPubScreen`, `LockPubScreen`
+
+**EXAMPLES**
+
+```zig
+const list = ib.LockPubScreenList();
+defer ib.UnlockPubScreenList();
+var node = list.head;
+while (node) |n| : (node = n.succ) {
+    if (n.succ == null) break;
+    const psn: *sc.PubScreenNode = @ptrCast(n);
+    show(psn.node.name.?);
+}
 ```
 
 ## MakeClass
@@ -2822,6 +3169,70 @@ None known.
 ib.MoveWindow(window, 10, 0);
 ```
 
+## MoveWindowInFrontOf
+
+Puts a window just in front of another.
+
+**SYNOPSIS**
+
+```zig
+fn MoveWindowInFrontOf(ib: *IntuitionBase, window: *Window, behind: *Window) void
+```
+
+**SINCE**
+
+0.14. LVO -344.
+
+**INPUTS**
+
+- `window` - the window to move.
+- `behind` - the window it goes in front of.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The window goes in front of `behind` and of everything that belongs to
+it - its interior and its requesters - and behind whatever was in front
+of those. What that uncovers of other windows is repaired.
+
+Nothing happens when the two are on different screens, are the same
+window, or are of different kinds: a backdrop window stays behind every
+other window, and an ordinary one in front of every backdrop window.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+A window asking for IDCMP_CHANGEWINDOW with `WA_NotifyDepth` is told
+its depth changed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WindowToFront`, `WindowToBack`
+
+**EXAMPLES**
+
+```zig
+// The palette window stays just in front of the picture it belongs to.
+ib.MoveWindowInFrontOf(palette, picture);
+```
+
 ## NewObjectTagList
 
 Makes an object.
@@ -2949,6 +3360,67 @@ None known.
 ```zig
 var at = members.head;
 while (ib.NextObject(&at)) |member| ib.DisposeObject(member);
+```
+
+## NextPubScreen
+
+Names the public screen after a given one, going round.
+
+**SYNOPSIS**
+
+```zig
+fn NextPubScreen(ib: *IntuitionBase, screen: ?*Screen, name_buffer: *[32]u8) ?[*:0]u8
+```
+
+**SINCE**
+
+0.14. LVO -368.
+
+**INPUTS**
+
+- `screen` - the screen to go on from, or null to start at the first.
+- `name_buffer` - where the name is written, NUL-terminated.
+
+**RESULT**
+
+`name_buffer`, or null when there is no public screen.
+
+**BEHAVIOR**
+
+The public screens are taken in the order they opened; after the last
+comes the first again, and a screen that is not public starts at the
+first. Private screens are named too.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The name is a copy in the caller's buffer.
+
+**NOTES**
+
+The screen named may have closed, or gone private, by the time it is
+locked; `LockPubScreen` answers null then and the caller moves on.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockPubScreen`, `LockPubScreenList`
+
+**EXAMPLES**
+
+```zig
+var name: [sc.MAXPUBSCREENNAME + 1]u8 = undefined;
+// A gadget that jumps the window to the next screen.
+if (ib.NextPubScreen(current, &name)) |next| reopenOn(next);
 ```
 
 ## ObtainGIRPort
@@ -3548,6 +4020,68 @@ var label = intuition.IntuiText{
 ib.PrintIText(rp, &label, 10, 20);
 ```
 
+## PubScreenStatus
+
+Opens a public screen to visitors, or closes it to them.
+
+**SYNOPSIS**
+
+```zig
+fn PubScreenStatus(ib: *IntuitionBase, screen: *Screen, flags: u32) u32
+```
+
+**SINCE**
+
+0.14. LVO -384.
+
+**INPUTS**
+
+- `screen` - a public screen the caller opened.
+- `flags` - `PSNF_PRIVATE` to close it to visitors, 0 to open it.
+
+**RESULT**
+
+1 when it is done; 0 when the screen is not public, or cannot go
+private because it still has visitors.
+
+**BEHAVIOR**
+
+A public screen opens private: nobody finds it until its owner has
+set it up and calls this with 0. Going private, it also stops being
+the default public screen.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+An owner that wants to close its screen makes it private first, so no
+new visitor comes while it waits for the last to go.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenScreenTagList` (`SA_PubName`, `SA_PubSig`), `LockPubScreen`
+
+**EXAMPLES**
+
+```zig
+const screen = ib.OpenScreenTagList(&tags) orelse return;
+// Set up, now visitors are welcome.
+_ = ib.PubScreenStatus(screen, 0);
+```
+
 ## RefreshGList
 
 Draws gadgets of a window.
@@ -3893,6 +4427,67 @@ const code = im.code;
 ib.ReplyIMsg(im);
 ```
 
+## ReportMouse
+
+Turns the reports of the pointer's moves to a window on or off.
+
+**SYNOPSIS**
+
+```zig
+fn ReportMouse(ib: *IntuitionBase, window: *Window, on: bool) void
+```
+
+**SINCE**
+
+0.14. LVO -356.
+
+**INPUTS**
+
+- `window` - the window.
+- `on` - true to be told of the pointer's moves with no button held
+  while the window is active, false not to be.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+It is what `WA_ReportMouse` sets when the window opens. The moves come
+as IDCMP_MOUSEMOVE messages, so the window's IDCMP must ask for them
+too; how many may wait is `SetMouseQueue`'s.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+A program that follows the pointer only in some mode - a tool that
+shows where it would draw - turns the reports on for that mode, and is
+not woken by every move otherwise.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetMouseQueue`, `ModifyIDCMP`, `OpenWindowTagList` (`WA_ReportMouse`)
+
+**EXAMPLES**
+
+```zig
+ib.ReportMouse(window, true); // the button went down: follow the drag
+```
+
 ## Request
 
 Puts a requester up in a window.
@@ -4038,6 +4633,64 @@ save_item.flags &= ~ITEMENABLED;
 _ = ib.ResetMenuStrip(window, &project_menu);
 ```
 
+## ScreenDepth
+
+Moves a screen to the front of its display or to the back.
+
+**SYNOPSIS**
+
+```zig
+fn ScreenDepth(ib: *IntuitionBase, screen: *Screen, flags: u32) void
+```
+
+**SINCE**
+
+0.14. LVO -388.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `flags` - `SDEPTH_TOFRONT` or `SDEPTH_TOBACK`.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+`ScreenToFront` or `ScreenToBack`, chosen by a value - for a gadget or
+a key that flips between the two.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and for the display to take
+  the new picture up at the next frame.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScreenToFront`, `ScreenToBack`
+
+**EXAMPLES**
+
+```zig
+ib.ScreenDepth(screen, sc.SDEPTH_TOBACK);
+```
+
 ## ScreenToBack
 
 Puts a screen behind the others on its display.
@@ -4045,7 +4698,7 @@ Puts a screen behind the others on its display.
 **SYNOPSIS**
 
 ```zig
-fn ScreenToBack(_: *IntuitionBase, screen: *Screen) void
+fn ScreenToBack(ib: *IntuitionBase, screen: *Screen) void
 ```
 
 **SINCE**
@@ -4062,12 +4715,17 @@ Nothing.
 
 **BEHAVIOR**
 
-As `ScreenToFront`: with one screen to a display there is no other to
-put in front of it.
+It goes behind every other screen of its display, and the display shows
+the one that is now in front from the start of the next frame. Nothing
+is copied, and nothing of it is lost: it is shown as it was when it is
+brought forward again.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed.
+- Waits: for the screen list's semaphore, and for the display to take
+  the new picture up at the next frame.
+- Interrupts: no.
+- Forbid: must not be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4076,7 +4734,7 @@ Nothing changes hands.
 
 **NOTES**
 
-None.
+The pointer and the menu button reach the screen in front.
 
 **BUGS**
 
@@ -4084,7 +4742,7 @@ None known.
 
 **SEE ALSO**
 
-`ScreenToFront`
+`ScreenToFront`, `ScreenDepth`, `OpenScreenTagList` (`SA_Behind`)
 
 **EXAMPLES**
 
@@ -4099,7 +4757,7 @@ Brings a screen to the front of its display.
 **SYNOPSIS**
 
 ```zig
-fn ScreenToFront(_: *IntuitionBase, screen: *Screen) void
+fn ScreenToFront(ib: *IntuitionBase, screen: *Screen) void
 ```
 
 **SINCE**
@@ -4116,13 +4774,17 @@ Nothing.
 
 **BEHAVIOR**
 
-A display shows one screen, so it is always at the front and this
-changes nothing. The slot is here so that a program written now keeps
-working when a display can hold several.
+It goes in front of every other screen of its display, and the display
+shows it from the start of the next frame: its buffer is shown in place
+of the one that was, whole, and nothing is copied. Its windows keep
+whatever they had; the active window stays the one it was.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed.
+- Waits: for the screen list's semaphore, and for the display to take
+  the new picture up at the next frame.
+- Interrupts: no.
+- Forbid: must not be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4131,7 +4793,7 @@ Nothing changes hands.
 
 **NOTES**
 
-None.
+The pointer and the menu button reach the screen in front.
 
 **BUGS**
 
@@ -4139,12 +4801,79 @@ None known.
 
 **SEE ALSO**
 
-`ScreenToBack`
+`ScreenToBack`, `ScreenDepth`, `OpenScreenTagList` (`SA_Behind`)
 
 **EXAMPLES**
 
 ```zig
 ib.ScreenToFront(screen);
+```
+
+## ScrollWindowRaster
+
+Moves part of what a window shows, and clears what it leaves.
+
+**SYNOPSIS**
+
+```zig
+fn ScrollWindowRaster(ib: *IntuitionBase, window: *Window, dx: i32, dy: i32, area: *const Rect) bool
+```
+
+**SINCE**
+
+0.14. LVO -348.
+
+**INPUTS**
+
+- `window` - the window.
+- `dx`, `dy` - how far the contents move left and up; negative moves
+  them right and down.
+- `area` - what moves, half-open, in the coordinates the program draws
+  in: `WA_RastPort`'s, which for a GimmeZeroZero window start inside
+  the border.
+
+**RESULT**
+
+True when the contents moved: only the strip they left is cleared, and
+only that needs drawing. False when they could not be moved - part of
+what was to be read is covered and kept nowhere, or the area is in too
+many pieces - and then the whole area is cleared and wants drawing.
+
+**BEHAVIOR**
+
+`ScrollRaster` on the window's RastPort, then what is to be drawn again
+is cleared the way the window paints its ground, its backfill hook or
+the background pen.
+
+**CONTEXT**
+
+- Waits: for the window's layer.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+A scroll by the area's whole width or height or more moves nothing and
+clears all of it, and answers true.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScrollRaster`, `EraseRect`
+
+**EXAMPLES**
+
+```zig
+// One line of text up; the line it leaves at the bottom is drawn.
+if (ib.ScrollWindowRaster(window, 0, line_height, &text_area)) drawLastLine() else drawAll();
 ```
 
 ## SendMessage
@@ -4394,6 +5123,65 @@ None known.
 _ = ib.SetDMRequest(window, &quick);
 ```
 
+## SetDefaultPubScreen
+
+Chooses the public screen windows open on by default.
+
+**SYNOPSIS**
+
+```zig
+fn SetDefaultPubScreen(ib: *IntuitionBase, name: ?[*:0]const u8) void
+```
+
+**SINCE**
+
+0.14. LVO -372.
+
+**INPUTS**
+
+- `name` - the public screen's name, in any case, or null for the
+  Workbench screen.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+From now on `LockPubScreen(null)`, and a window given no screen or
+falling back from a name that is not there, get that screen. A name
+that is not a public screen open to visitors changes nothing. It stops
+being the default when it closes or goes private.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; the screen is not locked by being the default.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetDefaultPubScreen`, `LockPubScreen`, `PubScreenStatus`
+
+**EXAMPLES**
+
+```zig
+ib.SetDefaultPubScreen("PAINT");
+```
+
 ## SetGadgetAttrsTagList
 
 Changes a gadget's attributes, and lets it show the change.
@@ -4529,6 +5317,125 @@ _ = ib.SetMenuStrip(window, &project_menu);
 defer ib.ClearMenuStrip(window);
 ```
 
+## SetMouseQueue
+
+Sets how many pointer moves a window may have waiting.
+
+**SYNOPSIS**
+
+```zig
+fn SetMouseQueue(ib: *IntuitionBase, window: *Window, length: u32) u32
+```
+
+**SINCE**
+
+0.14. LVO -352.
+
+**INPUTS**
+
+- `window` - the window.
+- `length` - how many IDCMP_MOUSEMOVE messages may be out unreplied; 0
+  is taken as 1.
+
+**RESULT**
+
+The length it had before.
+
+**BEHAVIOR**
+
+Beyond that many, further moves are not sent until the program replies:
+the next one says where the pointer is anyway. Moves already waiting
+stay. It is what `WA_MouseQueue` sets when the window opens.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+A drawing program that wants every point of a stroke asks for more; a
+program that only wants to know where the pointer is now needs one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReportMouse`, `OpenWindowTagList` (`WA_MouseQueue`)
+
+**EXAMPLES**
+
+```zig
+_ = ib.SetMouseQueue(window, 16);
+```
+
+## SetPubScreenModes
+
+Sets how public screens behave, for every program.
+
+**SYNOPSIS**
+
+```zig
+fn SetPubScreenModes(ib: *IntuitionBase, modes: u32) u32
+```
+
+**SINCE**
+
+0.14. LVO -380.
+
+**INPUTS**
+
+- `modes` - the new bits: `POPPUBSCREEN`, or 0.
+
+**RESULT**
+
+The bits there were before.
+
+**BEHAVIOR**
+
+With `POPPUBSCREEN` a window opened on a public screen by name, or on
+the default one, brings that screen to the front.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+The modes are the whole system's, not the caller's: they are for the
+program that manages the screens, which reads them first and keeps the
+bits it does not mean to change.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockPubScreen`, `ScreenToFront`
+
+**EXAMPLES**
+
+```zig
+const old = ib.SetPubScreenModes(sc.POPPUBSCREEN);
+_ = old;
+```
+
 ## SetWindowTitles
 
 Changes a window's title and the screen title it shows while active.
@@ -4590,6 +5497,68 @@ None known.
 
 ```zig
 ib.SetWindowTitles(window, "Saved", wn.TITLE_UNCHANGED);
+```
+
+## ShowTitle
+
+Puts a screen's title bar in front of its backdrop windows, or behind them.
+
+**SYNOPSIS**
+
+```zig
+fn ShowTitle(ib: *IntuitionBase, screen: *Screen, show: bool) void
+```
+
+**SINCE**
+
+0.14. LVO -392.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `show` - true for the bar in front of the backdrop windows, false for
+  it behind them.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A backdrop window covering the whole screen hides the bar when it is
+behind, and the bar shows over the window when it is in front. Ordinary
+windows are always in front of the bar. A backdrop window opened later
+goes where the bar leaves room for it: behind a bar that is shown, in
+front of one that is not. A screen without a bar is left as it is.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+A program filling the screen with a backdrop window hides the bar this
+way and shows it again when the menu button is held.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenScreenTagList` (`SA_ShowTitle`), `OpenWindowTagList` (`WA_Backdrop`)
+
+**EXAMPLES**
+
+```zig
+ib.ShowTitle(screen, false);
 ```
 
 ## SizeWindow
@@ -4861,7 +5830,8 @@ Nothing.
 
 **BEHAVIOR**
 
-One lock fewer. A screen with none can close.
+One lock fewer. A screen with none can close, and its owner is sent
+`SA_PubSig` if it asked for it.
 
 **CONTEXT**
 
@@ -4891,6 +5861,62 @@ None known.
 
 ```zig
 ib.UnlockPubScreen(null, screen);
+```
+
+## UnlockPubScreenList
+
+Lets the list of public screens go.
+
+**SYNOPSIS**
+
+```zig
+fn UnlockPubScreenList(ib: *IntuitionBase) void
+```
+
+**SINCE**
+
+0.14. LVO -364.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Screens can open, close and change again. Each `LockPubScreenList` has
+one of these.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do; the one that locked the list.
+
+**OWNERSHIP**
+
+Nothing changes hands. The list and its nodes must not be read after.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockPubScreenList`
+
+**EXAMPLES**
+
+```zig
+ib.UnlockPubScreenList();
 ```
 
 ## WaitIMsg

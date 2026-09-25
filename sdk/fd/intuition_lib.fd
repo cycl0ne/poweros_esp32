@@ -258,4 +258,46 @@ void ReplyIMsg(*intuition.IntuiMessage msg)
 /// Wait until the window has a message or a signal in `others` arrives,
 /// and answer the signals received.
 u32 WaitIMsg(*intuition.Window window, u32 others)
+/// Put a window just in front of another of the same screen and kind.
+void MoveWindowInFrontOf(*intuition.Window window, *intuition.Window behind)
+/// Move part of what a window shows by dx, dy and clear what it leaves.
+/// False when it could not be moved: the whole area is cleared then.
+bool ScrollWindowRaster(*intuition.Window window, i32 dx, i32 dy, *const graphics.Rect area)
+/// How many pointer moves a window may have waiting; answers the old one.
+u32 SetMouseQueue(*intuition.Window window, u32 length)
+/// Whether a window is told of the pointer's moves with no button held.
+void ReportMouse(*intuition.Window window, bool on)
+/// Hold the list of public screens (PubScreenNodes) and answer it; nothing
+/// opens, closes or changes status until UnlockPubScreenList.
+*exec.List LockPubScreenList()
+/// Let the list of public screens go.
+void UnlockPubScreenList()
+/// The name of the public screen after `screen` (the first for null or a
+/// private one), round and round, into `name_buffer`; null when none.
+?[*:0]u8 NextPubScreen(?*intuition.Screen screen, *[32]u8 name_buffer)
+/// Make the named public screen the default one; null for Workbench.
+void SetDefaultPubScreen(?[*:0]const u8 name)
+/// The default public screen (null for Workbench), its name into
+/// `name_buffer` if given. The screen is not locked.
+?*intuition.Screen GetDefaultPubScreen(?*[32]u8 name_buffer)
+/// The public screen modes (POPPUBSCREEN); answers the old ones.
+u32 SetPubScreenModes(u32 modes)
+/// Open a public screen to visitors (0) or close it to them
+/// (PSNF_PRIVATE). 1 when done, 0 when not public or visitors remain.
+u32 PubScreenStatus(*intuition.Screen screen, u32 flags)
+/// A screen to the front of its display (SDEPTH_TOFRONT) or to the back
+/// (SDEPTH_TOBACK).
+void ScreenDepth(*intuition.Screen screen, u32 flags)
+/// A screen's title bar in front of its backdrop windows, or behind them.
+void ShowTitle(*intuition.Screen screen, bool show)
+/// One more buffer for a screen to show: SB_SCREEN_BITMAP for its own, 0
+/// or SB_COPY_BITMAP for a new one in its display's memory. Null without
+/// room.
+?*intuition.screens.ScreenBuffer AllocScreenBuffer(*intuition.Screen screen, u32 flags)
+/// Show one of a screen's buffers from the display's next frame on;
+/// returns when it is shown. False while its menus are up.
+bool ChangeScreenBuffer(*intuition.Screen screen, *intuition.screens.ScreenBuffer buffer)
+/// Give back a buffer from AllocScreenBuffer, the screen's own shown again
+/// first if it was the one shown.
+void FreeScreenBuffer(*intuition.Screen screen, ?*intuition.screens.ScreenBuffer buffer)
 ##end

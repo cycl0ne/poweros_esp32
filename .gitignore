@@ -10,4 +10,7 @@ CLAUDE.md
 .claude/
 
 # Files dropped onto the disk image (see build.zig: disk_tree)
-disk/
+/disk/
+
+# Work lists, kept locally
+todo/

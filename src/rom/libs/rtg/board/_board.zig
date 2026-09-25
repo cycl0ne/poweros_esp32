@@ -133,7 +133,9 @@ pub fn setName(rb: *RtgBase, private: *Private, driver_name: [*:0]const u8, want
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.set_mode != null) caps |= rtg.boards.RTGBC_SET_MODE;
-    if (ops.show_bitmap != null) caps |= rtg.boards.RTGBC_SHOW | rtg.boards.RTGBC_PAN;
+    // Showing a buffer is not panning over one: no driver says it can move
+    // the picture within a buffer, so none claims it.
+    if (ops.show_bitmap != null) caps |= rtg.boards.RTGBC_SHOW;
     if (ops.wait_vblank != null) caps |= rtg.boards.RTGBC_VBLANK;
     if (ops.refresh != null) caps |= rtg.boards.RTGBC_REFRESH;
     if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;

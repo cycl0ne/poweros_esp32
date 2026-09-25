@@ -41,7 +41,8 @@ const TagItem = utility.TagItem;
 const InputEvent = ie.InputEvent;
 const ExecBase = sdk.interface.exec.ExecBase;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
-const Screen = @import("../screen/_screen.zig").Screen;
+const _kscreen = @import("../screen/_screen.zig");
+const Screen = _kscreen.Screen;
 const _window = @import("../window/_window.zig");
 const Window = _window.Window;
 const _gadget = @import("../gadget/_gadget.zig");
@@ -65,8 +66,9 @@ const ring_size = 64;
 /// What the pointer is doing with the button held: `gadget` is a border
 /// gadget pressed, `active` a gadget of the window's own being fed input,
 /// `verify` the window being asked IDCMP_SIZEVERIFY before `part` - its
-/// size gadget pressed or its zoom gadget used - goes ahead.
-const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify };
+/// size gadget pressed or its zoom gadget used - goes ahead,
+/// `screen_depth` the depth gadget in a screen's title bar pressed.
+const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth };
 
 /// Where on a window a point is.
 pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, size };
@@ -112,6 +114,8 @@ pub const State = extern struct {
     pad2: [3]u8 = .{ 0, 0, 0 },
     /// The window's own gadget that has the input, in `mode` active.
     active: ?*Object = null,
+    /// The screen whose depth gadget is pressed, in `mode` screen_depth.
+    screen: ?*Screen = null,
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -591,6 +595,15 @@ fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
 fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     const st = stateOf(ib);
     const s = screenAt(ib) orelse return;
+    // The screen's depth gadget, where no window covers it: pressed until
+    // the button goes up.
+    if (_kscreen.onDepthGadget(ib, s, st.x, st.y)) {
+        st.mode = .screen_depth;
+        st.screen = s;
+        st.over = 1;
+        _kscreen.drawDepth(ib, s, true);
+        return;
+    }
     const w = windowAt(ib, s, st.x, st.y) orelse return;
     if (ib.active_window != w) ib.iface().ActivateWindow(@ptrCast(w));
     const part = partAt(w, st.x - w.left, st.y - w.top);
@@ -697,6 +710,13 @@ fn moved(ib: *IntuitionBase) void {
             st.box_width + st.x - st.grab_x,
             st.box_height + st.y - st.grab_y,
         ),
+        .screen_depth => if (st.screen) |s| {
+            const over: u8 = @intFromBool(_kscreen.onDepthGadget(ib, s, st.x, st.y));
+            if (over != st.over) {
+                st.over = over;
+                _kscreen.drawDepth(ib, s, over != 0);
+            }
+        },
         .gadget => if (st.window) |w| {
             // Pressed while the pointer is over it, as it would be let go.
             const over: u8 = @intFromBool(partAt(w, st.x - w.left, st.y - w.top) == st.part);
@@ -793,6 +813,7 @@ fn release(ib: *IntuitionBase) void {
     const st = stateOf(ib);
     const mode = st.mode;
     st.mode = .none;
+    if (mode == .screen_depth) return releaseScreenDepth(ib);
     const w = st.window orelse return;
     st.window = null;
     switch (mode) {
@@ -827,6 +848,21 @@ fn release(ib: *IntuitionBase) void {
         .inside => _window.send(ib, w, wn.IDCMP_MOUSEBUTTONS, wn.SELECTUP),
         else => {},
     }
+}
+
+/// The screen's depth gadget let go: over it, the screen goes to the back
+/// when it is in front of its display or Shift is held, and to the front
+/// otherwise.
+fn releaseScreenDepth(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const s = st.screen orelse return;
+    st.screen = null;
+    if (st.over != 0) _kscreen.drawDepth(ib, s, false);
+    if (!_kscreen.onDepthGadget(ib, s, st.x, st.y)) return;
+    const shifted = st.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+    const in_front = _kscreen.frontOn(ib, s.board) == s;
+    const flags = if (in_front or shifted) sdk.intuition.screens.SDEPTH_TOBACK else sdk.intuition.screens.SDEPTH_TOFRONT;
+    ib.iface().ScreenDepth(@ptrCast(s), flags);
 }
 
 const testing = @import("std").testing;

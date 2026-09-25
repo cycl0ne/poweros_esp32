@@ -69,7 +69,7 @@ const Vector = struct {
 
 /// Where the image sits, which decides its edge: a border gadget's, or
 /// none for one on a menu panel.
-const Edge = enum { left_of_bar, right_of_bar, corner, in_menu };
+const Edge = enum { left_of_bar, right_of_bar, corner, in_menu, in_screen_bar };
 
 const Design = struct {
     /// The grid the vectors are on.
@@ -89,6 +89,9 @@ const wdepth3 = [_]u8{ 9, 4, 19, 8 };
 const wzoom1 = [_]u8{ 7, 2, 11, 5 };
 const wzoom2 = [_]u8{ 6, 2, 18, 8, 6, 2, 12, 5, 7, 2, 11, 5 };
 const wclose1 = [_]u8{ 7, 3, 11, 7 };
+const sdepth1 = [_]u8{ 4, 2, 14, 6 };
+const sdepth2 = [_]u8{ 4, 2, 14, 2, 14, 4, 8, 4, 8, 6, 4, 6, 4, 2 };
+const sdepth3 = [_]u8{ 8, 4, 18, 8 };
 const wsize1 = [_]u8{ 4, 7, 14, 7, 14, 2, 13, 2, 4, 6, 4, 7 };
 const mcheck1 = [_]u8{ 14, 0, 12, 0, 6, 6, 5, 6, 3, 4, 0, 4, 1, 4, 4, 7, 6, 7, 13, 0 };
 const mamiga1 = [_]u8{ 6, 0, 38, 0, 44, 2, 44, 12, 38, 14, 6, 14, 0, 12, 0, 2, 6, 0 };
@@ -101,6 +104,14 @@ const depth_design = Design{ .width = 24, .height = 11, .edge = .right_of_bar, .
     .{ .shape = .fill_rect, .pen = sc.SHINEPEN, .states = S_N | S_S, .points = &wdepth3 },
     .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_N | S_S | S_I, .points = &wdepth3 },
     .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_S, .points = &wdepth1 },
+} };
+// A screen's depth gadget: the screen behind outlined, the one in front
+// filled, on the background pen in a box of its own.
+const sdepth_design = Design{ .width = 23, .height = 11, .edge = .in_screen_bar, .vectors = &.{
+    .{ .shape = .line_poly, .pen = sc.SHADOWPEN, .states = S_N | S_S | S_I, .points = &sdepth2 },
+    .{ .shape = .fill_rect, .pen = sc.SHINEPEN, .states = S_N | S_S, .points = &sdepth3 },
+    .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_N | S_S | S_I, .points = &sdepth3 },
+    .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_S, .points = &sdepth1 },
 } };
 const zoom_design = Design{ .width = 24, .height = 11, .edge = .right_of_bar, .vectors = &.{
     .{ .shape = .fill_rect, .pen = sc.SHINEPEN, .states = S_N, .points = &wzoom1 },
@@ -136,6 +147,7 @@ fn designOf(which: u32) ?*const Design {
         ic.ZOOMIMAGE => &zoom_design,
         ic.SIZEIMAGE => &size_design,
         ic.CLOSEIMAGE => &close_design,
+        ic.SDEPTHIMAGE => &sdepth_design,
         ic.MENUCHECK => &menucheck_design,
         ic.AMIGAKEY => &amigakey_design,
         else => null,
@@ -210,11 +222,12 @@ fn line(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen, x: i32, y0: i32, 
 /// One state of a design, drawn at `w` by `h` into `rp`, whose room for
 /// filled shapes the caller has made.
 fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen) void {
-    // The ground: a menu panel's own for an image on one; the fill pen in
-    // an active border, the background pen in an inactive one.
+    // The ground: a menu panel's own for an image on one; the background
+    // pen for one in a box of its own - a screen's depth gadget - and in an
+    // inactive window border; the fill pen in an active one.
     const ground = if (design.edge == .in_menu)
         pens[sc.BARBLOCKPEN]
-    else if (state == INACTIVE)
+    else if (design.edge == .in_screen_bar or state == INACTIVE)
         pens[sc.BACKGROUNDPEN]
     else
         pens[sc.FILLPEN];
@@ -260,6 +273,7 @@ fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, stat
     const raised = state != SELECTED;
     switch (design.edge) {
         .in_menu => {},
+        .in_screen_bar => edge3d(gb, rp, pens, raised, 0, w, h),
         .corner => {
             edge3d(gb, rp, pens, raised, 0, w, h);
             dot(gb, rp, pens[sc.SHADOWPEN], w - 1, 0);

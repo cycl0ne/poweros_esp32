@@ -101,6 +101,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         sys_base.CloseLibrary(utility_lib);
         return null;
     };
+    ib.rtg_base = @ptrCast(@alignCast(sys_base.OpenLibrary(sdk.rtg.RTGNAME, 0)));
     ib.utility_base = @ptrCast(utility_lib);
     ib.graphics_base = @ptrCast(graphics_lib);
     ib.layers_base = @ptrCast(layers_lib);
@@ -108,6 +109,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     // No screen is opened here: a machine with no display boots, and the
     // default screen opens the first time something asks for it.
     ib.screen_list.init();
+    ib.pub_screens.init(.unknown);
+    ib.default_pub = null;
+    ib.pub_modes = 0;
     sys_base.InitSemaphore(&ib.screen_lock);
 
     ib.class_list.init();
@@ -151,6 +155,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         _ = ib.iface().FreeClass(ib.image_class);
         _ = ib.iface().FreeClass(ib.root_class);
         if (ib.keymap_base) |kb| sys_base.CloseLibrary(@ptrCast(@alignCast(kb)));
+        if (ib.rtg_base) |rb| sys_base.CloseLibrary(@ptrCast(@alignCast(rb)));
         sys_base.CloseLibrary(layers_lib);
         sys_base.CloseLibrary(graphics_lib);
         sys_base.CloseLibrary(utility_lib);

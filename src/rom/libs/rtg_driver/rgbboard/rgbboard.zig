@@ -98,16 +98,16 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     };
     state.sys.AddTail(&board.modes, &panel.mode.node);
 
-    // The framebuffer is the board's display memory: the library cuts the
+    // The frames are the board's display memory: the library cuts the
     // buffers out of it, and the first one is the picture.
     board.region = .{
         .base = panel.frame,
-        .size = panel.frame_bytes,
+        .size = panel.frames * panel.frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
     };
     board.ops = &ops;
-    board.info.buffers = 1;
+    board.info.buffers = panel.frames;
     board.info.pixel_clock_hz = setup.pixel_clock_hz;
     board.info.refresh_mhz = panel.mode.refresh_mhz;
     board.info.flags |= rtg.boards.RTGBF_STREAMING;
@@ -140,8 +140,11 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return panels.program(panel);
 }
 
-/// Feed the panel from that buffer. This is what starts the stream, and
-/// what a caller that has drawn its first picture calls to see it.
+/// Feed the panel from that buffer. The first time, this is what starts the
+/// stream, and what a caller that has drawn its first picture calls to see
+/// it. With the stream running it is a flip: the buffer is shown from the
+/// next frame on, whole, and this returns when it is - the one it replaced
+/// is no longer read.
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     // The chain is over a whole picture from its first byte: a window of a
@@ -159,6 +162,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     if (bm.width != panel.mode.width or bm.height != panel.mode.height) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+    if (panel.streaming and panel.aligned) return panels.flip(panel, pixels);
     return panels.start(panel, pixels);
 }
 

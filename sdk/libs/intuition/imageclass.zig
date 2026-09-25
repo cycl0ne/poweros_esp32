@@ -98,7 +98,7 @@ pub const FRAME_ICONDROPBOX: u32 = 3;
 // --- sysiclass: the system's own images ---------------------------------------
 
 /// Which image: `DEPTHIMAGE`, `ZOOMIMAGE`, `SIZEIMAGE`, `CLOSEIMAGE`,
-/// `MENUCHECK` or `AMIGAKEY`.
+/// `SDEPTHIMAGE`, `MENUCHECK` or `AMIGAKEY`.
 pub const SYSIA_Which = IA_Dummy + 0x0D;
 /// The screen's DrawInfo, whose pens it is drawn in. Without one it uses
 /// the default pens.
@@ -111,6 +111,9 @@ pub const ZOOMIMAGE: u32 = 0x01;
 pub const SIZEIMAGE: u32 = 0x02;
 /// A dot in a box: the close gadget.
 pub const CLOSEIMAGE: u32 = 0x03;
+/// Two screens, one over the other: a screen's depth gadget, at the right
+/// end of its title bar.
+pub const SDEPTHIMAGE: u32 = 0x05;
 /// A tick: what a checked menu item shows at its left. Sized to the
 /// DrawInfo's font unless IA_Width and IA_Height say otherwise.
 pub const MENUCHECK: u32 = 0x10;

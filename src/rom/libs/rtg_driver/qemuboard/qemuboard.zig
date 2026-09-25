@@ -35,6 +35,7 @@ const err = rtg.errors;
 
 const qemu_rgb = sdk.hardware.qemu_rgb;
 const tags = rtg.tags;
+const timer = sdk.devices.timer;
 
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
@@ -75,7 +76,40 @@ const Screen = struct {
     /// How many times the picture has been handed to the window. There is
     /// no blanking to count, so this is the only number worth having.
     updates: u32 = 0,
+    /// timer.device, opened the first time a frame is waited for: the
+    /// request each wait copies.
+    timer_io: timer.TimeRequest = .{},
+    timer_open: bool = false,
 };
+
+/// A frame of the panel the window stands in for, at 60 a second.
+const frame_us = 16_667;
+
+/// Wait as long as `frames` frames of a 60 Hz panel take. The window has
+/// no blanking of its own, so this is what makes a program that paces
+/// itself by the display - a flip, WaitVBlank - run here at the speed it
+/// runs on the glass, and give the CPU away while it waits as it would
+/// there. Nothing is waited for when timer.device cannot be had.
+fn pace(screen: *Screen, frames: u32) void {
+    const sys = screen.sys;
+    if (!screen.timer_open) {
+        screen.timer_io = .{};
+        screen.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
+        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &screen.timer_io.node, 0) != 0) return;
+        screen.timer_open = true;
+    }
+    const bit = sys.AllocSignal(-1);
+    if (bit < 0) return;
+    defer sys.FreeSignal(bit);
+    // The waiting task's own port: any task may be the one showing.
+    var port: exec.MsgPort = .{ .sig_bit = @intCast(bit), .sig_task = sys.FindTask(null) };
+    port.msg_list.init(.message);
+    var io = screen.timer_io;
+    io.node.message.reply_port = &port;
+    io.node.command = timer.TR_ADDREQUEST;
+    io.time = timer.TimeVal.fromMicros(@as(u64, frame_us) * frames);
+    _ = sys.DoIO(&io.node);
+}
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
     return @fieldParentPtr("driver", driver);
@@ -102,7 +136,8 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 /// - Forbid: not held, not needed.
 /// - Process: a Task will do.
 fn present(screen: *Screen) void {
-    qemu_rgb.update(@intCast(screen.width), @intCast(screen.height));
+    const shown = screen.showing orelse return;
+    qemu_rgb.update(@intFromPtr(shown.pixels), @intCast(screen.width), @intCast(screen.height));
     screen.updates +%= 1;
 }
 
@@ -136,20 +171,30 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     // The device's own VRAM is the board's display memory, so a buffer cut
     // out of it is already where the device reads from and a refresh is a
     // doorbell rather than a copy. It is not cached: these are device
-    // bytes, and nothing has to be written back before they are read.
+    // bytes, and nothing has to be written back before they are read. As
+    // many pictures as the board asks for and the VRAM holds are as many
+    // buffers as can be shown in turn, each by naming its address.
+    const frame = screen.width * screen.height * bytes_per_pixel;
+    const room = qemu_rgb.vramSize() / frame;
+    if (room == 0) return err.RTGERR_BAD_ARG;
+    const asked: u32 = @truncate(state.rtg_base.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list));
+    const frames = @min(@max(asked, 1), room);
     board.region = .{
         .base = @ptrFromInt(qemu_rgb.vram),
-        .size = screen.width * screen.height * bytes_per_pixel,
+        .size = frames * frame,
         .alignment = bytes_per_pixel,
         .flags = rtg.boards.RTGRF_DISPLAYABLE,
     };
     board.ops = &ops;
-    board.info.buffers = 1;
+    board.info.buffers = frames;
     state.board = board;
     return err.RTGERR_OK;
 }
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
+    const screen = screenOf(board);
+    if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
+    screen.timer_open = false;
     if (board.driver) |driver| stateOf(driver).board = null;
 }
 
@@ -169,17 +214,28 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
-/// Show a buffer, which here means: remember it and ring the doorbell.
+/// Show a buffer, which here means: remember it and ring the doorbell with
+/// its address. The window takes the whole picture from there at its next
+/// refresh, so it never shows half of one and half of another.
 ///
-/// The device reads whatever address it was last given, so a buffer that
-/// is not in its VRAM cannot be shown at all - and the library only ever
-/// hands over one cut from the region, which is that VRAM.
+/// The device reads packed rows out of its VRAM or internal memory, so a
+/// buffer has to be one cut from the region, the mode's size and pitch.
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
-    // There is one frame's worth of VRAM and no panning in the device.
+    // No panning in the device.
     if (x != 0 or y != 0) return err.RTGERR_BAD_ARG;
     const screen = screenOf(board);
+    if (bitmap) |bm| {
+        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
+        if (bm.width != screen.width or bm.height != screen.height) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.pitch != screen.width * bytes_per_pixel) return err.RTGERR_NOT_DISPLAYABLE;
+    }
+    // A flip from one picture to another takes a frame, as on the glass.
+    // The first picture shown is not waited for: it comes up at cold
+    // start, under the display module's Forbid.
+    const flip = screen.showing != null and bitmap != null and screen.showing != bitmap;
     screen.showing = bitmap;
     if (bitmap != null) present(screen);
+    if (flip) pace(screen, 1);
     return err.RTGERR_OK;
 }
 
@@ -197,11 +253,11 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     return err.RTGERR_OK;
 }
 
-/// There is no blanking to wait for: the window is redrawn when the device
-/// feels like it, and nothing is ever torn because nothing is streaming.
+/// The window has no blanking of its own: the frames of a 60 Hz panel are
+/// waited out instead, so a program pacing itself by them runs as it would
+/// on the glass. Nothing is ever torn: the device copies whole pictures.
 fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
-    _ = board;
-    _ = frames;
+    pace(screenOf(board), if (frames == 0) 1 else frames);
     return err.RTGERR_OK;
 }
 

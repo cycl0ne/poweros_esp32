@@ -125,8 +125,8 @@ pub fn toDomain(w: *Window, x: i32, y: i32) struct { x: i32, y: i32 } {
 /// What this particular gadget is told about where it is.
 ///
 /// A gadget of a GimmeZeroZero window belongs to its interior, which is a
-/// layer of its own - unless it says `GA_GZZGadget`, which puts it in the
-/// border with the window's own furniture. The border is the outer layer
+/// layer of its own - unless it is part of the border (`inBorder`), with
+/// the window's own furniture. The border is the outer layer
 /// and the whole window is its room, so such a gadget is measured from the
 /// window's corner and there is nothing to take off a point to reach it.
 pub fn infoFor(ib: *IntuitionBase, w: *Window, o: *Object) classusr.GadgetInfo {
@@ -144,13 +144,24 @@ pub fn infoFor(ib: *IntuitionBase, w: *Window, o: *Object) classusr.GadgetInfo {
         return gi;
     }
     if (w.inner_layer == null) return gi;
-    if (gadgetOf(ib, o).flags & gadgetclass.GFLG_GZZGADGET == 0) return gi;
+    if (!inBorder(ib, w, o)) return gi;
     gi.layer = w.layer;
     gi.domain_left = 0;
     gi.domain_top = 0;
     gi.domain_width = w.width;
     gi.domain_height = w.height;
     return gi;
+}
+
+/// Whether a gadget is part of its window's border: one that says it lives
+/// in a border, and in a GimmeZeroZero window one that says `GA_GZZGadget`.
+/// Such a gadget is measured from the window's own corner and drawn with
+/// the border every time the border is drawn.
+pub fn inBorder(ib: *IntuitionBase, w: *Window, o: *Object) bool {
+    const g = gadgetOf(ib, o);
+    if (g.requester != null) return false;
+    if (g.activation & gadgetclass.GACT_BORDER != 0) return true;
+    return w.inner_layer != null and g.flags & gadgetclass.GFLG_GZZGADGET != 0;
 }
 
 /// A point in the window, in the coordinates this gadget is measured in.

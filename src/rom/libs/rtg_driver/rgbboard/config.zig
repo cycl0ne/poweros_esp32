@@ -29,6 +29,9 @@ pub const Config = struct {
     /// How many lines one of the two buffers the panel is really fed from
     /// holds. The height has to divide by it.
     bounce_lines: u32 = 10,
+    /// How many pictures the display memory holds (`RTGA_Buffers`): as
+    /// many as there is room for, down to one.
+    buffers: u32 = 1,
     /// Where the stream sits on the bus.
     dma_priority: u32 = sdk.resources.dma.DMA_MAXPRI,
 };
@@ -85,6 +88,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     config.reset_ms = get.u32At(rb, tags.RTGA_ResetMillis, 10, tag_list);
     config.settle_ms = get.u32At(rb, tags.RTGA_SettleMillis, 20, tag_list);
     config.bounce_lines = get.u32At(rb, tags.RTGA_RGB_BounceLines, 10, tag_list);
+    config.buffers = @max(get.u32At(rb, tags.RTGA_Buffers, 1, tag_list), 1);
     config.dma_priority = get.u32At(rb, tags.RTGA_RGB_DmaPriority, sdk.resources.dma.DMA_MAXPRI, tag_list);
 
     // A panel with no size, no clock or no blanking is not a panel.

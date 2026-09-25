@@ -218,6 +218,9 @@ pub const WMF_MENUHELP: u32 = 1 << 0;
 /// It was sent IDCMP_MENUVERIFY `MENUWAITING`, and is owed a `MENUUP` when
 /// the menus are gone.
 pub const WMF_NEEDMENUCLEAR: u32 = 1 << 1;
+/// Opened on a public screen found by name or as the default: it holds a
+/// visit to the screen until it closes.
+pub const WMF_VISITOR: u32 = 1 << 2;
 /// Inside BeginRefresh, so EndRefresh has an update to end.
 pub const WF_IN_REFRESH = wn.WFLG_WINDOWREFRESH;
 /// An IDCMP_INTUITICKS is waiting; no second is sent until it is replied.
@@ -253,14 +256,17 @@ pub fn unlock(ib: *IntuitionBase) void {
     ib.sys_base.ReleaseSemaphore(&ib.screen_lock);
 }
 
-/// The border, from its pieces.
+/// The border, from its pieces, and the gadgets that live in it.
 ///
 /// Each of its four strips is drawn into a bitmap of its own first and
 /// put on the window in one blit, so every pixel changes once, to what it
 /// ends up as. Drawn in place, the fill would wipe the title and the
 /// gadgets before they are drawn again, and while the window is being
-/// sized - a redraw for every step of the pointer - they flicker. Without
-/// the memory for a strip it is drawn in place after all.
+/// sized - a redraw for every step of the pointer - they flicker. A strip's
+/// RastPort draws in the window's own coordinates and sends what falls in
+/// the strip to its bitmap, so the border and its gadgets draw there
+/// exactly as they would on the window. Without the memory for a strip it
+/// is all drawn in place after all.
 pub fn drawBorder(ib: *IntuitionBase, w: *Window) void {
     if (w.flags & WF_BORDERLESS != 0) return;
     const gb = ib.graphics_base;
@@ -270,42 +276,73 @@ pub fn drawBorder(ib: *IntuitionBase, w: *Window) void {
     var font: usize = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} };
     gb.GetRPAttrs(w.rp, &ask);
-    const inner_h = w.height - w.border_top - w.border_bottom;
-    const strips = [_]Box{
-        .{ .x = 0, .y = 0, .width = w.width, .height = w.border_top },
-        .{ .x = 0, .y = w.height - w.border_bottom, .width = w.width, .height = w.border_bottom },
-        .{ .x = 0, .y = w.border_top, .width = w.border_left, .height = inner_h },
-        .{ .x = w.width - w.border_right, .y = w.border_top, .width = w.border_right, .height = inner_h },
+    const inner_top = w.border_top;
+    const inner_bottom = w.height - w.border_bottom;
+    const strips = [_]graphics.Rect{
+        .{ .min_x = 0, .min_y = 0, .max_x = w.width, .max_y = inner_top },
+        .{ .min_x = 0, .min_y = inner_bottom, .max_x = w.width, .max_y = w.height },
+        .{ .min_x = 0, .min_y = inner_top, .max_x = w.border_left, .max_y = inner_bottom },
+        .{ .min_x = w.width - w.border_right, .min_y = inner_top, .max_x = w.width, .max_y = inner_bottom },
     };
     for (strips) |strip| {
-        if (strip.width <= 0 or strip.height <= 0) continue;
-        const tags = [_]TagItem{
-            .{ .tag = graphics.BMTAG_Width, .data = @intCast(strip.width) },
-            .{ .tag = graphics.BMTAG_Height, .data = @intCast(strip.height) },
-            .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(w.rp) },
-            .{},
-        };
-        const surface = gb.AllocBitMapTagList(&tags) orelse return paintBorder(ib, w, w.rp, 0, 0);
-        defer gb.FreeBitMap(surface);
-        const on = [_]TagItem{
-            .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) },
-            .{ .tag = graphics.RPTAG_Font, .data = font },
-            .{},
-        };
-        const rp = gb.CreateRastPortTagList(&on) orelse return paintBorder(ib, w, w.rp, 0, 0);
-        defer gb.FreeRastPort(rp);
-        paintBorder(ib, w, rp, strip.x, strip.y);
-        gb.BltBitMapRastPort(surface, 0, 0, w.rp, strip.x, strip.y, strip.width, strip.height);
+        if (strip.max_x <= strip.min_x or strip.max_y <= strip.min_y) continue;
+        if (drawStrip(ib, w, strip, font)) continue;
+        paintBorder(ib, w, w.rp);
+        drawBorderGadgets(ib, w, w.rp);
+        return;
     }
 }
 
-/// A rectangle as x/y/width/height.
-const Box = struct { x: i32, y: i32, width: i32, height: i32 };
+/// One strip of the border, drawn off the window and put on it; false when
+/// there was no memory to do it that way.
+fn drawStrip(ib: *IntuitionBase, w: *Window, strip: graphics.Rect, font: usize) bool {
+    const gb = ib.graphics_base;
+    const width = strip.max_x - strip.min_x;
+    const height = strip.max_y - strip.min_y;
+    const tags = [_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(width) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(height) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(w.rp) },
+        .{},
+    };
+    const surface = gb.AllocBitMapTagList(&tags) orelse return false;
+    defer gb.FreeBitMap(surface);
+    var target = graphics.ClipTarget{ .rect = strip, .surface = surface, .dx = -strip.min_x, .dy = -strip.min_y };
+    const whole = graphics.Rect{ .max_x = w.width, .max_y = w.height };
+    // Its own surface is the display's, as a window's RastPort's is: what
+    // bounds its clip and says its format. Every write goes to the target.
+    const on = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
+        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },
+        .{ .tag = graphics.RPTAG_Font, .data = font },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&on) orelse return false;
+    defer gb.FreeRastPort(rp);
+    paintBorder(ib, w, rp);
+    drawBorderGadgets(ib, w, rp);
+    gb.BltBitMapRastPort(surface, 0, 0, w.rp, strip.min_x, strip.min_y, width, height);
+    return true;
+}
 
-/// The border drawn into `rp`, whose top left corner is the window's
-/// (`x`, `y`): the window's own RastPort at (0, 0), or a bitmap holding
-/// one strip of it, which clips away the rest.
-fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort, x: i32, y: i32) void {
+/// The gadgets that live in the border, drawn through `rp`, which draws in
+/// the window's own coordinates - as every such gadget is measured.
+fn drawBorderGadgets(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
+    const it = ib.iface();
+    var next = w.gadgets;
+    while (next) |o| : (next = @import("../classes/gadgetclass.zig").gadgetOf(ib, o).next) {
+        if (!_gadget.inBorder(ib, w, o)) continue;
+        var gi = _gadget.infoFor(ib, w, o);
+        var msg = intuition.gadgetclass.GpRender{ .gadget_info = &gi, .rast_port = rp, .redraw = intuition.gadgetclass.GREDRAW_REDRAW };
+        _ = it.SendMessage(o, @ptrCast(&msg));
+    }
+}
+
+/// The border drawn through `rp`, in the window's own coordinates: the
+/// window's RastPort, or one that sends what falls in a strip to its
+/// bitmap and drops the rest.
+fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
     const gb = ib.graphics_base;
     const it = ib.iface();
     const saved = d.save(gb, rp);
@@ -321,17 +358,16 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort, x: i32, y
 
     // The four strips, then the frame raised around the outside and sunk
     // around the inside.
-    d.box(gb, rp, -x, -y, w.width, w.border_top, fill);
-    d.box(gb, rp, -x, w.border_top - y, w.border_left, inner_h, fill);
-    d.box(gb, rp, w.width - w.border_right - x, w.border_top - y, w.border_right, inner_h, fill);
-    d.box(gb, rp, -x, w.height - w.border_bottom - y, w.width, w.border_bottom, fill);
+    d.box(gb, rp, 0, 0, w.width, w.border_top, fill);
+    d.box(gb, rp, 0, w.border_top, w.border_left, inner_h, fill);
+    d.box(gb, rp, w.width - w.border_right, w.border_top, w.border_right, inner_h, fill);
+    d.box(gb, rp, 0, w.height - w.border_bottom, w.width, w.border_bottom, fill);
     if (w.frame) |frame| {
         const raised = [_]TagItem{ .{ .tag = ic.IA_Recessed, .data = 0 }, .{} };
         _ = it.SetAttrsTagList(frame, &raised);
         var outside = ic.ImpDraw{
             .method_id = ic.IM_DRAWFRAME,
             .rast_port = rp,
-            .offset = .{ .x = -x, .y = -y },
             .state = state,
             .draw_info = dri,
             .dimensions = .{ .width = w.width, .height = w.height },
@@ -342,7 +378,7 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort, x: i32, y
         var inside = ic.ImpDraw{
             .method_id = ic.IM_DRAWFRAME,
             .rast_port = rp,
-            .offset = .{ .x = w.border_left - 1 - x, .y = w.border_top - 1 - y },
+            .offset = .{ .x = w.border_left - 1, .y = w.border_top - 1 },
             .state = state,
             .draw_info = dri,
             .dimensions = .{ .width = inner_w + 2, .height = inner_h + 2 },
@@ -361,15 +397,15 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort, x: i32, y
         };
         gb.GetRPAttrs(rp, &metric);
         d.pen(gb, rp, if (active) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
-        const text_x: i32 = if (w.close_image != null) close_width + 4 else 4;
-        const text_y = @divTrunc(w.border_top - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
-        gb.Move(rp, text_x - x, text_y - y);
+        const x: i32 = if (w.close_image != null) close_width + 4 else 4;
+        const y = @divTrunc(w.border_top - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
+        gb.Move(rp, x, y);
         gb.Text(rp, title, textLen(title));
     }
-    if (w.close_image) |image| it.DrawImageState(rp, image, -x, -y, state, dri);
-    if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depth_width - x, -y, state, dri);
-    if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - depth_width - zoom_width - x, -y, state, dri);
-    if (w.size_image) |image| it.DrawImageState(rp, image, w.width - size_width - x, w.height - size_height - y, state, dri);
+    if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
+    if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depth_width, 0, state, dri);
+    if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - depth_width - zoom_width, 0, state, dri);
+    if (w.size_image) |image| it.DrawImageState(rp, image, w.width - size_width, w.height - size_height, state, dri);
 }
 
 /// The backfill hook: `area` of the layer in the screen's background pen,

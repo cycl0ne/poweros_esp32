@@ -9,7 +9,8 @@ const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("_screen.zig");
 const Screen = _screen.Screen;
-const findPublic = _screen.findPublic;
+const findVisitable = _screen.findVisitable;
+const visit = _screen.visit;
 const lock = _screen.lock;
 const unlock = _screen.unlock;
 
@@ -23,17 +24,20 @@ const unlock = _screen.unlock;
 /// SINCE: 0.4. LVO -124.
 ///
 /// INPUTS:
-/// - `name` - the public screen's name, or null for the default public
-///   screen, `WBENCHNAME`.
+/// - `name` - the public screen's name, in any case, or null for the
+///   default public screen: the one `SetDefaultPubScreen` chose, or else
+///   `WBENCHNAME`.
 ///
 /// RESULT:
-/// The screen, locked, or null: no public screen of that name, or - for
-/// null - the default screen could not be opened (no display, or the
-/// display already shows another screen).
+/// The screen, locked, or null: no public screen of that name, or it is
+/// private, or - for null - the Workbench screen could not be opened (no
+/// display, or the display already shows another screen).
 ///
 /// BEHAVIOR:
 /// The screen cannot close until each lock has its `UnlockPubScreen`. Null
-/// opens the Workbench screen the first time; a name opens nothing.
+/// opens the Workbench screen the first time, public at once; a name opens
+/// nothing. A screen its owner has not yet opened to visitors with
+/// `PubScreenStatus` is not found.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
@@ -62,18 +66,25 @@ const unlock = _screen.unlock;
 pub fn LockPubScreen(ib: *IntuitionBase, name: ?[*:0]const u8) ?*Screen {
     lock(ib);
     defer unlock(ib);
-    const s: *Screen = findPublic(ib, name orelse sc.WBENCHNAME) orelse blk: {
-        // Only the default is opened on demand; any other name is a
-        // screen its owner opens.
-        if (name != null) return null;
-        const open = [_]TagItem{
-            .{ .tag = sc.SA_PubName, .data = @intFromPtr(sc.WBENCHNAME) },
-            .{ .tag = sc.SA_Title, .data = @intFromPtr(sdk.release.NAME ++ " Screen") },
-            .{},
+    const s: *Screen = if (name) |wanted|
+        (findVisitable(ib, wanted) orelse return null)
+    else if (ib.default_pub) |default|
+        default
+    else
+        findVisitable(ib, sc.WBENCHNAME) orelse blk: {
+            // Only the Workbench screen is opened on demand; any other is
+            // a screen its owner opens. It is public from the start: it
+            // belongs to nobody who would open it later.
+            const open = [_]TagItem{
+                .{ .tag = sc.SA_PubName, .data = @intFromPtr(sc.WBENCHNAME) },
+                .{ .tag = sc.SA_Title, .data = @intFromPtr(sdk.release.NAME ++ " Screen") },
+                .{},
+            };
+            const opened = ib.iface().OpenScreenTagList(&open) orelse return null;
+            const wb: *Screen = @ptrCast(@alignCast(opened));
+            wb.pub_node.flags &= ~sc.PSNF_PRIVATE;
+            break :blk wb;
         };
-        const opened = ib.iface().OpenScreenTagList(&open) orelse return null;
-        break :blk @ptrCast(@alignCast(opened));
-    };
-    s.visitors += 1;
+    visit(s);
     return s;
 }

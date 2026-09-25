@@ -8,6 +8,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("_screen.zig");
 const Screen = _screen.Screen;
 const findPublic = _screen.findPublic;
+const leave = _screen.leave;
 const lock = _screen.lock;
 const unlock = _screen.unlock;
 
@@ -30,7 +31,8 @@ const unlock = _screen.unlock;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// One lock fewer. A screen with none can close.
+/// One lock fewer. A screen with none can close, and its owner is sent
+/// `SA_PubSig` if it asked for it.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
@@ -58,6 +60,6 @@ const unlock = _screen.unlock;
 pub fn UnlockPubScreen(ib: *IntuitionBase, name: ?[*:0]const u8, screen: ?*Screen) void {
     lock(ib);
     defer unlock(ib);
-    const s = if (screen) |given| given else (findPublic(ib, name orelse sc.WBENCHNAME) orelse return);
-    if (s.visitors > 0) s.visitors -= 1;
+    const s = if (screen) |given| given else if (name) |wanted| (findPublic(ib, wanted) orelse return) else (ib.default_pub orelse findPublic(ib, sc.WBENCHNAME) orelse return);
+    leave(ib, s);
 }

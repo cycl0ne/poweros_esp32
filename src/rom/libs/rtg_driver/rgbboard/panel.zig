@@ -53,12 +53,14 @@ pub const Panel = struct {
     /// The one mode this panel has.
     mode: rtg.RtgMode = .{},
 
-    /// The framebuffer: what AllocMem gave, and the frame inside it that
-    /// starts on a cache line.
+    /// The display memory: what AllocMem gave, and the frames inside it,
+    /// the first starting on a cache line - several, when there was room,
+    /// so one picture can be drawn while another is shown.
     frame_memory: ?[*]u8 = null,
     frame_taken: usize = 0,
     frame: ?[*]u8 = null,
     frame_bytes: usize = 0,
+    frames: u32 = 0,
 
     /// The pads the panel is on - its colour bits, its four timing
     /// signals, and those of its control lines that are pads of the chip -
@@ -82,10 +84,20 @@ pub const Panel = struct {
     stretches: u32 = 0,
     bounce_chain: [2]?*dmares.DMADescriptor = .{ null, null },
     fill_into: [2]?*dmares.DMADescriptor = .{ null, null },
-    /// The copy's chain out of each stretch of the frame, one per stretch,
-    /// built when a buffer is shown: the copy's interrupt has no time to
-    /// build one, and they change only when the picture does.
+    /// The copy's chain out of each stretch of the picture being shown, one
+    /// per stretch: the copy's interrupt has no time to build one.
     fill_from: ?[*]?*dmares.DMADescriptor = null,
+    /// The same for every picture shown lately, by where its pixels are. A
+    /// chain depends on nothing else, so one made for an address is right
+    /// for whatever buffer is there - and flipping between buffers that
+    /// have been shown before builds nothing.
+    cached: [max_cached]Cached = @splat(.{}),
+    /// The chains of a picture to be shown from the next frame on, and the
+    /// task waiting to hear it has been: the copy's interrupt takes them up
+    /// as it starts the frame's first stretch.
+    pending: ?[*]?*dmares.DMADescriptor = null,
+    waiter: ?*exec.Task = null,
+    waiter_mask: u32 = 0,
     /// Which buffer the panel finishes next, and which stretch goes in it.
     next_buffer: u32 = 0,
     next_stretch: u32 = 0,
@@ -111,6 +123,16 @@ pub const Panel = struct {
 
     /// Everything the board reports about how the stream is doing.
     stats: rtg.RtgBoardStats = .{},
+};
+
+/// How many pictures' chains are kept: every frame there is, and one over
+/// for a buffer that lives outside the display memory.
+const max_cached = 4;
+
+/// One picture's chains, and where its pixels start.
+pub const Cached = struct {
+    pixels: usize = 0,
+    chains: ?[*]?*dmares.DMADescriptor = null,
 };
 
 /// The panel's own numbers turned into what the counters are measured
@@ -183,14 +205,19 @@ pub fn bringUp(panel: *Panel) i32 {
     _ = setLine(panel, panel.config.display_pin, true);
     sleep(panel.config.settle_ms);
 
-    // The framebuffer. It starts and ends on a cache line: the DMA reaches
-    // PSRAM through the cache controller and asks for whole lines, and
-    // exec's allocator promises eight bytes.
+    // The display memory: as many frames as the board asks for, or as many
+    // fewer as there is room for, down to one. It starts on a cache line,
+    // and a frame is a whole number of them: the DMA reaches PSRAM through
+    // the cache controller and asks for whole lines, and exec's allocator
+    // promises eight bytes.
     const line = sdk.hardware.DCACHE_LINE_SIZE;
     panel.frame_bytes = @as(usize, setup.width) * setup.height * (setup.bits_per_pixel / 8);
-    panel.frame_taken = panel.frame_bytes + line - 1;
-    const got = sys.AllocMem(panel.frame_taken, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR) orelse
-        return giveBack(panel, err.RTGERR_NO_MEMORY);
+    panel.frames = panel.config.buffers;
+    const got = while (true) : (panel.frames -= 1) {
+        panel.frame_taken = panel.frames * panel.frame_bytes + line - 1;
+        if (sys.AllocMem(panel.frame_taken, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR)) |memory| break memory;
+        if (panel.frames == 1) return giveBack(panel, err.RTGERR_NO_MEMORY);
+    };
     panel.frame_memory = @ptrCast(got);
     panel.frame = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(got), line));
 
@@ -255,13 +282,7 @@ pub fn bringUp(panel: *Panel) i32 {
     lastOf(panel.bounce_chain[1].?).next = panel.bounce_chain[0];
     panel.chain = panel.bounce_chain[0];
 
-    // Room for one chain per stretch of the picture. What they point at is
-    // decided when a buffer is shown.
-    // Read from the refill interrupt, so it goes where that can read it
-    // without waiting on the stream.
-    const chains = sys.AllocVec(panel.stretches * @sizeOf(?*dmares.DMADescriptor), exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse
-        return giveBack(panel, err.RTGERR_NO_MEMORY);
-    panel.fill_from = @ptrCast(@alignCast(chains));
+    // The chains over a picture are made when it is first shown.
 
     // The panel's channel says when a buffer is free; its own interrupt
     // says when a frame has ended.
@@ -291,19 +312,93 @@ pub fn program(panel: *Panel) i32 {
     return err.RTGERR_OK;
 }
 
-/// Feed the panel from `pixels` and start it. The chains over the picture
-/// are built here, so showing another buffer is showing another picture.
+/// The chains over the picture at `pixels`: the ones made when it was
+/// shown before, or new ones, in place of those of a picture neither shown
+/// nor about to be. Null when there is no memory for them.
+pub fn chainsFor(panel: *Panel, pixels: [*]u8) ?[*]?*dmares.DMADescriptor {
+    const db = panel.dma orelse return null;
+    const at = @intFromPtr(pixels);
+    for (&panel.cached) |*entry| {
+        if (entry.chains != null and entry.pixels == at) return entry.chains;
+    }
+    // A slot: an empty one, or one whose picture is neither on the panel
+    // nor on its way there - nothing reads those chains.
+    const slot = for (&panel.cached) |*entry| {
+        if (entry.chains == null) break entry;
+    } else for (&panel.cached) |*entry| {
+        if (entry.chains != panel.fill_from and entry.chains != panel.pending) {
+            freeChains(panel, entry.chains.?);
+            entry.* = .{};
+            break entry;
+        }
+    } else return null;
+
+    // Read from the refill interrupt, so it goes where that can read it
+    // without waiting on the stream.
+    const memory = panel.sys.AllocVec(panel.stretches * @sizeOf(?*dmares.DMADescriptor), exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse return null;
+    const chains: [*]?*dmares.DMADescriptor = @ptrCast(@alignCast(memory));
+    for (0..panel.stretches) |i| {
+        const from: *anyopaque = @ptrFromInt(at + i * panel.bounce_bytes);
+        chains[i] = db.AllocDMAChain(dmares.DMA_OUT, from, panel.bounce_bytes, 0) orelse {
+            freeChains(panel, chains);
+            return null;
+        };
+    }
+    slot.* = .{ .pixels = at, .chains = chains };
+    return chains;
+}
+
+fn freeChains(panel: *Panel, chains: [*]?*dmares.DMADescriptor) void {
+    if (panel.dma) |db| {
+        for (0..panel.stretches) |i| {
+            if (chains[i]) |c| db.FreeDMAChain(c);
+        }
+    }
+    panel.sys.FreeVec(@ptrCast(chains));
+}
+
+/// Show the picture at `pixels` from the next frame on, with the stream
+/// running: its chains take over as the copy starts the frame's first
+/// stretch, so the whole of that frame and none of the one before comes
+/// from it. Returns once they have, when the old picture is no longer
+/// read and may be drawn into.
+pub fn flip(panel: *Panel, pixels: [*]u8) i32 {
+    const sys = panel.sys;
+    const chains = chainsFor(panel, pixels) orelse return err.RTGERR_NO_MEMORY;
+    if (chains == panel.fill_from) return err.RTGERR_OK;
+    const bit = sys.AllocSignal(-1);
+    if (bit < 0) return err.RTGERR_NO_MEMORY;
+    defer sys.FreeSignal(bit);
+    const mask = @as(u32, 1) << @intCast(bit);
+    sys.Disable();
+    panel.waiter = sys.FindTask(null);
+    panel.waiter_mask = mask;
+    panel.pending = chains;
+    sys.Enable();
+    _ = sys.Wait(mask);
+    return err.RTGERR_OK;
+}
+
+/// The pending picture, if any, made the one the copy reads, and whoever
+/// waits for it told. From the refill interrupt at a frame's first stretch,
+/// and from a realignment, which starts the frame over.
+fn takePending(panel: *Panel) void {
+    const chains = panel.pending orelse return;
+    panel.fill_from = chains;
+    panel.pending = null;
+    if (panel.waiter) |task| panel.sys.Signal(task, panel.waiter_mask);
+    panel.waiter = null;
+    _ = panel.rtg_base.SignalRtgEvent(panel.board, rtg.events.RTGEV_SHOWN);
+}
+
+/// Feed the panel from `pixels` and start it, the stream stopped first if
+/// it was running.
 pub fn start(panel: *Panel, pixels: [*]u8) i32 {
     const db = panel.dma orelse return err.RTGERR_NO_DISPLAY;
-    const from = panel.fill_from orelse return err.RTGERR_NO_DISPLAY;
+    const chains = chainsFor(panel, pixels) orelse return err.RTGERR_NO_MEMORY;
 
     if (panel.streaming) stream.stopStream(panel);
-    for (0..panel.stretches) |i| {
-        if (from[i]) |old| db.FreeDMAChain(old);
-        const at: *anyopaque = @ptrFromInt(@intFromPtr(pixels) + i * panel.bounce_bytes);
-        from[i] = db.AllocDMAChain(dmares.DMA_OUT, at, panel.bounce_bytes, 0) orelse
-            return err.RTGERR_NO_MEMORY;
-    }
+    panel.fill_from = chains;
 
     // Emptied here rather than in `program`: the FIFO must be empty at the
     // instant the DMA begins, and that is a long way from the timings.
@@ -342,13 +437,12 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
             db.StopDMA(panel.copy_channel, dmares.DMA_OUT);
             db.StopDMA(panel.copy_channel, dmares.DMA_IN);
         }
-        if (panel.fill_from) |from| {
-            for (0..panel.stretches) |i| {
-                if (from[i]) |c| db.FreeDMAChain(c);
-            }
-            sys.FreeVec(@ptrCast(from));
-            panel.fill_from = null;
+        for (&panel.cached) |*entry| {
+            if (entry.chains) |chains| freeChains(panel, chains);
+            entry.* = .{};
         }
+        panel.fill_from = null;
+        panel.pending = null;
         for (&panel.bounce_chain) |*c| {
             if (c.*) |chain| db.FreeDMAChain(chain);
             c.* = null;
@@ -485,6 +579,9 @@ fn bufferServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const db = panel.dma orelse return 0;
     if (db.DMAIntStatus(panel.channel, dmares.DMA_OUT) & dmares.DMAINTF_OUT_EOF == 0) return 0;
     db.ClearDMAInts(panel.channel, dmares.DMA_OUT, dmares.DMAINTF_OUT_EOF);
+    // A new frame's first stretch: the moment a new picture can take over
+    // without the frame showing any of the old one.
+    if (panel.next_stretch == 0) takePending(panel);
     startCopy(panel, panel.next_buffer, panel.next_stretch);
     panel.next_buffer ^= 1;
     panel.next_stretch += 1;
@@ -513,6 +610,8 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     if (lcd.intStatus() & lcd.INT_VSYNC == 0) return 0; // not ours
     lcd.intClear(lcd.INT_VSYNC);
     panel.stats.frames +%= 1;
+    // Whoever waits for a blanking - WaitVBlank - hears of it.
+    _ = panel.rtg_base.SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
 
     const now = cpu.ccount();
     const took = now -% panel.last_cycles;
@@ -555,6 +654,9 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     // is held as short as it can be made: interrupts off, and the sequence
     // itself in internal memory.
     stream.stopStream(panel);
+    // The frame starts over from its first stretch, so a picture waiting
+    // to be shown can be taken up now.
+    takePending(panel);
     primeBuffers(panel);
     panel.sys.Disable();
     const gap = stream.restart(panel);

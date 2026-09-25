@@ -84,6 +84,17 @@ pub const GA_EndGadget = GA_Dummy + 0x14;
 /// than to the part inside it. It means nothing to any other window, whose
 /// border and interior are one layer.
 pub const GA_GZZGadget = GA_Dummy + 0x0F;
+/// True: the gadget lives in that border of its window - a scroller down
+/// the right edge, a row of buttons along the bottom. The border is made
+/// wide enough to hold it when the window opens with it (`WA_Gadgets`),
+/// it is drawn with the border each time the border is, and in a
+/// GimmeZeroZero window it belongs to the border, as `GA_GZZGadget`.
+/// A right or bottom one is placed with `GA_RelRight` / `GA_RelBottom`
+/// so it stays at that edge as the window is sized.
+pub const GA_RightBorder = GA_Dummy + 0x18;
+pub const GA_LeftBorder = GA_Dummy + 0x19;
+pub const GA_TopBorder = GA_Dummy + 0x1A;
+pub const GA_BottomBorder = GA_Dummy + 0x1B;
 /// Whether Tab moves the keyboard from one gadget to the next. A line of
 /// text answers Tab with `GMR_NEXTACTIVE`, and the next gadget of the
 /// window that has this set takes over.

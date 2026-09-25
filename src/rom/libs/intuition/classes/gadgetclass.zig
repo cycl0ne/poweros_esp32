@@ -80,6 +80,12 @@ pub const GACT_RELVERIFY: u32 = 1 << 1;
 pub const GACT_TOGGLESELECT: u32 = 1 << 2;
 /// In a requester, finishing the way that counts ends the requester.
 pub const GACT_ENDGADGET: u32 = 1 << 3;
+/// It lives in that border of its window (`GA_RightBorder`, ...).
+pub const GACT_RIGHTBORDER: u32 = 1 << 4;
+pub const GACT_LEFTBORDER: u32 = 1 << 5;
+pub const GACT_TOPBORDER: u32 = 1 << 6;
+pub const GACT_BOTTOMBORDER: u32 = 1 << 7;
+pub const GACT_BORDER: u32 = GACT_RIGHTBORDER | GACT_LEFTBORDER | GACT_TOPBORDER | GACT_BOTTOMBORDER;
 
 /// Make gadgetclass, from rootclass, and put it on the public list.
 pub fn make(ib: *IntuitionBase) ?*Class {
@@ -158,6 +164,10 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             gc.GA_GZZGadget => setFlag(&g.flags, GFLG_GZZGADGET, v != 0),
             gc.GA_ToggleSelect => setFlag(&g.activation, GACT_TOGGLESELECT, v != 0),
             gc.GA_EndGadget => setFlag(&g.activation, GACT_ENDGADGET, v != 0),
+            gc.GA_RightBorder => setFlag(&g.activation, GACT_RIGHTBORDER, v != 0),
+            gc.GA_LeftBorder => setFlag(&g.activation, GACT_LEFTBORDER, v != 0),
+            gc.GA_TopBorder => setFlag(&g.activation, GACT_TOPBORDER, v != 0),
+            gc.GA_BottomBorder => setFlag(&g.activation, GACT_BOTTOMBORDER, v != 0),
             gc.GA_ID => g.id = @truncate(v),
             gc.GA_UserData => g.user_data = v,
             gc.GA_Immediate => setFlag(&g.activation, GACT_IMMEDIATE, v != 0),

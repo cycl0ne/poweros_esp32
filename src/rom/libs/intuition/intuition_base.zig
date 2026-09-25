@@ -34,10 +34,21 @@ pub const IntuitionBase = extern struct {
     /// layers.library, opened by the init and kept: a screen's windows and
     /// its title bar are layers of its display.
     layers_base: *LayersBase,
-    /// The open screens, oldest first.
+    /// rtg.library, opened by the init and kept when there is one: a screen
+    /// is a buffer of its display's, allocated and shown through it.
+    rtg_base: ?*sdk.interface.rtg.RtgBase,
+    /// The open screens, front to back: the first of a display's is the
+    /// one it shows.
     screen_list: exec.MinList,
-    /// Guards `screen_list` and every public screen's lock count.
+    /// Guards `screen_list`, `pub_screens`, the default public screen, and
+    /// every public screen's lock count.
     screen_lock: exec.SignalSemaphore,
+    /// The public screens, as `PubScreenNode`s, oldest first.
+    pub_screens: exec.List,
+    /// The screen `LockPubScreen(null)` answers, or null for Workbench.
+    default_pub: ?*@import("screen/_screen.zig").Screen,
+    /// `SetPubScreenModes`' bits.
+    pub_modes: u32,
     /// The public classes, newest first. Each node is a class's
     /// dispatcher hook, which is the class's first field.
     class_list: exec.MinList,
