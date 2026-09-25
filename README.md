@@ -193,7 +193,9 @@ cores.
   or comes by itself is followed. `C:net/Ping` sends echo requests and
   times the answers; `C:net/TimeSync` sets the date from a time server
   (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
-  local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives.
+  local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives;
+  `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
+  redirects), plain http until there is TLS.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

@@ -40,7 +40,7 @@ const tests = [_][]const u8{
     "screens",    "layout",   "classes",  "gadgets", "listview",
     "colorwheel", "tapedeck", "pointer",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget" };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
