@@ -28,7 +28,8 @@ const tcp_user = @import("../tcp/user.zig");
 /// - `address_length` - its size.
 ///
 /// RESULT:
-/// 0, or -1 with Errno(): `EBADF`, `EINVAL`, `EAFNOSUPPORT`,
+/// 0, or -1 with Errno(): `EBADF`, `EINVAL`, `EAFNOSUPPORT`, `EOPNOTSUPP`
+/// (a capture socket),
 /// `EADDRNOTAVAIL` (no port of its own could be had, or an address that
 /// is none or for many); for a stream socket also `EINPROGRESS` (it does
 /// not wait, and the connection is on its way), `EALREADY`, `EISCONN`,
@@ -78,6 +79,7 @@ pub fn Connect(sb: *SocketBase, descriptor: i32, address: *const bsd.sockaddr, a
     var held = _lock.take(stack);
     defer _lock.give(stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "Connect");
+    if (socket.flags & _socket.capture != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "Connect");
     if (socket.socket_type == bsd.SOCK_STREAM) {
         const peer = _socket.addressIn(sb, address, address_length) orelse return _socket.fail(sb, sb.errno, "Connect");
         const refused = tcp_user.connect(stack, socket, peer.address, peer.port);

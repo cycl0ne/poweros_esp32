@@ -195,7 +195,9 @@ cores.
   (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
   local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives;
   `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
-  redirects), plain http until there is TLS.
+  redirects), plain http until there is TLS; `C:net/PacketCapture`
+  writes what an interface sends and takes to a pcap file, through a
+  capture socket (`PF_PACKET`) a program can open too.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

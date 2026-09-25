@@ -61,6 +61,8 @@ pub const StackBase = extern struct {
     ip_id: u16 = 1,
     next_port: u16 = port_first,
     counts: Counts = .{},
+    /// Capture sockets there are: none, and no frame is looked at twice.
+    captures: u32 = 0,
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
     reassembly: reassembly.Slots = .{},

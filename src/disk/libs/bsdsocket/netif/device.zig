@@ -289,16 +289,8 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 stack.frames.give(sys, frame);
                 if (req.req.err == net.S2ERR_OUTOFSERVICE) setLink(stack, device, false);
             } else {
-                interface.received += 1;
-                if (request.kind == .read_arp) {
-                    _arp.input(stack, interface, frame, now);
-                } else {
-                    const packet = frame.bytes();
-                    if (packet.len >= _ip.header_bytes) {
-                        _arp.heard(stack, interface, _ip.get32(packet, 12), req.src_addr[0..6]);
-                    }
-                    _ip.input(stack, interface, frame);
-                }
+                const packet_type: u16 = if (request.kind == .read_arp) _arp.ethertype else _ip.ethertype;
+                _netif.receive(stack, interface, frame, req.src_addr[0..6], req.dst_addr[0..6], packet_type, now);
             }
             if (device.going != 0) return;
             if (device.offline != 0) return sys.AddTail(&device.idle_reads, &request.req.req.message.node);

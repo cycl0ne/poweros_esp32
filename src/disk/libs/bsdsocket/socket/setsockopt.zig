@@ -30,7 +30,8 @@ const buffer_max: u32 = 256 * 1024;
 ///   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
 ///   i32 of FD_* events to be told of with the event signal),
 ///   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
-///   `linger`); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
+///   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
+///   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
 /// - `value` - the option's value.
 /// - `value_length` - its size.
 ///
@@ -47,7 +48,9 @@ const buffer_max: u32 = 256 * 1024;
 /// `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 /// and changes nothing for a datagram socket, which never waits to send.
 /// `SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
-/// socket can always send.
+/// socket can always send. `SO_BINDTODEVICE` holds a capture socket to
+/// one interface, or with an empty name to every one again; a name there
+/// is no interface of is `ENXIO`.
 ///
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
@@ -100,6 +103,19 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
             } else {
                 tcb.flags &= ~_tcp.keep_alive;
                 if (tcb.state != .time_wait) _timer.cancel(sb.stack, &tcb.timer_long);
+            }
+        },
+        bsd.SO_BINDTODEVICE => {
+            if (socket.flags & _socket.capture == 0) return _socket.fail(sb, bsd.ENOPROTOOPT, "SetSockOpt");
+            const text: [*]const u8 = @ptrCast(value);
+            var name: [bsd.IFNAMSIZ:0]u8 = @splat(0);
+            var length: usize = 0;
+            while (length < value_length and length < bsd.IFNAMSIZ - 1 and text[length] != 0) : (length += 1) name[length] = text[length];
+            socket.flags &= ~_socket.capture_detached;
+            if (length == 0) {
+                socket.capture_interface = null;
+            } else {
+                socket.capture_interface = @import("../netif/_netif.zig").named(sb.stack, &name) orelse return _socket.fail(sb, bsd.ENXIO, "SetSockOpt");
             }
         },
         bsd.SO_EVENTMASK => {

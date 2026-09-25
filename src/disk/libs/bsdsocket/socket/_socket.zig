@@ -34,6 +34,10 @@ pub const broadcast_allowed: u32 = 1 << 3;
 pub const reuse_address: u32 = 1 << 4;
 /// A stream socket its program closed, still finishing its connection.
 pub const orphan: u32 = 1 << 5;
+/// A capture socket (PF_PACKET), and one whose interface went away,
+/// which sees nothing more.
+pub const capture: u32 = 1 << 6;
+pub const capture_detached: u32 = 1 << 7;
 
 /// What a new socket buffers.
 pub const receive_limit_default: u32 = 16 * 1024;
@@ -74,6 +78,10 @@ pub const Socket = extern struct {
     tcb: ?*anyopaque = null,
     /// SO_LINGER.
     linger: bsd.linger = .{},
+    /// A capture socket's interface (SO_BINDTODEVICE), or null for every
+    /// one; the frames it could not take since it last took one.
+    capture_interface: ?*@import("../netif/_netif.zig").Interface = null,
+    capture_dropped: u32 = 0,
 };
 
 pub fn fromNode(node: *exec.Node) *Socket {
@@ -159,6 +167,7 @@ pub fn destroy(sb: *SocketBase, socket: *Socket) void {
 pub fn free(stack: *StackBase, socket: *Socket) void {
     const sys = stack.sys_base;
     while (sys.RemHead(&socket.receive)) |node| stack.frames.give(sys, @fieldParentPtr("node", node));
+    if (socket.flags & capture != 0) stack.captures -= 1;
     sys.Remove(&socket.node);
     sys.FreeMem(socket, @sizeOf(Socket));
 }

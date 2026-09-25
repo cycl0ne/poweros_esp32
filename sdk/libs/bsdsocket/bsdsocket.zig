@@ -40,6 +40,10 @@ pub inline fn ntohl(value: u32) u32 {
 pub const AF_UNSPEC: u8 = 0;
 pub const AF_INET: u8 = 2;
 pub const PF_INET: i32 = AF_INET;
+/// Frames as an interface sends and takes them, for a capture socket
+/// (`Socket(PF_PACKET, SOCK_RAW, 0)`): see CaptureHeader.
+pub const AF_PACKET: u8 = 17;
+pub const PF_PACKET: i32 = AF_PACKET;
 
 /// struct in_addr: an IPv4 address, in network order.
 pub const in_addr = extern struct {
@@ -542,5 +546,41 @@ pub const ArpInfo = extern struct {
     /// ARPSTATE_*.
     state: u8 = 0,
     pad: u8 = 0,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+// --- capture ----------------------------------------------------------------------
+
+/// SetSockOpt(SOL_SOCKET, SO_BINDTODEVICE): a capture socket held to the
+/// interface named in the value ("eth0"); an empty name is every one.
+pub const SO_BINDTODEVICE: i32 = 0x2002;
+
+/// CaptureHeader's `direction`.
+pub const CAPTURE_IN: u8 = 0;
+pub const CAPTURE_OUT: u8 = 1;
+
+/// CaptureHeader's `link`: what the frame behind it starts with. The
+/// values are pcap's LINKTYPE_ numbers. NULL is a 4-byte address family
+/// in the chip's order, then the IP packet: what lo0 carries.
+pub const CAPTURE_LINK_NULL: u8 = 0;
+/// A 14-byte Ethernet header: destination, source, type.
+pub const CAPTURE_LINK_ETHERNET: u8 = 1;
+
+/// What each datagram a capture socket receives starts with; the frame
+/// follows it, as much of it as the datagram holds.
+pub const CaptureHeader = extern struct {
+    /// When the frame was seen: the system time.
+    secs: u32 = 0,
+    micro: u32 = 0,
+    /// The frame's whole length on the link.
+    length: u32 = 0,
+    /// Frames the socket had no room for since the one before this.
+    dropped: u32 = 0,
+    /// CAPTURE_IN or CAPTURE_OUT.
+    direction: u8 = CAPTURE_IN,
+    /// CAPTURE_LINK_*.
+    link: u8 = CAPTURE_LINK_ETHERNET,
+    pad: [2]u8 = .{ 0, 0 },
+    /// The interface it went through.
     interface: [IFNAMSIZ]u8 = @splat(0),
 };

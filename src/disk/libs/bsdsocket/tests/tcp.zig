@@ -33,6 +33,8 @@ var lent: [1024 * 1024]u8 align(16) = undefined;
 
 const address_a: u32 = 0x0A00_0001;
 const address_b: u32 = 0x0A00_0002;
+/// The Ethernet address on both ends of the link, which has no ARP.
+const station: [6]u8 = .{ 2, 0, 0, 0, 0, 1 };
 
 // --- the wire -----------------------------------------------------------------------
 
@@ -127,7 +129,7 @@ const Rig = struct {
             const frame = target.stack.frames.take(target.stack.sys_base).?;
             @memcpy(frame.room()[frame.start..][0..packet.length], packet.bytes[0..packet.length]);
             frame.length = @intCast(packet.length);
-            _ip.input(target.stack, target.interface, frame);
+            _netif.receive(target.stack, target.interface, frame, &station, &station, _ip.ethertype, target.stack.fixed_time);
         }
     }
 
@@ -186,7 +188,7 @@ const Rig = struct {
         const frame = target.stack.frames.take(target.stack.sys_base) orelse return;
         @memcpy(frame.room()[frame.start..][0..packet.length], packet.bytes[0..packet.length]);
         frame.length = @intCast(packet.length);
-        _ip.input(target.stack, target.interface, frame);
+        _netif.receive(target.stack, target.interface, frame, &station, &station, _ip.ethertype, target.stack.fixed_time);
     }
 
     fn deinit(rig: *Rig) !void {
@@ -865,5 +867,74 @@ test "every allocation of a connection that fails is answered, and leaves nothin
     // blocks and rings, and the frames: every one of them failed once.
     try testing.expect(n > 12 and n < 200);
     _ = sys.SetFunction(exec_lib, sdk.interface.exec.LVO.AllocMem, real_alloc.?);
+    try rig.deinit();
+}
+
+// --- capture ----------------------------------------------------------------------
+
+/// An echo request to B from A's raw socket `raw`.
+fn echoToB(a: *SocketBase, raw: i32, sequence: u8) !void {
+    var echo: [12]u8 = .{ 8, 0, 0, 0, 0x12, 0x34, 0, sequence, 'p', 'i', 'n', 'g' };
+    _ip.put16(&echo, 2, _ip.finish(_ip.sum(0, &echo)));
+    var to = at(address_b, 0);
+    try testing.expectEqual(@as(i32, echo.len), a.SendTo(raw, &echo, echo.len, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in)));
+}
+
+test "a capture socket sees what goes out and what comes in, and counts what it had no room for" {
+    var rig = try Rig.init();
+    const a = rig.a.sb;
+    @memcpy(rig.a.interface.name[0..4], "eth0");
+    const capture = a.Socket(bsd.PF_PACKET, bsd.SOCK_RAW, 0);
+    try testing.expect(capture >= 0);
+    try testing.expectEqual(@as(i32, 0), a.SetSockOpt(capture, bsd.SOL_SOCKET, bsd.SO_BINDTODEVICE, "eth0", 4));
+    try testing.expectEqual(@as(i32, -1), a.SetSockOpt(capture, bsd.SOL_SOCKET, bsd.SO_BINDTODEVICE, "eth9", 4));
+    try testing.expectEqual(bsd.ENXIO, a.Errno());
+    var nowhere = at(address_b, 7);
+    try testing.expectEqual(@as(i32, -1), a.SendTo(capture, "x", 1, 0, nowhere.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    try testing.expectEqual(bsd.EOPNOTSUPP, a.Errno());
+    try testing.expectEqual(@as(i32, -1), a.Bind(capture, nowhere.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    const raw = a.Socket(bsd.PF_INET, bsd.SOCK_RAW, bsd.IPPROTO_ICMP);
+
+    try echoToB(a, raw, 1);
+    rig.pump();
+    const header_bytes = @sizeOf(bsd.CaptureHeader);
+    var buffer: [1600]u8 = undefined;
+    for ([_]u8{ bsd.CAPTURE_OUT, bsd.CAPTURE_IN }, [_]u8{ 8, 0 }) |direction, icmp_type| {
+        const got = a.Recv(capture, &buffer, buffer.len, 0);
+        try testing.expectEqual(@as(i32, header_bytes + 14 + 20 + 12), got);
+        const header: *align(1) const bsd.CaptureHeader = @ptrCast(&buffer);
+        try testing.expectEqual(direction, header.direction);
+        try testing.expectEqual(bsd.CAPTURE_LINK_ETHERNET, header.link);
+        try testing.expectEqual(@as(u32, 14 + 20 + 12), header.length);
+        try testing.expectEqual(@as(u32, 0), header.dropped);
+        try testing.expectEqualStrings("eth0", std.mem.sliceTo(&header.interface, 0));
+        const frame = buffer[header_bytes..];
+        try testing.expectEqualSlices(u8, &.{ 0x08, 0x00 }, frame[12..14]);
+        try testing.expectEqual(@as(u8, 0x45), frame[14]);
+        try testing.expectEqual(icmp_type, frame[14 + 20]);
+    }
+    // Only its own interface's: lo0 is not.
+    var own = at(address_a, 9);
+    const udp = a.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    try testing.expectEqual(@as(i32, 1), a.SendTo(udp, "x", 1, 0, own.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    var ready: bsd.fd_set = .{};
+    ready.set(capture);
+    var no_wait: bsd.timeval = .{};
+    try testing.expectEqual(@as(i32, 0), a.WaitSelect(capture + 1, &ready, null, null, &no_wait, null));
+
+    // Ten echoes both ways, unread: sixteen kept, four counted.
+    for (0..10) |sequence| try echoToB(a, raw, @intCast(sequence + 2));
+    rig.pump();
+    for (0..16) |_| try testing.expect(a.Recv(capture, &buffer, buffer.len, 0) > 0);
+    try echoToB(a, raw, 99);
+    try testing.expect(a.Recv(capture, &buffer, buffer.len, 0) > 0);
+    const header: *align(1) const bsd.CaptureHeader = @ptrCast(&buffer);
+    try testing.expectEqual(@as(u32, 4), header.dropped);
+    rig.pump();
+
+    _ = a.CloseSocket(udp);
+    _ = a.CloseSocket(raw);
+    _ = a.CloseSocket(capture);
+    try testing.expectEqual(@as(u32, 0), rig.a.stack.captures);
     try rig.deinit();
 }

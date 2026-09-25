@@ -343,7 +343,8 @@ fn Bind(base: *SocketBase, socket: i32, address: *const sockaddr, address_length
 
 0, or -1 with Errno(): `EBADF`, `EINVAL` (already bound, or a short
 address), `EAFNOSUPPORT`, `EADDRNOTAVAIL` (not an address of this
-machine), `EADDRINUSE` (the port is taken on that address).
+machine), `EADDRINUSE` (the port is taken on that address),
+`EOPNOTSUPP` (a capture socket).
 
 **BEHAVIOR**
 
@@ -543,7 +544,8 @@ fn Connect(base: *SocketBase, socket: i32, address: *const sockaddr, address_len
 
 **RESULT**
 
-0, or -1 with Errno(): `EBADF`, `EINVAL`, `EAFNOSUPPORT`,
+0, or -1 with Errno(): `EBADF`, `EINVAL`, `EAFNOSUPPORT`, `EOPNOTSUPP`
+(a capture socket),
 `EADDRNOTAVAIL` (no port of its own could be had, or an address that
 is none or for many); for a stream socket also `EINPROGRESS` (it does
 not wait, and the connection is on its way), `EALREADY`, `EISCONN`,
@@ -2165,7 +2167,8 @@ ring - or -1 with Errno(): `EPIPE` (the stream was shut for writing or
 has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
 does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 not connected), `EISCONN` (an address on a connected socket),
-`EAFNOSUPPORT`, `EINVAL`, `EMSGSIZE` (more than the interface takes),
+`EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket), `EMSGSIZE`
+(more than the interface takes),
 `ENETUNREACH` (no route), `EACCES` (a broadcast without
 `SO_BROADCAST`), `ENOBUFS` (no frame free), or an error the network
 reported for an earlier datagram of this socket.
@@ -2351,7 +2354,8 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
   i32 of FD_* events to be told of with the event signal),
   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
-  `linger`); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
+  `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
+  only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -2370,7 +2374,9 @@ to 64 KiB, and change only while the ring is empty (`EINVAL` else).
 `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 and changes nothing for a datagram socket, which never waits to send.
 `SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
-socket can always send.
+socket can always send. `SO_BINDTODEVICE` holds a capture socket to
+one interface, or with an empty name to every one again; a name there
+is no interface of is `ENXIO`.
 
 **CONTEXT**
 
@@ -2479,12 +2485,14 @@ fn Socket(base: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
 
 **INPUTS**
 
-- `domain` - `PF_INET`, the only family there is.
+- `domain` - `PF_INET`; or `PF_PACKET` for a capture socket.
 - `socket_type` - `SOCK_STREAM`: a connection, TCP; `SOCK_DGRAM`:
   datagrams, UDP; `SOCK_RAW`: ICMP messages as they are, for a program
-  such as Ping.
+  such as Ping, or with `PF_PACKET` the frames an interface sends and
+  takes.
 - `protocol` - 0, or `IPPROTO_TCP` for a stream socket, `IPPROTO_UDP`
-  for a datagram socket; `IPPROTO_ICMP` for a raw one.
+  for a datagram socket; `IPPROTO_ICMP` for a raw one; 0 for a capture
+  socket.
 
 **RESULT**
 
@@ -2520,6 +2528,14 @@ and checksum made by the program, and the stack puts the IPv4 header
 in front. A stream socket has two rings of 8 KiB, one each way, which
 SO_SNDBUF and SO_RCVBUF resize, and its first one starts the stack
 task, which runs its timers.
+
+A capture socket receives a copy of every frame that goes out or
+comes in on its interface (SO_BINDTODEVICE; every interface until
+then), each as a datagram starting with a `CaptureHeader`, then the
+frame with its link header; it holds 16 frames at the most, and the
+next header counts the ones it had no room for. It sends nothing, and
+Bind and Connect refuse it with `EOPNOTSUPP`. RecvFrom's `from` says
+nothing of a frame.
 
 **BUGS**
 

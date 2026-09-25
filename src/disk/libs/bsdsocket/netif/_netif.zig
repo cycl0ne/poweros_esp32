@@ -20,6 +20,7 @@ const Frame = @import("../frame/_frame.zig").Frame;
 const _ip = @import("../ip/_ip.zig");
 const _arp = @import("../arp/_arp.zig");
 const _timer = @import("../timer/_timer.zig");
+const _capture = @import("../capture/_capture.zig");
 
 /// Hands `frame` to the link, to the station `to`, as a packet of
 /// `packet_type`: 0, or the errno of a frame that could not go. The frame
@@ -147,7 +148,10 @@ pub fn isBroadcast(stack: *StackBase, address: u32) bool {
 /// that could not go.
 pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop: u32) i32 {
     interface.sent += 1;
-    if (interface.loopback != 0) return loop(stack, interface, frame);
+    if (interface.loopback != 0) {
+        if (stack.captures != 0) _capture.tap(stack, interface, frame.bytes(), bsd.CAPTURE_OUT, .loopback);
+        return loop(stack, interface, frame);
+    }
     if (interface.no_arp != 0) return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
     if (next_hop == bsd.INADDR_BROADCAST or next_hop == interface.broadcast) {
         return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
@@ -175,8 +179,21 @@ fn loop(stack: *StackBase, interface: *Interface, frame: *Frame) i32 {
     return 0;
 }
 
+/// A frame the link took in: `from` sent it to `to`, carrying a packet of
+/// `packet_type`. Seen by the capture sockets, then ARP's or IPv4's; the
+/// frame is theirs.
+pub fn receive(stack: *StackBase, interface: *Interface, frame: *Frame, from: *const [6]u8, to: *const [6]u8, packet_type: u16, now: u64) void {
+    interface.received += 1;
+    if (stack.captures != 0) _capture.tap(stack, interface, frame.bytes(), bsd.CAPTURE_IN, .{ .ethernet = .{ .to = to, .from = from, .packet_type = packet_type } });
+    if (packet_type == _arp.ethertype) return _arp.input(stack, interface, frame, now);
+    const packet = frame.bytes();
+    if (packet.len >= _ip.header_bytes) _arp.heard(stack, interface, _ip.get32(packet, 12), from);
+    _ip.input(stack, interface, frame);
+}
+
 /// `frame` handed to the interface's link for the station `to`.
 pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *const [6]u8, packet_type: u16) i32 {
+    if (stack.captures != 0) _capture.tap(stack, interface, frame.bytes(), bsd.CAPTURE_OUT, .{ .ethernet = .{ .to = to, .from = &interface.hardware, .packet_type = packet_type } });
     const send = interface.transmit orelse {
         interface.dropped += 1;
         stack.frames.give(stack.sys_base, frame);

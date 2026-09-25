@@ -27,7 +27,8 @@ const _netif = @import("../netif/_netif.zig");
 /// RESULT:
 /// 0, or -1 with Errno(): `EBADF`, `EINVAL` (already bound, or a short
 /// address), `EAFNOSUPPORT`, `EADDRNOTAVAIL` (not an address of this
-/// machine), `EADDRINUSE` (the port is taken on that address).
+/// machine), `EADDRINUSE` (the port is taken on that address),
+/// `EOPNOTSUPP` (a capture socket).
 ///
 /// BEHAVIOR:
 /// A port is taken when another socket of the same type is bound to it on
@@ -65,6 +66,7 @@ pub fn Bind(sb: *SocketBase, descriptor: i32, address: *const bsd.sockaddr, addr
     const held = _lock.take(stack);
     defer _lock.give(stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "Bind");
+    if (socket.flags & _socket.capture != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "Bind");
     if (socket.flags & _socket.bound != 0) return _socket.fail(sb, bsd.EINVAL, "Bind");
     const wanted = _socket.addressIn(sb, address, address_length) orelse return _socket.fail(sb, sb.errno, "Bind");
     if (wanted.address != bsd.INADDR_ANY and !_netif.isOurs(stack, wanted.address)) return _socket.fail(sb, bsd.EADDRNOTAVAIL, "Bind");

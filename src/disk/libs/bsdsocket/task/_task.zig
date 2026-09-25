@@ -217,6 +217,15 @@ fn remove(stack: *StackBase, interface: *Interface) void {
         @import("../dhcp/_dhcp.zig").stop(stack, interface);
         link.going = 1;
         interface.up = 0;
+        // A capture socket held to it sees nothing more.
+        var sockets = stack.sockets.iterator();
+        while (sockets.next()) |node| {
+            const socket = _socket.fromNode(node);
+            if (socket.capture_interface == interface) {
+                socket.capture_interface = null;
+                socket.flags |= _socket.capture_detached;
+            }
+        }
         _route.removeAll(stack, interface);
         _arp.forget(stack, interface);
     }

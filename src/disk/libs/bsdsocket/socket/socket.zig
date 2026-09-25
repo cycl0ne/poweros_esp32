@@ -20,12 +20,14 @@ const _task = @import("../task/_task.zig");
 /// SINCE: 1.0. LVO -20.
 ///
 /// INPUTS:
-/// - `domain` - `PF_INET`, the only family there is.
+/// - `domain` - `PF_INET`; or `PF_PACKET` for a capture socket.
 /// - `socket_type` - `SOCK_STREAM`: a connection, TCP; `SOCK_DGRAM`:
 ///   datagrams, UDP; `SOCK_RAW`: ICMP messages as they are, for a program
-///   such as Ping.
+///   such as Ping, or with `PF_PACKET` the frames an interface sends and
+///   takes.
 /// - `protocol` - 0, or `IPPROTO_TCP` for a stream socket, `IPPROTO_UDP`
-///   for a datagram socket; `IPPROTO_ICMP` for a raw one.
+///   for a datagram socket; `IPPROTO_ICMP` for a raw one; 0 for a capture
+///   socket.
 ///
 /// RESULT:
 /// The descriptor, from 0 up, or -1 with Errno(): `EAFNOSUPPORT` for
@@ -57,6 +59,14 @@ const _task = @import("../task/_task.zig");
 /// SO_SNDBUF and SO_RCVBUF resize, and its first one starts the stack
 /// task, which runs its timers.
 ///
+/// A capture socket receives a copy of every frame that goes out or
+/// comes in on its interface (SO_BINDTODEVICE; every interface until
+/// then), each as a datagram starting with a `CaptureHeader`, then the
+/// frame with its link header; it holds 16 frames at the most, and the
+/// next header counts the ones it had no room for. It sends nothing, and
+/// Bind and Connect refuse it with `EOPNOTSUPP`. RecvFrom's `from` says
+/// nothing of a frame.
+///
 /// BUGS:
 /// None known.
 ///
@@ -71,6 +81,7 @@ const _task = @import("../task/_task.zig");
 /// if (socket < 0) return sb.Errno();
 /// ```
 pub fn Socket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32 {
+    if (domain == bsd.PF_PACKET) return capture(sb, socket_type, protocol);
     if (domain != bsd.PF_INET) return _socket.fail(sb, bsd.EAFNOSUPPORT, "Socket");
     const kind = switch (socket_type) {
         bsd.SOCK_DGRAM => if (protocol == 0 or protocol == bsd.IPPROTO_UDP) bsd.IPPROTO_UDP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
@@ -94,4 +105,16 @@ pub fn Socket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
         return _socket.fail(sb, bsd.ENOMEM, "Socket");
     }
     return descriptor;
+}
+
+/// A capture socket: SOCK_RAW, protocol 0.
+fn capture(sb: *SocketBase, socket_type: i32, protocol: i32) i32 {
+    if (socket_type != bsd.SOCK_RAW) return _socket.fail(sb, bsd.ESOCKTNOSUPPORT, "Socket");
+    if (protocol != 0) return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket");
+    const held = _lock.take(sb.stack);
+    defer _lock.give(sb.stack, held);
+    const socket = _socket.create(sb, socket_type, 0) orelse return _socket.fail(sb, sb.errno, "Socket");
+    socket.flags |= _socket.capture;
+    sb.stack.captures += 1;
+    return socket.descriptor;
 }

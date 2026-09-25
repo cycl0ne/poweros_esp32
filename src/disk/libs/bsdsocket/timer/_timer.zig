@@ -126,6 +126,16 @@ fn down(heap: *Heap, from: u32) void {
     }
 }
 
+/// The system time, for what is stamped with the date - a captured
+/// frame - rather than timed; zero before the stack has a timer.
+pub fn date(stack: *StackBase) timer.TimeVal {
+    if (stack.no_task != 0) return timer.TimeVal.fromMicros(stack.fixed_time);
+    const timer_base = stack.timer_base orelse return .{};
+    var time: timer.TimeVal = .{};
+    timer_base.GetSysTime(&time);
+    return time;
+}
+
 /// The microseconds since the boot, on the E-clock, or 0 before the
 /// stack has a timer. A stack that runs without its task has the time its
 /// runner says.

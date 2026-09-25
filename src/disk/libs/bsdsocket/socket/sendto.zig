@@ -41,7 +41,8 @@ const tcp_user = @import("../tcp/user.zig");
 /// has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
 /// does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 /// not connected), `EISCONN` (an address on a connected socket),
-/// `EAFNOSUPPORT`, `EINVAL`, `EMSGSIZE` (more than the interface takes),
+/// `EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket), `EMSGSIZE`
+/// (more than the interface takes),
 /// `ENETUNREACH` (no route), `EACCES` (a broadcast without
 /// `SO_BROADCAST`), `ENOBUFS` (no frame free), or an error the network
 /// reported for an earlier datagram of this socket.
@@ -95,6 +96,7 @@ pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, lengt
         socket.pending_error = 0;
         return _socket.fail(sb, errno, "SendTo");
     }
+    if (socket.flags & _socket.capture != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "SendTo");
     const bytes: [*]const u8 = @ptrCast(message);
     if (socket.socket_type == bsd.SOCK_STREAM) {
         if (to != null) return _socket.fail(sb, bsd.EISCONN, "SendTo");
