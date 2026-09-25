@@ -349,7 +349,7 @@ pub fn timeWait(stack: *StackBase, tcb: *Tcb) void {
     tcb.state = .time_wait;
     _timer.cancel(stack, &tcb.timer_retransmit);
     _timer.cancel(stack, &tcb.timer_delack);
-    _ = _timer.set(stack, &tcb.timer_long, _timer.systemTime(stack) + 2 * msl_us);
+    _ = _timer.set(stack, &tcb.timer_long, _timer.clock(stack) + 2 * msl_us);
 }
 
 /// The initial sequence number for the socket's connection (isn.zig).

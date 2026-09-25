@@ -168,7 +168,7 @@ pub fn start(stack: *StackBase, interface: *Interface) void {
     const fire = client.timer.fire;
     client.* = .{};
     client.timer.fire = fire;
-    begin(stack, client, _timer.systemTime(stack));
+    begin(stack, client, _timer.clock(stack));
 }
 
 /// From the beginning: DISCOVER.
@@ -195,7 +195,7 @@ fn later(stack: *StackBase, client: *Client, now: u64) void {
 pub fn linkUp(stack: *StackBase, interface: *Interface) void {
     if (interface.dhcp == 0) return;
     const client = clientOf(stack, interface);
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     switch (client.state) {
         .bound, .renewing, .rebinding => {
             client.state = .renewing;
@@ -316,7 +316,7 @@ pub fn input(stack: *StackBase, interface: *Interface, data: []const u8) bool {
         stack.dhcp.bad += 1;
         return true;
     };
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     switch (reply.kind) {
         offer => if (client.state == .selecting) {
             client.state = .requesting;
@@ -540,7 +540,7 @@ pub fn arpSeen(stack: *StackBase, interface: *Interface, sender_address: u32, se
         if (got != mine) own = false;
     }
     if (own) return;
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     if (client.state == .checking and (sender_address == client.offered or (sender_address == 0 and target_address == client.offered))) {
         stack.dhcp.bad += 1;
         send(stack, client, decline);

@@ -5,7 +5,9 @@
 //! allocates nothing, and a deadline exists only while something waits on
 //! it: an idle stack has an empty heap and its task sleeps.
 //!
-//! Times are microseconds of system time, which only rises. The stack task
+//! Times are microseconds on the E-clock, which counts from the boot and
+//! only rises - not the system time, which setting the date moves, and
+//! which would run every deadline out at once. The stack task
 //! keeps one timer.device request for the earliest deadline, and runs
 //! every timer whose time has come when it is answered; whoever puts a
 //! timer in front of the heap tells the task, which sets its request
@@ -124,12 +126,14 @@ fn down(heap: *Heap, from: u32) void {
     }
 }
 
-/// The system time in microseconds, or 0 before the stack has a timer.
-/// A stack that runs without its task has the time its runner says.
-pub fn systemTime(stack: *StackBase) u64 {
+/// The microseconds since the boot, on the E-clock, or 0 before the
+/// stack has a timer. A stack that runs without its task has the time its
+/// runner says.
+pub fn clock(stack: *StackBase) u64 {
     if (stack.no_task != 0) return stack.fixed_time;
     const timer_base = stack.timer_base orelse return 0;
-    var time: timer.TimeVal = .{};
-    timer_base.GetSysTime(&time);
-    return time.toMicros();
+    var value: timer.EClockVal = .{};
+    const rate = timer_base.ReadEClock(&value);
+    const count = @as(u64, value.hi) << 32 | value.lo;
+    return count / rate * 1_000_000 + count % rate * 1_000_000 / rate;
 }

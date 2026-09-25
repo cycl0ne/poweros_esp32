@@ -144,7 +144,7 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
         }
 
         var held = _lock.take(stack);
-        const now = _timer.systemTime(stack);
+        const now = _timer.clock(stack);
         _timer.run(stack, now);
         while (sys.GetMsg(&stack.port)) |message| device.complete(stack, &message.node, now);
         for (&stack.interfaces) |*interface| {

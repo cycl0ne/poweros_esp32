@@ -96,7 +96,7 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
             const _timer = @import("../timer/_timer.zig");
             if (@as(*align(1) const i32, @ptrCast(value)).* != 0) {
                 tcb.flags |= _tcp.keep_alive;
-                timers.keepalive(sb.stack, tcb, _timer.systemTime(sb.stack));
+                timers.keepalive(sb.stack, tcb, _timer.clock(sb.stack));
             } else {
                 tcb.flags &= ~_tcp.keep_alive;
                 if (tcb.state != .time_wait) _timer.cancel(sb.stack, &tcb.timer_long);

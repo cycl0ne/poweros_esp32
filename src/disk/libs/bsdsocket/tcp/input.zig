@@ -202,7 +202,7 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _ip.Header
         tcb.snd_wl2 = seg.ack;
         tcb.flags |= _tcp.ack_now;
         timers.established(stack, tcb);
-        timers.restart(stack, tcb, _timer.systemTime(stack));
+        timers.restart(stack, tcb, _timer.clock(stack));
         _socket.wake(socket, bsd.FD_CONNECT | bsd.FD_WRITE);
         // Data or a FIN that came with the SYN is taken as if it came
         // after it.
@@ -239,7 +239,7 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         return;
     }
     trim(tcb, &seg, window);
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     timers.heard(stack, tcb, now);
 
     // Second: RST. Only one at exactly RCV.NXT resets; one elsewhere in
@@ -340,7 +340,7 @@ fn predicted(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
     if (tcb.state != .established or seg.flags & ~_tcp.PSH != _tcp.ACK) return false;
     if (seg.seq != tcb.rcv_nxt or seg.window != tcb.snd_wnd or tcb.snd_nxt != tcb.snd_max) return false;
     if (tcb.held_bytes != 0 or tcb.dupacks != 0 or tcb.flags & (_tcp.probing | _tcp.read_shut) != 0) return false;
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     if (seg.data.len == 0) {
         if (!(_tcp.after(seg.ack, tcb.snd_una) and _tcp.atOrBefore(seg.ack, tcb.snd_max))) return false;
         timers.heard(stack, tcb, now);
@@ -490,7 +490,7 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
             }
             if (taken > 0) _socket.wake(socket, bsd.FD_READ);
         }
-        timers.owe(stack, tcb, _timer.systemTime(stack));
+        timers.owe(stack, tcb, _timer.clock(stack));
     }
     const data_end = seg.seq +% @as(u32, @intCast(seg.data.len));
     if (seg.flags & _tcp.FIN != 0 and data_end == tcb.rcv_nxt and tcb.flags & _tcp.fin_received == 0) {

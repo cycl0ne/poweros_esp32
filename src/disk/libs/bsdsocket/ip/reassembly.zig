@@ -91,7 +91,7 @@ fn claim(stack: *StackBase, header: _ip.Header, interface: *Interface) ?*Slot {
             .frame = frame,
         };
         slot.timer.fire = fire;
-        _ = _timer.set(stack, &slot.timer, _timer.systemTime(stack) + timeout_us);
+        _ = _timer.set(stack, &slot.timer, _timer.clock(stack) + timeout_us);
         return slot;
     }
     return null;

@@ -32,7 +32,7 @@ pub fn initialSequence(stack: *StackBase, local_address: u32, local_port: u16, r
     message[9] = @truncate(local_port);
     message[10] = @truncate(remote_port >> 8);
     message[11] = @truncate(remote_port);
-    const clock: u32 = @truncate(_timer.systemTime(stack) / 4);
+    const clock: u32 = @truncate(_timer.clock(stack) / 4);
     return clock +% @as(u32, @truncate(sipHash(&stack.isn_key, &message)));
 }
 

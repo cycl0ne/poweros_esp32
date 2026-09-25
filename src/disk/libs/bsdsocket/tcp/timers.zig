@@ -55,7 +55,7 @@ pub fn initialWindow(mss: u32) u32 {
 pub fn established(stack: *StackBase, tcb: *Tcb) void {
     tcb.cwnd = initialWindow(tcb.mss);
     tcb.ssthresh = 0xFFFF_FFFF;
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     tcb.last_heard = now;
     keepalive(stack, tcb, now);
 }

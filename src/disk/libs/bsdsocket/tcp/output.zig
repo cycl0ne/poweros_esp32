@@ -88,7 +88,7 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         },
         else => {},
     }
-    const now = _timer.systemTime(stack);
+    const now = _timer.clock(stack);
     while (true) {
         // Nothing but an acknowledgement goes before our SYN is.
         const synced = _tcp.atOrAfter(tcb.snd_una, tcb.ring_seq);
@@ -142,7 +142,7 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
 pub fn sendSyn(stack: *StackBase, tcb: *Tcb) i32 {
     const flags: u8 = if (tcb.state == .syn_received) _tcp.SYN | _tcp.ACK else _tcp.SYN;
     const refused = segment(stack, tcb, tcb.iss, flags, 0, 0);
-    timers.arm(stack, tcb, _timer.systemTime(stack));
+    timers.arm(stack, tcb, _timer.clock(stack));
     return refused;
 }
 

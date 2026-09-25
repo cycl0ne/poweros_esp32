@@ -401,6 +401,8 @@ pub const SBTC_HERRNO: u32 = 7;
 /// disk: files a program and a user edit.
 pub const HOSTS_FILE = "ENVARC:Sys/net/hosts";
 pub const NAMESERVERS_FILE = "ENVARC:Sys/net/nameservers";
+/// The time server TimeSync asks when neither it nor DHCP names one.
+pub const TIMESERVER_FILE = "ENVARC:Sys/net/timeserver";
 
 /// How long an interface's name may be.
 pub const IFNAMSIZ = 16;

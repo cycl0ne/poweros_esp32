@@ -103,7 +103,7 @@ pub const StackBase = extern struct {
     commands: exec.MsgPort = .{},
     /// The signal that tells the task the earliest deadline changed.
     rethink_mask: u32 = 0,
-    /// timer.device, as the task opened it: the system time.
+    /// timer.device, as the task opened it: the E-clock.
     timer_base: ?*TimerBase = null,
     /// One caller at a time starts the task.
     start_lock: exec.SignalSemaphore = .{},

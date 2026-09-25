@@ -152,7 +152,7 @@ pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop:
     if (next_hop == bsd.INADDR_BROADCAST or next_hop == interface.broadcast) {
         return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
     }
-    return _arp.resolve(stack, interface, next_hop, frame, _timer.systemTime(stack));
+    return _arp.resolve(stack, interface, next_hop, frame, _timer.clock(stack));
 }
 
 /// `frame` back in on lo0. The outermost of these delivers; a packet sent

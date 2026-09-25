@@ -50,9 +50,7 @@ pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
     if (hosts.dotted(text)) |address| return sb.host.fill(text, &.{address});
 
     // The hosts file; `localhost` is known without it.
-    var file: [hosts_bytes]u8 = undefined;
-    const known = readHosts(sb, &file);
-    if (hosts.find(known, text)) |address| return sb.host.fill(text, &.{address});
+    if (hostsAddress(sb, text)) |address| return sb.host.fill(text, &.{address});
     if (hosts.same(text, "localhost")) return sb.host.fill(text, &.{bsd.htonl(bsd.INADDR_LOOPBACK)});
 
     const stack = sb.stack;
@@ -60,7 +58,7 @@ pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
     {
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
-        const count = _names.cached(stack, text, _timer.systemTime(stack), &addresses);
+        const count = _names.cached(stack, text, _timer.clock(stack), &addresses);
         if (count > 0) return sb.host.fill(text, addresses[0..count]);
     }
 
@@ -92,7 +90,7 @@ pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
         {
             const held = _lock.take(stack);
             defer _lock.give(stack, held);
-            _names.remember(stack, text, found.addresses[0..found.count], found.ttl, _timer.systemTime(stack));
+            _names.remember(stack, text, found.addresses[0..found.count], found.ttl, _timer.clock(stack));
         }
         return sb.host.fill(candidate, found.addresses[0..found.count]);
     }
@@ -101,9 +99,7 @@ pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
 
 /// The name `address` (network order) has; null with `h_errno` set.
 pub fn byAddress(sb: *SocketBase, address: u32) ?*bsd.hostent {
-    var file: [hosts_bytes]u8 = undefined;
-    const known = readHosts(sb, &file);
-    if (hosts.reverse(known, address)) |name| return sb.host.fill(name, &.{address});
+    if (hostsName(sb, address)) |entry| return entry;
     if (address == bsd.htonl(bsd.INADDR_LOOPBACK)) return sb.host.fill("localhost", &.{address});
     const octets: [4]u8 = @bitCast(address);
     var name: [32]u8 = undefined;
@@ -153,6 +149,26 @@ fn domainOf(stack: *StackBase) []const u8 {
     var length: usize = 0;
     while (length < stack.domain.len and stack.domain[length] != 0) length += 1;
     return stack.domain[0..length];
+}
+
+/// The address `name` has in the hosts file, if it is there. The file is
+/// read into memory of its own: the caller's stack may be a command's,
+/// too small for it.
+fn hostsAddress(sb: *SocketBase, name: []const u8) ?u32 {
+    const sys = sb.sys_base;
+    const memory = sys.AllocVec(hosts_bytes, exec.MEMF_ANY) orelse return null;
+    defer sys.FreeVec(memory);
+    return hosts.find(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), name);
+}
+
+/// The first name `address` has in the hosts file, as a hostent in the
+/// opener's buffer; null when it is not there.
+fn hostsName(sb: *SocketBase, address: u32) ?*bsd.hostent {
+    const sys = sb.sys_base;
+    const memory = sys.AllocVec(hosts_bytes, exec.MEMF_ANY) orelse return null;
+    defer sys.FreeVec(memory);
+    const name = hosts.reverse(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), address) orelse return null;
+    return sb.host.fill(name, &.{address});
 }
 
 /// The hosts file's text, as much as fits in `into`; empty when there is
