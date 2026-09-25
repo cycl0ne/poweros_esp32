@@ -13,6 +13,8 @@ const flash_size = 16 * 1024 * 1024;
 /// Where the disk starts unless `-Ddisk-offset` says otherwise, in KiB:
 /// the kernel image starts at offset 0 and has this much room to grow in.
 const default_disk_offset_kib = 2048;
+/// The host port qemu-display forwards to the machine's Telnet port, 23.
+const display_telnet_port: u16 = 2323;
 /// An MMU page: the disk's start has to be one, since flash.device maps
 /// the disk into the data window a page at a time.
 const mmu_page = 64 * 1024;
@@ -68,11 +70,13 @@ pub fn build(b: *std.Build) void {
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
-    const network = qemuNetwork(
-        b,
-        b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)"),
-        b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file"),
-    );
+    const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
+    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
+    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
+    const network = qemuNetwork(b, net, net_dump, telnet);
+    // The display is the one a person sits at: `telnet localhost 2323`
+    // reaches a ShellServer in it without asking for the port.
+    const display_network = qemuNetwork(b, net, net_dump, telnet orelse display_telnet_port);
     const disk_offset = disk_offset_kib * 1024;
     if (disk_offset % mmu_page != 0 or disk_offset == 0 or disk_offset >= flash_size) {
         std.debug.panic("-Ddisk-offset={d}: the disk has to start on a 64 KiB page inside the {d} KiB of flash", .{ disk_offset_kib, flash_size / 1024 });
@@ -182,7 +186,7 @@ pub fn build(b: *std.Build) void {
     const run_qemu = qemuRun(b, qemu, flash_image, network, &.{"-nographic"});
     b.step("qemu", "Boot the kernel in Espressif QEMU (quit with Ctrl-A X)").dependOn(&run_qemu.step);
 
-    const run_display = qemuRun(b, qemu, flash_image, network, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
+    const run_display = qemuRun(b, qemu, flash_image, display_network, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
     b.step("qemu-display", "Boot in QEMU with its virtual display in an SDL window").dependOn(&run_display.step);
 
     // The same, but on a flash image that keeps what the kernel writes:
@@ -570,12 +574,18 @@ fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, net
 /// backend for the MAC (a tap device puts the machine on the real
 /// network) or `none`; `dump` writes every frame to a pcap file, which
 /// needs the backend to have a name, so it makes the user network explicit.
-fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8) []const []const u8 {
+/// `telnet` forwards that host port to the machine's port 23, where
+/// C:net/ShellServer listens; 0 is none. Only qemu-display has one unless
+/// asked (2323): a fixed host port keeps a second QEMU from starting, and
+/// the display is the run a person sits at.
+fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16) []const []const u8 {
     if (net) |backend| {
         if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
     }
-    if (net == null and dump == null) return &.{};
-    const nic = b.fmt("{s},id=net0,model=open_eth", .{net orelse "user"});
+    const forwarded: ?u16 = if (telnet) |port| (if (port == 0) null else port) else null;
+    if (net == null and dump == null and forwarded == null) return &.{};
+    const forward = if (forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:23", .{port}) else "";
+    const nic = b.fmt("{s},id=net0,model=open_eth{s}", .{ net orelse "user", if (net == null) forward else "" });
     const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
 }

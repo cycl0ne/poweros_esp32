@@ -200,6 +200,13 @@ cores.
   redirects), plain http until there is TLS; `C:net/PacketCapture`
   writes what an interface sends and takes to a pcap file, through a
   capture socket (`PF_PACKET`) a program can open too.
+- A shell over the network: `C:net/ShellServer` listens on port 23 and
+  gives each Telnet connection a shell of its own, on a console with
+  line editing, history and Ctrl-C - con-handler on `DEVS:telnet.device`,
+  which turns a connection into a stream of bytes. A password, if
+  `ENVARC:Sys/net/shellserver` holds one. `Run >NIL: C:net/ShellServer`
+  in `S:User-Startup` makes a board reachable without a cable; in QEMU,
+  `zig build qemu-display` and `telnet localhost 2323`.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 
@@ -247,6 +254,7 @@ More build steps and options:
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
 | `-Dnet=none` | the `qemu*` steps without a network; any other value is a QEMU `-nic` backend, e.g. `tap,ifname=tap0,script=no,downscript=no` (default: QEMU's user network, NAT to the host's) |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, in a file Wireshark reads |
+| `-Dtelnet=2323` | forward that host port to the machine's port 23, where `C:net/ShellServer` listens; `qemu-display` forwards 2323 unless told otherwise, `0` forwards none |
 
 On a board the serial console is the chip's USB port
 (e.g. `tio /dev/ttyACM0`); the display comes up with a shell window.
