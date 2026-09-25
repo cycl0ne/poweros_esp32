@@ -30,8 +30,9 @@ Assign >NIL: T: RAM:T
 Assign >NIL: CLIPS: RAM:Clipboards
 
 ; Where a command is looked for, before C:. C:test holds the programs that
-; exercise a device or a library, so they are called by name like the rest.
-Path >NIL: RAM: SYS: S: C:test
+; exercise a device or a library, C:net the network's tools, so they are
+; called by name like the rest.
+Path >NIL: RAM: SYS: S: C:test C:net
 
 SetEnv Kickstart $Kickstart
 UnSet Kickstart

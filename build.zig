@@ -36,6 +36,8 @@ const image_dirs = [_][]const u8{
     // startup-sequence puts it on the path, so they are still called by
     // name.
     "c/test",
+    // C:net - the network's tools, on the path as well.
+    "c/net",
     "s",
     "libs",
     // The classes, opened through LIBS: (the startup-sequence adds this

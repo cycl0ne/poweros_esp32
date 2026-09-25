@@ -24,7 +24,7 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// What a command is for decides which directory it lives in, and the one
 /// name serves for both the source tree and the disk: `c` is what the
 /// system is used with, `c/test` the programs that exercise a device or a
-/// library and print what happened.
+/// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
     "type",       "dir",      "delete",  "makedir",       "rename",
     "avail",      "assign",   "version", "addbuffers",    "which",
@@ -38,9 +38,9 @@ const tests = [_][]const u8{
     "intuition",  "console",  "keyboard", "touch",   "input",
     "lines",      "nyan",     "plasma",   "audio",   "fonts",
     "screens",    "layout",   "classes",  "gadgets", "listview",
-    "colorwheel", "tapedeck", "pointer",  "net",     "udp",
-    "tcp",
+    "colorwheel", "tapedeck", "pointer",
 };
+const net_tools = [_][]const u8{ "net", "udp", "tcp" };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
@@ -70,7 +70,7 @@ const modules = [_]Program{
 };
 
 pub const programs: []const Program = blk: {
-    var list: [commands.len + tests.len + modules.len]Program = undefined;
+    var list: [commands.len + tests.len + net_tools.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
         list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
@@ -78,6 +78,10 @@ pub const programs: []const Program = blk: {
     }
     for (tests) |name| {
         list[n] = .{ .disk = "c/test/" ++ name, .source = "c/test/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        n += 1;
+    }
+    for (net_tools) |name| {
+        list[n] = .{ .disk = "c/net/" ++ name, .source = "c/net/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
         n += 1;
     }
     for (modules) |module| {

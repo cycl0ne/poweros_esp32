@@ -119,7 +119,8 @@ cores.
 - A shell with variables, aliases, redirection, scripts and resident
   commands, and 26 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
   `Info`, `Format`, `Mount`, `Version` and more - with test programs for
-  the devices and libraries in `C:test`.
+  the devices and libraries in `C:test` and the network's tools in
+  `C:net`.
 
 **Graphics and windows**
 - rtg.library for the displays and their drivers, graphics.library for
@@ -158,7 +159,7 @@ cores.
   reads by packet type, orphan reads, events, multicast groups,
   statistics, the opener's own buffers filled through its copy calls).
   `DEVS:networks/openeth.device` drives QEMU's Ethernet, with the
-  emulator's network behind it; `C:test/Net` asks the link who has an
+  emulator's network behind it; `C:net/Net` asks the link who has an
   address.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
@@ -175,8 +176,8 @@ cores.
   frame or a deadline comes. `WaitSelect` waits for sockets and the
   program's own signals at once; socket events tell of readiness on a
   signal of the program's choosing; a socket can be handed to another
-  task. `C:test/Udp` sends a datagram and waits for its echo, or pings;
-  `C:test/Tcp` fetches a page over HTTP or echoes a connection - over the
+  task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
+  `C:net/Tcp` fetches a page over HTTP or echoes a connection - over the
   network in QEMU.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
