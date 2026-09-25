@@ -31,7 +31,7 @@ const commands = [_][]const u8{
     "list",       "format",   "protect", "changetaskpri", "wait",
     "info",       "platform", "copy",    "rdb",           "i2c",
     "backlight",  "rtg",      "show",    "setmap",        "mount",
-    "showconfig",
+    "showconfig", "date",     "setdate",
 };
 const tests = [_][]const u8{
     "hello",      "echoargs", "testlib",  "gfx",     "anim",

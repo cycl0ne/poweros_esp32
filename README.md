@@ -117,8 +117,8 @@ cores.
 - Consoles `CON:`, `RAW:` and `AUX:` with line editing, history, and
   copy and paste by mouse and keyboard.
 - A shell with variables, aliases, redirection, scripts and resident
-  commands, and 26 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
-  `Info`, `Format`, `Mount`, `Version` and more - with test programs for
+  commands, and 28 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
+  `Info`, `Format`, `Mount`, `Version`, `Date`, `SetDate` and more - with test programs for
   the devices and libraries in `C:test` and the network's tools in
   `C:net`.
 
