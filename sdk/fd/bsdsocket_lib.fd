@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT
+//! bsdsocket.library's functions: the TCP/IP stack's sockets. The base is
+//! the opener's own, from OpenLibrary("bsdsocket.library", 1): its sockets,
+//! its error number and its signals are its own and go with it when it
+//! closes the library. A call that fails answers -1 and sets Errno().
+##include libs/bsdsocket/bsdsocket as bsd
+##include devices/timer as timer
+##include libs/utility/utility as utility
+##basetype SocketBase
+##name bsdsocket.library
+##bias 4
+##public
+/// A new socket of `socket_type` (SOCK_DGRAM, ...) in `domain` (AF_INET):
+/// its descriptor, or -1.
+i32 Socket(i32 domain, i32 socket_type, i32 protocol)
+/// The local address and port of `socket`; port 0 picks a free one.
+i32 Bind(i32 socket, *const bsd.sockaddr address, u32 address_length)
+/// The peer a datagram socket sends to and only takes datagrams from.
+i32 Connect(i32 socket, *const bsd.sockaddr address, u32 address_length)
+/// `length` bytes from `message` to `to` (or the connected peer): the bytes
+/// sent, or -1.
+i32 SendTo(i32 socket, *const anyopaque message, u32 length, u32 flags, ?*const bsd.sockaddr to, u32 to_length)
+/// SendTo to the connected peer.
+i32 Send(i32 socket, *const anyopaque message, u32 length, u32 flags)
+/// The next datagram into `buffer`, and where it came from: the bytes
+/// taken, or -1.
+i32 RecvFrom(i32 socket, *anyopaque buffer, u32 length, u32 flags, ?*bsd.sockaddr from, ?*u32 from_length)
+/// RecvFrom without the sender.
+i32 Recv(i32 socket, *anyopaque buffer, u32 length, u32 flags)
+/// One of the socket's options (SOL_SOCKET, SO_*) set.
+i32 SetSockOpt(i32 socket, i32 level, i32 option, *const anyopaque value, u32 value_length)
+/// One of the socket's options read into `value`.
+i32 GetSockOpt(i32 socket, i32 level, i32 option, *anyopaque value, *u32 value_length)
+/// The socket's local address.
+i32 GetSockName(i32 socket, *bsd.sockaddr address, *u32 address_length)
+/// The address of the socket's connected peer.
+i32 GetPeerName(i32 socket, *bsd.sockaddr address, *u32 address_length)
+/// FIONBIO or FIONREAD on the socket.
+i32 IoctlSocket(i32 socket, u32 request, *anyopaque argument)
+/// The socket closed and its descriptor free again.
+i32 CloseSocket(i32 socket)
+/// Until a socket in the sets is ready, one of the signals in `*signals`
+/// comes, or `timeout` passes: how many sockets are ready, 0, or -1.
+i32 WaitSelect(i32 count, ?*bsd.fd_set read, ?*bsd.fd_set write, ?*bsd.fd_set except, ?*timer.TimeVal timeout, ?*u32 signals)
+/// How many descriptors the opener's table has.
+i32 GetDTableSize()
+/// The error number of the last call that failed.
+i32 Errno()
+/// Where to write the error number as well, and in how many bytes (1, 2
+/// or 4).
+void SetErrnoPtr(?*anyopaque errno_pointer, u32 size)
+/// An address as dotted text, in a buffer of the opener's that the next
+/// call overwrites.
+[*:0]const u8 Inet_NtoA(u32 address)
+/// Dotted text as an address in network order, or INADDR_NONE.
+u32 Inet_Addr([*:0]const u8 text)
+/// The opener's settings (SBTM_SETVAL/SBTM_GETREF of SBTC_*): 0, or the
+/// position of the first tag it could not take, from 1.
+i32 SocketBaseTagList(?[*]const utility.TagItem tags)
+##end

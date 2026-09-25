@@ -160,6 +160,11 @@ cores.
   `DEVS:networks/openeth.device` drives QEMU's Ethernet, with the
   emulator's network behind it; `C:test/Net` asks the link who has an
   address.
+- `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
+  a base per opener (its own descriptors, error number and signals),
+  IPv4 and UDP, the loopback interface, and `WaitSelect`, which waits for
+  sockets and the program's own signals at once. `C:test/Udp` sends a
+  datagram and waits for its echo.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

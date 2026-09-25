@@ -27,6 +27,7 @@ pub const intuition = @import("libs/intuition/intuition.zig");
 pub const keymap = @import("libs/keymap/keymap.zig");
 pub const console = @import("libs/console/console.zig");
 pub const gadgets = @import("libs/gadgets/gadgets.zig");
+pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------
