@@ -38,3 +38,6 @@ pub const support = @import("support.zig");
 pub const checkbox = @import("checkbox.zig");
 pub const cycle = @import("cycle.zig");
 pub const radiobutton = @import("radiobutton.zig");
+pub const string = @import("string.zig");
+pub const text = @import("text.zig");
+pub const slider = @import("slider.zig");

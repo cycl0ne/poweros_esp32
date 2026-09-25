@@ -136,8 +136,10 @@ cores.
   chosen as the default and signal their owner when the last visitor
   leaves; gadgets can live in a window's border.
 - Gadget classes on the disk, each a library of its own in
-  `SYS:classes/gadgets/`: check boxes, cycle buttons and radio buttons,
-  built with the SDK's class library skeleton (`sdk.gadgets`).
+  `SYS:classes/gadgets/`: check boxes, cycle buttons, radio buttons,
+  lines to type text or a number in, lines of text to show, and sliders
+  that show their level, built with the SDK's class library skeleton
+  (`sdk.gadgets`).
 
 **Devices**
 - Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,

@@ -27,6 +27,13 @@ const kexec = host_rom.exec;
 const checkbox = @import("../checkbox/checkbox.zig");
 const cycle = @import("../cycle/cycle.zig");
 const radiobutton = @import("../radiobutton/radiobutton.zig");
+const string = @import("../string/string.zig");
+const text = @import("../text/text.zig");
+const slider = @import("../slider/slider.zig");
+const st = sdk.gadgets.string;
+const tx = sdk.gadgets.text;
+const sl = sdk.gadgets.slider;
+const pg = intuition.propgclass;
 
 /// What a target was last told: the value of the one tag it listens for,
 /// and the gadget's ID.
@@ -262,5 +269,180 @@ test "radiobutton.gadget: a press on a line makes it the one, a press on the one
     try testing.expectEqual(@as(usize, 2), attr(ib, radio, rb.RADIO_Active));
 
     ib.DisposeObject(radio);
+    try rig.down();
+}
+
+/// A key pressed, as the keyboard sends it.
+fn key(code: u16) ie.InputEvent {
+    return .{ .class = ie.IECLASS_RAWKEY, .code = code };
+}
+
+test "string.gadget: a line in a ridge, and a number field that takes digits only" {
+    var heard = Heard{ .tag = gc.STRINGA_LongVal, .ib = undefined };
+    var rig = try Rig.up(&string.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // Text: set and read through strgclass's own attributes.
+    const line = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 32 },
+        .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("PowerOS") },
+        .{},
+    }).?;
+    const said: [*:0]const u8 = @ptrFromInt(attr(ib, line, gc.STRINGA_TextVal));
+    try testing.expectEqualStrings("PowerOS", std.mem.span(said));
+    _ = ib.SetAttrsTagList(line, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("Amiga") }, .{} });
+    try testing.expectEqualStrings("Amiga", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, line, gc.STRINGA_TextVal)))));
+    // A line of the font high inside its ridge, taller than the line alone.
+    try testing.expect(attr(ib, line, gc.GA_Height) > 12);
+    ib.DisposeObject(line);
+
+    // A number field.
+    const number = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{ .tag = gc.STRINGA_LongVal, .data = 0 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    _ = ib.SetAttrsTagList(number, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr("") }, .{} });
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 20, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(number, @ptrCast(&down)));
+    // "4", "a", "2": the letter is turned away. (Keys that are the same
+    // on every keymap.)
+    for ([_]u16{ 0x04, 0x20, 0x02 }) |code| {
+        const e = key(code);
+        var typed = input(gc.GM_HANDLEINPUT, &e, 20, 5, &termination);
+        try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(number, @ptrCast(&typed)));
+    }
+    try testing.expectEqualStrings("42", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, number, gc.STRINGA_TextVal)))));
+    try testing.expectEqual(@as(isize, 42), @as(isize, @bitCast(attr(ib, number, gc.STRINGA_LongVal))));
+    // The target heard the number, in the field's own name.
+    try testing.expectEqual(@as(?usize, 42), heard.value);
+    try testing.expectEqual(@as(?usize, 9), heard.id);
+    // Return ends it, the way that counts.
+    const enter = key(0x44);
+    var done = input(gc.GM_HANDLEINPUT, &enter, 20, 5, &termination);
+    try testing.expect(ib.SendMessage(number, @ptrCast(&done)) & gc.GMR_VERIFY != 0);
+
+    ib.DisposeObject(number);
+    try rig.down();
+}
+
+test "text.gadget: a text or a number through its format, never pressed" {
+    var heard = Heard{ .tag = tx.TEXT_Number, .ib = undefined };
+    var rig = try Rig.up(&text.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // Copied: the caller's text may change after.
+    var mine = [_:0]u8{ 'R', 'e', 'a', 'd', 'y' };
+    const status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&mine) },
+        .{ .tag = tx.TEXT_CopyText, .data = 1 },
+        .{ .tag = tx.TEXT_Border, .data = 1 },
+        .{},
+    }).?;
+    mine[0] = 'X';
+    try testing.expectEqualStrings("Ready", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, status, tx.TEXT_Text)))));
+    _ = ib.SetAttrsTagList(status, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr("Busy") }, .{} });
+    try testing.expectEqualStrings("Busy", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, status, tx.TEXT_Text)))));
+    _ = ib.SetAttrsTagList(status, &[_]TagItem{ .{ .tag = tx.TEXT_Number, .data = @bitCast(@as(isize, -7)) }, .{} });
+    try testing.expectEqual(@as(isize, -7), @as(isize, @bitCast(attr(ib, status, tx.TEXT_Number))));
+
+    // Never pressed.
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 1, .y = 1 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(status, @ptrCast(&hit)));
+    ib.DisposeObject(status);
+
+    // A number through a format: %ld takes all of it, %d its low half.
+    var into: [32]u8 = undefined;
+    const sys = kexec.SysBase.iface();
+    try testing.expectEqualStrings("42 files", std.mem.span(sdk.gadgets.support.formatNumber(sys, "%ld files", 42, &into)));
+    try testing.expectEqualStrings("-3", std.mem.span(sdk.gadgets.support.formatNumber(sys, "%d", -3, &into)));
+    // Cut to fit, never past the end.
+    var small: [4]u8 = undefined;
+    try testing.expectEqualStrings("123", std.mem.span(sdk.gadgets.support.formatNumber(sys, "%ld", 123456, &small)));
+    try rig.down();
+}
+
+fn doubled(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const level: *const i32 = @ptrCast(@alignCast(message.?));
+    return @bitCast(@as(isize, level.* * 2));
+}
+
+test "slider.gadget: levels spread over the pot, the knob on its level, and the level shown" {
+    var heard = Heard{ .tag = sl.SLIDER_Level, .ib = undefined };
+    var rig = try Rig.up(&slider.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // Every level is the pot it puts the knob at, and the ends are the
+    // pot's ends: across, the smallest at the left; up and down, at the
+    // bottom.
+    var across = slider.Data{ .min = -5, .max = 5 };
+    try testing.expectEqual(@as(u32, 0), slider.potFor(&across, -5));
+    try testing.expectEqual(pg.MAXPOT, slider.potFor(&across, 5));
+    var up = slider.Data{ .min = -5, .max = 5, .vertical = 1 };
+    try testing.expectEqual(pg.MAXPOT, slider.potFor(&up, -5));
+    try testing.expectEqual(@as(u32, 0), slider.potFor(&up, 5));
+    var level: i32 = -5;
+    while (level <= 5) : (level += 1) {
+        try testing.expectEqual(level, slider.levelAt(&across, slider.potFor(&across, level)));
+        try testing.expectEqual(level, slider.levelAt(&up, slider.potFor(&up, level)));
+    }
+    // A pot between two levels is the nearer one.
+    try testing.expectEqual(@as(i32, 0), slider.levelAt(&across, pg.MAXPOT / 2 + 100));
+
+    // The wrong way round is swapped, and past the end is the end.
+    const knob = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 4 },
+        .{ .tag = sl.SLIDER_Min, .data = 15 },
+        .{ .tag = sl.SLIDER_Max, .data = 0 },
+        .{ .tag = sl.SLIDER_Level, .data = 99 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), attr(ib, knob, sl.SLIDER_Min));
+    try testing.expectEqual(@as(usize, 15), attr(ib, knob, sl.SLIDER_Max));
+    try testing.expectEqual(@as(usize, 15), attr(ib, knob, sl.SLIDER_Level));
+    _ = ib.SetAttrsTagList(knob, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = 0 }, .{} });
+
+    // A press beside the knob, at the right: one level that way, reported
+    // and told.
+    var termination: i32 = -1;
+    const width: i32 = @intCast(attr(ib, knob, gc.GA_Width));
+    var beside = input(gc.GM_GOACTIVE, &press, width - 6, 5, &termination);
+    try testing.expect(ib.SendMessage(knob, @ptrCast(&beside)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, knob, sl.SLIDER_Level));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 4), heard.id);
+
+    // Dragged to the far end and let go: the last level.
+    _ = ib.SetAttrsTagList(knob, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = 0 }, .{} });
+    var grab = input(gc.GM_GOACTIVE, &press, 6, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(knob, @ptrCast(&grab)));
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var drag = input(gc.GM_HANDLEINPUT, &moving, width + 40, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(knob, @ptrCast(&drag)));
+    try testing.expectEqual(@as(?usize, 15), heard.value);
+    var let_go = input(gc.GM_HANDLEINPUT, &release, width + 40, 5, &termination);
+    try testing.expect(ib.SendMessage(knob, @ptrCast(&let_go)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 15), termination);
+    ib.DisposeObject(knob);
+
+    // The level shown through its format, and through a hook first.
+    var hook = utility.Hook{ .entry = &doubled };
+    const shown = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = sl.SLIDER_Level, .data = 6 },
+        .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld%%") },
+        .{ .tag = sl.SLIDER_MaxLevelLen, .data = 4 },
+        .{ .tag = sl.SLIDER_DispFunc, .data = @intFromPtr(&hook) },
+        .{},
+    }).?;
+    const own = classes.instData(slider.Data, classes.objectClass(shown), shown);
+    try testing.expectEqualStrings("12%", std.mem.span(slider.levelText(sdk.gadgets.baseOf(classes.objectClass(shown)), own, shown)));
+    ib.DisposeObject(shown);
     try rig.down();
 }
