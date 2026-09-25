@@ -38,6 +38,10 @@ const image_dirs = [_][]const u8{
     "c/test",
     "s",
     "libs",
+    // The classes, opened through LIBS: (the startup-sequence adds this
+    // directory to it): gadgets/ for the gadget classes.
+    "classes",
+    "classes/gadgets",
     "devs",
     // HANDLERS: - what a device is, for Mount to read, and the handlers
     // that are not in the ROM.

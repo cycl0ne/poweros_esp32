@@ -9,6 +9,9 @@ pub const name = @import("name.zig");
 pub const pack = @import("pack.zig");
 pub const pattern = @import("pattern.zig");
 
+/// The name to open it by.
+pub const UTILITYNAME = "utility.library";
+
 /// utility.library's base, with its functions.
 pub const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 

@@ -81,40 +81,42 @@ pub const Data = extern struct {
     requester: ?*intuition.Requester = null,
 };
 
-pub const GFLG_SELECTED: u32 = 1 << 0;
-pub const GFLG_DISABLED: u32 = 1 << 1;
-pub const GFLG_RELRIGHT: u32 = 1 << 2;
-pub const GFLG_RELBOTTOM: u32 = 1 << 3;
-pub const GFLG_RELWIDTH: u32 = 1 << 4;
-pub const GFLG_RELHEIGHT: u32 = 1 << 5;
-pub const GFLG_RELATIVE: u32 = GFLG_RELRIGHT | GFLG_RELBOTTOM | GFLG_RELWIDTH | GFLG_RELHEIGHT;
-/// Tab moves the keyboard to this gadget.
-pub const GFLG_TABCYCLE: u32 = 1 << 6;
-/// It belongs to the border of a GimmeZeroZero window, not to the part
-/// inside it.
-pub const GFLG_GZZGADGET: u32 = 1 << 7;
-/// It has something to say under gadget help (`GA_GadgetHelp`).
-pub const GFLG_GADGETHELP: u32 = 1 << 8;
-/// It has a bounding box of its own (`GA_Bounds`).
-pub const GFLG_BOUNDS: u32 = 1 << 9;
-/// It stands for one of the window's own gadgets (`GA_SysGadget`).
-pub const GFLG_SYSGADGET: u32 = 1 << 10;
+// The flags are the SDK's: `gc.Gadget` is the public view of `Data`.
+pub const GFLG_SELECTED = gc.GFLG_SELECTED;
+pub const GFLG_DISABLED = gc.GFLG_DISABLED;
+pub const GFLG_RELRIGHT = gc.GFLG_RELRIGHT;
+pub const GFLG_RELBOTTOM = gc.GFLG_RELBOTTOM;
+pub const GFLG_RELWIDTH = gc.GFLG_RELWIDTH;
+pub const GFLG_RELHEIGHT = gc.GFLG_RELHEIGHT;
+pub const GFLG_RELATIVE = gc.GFLG_RELATIVE;
+pub const GFLG_TABCYCLE = gc.GFLG_TABCYCLE;
+pub const GFLG_GZZGADGET = gc.GFLG_GZZGADGET;
+pub const GFLG_GADGETHELP = gc.GFLG_GADGETHELP;
+pub const GFLG_BOUNDS = gc.GFLG_BOUNDS;
+pub const GFLG_SYSGADGET = gc.GFLG_SYSGADGET;
+pub const GACT_IMMEDIATE = gc.GACT_IMMEDIATE;
+pub const GACT_RELVERIFY = gc.GACT_RELVERIFY;
+pub const GACT_TOGGLESELECT = gc.GACT_TOGGLESELECT;
+pub const GACT_ENDGADGET = gc.GACT_ENDGADGET;
+pub const GACT_RIGHTBORDER = gc.GACT_RIGHTBORDER;
+pub const GACT_LEFTBORDER = gc.GACT_LEFTBORDER;
+pub const GACT_TOPBORDER = gc.GACT_TOPBORDER;
+pub const GACT_BOTTOMBORDER = gc.GACT_BOTTOMBORDER;
+pub const GACT_BORDER = gc.GACT_BORDER;
+pub const GACT_FOLLOWMOUSE = gc.GACT_FOLLOWMOUSE;
 
-pub const GACT_IMMEDIATE: u32 = 1 << 0;
-pub const GACT_RELVERIFY: u32 = 1 << 1;
-/// A press turns it on or off and leaves it that way, rather than selecting
-/// it only for as long as the button is held.
-pub const GACT_TOGGLESELECT: u32 = 1 << 2;
-/// In a requester, finishing the way that counts ends the requester.
-pub const GACT_ENDGADGET: u32 = 1 << 3;
-/// It lives in that border of its window (`GA_RightBorder`, ...).
-pub const GACT_RIGHTBORDER: u32 = 1 << 4;
-pub const GACT_LEFTBORDER: u32 = 1 << 5;
-pub const GACT_TOPBORDER: u32 = 1 << 6;
-pub const GACT_BOTTOMBORDER: u32 = 1 << 7;
-pub const GACT_BORDER: u32 = GACT_RIGHTBORDER | GACT_LEFTBORDER | GACT_TOPBORDER | GACT_BOTTOMBORDER;
-/// While held, the window hears the pointer's moves (`GA_FollowMouse`).
-pub const GACT_FOLLOWMOUSE: u32 = 1 << 8;
+// `Data` is what `gc.Gadget` shows a class: the same fields at the same
+// places, checked here so that the two cannot drift apart.
+comptime {
+    const Public = gc.Gadget;
+    if (@sizeOf(Public) != @sizeOf(Data)) @compileError("gc.Gadget and gadgetclass.Data differ in size");
+    for (@typeInfo(Public).@"struct".fields) |field| {
+        if (@offsetOf(Public, field.name) != @offsetOf(Data, field.name) or
+            @sizeOf(field.type) != @sizeOf(@FieldType(Data, field.name)))
+            @compileError("gc.Gadget." ++ field.name ++ " is not where gadgetclass.Data has it");
+    }
+    if (@typeInfo(Public).@"struct".fields.len != @typeInfo(Data).@"struct".fields.len) @compileError("gc.Gadget and gadgetclass.Data have different fields");
+}
 
 /// The state a gadget of `highlight` is drawn in: its own selected look
 /// for `GFLG_GADGHCOMP` and `GFLG_GADGHIMAGE`, its normal one for

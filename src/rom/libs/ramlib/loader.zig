@@ -12,32 +12,53 @@
 //! image: find the tag, check what it is, hand it to `InitResident`. The
 //! difference is only where the bytes came from.
 //!
-//! The name is tried as it was given first, so a program can load a module
-//! sitting beside it, and then under `LIBS:` or `DEVS:`.
+//! A name may carry a path: `gadgets/checkbox.gadget`,
+//! `SYS:classes/gadgets/checkbox.gadget`. What the module is called is the
+//! part after the last `/` or `:` - its **tail** - and that is what it is
+//! looked for by on exec's lists and among the ROM tags, and what the tag
+//! in the file must be named. The file is looked for by the whole name:
+//! under `LIBS:` or `DEVS:` when it has no `:`, as it stands when it has
+//! one, and last, from a process, as given, from its current directory.
+//! `LIBS:` may be a multi-assign - `SYS:libs` and `SYS:classes` - and dos
+//! walks its directories until the file is found.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const ramlib = @import("ramlib.zig");
 const RamLibBase = ramlib.RamLibBase;
+const ExecBase = sdk.interface.exec.ExecBase;
 
 /// The longest name a module may have, with its directory in front.
 const max_path = 96;
 
 /// Look for `name`, make what is in it, and keep the segments. True when
-/// something was made, and the caller looks on exec's list again.
-pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32) bool {
+/// something was made, and the caller looks on exec's list again, by the
+/// name's tail. `own_process` is true when this runs in the asking
+/// process, whose current directory the name as given is tried from.
+pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32, own_process: bool) bool {
     const sys = rlb.sys_base;
     // One at a time: two tasks asking for the same name at once would both
     // find it missing and both load it.
     sys.ObtainSemaphore(&rlb.lock);
     defer sys.ReleaseSemaphore(&rlb.lock);
 
+    const tail = tailName(name);
     // Somebody may have loaded it while this was waiting for the lock.
-    if (alreadyLoaded(rlb, name)) return true;
+    if (kind == ramlib.KIND_LIBRARY) {
+        if (libraryListed(rlb, tail)) return true;
+        // Loaded once and expunged since: its segments are free to go.
+        forget(rlb, tail);
+    } else if (alreadyLoaded(rlb, tail)) return true;
 
-    const seg_list = find(rlb, name, kind) orelse return false;
-    const tag = scan(seg_list, name, version) orelse {
+    // A ROM tag of that name that no boot phase started: made from the
+    // ROM, with no file behind it.
+    if (sys.FindResident(tail)) |tag| {
+        if (tag.version >= version and wantedKind(tag, kind)) return sys.InitResident(tag, null) != null;
+    }
+
+    const seg_list = find(rlb, name, kind, own_process) orelse return false;
+    const tag = scan(seg_list, tail, version) orelse {
         // A file that is not a module, or not the one that was asked for.
         rlb.dos_base.UnLoadSeg(seg_list);
         return false;
@@ -46,19 +67,47 @@ pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32) bool
         rlb.dos_base.UnLoadSeg(seg_list);
         return false;
     }
-    keep(rlb, name, seg_list);
+    keep(rlb, tail, seg_list);
     return true;
 }
 
-/// The file, by the name it was asked for and then where its kind lives.
-fn find(rlb: *RamLibBase, name: [*:0]const u8, kind: u32) ?*dos.SegList {
-    const dl = rlb.dos_base;
-    if (dl.LoadSeg(name)) |seg_list| return seg_list;
+/// A ROM tag answers only the call that asks for its kind.
+fn wantedKind(tag: *const exec.Resident, kind: u32) bool {
+    return if (kind == ramlib.KIND_DEVICE) tag.type == .device else tag.type == .library;
+}
 
+/// What a module is called: the part of `name` after its last `/` or `:`.
+pub fn tailName(name: [*:0]const u8) [*:0]const u8 {
+    var tail = name;
+    var i: usize = 0;
+    while (name[i] != 0) : (i += 1) {
+        if (name[i] == '/' or name[i] == ':') tail = name + i + 1;
+    }
+    return tail;
+}
+
+/// The file: where its kind lives, then the name as given from the
+/// asking process's current directory. A name with a `:` says where it
+/// is, and is tried there alone.
+fn find(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, own_process: bool) ?*dos.SegList {
+    const dl = rlb.dos_base;
     var path: [max_path]u8 = undefined;
+    const load_name = loadName(&path, name, kind) orelse return null;
+    if (dl.LoadSeg(load_name)) |seg_list| return seg_list;
+    // ramlib's own process has no current directory of the asker's.
+    if (load_name == name or !own_process) return null;
+    return dl.LoadSeg(name);
+}
+
+/// The name the file is loaded by: `name` itself when it has a `:`,
+/// otherwise `LIBS:` or `DEVS:` and the whole of it, in `into`.
+fn loadName(into: []u8, name: [*:0]const u8, kind: u32) ?[*:0]const u8 {
+    var i: usize = 0;
+    while (name[i] != 0) : (i += 1) {
+        if (name[i] == ':') return name;
+    }
     const where: []const u8 = if (kind == ramlib.KIND_DEVICE) "DEVS:" else "LIBS:";
-    const full = join(&path, where, name) orelse return null;
-    return dl.LoadSeg(full);
+    return join(into, where, name);
 }
 
 /// "LIBS:" and a name into one buffer, NUL-terminated. Null if it does not
@@ -120,12 +169,38 @@ fn lower(c: u8) u8 {
 }
 
 fn alreadyLoaded(rlb: *RamLibBase, name: [*:0]const u8) bool {
+    return noteOf(rlb, name) != null;
+}
+
+fn noteOf(rlb: *RamLibBase, name: [*:0]const u8) ?*ramlib.Loaded {
     var node = rlb.loaded.first();
     while (node) |n| : (node = n.next()) {
         const module: *ramlib.Loaded = @fieldParentPtr("node", n);
-        if (sameName(@ptrCast(&module.name_buf), name)) return true;
+        if (sameName(@ptrCast(&module.name_buf), name)) return module;
     }
-    return false;
+    return null;
+}
+
+/// Whether exec has a library of that name: exec's own open, and a close
+/// straight after. A library leaves the list when it expunges, which a
+/// note of ramlib's cannot see.
+fn libraryListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
+    const sys = rlb.sys_base;
+    const open: *const fn (*ExecBase, [*:0]const u8, u32) callconv(.c) ?*exec.Library =
+        @ptrCast(@alignCast(rlb.old_open_library.?));
+    const lib = open(sys, name, 0) orelse return false;
+    sys.CloseLibrary(lib);
+    return true;
+}
+
+/// A library that was loaded and has expunged itself since: its base is
+/// gone and its code is used by nothing, so the segments go with the note.
+fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
+    const module = noteOf(rlb, name) orelse return;
+    const sys = rlb.sys_base;
+    sys.Remove(&module.node);
+    if (module.seg_list) |seg_list| rlb.dos_base.UnLoadSeg(seg_list);
+    sys.FreeVec(module);
 }
 
 /// Note what was loaded, so that a flush has something to walk and a
@@ -180,6 +255,14 @@ test "the scan finds a module, and refuses one that was not asked for" {
     try testing.expect(scan(&seg, "hello.library", 0) == null);
 }
 
+test "a module is called by the tail of its name" {
+    try testing.expectEqualStrings("x.gadget", std.mem.span(tailName("gadgets/x.gadget")));
+    try testing.expectEqualStrings("x.gadget", std.mem.span(tailName("SYS:classes/gadgets/x.gadget")));
+    try testing.expectEqualStrings("x.gadget", std.mem.span(tailName("RAM:x.gadget")));
+    try testing.expectEqualStrings("hello.library", std.mem.span(tailName("hello.library")));
+    try testing.expectEqualStrings("", std.mem.span(tailName("LIBS:")));
+}
+
 test "the scan walks every segment of the file" {
     var first: [64]u8 align(@alignOf(exec.Resident)) = @splat(0);
     var second: [128]u8 align(@alignOf(exec.Resident)) = @splat(0);
@@ -195,6 +278,13 @@ test "a path is where its kind lives and the name" {
     var buffer: [max_path]u8 = undefined;
     const path = join(&buffer, "LIBS:", "hello.library").?;
     try testing.expectEqualStrings("LIBS:hello.library", std.mem.span(path));
+
+    // A directory in the name stays in the path; a device goes where
+    // devices are; a name with a colon is loaded as it stands.
+    try testing.expectEqualStrings("LIBS:gadgets/x.gadget", std.mem.span(loadName(&buffer, "gadgets/x.gadget", ramlib.KIND_LIBRARY).?));
+    try testing.expectEqualStrings("DEVS:sd.device", std.mem.span(loadName(&buffer, "sd.device", ramlib.KIND_DEVICE).?));
+    const given: [*:0]const u8 = "SYS:classes/gadgets/x.gadget";
+    try testing.expectEqual(given, loadName(&buffer, given, ramlib.KIND_LIBRARY).?);
 
     // A name that does not fit is refused rather than cut: half a name
     // would find the wrong file or none.

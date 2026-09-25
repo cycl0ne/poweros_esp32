@@ -186,7 +186,7 @@ test {
 }
 
 /// exec on its test RAM, and every library this one stands on.
-fn setUp() !*IntuitionBase {
+pub fn setUp() !*IntuitionBase {
     try kexec.setUp();
     _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
     _ = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
@@ -202,7 +202,7 @@ fn setUp() !*IntuitionBase {
 
 /// Nothing here expunges itself, so the test gives back every class, every
 /// open and every library.
-fn tearDown(ib: *IntuitionBase) !void {
+pub fn tearDown(ib: *IntuitionBase) !void {
     try testing.expect(ib.iface().FreeClass(ib.window_class));
     try testing.expect(ib.iface().FreeClass(ib.layout_class));
     try testing.expect(ib.iface().FreeClass(ib.string_class));

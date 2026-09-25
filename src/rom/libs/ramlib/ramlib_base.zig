@@ -21,8 +21,9 @@ pub const RamLibBase = extern struct {
     /// The vectors that were replaced, called first on every open.
     old_open_library: ?*const anyopaque = null,
     old_open_device: ?*const anyopaque = null,
-    /// What has been loaded: a `Loaded` per module, so a flush later has
-    /// something to walk. Nothing is unloaded yet.
+    /// What has been loaded: a `Loaded` per module, by its tail name. A
+    /// library's segments are unloaded when it is asked for again after it
+    /// expunged itself; a device's stay.
     loaded: exec.List = .{},
     /// One load at a time: two tasks asking for the same name at once
     /// would otherwise both load it.

@@ -19,4 +19,5 @@ test {
     _ = @import("handlers/fat/tests/names.zig");
     _ = @import("handlers/fat/tests/dir.zig");
     _ = @import("handlers/fat/tests/fs.zig");
+    _ = @import("classes/gadgets/tests/classes.zig");
 }

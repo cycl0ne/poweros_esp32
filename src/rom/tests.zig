@@ -13,7 +13,7 @@ test {
     _ = @import("libs/graphics/graphics.zig");
     _ = @import("libs/layers/layers.zig");
     _ = @import("libs/intuition/intuition.zig");
-    _ = @import("libs/ramlib/loader.zig");
+    _ = @import("libs/ramlib/ramlib.zig");
     _ = @import("devs/touch/_touch.zig");
     _ = @import("devs/touch/gt911.zig");
     _ = @import("devs/touch/st7123.zig");

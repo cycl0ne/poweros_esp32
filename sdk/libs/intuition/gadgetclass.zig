@@ -35,6 +35,10 @@ const utility = @import("../utility/utility.zig");
 const classusr = @import("classusr.zig");
 const ie = @import("../../devices/inputevent.zig");
 const MethodID = classusr.MethodID;
+const screens = @import("screens.zig");
+const windows = @import("windows.zig");
+const requesters = @import("requesters.zig");
+const text_ = @import("text.zig");
 const GadgetInfo = classusr.GadgetInfo;
 
 // --- attributes -------------------------------------------------------------
@@ -155,6 +159,116 @@ pub const GA_TabCycle = GA_Dummy + 0x24;
 pub const GA_GadgetHelp = GA_Dummy + 0x25;
 /// The pens to draw with, for a class that wants them when it is made.
 pub const GA_DrawInfo = GA_Dummy + 0x21;
+
+// --- the gadget -------------------------------------------------------------
+
+/// What gadgetclass keeps of every gadget: its box, flags, ID and look.
+/// It is the first thing in a gadget object, so `gadget` finds it at the
+/// object's handle whatever class the object is.
+///
+/// A class made from gadgetclass reads it - its box, whether it is
+/// selected or disabled - and changes it only through attributes, with one
+/// exception: a class that keeps its own selected state sets and clears
+/// `GFLG_SELECTED` in `flags`, as buttongclass does.
+pub const Gadget = extern struct {
+    /// The next gadget in its list.
+    next: ?*classusr.Object = null,
+    /// The box as given: `GFLG_REL*` in `flags` say which of the four are
+    /// measured from the window's right and bottom edges. `boxIn` answers
+    /// the box itself.
+    left: i32 = 0,
+    top: i32 = 0,
+    width: i32 = 80,
+    height: i32 = 40,
+    /// The size it was made with (`GA_Width`, `GA_Height`), which a layout
+    /// does not change.
+    given_width: i32 = 80,
+    given_height: i32 = 40,
+    /// `GFLG_*`.
+    flags: u32 = 0,
+    /// `GACT_*`.
+    activation: u32 = 0,
+    id: u32 = 0,
+    user_data: usize = 0,
+    image: ?*classusr.Object = null,
+    select_render: ?*classusr.Object = null,
+    /// Its label: one of the three at a time.
+    text: ?[*:0]const u8 = null,
+    itext: ?*const text_.IntuiText = null,
+    label_image: ?*classusr.Object = null,
+    /// `GFLG_GADGH*`.
+    highlight: u32 = GFLG_GADGHCOMP,
+    bounds: Box = .{},
+    sys_type: u32 = 0,
+    /// `GA_DrawInfo`.
+    draw_info: ?*screens.DrawInfo = null,
+    target: usize = 0,
+    map: ?[*]const utility.TagItem = null,
+    loop_count: u32 = 0,
+    /// The window it is in, while it is in one.
+    window: ?*windows.Window = null,
+    requester: ?*requesters.Requester = null,
+};
+
+/// `Gadget.flags`.
+pub const GFLG_SELECTED: u32 = 1 << 0;
+pub const GFLG_DISABLED: u32 = 1 << 1;
+pub const GFLG_RELRIGHT: u32 = 1 << 2;
+pub const GFLG_RELBOTTOM: u32 = 1 << 3;
+pub const GFLG_RELWIDTH: u32 = 1 << 4;
+pub const GFLG_RELHEIGHT: u32 = 1 << 5;
+pub const GFLG_RELATIVE: u32 = GFLG_RELRIGHT | GFLG_RELBOTTOM | GFLG_RELWIDTH | GFLG_RELHEIGHT;
+/// Tab moves the keyboard to this gadget.
+pub const GFLG_TABCYCLE: u32 = 1 << 6;
+/// It belongs to the border of a GimmeZeroZero window, not to the part
+/// inside it.
+pub const GFLG_GZZGADGET: u32 = 1 << 7;
+/// It has something to say under gadget help (`GA_GadgetHelp`).
+pub const GFLG_GADGETHELP: u32 = 1 << 8;
+/// It has a bounding box of its own (`GA_Bounds`).
+pub const GFLG_BOUNDS: u32 = 1 << 9;
+/// It stands for one of the window's own gadgets (`GA_SysGadget`).
+pub const GFLG_SYSGADGET: u32 = 1 << 10;
+
+/// `Gadget.activation`.
+pub const GACT_IMMEDIATE: u32 = 1 << 0;
+pub const GACT_RELVERIFY: u32 = 1 << 1;
+/// A press turns it on or off and leaves it that way, rather than selecting
+/// it only for as long as the button is held.
+pub const GACT_TOGGLESELECT: u32 = 1 << 2;
+/// In a requester, finishing the way that counts ends the requester.
+pub const GACT_ENDGADGET: u32 = 1 << 3;
+/// It lives in that border of its window (`GA_RightBorder`, ...).
+pub const GACT_RIGHTBORDER: u32 = 1 << 4;
+pub const GACT_LEFTBORDER: u32 = 1 << 5;
+pub const GACT_TOPBORDER: u32 = 1 << 6;
+pub const GACT_BOTTOMBORDER: u32 = 1 << 7;
+pub const GACT_BORDER: u32 = GACT_RIGHTBORDER | GACT_LEFTBORDER | GACT_TOPBORDER | GACT_BOTTOMBORDER;
+/// While held, the window hears the pointer's moves (`GA_FollowMouse`).
+pub const GACT_FOLLOWMOUSE: u32 = 1 << 8;
+
+/// The gadget of any object made from gadgetclass.
+pub inline fn gadget(o: *classusr.Object) *Gadget {
+    return @ptrCast(@alignCast(o));
+}
+
+/// A gadget's box in a domain `width` by `height` - the GadgetInfo's
+/// `domain_width` and `domain_height` - with its relative edges worked out.
+pub fn boxIn(g: *const Gadget, width: i32, height: i32) Box {
+    return .{
+        .left = if (g.flags & GFLG_RELRIGHT != 0) width - 1 + g.left else g.left,
+        .top = if (g.flags & GFLG_RELBOTTOM != 0) height - 1 + g.top else g.top,
+        .width = if (g.flags & GFLG_RELWIDTH != 0) width + g.width else g.width,
+        .height = if (g.flags & GFLG_RELHEIGHT != 0) height + g.height else g.height,
+    };
+}
+
+/// A gadget's box where a message says it is: in the GadgetInfo's domain,
+/// or at 0,0 at its own size without one.
+pub fn boxFor(g: *const Gadget, gi: ?*const GadgetInfo) Box {
+    const info = gi orelse return .{ .width = g.width, .height = g.height };
+    return boxIn(g, info.domain_width, info.domain_height);
+}
 
 // --- methods ----------------------------------------------------------------
 

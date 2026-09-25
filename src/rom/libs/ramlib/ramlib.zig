@@ -10,6 +10,10 @@
 //! with `LoadSeg`, finds the ROM tag in it and lets `InitResident` make the
 //! thing. The second attempt then finds it on the list like any other.
 //!
+//! A name may carry a path (`gadgets/checkbox.gadget`); exec is asked for
+//! the part after its last `/` or `:`, which is what the module is called,
+//! and the path only says where its file is (loader.zig).
+//!
 //! A load is disk work: it opens files, waits on a handler and takes as
 //! long as a file system takes. A process can do that itself, and does. A
 //! bare task cannot - dos wants a process to hang its context on - so the
@@ -81,15 +85,16 @@ fn ourBase(sys: *ExecBase) ?*RamLibBase {
 // --- what stands in front of exec --------------------------------------------
 
 /// exec's OpenLibrary, with a look on the disk when the list has not got
-/// it. The replaced vector is called first, so a library that is already
-/// there costs one indirect call and nothing else.
+/// it. The replaced vector is called first, with the name's tail, so a
+/// library that is already there costs one indirect call and nothing else.
 pub fn openLibrary(sys: *ExecBase, name: [*:0]const u8, version: u32) callconv(.c) ?*exec.Library {
     const rlb = ourBase(sys) orelse return null;
     const old: *const fn (*ExecBase, [*:0]const u8, u32) callconv(.c) ?*exec.Library =
         @ptrCast(@alignCast(rlb.old_open_library.?));
-    if (old(sys, name, version)) |lib| return lib;
+    const tail = loader.tailName(name);
+    if (old(sys, tail, version)) |lib| return lib;
     if (!fetch(rlb, name, KIND_LIBRARY, version)) return null;
-    return old(sys, name, version);
+    return old(sys, tail, version);
 }
 
 /// The same for devices. A device answers with an error code rather than a
@@ -99,10 +104,11 @@ pub fn openDevice(sys: *ExecBase, name: [*:0]const u8, unit: u32, io: *exec.IORe
     const rlb = ourBase(sys) orelse return exec.IOERR_OPENFAIL;
     const old: *const fn (*ExecBase, [*:0]const u8, u32, *exec.IORequest, u32) callconv(.c) i32 =
         @ptrCast(@alignCast(rlb.old_open_device.?));
-    const answer = old(sys, name, unit, io, flags);
+    const tail = loader.tailName(name);
+    const answer = old(sys, tail, unit, io, flags);
     if (answer == 0) return answer;
     if (!fetch(rlb, name, KIND_DEVICE, 0)) return answer;
-    return old(sys, name, unit, io, flags);
+    return old(sys, tail, unit, io, flags);
 }
 
 /// Get it from the disk, whoever is asking. A process does it itself; a
@@ -111,7 +117,7 @@ pub fn openDevice(sys: *ExecBase, name: [*:0]const u8, unit: u32, io: *exec.IORe
 fn fetch(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32) bool {
     const sys = rlb.sys_base;
     const task = sys.FindTask(null) orelse return false;
-    if (task.node.type == .process) return loader.load(rlb, name, kind, version);
+    if (task.node.type == .process) return loader.load(rlb, name, kind, version, true);
 
     // Before the process has made its port there is nobody to ask, which
     // is only ever true of the residents that start between this one and
@@ -142,13 +148,65 @@ pub fn server(sys: *ExecBase) callconv(.c) void {
         _ = sys.WaitPort(port);
         while (sys.GetMsg(port)) |message| {
             const request: *LoadMessage = @ptrCast(@alignCast(message));
-            request.loaded = @intFromBool(loader.load(rlb, request.name, request.kind, request.version));
+            request.loaded = @intFromBool(loader.load(rlb, request.name, request.kind, request.version, false));
             sys.ReplyMsg(message);
         }
     }
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
+
+const testing = std.testing;
+/// The kernel's exec, to set up and tear down around the test.
+const kexec = @import("../exec/exec.zig");
+
+fn neverExpunge(_: *exec.Library) callconv(.c) ?*anyopaque {
+    return null;
+}
+
+const test_vectors = [_]*const anyopaque{
+    exec.libraries.vec(exec.libraries.libOpen),
+    exec.libraries.vec(exec.libraries.libClose),
+    exec.libraries.vec(neverExpunge),
+    exec.libraries.vec(exec.libraries.libExtFunc),
+};
+
+const gadget_table = exec.InitTable{
+    .data_size = @sizeOf(exec.Library),
+    .vectors = &test_vectors,
+    .vector_count = test_vectors.len,
+};
+
+test "a name with a path opens the module of its tail, and loads nothing" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+
+    const Tag = struct {
+        var tag: exec.Resident = undefined;
+    };
+    Tag.tag = .{ .match_tag = &Tag.tag, .flags = exec.RTF_AUTOINIT, .version = 1, .type = .library, .name = "x.gadget", .init = &gadget_table };
+    const made: *exec.Library = @ptrCast(@alignCast(sys.InitResident(&Tag.tag, null).?));
+
+    // Only what the replaced vector needs: exec's own OpenLibrary, and
+    // the base where exec keeps it. No dos: a load would reach for it.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    const exec_lib: *exec.Library = @ptrCast(@alignCast(sys));
+    rlb.old_open_library = exec_lib.vector(*const anyopaque, sdk.interface.exec.LVO.OpenLibrary);
+    sys.SetRamLib(@ptrCast(&rlb));
+    defer sys.SetRamLib(null);
+
+    for ([_][*:0]const u8{ "x.gadget", "gadgets/x.gadget", "SYS:classes/gadgets/x.gadget" }) |name| {
+        const opened = openLibrary(sys, name, 1) orelse return error.NotFound;
+        try testing.expectEqual(made, opened);
+        sys.CloseLibrary(opened);
+    }
+    try testing.expectEqual(@as(u16, 0), made.open_cnt);
+
+    sys.Remove(&made.node);
+    kexec.freeLibraryMemory(kexec.SysBase, made);
+    try kexec.expectNoLeaks();
+}
 
 test {
     _ = ramlib_base;

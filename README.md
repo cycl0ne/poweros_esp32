@@ -99,7 +99,9 @@ cores.
 - Preemptive multitasking with priorities, signals, message ports,
   semaphores and software interrupts.
 - Libraries and devices with jump tables, opened by name, loaded from disk
-  on demand and expunged when memory runs short.
+  on demand and expunged when memory runs short. A name may carry a path
+  (`gadgets/hello.gadget`); `LIBS:` is `SYS:libs` and `SYS:classes`, where
+  classes live in libraries of their own.
 - Internal SRAM and 8 MiB of octal PSRAM, managed as memory with
   attributes (`MEMF_INTERNAL`, `MEMF_EXTERNAL`, `MEMF_DMA`).
 - The CPU at 240 MHz, code executing from flash through the cache and MMU,
@@ -133,6 +135,9 @@ cores.
   flipped at the display's frame start. Public screens can be listed,
   chosen as the default and signal their owner when the last visitor
   leaves; gadgets can live in a window's border.
+- Gadget classes on the disk, each a library of its own in
+  `SYS:classes/gadgets/`: check boxes, cycle buttons and radio buttons,
+  built with the SDK's class library skeleton (`sdk.gadgets`).
 
 **Devices**
 - Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,

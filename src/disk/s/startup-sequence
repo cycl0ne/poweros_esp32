@@ -16,6 +16,10 @@ Resident >NIL: C:Assign PURE
 Resident >NIL: C:Dir PURE
 Resident >NIL: C:List PURE
 
+; LIBS: is two directories: the libraries, and the classes a program opens
+; as gadgets/<name>.gadget, which live in SYS:classes.
+Assign >NIL: LIBS: SYS:libs SYS:classes
+
 ; The global variables that survive a reboot live on the disk; the ones a
 ; running system reads live in RAM:, and start as a copy of them.
 Assign >NIL: ENVARC: SYS:Prefs/Env-Archive

@@ -7,8 +7,10 @@
 //!
 //!   Assign                      everything: volumes, directories, devices
 //!   Assign LIBS: SYS:libs       LIBS: is that directory
+//!   Assign LIBS: SYS:libs SYS:classes   both: the second is added
 //!   Assign LIBS:                the assign goes
-//!   Assign LIBS: SYS:libs ADD   another directory under the same name
+//!   Assign LIBS: SYS:libs ADD   another directory under the same name, or
+//!                               the first when there is no LIBS: yet
 //!   Assign LIBS: dir REMOVE     one of them goes
 //!   Assign C: SYS:c DEFER       bound when it is first used (a late assign)
 //!   Assign T: RAM:t PATH        bound afresh at every use
@@ -28,7 +30,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Assign";
-const VERSION_STRING = "\x00$VER: Assign 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Assign 1.1 (25.09.2026)\r\n";
 
 const template = "NAME,TARGET/M,LIST/S,EXISTS/S,DISMOUNT/S,DEFER/S,PATH/S,ADD/S,REMOVE/S,VOLS/S,DIRS/S,DEVICES/S";
 const arg_name = 0;
@@ -122,30 +124,35 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
 
     var failed = false;
+    // Several directories make one assign: the first is assigned, the rest
+    // are added to it.
+    var add = argv[arg_add] != 0;
     for (targets) |target| {
         const ok = if (argv[arg_defer] != 0)
             dl.AssignLate(bare, target)
         else if (argv[arg_path] != 0)
             dl.AssignPath(bare, target)
         else
-            byLock(dl, bare, target, argv[arg_add] != 0, argv[arg_remove] != 0);
+            byLock(dl, bare, target, add, argv[arg_remove] != 0);
         if (!ok) {
             _ = Printf(dl, MSG_IDUNNO, .{target});
             failed = true;
-        }
+        } else if (argv[arg_remove] == 0) add = true;
     }
     return if (failed) dos.RETURN_ERROR else dos.RETURN_OK;
 }
 
 /// The assigns that hold a lock: dos keeps the lock when it takes it, and
-/// it is ours again when it does not.
+/// it is ours again when it does not. Adding to a name that is not
+/// assigned at all makes the assign.
 fn byLock(dl: *DosBase, name: [*:0]const u8, target: [*:0]const u8, add: bool, remove: bool) bool {
     const lock = dl.Lock(target, dos.SHARED_LOCK) orelse return false;
     if (remove) {
         defer dl.UnLock(lock); // only compared against the ones on the list
         return dl.RemAssignList(name, lock);
     }
-    const ok = if (add) dl.AssignAdd(name, lock) else dl.AssignLock(name, lock);
+    var ok = if (add) dl.AssignAdd(name, lock) else dl.AssignLock(name, lock);
+    if (!ok and add and dl.IoErr() == dos.ERROR_OBJECT_NOT_FOUND) ok = dl.AssignLock(name, lock);
     if (!ok) dl.UnLock(lock);
     return ok;
 }

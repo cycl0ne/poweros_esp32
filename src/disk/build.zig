@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The disk's own programs as a Zig package: the commands in C:, the test
 //! programs in C:test, the libraries, devices and handlers loaded from
-//! LIBS:, DEVS: and HANDLERS:, and the scripts in S:. Every one of them is
+//! LIBS:, DEVS: and HANDLERS:, the classes in SYS:classes, and the scripts
+//! in S:. Every one of them is
 //! built against the SDK package alone.
 //!
 //! What it builds is listed here (`programs`, `files`), and each is handed
@@ -33,19 +34,24 @@ const commands = [_][]const u8{
     "showconfig",
 };
 const tests = [_][]const u8{
-    "hello",     "echoargs", "testlib",  "gfx",   "anim",
-    "intuition", "console",  "keyboard", "touch", "input",
-    "lines",     "nyan",     "plasma",   "audio", "fonts",
-    "screens",   "layout",
+    "hello",     "echoargs", "testlib",  "gfx",     "anim",
+    "intuition", "console",  "keyboard", "touch",   "input",
+    "lines",     "nyan",     "plasma",   "audio",   "fonts",
+    "screens",   "layout",   "classes",  "gadgets",
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
 /// after LoadSeg and hands it to InitResident, dos finds a handler's when
 /// the device it serves is first used. Each goes where its kind is looked
-/// for - LIBS:, DEVS:, HANDLERS:.
+/// for - LIBS:, DEVS:, HANDLERS: - and a class library in classes/, which
+/// the startup-sequence adds to LIBS:.
 const modules = [_]Program{
     .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library" },
+    .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
+    .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
+    .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },
+    .{ .disk = "classes/gadgets/radiobutton.gadget", .source = "classes/gadgets/radiobutton/radiobutton.zig", .name = "radiobutton.gadget" },
     .{ .disk = "devs/sd.device", .source = "devs/sd/sd.zig", .name = "sd.device" },
     .{ .disk = "handlers/fat-handler", .source = "handlers/fat/fat.zig", .name = "fat-handler" },
 };

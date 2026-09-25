@@ -67,9 +67,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
 }
 
 /// In front of exec's two open calls, once the process is there to do the
-/// loading. Nothing else is touched: closing is exec's own business, and
-/// what a loaded module costs is given back when it is flushed, which
-/// nothing does yet. A replaced vector is called with exec's arguments on
+/// loading. Nothing else is touched: closing is exec's own business. A
+/// loaded library that expunged itself is noticed at the next ask for it,
+/// and its segments unloaded then (loader.zig). A replaced vector is called with exec's arguments on
 /// whatever task is opening something, so the base it needs is kept where
 /// exec is: `SetRamLib`, set with the patch.
 fn patch(rlb: *RamLibBase) void {
