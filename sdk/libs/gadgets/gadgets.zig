@@ -43,3 +43,4 @@ pub const text = @import("text.zig");
 pub const slider = @import("slider.zig");
 pub const scroller = @import("scroller.zig");
 pub const listview = @import("listview.zig");
+pub const palette = @import("palette.zig");

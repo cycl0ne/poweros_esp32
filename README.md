@@ -138,8 +138,9 @@ cores.
 - Gadget classes on the disk, each a library of its own in
   `SYS:classes/gadgets/`: check boxes, cycle buttons, radio buttons,
   lines to type text or a number in, lines of text to show, sliders that
-  show their level, scroll bars with arrows, and scrolling lists of an
-  exec list's nodes, built with the SDK's class library skeleton
+  show their level, scroll bars with arrows, scrolling lists of an exec
+  list's nodes, and colour palettes, built with the SDK's class library
+  skeleton
   (`sdk.gadgets`).
 
 **Devices**

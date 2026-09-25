@@ -5,15 +5,17 @@
 //!   Gadgets
 //!
 //! It opens the gadget classes of `SYS:classes/gadgets/` - checkbox,
-//! cycle, radiobutton, string, text and slider - and a window object on
+//! cycle, radiobutton, string, text, slider and palette - and a window object on
 //! the default public screen holding one layout, each gadget labelled by
 //! it: a line to type a name in, a number field, a check box "Backups", a
 //! second one "Locked" that is ticked and disabled, a cycle "Level" of Low,
 //! Medium and High, a radio column "Port" of Serial, USB and None, a
-//! slider "Volume" from 0 to 64 showing its level, a text line "Last" in a
+//! slider "Volume" from 0 to 64 showing its level, a palette "Colour" of
+//! eight colours, a text line "Last" in a
 //! sunk frame, and an OK button. Every gadget let go is printed with its
 //! ID, its name and the code it finished with - the check box's state, the
-//! cycle's choice, the radio button's line, the slider's level, the key
+//! cycle's choice, the radio button's line, the slider's level, the
+//! colour's number, the key
 //! that ended a line - and the text line shows the code, set in the
 //! window with SetGadgetAttrsTagList. OK prints the name and the number;
 //! OK, the close gadget or Ctrl-C end it.
@@ -33,6 +35,7 @@ const rb = sdk.gadgets.radiobutton;
 const st = sdk.gadgets.string;
 const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
+const pa = sdk.gadgets.palette;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -41,7 +44,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gadgets";
-const VERSION_STRING = "\x00$VER: Gadgets 1.1 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gadgets 1.2 (25.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -63,6 +66,13 @@ const ID_NAME = 6;
 const ID_NUMBER = 7;
 const ID_VOLUME = 8;
 const ID_LAST = 9;
+const ID_COLOUR = 10;
+
+/// The palette's colours.
+const colours = [_]sdk.graphics.Pen{
+    0xFF000000, 0xFFFFFFFF, 0xFFCC3333, 0xFF33AA33,
+    0xFF3366CC, 0xFFEECC33, 0xFFAA55CC, 0xFF33BBBB,
+};
 
 const levels = [_:null]?[*:0]const u8{ "Low", "Medium", "High" };
 const ports = [_:null]?[*:0]const u8{ "Serial", "USB", "None" };
@@ -77,6 +87,7 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_NAME => "Name",
         ID_NUMBER => "Number",
         ID_VOLUME => "Volume",
+        ID_COLOUR => "Colour",
         else => "?",
     };
 }
@@ -116,6 +127,13 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = sl.SLIDER_LevelJustify, .data = tx.TEXT_JUSTIFY_RIGHT },
         .{},
     });
+    const colour = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_COLOUR },
+        .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&colours) },
+        .{ .tag = pa.PALETTE_NumColors, .data = colours.len },
+        .{ .tag = pa.PALETTE_Color, .data = 2 },
+        .{},
+    });
     const last = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_LAST },
         .{ .tag = tx.TEXT_Text, .data = @intFromPtr("nothing yet") },
@@ -150,7 +168,7 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     });
-    const parts = [_]?*Object{ name, number, backups, locked, level, port, volume, last, ok };
+    const parts = [_]?*Object{ name, number, backups, locked, level, port, volume, colour, last, ok };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -172,6 +190,9 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(volume) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Volume") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(colour) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Colour") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(last) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Last") },
@@ -213,6 +234,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const wanted = [_][*:0]const u8{
         cb.CHECKBOX_LIBRARY, cy.CYCLE_LIBRARY, rb.RADIO_LIBRARY,
         st.STRING_LIBRARY,   tx.TEXT_LIBRARY,  sl.SLIDER_LIBRARY,
+        pa.PALETTE_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);

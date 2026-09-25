@@ -32,6 +32,8 @@ const text = @import("../text/text.zig");
 const slider = @import("../slider/slider.zig");
 const scroller = @import("../scroller/scroller.zig");
 const listview = @import("../listview/listview.zig");
+const palette = @import("../palette/palette.zig");
+const pa = sdk.gadgets.palette;
 const sr = sdk.gadgets.scroller;
 const lv = sdk.gadgets.listview;
 const st = sdk.gadgets.string;
@@ -694,4 +696,70 @@ test "listview.gadget: read only, it selects nothing" {
     _ = sys.RemLibrary(scroller_lib);
     ByTail.remove();
     try host_rom.intuition.tearDown(kib);
+}
+
+test "palette.gadget: boxes nearest to square, a pick that follows, the right button puts it back" {
+    // Eight colours in a wide room: two rows of four; in a tall one, four
+    // rows of two; in a room too small for eight, fewer.
+    const wide = palette.gridFor(8, 100, 50).?;
+    try testing.expectEqual(@as(u32, 4), wide.columns);
+    try testing.expectEqual(@as(u32, 2), wide.rows);
+    const tall = palette.gridFor(8, 50, 100).?;
+    try testing.expectEqual(@as(u32, 2), tall.columns);
+    try testing.expectEqual(@as(u32, 4), tall.rows);
+    const cramped = palette.gridFor(8, 20, 4).?;
+    try testing.expect(cramped.shown < 8);
+    try testing.expect(palette.gridFor(8, 3, 3) == null);
+    // A point to its box, pulled into the grid at the edges.
+    const area = gc.Box{ .width = 100, .height = 50 };
+    try testing.expectEqual(@as(u32, 0), palette.boxAt(wide, area, 1, 1));
+    try testing.expectEqual(@as(u32, 5), palette.boxAt(wide, area, 30, 30));
+    try testing.expectEqual(@as(u32, 7), palette.boxAt(wide, area, 500, 500));
+    try testing.expectEqual(@as(u32, 0), palette.boxAt(wide, area, -9, -9));
+
+    var heard = Heard{ .tag = pa.PALETTE_Color, .ib = undefined };
+    var rig = try Rig.up(&palette.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const colours = [_]sdk.graphics.Pen{ 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF };
+    const pick = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 8 },
+        .{ .tag = gc.GA_Width, .data = 84 },
+        .{ .tag = gc.GA_Height, .data = 24 },
+        .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&colours) },
+        .{ .tag = pa.PALETTE_NumColors, .data = colours.len },
+        .{ .tag = pa.PALETTE_Color, .data = 1 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0xFF00FF00), attr(ib, pick, pa.PALETTE_Pen));
+
+    // Pressed on the last box, dragged to the first, let go: the first.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 80, 12, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(pick, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 3), attr(ib, pick, pa.PALETTE_Color));
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var drag = input(gc.GM_HANDLEINPUT, &moving, 3, 12, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(pick, @ptrCast(&drag)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, pick, pa.PALETTE_Color));
+    var up = input(gc.GM_HANDLEINPUT, &release, 3, 12, &termination);
+    try testing.expect(ib.SendMessage(pick, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expectEqual(@as(?usize, 0), heard.value);
+    try testing.expectEqual(@as(?usize, 8), heard.id);
+
+    // Pressed on another, then the right button: back to the first, and
+    // nothing reported.
+    termination = -1;
+    var again = input(gc.GM_GOACTIVE, &press, 80, 12, &termination);
+    _ = ib.SendMessage(pick, @ptrCast(&again));
+    try testing.expectEqual(@as(usize, 3), attr(ib, pick, pa.PALETTE_Color));
+    const right = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON };
+    var undo = input(gc.GM_HANDLEINPUT, &right, 80, 12, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(pick, @ptrCast(&undo)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, pick, pa.PALETTE_Color));
+    try testing.expectEqual(@as(i32, -1), termination);
+
+    ib.DisposeObject(pick);
+    try rig.down();
 }
