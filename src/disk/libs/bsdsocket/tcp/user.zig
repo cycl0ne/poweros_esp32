@@ -69,7 +69,7 @@ pub fn connect(stack: *StackBase, socket: *Socket, address: u32, port: u16) i32 
     socket.remote_address = address;
     socket.remote_port = port;
     socket.flags |= _socket.connected;
-    tcb.iss = _tcp.initialSequence(stack);
+    tcb.iss = _tcp.initialSequence(stack, socket);
     tcb.snd_una = tcb.iss;
     tcb.snd_nxt = tcb.iss +% 1;
     tcb.snd_max = tcb.snd_nxt;

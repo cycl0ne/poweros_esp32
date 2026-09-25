@@ -276,13 +276,15 @@ The datagrams still waiting on it are dropped, and its port is free
 again. A stream socket's connection is not cut: what was written is
 still sent, then FIN, and the connection finishes on its own - TIME_WAIT
 included - while the library stays in memory for it. With `SO_LINGER`
-on and a time of 0 it is reset instead. A listener resets the
-connections it had not had accepted. A call of another task waiting on the socket finds it gone and
-answers `EBADF`.
+on and a time of 0 it is reset instead; with a time, the call first
+waits up to that many seconds for everything, FIN included, to be
+acknowledged. A listener resets the connections it had not had
+accepted. A call of another task waiting on the socket finds it gone
+and answers `EBADF`.
 
 **CONTEXT**
 
-- Waits: only for the stack's lock.
+- Waits: only for the stack's lock, unless SO_LINGER has a time.
 - Interrupts: no.
 - Forbid: not held.
 - Process: a Task will do.

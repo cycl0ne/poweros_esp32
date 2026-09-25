@@ -350,8 +350,7 @@ pub fn timeWait(stack: *StackBase, tcb: *Tcb) void {
     _ = _timer.set(stack, &tcb.timer_long, _timer.systemTime(stack) + 2 * msl_us);
 }
 
-/// The next initial sequence number.
-pub fn initialSequence(stack: *StackBase) u32 {
-    stack.isn_count +%= 64_000;
-    return @as(u32, @truncate(_timer.systemTime(stack) / 4)) +% stack.isn_count;
+/// The initial sequence number for the socket's connection (isn.zig).
+pub fn initialSequence(stack: *StackBase, socket: *Socket) u32 {
+    return @import("isn.zig").initialSequence(stack, socket.local_address, socket.local_port, socket.remote_address, socket.remote_port);
 }

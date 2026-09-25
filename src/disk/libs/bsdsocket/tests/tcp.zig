@@ -630,3 +630,195 @@ test "keepalive keeps a quiet connection whose peer answers, and ends one whose 
     wire_count = 0;
     try rig.deinit();
 }
+
+// --- hostile segments -------------------------------------------------------------
+
+/// A segment written by the test, as if A's end of `pair` had sent it,
+/// handed to B.
+const Forged = struct {
+    seq: u32,
+    ack: u32,
+    flags: u8,
+    data: []const u8 = &.{},
+    /// Options as they are, and a data offset that lies if not null.
+    options: []const u8 = &.{},
+    offset_words: ?u8 = null,
+};
+
+fn forge(rig: *Rig, client_port: u16, server_port: u16, segment: Forged) void {
+    var packet: [1600]u8 = @splat(0);
+    const tcp_length = 20 + segment.options.len + segment.data.len;
+    packet[0] = 0x45;
+    _ip.put16(&packet, 2, @intCast(20 + tcp_length));
+    packet[8] = 64;
+    packet[9] = @intCast(bsd.IPPROTO_TCP);
+    _ip.put32(&packet, 12, address_a);
+    _ip.put32(&packet, 16, address_b);
+    _ip.put16(&packet, 10, _ip.finish(_ip.sum(0, packet[0..20])));
+    const tcp = packet[20..][0..tcp_length];
+    _ip.put16(tcp, 0, client_port);
+    _ip.put16(tcp, 2, server_port);
+    _ip.put32(tcp, 4, segment.seq);
+    _ip.put32(tcp, 8, segment.ack);
+    const words: u8 = segment.offset_words orelse @intCast((20 + segment.options.len) / 4);
+    tcp[12] = words << 4;
+    tcp[13] = segment.flags;
+    _ip.put16(tcp, 14, 8192);
+    @memcpy(tcp[20..][0..segment.options.len], segment.options);
+    @memcpy(tcp[20 + segment.options.len ..][0..segment.data.len], segment.data);
+    _ip.put16(tcp, 16, _ip.finish(_ip.sum(_ip.pseudoSum(address_a, address_b, @intCast(bsd.IPPROTO_TCP), @intCast(tcp_length)), tcp)));
+    const frame = rig.b.stack.frames.take(rig.b.stack.sys_base).?;
+    @memcpy(frame.room()[frame.start..][0 .. 20 + tcp_length], packet[0 .. 20 + tcp_length]);
+    frame.length = @intCast(20 + tcp_length);
+    _ip.input(rig.b.stack, rig.b.interface, frame);
+}
+
+test "a reset inside the window but not at its edge draws a challenge, and only the exact one resets" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 96);
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    const client_port = socketOf(&rig.a, pair.client).local_port;
+    const counts = &rig.b.stack.counts;
+    // A flood of guessed resets: a few challenges, then the limit.
+    for (0..30) |guess| forge(&rig, client_port, 96, .{ .seq = server.rcv_nxt +% 100 +% @as(u32, @intCast(guess)), .ack = 0, .flags = _tcp.RST });
+    try testing.expectEqual(_tcp.State.established, server.state);
+    try testing.expectEqual(@as(u32, 10), counts.tcp_challenges);
+    try testing.expectEqual(@as(u32, 20), counts.tcp_challenges_dropped);
+    // A SYN on a standing connection: a challenge too, and nothing else.
+    rig.advance(1_000_000);
+    forge(&rig, client_port, 96, .{ .seq = server.rcv_nxt, .ack = 0, .flags = _tcp.SYN });
+    try testing.expectEqual(_tcp.State.established, server.state);
+    try testing.expectEqual(@as(u32, 11), counts.tcp_challenges);
+    // An acknowledgement for what was never sent.
+    forge(&rig, client_port, 96, .{ .seq = server.rcv_nxt, .ack = server.snd_max +% 5000, .flags = _tcp.ACK });
+    try testing.expectEqual(@as(u32, 12), counts.tcp_challenges);
+    // The exact one.
+    forge(&rig, client_port, 96, .{ .seq = server.rcv_nxt, .ack = 0, .flags = _tcp.RST });
+    var buffer: [4]u8 = undefined;
+    try testing.expectEqual(@as(i32, -1), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqual(bsd.ECONNRESET, rig.b.sb.Errno());
+    wire_count = 0;
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+test "segments that lie about their headers, options and places are dropped or trimmed" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 97);
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    const client_port = socketOf(&rig.a, pair.client).local_port;
+    const counts = &rig.b.stack.counts;
+    const bad_before = counts.tcp_bad;
+    // A data offset past the segment, and one below the header.
+    forge(&rig, client_port, 97, .{ .seq = server.rcv_nxt, .ack = server.snd_una, .flags = _tcp.ACK, .offset_words = 15 });
+    forge(&rig, client_port, 97, .{ .seq = server.rcv_nxt, .ack = server.snd_una, .flags = _tcp.ACK, .offset_words = 2 });
+    try testing.expectEqual(bad_before + 2, counts.tcp_bad);
+    // Options of length 0, of length 1, and running past their space:
+    // the walk stops, and the segment is taken as it is.
+    for ([_][4]u8{ .{ 5, 0, 1, 1 }, .{ 5, 1, 1, 1 }, .{ 1, 1, 2, 9 } }) |options| {
+        forge(&rig, client_port, 97, .{ .seq = server.rcv_nxt, .ack = server.snd_una, .flags = _tcp.ACK | _tcp.PSH, .options = &options, .data = "o" });
+    }
+    var buffer: [16]u8 = undefined;
+    try testing.expectEqual(@as(i32, 3), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    // Far outside the window: acknowledged, nothing taken.
+    forge(&rig, client_port, 97, .{ .seq = server.rcv_nxt +% 0x4000_0000, .ack = server.snd_una, .flags = _tcp.ACK, .data = "far" });
+    try testing.expectEqual(@as(i32, -1), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    // More than the window: what fits is taken, the rest trimmed.
+    const small: i32 = 1024;
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &small, @sizeOf(i32));
+    var big: [1400]u8 = @splat('w');
+    forge(&rig, client_port, 97, .{ .seq = server.rcv_nxt, .ack = server.snd_una, .flags = _tcp.ACK, .data = &big });
+    try testing.expectEqual(@as(u32, 1024), server.receive.count);
+    wire_count = 0;
+    try testing.expectEqual(@as(u32, 0), rig.b.stack.frames.used());
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+test "SipHash-2-4 gives the reference answers" {
+    const isn = @import("../tcp/isn.zig");
+    var key: [16]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @intCast(index);
+    try testing.expectEqual(@as(u64, 0x726fdb47dd0e0e31), isn.sipHash(&key, &.{}));
+    var message: [15]u8 = undefined;
+    for (&message, 0..) |*byte, index| byte.* = @intCast(index);
+    try testing.expectEqual(@as(u64, 0xa129ca6149be45e5), isn.sipHash(&key, &message));
+}
+
+// --- running out of memory -----------------------------------------------------------
+
+var real_alloc: ?*const anyopaque = null;
+var allocations: u32 = 0;
+var fail_at: u32 = 0;
+
+fn failingAlloc(sys: *sdk.interface.exec.ExecBase, size: usize, requirements: u32) callconv(.c) ?*anyopaque {
+    allocations += 1;
+    if (allocations == fail_at) return null;
+    const real: sdk.interface.exec.Fn.AllocMem = @ptrCast(@alignCast(real_alloc.?));
+    return real(sys, size, requirements);
+}
+
+/// A whole connection over lo0 on A, given up at the first call that
+/// fails, as a program would; then everything closed and let finish.
+fn connection(rig: *Rig) void {
+    const a = rig.a.sb;
+    const listener = a.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    if (listener < 0) return;
+    defer _ = a.CloseSocket(listener);
+    var never: i32 = 1;
+    _ = a.IoctlSocket(listener, bsd.FIONBIO, &never);
+    var here = at(bsd.INADDR_LOOPBACK, 7700);
+    if (a.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return;
+    if (a.Listen(listener, 2) < 0) return;
+    const client = a.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    if (client < 0) return;
+    defer _ = a.CloseSocket(client);
+    _ = a.IoctlSocket(client, bsd.FIONBIO, &never);
+    _ = a.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    const server = a.Accept(listener, null, null);
+    if (server < 0) return;
+    defer _ = a.CloseSocket(server);
+    if (a.Send(client, "ping", 4, 0) < 0) return;
+    var buffer: [8]u8 = undefined;
+    _ = a.Recv(server, &buffer, buffer.len, 0);
+}
+
+test "every allocation of a connection that fails is answered, and leaves nothing behind" {
+    var rig = try Rig.init();
+    const sys = kexec.SysBase.iface();
+    const exec_lib: *exec.Library = &kexec.SysBase.lib;
+    real_alloc = sys.SetFunction(exec_lib, sdk.interface.exec.LVO.AllocMem, exec.vec(failingAlloc));
+    var n: u32 = 1;
+    var time: u64 = 0;
+    while (n < 200) : (n += 1) {
+        allocations = 0;
+        fail_at = n;
+        connection(&rig);
+        fail_at = 0;
+        // Let whatever is still finishing finish.
+        var rounds: usize = 0;
+        while (rounds < 50) : (rounds += 1) {
+            time = @max(time + 1, rig.earliest() orelse break);
+            rig.advance(time);
+        }
+        try testing.expect(rig.a.stack.sockets.isEmpty());
+        try testing.expectEqual(@as(u32, 0), rig.a.stack.frames.used());
+        if (allocations < n) break;
+    }
+    // Two sockets and a third made by the listener, their connection
+    // blocks and rings, and the frames: every one of them failed once.
+    try testing.expect(n > 12 and n < 200);
+    _ = sys.SetFunction(exec_lib, sdk.interface.exec.LVO.AllocMem, real_alloc.?);
+    try rig.deinit();
+}

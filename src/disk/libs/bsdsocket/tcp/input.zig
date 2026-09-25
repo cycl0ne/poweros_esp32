@@ -158,7 +158,7 @@ fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: 
     tcb.state = .syn_received;
     tcb.irs = seg.seq;
     tcb.rcv_nxt = seg.seq +% 1;
-    tcb.iss = _tcp.initialSequence(stack);
+    tcb.iss = _tcp.initialSequence(stack, child);
     tcb.snd_una = tcb.iss;
     tcb.snd_nxt = tcb.iss +% 1;
     tcb.snd_max = tcb.snd_nxt;
@@ -227,6 +227,7 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _ip.Header
 fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: _ip.Header) void {
     const socket = tcb.socket;
     var seg = original.*;
+    if (predicted(stack, tcb, &seg)) return;
     const window = output.window(tcb);
 
     // First: is any of it inside the window?
@@ -241,8 +242,11 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
     const now = _timer.systemTime(stack);
     timers.heard(stack, tcb, now);
 
-    // Second: RST.
+    // Second: RST. Only one at exactly RCV.NXT resets; one elsewhere in
+    // the window may be a guess by a stranger, and draws a challenge ACK
+    // the real peer answers with a reset that fits (RFC 5961 3.2).
     if (seg.flags & _tcp.RST != 0) {
+        if (seg.seq != tcb.rcv_nxt) return challenge(stack, tcb, now);
         switch (tcb.state) {
             .syn_received => _tcp.close(stack, socket, if (tcb.flags & _tcp.passive != 0) 0 else bsd.ECONNREFUSED),
             .established, .fin_wait_1, .fin_wait_2, .close_wait => _tcp.close(stack, socket, bsd.ECONNRESET),
@@ -251,13 +255,9 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         return;
     }
 
-    // Fourth: a SYN here is answered with an acknowledgement, and
-    // dropped (RFC 5961 4.2).
-    if (seg.flags & _tcp.SYN != 0) {
-        tcb.flags |= _tcp.ack_now;
-        output.output(stack, tcb);
-        return;
-    }
+    // Fourth: a SYN here is answered with a challenge ACK, and dropped
+    // (RFC 5961 4.2).
+    if (seg.flags & _tcp.SYN != 0) return challenge(stack, tcb, now);
 
     // Fifth: ACK.
     if (seg.flags & _tcp.ACK == 0) return;
@@ -285,10 +285,11 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
             tcb.snd_max = seg.ack;
         }
     }
-    if (_tcp.after(seg.ack, tcb.snd_max)) {
-        tcb.flags |= _tcp.ack_now;
-        output.output(stack, tcb);
-        return;
+    // An ACK for what was never sent, or older than any window the peer
+    // could still be answering, is not the peer's: acknowledged and
+    // dropped (RFC 5961 5.2).
+    if (_tcp.after(seg.ack, tcb.snd_max) or _tcp.before(seg.ack, tcb.snd_una -% tcb.max_snd_wnd)) {
+        return challenge(stack, tcb, now);
     }
     if (_tcp.after(seg.ack, tcb.snd_una)) {
         acknowledged(stack, tcb, seg.ack, now);
@@ -327,6 +328,60 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
     if (!takeText(stack, tcb, &seg)) return;
     if (tcb.state != .closed) output.output(stack, tcb);
 }
+
+/// Header prediction: in ESTABLISHED, with nothing unusual about the
+/// connection - no hole, no recovery, no probe, nothing sent again - a
+/// segment that is exactly the next one, with only ACK (and PSH) set and
+/// the same window, is either a pure acknowledgement of new data or the
+/// next data and nothing else. Those two, most of what comes on a busy
+/// connection, are taken here in a few steps; everything else goes the
+/// whole way. True when the segment was taken.
+fn predicted(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
+    if (tcb.state != .established or seg.flags & ~_tcp.PSH != _tcp.ACK) return false;
+    if (seg.seq != tcb.rcv_nxt or seg.window != tcb.snd_wnd or tcb.snd_nxt != tcb.snd_max) return false;
+    if (tcb.held_bytes != 0 or tcb.dupacks != 0 or tcb.flags & (_tcp.probing | _tcp.read_shut) != 0) return false;
+    const now = _timer.systemTime(stack);
+    if (seg.data.len == 0) {
+        if (!(_tcp.after(seg.ack, tcb.snd_una) and _tcp.atOrBefore(seg.ack, tcb.snd_max))) return false;
+        timers.heard(stack, tcb, now);
+        tcb.snd_wl1 = seg.seq;
+        tcb.snd_wl2 = seg.ack;
+        acknowledged(stack, tcb, seg.ack, now);
+        stack.counts.tcp_predicted += 1;
+        output.output(stack, tcb);
+        return true;
+    }
+    if (seg.ack != tcb.snd_una or seg.data.len > tcb.receive.space()) return false;
+    timers.heard(stack, tcb, now);
+    tcb.snd_wl1 = seg.seq;
+    tcb.snd_wl2 = seg.ack;
+    tcb.rcv_nxt +%= tcb.receive.write(seg.data);
+    _socket.wake(tcb.socket, bsd.FD_READ);
+    timers.owe(stack, tcb, now);
+    stack.counts.tcp_predicted += 1;
+    if (tcb.flags & _tcp.ack_now != 0) output.output(stack, tcb);
+    return true;
+}
+
+/// A challenge ACK: the connection's own numbers, sent at most
+/// `challenges_per_second` times a second for the whole stack, so a
+/// flood of forged segments cannot make it a flood of answers.
+fn challenge(stack: *StackBase, tcb: *Tcb, now: u64) void {
+    if (now >= stack.challenge_since + 1_000_000) {
+        stack.challenge_since = now;
+        stack.challenges = 0;
+    }
+    if (stack.challenges >= challenges_per_second) {
+        stack.counts.tcp_challenges_dropped += 1;
+        return;
+    }
+    stack.challenges += 1;
+    stack.counts.tcp_challenges += 1;
+    tcb.flags |= _tcp.ack_now;
+    output.output(stack, tcb);
+}
+
+pub const challenges_per_second = 10;
 
 /// RFC 9293's acceptability test: whether some of the segment lies in
 /// the receive window.
@@ -395,7 +450,7 @@ fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32, now: u64) void {
         const data_acked: u32 = @min(ack -% tcb.ring_seq, tcb.send.count);
         tcb.send.drop(data_acked);
         tcb.ring_seq +%= data_acked;
-        if (data_acked > 0) _socket.wake(tcb.socket, bsd.FD_WRITE);
+        if (data_acked > 0 or ack == tcb.snd_max) _socket.wake(tcb.socket, bsd.FD_WRITE);
     }
     if (_tcp.before(tcb.snd_nxt, tcb.snd_una)) tcb.snd_nxt = tcb.snd_una;
     timers.restart(stack, tcb, now);

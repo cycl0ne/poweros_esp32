@@ -25,6 +25,8 @@ pub const gdma = @import("gdma.zig");
 pub const wdt = @import("wdt.zig");
 /// The core's cycle counter.
 pub const cpu = @import("cpu.zig");
+/// The random number generator.
+pub const rng = @import("rng.zig");
 /// The emulator's virtual display, with its window's pointer and keys.
 pub const qemu_rgb = @import("qemu_rgb.zig");
 

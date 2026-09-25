@@ -82,6 +82,11 @@ pub const Counts = extern struct {
     tcp_fast_retransmits: u32 = 0,
     tcp_window_probes: u32 = 0,
     tcp_timeouts: u32 = 0,
+    /// Challenge ACKs sent, and the ones the limit held back; segments
+    /// the fast path took.
+    tcp_challenges: u32 = 0,
+    tcp_challenges_dropped: u32 = 0,
+    tcp_predicted: u64 align(4) = 0,
 };
 
 pub const StackBase = extern struct {
@@ -104,8 +109,11 @@ pub const StackBase = extern struct {
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
     reassembly: reassembly.Slots = .{},
-    /// Counted up for every initial sequence number.
-    isn_count: u32 = 0,
+    /// The key initial sequence numbers are hashed with.
+    isn_key: [16]u8 = @splat(0),
+    /// Challenge ACKs sent in the second that began at `challenge_since`.
+    challenge_since: u64 align(4) = 0,
+    challenges: u32 = 0,
     /// The id the next socket handed over with ReleaseSocket gets.
     next_release_id: i32 = 1,
     /// Packets lo0 has yet to deliver, and whether it is delivering.

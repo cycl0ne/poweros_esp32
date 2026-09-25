@@ -24,6 +24,8 @@ pub const I2C1: usize = 0x6002_7000;
 pub const SDMMC: usize = 0x6002_8000;
 pub const UART2: usize = 0x6002_E000;
 pub const USB_SERIAL_JTAG: usize = 0x6003_8000;
+/// The random number generator's one register (RNG_DATA_REG).
+pub const RNG_DATA: usize = 0x6003_507C;
 pub const GDMA: usize = 0x6003_F000;
 pub const LCD_CAM: usize = 0x6004_1000;
 /// SYSTEM: the peripherals' bus clocks and resets (`system.zig`).

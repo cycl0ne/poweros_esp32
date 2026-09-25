@@ -162,8 +162,12 @@ cores.
   address.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
-  IPv4 with fragments put back together, TCP connections (Listen,
-  Accept, Connect, Shutdown; a closed connection finishes on its own),
+  IPv4 with fragments put back together, TCP (connections that close on
+  their own after the program has gone, retransmission with measured
+  timeouts, congestion control, delayed acknowledgements, segments put
+  back in order, keepalive, RFC 5961's checks against forged resets,
+  keyed initial sequence numbers from the chip's random number
+  generator),
   UDP, ICMP (echoes answered,
   errors told to the socket they concern, raw sockets for a ping), ARP,
   the loopback interface, and interfaces on network devices
