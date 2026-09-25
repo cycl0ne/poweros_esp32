@@ -1,0 +1,15 @@
+; Network-Startup: the network brought up behind the boot. The
+; Startup-Sequence runs it in a shell of its own, so the boot waits for
+; none of it.
+
+; A board without an interface's device, or a network nobody answers
+; on, stops nothing here.
+FailAt 21
+
+; Every interface in DEVS:NetInterfaces/, and a DHCP address waited for:
+; ten seconds at the most.
+C:net/AddNetInterface ALL QUIET
+
+; The clock set from a time server: DHCP's, ENVARC:Sys/net/timeserver's,
+; or pool.ntp.org, in the local time of ENVARC:Sys/timezone.
+C:net/TimeSync QUIET

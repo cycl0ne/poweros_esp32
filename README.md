@@ -179,7 +179,8 @@ cores.
   task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
   `C:net/Tcp` fetches a page over HTTP or echoes a connection - over the
   network in QEMU.
-- The network comes up at boot from `DEVS:NetInterfaces/`, a file per
+- The network comes up at boot, in the background (`S:Network-Startup`),
+  from `DEVS:NetInterfaces/`, a file per
   interface in the mountlist's keyword format (`Device`, `Configure =
   DHCP` or a fixed `Address` with `Gateway` and `NameServer`, ...), its
   address from DHCP - a 169.254.x.y one while no server answers - and
@@ -193,7 +194,8 @@ cores.
   or comes by itself is followed. `C:net/Ping` sends echo requests and
   times the answers; `C:net/TimeSync` sets the date from a time server
   (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
-  local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives;
+  local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives, and runs
+  at boot once the network is up;
   `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
   redirects), plain http until there is TLS; `C:net/PacketCapture`
   writes what an interface sends and takes to a pcap file, through a

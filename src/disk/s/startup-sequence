@@ -34,10 +34,10 @@ Assign >NIL: CLIPS: RAM:Clipboards
 ; called by name like the rest.
 Path >NIL: RAM: SYS: S: C:test C:net
 
-; The network, from DEVS:NetInterfaces/: every interface there is brought
-; up, a DHCP address fetched behind the boot rather than waited for. A
-; board without an interface's device says nothing and loses no time.
-C:net/AddNetInterface ALL QUIET NOWAIT
+; The network, from DEVS:NetInterfaces/, and then the clock from a time
+; server: in a shell of its own, so the boot waits for neither. A board
+; without an interface's device says nothing and loses no time.
+Run >NIL: Execute S:Network-Startup
 
 SetEnv Kickstart $Kickstart
 UnSet Kickstart

@@ -96,6 +96,7 @@ pub const programs: []const Program = blk: {
 pub const files = [_]File{
     .{ .disk = "s/startup-sequence", .source = "s/startup-sequence" },
     .{ .disk = "s/shell-startup", .source = "s/shell-startup" },
+    .{ .disk = "s/network-startup", .source = "s/network-startup" },
     .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
 };
