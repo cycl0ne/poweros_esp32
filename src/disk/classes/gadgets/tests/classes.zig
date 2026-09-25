@@ -33,6 +33,8 @@ const slider = @import("../slider/slider.zig");
 const scroller = @import("../scroller/scroller.zig");
 const listview = @import("../listview/listview.zig");
 const palette = @import("../palette/palette.zig");
+const colorwheel = @import("../colorwheel/colorwheel.zig");
+const cw = sdk.gadgets.colorwheel;
 const pa = sdk.gadgets.palette;
 const sr = sdk.gadgets.scroller;
 const lv = sdk.gadgets.listview;
@@ -761,5 +763,75 @@ test "palette.gadget: boxes nearest to square, a pick that follows, the right bu
     try testing.expectEqual(@as(i32, -1), termination);
 
     ib.DisposeObject(pick);
+    try rig.down();
+}
+
+test "colorwheel.gadget: the colour set and read both ways, a press picks, the right button puts back" {
+    var heard = Heard{ .tag = cw.WHEEL_Hue, .ib = undefined };
+    var rig = try Rig.up(&colorwheel.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // Set as red, green and blue: pure green is a third of the way round,
+    // fully saturated and bright.
+    const green = cw.ColorWheelRGB{ .red = 0, .green = 0xFFFFFFFF, .blue = 0 };
+    const wheel = ib.NewObjectTagList(null, cw.WHEEL_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 11 },
+        .{ .tag = gc.GA_Width, .data = 101 },
+        .{ .tag = gc.GA_Height, .data = 101 },
+        .{ .tag = cw.WHEEL_RGB, .data = @intFromPtr(&green) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    const hue = attr(ib, wheel, cw.WHEEL_Hue);
+    try testing.expect(@abs(@as(i64, @intCast(hue >> 16)) - 0x5555) <= 2);
+    try testing.expectEqual(@as(usize, 0xFFFFFFFF), attr(ib, wheel, cw.WHEEL_Saturation));
+    // GetAttr's storage is a usize's, which the structure is aligned for.
+    var hsb: cw.ColorWheelHSB align(@alignOf(usize)) = .{};
+    _ = ib.GetAttr(cw.WHEEL_HSB, wheel, @ptrCast(&hsb));
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), hsb.brightness);
+    // One component changed keeps the others: blue added is cyan.
+    _ = ib.SetAttrsTagList(wheel, &[_]TagItem{ .{ .tag = cw.WHEEL_Blue, .data = 0xFFFFFFFF }, .{} });
+    var rgb: cw.ColorWheelRGB align(@alignOf(usize)) = .{};
+    _ = ib.GetAttr(cw.WHEEL_RGB, wheel, @ptrCast(&rgb));
+    try testing.expectEqual(@as(u32, 0), rgb.red >> 24);
+    try testing.expectEqual(@as(u32, 0xFF), rgb.green >> 24);
+    try testing.expectEqual(@as(u32, 0xFF), rgb.blue >> 24);
+
+    // Pressed at the top of the wheel: red, all of it, and told.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 50, 3, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(wheel, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, wheel, cw.WHEEL_Hue));
+    try testing.expectEqual(@as(usize, 0xFFFFFFFF), attr(ib, wheel, cw.WHEEL_Saturation));
+    try testing.expectEqual(@as(?usize, 0), heard.value);
+    try testing.expectEqual(@as(?usize, 11), heard.id);
+    // Dragged to the middle: no saturation.
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var middle = input(gc.GM_HANDLEINPUT, &moving, 50, 50, &termination);
+    _ = ib.SendMessage(wheel, @ptrCast(&middle));
+    try testing.expectEqual(@as(usize, 0), attr(ib, wheel, cw.WHEEL_Saturation));
+    // The right button: the colour as it was before the press.
+    const right = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON };
+    var undo = input(gc.GM_HANDLEINPUT, &right, 50, 50, &termination);
+    try testing.expect(ib.SendMessage(wheel, @ptrCast(&undo)) & gc.GMR_VERIFY != 0);
+    try testing.expect(@abs(@as(i64, @intCast(attr(ib, wheel, cw.WHEEL_Hue) >> 16)) - 0x8000) <= 2);
+
+    // Off the wheel is not the wheel; its middle is.
+    var corner = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 1, .y = 1 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(wheel, @ptrCast(&corner)));
+    var centre = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 50, .y = 50 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(wheel, @ptrCast(&centre)));
+
+    // The library's own calls, through its jump table.
+    const calls: *sdk.interface.colorwheel.ColorWheelBase = @ptrCast(rig.lib);
+    var out_rgb: cw.ColorWheelRGB = .{};
+    calls.ConvertHSBToRGB(&.{ .hue = 0, .saturation = 0xFFFFFFFF, .brightness = 0xFFFFFFFF }, &out_rgb);
+    try testing.expectEqual(cw.ColorWheelRGB{ .red = 0xFFFFFFFF, .green = 0, .blue = 0 }, out_rgb);
+    var out_hsb: cw.ColorWheelHSB = .{};
+    calls.ConvertRGBToHSB(&.{ .red = 0x80008000, .green = 0x80008000, .blue = 0x80008000 }, &out_hsb);
+    try testing.expectEqual(@as(u32, 0), out_hsb.saturation);
+    try testing.expectEqual(@as(u32, 0x80008000), out_hsb.brightness);
+
+    ib.DisposeObject(wheel);
     try rig.down();
 }

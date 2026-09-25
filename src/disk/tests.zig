@@ -20,4 +20,5 @@ test {
     _ = @import("handlers/fat/tests/dir.zig");
     _ = @import("handlers/fat/tests/fs.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
+    _ = @import("classes/gadgets/colorwheel/_colour.zig");
 }

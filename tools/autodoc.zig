@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! autodoc [--check] <fd dir> <rom dir> <out dir>: a reference per module,
+//! autodoc [--check] <fd dir> <src dir> <out dir>: a reference per module,
 //! made from the doc comments of its calls.
 //!
 //! For every `<stem>_lib.fd` in <fd dir> it writes `<stem>.doc`, plain
 //! text, and `<stem>.md`, Markdown, into <out dir>: the module's name and
 //! description, an index of its public calls, then each call in
 //! alphabetical order. A call's text is the `///` block above its
-//! `pub fn <Name>(` somewhere under `<rom dir>/{libs,devs,resources}/<stem>/`,
+//! `pub fn <Name>(` somewhere under `<src dir>/rom/{libs,devs,resources}/<stem>/`
+//! or, for a module on the disk, `<src dir>/disk/{libs,devs,classes/gadgets}/<stem>/`,
 //! split at the section headers (`SYNOPSIS:`, `INPUTS:`, ...). A call
 //! with no such block gets its `.fd` text instead: the prototype as
 //! SYNOPSIS, the rest as BEHAVIOR.
@@ -26,8 +27,9 @@ const sections = [_][]const u8{
     "OWNERSHIP", "NOTES", "BUGS",   "SEE ALSO", "EXAMPLES",
 };
 
-/// Where a module's source may live, under <rom dir>.
-const homes = [_][]const u8{ "libs", "devs", "resources" };
+/// Where a module's source may live, under <src dir>: the ROM's modules,
+/// and the disk's.
+const homes = [_][]const u8{ "rom/libs", "rom/devs", "rom/resources", "disk/libs", "disk/devs", "disk/classes/gadgets" };
 
 const Section = struct { title: []const u8, lines: []const []const u8 };
 
@@ -56,16 +58,16 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
     const check = args.len == 5 and mem.eql(u8, args[1], "--check");
-    if (args.len != 4 and !check) fatal("usage: autodoc [--check] <fd dir> <rom dir> <out dir>", .{});
+    if (args.len != 4 and !check) fatal("usage: autodoc [--check] <fd dir> <src dir> <out dir>", .{});
     const fd_path = args[args.len - 3];
-    const rom_path = args[args.len - 2];
+    const src_path = args[args.len - 2];
     const out_path = args[args.len - 1];
 
     const cwd = Io.Dir.cwd();
     var fd_dir = try cwd.openDir(io, fd_path, .{ .iterate = true });
     defer fd_dir.close(io);
-    var rom_dir = try cwd.openDir(io, rom_path, .{});
-    defer rom_dir.close(io);
+    var src_dir = try cwd.openDir(io, src_path, .{});
+    defer src_dir.close(io);
     if (!check) try cwd.createDirPath(io, out_path);
     var out_dir = try cwd.openDir(io, out_path, .{ .iterate = true });
     defer out_dir.close(io);
@@ -81,8 +83,8 @@ pub fn main(init: std.process.Init) !void {
     for (stems.items) |stem| {
         const fd_name = try std.fmt.allocPrint(arena, "{s}_lib.fd", .{stem});
         const fd = try fd_dir.readFileAlloc(io, fd_name, arena, .unlimited);
-        const source = try findHome(io, rom_dir, stem) orelse
-            fatal("{s}/{s}: no {s}/{{libs,devs,resources}}/{s}/ holds its source", .{ fd_path, fd_name, rom_path, stem });
+        const source = try findHome(io, src_dir, stem) orelse
+            fatal("{s}/{s}: no {s}/{{rom,disk}}/.../{s}/ holds its source", .{ fd_path, fd_name, src_path, stem });
         var home = source;
         defer home.close(io);
         const module = try readModule(io, arena, fd_name, fd, home);
@@ -130,11 +132,11 @@ pub fn main(init: std.process.Init) !void {
 
 /// The first of `<rom dir>/{libs,devs,resources}/<stem>/` there is, opened
 /// to walk.
-fn findHome(io: Io, rom_dir: Io.Dir, stem: []const u8) !?Io.Dir {
+fn findHome(io: Io, src_dir: Io.Dir, stem: []const u8) !?Io.Dir {
     var buffer: [256]u8 = undefined;
     for (homes) |home| {
         const sub = try std.fmt.bufPrint(&buffer, "{s}/{s}", .{ home, stem });
-        return rom_dir.openDir(io, sub, .{ .iterate = true }) catch |err| switch (err) {
+        return src_dir.openDir(io, sub, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => continue,
             else => return err,
         };

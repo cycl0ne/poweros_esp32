@@ -16,6 +16,8 @@
 //!   opened,
 //!   takes the library off exec's list, frees its memory and hands back
 //!   the segments.
+//! - The jump table: the standard four, then the library's own calls when
+//!   it has any (`functions`).
 //! - The ROM tag, in `.resident`, the `$VER:` string, in `.version`, and a
 //!   program entry that says the file is not a command.
 //!
@@ -59,6 +61,9 @@ pub const Spec = struct {
     /// Libraries the class needs open for as long as it is there, by
     /// name: at most `max_opens`.
     opens: []const [*:0]const u8 = &.{},
+    /// The library's own calls, after the standard four, in the order of
+    /// its `.fd`: each an `lvo<Name>` taking the `Base` first.
+    functions: []const *const anyopaque = &.{},
 };
 
 /// How many libraries a class library may open for its class.
@@ -163,7 +168,7 @@ pub fn ClassLibrary(comptime spec: Spec) type {
             exec.libraries.vec(exec.libraries.libClose),
             exec.libraries.vec(expunge),
             exec.libraries.vec(exec.libraries.libExtFunc),
-        };
+        } ++ spec.functions[0..spec.functions.len].*;
 
         const init_table = exec.InitTable{
             .data_size = @sizeOf(Base),

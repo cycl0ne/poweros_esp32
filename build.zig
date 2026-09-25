@@ -255,7 +255,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseSafe,
         }),
     });
-    const autodoc_args = [_][]const u8{ b.pathFromRoot("sdk/fd"), b.pathFromRoot("src/rom"), b.pathFromRoot("sdk/docs/autodocs") };
+    const autodoc_args = [_][]const u8{ b.pathFromRoot("sdk/fd"), b.pathFromRoot("src"), b.pathFromRoot("sdk/docs/autodocs") };
     const write_autodocs = b.addRunArtifact(autodoc);
     write_autodocs.addArgs(&autodoc_args);
     write_autodocs.has_side_effects = true;

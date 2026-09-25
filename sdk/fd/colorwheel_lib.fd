@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+//! colorwheel.gadget's functions, besides its class: a colour between
+//! hue, saturation and brightness and red, green and blue. The base is
+//! the class library's, from OpenLibrary("gadgets/colorwheel.gadget", 0).
+##include libs/gadgets/colorwheel as colorwheel
+##basetype ColorWheelBase
+##name colorwheel.gadget
+##bias 4
+##public
+/// The colour `hsb` as red, green and blue, into `rgb`.
+void ConvertHSBToRGB(*const colorwheel.ColorWheelHSB hsb, *colorwheel.ColorWheelRGB rgb)
+/// The colour `rgb` as hue, saturation and brightness, into `hsb`.
+void ConvertRGBToHSB(*const colorwheel.ColorWheelRGB rgb, *colorwheel.ColorWheelHSB hsb)
+##end

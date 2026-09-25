@@ -19,3 +19,4 @@ pub const intuition = @import("intuition.zig");
 pub const input = @import("input.zig");
 pub const keymap = @import("keymap.zig");
 pub const console = @import("console.zig");
+pub const colorwheel = @import("colorwheel.zig");
