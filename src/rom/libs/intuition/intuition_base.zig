@@ -92,6 +92,8 @@ pub const IntuitionBase = extern struct {
     itext_class: ?*Class,
     /// strgclass, a line of text a person types.
     string_class: ?*Class,
+    /// layoutgclass, a group that places its members itself.
+    layout_class: ?*Class,
     /// The height of the ROM font a screen opens with when it is given
     /// none, and what `IntuiTextLength` measures a run without a font in.
     /// It starts at `default_font_height`.

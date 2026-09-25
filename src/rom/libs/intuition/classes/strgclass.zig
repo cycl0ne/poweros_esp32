@@ -93,6 +93,30 @@ pub fn make(ib: *IntuitionBase) ?*Class {
     return cl;
 }
 
+/// How many characters wide a line is at the least: enough to see what is
+/// being typed.
+const least_chars = 4;
+
+/// Its size, for `GM_DOMAIN`: one line of its font high inside its frame,
+/// never taller - a line of text has no use for more - and at least a few
+/// characters wide; the width it was given as it looks right, and as wide
+/// as there is room at the most.
+fn domain(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, which: u32) gc.Box {
+    const g = gadgetclass.gadgetOf(ib, o);
+    const p = own(cl, o);
+    const measure: gadgetclass.Measure = if (p.font) |font| .{ .font = font, .opened = false } else gadgetclass.measureFont(ib, g, gi);
+    defer measure.done(ib);
+    const cell = gadgetclass.fontCell(ib, measure.font);
+    // The frame and the gap inside it: two pixels a side, as it is drawn.
+    const height = cell.height + 4;
+    const least = least_chars * cell.width + 4;
+    return switch (which) {
+        gc.GDOMAIN_MINIMUM => .{ .width = least, .height = height },
+        gc.GDOMAIN_NOMINAL => .{ .width = @max(least, g.given_width), .height = height },
+        else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = height },
+    };
+}
+
 fn own(cl: *Class, o: *Object) *Data {
     return classes.instData(Data, cl, o);
 }
@@ -737,6 +761,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 gc.STRINGA_Font => get.storage.* = @intFromPtr(p.font),
                 else => return it.SendSuperMessage(cl, o, msg),
             }
+            return 1;
+        },
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            ask.domain = domain(ib, cl, o.?, ask.gadget_info, ask.which);
             return 1;
         },
         gc.GM_HITTEST => {

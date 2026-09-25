@@ -29,6 +29,7 @@ const _window = @import("../window/_window.zig");
 const Window = _window.Window;
 const gadgetclass = @import("../classes/gadgetclass.zig");
 const gadgetOf = gadgetclass.gadgetOf;
+const groupgclass = @import("../classes/groupgclass.zig");
 
 /// Where a gadget is, in its window's coordinates.
 pub const Box = struct { left: i32, top: i32, width: i32, height: i32 };
@@ -347,6 +348,21 @@ pub fn hitList(ib: *IntuitionBase, w: *Window, first: ?*Object, x: i32, y: i32) 
         return .{ .gadget = o };
     }
     return .none;
+}
+
+/// The gadget a press in `o` is reported as, for what `flag` asks
+/// (`GACT_RELVERIFY`, `GACT_IMMEDIATE`, `GACT_ENDGADGET`): the innermost
+/// of `o` and the members of groups inside it that have the input which
+/// asked for it, or null when none did. A button in a layout reports
+/// itself, with its own ID; a group whose members ask for nothing reports
+/// as the group.
+pub fn reporter(ib: *IntuitionBase, o: *Object, flag: u32) ?*Object {
+    var found: ?*Object = null;
+    var at: ?*Object = o;
+    while (at) |g| : (at = groupgclass.activeMember(ib, g)) {
+        if (gadgetOf(ib, g).activation & flag != 0) found = g;
+    }
+    return found;
 }
 
 /// The list a gadget is on: its requester's, or the window's own.

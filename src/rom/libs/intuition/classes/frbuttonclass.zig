@@ -107,10 +107,9 @@ fn redraw(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) void {
     _ = it.SendMessage(o, @ptrCast(&msg));
 }
 
-/// A framed button made without a size is its frame round what it shows:
-/// its image, or else its label in the DrawInfo's font (the ROM's default
-/// font without one). With neither it keeps the size it was given.
-fn sizeToContents(ib: *IntuitionBase, cl: *Class, o: *Object, frame: *Object) void {
+/// Its frame round what it shows: its image, or else its label in the font
+/// it is measured in (`gadgetclass.measureFont`); null with neither.
+fn framed(ib: *IntuitionBase, o: *Object, frame: *Object, gi: ?*classusr.GadgetInfo) ?ic.Box {
     const it = ib.iface();
     const g = gadgetclass.gadgetOf(ib, o);
     var contents = ic.Box{};
@@ -122,18 +121,26 @@ fn sizeToContents(ib: *IntuitionBase, cl: *Class, o: *Object, frame: *Object) vo
         contents.width = @intCast(width);
         contents.height = @intCast(height);
     } else if (g.text != null or g.itext != null or g.label_image != null) {
-        const gb = ib.graphics_base;
-        const given: ?*graphics.TextFont = if (g.draw_info) |dri| dri.font else null;
-        const font = given orelse gb.OpenFont(graphics.POSPAZNAME, ib.font_height) orelse return;
-        defer if (given == null) gb.CloseFont(font);
+        const measure = gadgetclass.measureFont(ib, g, gi);
+        defer measure.done(ib);
+        const font = measure.font orelse return null;
         const size = gadgetclass.labelSize(ib, g, null, font);
         contents.width = size.width;
         contents.height = size.height;
-    } else return;
+    } else return null;
 
     var box = ic.Box{};
-    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = g.draw_info };
-    if (it.SendMessage(frame, @ptrCast(&msg)) == 0) return;
+    const dri = if (gi) |info| info.draw_info else g.draw_info;
+    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = dri };
+    if (it.SendMessage(frame, @ptrCast(&msg)) == 0) return null;
+    return box;
+}
+
+/// A framed button made without a size is its frame round what it shows.
+/// With nothing to show it keeps the size it was given.
+fn sizeToContents(ib: *IntuitionBase, cl: *Class, o: *Object, frame: *Object) void {
+    const it = ib.iface();
+    const box = framed(ib, o, frame, null) orelse return;
     const tags = [_]TagItem{
         .{ .tag = gc.GA_Width, .data = @intCast(box.width) },
         .{ .tag = gc.GA_Height, .data = @intCast(box.height) },
@@ -199,6 +206,21 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const r: *gc.GpRender = @ptrCast(@alignCast(msg));
             render(ib, cl, o.?, r.gadget_info, r.rast_port);
             return 0;
+        },
+        // No smaller than its frame round what it shows, in the font of
+        // the window it is asked in; as it looks right, that or the size
+        // it was given if larger.
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            if (ask.which == gc.GDOMAIN_MAXIMUM) return it.SendSuperMessage(cl, o, msg);
+            const g = gadgetclass.gadgetOf(ib, o.?);
+            const frame = classes.instData(Data, cl, o.?).frame orelse return it.SendSuperMessage(cl, o, msg);
+            const box = framed(ib, o.?, frame, ask.gadget_info) orelse return it.SendSuperMessage(cl, o, msg);
+            ask.domain = if (ask.which == gc.GDOMAIN_MINIMUM)
+                .{ .width = box.width, .height = box.height }
+            else
+                .{ .width = @max(box.width, g.given_width), .height = @max(box.height, g.given_height) };
+            return 1;
         },
         else => return it.SendSuperMessage(cl, o, msg),
     }

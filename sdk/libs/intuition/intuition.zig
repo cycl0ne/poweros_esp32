@@ -23,6 +23,7 @@ pub const gadgetclass = @import("gadgetclass.zig");
 pub const sghooks = @import("sghooks.zig");
 pub const SGWork = sghooks.SGWork;
 pub const propgclass = @import("propgclass.zig");
+pub const layoutgclass = @import("layoutgclass.zig");
 pub const text = @import("text.zig");
 pub const IntuiText = text.IntuiText;
 pub const border = @import("border.zig");

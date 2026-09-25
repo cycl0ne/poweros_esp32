@@ -13,6 +13,11 @@
 //! itself where it is. The group grows to hold it. Moving the group moves
 //! every member by the same amount.
 //!
+//! What a member does reaches the window in the member's own name: a
+//! member with `GA_RelVerify` let go over itself is the gadget of that
+//! `IDCMP_GADGETUP`, not the group, which reports only for a member that
+//! did not ask to (`activeMember`, and `_gadget.reporter`).
+//!
 //! Disposing of the group disposes of its members, since they are its.
 
 const sdk = @import("sdk");
@@ -67,6 +72,17 @@ pub fn make(ib: *IntuitionBase) ?*Class {
 
 fn own(cl: *Class, o: *Object) *Data {
     return classes.instData(Data, cl, o);
+}
+
+/// The member of a group that has the input - the one the last hit test
+/// landed in, until it is done - or null, and null for anything that is
+/// not a group.
+pub fn activeMember(ib: *IntuitionBase, o: *Object) ?*Object {
+    var cl: ?*Class = classes.objectClass(o);
+    while (cl) |c| : (cl = c.super) {
+        if (c == ib.group_class) return own(c, o).active;
+    }
+    return null;
 }
 
 /// Where a gadget is, with `GA_Rel*` worked out against the room it is
@@ -219,9 +235,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return 0;
         },
+        // It is the size its members make it, and no other.
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            const g = gadgetclass.gadgetOf(ib, o.?);
+            ask.domain = .{ .width = g.width, .height = g.height };
+            return 1;
+        },
         gc.GM_HITTEST => {
             const ht: *gc.GpHitTest = @ptrCast(@alignCast(msg));
             return if (propagateHit(ib, cl, o.?, ht.gadget_info, ht.mouse.x, ht.mouse.y) != null) gc.GMR_GADGETHIT else 0;
+        },
+        // Only the window's own gadgets hear that the room changed, so a
+        // group tells its members - a layout among them lays itself out.
+        gc.GM_LAYOUT => {
+            const p = own(cl, o.?);
+            var walk = Walk.over(ib, p);
+            while (walk.next()) |member| _ = it.SendMessage(member, @ptrCast(msg));
+            return 0;
         },
         gc.GM_RENDER => {
             // A member is a gadget of the window with a box of its own, so

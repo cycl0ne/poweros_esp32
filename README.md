@@ -125,11 +125,13 @@ cores.
   and 16 rows), layers.library for overlapping windows.
 - intuition.library: screens, windows, menus, requesters, and an object
   system of classes for gadgets and images (buttons, sliders, string
-  fields, groups). Several screens share a display, each in a buffer of
-  its own, brought forward by showing that buffer; a screen can be double
-  buffered, its frames flipped at the display's frame start. Public
-  screens can be listed, chosen as the default and signal their owner when
-  the last visitor leaves; gadgets can live in a window's border.
+  fields, groups, and layouts that size and place their gadgets to fit
+  the window, whichever display it is on). Several screens share a
+  display, each in a buffer of its own, brought forward by showing that
+  buffer; a screen can be double buffered, its frames flipped at the
+  display's frame start. Public screens can be listed, chosen as the
+  default and signal their owner when the last visitor leaves; gadgets
+  can live in a window's border.
 
 **Devices**
 - Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,

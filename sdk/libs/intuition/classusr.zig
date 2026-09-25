@@ -33,6 +33,7 @@ pub const GROUPGCLASS = "groupgclass";
 pub const FILLRECTCLASS = "fillrectclass";
 pub const ITEXTICLASS = "itexticlass";
 pub const STRGCLASS = "strgclass";
+pub const LAYOUTGCLASS = "layoutgclass";
 
 // --- the methods every object has ---------------------------------------
 

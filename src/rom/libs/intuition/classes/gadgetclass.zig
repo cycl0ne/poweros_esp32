@@ -45,6 +45,12 @@ pub const Data = extern struct {
     /// visibly wrong rather than invisibly absent.
     width: i32 = 80,
     height: i32 = 40,
+    /// The size it was given with `GA_Width` and `GA_Height` - or the one
+    /// above, without them: what it answers `GM_DOMAIN` with unless its
+    /// class knows better. Kept apart from the box, because a layout sets
+    /// the box and would otherwise hear its own last answer back.
+    given_width: i32 = 80,
+    given_height: i32 = 40,
     flags: u32 = 0,
     activation: u32 = 0,
     id: u32 = 0,
@@ -177,6 +183,35 @@ pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, fo
     return .{ .width = 0, .height = 0 };
 }
 
+/// The font a gadget is measured in: its window's, when it is asked in
+/// one; else the one its `GA_DrawInfo` names; else the ROM's font at the
+/// height a screen opens with, opened for the purpose - `opened` says it
+/// has to be closed again (`done`).
+pub const Measure = struct {
+    font: ?*graphics.TextFont,
+    opened: bool,
+
+    pub fn done(m: Measure, ib: *IntuitionBase) void {
+        if (m.opened) ib.graphics_base.CloseFont(m.font.?);
+    }
+};
+
+pub fn measureFont(ib: *IntuitionBase, g: *const Data, gi: ?*classusr.GadgetInfo) Measure {
+    if (gi) |info| if (info.draw_info.font) |font| return .{ .font = font, .opened = false };
+    if (g.draw_info) |dri| if (dri.font) |font| return .{ .font = font, .opened = false };
+    const font = ib.graphics_base.OpenFont(graphics.POSPAZNAME, ib.font_height);
+    return .{ .font = font, .opened = font != null };
+}
+
+/// How wide a character of `font` is and how tall a line; nothing
+/// without one.
+pub fn fontCell(ib: *IntuitionBase, font: ?*graphics.TextFont) gc.Box {
+    const f = font orelse return .{};
+    var extent = graphics.FontExtent{};
+    ib.graphics_base.FontExtent(f, &extent);
+    return .{ .width = extent.width, .height = extent.height };
+}
+
 fn textLen(s: [*:0]const u8) u32 {
     var n: u32 = 0;
     while (s[n] != 0) n += 1;
@@ -256,11 +291,13 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             },
             gc.GA_Width, gc.GA_RelWidth => {
                 g.width = n;
+                if (item.tag == gc.GA_Width) g.given_width = n;
                 setFlag(&g.flags, GFLG_RELWIDTH, item.tag == gc.GA_RelWidth);
                 changed = 1;
             },
             gc.GA_Height, gc.GA_RelHeight => {
                 g.height = n;
+                if (item.tag == gc.GA_Height) g.given_height = n;
                 setFlag(&g.flags, GFLG_RELHEIGHT, item.tag == gc.GA_RelHeight);
                 changed = 1;
             },
@@ -438,6 +475,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return 1;
         },
         gc.GM_HITTEST => return gc.GMR_GADGETHIT,
+        // The size it was given, as small as it goes and as it looks
+        // right; any larger is the layout's to decide.
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            const g = classes.instData(Data, cl, o orelse return 0);
+            ask.domain = if (ask.which == gc.GDOMAIN_MAXIMUM)
+                .{ .width = gc.GDOMAIN_UNLIMITED, .height = gc.GDOMAIN_UNLIMITED }
+            else
+                .{ .width = g.given_width, .height = g.given_height };
+            return 1;
+        },
         gc.GM_RENDER, gc.GM_GOINACTIVE => return 0,
         // Asked about a point already known to be in the box: it is this
         // gadget's, and it has nothing more particular to say about which

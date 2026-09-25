@@ -30,6 +30,7 @@ const groupgclass = @import("classes/groupgclass.zig");
 const fillrectclass = @import("classes/fillrectclass.zig");
 const itexticlass = @import("classes/itexticlass.zig");
 const strgclass = @import("classes/strgclass.zig");
+const layoutgclass = @import("classes/layoutgclass.zig");
 
 /// The version of utility.library the hook and pack calls are taken from.
 const UTILITY_VERSION = 1;
@@ -54,9 +55,10 @@ pub const LIBRARY_VERSION = 0;
 /// shortcuts, IDCMP_MENUVERIFY and IDCMP_MENUHELP, and lent menus. 13:
 /// requesters in a window and the double-click requester, the requester
 /// from IntuiTexts, ActivateGadget and DoGadgetMethodA. 14:
-/// IDCMP_SIZEVERIFY, the verifies in a file of their own.
-pub const LIBRARY_REVISION = 14;
-const BUILD_DATE = "22.9.2026";
+/// IDCMP_SIZEVERIFY, the verifies in a file of their own. 15:
+/// layoutgclass and GM_DOMAIN; a group's member reports in its own name.
+pub const LIBRARY_REVISION = 15;
+const BUILD_DATE = "25.9.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -138,6 +140,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.fillrect_class = if (ib.group_class != null) fillrectclass.make(ib) else null;
     ib.itext_class = if (ib.fillrect_class != null) itexticlass.make(ib) else null;
     ib.string_class = if (ib.itext_class != null) strgclass.make(ib) else null;
+    ib.layout_class = if (ib.string_class != null) layoutgclass.make(ib) else null;
     ib.active_window = null;
     ib.input = .{};
     @import("input/menus.zig").init(ib);
@@ -146,7 +149,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.double_seconds = 1;
     ib.double_micros = 500_000;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
-    if (ib.string_class == null) {
+    if (ib.layout_class == null) {
+        _ = ib.iface().FreeClass(ib.string_class);
         _ = ib.iface().FreeClass(ib.itext_class);
         _ = ib.iface().FreeClass(ib.fillrect_class);
         _ = ib.iface().FreeClass(ib.group_class);

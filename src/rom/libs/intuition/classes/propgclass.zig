@@ -64,6 +64,29 @@ pub fn make(ib: *IntuitionBase) ?*Class {
     return cl;
 }
 
+/// How short a slider gets along the way its knob moves: room for a knob
+/// and for it to move.
+const least_travel = 16;
+
+/// Its size, for `GM_DOMAIN`: across the way the knob moves, as thick as
+/// it was made and no other; along it, at least room to move, the length
+/// it was given as it looks right, and as long as there is room.
+fn domain(p: *const Data, g: *const gadgetclass.Data, which: u32) gc.Box {
+    const horiz = p.flags & pg.FREEHORIZ != 0;
+    const vert = p.flags & pg.FREEVERT != 0;
+    return switch (which) {
+        gc.GDOMAIN_MINIMUM => .{
+            .width = if (horiz) @min(least_travel, g.given_width) else g.given_width,
+            .height = if (vert) @min(least_travel, g.given_height) else g.given_height,
+        },
+        gc.GDOMAIN_NOMINAL => .{ .width = g.given_width, .height = g.given_height },
+        else => .{
+            .width = if (horiz) gc.GDOMAIN_UNLIMITED else g.given_width,
+            .height = if (vert) gc.GDOMAIN_UNLIMITED else g.given_height,
+        },
+    };
+}
+
 fn own(cl: *Class, o: *Object) *Data {
     return classes.instData(Data, cl, o);
 }
@@ -415,6 +438,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 pg.PGA_Top => into.* = p.top,
                 else => return it.SendSuperMessage(cl, o, msg),
             }
+            return 1;
+        },
+        gc.GM_DOMAIN => {
+            const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
+            ask.domain = domain(own(cl, o.?), gadgetclass.gadgetOf(ib, o.?), ask.which);
             return 1;
         },
         gc.GM_HITTEST => {

@@ -203,6 +203,7 @@ fn setUp() !*IntuitionBase {
 /// Nothing here expunges itself, so the test gives back every class, every
 /// open and every library.
 fn tearDown(ib: *IntuitionBase) !void {
+    try testing.expect(ib.iface().FreeClass(ib.layout_class));
     try testing.expect(ib.iface().FreeClass(ib.string_class));
     try testing.expect(ib.iface().FreeClass(ib.itext_class));
     try testing.expect(ib.iface().FreeClass(ib.fillrect_class));
@@ -294,6 +295,8 @@ test "intuition.library: made from its tag, with its classes public" {
     try testing.expectEqual(ib.image_class.?, ib.itext_class.?.super.?);
     try testing.expectEqual(ib.string_class.?, ib.iface().FindClass(classusr.STRGCLASS).?);
     try testing.expectEqual(ib.gadget_class.?, ib.string_class.?.super.?);
+    try testing.expectEqual(ib.layout_class.?, ib.iface().FindClass(classusr.LAYOUTGCLASS).?);
+    try testing.expectEqual(ib.group_class.?, ib.layout_class.?.super.?);
 
     try testing.expectEqual(&ib.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, intuition_init.LIBRARY_VERSION).?);
     kexec.CloseLibrary(kexec.SysBase, &ib.lib);
@@ -3634,7 +3637,7 @@ test "a group holds what it is given, and gives a member back where it found it"
     try tearDown(ib);
 }
 
-test "a group tells the member that had the input that it is done" {
+test "a group tells the member that had the input that it is done, and that the room changed" {
     const ib = try setUp();
     defer kexec.deinit();
     const wn = intuition.windows;
@@ -3674,6 +3677,9 @@ test "a group tells the member that had the input that it is done" {
     // put down once. Without the second the member would go on believing
     // it had the input - a field would keep its cursor for ever.
     const state = intuition.instData(Told, told_class, member);
+    // The window opened with the group in it, and the group said so to
+    // its member.
+    try testing.expectEqual(@as(u32, 1), state.laid_out);
     click(ib, 4 + 5, 12 + 4 + 5);
     try testing.expectEqual(@as(u32, 1), state.active);
     try testing.expectEqual(@as(u32, 1), state.inactive);
@@ -3689,6 +3695,256 @@ test "a group tells the member that had the input that it is done" {
     try testing.expect(ib.iface().CloseScreen(screen));
     it.DisposeObject(group); // its member goes with it
     try testing.expect(ib.iface().FreeClass(told_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// Where a gadget is, as its own attributes say.
+fn boxOf(ib: *IntuitionBase, o: *Object) _gadget.Box {
+    const gc = intuition.gadgetclass;
+    return .{
+        .left = @intCast(@as(isize, @bitCast(getAttr(ib, o, gc.GA_Left)))),
+        .top = @intCast(@as(isize, @bitCast(getAttr(ib, o, gc.GA_Top)))),
+        .width = @intCast(@as(isize, @bitCast(getAttr(ib, o, gc.GA_Width)))),
+        .height = @intCast(@as(isize, @bitCast(getAttr(ib, o, gc.GA_Height)))),
+    };
+}
+
+fn framedButton(ib: *IntuitionBase, text: [*:0]const u8, id: usize) *Object {
+    const gc = intuition.gadgetclass;
+    return ib.iface().NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(text) },
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+}
+
+test "layoutgclass: one tree laid out in the room of each board" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const pg = intuition.propgclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const name = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 40 },
+        .{},
+    }).?;
+    const slider = it.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
+        .{ .tag = gc.GA_Width, .data = 60 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const big = framedButton(ib, "Big", 3);
+    const ok = framedButton(ib, "OK", 1);
+    const cancel = framedButton(ib, "Cancel", 2);
+    const row = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ok) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(cancel) },
+        .{},
+    }).?;
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_RelWidth, .data = 0 },
+        .{ .tag = gc.GA_RelHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 4 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 3 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Name") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(slider) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Size") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(big) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_MinHeight, .data = 20 },
+        .{},
+    }).?;
+
+    // What the tree needs, from what its children need.
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    try testing.expectEqual(@as(usize, 1), it.SendMessage(layout, @ptrCast(&least)));
+    var big_least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(big, @ptrCast(&big_least));
+    try testing.expectEqual(4 + 12 + 3 + 10 + 3 + big_least.domain.height + 3 + 20 + 4, least.domain.height);
+
+    // A window to be measured in - the display is too small for the boards'
+    // own, so the room is the one each board's screen would give.
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+
+    // The same rules in each room: the labelled children after one label
+    // column, the name as wide as the room, the slider its own height, the
+    // row of buttons at the bottom as tall as it asked, the big button in
+    // what is left, the two buttons sharing the row.
+    for ([_][2]i32{ .{ 1016, 560 }, .{ 472, 280 } }) |room| {
+        var gi = _gadget.info(win);
+        gi.domain_width = room[0];
+        gi.domain_height = room[1];
+        var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+        _ = it.SendMessage(layout, @ptrCast(&lay));
+        const inner_w = room[0];
+        const inner_h = room[1];
+        const n = boxOf(ib, name);
+        const s = boxOf(ib, slider);
+        const b = boxOf(ib, big);
+        const r = boxOf(ib, row);
+        const o = boxOf(ib, ok);
+        const c = boxOf(ib, cancel);
+
+        try testing.expectEqual(n.left, s.left);
+        try testing.expect(n.left > 4 + 3);
+        try testing.expectEqual(inner_w - 4, n.left + n.width);
+        try testing.expectEqual(@as(i32, 4), n.top);
+        try testing.expectEqual(@as(i32, 8 + 4), n.height); // a line of the font in its frame
+        try testing.expectEqual(n.top + n.height + 3, s.top);
+        try testing.expectEqual(@as(i32, 10), s.height);
+        try testing.expectEqual(inner_w - 4, s.left + s.width);
+
+        try testing.expectEqual(@as(i32, 20), r.height);
+        try testing.expectEqual(inner_h - 4, r.top + r.height);
+        try testing.expectEqual(@as(i32, 4), r.left);
+        try testing.expectEqual(inner_w - 8, r.width);
+        try testing.expectEqual(@as(i32, 4), b.left);
+        try testing.expectEqual(s.top + s.height + 3, b.top);
+        try testing.expectEqual(r.top - 3, b.top + b.height);
+
+        // In the row: side by side, the gap between them, the row filled;
+        // each as tall as the row.
+        try testing.expectEqual(r.left, o.left);
+        try testing.expectEqual(o.left + o.width + 4, c.left);
+        try testing.expectEqual(r.left + r.width, c.left + c.width);
+        try testing.expectEqual(r.height, o.height);
+        try testing.expectEqual(r.top, c.top);
+        // Each is its nominal width and half of what was spare.
+        var ok_wants = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+        var cancel_wants = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+        try testing.expectEqual(@as(usize, 1), it.SendMessage(ok, @ptrCast(&ok_wants)));
+        try testing.expectEqual(@as(usize, 1), it.SendMessage(cancel, @ptrCast(&cancel_wants)));
+        try testing.expect(cancel_wants.domain.width > ok_wants.domain.width);
+        try testing.expect(@abs((o.width - ok_wants.domain.width) - (c.width - cancel_wants.domain.width)) <= 1);
+    }
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(layout); // and everything in it
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: in a window, its smallest size, and a button that reports by its own ID" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    // Room left in the fake board's memory for a window to be sized in.
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    const ok = framedButton(ib, "OK", 1);
+    const cancel = framedButton(ib, "No", 2);
+    const row = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ok) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(cancel) },
+        .{},
+    }).?;
+    const name = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{.{}}).?;
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_RelWidth, .data = 0 },
+        .{ .tag = gc.GA_RelHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("N") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
+        .{},
+    }).?;
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(layout, @ptrCast(&least));
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 112 },
+        .{ .tag = wn.WA_Height, .data = 44 },
+        .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(layout) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const bl: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderLeft));
+    const bt: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderTop));
+    const frame_w = 112 - @as(i32, @intCast(windowAttr(ib, w, wn.WA_InnerWidth)));
+    const frame_h = 44 - @as(i32, @intCast(windowAttr(ib, w, wn.WA_InnerHeight)));
+
+    // The window was made no smaller than the layout fits in, its border
+    // counted; sized down as far as it goes, everything still fits.
+    try testing.expectEqual(least.domain.width + frame_w, win.min_width);
+    try testing.expectEqual(least.domain.height + frame_h, win.min_height);
+    it.ChangeWindowBox(w, 0, 12, 10, 10);
+    try testing.expectEqual(win.min_width, win.width);
+    try testing.expectEqual(win.min_height, win.height);
+    const inner_h: i32 = @intCast(windowAttr(ib, w, wn.WA_InnerHeight));
+    const inner_w: i32 = @intCast(windowAttr(ib, w, wn.WA_InnerWidth));
+    const r = boxOf(ib, row);
+    try testing.expectEqual(inner_h - 2, r.top + r.height);
+    try testing.expectEqual(inner_w - 2, boxOf(ib, cancel).left + boxOf(ib, cancel).width);
+
+    // And grown again, the row with it.
+    it.ChangeWindowBox(w, 0, 12, 112, 44);
+    try testing.expectEqual(@as(i32, @intCast(windowAttr(ib, w, wn.WA_InnerWidth))) - 2, boxOf(ib, cancel).left + boxOf(ib, cancel).width);
+
+    // A button of the row pressed: the window hears it from the button,
+    // with the button's own ID - not from either layout.
+    var msgs: [4]intuition.IntuiMessage = undefined;
+    _ = drainMessages(ib, w, &msgs);
+    const c = boxOf(ib, cancel);
+    click(ib, bl + c.left + 2, 12 + bt + c.top + 2);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &msgs));
+    try testing.expectEqual(wn.IDCMP_GADGETUP, msgs[0].class);
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(cancel)), msgs[0].iaddress);
+    try testing.expectEqual(@as(usize, 2), getAttr(ib, @ptrCast(msgs[0].iaddress.?), gc.GA_ID));
+
+    // The label is drawn left of its child, in the text pen: something
+    // other than the window's ground is in the label column.
+    const n = boxOf(ib, name);
+    const ground = display.pixel(@intCast(bl + 1), @intCast(12 + bt + n.top + n.height - 1));
+    var inked = false;
+    var y = n.top;
+    while (y < n.top + n.height) : (y += 1) {
+        var x: i32 = 2;
+        while (x < n.left - 2) : (x += 1) {
+            if (display.pixel(@intCast(bl + x), @intCast(12 + bt + y)) != ground) inked = true;
+        }
+    }
+    try testing.expect(inked);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(layout);
     display.down(ib);
     try tearDown(ib);
 }

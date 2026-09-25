@@ -15,6 +15,9 @@
 //!   - `GM_GOINACTIVE`: it is no longer active, because it said so or
 //!     because it was taken away (`abort`).
 //!   - `GM_RENDER`: draw yourself.
+//!   - `GM_LAYOUT`: the room you are measured against has changed.
+//!   - `GM_DOMAIN`: how big would you be - at the least, as you look
+//!     right, at the most? Asked by a layout before it places you.
 //!
 //! What a gadget did reaches the program as `IDCMP_GADGETDOWN` (pressed,
 //! with `GA_Immediate`) and `IDCMP_GADGETUP` (finished with `GMR_VERIFY`,
@@ -172,6 +175,34 @@ pub const GM_LAYOUT: MethodID = 6;
 /// `GpHitTest`: is this point one you have something to say about? Answered
 /// while the pointer rests over a window whose program asked to be told.
 pub const GM_HELPTEST: MethodID = 5;
+
+/// `GpDomain`: how big would you be? Asked by whatever places gadgets for
+/// itself - layoutgclass - before it decides where each one goes.
+pub const GM_DOMAIN: MethodID = 7;
+
+/// GM_DOMAIN's `which`: the smallest a gadget can be and still work, the
+/// size it looks right at, and the largest it is any use at.
+pub const GDOMAIN_MINIMUM: u32 = 0;
+pub const GDOMAIN_NOMINAL: u32 = 1;
+pub const GDOMAIN_MAXIMUM: u32 = 2;
+
+/// A size a gadget has no limit to: GM_DOMAIN's `GDOMAIN_MAXIMUM` answer
+/// for a gadget that can be stretched as far as there is room.
+pub const GDOMAIN_UNLIMITED: i32 = 0x7FFF;
+
+/// GM_DOMAIN. The gadget fills `domain`'s width and height (left and top
+/// are 0) and answers 1; 0 means it has no answer, and whoever asked
+/// keeps the size it has.
+pub const GpDomain = extern struct {
+    method_id: MethodID = GM_DOMAIN,
+    /// The window it is asked in, when there is one: its font is what a
+    /// label is measured in. Null before the gadget is in a window, when
+    /// the gadget's `GA_DrawInfo` or the ROM's font is used.
+    gadget_info: ?*GadgetInfo = null,
+    /// `GDOMAIN_*`.
+    which: u32,
+    domain: Box = .{},
+};
 
 /// GM_HELPTEST: nothing here worth saying anything about.
 pub const GMR_NOHELPHIT: usize = 0;

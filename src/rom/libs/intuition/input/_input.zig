@@ -548,16 +548,19 @@ fn finish(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination
     st.active = null;
     st.mode = .none;
     st.window = null;
+    // Who it was, asked before it is told it is done: a group forgets
+    // which of its members had the input then.
+    const up = _gadget.reporter(ib, o, gadgetclass.GACT_RELVERIFY);
+    const ends = _gadget.reporter(ib, o, gadgetclass.GACT_ENDGADGET) != null;
     var gi = _gadget.infoFor(ib, w, o);
     var msg = gc.GpGoInactive{ .gadget_info = &gi, .abort = 0 };
     _ = ib.iface().SendMessage(o, @ptrCast(&msg));
-    const g = gadgetclass.gadgetOf(ib, o);
-    if (result & gc.GMR_VERIFY != 0 and g.activation & gadgetclass.GACT_RELVERIFY != 0) {
-        _ = _window.sendWith(ib, w, wn.IDCMP_GADGETUP, @bitCast(termination), o);
+    if (result & gc.GMR_VERIFY != 0) {
+        if (up) |reported| _ = _window.sendWith(ib, w, wn.IDCMP_GADGETUP, @bitCast(termination), reported);
     }
     // An end gadget used the way that counts takes its requester down.
-    if (result & gc.GMR_VERIFY != 0 and g.activation & gadgetclass.GACT_ENDGADGET != 0) {
-        if (g.requester) |req| ib.iface().EndRequest(req, @ptrCast(w));
+    if (result & gc.GMR_VERIFY != 0 and ends) {
+        if (gadgetclass.gadgetOf(ib, o).requester) |req| ib.iface().EndRequest(req, @ptrCast(w));
     }
 }
 
@@ -575,8 +578,10 @@ fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent)
         .termination = &termination,
         .mouse = .{ .x = at.x - b.left, .y = at.y - b.top },
     };
-    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_IMMEDIATE != 0) {
-        _ = _window.sendWith(ib, w, wn.IDCMP_GADGETDOWN, 0, o);
+    // The hit test that found it has already said which member of a
+    // group is under the press.
+    if (_gadget.reporter(ib, o, gadgetclass.GACT_IMMEDIATE)) |reported| {
+        _ = _window.sendWith(ib, w, wn.IDCMP_GADGETDOWN, 0, reported);
     }
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) {
