@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! The random number generator: one register that gives 32 new bits each
 //! time it is read. It draws on the noise of the radio's and the SAR
-//! ADC's clocks, and is truly random while either runs; without them it
-//! still mixes timing noise, and is no worse than anything else a program
-//! could make up. What needs a secret - a key for sequence numbers, for
-//! DNS ids - takes it from here.
+//! ADC's clocks, and is truly random while either runs. The kernel sets
+//! the SAR ADCs sampling at boot (src/arch/esp32s3/entropy.zig), so it is
+//! from the first task on. What needs a secret - a key for sequence
+//! numbers, for DNS ids, crypto.library's random bytes - takes it from
+//! here.
 
 const reg = @import("mmio.zig").reg;
 const map = @import("map.zig");

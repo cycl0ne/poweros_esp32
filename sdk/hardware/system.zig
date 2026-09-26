@@ -36,6 +36,16 @@ pub const Peripheral = enum {
     gdma,
     lcd_cam,
     sdio_host,
+    /// The SAR ADCs' digital controller.
+    apb_saradc,
+    /// The crypto engines. The SHA engine stays in reset while the
+    /// digital signature and HMAC engines are, so its user lets those
+    /// out of reset as well.
+    crypto_aes,
+    crypto_sha,
+    crypto_rsa,
+    crypto_ds,
+    crypto_hmac,
 };
 
 /// Which register pair holds a peripheral's bit, and the bit.
@@ -50,8 +60,14 @@ inline fn slotOf(comptime peripheral: Peripheral) Slot {
         .i2c0 => .{ .second = false, .bit = 1 << 7 },
         .i2c1 => .{ .second = false, .bit = 1 << 18 },
         .uart_mem => .{ .second = false, .bit = 1 << 24 },
+        .apb_saradc => .{ .second = false, .bit = 1 << 28 },
         .gdma => .{ .second = true, .bit = 1 << 6 },
         .sdio_host => .{ .second = true, .bit = 1 << 7 },
+        .crypto_aes => .{ .second = true, .bit = 1 << 1 },
+        .crypto_sha => .{ .second = true, .bit = 1 << 2 },
+        .crypto_rsa => .{ .second = true, .bit = 1 << 3 },
+        .crypto_ds => .{ .second = true, .bit = 1 << 4 },
+        .crypto_hmac => .{ .second = true, .bit = 1 << 5 },
         .lcd_cam => .{ .second = true, .bit = 1 << 8 },
         .uart2 => .{ .second = true, .bit = 1 << 9 },
     };

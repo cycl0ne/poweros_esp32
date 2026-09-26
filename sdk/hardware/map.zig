@@ -12,6 +12,8 @@ pub const SPI1: usize = 0x6000_2000;
 pub const SPI0: usize = 0x6000_3000;
 pub const GPIO: usize = 0x6000_4000;
 pub const RTC_CNTL: usize = 0x6000_8000;
+/// SENS: the SAR ADCs' analog controls, beside RTC_CNTL.
+pub const SENS: usize = 0x6000_8800;
 pub const IO_MUX: usize = 0x6000_9000;
 pub const I2S0: usize = 0x6000_F000;
 pub const UART1: usize = 0x6001_0000;
@@ -20,13 +22,21 @@ pub const TIMG0: usize = 0x6001_F000;
 pub const TIMG1: usize = 0x6002_0000;
 pub const SYSTIMER: usize = 0x6002_3000;
 pub const SPI2: usize = 0x6002_4000;
+/// SYSCON (APB_CTRL): among others, the random number generator's clock.
+pub const SYSCON: usize = 0x6002_6000;
 pub const I2C1: usize = 0x6002_7000;
 pub const SDMMC: usize = 0x6002_8000;
 pub const UART2: usize = 0x6002_E000;
 pub const USB_SERIAL_JTAG: usize = 0x6003_8000;
 /// The random number generator's one register (RNG_DATA_REG).
 pub const RNG_DATA: usize = 0x6003_507C;
+/// The AES, SHA and RSA engines (crypto.library's).
+pub const AES: usize = 0x6003_A000;
+pub const SHA: usize = 0x6003_B000;
+pub const RSA: usize = 0x6003_C000;
 pub const GDMA: usize = 0x6003_F000;
+/// The SAR ADCs' digital controller.
+pub const APB_SARADC: usize = 0x6004_0000;
 pub const LCD_CAM: usize = 0x6004_1000;
 /// SYSTEM: the peripherals' bus clocks and resets (`system.zig`).
 pub const SYSTEM: usize = 0x600C_0000;

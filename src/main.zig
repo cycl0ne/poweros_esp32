@@ -8,6 +8,7 @@ const bootstrap = @import("bootstrap.zig");
 const clock = @import("arch/esp32s3/clock.zig");
 const context = @import("arch/esp32s3/context.zig");
 const cpu = @import("arch/esp32s3/cpu.zig");
+const entropy = @import("arch/esp32s3/entropy.zig");
 const exec = @import("rom/libs/exec/exec.zig");
 const flashmap = @import("arch/esp32s3/flashmap.zig");
 const intmatrix = @import("arch/esp32s3/intmatrix.zig");
@@ -85,6 +86,7 @@ export fn kmain() callconv(.c) noreturn {
     exec.alert_hook.* = alert.show;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();
+    entropy.init();
     var regions: [ram.max_regions]exec.MemRegion = undefined;
     // exec.library from its ROM tag; its init does RawIOInit, sets up the
     // rest, scans the ROM tags, creates the exec task and starts the
