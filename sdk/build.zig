@@ -44,6 +44,32 @@ pub fn build(b: *std.Build) void {
     elf2seg.root_module.addImport("sdk", sdk);
     b.installArtifact(elf2seg);
 
+    // A program's linker script with the chip ROM's addresses added, for
+    // one that links a vendor archive.
+    const romld = b.addExecutable(.{
+        .name = "romld",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/romld/romld.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    b.installArtifact(romld);
+    const romld_tests = b.addTest(.{ .root_module = romld.root_module });
+
+    // A foreign archive's in-place addends folded into its relocations,
+    // so that LLD links it as the GNU linker would.
+    const addends = b.addExecutable(.{
+        .name = "addends",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/addends/addends.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    b.installArtifact(addends);
+    const addends_tests = b.addTest(.{ .root_module = addends.root_module });
+
     // A library's .fd file into its interface.
     const fd2zig = b.addExecutable(.{
         .name = "fd2zig",
@@ -56,7 +82,9 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(fd2zig);
 
     const fd_step = b.step("fd", "Generate the interfaces (interface/) from fd/");
-    const test_step = b.step("test", "Check that every interface is up to date with its .fd file");
+    const test_step = b.step("test", "Check that every interface is up to date with its .fd file, and test the tools");
+    test_step.dependOn(&b.addRunArtifact(addends_tests).step);
+    test_step.dependOn(&b.addRunArtifact(romld_tests).step);
     for (interfaces) |name| {
         const fd = b.path(b.fmt("fd/{s}_lib.fd", .{name}));
         const interface = b.fmt("interface/{s}.zig", .{name});
@@ -83,6 +111,15 @@ pub const Program = struct {
     /// Its root source file.
     root: std.Build.LazyPath,
     optimize: std.builtin.OptimizeMode = .ReleaseSafe,
+    /// Foreign archives linked in (`.a`): code built by GCC for the same
+    /// chip and the windowed ABI, such as the radio's vendor libraries.
+    /// Each goes through tools/addends first; only what the program
+    /// reaches is kept.
+    archives: []const std.Build.LazyPath = &.{},
+    /// Linker scripts that name the chip ROM's functions and data, for
+    /// archives that call into mask ROM; their addresses are added to
+    /// `program.ld` (tools/romld) and left alone by elf2seg.
+    rom_scripts: []const std.Build.LazyPath = &.{},
 };
 
 /// A program, library, device or handler built for the chip and made into
@@ -107,7 +144,20 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         char.* = '_';
     };
     const exe = b.addExecutable(.{ .name = artifact_name, .root_module = module });
-    exe.setLinkerScript(dep.path("program.ld"));
+    if (program.rom_scripts.len == 0) {
+        exe.setLinkerScript(dep.path("program.ld"));
+    } else {
+        const merge = b.addRunArtifact(dep.artifact("romld"));
+        merge.addFileArg(dep.path("program.ld"));
+        const script = merge.addOutputFileArg(b.fmt("{s}.ld", .{program.name}));
+        for (program.rom_scripts) |rom| merge.addFileArg(rom);
+        exe.setLinkerScript(script);
+    }
+    for (program.archives, 0..) |archive, index| {
+        const fold = b.addRunArtifact(dep.artifact("addends"));
+        fold.addFileArg(archive);
+        module.addObjectFile(fold.addOutputFileArg(b.fmt("{s}-{d}.a", .{ program.name, index })));
+    }
     exe.entry = .{ .symbol_name = "_program_entry" };
     exe.link_emit_relocs = true;
 

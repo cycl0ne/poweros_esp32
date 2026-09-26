@@ -22,6 +22,13 @@ SECTIONS
   {
     /* Literal pools must precede the code that loads them (l32r). */
     *(.literal .text .literal.* .text.*)
+    /* Vendor archives (wifi.device's radio libraries) name their code by
+       where their own system puts it - internal RAM, code that runs
+       asleep - and a loaded program has one code segment for all of it. */
+    *(.iram1 .iram1.* .wifi0iram .wifi0iram.* .wifirxiram .wifirxiram.*)
+    *(.wifislpiram .wifislpiram.* .wifislprxiram .wifislprxiram.*)
+    *(.wifiextrairam .wifiextrairam.* .wifiorslpiram .wifiorslpiram.*)
+    *(.phyiram .phyiram.*)
     . = ALIGN(4);
   }
 
@@ -38,6 +45,8 @@ SECTIONS
        with the code they are in. */
     KEEP(*(.resident))
     *(.rodata .rodata.* .data .data.*)
+    /* The same archives' data for internal RAM, and their log strings. */
+    *(.dram1 .dram1.* .rodata_wlog_* .rodata_wlog_*.*)
     . = ALIGN(4);
   }
 
@@ -47,5 +56,7 @@ SECTIONS
     . = ALIGN(4);
   }
 
-  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) *(.comment) }
+  /* .xt.prop and .xt.lit are GCC's property tables for an Xtensa
+     linker's relaxation; they point at code --gc-sections collected. */
+  /DISCARD/ : { *(.eh_frame) *(.eh_frame_hdr) *(.comment) *(.xt.prop .xt.prop.*) *(.xt.lit .xt.lit.*) }
 }

@@ -19,6 +19,10 @@
 //! space. Without this a pointer into a segment that wasn't linked
 //! at 0 would come out too high by that segment's link address.
 //!
+//! A word that points at an absolute symbol - one a linker script sets to
+//! a fixed address, as the chip ROM's functions and data are - is not the
+//! program's: it holds that address already and is left as it is.
+//!
 //! Sections become segments: an executable one (SHF_EXECINSTR) is code, a
 //! NOBITS one is bss, any other allocatable one is data. Code comes first,
 //! since the entry is in it.
@@ -53,6 +57,8 @@ const SHT_NOBITS = 8;
 const SHT_RELA = 4;
 const SHF_ALLOC = 2;
 const SHF_EXECINSTR = 4;
+
+const SHN_ABS = 0xFFF1;
 
 const EM_XTENSA = 94;
 const ET_EXEC = 2;
@@ -213,6 +219,7 @@ fn collectRelocs(elf: []const u8, sections: []Section, segments: *[3]Segment, ar
                 else => fatal("{s}: relocation type {d} at 0x{x} is not supported", .{ rela.name, kind, r_offset }),
             }
             const sym = r_info >> 8;
+            if (symbolSection(elf, symtab, sym) == SHN_ABS) continue;
             const value = symbolValue(elf, symtab, sym);
             const address = value +% addend;
             const to = segmentOf(segments, address) orelse
@@ -238,6 +245,13 @@ fn symbolValue(elf: []const u8, symtab: *const Section, index: u32) u32 {
     const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else 16;
     if ((index + 1) * entsize > symtab.size) fatal("symbol {d} is outside the symbol table", .{index});
     return u32At(elf, symtab.offset + index * entsize + 4); // st_value
+}
+
+/// The section index of a symbol (st_shndx), SHN_ABS for a fixed address.
+fn symbolSection(elf: []const u8, symtab: *const Section, index: u32) u16 {
+    const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else 16;
+    if ((index + 1) * entsize > symtab.size) fatal("symbol {d} is outside the symbol table", .{index});
+    return mem.readInt(u16, elf[symtab.offset + index * entsize + 14 ..][0..2], .little);
 }
 
 /// Which segment an address is in. A bss address may be the byte past the
