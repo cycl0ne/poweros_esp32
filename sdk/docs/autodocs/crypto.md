@@ -166,7 +166,8 @@ fn InitCipher(cb: *CryptoBase, context: *CipherContext, mode: u32, key: *const a
 
 **INPUTS**
 
-- `context`: the caller's; whatever it held before is dropped.
+- `context`: the caller's, made with `.{}` so that its `size` is
+  right; whatever it held before is dropped.
 - `mode`: CIPHER_AES_ECB, CIPHER_AES_CBC or CIPHER_AES_CTR, with
   CIPHERF_DECRYPT or-ed in to decrypt.
 - `key`: `key_length` bytes.
@@ -179,7 +180,8 @@ fn InitCipher(cb: *CryptoBase, context: *CipherContext, mode: u32, key: *const a
 CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a mode or a flag there is not;
 CRYPTOERR_KEY for another key length; CRYPTOERR_LENGTH for CBC or CTR
 without an IV. On an error the context is left empty and UpdateCipher
-refuses it.
+refuses it. CRYPTOERR_CONTEXT for a context whose `size` is less than
+`@sizeOf(CipherContext)`, which is not written to at all.
 
 **BEHAVIOR**
 
@@ -239,7 +241,8 @@ fn InitHash(cb: *CryptoBase, context: *HashContext, algorithm: u32) i32
 
 **INPUTS**
 
-- `context`: the caller's; whatever it held before is dropped.
+- `context`: the caller's, made with `.{}` so that its `size` is
+  right; whatever it held before is dropped.
 - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
   HASH_SHA512.
 
@@ -247,7 +250,8 @@ fn InitHash(cb: *CryptoBase, context: *HashContext, algorithm: u32) i32
 
 CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
 the context is then left empty, and UpdateHash and FinishHash do
-nothing with it.
+nothing with it. CRYPTOERR_CONTEXT for a context whose `size` is
+less than `@sizeOf(HashContext)`, which is not written to at all.
 
 **BEHAVIOR**
 
@@ -307,7 +311,8 @@ fn InitHmac(cb: *CryptoBase, context: *HmacContext, algorithm: u32, key: ?*const
 
 **INPUTS**
 
-- `context`: the caller's; whatever it held before is dropped.
+- `context`: the caller's, made with `.{}` so that its `size` is
+  right; whatever it held before is dropped.
 - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
   HASH_SHA512.
 - `key`: the key's bytes; may be null when `key_length` is 0.
@@ -318,7 +323,8 @@ fn InitHmac(cb: *CryptoBase, context: *HmacContext, algorithm: u32, key: ?*const
 
 CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
 the context is then left empty, and UpdateHmac and FinishHmac do
-nothing with it.
+nothing with it. CRYPTOERR_CONTEXT for a context whose `size` is
+less than `@sizeOf(HmacContext)`, which is not written to at all.
 
 **BEHAVIOR**
 

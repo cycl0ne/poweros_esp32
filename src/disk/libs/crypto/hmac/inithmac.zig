@@ -18,7 +18,8 @@ const _hash = @import("../hash/_hash.zig");
 /// SINCE: 1.0. LVO -36.
 ///
 /// INPUTS:
-/// - `context`: the caller's; whatever it held before is dropped.
+/// - `context`: the caller's, made with `.{}` so that its `size` is
+///   right; whatever it held before is dropped.
 /// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
 ///   HASH_SHA512.
 /// - `key`: the key's bytes; may be null when `key_length` is 0.
@@ -28,7 +29,8 @@ const _hash = @import("../hash/_hash.zig");
 /// RESULT:
 /// CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
 /// the context is then left empty, and UpdateHmac and FinishHmac do
-/// nothing with it.
+/// nothing with it. CRYPTOERR_CONTEXT for a context whose `size` is
+/// less than `@sizeOf(HmacContext)`, which is not written to at all.
 ///
 /// BEHAVIOR:
 /// RFC 2104's HMAC: the key, padded to a block, is exclusive-ored with
@@ -64,7 +66,9 @@ const _hash = @import("../hash/_hash.zig");
 /// const length = cb.FinishHmac(&context, &mac);
 /// ```
 pub fn InitHmac(cb: *CryptoBase, context: *HmacContext, algorithm: u32, key: ?*const anyopaque, key_length: u32) i32 {
-    context.* = .{};
+    if (context.size < @sizeOf(HmacContext)) return crypto.CRYPTOERR_CONTEXT;
+    const size = context.size;
+    context.* = .{ .size = size };
     if (!_hash.known(algorithm)) return crypto.CRYPTOERR_ALGORITHM;
     const block = crypto.blockLength(algorithm);
     var padded: [crypto.HASH_BLOCK_MAX]u8 = @splat(0);

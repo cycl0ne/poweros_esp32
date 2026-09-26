@@ -17,7 +17,8 @@ const _cipher = @import("_cipher.zig");
 /// SINCE: 1.0. LVO -48.
 ///
 /// INPUTS:
-/// - `context`: the caller's; whatever it held before is dropped.
+/// - `context`: the caller's, made with `.{}` so that its `size` is
+///   right; whatever it held before is dropped.
 /// - `mode`: CIPHER_AES_ECB, CIPHER_AES_CBC or CIPHER_AES_CTR, with
 ///   CIPHERF_DECRYPT or-ed in to decrypt.
 /// - `key`: `key_length` bytes.
@@ -29,7 +30,8 @@ const _cipher = @import("_cipher.zig");
 /// CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a mode or a flag there is not;
 /// CRYPTOERR_KEY for another key length; CRYPTOERR_LENGTH for CBC or CTR
 /// without an IV. On an error the context is left empty and UpdateCipher
-/// refuses it.
+/// refuses it. CRYPTOERR_CONTEXT for a context whose `size` is less than
+/// `@sizeOf(CipherContext)`, which is not written to at all.
 ///
 /// BEHAVIOR:
 /// The key and the IV are copied into the context, which from here on
@@ -66,7 +68,9 @@ const _cipher = @import("_cipher.zig");
 /// _ = cb.UpdateCipher(&context, data.ptr, data.ptr, data.len);
 /// ```
 pub fn InitCipher(_: *CryptoBase, context: *CipherContext, mode: u32, key: *const anyopaque, key_length: u32, iv: ?*const anyopaque) i32 {
-    context.* = .{};
+    if (context.size < @sizeOf(CipherContext)) return crypto.CRYPTOERR_CONTEXT;
+    const size = context.size;
+    context.* = .{ .size = size };
     const cipher = mode & ~crypto.CIPHERF_DECRYPT;
     if (cipher != crypto.CIPHER_AES_ECB and cipher != crypto.CIPHER_AES_CBC and cipher != crypto.CIPHER_AES_CTR) {
         return crypto.CRYPTOERR_ALGORITHM;

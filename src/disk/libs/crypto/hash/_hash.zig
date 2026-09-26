@@ -18,9 +18,11 @@ pub fn known(algorithm: u32) bool {
     return crypto.digestLength(algorithm) != 0;
 }
 
-/// `context` fresh, for `algorithm` (a known one).
+/// `context` fresh, for `algorithm` (a known one). Its `size` stays the
+/// caller's: a later SDK's context may be larger than this one.
 pub fn begin(context: *HashContext, algorithm: u32) void {
-    context.* = .{ .algorithm = algorithm };
+    const size = context.size;
+    context.* = .{ .size = size, .algorithm = algorithm };
 }
 
 fn run(cb: *CryptoBase, context: *HashContext, data: [*]const u8, blocks: u32) void {
@@ -72,6 +74,7 @@ pub fn finish(cb: *CryptoBase, context: *HashContext, digest: [*]u8) u32 {
     const length = crypto.digestLength(context.algorithm);
     const state: [*]const u8 = @ptrCast(&context.state);
     for (0..length) |index| digest[index] = state[index];
-    context.* = .{};
+    const size = context.size;
+    context.* = .{ .size = size };
     return length;
 }

@@ -17,14 +17,16 @@ const _hash = @import("_hash.zig");
 /// SINCE: 1.0. LVO -24.
 ///
 /// INPUTS:
-/// - `context`: the caller's; whatever it held before is dropped.
+/// - `context`: the caller's, made with `.{}` so that its `size` is
+///   right; whatever it held before is dropped.
 /// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
 ///   HASH_SHA512.
 ///
 /// RESULT:
 /// CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
 /// the context is then left empty, and UpdateHash and FinishHash do
-/// nothing with it.
+/// nothing with it. CRYPTOERR_CONTEXT for a context whose `size` is
+/// less than `@sizeOf(HashContext)`, which is not written to at all.
 ///
 /// BEHAVIOR:
 /// The context holds the whole hash from here to FinishHash: the bytes
@@ -61,8 +63,10 @@ const _hash = @import("_hash.zig");
 /// const length = cb.FinishHash(&context, &digest);
 /// ```
 pub fn InitHash(_: *CryptoBase, context: *HashContext, algorithm: u32) i32 {
+    if (context.size < @sizeOf(HashContext)) return crypto.CRYPTOERR_CONTEXT;
     if (!_hash.known(algorithm)) {
-        context.* = .{};
+        const size = context.size;
+        context.* = .{ .size = size };
         return crypto.CRYPTOERR_ALGORITHM;
     }
     _hash.begin(context, algorithm);

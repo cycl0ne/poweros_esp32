@@ -11,6 +11,13 @@
 //! fields are the library's to read and write - a caller only hands it
 //! over.
 //!
+//! Each context starts with its size, which `.{}` fills in, and ends in
+//! reserved bytes. The Init call refuses a context whose size is less
+//! than the library's own idea of it, before writing anything, and a
+//! later version that needs more of a context takes it from the
+//! reserved bytes or from a size a new program declares - the calls stay
+//! the same.
+//!
 //! Every byte string is in the order it has on the wire: a digest, a key,
 //! an IV, and a number for ModExp, most significant byte first.
 
@@ -32,6 +39,9 @@ pub const CRYPTOERR_LENGTH: i32 = -3;
 pub const CRYPTOERR_TAG: i32 = -4;
 /// ModExp: a modulus that is even, or less than 3.
 pub const CRYPTOERR_NUMBER: i32 = -5;
+/// An Init call: a context whose `size` is less than this version of
+/// the library's; nothing was written to it.
+pub const CRYPTOERR_CONTEXT: i32 = -6;
 
 // --- hashes -------------------------------------------------------------------
 
@@ -69,8 +79,10 @@ pub inline fn blockLength(algorithm: u32) u32 {
 }
 
 /// One hash under way: InitHash, UpdateHash as often as there is data,
-/// FinishHash. 216 bytes.
+/// FinishHash. 256 bytes.
 pub const HashContext = extern struct {
+    /// The context's size in bytes, as the program was built with it.
+    size: u32 = @sizeOf(HashContext),
     /// HASH_*; 0 until InitHash.
     algorithm: u32 = 0,
     /// Whether a block has gone through the engine yet: before the
@@ -83,11 +95,15 @@ pub const HashContext = extern struct {
     /// The state between blocks, as the digest's bytes are laid out.
     state: [16]u32 = @splat(0),
     buffer: [HASH_BLOCK_MAX]u8 = @splat(0),
+    reserved: [40]u8 = @splat(0),
 };
 
 /// One HMAC under way: InitHmac, UpdateHmac, FinishHmac. The inner hash,
-/// and the outer one with the key's block already through it.
+/// and the outer one with the key's block already through it. 528 bytes.
 pub const HmacContext = extern struct {
+    /// The context's size in bytes, as the program was built with it.
+    size: u32 = @sizeOf(HmacContext),
+    reserved: [12]u8 = @splat(0),
     inner: HashContext = .{},
     outer: HashContext = .{},
 };
@@ -106,7 +122,10 @@ pub const CIPHER_AES_CTR: u32 = 3;
 pub const CIPHERF_DECRYPT: u32 = 1 << 16;
 
 /// One cipher under way: InitCipher, then UpdateCipher over the data.
+/// 128 bytes.
 pub const CipherContext = extern struct {
+    /// The context's size in bytes, as the program was built with it.
+    size: u32 = @sizeOf(CipherContext),
     /// CIPHER_*, CIPHERF_DECRYPT or-ed in.
     mode: u32 = 0,
     /// 16 or 32.
@@ -118,7 +137,14 @@ pub const CipherContext = extern struct {
     /// of it is used up.
     stream: [AES_BLOCK]u8 = @splat(0),
     stream_used: u32 = AES_BLOCK,
+    reserved: [48]u8 = @splat(0),
 };
+
+comptime {
+    if (@sizeOf(HashContext) != 256 or @sizeOf(HmacContext) != 528 or @sizeOf(CipherContext) != 128) {
+        @compileError("crypto.library: a context's size moved; it is part of the ABI");
+    }
+}
 
 /// AES-GCM's tag: 16 bytes, always.
 pub const GCM_TAG: u32 = 16;

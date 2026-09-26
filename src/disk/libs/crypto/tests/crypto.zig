@@ -120,6 +120,24 @@ test "a hash of an unknown algorithm is refused, and takes nothing" {
     try testing.expectEqual(@as(u32, 0), rig.cb.FinishHash(&context, &digest));
 }
 
+test "a context whose size is too small is refused, and not written" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var hash: crypto.HashContext = .{ .size = 16, .algorithm = 77 };
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitHash(&hash, crypto.HASH_SHA256));
+    try testing.expectEqual(@as(u32, 77), hash.algorithm);
+    var hmac: crypto.HmacContext = .{ .size = 0 };
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitHmac(&hmac, crypto.HASH_SHA256, "k", 1));
+    var cipher: crypto.CipherContext = .{ .size = @sizeOf(crypto.CipherContext) - 1, .mode = 9 };
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitCipher(&cipher, crypto.CIPHER_AES_ECB, &@as([16]u8, @splat(0)), 16, null));
+    try testing.expectEqual(@as(u32, 9), cipher.mode);
+    // A bigger one, as a later SDK would make it, is taken.
+    var bigger: crypto.HashContext = .{ .size = @sizeOf(crypto.HashContext) + 64 };
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitHash(&bigger, crypto.HASH_SHA256));
+    try testing.expectEqual(@as(u32, @sizeOf(crypto.HashContext) + 64), bigger.size);
+}
+
 // --- HMAC ---------------------------------------------------------------------
 
 test "RFC 4231's HMAC-SHA-256, and keys of every length as std.crypto has them" {
