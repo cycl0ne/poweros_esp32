@@ -23,14 +23,13 @@
 //! hardware's hash filter let through, is dropped unless the unit is
 //! promiscuous.
 
-const sdk = @import("sdk");
-const exec = sdk.exec;
-const net = sdk.devices.network;
-const TimeVal = sdk.devices.timer.TimeVal;
-const ExecBase = sdk.interface.exec.ExecBase;
-const UtilityBase = sdk.interface.utility.UtilityBase;
-const TagItem = sdk.utility.TagItem;
-const Hook = sdk.utility.Hook;
+const exec = @import("../../libs/exec/exec.zig");
+const net = @import("../network.zig");
+const TimeVal = @import("../timer.zig").TimeVal;
+const ExecBase = @import("../../interface/exec.zig").ExecBase;
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
+const TagItem = @import("../../libs/utility/tagitem.zig").TagItem;
+const Hook = @import("../../libs/utility/hooks.zig").Hook;
 const ethernet = @import("ethernet.zig");
 
 /// How many packet types S2_TRACKTYPE can count at once, and how many
@@ -105,6 +104,13 @@ fn fail(req: *net.IOSana2Req, err: i8, wire_error: u32) void {
 ///   setFilter(link, []Group, bool) the groups to take, and whether all
 ///   startWrites(link)              send what `nextWrite` hands out
 ///   now(link) TimeVal              the system time
+///
+/// **Online** is two things at once: the unit is wanted on line
+/// (configured, and not taken off line by S2_OFFLINE), and the link has a
+/// carrier. A link that is always there never says otherwise; one that
+/// comes and goes - a radio joining and leaving its network - tells the
+/// unit with `setCarrier`, and the unit goes on and off line with it,
+/// with the events S2_ONEVENT waits for.
 pub fn Unit(comptime Link: type) type {
     return extern struct {
         const Self = @This();
@@ -122,7 +128,10 @@ pub fn Unit(comptime Link: type) type {
         online: u8 = 0,
         /// An opener has the unit alone (SANA2OPF_MINE).
         exclusive: u8 = 0,
-        pad: u8 = 0,
+        /// Wanted on line, and whether the link has a carrier.
+        wanted: u8 = 0,
+        carrier: u8 = 1,
+        pad: [3]u8 = @splat(0),
         /// The openers that asked for every frame (SANA2OPF_PROM).
         promiscuous: u32 = 0,
         stats: net.Sana2DeviceStats = .{},
@@ -233,17 +242,19 @@ pub fn Unit(comptime Link: type) type {
                 net.S2_ONLINE => {
                     if (unit.configured == 0) {
                         fail(req, net.S2ERR_BAD_STATE, net.S2WERR_NOT_CONFIGURED);
-                    } else if (unit.online != 0) {
+                    } else if (unit.wanted != 0) {
                         fail(req, net.S2ERR_BAD_STATE, net.S2WERR_UNIT_ONLINE);
                     } else {
-                        unit.goOnline();
+                        unit.wanted = 1;
+                        if (unit.carrier != 0) unit.goOnline();
                     }
                 },
                 net.S2_OFFLINE => {
-                    if (unit.online == 0) {
+                    if (unit.wanted == 0) {
                         fail(req, net.S2ERR_BAD_STATE, net.S2WERR_UNIT_OFFLINE);
                     } else {
-                        unit.goOffline();
+                        unit.wanted = 0;
+                        if (unit.online != 0) unit.goOffline();
                     }
                 },
                 net.S2_ADDMULTICASTADDRESS => unit.join(req),
@@ -391,7 +402,16 @@ pub fn Unit(comptime Link: type) type {
             unit.station = address.*;
             Link.setStation(unit.link, &unit.station);
             unit.configured = 1;
-            unit.goOnline();
+            unit.wanted = 1;
+            if (unit.carrier != 0) unit.goOnline();
+        }
+
+        /// The link's carrier came or went: the unit goes on line with it
+        /// if it is wanted there, and off line without it.
+        pub fn setCarrier(unit: *Self, up: bool) void {
+            unit.carrier = @intFromBool(up);
+            if (up and unit.wanted != 0 and unit.online == 0) unit.goOnline();
+            if (!up and unit.online != 0) unit.goOffline();
         }
 
         fn goOnline(unit: *Self) void {

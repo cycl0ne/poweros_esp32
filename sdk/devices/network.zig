@@ -76,6 +76,11 @@
 //! with IOERR_NOREPLYPORT.
 
 const exec = @import("../libs/exec/exec.zig");
+
+/// A network unit's request logic, apart from its hardware, and the
+/// Ethernet framing it works in: what every driver shares.
+pub const unit = @import("network/unit.zig");
+pub const ethernet = @import("network/ethernet.zig");
 const TimeVal = @import("timer.zig").TimeVal;
 const TAG_USER = @import("../libs/utility/tagitem.zig").TAG_USER;
 

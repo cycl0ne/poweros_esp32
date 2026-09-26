@@ -18,7 +18,12 @@ ENTRY(_start)
 iram_start = 0x40378000;
 iram_to_dram = 0x6F0000;
 /* Above this are the ROM's boot stack and data: our loaded segments and the
-   stack must stay below it. heap.zig reclaims the boot stack area later. */
+   stack must stay below it. heap.zig reclaims the boot stack area later.
+   The ROM's data above 0x3FCED710 stays untouched for good: the ROM's own
+   code keeps using it - the SPI flash routines, and the parts of the
+   radio's stack that live in mask ROM, whose state words (the adapter
+   table's pointer, the Wi-Fi task's queue, ...) are at 0x3FCEF81C to
+   0x3FCEFFFC. */
 dram_end = 0x3FCE9700;
 _stack_size = 16K;
 

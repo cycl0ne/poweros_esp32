@@ -25,8 +25,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const TimerBase = sdk.interface.timer.TimerBase;
 const ethmac = @import("ethmac.zig");
-const ethernet = @import("ethernet.zig");
-const unit_file = @import("unit.zig");
+const ethernet = sdk.devices.network.ethernet;
+const unit_file = sdk.devices.network.unit;
 
 pub const DEVICE_NAME = "openeth.device";
 

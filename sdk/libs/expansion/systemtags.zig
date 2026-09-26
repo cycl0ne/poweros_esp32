@@ -165,6 +165,9 @@ pub const CHIP_RGB_PANEL: u32 = 8;
 pub const CHIP_QEMU_DISPLAY: u32 = 9;
 /// The emulator's OpenCores Ethernet MAC.
 pub const CHIP_OPENETH: u32 = 10;
+/// The chip's own 2.4 GHz radio, on a board whose module gives it an
+/// antenna (wifi.device).
+pub const CHIP_ESP32S3_RADIO: u32 = 11;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

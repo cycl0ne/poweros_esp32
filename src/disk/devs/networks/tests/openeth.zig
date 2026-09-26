@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of openeth.device's unit (`openeth/unit.zig`) on a link that
-//! is a test's own: which read a frame goes to, orphans, filters, going
-//! offline, the frames writes become, groups and aborts. They bring up
+//! Host tests of the network unit (`sdk/devices/network/unit.zig`) on a
+//! link that is a test's own: which read a frame goes to, orphans,
+//! filters, going offline, the frames writes become, groups and aborts. They bring up
 //! exec and utility.library from the ROM, so they are here, where only the
 //! test build looks. The MAC's registers are not tested here; the
 //! emulator is where they are proved.
@@ -15,8 +15,8 @@ const TagItem = sdk.utility.TagItem;
 const Hook = sdk.utility.Hook;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
-const unit_file = @import("../openeth/unit.zig");
-const ethernet = @import("../openeth/ethernet.zig");
+const unit_file = sdk.devices.network.unit;
+const ethernet = sdk.devices.network.ethernet;
 const ethmac = @import("../openeth/ethmac.zig");
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
@@ -319,6 +319,43 @@ test "going offline answers the reads and writes, and the events waiting for it"
     event.wire_error = net.S2EVENT_OFFLINE;
     rig.send(&event, net.S2_ONEVENT);
     try testing.expectEqual(&event, rig.answered().?);
+    rig.unit.close(&opener);
+    try rig.deinit();
+}
+
+test "a link without a carrier keeps a configured unit off line until it has one" {
+    var rig: Rig = undefined;
+    try rig.init();
+    const buffers = byteBuffers();
+    var opener = try rig.open(&buffers, 0);
+    rig.unit.setCarrier(false);
+    try rig.configure(&opener);
+    try testing.expectEqual(@as(u8, 0), rig.unit.online);
+    try testing.expect(!rig.link.running);
+
+    var online = opener;
+    online.wire_error = net.S2EVENT_ONLINE;
+    rig.send(&online, net.S2_ONEVENT);
+    try testing.expectEqual(null, rig.answered());
+    rig.unit.setCarrier(true);
+    try testing.expectEqual(&online, rig.answered().?);
+    try testing.expect(rig.link.running);
+
+    var offline = opener;
+    offline.wire_error = net.S2EVENT_OFFLINE;
+    rig.send(&offline, net.S2_ONEVENT);
+    rig.unit.setCarrier(false);
+    try testing.expectEqual(&offline, rig.answered().?);
+    try testing.expect(!rig.link.running);
+
+    // Taken off line while the carrier is away, it stays off when the
+    // carrier comes back.
+    var off = opener;
+    rig.send(&off, net.S2_OFFLINE);
+    try testing.expectEqual(&off, rig.answered().?);
+    try testing.expectEqual(@as(i8, 0), off.req.err);
+    rig.unit.setCarrier(true);
+    try testing.expectEqual(@as(u8, 0), rig.unit.online);
     rig.unit.close(&opener);
     try rig.deinit();
 }

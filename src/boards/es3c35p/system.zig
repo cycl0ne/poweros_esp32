@@ -251,6 +251,15 @@ const battery = [_]Tag{
     .done,
 };
 
+/// The chip's radio: the module has its antenna.
+const radio = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_ESP32S3_RADIO),
+    .pointer(st.PART_ChipName, "esp32-s3 radio"),
+    .value(st.PART_Bus, st.BUS_NONE),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -270,6 +279,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &sd_slot),
     .pointer(st.SYSTAG_Part, &led),
     .pointer(st.SYSTAG_Part, &battery),
+    .pointer(st.SYSTAG_Part, &radio),
     .done,
 };
 

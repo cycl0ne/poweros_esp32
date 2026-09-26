@@ -40,7 +40,7 @@ const tests = [_][]const u8{
     "screens",    "layout",   "classes",  "gadgets", "listview",
     "colorwheel", "tapedeck", "pointer",  "crypto",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless" };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
@@ -94,6 +94,14 @@ pub const programs: []const Program = blk: {
     break :blk &done;
 };
 
+/// The radio's device: built only when the vendor libraries it links are
+/// at hand (scripts/fetch-wifi.sh), given to this package as `-Dwifi=`.
+pub const wifi_device: Program = .{ .disk = "devs/networks/wifi.device", .source = "devs/networks/wifi/wifi.zig", .name = "wifi.device" };
+
+/// The vendor archives wifi.device links, and the chip ROM's scripts.
+pub const wifi_archives = [_][]const u8{ "libcore.a", "libnet80211.a", "libpp.a", "libphy.a" };
+pub const wifi_rom_scripts = [_][]const u8{ "esp32s3.rom.ld", "esp32s3.rom.libc.ld", "esp32s3.rom.libgcc.ld", "esp32s3.rom.api.ld" };
+
 /// The scripts in S:, and what HANDLERS: holds for Mount to read.
 pub const files = [_]File{
     .{ .disk = "s/startup-sequence", .source = "s/startup-sequence" },
@@ -105,7 +113,23 @@ pub const files = [_]File{
 
 pub fn build(b: *std.Build) void {
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseSafe)") orelse .ReleaseSafe;
+    const wifi = b.option([]const u8, "wifi", "The directory with the radio's vendor libraries (scripts/fetch-wifi.sh); without it there is no wifi.device");
     const sdk = b.dependency("poweros_sdk", .{});
+    if (wifi) |dir| {
+        var archives: [wifi_archives.len]std.Build.LazyPath = undefined;
+        for (wifi_archives, 0..) |name, i| archives[i] = .{ .cwd_relative = b.pathJoin(&.{ dir, name }) };
+        var scripts: [wifi_rom_scripts.len]std.Build.LazyPath = undefined;
+        for (wifi_rom_scripts, 0..) |name, i| scripts[i] = .{ .cwd_relative = b.pathJoin(&.{ dir, name }) };
+        const seg = poweros_sdk.addProgram(b, sdk, .{
+            .name = wifi_device.name,
+            .root = b.path(wifi_device.source),
+            .optimize = optimize,
+            .archives = b.allocator.dupe(std.Build.LazyPath, &archives) catch @panic("OOM"),
+            .rom_scripts = b.allocator.dupe(std.Build.LazyPath, &scripts) catch @panic("OOM"),
+        });
+        b.addNamedLazyPath(wifi_device.disk, seg);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "wifi.device.seg").step);
+    }
     for (programs) |program| {
         const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize });
         b.addNamedLazyPath(program.disk, seg);

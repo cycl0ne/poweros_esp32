@@ -60,8 +60,9 @@ built with Zig against the SDK.
 a program that writes where it should not can bring the system down. It is
 a machine for one person at a time, not a server.
 
-**It does not (yet)** have networking (no Wi-Fi or Bluetooth drivers), USB
-host support, or a second CPU core: it runs on one of the chip's two
+**It does not (yet)** have a Wi-Fi link that joins a network (the radio
+starts and scans; the key handshake is to come), Bluetooth, USB host
+support, or a second CPU core: it runs on one of the chip's two
 cores.
 
 ### How it differs from AmigaOS
@@ -160,7 +161,10 @@ cores.
   statistics, the opener's own buffers filled through its copy calls).
   `DEVS:networks/openeth.device` drives QEMU's Ethernet, with the
   emulator's network behind it; `C:net/Net` asks the link who has an
-  address.
+  address. `DEVS:networks/wifi.device` is the chip's radio as a station,
+  on Espressif's closed radio libraries and an OS adapter onto exec: it
+  starts the radio and scans (the SANA-II wireless requests), and
+  `C:net/Wireless` lists the networks in range. Not yet on the boards.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
   IPv4 with fragments put back together, TCP (connections that close on
@@ -246,7 +250,12 @@ For the display in QEMU, build the patched QEMU once with
 `scripts/build-qemu.sh` (into `toolchain/qemu/`): it adds the 1024×600
 display with keyboard and mouse and room in it for four pictures, keeps
 the host's cursor hidden over the window so only PowerOS's own pointer is
-seen, and runs the core at 240 MHz. An older build still runs, with room for two and no
+seen, and runs the core at 240 MHz.
+
+For `DEVS:networks/wifi.device`, fetch the radio's vendor libraries once
+with `scripts/fetch-wifi.sh` (into `toolchain/espressif-wifi/`, pinned
+and checked, never committed); without them the disk has everything but
+Wi-Fi. An older build still runs, with room for two and no
 mouse pointer drawn.
 
 More build steps and options:

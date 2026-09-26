@@ -72,6 +72,7 @@ pub fn build(b: *std.Build) void {
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
+    const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
     const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet);
     // The display is the one a person sits at: `telnet localhost 2323`
@@ -97,10 +98,17 @@ pub fn build(b: *std.Build) void {
     // and HANDLERS:, and the scripts, each built against the SDK and
     // handed over under its place on the disk. Their load files are
     // installed beside the kernel as well, to compare with `List C:`.
-    const disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize });
+    const disk_dep = if (wifi) |dir|
+        b.dependency("poweros_userland", .{ .optimize = optimize, .wifi = dir })
+    else
+        b.dependency("poweros_userland", .{ .optimize = optimize });
     for (poweros_userland.programs) |program| {
         const load_file = b.fmt("{s}.seg", .{program.name});
         b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(program.disk), load_file).step);
+    }
+    if (wifi != null) {
+        const wifi_device = poweros_userland.wifi_device;
+        b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "wifi.device.seg").step);
     }
 
     // The disk image: the same file system code the handler runs
@@ -151,6 +159,10 @@ pub fn build(b: *std.Build) void {
     }
     for (poweros_userland.files) |file| {
         make_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
+    }
+    if (wifi != null) {
+        const wifi_device = poweros_userland.wifi_device;
+        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{wifi_device.disk}), disk_dep.namedLazyPath(wifi_device.disk));
     }
     // The `disk/` tree, and then -Dextra last, so that either may
     // replace a file the tree above put there.
@@ -231,6 +243,20 @@ pub fn build(b: *std.Build) void {
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
+    // wifi.device's own code compiles for the chip even where the vendor
+    // libraries it links are missing: as an object, which needs no link.
+    const wifi_check = b.addObject(.{
+        .name = "wifi_check",
+        .root_module = b.createModule(.{
+            .root_source_file = disk_dep.path(poweros_userland.wifi_device.source),
+            .target = target,
+            .optimize = optimize,
+            .single_threaded = true,
+            .unwind_tables = .none,
+        }),
+    });
+    wifi_check.root_module.addImport("sdk", sdk);
+    test_step.dependOn(&wifi_check.step);
     // Board facts are src/boards/'s and nothing a module imports: a
     // module asks expansion.library for its part (tools/boardcheck.zig).
     const boardcheck = b.addExecutable(.{
@@ -425,6 +451,22 @@ fn need(b: *std.Build, made: *std.ArrayList([]const u8), dirs: *std.ArrayList([]
 /// left behind, so the tree can hold a `.gitkeep` without the disk
 /// gaining one, and so is the `README.md` in the root of `disk/` that
 /// says what the directory is for.
+/// Where the radio's vendor libraries are, as an absolute path: the
+/// directory -Dwifi names, or toolchain/espressif-wifi if
+/// scripts/fetch-wifi.sh has filled it. Null without them: the build then
+/// has everything but wifi.device, and says so once.
+fn wifiDir(b: *std.Build, given: ?[]const u8) ?[]const u8 {
+    const io = b.graph.io;
+    const path = given orelse b.pathFromRoot("toolchain/espressif-wifi");
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch {
+        if (given != null) std.debug.panic("-Dwifi={s}: no such directory", .{path});
+        std.log.info("no radio libraries (scripts/fetch-wifi.sh): the disk has no wifi.device", .{});
+        return null;
+    };
+    dir.close(io);
+    return path;
+}
+
 fn diskTree(b: *std.Build, made: *std.ArrayList([]const u8)) Tree {
     const io = b.graph.io;
     var root = b.build_root.handle.openDir(io, disk_tree, .{ .iterate = true }) catch return .{};
