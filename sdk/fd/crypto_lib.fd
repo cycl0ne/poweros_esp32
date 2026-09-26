@@ -1,0 +1,36 @@
+//! crypto.library's functions: random bytes, hashes, HMAC, AES and
+//! modular exponentiation, on the chip's own engines. A hash, an HMAC or
+//! a cipher under way is a context the caller keeps (sdk.crypto); a call
+//! that can fail answers 0 or a CRYPTOERR_* code.
+##include libs/crypto/crypto as crypto
+##basetype CryptoBase
+##name crypto.library
+##bias 4
+##public
+/// `length` random bytes into `buffer`, from the chip's generator.
+void RandomBytes(*anyopaque buffer, u32 length)
+/// `context` set up for a hash of `algorithm` (HASH_*).
+i32 InitHash(*crypto.HashContext context, u32 algorithm)
+/// `length` more bytes of `data` into the hash.
+void UpdateHash(*crypto.HashContext context, ?*const anyopaque data, u32 length)
+/// The digest into `digest`: its length in bytes.
+u32 FinishHash(*crypto.HashContext context, *anyopaque digest)
+/// `context` set up for an HMAC with `algorithm` (HASH_*) and `key`.
+i32 InitHmac(*crypto.HmacContext context, u32 algorithm, ?*const anyopaque key, u32 key_length)
+/// `length` more bytes of `data` into the HMAC.
+void UpdateHmac(*crypto.HmacContext context, ?*const anyopaque data, u32 length)
+/// The MAC into `mac`: its length in bytes.
+u32 FinishHmac(*crypto.HmacContext context, *anyopaque mac)
+/// `context` set up for AES in `mode` (CIPHER_*, CIPHERF_DECRYPT) with
+/// `key` and, for CBC and CTR, `iv`.
+i32 InitCipher(*crypto.CipherContext context, u32 mode, *const anyopaque key, u32 key_length, ?*const anyopaque iv)
+/// `length` bytes of `input` through the cipher into `output`.
+i32 UpdateCipher(*crypto.CipherContext context, ?*const anyopaque input, ?*anyopaque output, u32 length)
+/// A message encrypted with AES-GCM, and its tag.
+i32 SealGcm(*const crypto.GcmMessage message)
+/// A message's tag checked with AES-GCM, and the message decrypted.
+i32 OpenGcm(*const crypto.GcmMessage message)
+/// `base_value` to the power of `exponent`, modulo `modulus`, into
+/// `result`: as many bytes as the modulus has.
+i32 ModExp(*anyopaque result, *const crypto.Number base_value, *const crypto.Number exponent, *const crypto.Number modulus)
+##end

@@ -38,7 +38,7 @@ const tests = [_][]const u8{
     "intuition",  "console",  "keyboard", "touch",   "input",
     "lines",      "nyan",     "plasma",   "audio",   "fonts",
     "screens",    "layout",   "classes",  "gadgets", "listview",
-    "colorwheel", "tapedeck", "pointer",
+    "colorwheel", "tapedeck", "pointer",  "crypto",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver" };
 
@@ -51,6 +51,7 @@ const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnet
 const modules = [_]Program{
     .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library" },
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
+    .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
     .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },

@@ -1,0 +1,659 @@
+TABLE OF CONTENTS
+
+crypto.library/FinishHash
+crypto.library/FinishHmac
+crypto.library/InitCipher
+crypto.library/InitHash
+crypto.library/InitHmac
+crypto.library/ModExp
+crypto.library/OpenGcm
+crypto.library/RandomBytes
+crypto.library/SealGcm
+crypto.library/UpdateCipher
+crypto.library/UpdateHash
+crypto.library/UpdateHmac
+crypto.library/FinishHash                            crypto.library/FinishHash
+
+   NAME
+	FinishHash -- Ends a hash and writes its digest.
+
+   SYNOPSIS
+	    fn FinishHash(cb: *CryptoBase, context: *HashContext, digest: *anyopaque) u32
+
+   SINCE
+	1.0. LVO -32.
+
+   INPUTS
+	- `context`: set up by InitHash, with the bytes given by UpdateHash.
+	- `digest`: room for the algorithm's digest - `digestLength`, or
+	  DIGEST_MAX for any.
+
+   RESULT
+	The digest's length in bytes: 20 for SHA-1, 28, 32, 48 or 64 for the
+	others. 0 for a context InitHash did not set up, and nothing written.
+
+   BEHAVIOR
+	The hash is padded as FIPS 180-4 says and its last blocks run; the
+	digest is written most significant byte first, as it is printed and
+	sent. The context is wiped: to hash again it needs InitHash.
+
+   CONTEXT
+	- Waits: yes, for the SHA engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitHash`, `UpdateHash`, `FinishHmac`
+
+   EXAMPLES
+	    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+	    const length = cb.FinishHash(&context, &digest);
+	    for (digest[0..length]) |byte| _ = Printf(dl, "%02x", .{byte});
+crypto.library/FinishHmac                            crypto.library/FinishHmac
+
+   NAME
+	FinishHmac -- Ends an HMAC and writes the MAC.
+
+   SYNOPSIS
+	    fn FinishHmac(cb: *CryptoBase, context: *HmacContext, mac: *anyopaque) u32
+
+   SINCE
+	1.0. LVO -44.
+
+   INPUTS
+	- `context`: set up by InitHmac, with the bytes given by UpdateHmac.
+	- `mac`: room for the hash's digest - `digestLength`, or DIGEST_MAX
+	  for any.
+
+   RESULT
+	The MAC's length in bytes, the hash's digest length. 0 for a context
+	InitHmac did not set up, and nothing written.
+
+   BEHAVIOR
+	The inner hash is finished, its digest goes through the outer hash,
+	and the outer digest is the MAC. The context is wiped: another MAC
+	with the same key needs InitHmac again.
+
+   CONTEXT
+	- Waits: yes, for the SHA engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	A MAC received is compared with the one computed in constant time -
+	every byte, not up to the first that differs - or the time taken
+	tells an attacker how much of a forgery was right.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitHmac`, `UpdateHmac`, `FinishHash`
+
+   EXAMPLES
+	    var mac: [crypto.DIGEST_MAX]u8 = undefined;
+	    const length = cb.FinishHmac(&context, &mac);
+	    var differ: u8 = 0;
+	    for (mac[0..length], received[0..length]) |a, b| differ |= a ^ b;
+	    if (differ != 0) return error.Forged;
+crypto.library/InitCipher                            crypto.library/InitCipher
+
+   NAME
+	InitCipher -- Sets up a context for AES in one mode, with a key and an IV.
+
+   SYNOPSIS
+	    fn InitCipher(cb: *CryptoBase, context: *CipherContext, mode: u32, key: *const anyopaque, key_length: u32, iv: ?*const anyopaque) i32
+
+   SINCE
+	1.0. LVO -48.
+
+   INPUTS
+	- `context`: the caller's; whatever it held before is dropped.
+	- `mode`: CIPHER_AES_ECB, CIPHER_AES_CBC or CIPHER_AES_CTR, with
+	  CIPHERF_DECRYPT or-ed in to decrypt.
+	- `key`: `key_length` bytes.
+	- `key_length`: 16 (AES-128) or 32 (AES-256).
+	- `iv`: 16 bytes - CBC's IV, CTR's first counter block. Not read for
+	  ECB, which may pass null.
+
+   RESULT
+	CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a mode or a flag there is not;
+	CRYPTOERR_KEY for another key length; CRYPTOERR_LENGTH for CBC or CTR
+	without an IV. On an error the context is left empty and UpdateCipher
+	refuses it.
+
+   BEHAVIOR
+	The key and the IV are copied into the context, which from here on
+	is all the cipher is: UpdateCipher takes the data in any number of
+	calls. A CBC context goes one way only - it encrypts, or with
+	CIPHERF_DECRYPT it decrypts. CTR does both alike and ignores the flag.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The context holds a copy of the key: the caller
+	clears it when it is done, as it would the key.
+
+   NOTES
+	A CTR counter block must never be used twice with the same key, and
+	ECB shows equal plaintext blocks as equal ciphertext blocks; ECB is
+	here to build other modes on, not to encrypt data with.
+
+   BUGS
+	AES-192 is not there: the engine takes 128- and 256-bit keys.
+
+   SEE ALSO
+	`UpdateCipher`, `SealGcm`
+
+   EXAMPLES
+	    var context: crypto.CipherContext = .{};
+	    if (cb.InitCipher(&context, crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, &key, 32, &iv) != crypto.CRYPTOERR_OK) return;
+	    defer context = .{};
+	    _ = cb.UpdateCipher(&context, data.ptr, data.ptr, data.len);
+crypto.library/InitHash                                crypto.library/InitHash
+
+   NAME
+	InitHash -- Sets up a context for a new hash of one algorithm.
+
+   SYNOPSIS
+	    fn InitHash(cb: *CryptoBase, context: *HashContext, algorithm: u32) i32
+
+   SINCE
+	1.0. LVO -24.
+
+   INPUTS
+	- `context`: the caller's; whatever it held before is dropped.
+	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
+	  HASH_SHA512.
+
+   RESULT
+	CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
+	the context is then left empty, and UpdateHash and FinishHash do
+	nothing with it.
+
+   BEHAVIOR
+	The context holds the whole hash from here to FinishHash: the bytes
+	that do not yet make a block, the state between blocks and the length
+	so far. Nothing is taken from the library, so any number of hashes
+	may be under way at once, by any number of tasks, each in its own
+	context.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated; the context stays the caller's.
+
+   NOTES
+	SHA-1 is here for the formats that still name it; nothing new should
+	rest on it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`UpdateHash`, `FinishHash`, `InitHmac`
+
+   EXAMPLES
+	    var context: crypto.HashContext = .{};
+	    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+	    if (cb.InitHash(&context, crypto.HASH_SHA256) != crypto.CRYPTOERR_OK) return;
+	    cb.UpdateHash(&context, text.ptr, text.len);
+	    const length = cb.FinishHash(&context, &digest);
+crypto.library/InitHmac                                crypto.library/InitHmac
+
+   NAME
+	InitHmac -- Sets up a context for a new HMAC with one hash algorithm and a key.
+
+   SYNOPSIS
+	    fn InitHmac(cb: *CryptoBase, context: *HmacContext, algorithm: u32, key: ?*const anyopaque, key_length: u32) i32
+
+   SINCE
+	1.0. LVO -36.
+
+   INPUTS
+	- `context`: the caller's; whatever it held before is dropped.
+	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
+	  HASH_SHA512.
+	- `key`: the key's bytes; may be null when `key_length` is 0.
+	- `key_length`: any length. A key longer than the hash's block is
+	  hashed first, as RFC 2104 says.
+
+   RESULT
+	CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
+	the context is then left empty, and UpdateHmac and FinishHmac do
+	nothing with it.
+
+   BEHAVIOR
+	RFC 2104's HMAC: the key, padded to a block, is exclusive-ored with
+	0x36 and hashed ahead of the message in the inner hash, and with 0x5C
+	ahead of the inner digest in the outer. Both key blocks go through
+	the engine here, so the context holds no key, only the two hashes'
+	states; the copies made on the way are wiped.
+
+   CONTEXT
+	- Waits: yes, for the SHA engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated; the key is only read.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`UpdateHmac`, `FinishHmac`, `InitHash`
+
+   EXAMPLES
+	    var context: crypto.HmacContext = .{};
+	    var mac: [crypto.DIGEST_MAX]u8 = undefined;
+	    _ = cb.InitHmac(&context, crypto.HASH_SHA256, key.ptr, key.len);
+	    cb.UpdateHmac(&context, message.ptr, message.len);
+	    const length = cb.FinishHmac(&context, &mac);
+crypto.library/ModExp                                    crypto.library/ModExp
+
+   NAME
+	ModExp -- Raises a number to a power modulo another.
+
+   SYNOPSIS
+	    fn ModExp(cb: *CryptoBase, result: *anyopaque, base_value: *const Number, exponent: *const Number, modulus: *const Number) i32
+
+   SINCE
+	1.0. LVO -64.
+
+   INPUTS
+	- `result`: room for as many bytes as `modulus.length`.
+	- `base_value`: any number of up to NUMBER_MAX significant bytes; it
+	  need not be less than the modulus.
+	- `exponent`: no longer than the modulus, counted in 32-bit words:
+	  the engine's operands are all as long as the modulus.
+	- `modulus`: odd, at least 3, of up to NUMBER_MAX (512) significant
+	  bytes - 4096 bits.
+
+   RESULT
+	CRYPTOERR_OK, with `base_value ^ exponent mod modulus` in `result`,
+	most significant byte first and as long as the modulus as given,
+	leading zeroes included. CRYPTOERR_NUMBER for an even modulus or one
+	less than 3; CRYPTOERR_LENGTH for a number longer than it may be.
+	Nothing is written on an error.
+
+   BEHAVIOR
+	The numbers are big-endian byte strings, as RSA and Diffie-Hellman
+	send them (PKCS #1's I2OSP), and are only read. The work is done
+	in the engine on operands as long as the modulus, in 32-bit words;
+	the library works out the engine's two constants for the modulus and
+	first reduces a base that is not less than it. An exponent of 0
+	answers 1.
+
+	The engine runs in its constant-time mode: each exponent bit costs the
+	same, 0 or 1. It starts from the exponent's highest 1 bit, which gives
+	away only how long the exponent is - a public exponent of 17 bits
+	takes 17 steps, a private one is as long as its modulus in any case.
+
+   CONTEXT
+	- Waits: yes, for the RSA engine while another task has it; the
+	  engine is held for the whole call.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The numbers' copies in the library and the
+	exponent in the engine are cleared before the call returns.
+
+   NOTES
+	The constants are worked out in software on every call, bit by bit:
+	a 2048-bit modulus costs 4096 doubling steps before the engine
+	starts. A caller who signs many times with one key pays that each
+	time.
+
+   BUGS
+	A private-key operation is not blinded: the engine's constant time is
+	what stands against timing, and nothing stands against power analysis.
+
+   SEE ALSO
+	`RandomBytes`
+
+   EXAMPLES
+	    // An RSA signature checked: signature ^ e mod n.
+	    var decoded: [256]u8 = undefined;
+	    const s: crypto.Number = .{ .bytes = &signature, .length = 256 };
+	    const e: crypto.Number = .{ .bytes = &.{ 1, 0, 1 }, .length = 3 };
+	    const n: crypto.Number = .{ .bytes = &modulus, .length = 256 };
+	    if (cb.ModExp(&decoded, &s, &e, &n) != crypto.CRYPTOERR_OK) return error.Key;
+crypto.library/OpenGcm                                  crypto.library/OpenGcm
+
+   NAME
+	OpenGcm -- Checks a message's AES-GCM tag and, if it is right, decrypts it.
+
+   SYNOPSIS
+	    fn OpenGcm(cb: *CryptoBase, message: *const GcmMessage) i32
+
+   SINCE
+	1.0. LVO -60.
+
+   INPUTS
+	- `message`: the key and the nonce it was sealed with, the header
+	  (`aad`, may be none), the ciphertext (`input`, `length` bytes, may
+	  be none), where the plaintext goes (`output`, `length` bytes; may be
+	  `input` itself) and the 16-byte tag that came with it.
+
+   RESULT
+	CRYPTOERR_OK; CRYPTOERR_TAG when the tag does not match the key,
+	nonce, header and ciphertext; CRYPTOERR_KEY for another key length;
+	CRYPTOERR_LENGTH for a nonce of no bytes, or a null buffer with a
+	length that is not 0.
+
+   BEHAVIOR
+	The tag is worked out over the header and the ciphertext and compared
+	with the one given, every byte of it whatever the first difference.
+	Only a message whose tag matches is decrypted: on CRYPTOERR_TAG the
+	output has not been written, so nothing forged is ever there to be
+	used by mistake.
+
+   CONTEXT
+	- Waits: yes, for the AES engine while another task has it; the
+	  engine is held for the whole message.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated; the message stays the caller's.
+
+   NOTES
+	None.
+
+   BUGS
+	GHASH runs in software, as in SealGcm.
+
+   SEE ALSO
+	`SealGcm`
+
+   EXAMPLES
+	    switch (cb.OpenGcm(&message)) {
+	        crypto.CRYPTOERR_OK => {},
+	        crypto.CRYPTOERR_TAG => return error.Forged,
+	        else => return error.Open,
+	    }
+crypto.library/RandomBytes                          crypto.library/RandomBytes
+
+   NAME
+	RandomBytes -- Fills a buffer with random bytes.
+
+   SYNOPSIS
+	    fn RandomBytes(cb: *CryptoBase, buffer: *anyopaque, length: u32) void
+
+   SINCE
+	1.0. LVO -20.
+
+   INPUTS
+	- `buffer`: room for `length` bytes.
+	- `length`: any.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The bytes come straight from the chip's generator, which draws on the
+	noise of the SAR ADCs the kernel keeps sampling from boot (and of the
+	radio, when it runs). They are fit for keys, nonces and IVs as they
+	are, with no generator of the library's own in between.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: yes.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   NOTES
+	The generator refills between reads in a few cycles; the reads are
+	spaced so that no word is read twice.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SealGcm`, `InitCipher`
+
+   EXAMPLES
+	    var key: [32]u8 = undefined;
+	    cb.RandomBytes(&key, key.len);
+crypto.library/SealGcm                                  crypto.library/SealGcm
+
+   NAME
+	SealGcm -- Encrypts a message with AES-GCM and writes its tag.
+
+   SYNOPSIS
+	    fn SealGcm(cb: *CryptoBase, message: *const GcmMessage) i32
+
+   SINCE
+	1.0. LVO -56.
+
+   INPUTS
+	- `message`: the key (16 or 32 bytes), the nonce (12 bytes is what
+	  GCM is made for; any length but 0 is taken), the header to
+	  authenticate (`aad`, may be none), the plaintext (`input`,
+	  `length` bytes, may be none), where the ciphertext goes (`output`,
+	  `length` bytes; may be `input` itself) and where the 16-byte tag
+	  goes.
+
+   RESULT
+	CRYPTOERR_OK; CRYPTOERR_KEY for another key length; CRYPTOERR_LENGTH
+	for a nonce of no bytes, or a null buffer with a length that is not
+	0. Nothing is written on an error.
+
+   BEHAVIOR
+	The ciphertext is as long as the plaintext; the tag authenticates
+	the header and the ciphertext together, so neither can be changed, cut
+	or moved without OpenGcm noticing. The whole message is one call:
+	GCM's tag is over all of it.
+
+   CONTEXT
+	- Waits: yes, for the AES engine while another task has it; the
+	  engine is held for the whole message.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated; the message stays the caller's.
+
+   NOTES
+	A nonce is never used twice with the same key: two messages under one
+	nonce give away the exclusive-or of their plaintexts and let the tags
+	be forged. A counter kept for the key, or 12 bytes from RandomBytes,
+	is how a nonce is made.
+
+   BUGS
+	GHASH runs in software, bit by bit, and is slower than the engine:
+	it, not AES, sets the pace of a long message.
+
+   SEE ALSO
+	`OpenGcm`, `InitCipher`, `RandomBytes`
+
+   EXAMPLES
+	    var tag: [crypto.GCM_TAG]u8 = undefined;
+	    const message: crypto.GcmMessage = .{
+	        .key = &key, .key_length = 16, .nonce = &nonce, .nonce_length = 12,
+	        .aad = &header, .aad_length = header.len,
+	        .input = record.ptr, .output = record.ptr, .length = record.len,
+	        .tag = &tag,
+	    };
+	    if (cb.SealGcm(&message) != crypto.CRYPTOERR_OK) return error.Seal;
+crypto.library/UpdateCipher                        crypto.library/UpdateCipher
+
+   NAME
+	UpdateCipher -- Encrypts or decrypts data with the context's cipher.
+
+   SYNOPSIS
+	    fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const anyopaque, output: ?*anyopaque, length: u32) i32
+
+   SINCE
+	1.0. LVO -52.
+
+   INPUTS
+	- `context`: set up by InitCipher.
+	- `input`: `length` bytes; may be null when `length` is 0.
+	- `output`: room for `length` bytes. It may be `input` itself, for
+	  the data in place; it may not overlap it any other way.
+	- `length`: ECB and CBC: a multiple of 16. CTR: any.
+
+   RESULT
+	CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a context InitCipher did not set
+	up; CRYPTOERR_LENGTH for ECB or CBC data that is not whole blocks, or
+	a null buffer. Nothing is written on an error.
+
+   BEHAVIOR
+	The data continues from where the last call left off: a CBC chain
+	runs on from the last block, a CTR counter from the last counter
+	block, and a CTR call that ended inside a block starts the next with
+	the rest of that block's key stream. So a message may be given in any
+	number of pieces, and comes out as one call with all of it would.
+
+   CONTEXT
+	- Waits: yes, for the AES engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	CBC does not pad: a message that is not whole blocks is padded by the
+	caller, as its format says (PKCS #7, TLS).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitCipher`, `SealGcm`, `OpenGcm`
+
+   EXAMPLES
+	    if (cb.UpdateCipher(&context, packet.ptr, packet.ptr, packet.len) != crypto.CRYPTOERR_OK) return error.Cipher;
+crypto.library/UpdateHash                            crypto.library/UpdateHash
+
+   NAME
+	UpdateHash -- Adds bytes to a hash under way.
+
+   SYNOPSIS
+	    fn UpdateHash(cb: *CryptoBase, context: *HashContext, data: ?*const anyopaque, length: u32) void
+
+   SINCE
+	1.0. LVO -28.
+
+   INPUTS
+	- `context`: set up by InitHash.
+	- `data`: the bytes; may be null when `length` is 0.
+	- `length`: how many.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The digest depends only on the bytes, not on how they were divided
+	between calls: one call with all of them and a thousand with one byte
+	each come to the same. Whole blocks go to the chip's SHA engine as
+	they are made up; the rest waits in the context for the next call.
+	A context InitHash did not set up, or one FinishHash has ended, takes
+	nothing.
+
+   CONTEXT
+	- Waits: yes, for the SHA engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands; `data` is only read.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitHash`, `FinishHash`
+
+   EXAMPLES
+	    while (true) {
+	        const got = dl.Read(file, &chunk, chunk.len);
+	        if (got <= 0) break;
+	        cb.UpdateHash(&context, &chunk, @intCast(got));
+	    }
+crypto.library/UpdateHmac                            crypto.library/UpdateHmac
+
+   NAME
+	UpdateHmac -- Adds bytes to an HMAC under way.
+
+   SYNOPSIS
+	    fn UpdateHmac(cb: *CryptoBase, context: *HmacContext, data: ?*const anyopaque, length: u32) void
+
+   SINCE
+	1.0. LVO -40.
+
+   INPUTS
+	- `context`: set up by InitHmac.
+	- `data`: the bytes; may be null when `length` is 0.
+	- `length`: how many.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The bytes go into the inner hash, as UpdateHash would take them: how
+	they are divided between calls makes no difference to the MAC. A
+	context InitHmac did not set up takes nothing.
+
+   CONTEXT
+	- Waits: yes, for the SHA engine while another task has it.
+	- Interrupts: no.
+	- Forbid: must not be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands; `data` is only read.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`InitHmac`, `FinishHmac`, `UpdateHash`
+
+   EXAMPLES
+	    cb.UpdateHmac(&context, header.ptr, header.len);
+	    cb.UpdateHmac(&context, body.ptr, body.len);

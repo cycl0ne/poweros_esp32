@@ -21,3 +21,4 @@ pub const keymap = @import("keymap.zig");
 pub const console = @import("console.zig");
 pub const colorwheel = @import("colorwheel.zig");
 pub const bsdsocket = @import("bsdsocket.zig");
+pub const crypto = @import("crypto.zig");

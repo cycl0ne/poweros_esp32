@@ -28,6 +28,7 @@ pub const keymap = @import("libs/keymap/keymap.zig");
 pub const console = @import("libs/console/console.zig");
 pub const gadgets = @import("libs/gadgets/gadgets.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
+pub const crypto = @import("libs/crypto/crypto.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

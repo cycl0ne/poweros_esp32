@@ -207,6 +207,14 @@ cores.
   `ENVARC:Sys/net/shellserver` holds one. `Run >NIL: C:net/ShellServer`
   in `S:User-Startup` makes a board reachable without a cable; in QEMU,
   `zig build qemu-display` and `telnet localhost 2323`.
+- `LIBS:crypto.library`, on the chip's own engines: random bytes from its
+  generator, which the kernel keeps fed with the SAR ADCs' noise from
+  boot; SHA-1 and SHA-2 hashes and HMAC; AES-128 and AES-256 in ECB, CBC,
+  CTR and GCM; and modular exponentiation up to 4096 bits for RSA and
+  Diffie-Hellman, in the RSA engine's constant-time mode. A hash or a
+  cipher under way is a context the program keeps, so any number run at
+  once, the engine taken in turns. `C:test/Crypto` checks every call
+  against the standards' test vectors.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 

@@ -10,7 +10,10 @@ SDK has a `.fd` file for: one file per module, in two forms.
 
 | Module | Plain text | Markdown |
 |---|---|---|
+| bsdsocket.library | [bsdsocket.doc](autodocs/bsdsocket.doc) | [bsdsocket.md](autodocs/bsdsocket.md) |
+| colorwheel.gadget | [colorwheel.doc](autodocs/colorwheel.doc) | [colorwheel.md](autodocs/colorwheel.md) |
 | console.device | [console.doc](autodocs/console.doc) | [console.md](autodocs/console.md) |
+| crypto.library | [crypto.doc](autodocs/crypto.doc) | [crypto.md](autodocs/crypto.md) |
 | dma.resource | [dma.doc](autodocs/dma.doc) | [dma.md](autodocs/dma.md) |
 | dos.library | [dos.doc](autodocs/dos.doc) | [dos.md](autodocs/dos.md) |
 | exec.library | [exec.doc](autodocs/exec.doc) | [exec.md](autodocs/exec.md) |
