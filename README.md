@@ -193,7 +193,9 @@ cores.
   signal of the program's choosing; a socket can be handed to another
   task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
   `C:net/Tcp` fetches a page over HTTP or echoes a connection - either
-  family, over the network in QEMU.
+  family, over the network in QEMU. `C:test/BsdSockTest` runs 142 tests of the socket
+  API over the loopback, and over the network with a host helper, and
+  names the calls the library lacks.
 - The network comes up at boot, in the background (`S:Network-Startup`),
   from `DEVS:NetInterfaces/`, a file per
   interface in the mountlist's keyword format (`Device`, `Configure =
@@ -530,6 +532,10 @@ Copyright (c) 2026 Claus Herrmann and the PowerOS contributors.
   its author's to license as they like.
 - `scripts/qemu/esp_rgb_input.patch` changes QEMU and is under QEMU's
   license, GPL-2.0-or-later.
+- `C:test/BsdSockTest` (`src/disk/c/test/bsdsocktest/`) is Thomas Dye's
+  bsdsocktest in Zig and under its license,
+  [GPL-3.0-only](src/disk/c/test/bsdsocktest/LICENSE); the disk image
+  holds it as a program of its own.
 
 Every source file names its license in its first line
 (`SPDX-License-Identifier`).

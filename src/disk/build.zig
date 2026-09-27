@@ -39,6 +39,7 @@ const tests = [_][]const u8{
     "lines",      "nyan",     "plasma",   "audio",   "fonts",
     "screens",    "layout",   "classes",  "gadgets", "listview",
     "colorwheel", "tapedeck", "pointer",  "crypto",
+    "bsdsocktest",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless" };
 
