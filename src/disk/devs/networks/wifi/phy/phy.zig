@@ -145,7 +145,7 @@ pub fn enable(phy: *Phy) void {
     } else {
         phy_wakeup_init();
     }
-    osi_timer.timerSetfn(&phy.track, @constCast(@ptrCast(&trackPll)), phy);
+    osi_timer.timerSetfn(&phy.track, @ptrCast(@constCast(&trackPll)), phy);
     osi_timer.timerArm(&phy.track, track_period_ms, true);
     change(wifi_clk_en, 0, phy_clock);
     phy.enabled = true;

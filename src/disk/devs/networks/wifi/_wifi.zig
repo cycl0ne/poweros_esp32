@@ -9,7 +9,9 @@ const net = sdk.devices.network;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const CryptoBase = sdk.interface.crypto.CryptoBase;
 const _osi = @import("osi/_osi.zig");
+const supplicant = @import("wpa/supplicant.zig");
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
 const link = @import("link.zig");
@@ -26,6 +28,10 @@ pub const Work = struct {
     networks: [scan.max_networks]vendor.ApRecord,
     /// Frames in, and the one being sent.
     frames: link.Frames,
+    /// The station's keys and elements, and the key handshake that runs on
+    /// the libraries' task (`wpa/supplicant.zig`).
+    station: supplicant.Station,
+    handshake: supplicant.Handshake,
 };
 
 pub const Unit = unit_file.Unit(WifiBase);
@@ -44,6 +50,8 @@ pub const WifiBase = extern struct {
     timer_io: timer.TimeRequest = .{},
     /// utility.library, for the tag lists requests carry.
     utility: ?*UtilityBase = null,
+    /// crypto.library, for the key handshake's hashes and ciphers.
+    crypto: ?*CryptoBase = null,
     /// The S2_GETNETWORKS waiting for the scan that runs.
     scans: exec.List = .{},
     /// The station's address, from eFuse.

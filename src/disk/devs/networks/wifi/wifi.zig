@@ -19,8 +19,8 @@
 //! unit (sdk/devices/network/unit.zig), whose link (`link.zig`) has a
 //! carrier while the station is joined; it scans (S2_GETNETWORKS,
 //! `scan.zig`) and joins and leaves (S2_SETOPTIONS, S2_GETNETWORKINFO,
-//! `join.zig`). A protected network needs the key handshake, which the
-//! supplicant (`wpa/`) does not do yet.
+//! `join.zig`), WPA2-Personal included: the key handshake is the
+//! supplicant's (`wpa/`), and runs on the libraries' task.
 //!
 //! **Every request runs on the device's own task**, the one that started
 //! the radio: BeginIO queues them to it.
@@ -133,7 +133,7 @@ fn startRadio(base: *WifiBase) bool {
 
     const config: vendor.InitConfig = .{};
     if (!report(sys, "esp_wifi_init_internal", vendor.esp_wifi_init_internal(&config))) return false;
-    if (!supplicant.register()) return fail(sys, "the supplicant's table was refused");
+    if (!supplicant.register(base)) return fail(sys, "the supplicant's table was refused");
     if (!report(sys, "esp_wifi_set_mode", vendor.esp_wifi_set_mode(vendor.mode_sta))) return false;
     if (!report(sys, "esp_wifi_start", vendor.esp_wifi_start())) return false;
     return true;
@@ -153,6 +153,7 @@ fn handleEvents(base: *WifiBase) void {
         events.sta_disconnected => {
             base.net.setCarrier(false);
             link.hook(false);
+            join.left(base, event.data[0..event.length]);
         },
         else => {},
     };
@@ -332,6 +333,14 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.station = efuse.stationAddress();
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     base.utility = @ptrCast(utility_lib);
+    // crypto.library is the key handshake's engines. Without it the radio
+    // still scans and joins a network with no security, so a board that has
+    // not got it keeps a device that says so once.
+    if (sys_base.OpenLibrary(sdk.crypto.CRYPTONAME, 1)) |crypto_lib| {
+        base.crypto = @ptrCast(crypto_lib);
+    } else {
+        sdk.exec.kprintf(sys_base, "%s: no crypto.library, so no protected network\n", .{DEVICE_NAME});
+    }
     base.scans.init(.message);
 
     // PA_IGNORE until the task has a signal for it: a request that comes

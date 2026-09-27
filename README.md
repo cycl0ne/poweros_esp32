@@ -163,8 +163,10 @@ cores.
   emulator's network behind it; `C:net/Net` asks the link who has an
   address. `DEVS:networks/wifi.device` is the chip's radio as a station,
   on Espressif's closed radio libraries and an OS adapter onto exec: it
-  starts the radio and scans (the SANA-II wireless requests), and
-  `C:net/Wireless` lists the networks in range. Not yet on the boards.
+  starts the radio, scans, and joins a network (the SANA-II wireless
+  requests), WPA2-Personal included - the key handshake is written here,
+  on crypto.library. `C:net/Wireless` lists the networks in range and
+  joins or leaves one.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
   IPv4 with fragments put back together, TCP (connections that close on

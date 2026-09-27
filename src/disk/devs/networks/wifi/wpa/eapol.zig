@@ -92,8 +92,8 @@ pub const header_bytes = 99;
 /// The 802.1X header alone (version, type, length).
 const dot1x_bytes = 4;
 
-/// The Ethernet header in front of a frame sent.
-const ether_bytes = 14;
+/// The Ethernet header in front of a frame the station sends.
+pub const ether_bytes = 14;
 /// The most key data a message the station reads carries, once unwrapped.
 const key_data_max = 256;
 /// The longest RSN element the station sends, and so the longest frame it
