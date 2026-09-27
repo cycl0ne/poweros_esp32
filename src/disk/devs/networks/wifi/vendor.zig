@@ -150,3 +150,43 @@ pub extern fn esp_wifi_internal_reg_rxcb(interface: u32, callback: ?RxCallback) 
 pub extern fn esp_wifi_internal_free_rx_buffer(eb: ?*anyopaque) callconv(.c) void;
 /// An Ethernet frame sent; the libraries copy it.
 pub extern fn esp_wifi_internal_tx(interface: u32, buffer: *const anyopaque, length: u16) callconv(.c) c_int;
+
+// --- joining --------------------------------------------------------------
+
+/// wifi_sta_config_t, as the device fills it in: a network's name, its
+/// passphrase, the whole band scanned for it and the strongest access
+/// point taken, and the weakest security the station accepts. The
+/// fields past `sae_pk_mode` stay zero.
+pub const StaConfig = extern struct {
+    ssid: [32]u8 = @splat(0),
+    password: [64]u8 = @splat(0),
+    /// WIFI_ALL_CHANNEL_SCAN.
+    scan_method: c_uint = 1,
+    bssid_set: bool = false,
+    bssid: [6]u8 = @splat(0),
+    channel: u8 = 0,
+    listen_interval: u16 = 0,
+    /// WIFI_CONNECT_AP_BY_SIGNAL.
+    sort_method: c_uint = 0,
+    /// wifi_scan_threshold_t.
+    threshold: extern struct { rssi: i8 = 0, authmode: c_uint = auth_open, rssi_5g_adjustment: u8 = 0 } = .{},
+    pmf_capable: bool = false,
+    pmf_required: bool = false,
+    flags: u32 = 0,
+    sae_pwe_h2e: c_uint = 0,
+    sae_pk_mode: c_uint = 0,
+    rest: [40]u8 = @splat(0),
+};
+
+comptime {
+    if (@sizeOf(usize) == 4 and (@sizeOf(StaConfig) != 184 or @offsetOf(StaConfig, "scan_method") != 96 or
+        @offsetOf(StaConfig, "sort_method") != 112 or @offsetOf(StaConfig, "pmf_capable") != 128 or @offsetOf(StaConfig, "rest") != 144))
+        @compileError("wifi_sta_config_t: 184 bytes, as GCC lays it out");
+}
+
+pub extern fn esp_wifi_set_config(interface: u32, config: *StaConfig) callconv(.c) i32;
+pub extern fn esp_wifi_connect_internal() callconv(.c) i32;
+pub extern fn esp_wifi_disconnect_internal() callconv(.c) i32;
+/// Tells the libraries the station has an address.
+pub extern fn esp_wifi_internal_set_sta_ip() callconv(.c) i32;
+pub extern fn esp_wifi_sta_get_ap_info(record: *ApRecord) callconv(.c) i32;

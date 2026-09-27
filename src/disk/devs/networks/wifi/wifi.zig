@@ -17,9 +17,10 @@
 //! adapter call is traced on the raw port while this is young
 //! (`trace_calls`). It answers the network device API through the shared
 //! unit (sdk/devices/network/unit.zig), whose link (`link.zig`) has a
-//! carrier while the station is joined, and scans (S2_GETNETWORKS,
-//! `scan.zig`). Joining a network needs the supplicant (`wpa/`), which is
-//! not there yet.
+//! carrier while the station is joined; it scans (S2_GETNETWORKS,
+//! `scan.zig`) and joins and leaves (S2_SETOPTIONS, S2_GETNETWORKINFO,
+//! `join.zig`). A protected network needs the key handshake, which the
+//! supplicant (`wpa/`) does not do yet.
 //!
 //! **Every request runs on the device's own task**, the one that started
 //! the radio: BeginIO queues them to it.
@@ -43,6 +44,7 @@ const efuse = @import("phy/efuse.zig");
 const events = @import("events.zig");
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
+const join = @import("join.zig");
 const supplicant = @import("wpa/supplicant.zig");
 const link = @import("link.zig");
 
@@ -144,6 +146,7 @@ fn handleEvents(base: *WifiBase) void {
         events.sta_start => sdk.exec.kprintf(base.sys_base, "%s: the station is started\n", .{DEVICE_NAME}),
         events.scan_done => scan.done(base),
         events.sta_connected => {
+            _ = vendor.esp_wifi_internal_set_sta_ip();
             link.hook(true);
             base.net.setCarrier(true);
         },
@@ -190,6 +193,8 @@ fn perform(base: *WifiBase, io: *exec.IORequest) void {
             if (scan.begin(base, req)) return;
             io.err = net.S2ERR_SOFTWARE;
         },
+        wireless.S2_SETOPTIONS => io.err = join.setOptions(base, req),
+        wireless.S2_GETNETWORKINFO => io.err = join.networkInfo(base, req),
         else => return base.net.perform(req),
     }
     sys.ReplyMsg(&io.message);
@@ -218,6 +223,8 @@ fn queued(command: u16) bool {
         net.S2_ONLINE,
         net.S2_OFFLINE,
         wireless.S2_GETNETWORKS,
+        wireless.S2_SETOPTIONS,
+        wireless.S2_GETNETWORKINFO,
         => true,
         else => false,
     };

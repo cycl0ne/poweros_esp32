@@ -2,13 +2,16 @@
 //! Wireless: a radio's networks, through its device's wireless requests
 //! (sdk/devices/wireless.zig). Built against the SDK only.
 //!
-//!   Wireless DEVICE/K,UNIT/K/N,SCAN/S
+//!   Wireless DEVICE/K,UNIT/K/N,SCAN/S,JOIN/K,PASSPHRASE/K,LEAVE/S
 //!
 //! It opens the device (networks/wifi.device, unit 0, unless told
-//! otherwise). SCAN - what it does when given nothing else - asks the
-//! radio for the networks in range and prints one line each: the name,
-//! the access point's address, the channel, the signal in dBm, and how a
-//! station joins it.
+//! otherwise). LEAVE leaves the network the station is on. JOIN joins the
+//! network of that name - with PASSPHRASE for a protected one - and waits
+//! up to 15 seconds for the station to be on it, then says which access
+//! point it took, on which channel and how strong. SCAN - what it does
+//! when given nothing else - asks the radio for the networks in range and
+//! prints one line each: the name, the access point's address, the
+//! channel, the signal in dBm, and how a station joins it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -22,13 +25,20 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Wireless";
-const VERSION_STRING = "\x00$VER: Wireless 1.0 (26.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Wireless 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DEVICE/K,UNIT/K/N,SCAN/S";
+const template = "DEVICE/K,UNIT/K/N,SCAN/S,JOIN/K,PASSPHRASE/K,LEAVE/S";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_scan = 2;
+const arg_join = 3;
+const arg_passphrase = 4;
+const arg_leave = 5;
+
+/// How long a join may take, and how often it is asked after.
+const join_wait_ticks = 15 * 50;
+const join_poll_ticks = 25;
 
 const default_device = "networks/wifi.device";
 
@@ -39,6 +49,10 @@ const MSG_HEADER = "Network                          Access point       Chan Sig
 const MSG_NETWORK = "%-32s %s %4lu %4ld   %s\n";
 const MSG_NONE = "No networks in range\n";
 const MSG_BREAK = "***Break\n";
+const MSG_LEFT = "Left the network\n";
+const MSG_JOINING = "Joining %s...\n";
+const MSG_JOINED = "On %s through %s, channel %lu, %ld dBm\n";
+const MSG_NOLINK = "Not on %s after 15 seconds\n";
 
 /// The device's copy calls: nothing is read or written here, but the
 /// device wants them.
@@ -119,6 +133,58 @@ fn scanNetworks(sys: *ExecBase, dl: *DosBase, utility: *UtilityBase, req: *net.I
     return dos.RETURN_OK;
 }
 
+/// S2_SETOPTIONS with `tags`.
+fn setOptions(sys: *ExecBase, dl: *DosBase, req: *net.IOSana2Req, tags: []const TagItem) bool {
+    req.req.command = wireless.S2_SETOPTIONS;
+    req.data = @constCast(tags.ptr);
+    _ = sys.DoIO(&req.req);
+    if (req.req.err == 0) return true;
+    _ = Printf(dl, MSG_FAILED, .{ "S2_SETOPTIONS", @as(i32, req.req.err), req.wire_error });
+    return false;
+}
+
+/// The network the station is on, printed; false while it is on none.
+fn showNetwork(sys: *ExecBase, dl: *DosBase, utility: *UtilityBase, req: *net.IOSana2Req) bool {
+    const pool = sys.CreatePool(exec.MEMF_ANY, 512, 256) orelse return false;
+    defer sys.DeletePool(pool);
+    req.req.command = wireless.S2_GETNETWORKINFO;
+    req.data = pool;
+    req.stat_data = null;
+    _ = sys.DoIO(&req.req);
+    if (req.req.err != 0) return false;
+    const tags: [*]const TagItem = @ptrCast(@alignCast(req.stat_data orelse return false));
+    const ssid: [*:0]const u8 = @ptrFromInt(utility.GetTagData(wireless.S2INFO_SSID, @intFromPtr(""), tags));
+    const bssid: [*]const u8 = @ptrFromInt(utility.GetTagData(wireless.S2INFO_BSSID, @intFromPtr("\x00\x00\x00\x00\x00\x00"), tags));
+    const channel: u64 = utility.GetTagData(wireless.S2INFO_Channel, 0, tags);
+    const signal: i64 = @as(isize, @bitCast(utility.GetTagData(wireless.S2INFO_Signal, 0, tags)));
+    var text: [18]u8 = undefined;
+    _ = Printf(dl, MSG_JOINED, .{ ssid, hardwareText(bssid, &text), channel, signal });
+    return true;
+}
+
+/// The network `name` joined, and waited for.
+fn joinNetwork(sys: *ExecBase, dl: *DosBase, utility: *UtilityBase, req: *net.IOSana2Req, name: [*:0]const u8, passphrase: ?[*:0]const u8) i32 {
+    var tags = [_]TagItem{
+        .{ .tag = wireless.S2INFO_SSID, .data = @intFromPtr(name) },
+        .{},
+        .{},
+    };
+    if (passphrase) |text| tags[1] = .{ .tag = wireless.S2INFO_Passphrase, .data = @intFromPtr(text) };
+    _ = Printf(dl, MSG_JOINING, .{name});
+    if (!setOptions(sys, dl, req, &tags)) return dos.RETURN_ERROR;
+    var waited: u32 = 0;
+    while (waited < join_wait_ticks) : (waited += join_poll_ticks) {
+        if (showNetwork(sys, dl, utility, req)) return dos.RETURN_OK;
+        if (sys.SetSignal(0, exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C != 0) {
+            _ = Printf(dl, MSG_BREAK, .{});
+            return dos.RETURN_WARN;
+        }
+        dl.Delay(join_poll_ticks);
+    }
+    _ = Printf(dl, MSG_NOLINK, .{name});
+    return dos.RETURN_WARN;
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -129,7 +195,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(utility_lib);
     const utility: *UtilityBase = @ptrCast(utility_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -157,5 +223,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     defer sys.CloseDevice(&req.req);
 
+    if (argv[arg_leave] != 0) {
+        const tags = [_]TagItem{ .{ .tag = wireless.S2INFO_Disassociate, .data = 1 }, .{} };
+        if (!setOptions(sys, dl, &req, &tags)) return dos.RETURN_ERROR;
+        _ = Printf(dl, MSG_LEFT, .{});
+    }
+    if (argv[arg_join] != 0) {
+        const passphrase: ?[*:0]const u8 = if (argv[arg_passphrase] != 0) @ptrFromInt(argv[arg_passphrase]) else null;
+        const result = joinNetwork(sys, dl, utility, &req, @ptrFromInt(argv[arg_join]), passphrase);
+        if (result != dos.RETURN_OK or argv[arg_scan] == 0) return result;
+    }
+    if (argv[arg_leave] != 0 and argv[arg_scan] == 0) return dos.RETURN_OK;
     return scanNetworks(sys, dl, utility, &req);
 }
