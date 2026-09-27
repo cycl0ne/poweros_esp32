@@ -193,6 +193,12 @@ pub fn sleep(thread: *Thread, until: ?u64) bool {
     const io = thread.timer_io;
     io.node.command = timer.TR_ADDREQUEST;
     io.time = timer.TimeVal.fromMicros(time - start);
+    // A request cut short by the wake signal is aborted, and its reply
+    // arrives at once, so WaitIO takes it without waiting and the port's
+    // signal is left set. The next Wait would return on it straight away,
+    // abort that request too, and leave the signal set again: the thread
+    // would spin instead of sleeping, for good.
+    _ = sys.SetSignal(0, thread.timer_port.sigMask());
     sys.SendIO(&io.node);
     const got = sys.Wait(thread.wake | thread.timer_port.sigMask());
     if (sys.CheckIO(&io.node) == null) _ = sys.AbortIO(&io.node);

@@ -26,6 +26,7 @@ const WifiBase = _wifi.WifiBase;
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
 const supplicant = @import("wpa/supplicant.zig");
+const rejoin = @import("rejoin.zig");
 
 fn copyString(into: []u8, text: [*:0]const u8) ?usize {
     var length: usize = 0;
@@ -42,6 +43,7 @@ pub fn setOptions(base: *WifiBase, req: *net.IOSana2Req) i8 {
     const tags: ?[*]const TagItem = @ptrCast(@alignCast(req.data));
     const list = tags orelse return net.S2ERR_BAD_ARGUMENT;
     if (utility.FindTagItem(wireless.S2INFO_Disassociate, list) != null) {
+        rejoin.want(base, false);
         _ = vendor.esp_wifi_disconnect_internal();
         return 0;
     }
@@ -71,6 +73,7 @@ pub fn setOptions(base: *WifiBase, req: *net.IOSana2Req) i8 {
     }
     _ = vendor.esp_wifi_disconnect_internal();
     if (vendor.esp_wifi_set_config(vendor.if_sta, &config) != vendor.ok) return net.S2ERR_BAD_ARGUMENT;
+    rejoin.want(base, true);
     if (vendor.esp_wifi_connect_internal() != vendor.ok) return net.S2ERR_SOFTWARE;
     return 0;
 }
@@ -79,6 +82,11 @@ pub fn setOptions(base: *WifiBase, req: *net.IOSana2Req) i8 {
 /// (the network's name, its length, the access point's address, then the
 /// reason).
 const reason_offset = 32 + 1 + 6;
+
+/// The reason in a station-disconnected event's data; 0 if it is short.
+pub fn reasonOf(data: []const u8) u8 {
+    return if (data.len > reason_offset) data[reason_offset] else 0;
+}
 
 /// Why the station is off a network, in words for the reasons a join runs
 /// into and as a number for the rest.
@@ -115,7 +123,7 @@ fn reasonName(reason: u8) ?[*:0]const u8 {
 /// passphrase (the 4-way handshake timing out) reads differently from a
 /// network out of reach, and nothing else tells them apart.
 pub fn left(base: *WifiBase, data: []const u8) void {
-    const reason: u8 = if (data.len > reason_offset) data[reason_offset] else 0;
+    const reason = reasonOf(data);
     const sys = base.sys_base;
     if (reasonName(reason)) |text| {
         sdk.exec.kprintf(sys, "%s: off the network: %s (%u)\n", .{ _wifi.DEVICE_NAME, text, @as(u32, reason) });

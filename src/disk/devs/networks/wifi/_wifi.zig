@@ -15,6 +15,7 @@ const supplicant = @import("wpa/supplicant.zig");
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
 const link = @import("link.zig");
+const rejoin_file = @import("rejoin.zig");
 const ethernet = net.ethernet;
 const unit_file = net.unit;
 
@@ -72,6 +73,8 @@ pub const WifiBase = extern struct {
     starter: ?*exec.Task = null,
     /// What the device was loaded from, for its expunge to hand back.
     seg_list: ?*anyopaque = null,
+    /// Joining again after coming off a wanted network.
+    rejoin: rejoin_file.Rejoin = .{},
     /// The requests' side of the unit.
     net: Unit,
 

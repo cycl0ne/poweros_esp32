@@ -45,6 +45,7 @@ const events = @import("events.zig");
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
 const join = @import("join.zig");
+const rejoin = @import("rejoin.zig");
 const supplicant = @import("wpa/supplicant.zig");
 const link = @import("link.zig");
 
@@ -149,11 +150,13 @@ fn handleEvents(base: *WifiBase) void {
             _ = vendor.esp_wifi_internal_set_sta_ip();
             link.hook(true);
             base.net.setCarrier(true);
+            rejoin.joined(base);
         },
         events.sta_disconnected => {
             base.net.setCarrier(false);
             link.hook(false);
             join.left(base, event.data[0..event.length]);
+            rejoin.left(base, join.reasonOf(event.data[0..event.length]));
         },
         else => {},
     };
@@ -171,6 +174,9 @@ fn wifiTask(sys: *ExecBase) callconv(.c) void {
     sys.Enable();
 
     if (startRadio(base)) base.radio_up = 1;
+    if (base.radio_up != 0 and !rejoin.open(base)) {
+        sdk.exec.kprintf(sys, "%s: no timer for joining again\n", .{DEVICE_NAME});
+    }
     started(base);
 
     const event_mask: u32 = if (base.event_signal >= 0) @as(u32, 1) << @intCast(base.event_signal) else 0;
@@ -178,9 +184,10 @@ fn wifiTask(sys: *ExecBase) callconv(.c) void {
         if (base.radio_up != 0) {
             handleEvents(base);
             link.deliver(base);
+            rejoin.fired(base);
         }
         while (sys.GetMsg(queue_port)) |msg| perform(base, _wifi.requestOf(msg));
-        _ = sys.Wait(queue_port.sigMask() | event_mask | base.frame_mask);
+        _ = sys.Wait(queue_port.sigMask() | event_mask | base.frame_mask | rejoin.mask(base));
     }
 }
 
