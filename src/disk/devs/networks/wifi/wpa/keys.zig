@@ -9,7 +9,7 @@
 //!   nonces, cut into the key confirmation key (KCK), the key encryption
 //!   key (KEK) and the temporal key (TK) (`pairwiseTransient`);
 //! - the MIC of an EAPOL-Key frame, HMAC-SHA1 under the KCK, cut to 16
-//!   bytes (`mic`);
+//!   bytes (`mic`, or `micParts` over a frame in pieces);
 //! - AES key unwrap (RFC 3394) under the KEK, for the group key the
 //!   access point sends (`unwrap`).
 //!
@@ -105,15 +105,23 @@ pub fn pairwiseTransient(cb: *CryptoBase, pmk: *const [pmk_bytes]u8, authenticat
     return true;
 }
 
-/// The MIC of an EAPOL-Key frame whose MIC field is zero: HMAC-SHA1 under
-/// the KCK, its first 16 bytes (key descriptor version 2).
-pub fn mic(cb: *CryptoBase, kck: *const [kck_bytes]u8, frame: []const u8, out: *[mic_bytes]u8) bool {
+/// The MIC of an EAPOL-Key frame given in parts, its MIC field zero:
+/// HMAC-SHA1 under the KCK, its first 16 bytes (key descriptor version 2).
+/// A received frame is checked in place this way - the bytes before the
+/// MIC field, sixteen zeroes, the bytes after it - so nothing has to be
+/// copied to blank the field, and no buffer bounds the frame.
+pub fn micParts(cb: *CryptoBase, kck: *const [kck_bytes]u8, parts: []const []const u8, out: *[mic_bytes]u8) bool {
     var keyed: crypto.HmacContext = .{};
     if (cb.InitHmac(&keyed, crypto.HASH_SHA1, kck, kck_bytes) != crypto.CRYPTOERR_OK) return false;
     var digest: [sha1_bytes]u8 = undefined;
-    hmacOnce(cb, &keyed, &.{frame}, &digest);
+    hmacOnce(cb, &keyed, parts, &digest);
     out.* = digest[0..mic_bytes].*;
     return true;
+}
+
+/// The MIC of an EAPOL-Key frame whose MIC field is zero.
+pub fn mic(cb: *CryptoBase, kck: *const [kck_bytes]u8, frame: []const u8, out: *[mic_bytes]u8) bool {
+    return micParts(cb, kck, &.{frame}, out);
 }
 
 /// RFC 3394's unwrap of `wrapped` (8 bytes longer than the key) into

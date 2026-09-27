@@ -49,8 +49,10 @@ pub const ethertype: u16 = 0x888E;
 /// EAPOL's version the station sends, and the type of a key frame.
 const version = 1;
 const type_key = 3;
-/// The RSN key descriptor type.
+/// The key descriptor types: RSN's, and the older WPA one an access
+/// point may still use. A reply echoes the one that came in.
 const descriptor_rsn = 2;
+const descriptor_wpa = 254;
 /// Key descriptor version 2: HMAC-SHA1 for the MIC, AES key wrap for the
 /// key data. The only one WPA2-Personal uses.
 const key_descriptor_version_2 = 2;
@@ -66,14 +68,23 @@ const info_error: u16 = 0x0400;
 const info_request: u16 = 0x0800;
 const info_encrypted: u16 = 0x1000;
 
-// Offsets in an EAPOL frame, the 802.1X header first.
+// Offsets in an EAPOL frame: the 802.1X header (version 1, type 1,
+// length 2), then the key descriptor -
+//
+//   descriptor    @ 4    1     key_iv        @49   16
+//   key_info      @ 5    2     key_rsc       @65    8
+//   key_length    @ 7    2     reserved      @73    8
+//   replay        @ 9    8     mic           @81   16
+//   nonce         @17   32     data_length   @97    2
+//
+// - and the key data at 99. The key length is zero in every reply the
+// station sends (12.7.6.3), so nothing writes it.
 const off_body_length = 2;
 const off_descriptor = 4;
 const off_info = 5;
-const off_key_length = 7;
 const off_replay = 9;
 const off_nonce = 17;
-const off_rsc = 57;
+const off_rsc = 65;
 const off_mic = 81;
 const off_data_length = 97;
 /// From the 802.1X header to the start of the key data.
@@ -83,9 +94,10 @@ const dot1x_bytes = 4;
 
 /// The Ethernet header in front of a frame sent.
 const ether_bytes = 14;
-/// The most key data a message carries, and the longest RSN element the
-/// station sends.
+/// The most key data a message the station reads carries, once unwrapped.
 const key_data_max = 256;
+/// The longest RSN element the station sends, and so the longest frame it
+/// builds. A frame it reads is not bounded: it is checked where it lies.
 pub const own_ie_max = 64;
 pub const frame_max = ether_bytes + header_bytes + own_ie_max;
 
@@ -162,6 +174,9 @@ pub fn Handshake(comptime Env: type) type {
         have_replay: bool = false,
         /// The keys held from message 3 until message 4 has been sent.
         pending: ?Pending = null,
+        /// The key descriptor type the access point uses, echoed in the
+        /// replies.
+        descriptor: u8 = descriptor_rsn,
         /// The frame being built.
         out: [frame_max]u8 = @splat(0),
         /// Whether the port has been opened.
@@ -194,80 +209,96 @@ pub fn Handshake(comptime Env: type) type {
         pub fn rx(self: *Self, frame: []const u8) void {
             if (frame.len < header_bytes) return;
             if (frame[1] != type_key) return; // not an EAPOL-Key frame
-            // The RSN key descriptor (2), or the older WPA one (254) an AP
-            // may still send; the key info decides the rest.
-            if (frame[off_descriptor] != descriptor_rsn and frame[off_descriptor] != 254) return;
-            const key_info = get16(frame, off_info);
+            // What the 802.1X header says it holds is the frame, and is
+            // what the MIC covers: anything the radio hands over past that
+            // is not part of it and is cut away here.
+            const length = dot1x_bytes + @as(usize, get16(frame, off_body_length));
+            if (length < header_bytes or length > frame.len) return;
+            const eapol = frame[0..length];
+
+            const descriptor = eapol[off_descriptor];
+            if (descriptor != descriptor_rsn and descriptor != descriptor_wpa) return;
+            const key_info = get16(eapol, off_info);
             if (key_info & info_version != key_descriptor_version_2) return;
-            if (key_info & info_request != 0) return; // a request is the AP's to send
+            // The request bit is the station's to set, never the access
+            // point's.
+            if (key_info & info_request != 0) return;
 
-            const data_len = get16(frame, off_data_length);
-            if (header_bytes + data_len > frame.len) return;
-            const key_data = frame[header_bytes .. header_bytes + data_len];
+            const data_length = get16(eapol, off_data_length);
+            if (header_bytes + data_length > eapol.len) return;
+            const key_data = eapol[header_bytes .. header_bytes + data_length];
 
-            const pairwise = key_info & info_pairwise != 0;
-            if (pairwise) {
+            self.descriptor = descriptor;
+            if (key_info & info_pairwise != 0) {
                 if (key_info & info_mic == 0) {
-                    self.onMessage1(frame);
+                    self.onMessage1(eapol);
                 } else {
-                    self.onMessage3(frame, key_info, key_data);
+                    self.onMessage3(eapol, key_data);
                 }
-            } else {
-                self.onGroupMessage1(frame, key_data);
+            } else if (key_info & info_mic != 0) {
+                self.onGroupMessage1(eapol, key_data);
             }
         }
 
-        /// A replay counter newer than the last accepted (any, the first
-        /// time).
-        fn freshReplay(self: *Self, frame: []const u8) bool {
-            const counter = frame[off_replay .. off_replay + 8];
-            if (self.have_replay) {
-                var newer = false;
-                for (counter, &self.replay) |now, was| {
-                    if (now != was) {
-                        newer = now > was;
-                        break;
-                    }
-                }
-                if (!newer) return false;
+        /// Whether a frame's replay counter is newer than the last taken
+        /// (any counter, the first time).
+        fn replayFresh(self: *const Self, frame: []const u8) bool {
+            if (!self.have_replay) return true;
+            for (frame[off_replay .. off_replay + 8], &self.replay) |now, was| {
+                if (now != was) return now > was;
             }
-            @memcpy(&self.replay, counter);
+            return false;
+        }
+
+        /// The frame's replay counter becomes the last taken. A counter is
+        /// only taken once the frame carrying it has been believed - its
+        /// MIC checked, where it has one - so that a forged frame cannot
+        /// push the counter past the access point's own and leave every
+        /// real retransmission looking stale.
+        fn takeReplay(self: *Self, frame: []const u8) void {
+            @memcpy(&self.replay, frame[off_replay .. off_replay + 8]);
             self.have_replay = true;
-            return true;
         }
 
-        /// The MIC of a received frame checked under the KCK: the MIC
-        /// field zeroed in a copy, HMAC-SHA1 over the whole frame, its
-        /// first 16 bytes compared. Constant-time compare.
+        /// The MIC of a received frame checked under the KCK: HMAC-SHA1
+        /// over the frame with its MIC field read as zeroes, the first 16
+        /// bytes of the digest compared. Constant-time compare.
         fn micOk(self: *Self, frame: []const u8) bool {
-            var copy: [frame_max]u8 = @splat(0);
-            if (frame.len > copy.len) return false;
-            @memcpy(copy[0..frame.len], frame);
-            var received: [keys.mic_bytes]u8 = undefined;
-            @memcpy(&received, frame[off_mic .. off_mic + keys.mic_bytes]);
-            @memset(copy[off_mic .. off_mic + keys.mic_bytes], 0);
+            const zeroes: [keys.mic_bytes]u8 = @splat(0);
             var computed: [keys.mic_bytes]u8 = undefined;
-            if (!keys.mic(Env.crypto(self.env), &self.ptk.kck, copy[0..frame.len], &computed)) return false;
+            const parts = [_][]const u8{
+                frame[0..off_mic],
+                &zeroes,
+                frame[off_mic + keys.mic_bytes ..],
+            };
+            if (!keys.micParts(Env.crypto(self.env), &self.ptk.kck, &parts, &computed)) return false;
             var diff: u8 = 0;
-            for (received, computed) |a, b| diff |= a ^ b;
+            for (frame[off_mic .. off_mic + keys.mic_bytes], &computed) |a, b| diff |= a ^ b;
             return diff == 0;
         }
 
         fn onMessage1(self: *Self, frame: []const u8) void {
-            if (!self.freshReplay(frame)) return;
+            if (!self.replayFresh(frame)) return;
+            // The access point is starting the handshake over: the keys an
+            // earlier attempt left waiting belong to a pairwise key that
+            // is about to be replaced, and must not be installed.
+            self.pending = null;
+            self.ptk_set = false;
             Env.nonce(self.env, &self.snonce);
             const anonce = frame[off_nonce .. off_nonce + nonce_bytes];
             if (!keys.pairwiseTransient(Env.crypto(self.env), Env.pmk(self.env), Env.authenticator(self.env), Env.supplicant(self.env), anonce[0..nonce_bytes], &self.snonce, &self.ptk)) {
                 return Env.leave(self.env, reason_unspecified);
             }
             self.ptk_set = true;
+            self.takeReplay(frame);
             self.sendMessage2();
         }
 
-        fn onMessage3(self: *Self, frame: []const u8, key_info: u16, key_data: []const u8) void {
+        fn onMessage3(self: *Self, frame: []const u8, key_data: []const u8) void {
             if (!self.ptk_set) return;
-            if (!self.freshReplay(frame)) return;
+            if (!self.replayFresh(frame)) return;
             if (!self.micOk(frame)) return;
+            self.takeReplay(frame);
 
             // The key data is wrapped under the KEK (RFC 3394).
             var plain: [key_data_max]u8 = @splat(0);
@@ -286,14 +317,14 @@ pub fn Handshake(comptime Env: type) type {
             var pending: Pending = .{ .gtk = @splat(0), .gtk_len = gtk.key.len, .gtk_index = gtk.index, .gtk_tx = gtk.tx, .rsc = frame[off_rsc .. off_rsc + 6][0..6].* };
             @memcpy(pending.gtk[0..gtk.key.len], gtk.key);
             self.pending = pending;
-            _ = key_info;
             self.sendMessage4();
         }
 
         fn onGroupMessage1(self: *Self, frame: []const u8, key_data: []const u8) void {
             if (!self.ptk_set) return;
-            if (!self.freshReplay(frame)) return;
+            if (!self.replayFresh(frame)) return;
             if (!self.micOk(frame)) return;
+            self.takeReplay(frame);
             var plain: [key_data_max]u8 = @splat(0);
             if (key_data.len < 24 or key_data.len % 8 != 0 or key_data.len - 8 > plain.len) return;
             const out = plain[0 .. key_data.len - 8];
@@ -311,8 +342,10 @@ pub fn Handshake(comptime Env: type) type {
         /// header, the key descriptor with `key_info`, the station's
         /// nonce, the replay counter of the frame being answered, and
         /// `key_data`; then the MIC over all of it under the KCK. Answers
-        /// its length, or 0 if the MIC could not be made.
+        /// its length, or 0 if the key data does not fit or the MIC could
+        /// not be made.
         fn build(self: *Self, key_info: u16, key_data: []const u8) usize {
+            if (key_data.len > own_ie_max) return 0;
             const total = ether_bytes + header_bytes + key_data.len;
             @memset(self.out[0..total], 0);
             @memcpy(self.out[0..6], Env.authenticator(self.env));
@@ -322,7 +355,7 @@ pub fn Handshake(comptime Env: type) type {
             eapol[0] = version;
             eapol[1] = type_key;
             put16(eapol, off_body_length, @intCast(header_bytes - dot1x_bytes + key_data.len));
-            eapol[off_descriptor] = descriptor_rsn;
+            eapol[off_descriptor] = self.descriptor;
             put16(eapol, off_info, key_info);
             @memcpy(eapol[off_nonce .. off_nonce + nonce_bytes], &self.snonce);
             @memcpy(eapol[off_replay .. off_replay + 8], &self.replay);

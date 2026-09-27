@@ -298,11 +298,16 @@ fn rsnSuite(bits: u32) ?[4]u8 {
     return .{ 0x00, 0x0F, 0xAC, kind };
 }
 
+/// The longest element `buildRsn` writes, and the shortest form of it.
+pub const rsn_max: usize = 22;
+const rsn_short: usize = 8;
+
 /// The station's RSN element into `out`: the whole of it, or - when the
 /// libraries complete the element themselves (`complete` false) - only
 /// its version and group cipher. Answers its length, or 0 for a cipher
-/// that has no suite.
+/// that has no suite, or for an `out` too short to hold it.
 pub fn buildRsn(out: []u8, pairwise: u32, group: u32, capabilities: u16, complete: bool) usize {
+    if (out.len < (if (complete) rsn_max else rsn_short)) return 0;
     const group_suite = rsnSuite(group) orelse return 0;
     out[0] = eid_rsn;
     out[2] = 1;
@@ -310,7 +315,7 @@ pub fn buildRsn(out: []u8, pairwise: u32, group: u32, capabilities: u16, complet
     @memcpy(out[4..8], &group_suite);
     if (!complete) {
         out[1] = 6;
-        return 8;
+        return rsn_short;
     }
     const pairwise_suite = rsnSuite(pairwise) orelse return 0;
     out[8] = 1;
@@ -322,7 +327,7 @@ pub fn buildRsn(out: []u8, pairwise: u32, group: u32, capabilities: u16, complet
     out[20] = @truncate(capabilities);
     out[21] = @truncate(capabilities >> 8);
     out[1] = 20;
-    return 22;
+    return rsn_max;
 }
 
 /// Whether two elements say the same: byte for byte, or the same
