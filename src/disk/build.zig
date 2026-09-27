@@ -109,6 +109,7 @@ pub const files = [_]File{
     .{ .disk = "s/network-startup", .source = "s/network-startup" },
     .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
+    .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/WLAN0" },
 };
 
 pub fn build(b: *std.Build) void {

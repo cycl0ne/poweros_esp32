@@ -108,7 +108,15 @@ crypto.library:
 
 Message 4 goes out before the keys are installed, and only its
 transmit-done callback lets them in: installed any earlier, the frame would
-leave encrypted under a key the access point does not use yet.
+leave encrypted under a key the access point does not use yet. The
+callback's flag says whether sending **failed**, and which frame went out
+is read off the frame itself (`eapol.isFinal`: no key data, or the secure
+bit), so message 2 going out is never taken for message 4.
+
+The pairwise key goes in at index 0 for both directions
+(`PAIRWISE | TX | RX`) with a zero eight-byte counter; the group key for
+receiving only (`GROUP | RX`), with the six bytes of counter message 3
+carries. A key set without its directions is taken and never used.
 
 Three things the standard leaves to the implementation, each with its
 reason:
@@ -128,6 +136,28 @@ reason:
 A message 3 whose RSN element differs from the beacon's is a downgrade, and
 the station leaves with reason 17.
 
+### The memory functions
+
+The libraries copy each key into the MAC's key registers with `memcpy`.
+Those registers take nothing from a store narrower than a word, and the
+compiler's own `memcpy` - which would otherwise have that name in the
+device - stores in whatever widths it likes: the handshake finished, the
+key entries held the access point's address, and their key bytes were
+zero, so nothing encrypted was sent or received. `libc.zig` defines
+`memcpy`, `memmove` and `memset` as the ROM's, which store whole words
+where both sides are aligned; `romld` gives every ROM address a second name,
+`rom.<name>`, so they are reached though the plain names are taken.
+
+### The libraries' log
+
+The libraries log through the adapter, and hand some lines over as a
+`va_list` their compiler built. This compiler's reading of such a list goes
+wrong where the arguments move from the registers' save area to the stack:
+the third argument on came out as other data, and a `%s` among them could
+dereference it. `format.zig` reads those lists by the libraries' own
+compiler's rule (`LibraryList`), and its own lists as the compiler reads
+them (`OwnList`).
+
 ## Tests
 
 `tests/` holds the host tests: the adapter's ring and timer ordering, the
@@ -136,7 +166,8 @@ security elements including every prefix of a good one, and the handshake
 driven by a mock access point - the whole 4-way exchange, a downgraded
 message 3, key data longer than any frame the station sends, bytes past the
 declared length, a forged replay counter, a handshake started over, and a
-group rekey.
+group rekey. `format.zig` has its own, including a list built by hand the
+way the libraries' compiler builds one.
 
 The access point in those tests builds its frames from the frame layout
 written out in the test, not from `eapol.zig`'s own constants, so a wrong
@@ -146,16 +177,24 @@ offset there fails a test instead of agreeing with itself.
 
 On the Waveshare 7B: the radio up and calibrated, a scan listing the
 networks in range with their security, an open network joined with DHCP,
-ARP and DNS behind it, and the WPA2-Personal exchange as far as message 2 -
-the association accepted with the station's element, message 1 taken, the
-pairwise key derived, message 2 sent with its MIC.
+ARP and DNS behind it, and a WPA2-Personal network joined - the 4-way
+handshake, both keys in the hardware, an address from DHCP, a name resolved,
+a page fetched with `HTTPGet` and the clock set with `TimeSync`.
+
+`DEVS:NetInterfaces/WLAN0` is on the disk: the boot brings the interface
+up, and it takes its address once the radio has been joined to a network.
 
 ## Not done yet
 
-- **The 4-way handshake has not been finished on the board.** Everything up
-  to message 2 is proved; message 3, the keys going into the hardware, the
-  port opening and traffic need a network whose passphrase is right, and
-  have only been proved in the host tests.
+- **Pings to the gateway lose some and wait long** (half lost, 75 to 400 ms,
+  through the weakest access point of the network at -82 dBm). Whether
+  that is the signal or the device is not known yet.
+- **The first join after the board restarts is often refused** (the
+  authentication fails, 202): the access point still holds the station from
+  before. The libraries go on to the next access point of the network, or a
+  second JOIN takes.
+- **The group key rekey has not been seen on the board**; it is in the host
+  tests.
 - **The group key's TKIP form is untested.** A mixed WPA/WPA2 network hands
   out a 32-byte group key, and only CCMP's 16-byte one has been exercised.
 - **The reason the station came off a network only reaches the raw port.**
@@ -166,9 +205,10 @@ pairwise key derived, message 2 sent with its MIC.
 - **The calibration runs in full on every start.** It belongs in a file in
   `ENVARC:`, with a full run only when the stored one does not fit the
   board.
-- **The interface file and the passphrase file.** `DEVS:NetInterfaces/WLAN0`
-  and `ENVARC:Sys/net/networks/<ssid>`, so a network is joined at boot
-  without the passphrase being on the command line.
+- **The network is not joined at boot.** WLAN0 has no network to join
+  yet: a `Network` keyword and the passphrase in
+  `ENVARC:Sys/net/networks/<ssid>` are still to come, so that the boot joins
+  without the passphrase on a command line.
 - **Nothing is taken back.** The device never expunges: the libraries keep
   tasks, timers and an interrupt that cannot all be given up.
 - **WPA3, enterprise, OWE and the access point side are not there**, and the

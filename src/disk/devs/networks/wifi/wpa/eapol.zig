@@ -400,6 +400,18 @@ pub fn Handshake(comptime Env: type) type {
     };
 }
 
+/// Whether an EAPOL-Key frame the station sent is the last of a handshake -
+/// message 4, or the group handshake's reply. Those are what may let the
+/// keys be installed, and they are the ones carrying no key data or having
+/// the secure bit set; message 2 carries the station's RSN element and has
+/// neither. The frame starts at the 802.1X header, as the radio hands it
+/// back when it has gone out.
+pub fn isFinal(frame: []const u8) bool {
+    if (frame.len < header_bytes) return false;
+    if (frame[1] != type_key) return false;
+    return get16(frame, off_data_length) == 0 or get16(frame, off_info) & info_secure != 0;
+}
+
 /// The element with id `eid` in `elements` (each `id len ...`), or null.
 fn findElement(elements: []const u8, eid: u8) ?[]const u8 {
     var at: usize = 0;

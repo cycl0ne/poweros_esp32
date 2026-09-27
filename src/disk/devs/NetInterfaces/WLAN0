@@ -1,0 +1,14 @@
+/* DEVS:NetInterfaces/WLAN0 - the interface C:net/AddNetInterface WLAN0
+ * brings up as wlan0: the chip's radio as a station. The startup-sequence
+ * brings up every file here.
+ *
+ * The radio has to be on a network before DHCP can answer:
+ *   C:net/Wireless JOIN "<network>" PASSPHRASE <passphrase>
+ * Until then the interface waits, and takes a link-local address. On a
+ * board without the radio the interface is not added, and nothing is
+ * said. A keyword this file does not know is an error, with its line and
+ * column; see C:net/AddNetInterface for the list.
+ */
+Device     = networks/wifi.device
+Unit       = 0
+Configure  = DHCP

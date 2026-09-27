@@ -87,6 +87,7 @@ fn reasonName(reason: u8) ?[*:0]const u8 {
         1 => "unspecified",
         2 => "the authentication expired",
         3 => "deauthenticated, because one end is leaving",
+        4 => "disassociated for having been idle",
         8 => "disassociated, because one end is leaving",
         13 => "a security element was refused",
         14 => "a message integrity check failed",

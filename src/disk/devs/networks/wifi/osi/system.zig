@@ -12,6 +12,7 @@
 //! libraries' tag; the rest only when the adapter traces.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const rng = sdk.hardware.rng;
 const _osi = @import("_osi.zig");
@@ -149,11 +150,11 @@ pub fn nvsEraseKey(_: u32, _: ?[*:0]const u8) callconv(.c) c_int {
 const log_warn: c_uint = 2;
 
 /// One line of the libraries' log: `wifi: <tag>: <text>`.
-pub fn print(tag: ?[*:0]const u8, format_string: [*:0]const u8, args: *std.builtin.VaList) void {
+pub fn print(tag: ?[*:0]const u8, format_string: [*:0]const u8, source: anytype) void {
     const state = _osi.adapter orelse return;
     var buffer: [160]u8 = undefined;
     var sink: format.Sink = .{ .buffer = &buffer };
-    format.format(&sink, format_string, args);
+    format.formatFrom(&sink, format_string, source);
     sink.finish();
     var end = @min(sink.length, buffer.len - 1);
     while (end > 0 and (buffer[end - 1] == '\n' or buffer[end - 1] == '\r')) end -= 1;
@@ -171,13 +172,18 @@ pub fn logWrite(level: c_uint, tag: ?[*:0]const u8, format_string: ?[*:0]const u
     if (!shown(level)) return;
     var args = @cVaStart();
     defer @cVaEnd(&args);
-    print(tag, format_string orelse return, &args);
+    print(tag, format_string orelse return, format.OwnList{ .list = &args });
 }
 
 pub fn logWritev(level: c_uint, tag: ?[*:0]const u8, format_string: ?[*:0]const u8, args: std.builtin.VaList) callconv(.c) void {
     if (!shown(level)) return;
     var copy = args;
-    print(tag, format_string orelse return, &copy);
+    // The list is the libraries' own, made by their compiler.
+    if (builtin.cpu.arch == .xtensa) {
+        print(tag, format_string orelse return, format.LibraryList{ .list = &copy });
+    } else {
+        print(tag, format_string orelse return, format.OwnList{ .list = &copy });
+    }
 }
 
 // --- coexistence ----------------------------------------------------------

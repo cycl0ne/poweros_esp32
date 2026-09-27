@@ -275,6 +275,8 @@ fn upToMessage2(joined: *Joined) !void {
     try testing.expect(joined.hs.inHandshake());
     try checkReply(joined, 14 + header_bytes + ap.sta_rsn_len);
     try testing.expectEqualSlices(u8, &ap.snonce_given, ap.last[14 + off_nonce ..][0..32]);
+    // Message 2 going out must not let the keys in.
+    try testing.expect(!eapol.isFinal(ap.last[14..ap.last_len]));
 }
 
 /// The station's last reply as the access point checks it: its length, and
@@ -301,6 +303,8 @@ test "a full 4-way handshake, keys installed" {
     joined.hs.rx(msg[0..length]);
     try testing.expect(ap.left == null);
     try checkReply(&joined, 14 + header_bytes);
+    // Message 4 going out is what lets them in.
+    try testing.expect(eapol.isFinal(ap.last[14..ap.last_len]));
 
     // Message 4 came back, but no keys yet - it must go out first.
     try testing.expect(ap.installed_ptk == null);

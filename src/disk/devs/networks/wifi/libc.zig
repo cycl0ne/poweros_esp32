@@ -6,6 +6,8 @@
 //! The ROM has the string and memory functions (`memcpy`, `strlen`, ...)
 //! and the compiler's helpers; what it lacks is what formats (`sprintf`,
 //! `puts`), `free` for blocks the adapter gave out, and `hexstr2bin`.
+//! `memcpy`, `memmove` and `memset` are defined here all the same, and hand
+//! over to the ROM's: the compiler's own would otherwise take the names.
 //!
 //! **The data**: the delays the radio's fine timing measurement adds on
 //! each kind of channel, and the vendor number ESP-NOW frames carry.
@@ -23,6 +25,32 @@ export fn sprintf(buffer: [*]u8, format_string: [*:0]const u8, ...) callconv(.c)
     format.format(&sink, format_string, &args);
     sink.put(0);
     return @intCast(sink.length - 1);
+}
+
+/// The ROM's memory functions, under the second names romld gives them.
+const RomCopy = *const fn (?*anyopaque, ?*const anyopaque, usize) callconv(.c) ?*anyopaque;
+const RomSet = *const fn (?*anyopaque, c_int, usize) callconv(.c) ?*anyopaque;
+const rom_memcpy = @extern(RomCopy, .{ .name = "rom.memcpy" });
+const rom_memmove = @extern(RomCopy, .{ .name = "rom.memmove" });
+const rom_memset = @extern(RomSet, .{ .name = "rom.memset" });
+
+/// memcpy, memmove and memset are the ROM's, for everything in this
+/// device. The libraries were built against them, and they copy the keys
+/// into the MAC's key registers with memcpy: the ROM's stores whole words
+/// where both sides are aligned, while the compiler's own stores what it
+/// likes, and the registers take nothing from a store narrower than a
+/// word - the keys went in as zeroes, and nothing encrypted was sent or
+/// received.
+export fn memcpy(to: ?*anyopaque, from: ?*const anyopaque, length: usize) callconv(.c) ?*anyopaque {
+    return rom_memcpy(to, from, length);
+}
+
+export fn memmove(to: ?*anyopaque, from: ?*const anyopaque, length: usize) callconv(.c) ?*anyopaque {
+    return rom_memmove(to, from, length);
+}
+
+export fn memset(to: ?*anyopaque, value: c_int, length: usize) callconv(.c) ?*anyopaque {
+    return rom_memset(to, value, length);
 }
 
 export fn puts(text: [*:0]const u8) callconv(.c) c_int {
@@ -60,7 +88,7 @@ fn hook(comptime tag: [*:0]const u8) type {
         fn printf(format_string: [*:0]const u8, ...) callconv(.c) c_int {
             var args = @cVaStart();
             defer @cVaEnd(&args);
-            system.print(tag, format_string, &args);
+            system.print(tag, format_string, format.OwnList{ .list = &args });
             return 0;
         }
     };

@@ -50,7 +50,8 @@ const WifiSsid = extern struct {
     ssid: [32]u8,
 };
 
-/// eapol_txcb_t: an EAPOL frame of ours has gone out, or has not.
+/// eapol_txcb_t: an EAPOL frame of ours has been dealt with. The last
+/// argument is whether sending it **failed**, so false is the good one.
 const TxDone = *const fn (?[*]u8, usize, bool) callconv(.c) void;
 
 extern fn esp_wifi_register_wpa_cb_internal(table: *WpaFuncs) callconv(.c) c_int;
@@ -74,11 +75,12 @@ extern fn hexstr2bin(hex: [*]const u8, out: [*]u8, length: usize) callconv(.c) c
 /// whether it is also used to send, the receive sequence counter it starts
 /// at, the key, and what kind of key it is.
 ///
-/// The tenth argument is not one the function takes. Nine arguments leave
-/// three of them on the stack, and the compiler moves the stack pointer by
-/// just those twelve bytes, which leaves it four short of the eight-byte
-/// alignment code built for the ABI may rely on. A fourth word is written
-/// and never read.
+/// The tenth argument is not one the function takes. Nine arguments put
+/// three words on the stack, and the compiler moves the stack pointer by
+/// just those twelve bytes, which leaves it four short of eight-byte
+/// alignment for everything the call runs; a fourth word keeps it aligned,
+/// and is written and never read. The first nine arrive as they are either
+/// way.
 extern fn esp_wifi_set_sta_key_internal(
     alg: c_int,
     address: *const [6]u8,
@@ -101,10 +103,15 @@ const auth_wpa2_psk_sha256: u8 = 0x08;
 /// wifi_appie_t: the element added to an association request.
 const appie_rsn: u8 = 4;
 
-/// enum key_flag: which key is being set, and what it is used for.
+/// enum key_flag: which key is being set, and what it is used for. The
+/// pairwise key is set for both directions; the group key only for
+/// receiving, since a station that has a pairwise key sends under that.
 const key_flag_rx: c_int = 1 << 2;
+const key_flag_tx: c_int = 1 << 3;
 const key_flag_group: c_int = 1 << 4;
 const key_flag_pairwise: c_int = 1 << 5;
+const key_flag_for_pairwise: c_int = key_flag_pairwise | key_flag_tx | key_flag_rx;
+const key_flag_for_group: c_int = key_flag_group | key_flag_rx;
 
 /// The station's interface.
 const if_sta: u32 = 0;
@@ -199,7 +206,8 @@ pub const Station = struct {
     /// station sends and receives to itself from here on.
     pub fn installPairwise(station: *Station, alg: c_int, tk: []const u8) void {
         const seq: [ptk_seq_bytes]u8 = @splat(0);
-        _ = esp_wifi_set_sta_key_internal(alg, &station.aa, 0, 1, &seq, ptk_seq_bytes, tk.ptr, tk.len, key_flag_pairwise, 0);
+        _osi.trace2("install pairwise", @intCast(alg), tk.len);
+        _ = esp_wifi_set_sta_key_internal(alg, &station.aa, 0, 1, &seq, ptk_seq_bytes, tk.ptr, tk.len, key_flag_for_pairwise, 0);
     }
 
     /// The group key, with the send bit the access point set dropped. A
@@ -207,7 +215,8 @@ pub const Station = struct {
     /// and installing the group key as one to send would have the hardware
     /// use its index for what the station sends, which stops its traffic.
     pub fn installGroup(station: *Station, alg: c_int, index: u8, _: bool, rsc: []const u8, gtk: []const u8) void {
-        _ = esp_wifi_set_sta_key_internal(alg, &station.aa, index, 0, rsc.ptr, gtk_seq_bytes, gtk.ptr, gtk.len, key_flag_group | key_flag_rx, 0);
+        _osi.trace2("install group", index, gtk.len);
+        _ = esp_wifi_set_sta_key_internal(alg, &station.aa, index, 0, rsc.ptr, gtk_seq_bytes, gtk.ptr, gtk.len, key_flag_for_group, 0);
     }
 
     /// The handshake is done and the keys are in: the port opens and the
@@ -382,12 +391,18 @@ fn rxEapol(source: ?[*]u8, buffer: ?[*]u8, length: u32) callconv(.c) c_int {
     return 0;
 }
 
-/// An EAPOL frame of ours has gone out. Message 4 going out is what lets
-/// the keys be installed: before it they must not be, or the frame would
-/// leave encrypted under a key the access point does not use yet.
-fn txDone(_: ?[*]u8, _: usize, sent: bool) callconv(.c) void {
-    if (!sent) return;
+/// An EAPOL frame of ours has been dealt with, `failed` saying whether
+/// sending it went wrong. Message 4 going out is what lets the keys be
+/// installed: before it they must not be, or the frame would leave encrypted
+/// under a key the access point does not use yet. Which frame it was is read
+/// off the frame itself rather than taken from where the handshake has got
+/// to, so nothing else can be taken for message 4.
+fn txDone(payload: ?[*]u8, length: usize, failed: bool) callconv(.c) void {
+    if (failed) return;
+    const frame = payload orelse return;
     const base = device() orelse return;
+    _osi.trace2("eapol sent", length, @intFromBool(eapol.isFinal(frame[0..length])));
+    if (!eapol.isFinal(frame[0..length])) return;
     handshakeOf(base).confirmSent();
 }
 

@@ -97,10 +97,66 @@ fn text(sink: *Sink, spec: Spec, string: [*:0]const u8) void {
     if (spec.left) pad(sink, fill, ' ');
 }
 
-/// `format` with the arguments in `args`, into `sink`.
-/// C calling convention: the list is read with @cVaArg, which only a C
-/// function may do on every target.
-pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaList) callconv(.c) void {
+/// Arguments from a list this code started itself (`@cVaStart`), read the
+/// way the compiler that made it reads them.
+pub const OwnList = struct {
+    list: *std.builtin.VaList,
+
+    pub fn take(source: OwnList, comptime T: type) T {
+        return reader(T)(source.list);
+    }
+
+    /// `@cVaArg` may only be used in a function of the C calling
+    /// convention, so each type has its own.
+    fn reader(comptime T: type) fn (*std.builtin.VaList) callconv(.c) T {
+        return struct {
+            fn read(list: *std.builtin.VaList) callconv(.c) T {
+                return @cVaArg(list, T);
+            }
+        }.read;
+    }
+};
+
+/// Arguments from a list the radio's libraries made - one handed to a
+/// `v...` call. Their compiler lays an Xtensa list out as the arguments
+/// still in the registers' save area, the ones on the stack (from 32 bytes
+/// past `__va_stk`), and the offset of the next; an argument that would
+/// straddle the 24 bytes of registers is on the stack as a whole, and one
+/// of eight bytes starts at a multiple of eight. The list is read by that
+/// rule here, because this compiler's own reading goes wrong at the move to
+/// the stack: the third argument of a log line on and everything after it
+/// came out as other data, and a `%s` among them dereferenced it.
+pub const LibraryList = struct {
+    list: *std.builtin.VaListXtensa,
+
+    pub fn take(source: LibraryList, comptime T: type) T {
+        const list = source.list;
+        const size: c_int = (@sizeOf(T) + 3) & ~@as(c_int, 3);
+        var start = list.__va_ndx;
+        if (@alignOf(T) > 4) start = (start + @alignOf(T) - 1) & -@as(c_int, @alignOf(T));
+        var end = start + size;
+        var base: [*]const u8 = @ptrCast(list.__va_reg);
+        if (end > registers_bytes) {
+            if (start <= registers_bytes) end = stack_start + size;
+            base = @ptrCast(list.__va_stk);
+        }
+        list.__va_ndx = end;
+        const at: *align(1) const T = @ptrCast(base + @as(usize, @intCast(end - size)));
+        return at.*;
+    }
+
+    /// The six argument registers, and where the stack's part begins.
+    const registers_bytes = 24;
+    const stack_start = 32;
+};
+
+/// `format` with the arguments in `args` - a list started here.
+pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaList) void {
+    formatFrom(sink, format_string, OwnList{ .list = args });
+}
+
+/// `format_string` with the arguments `source` gives, into `sink`.
+pub fn formatFrom(sink: *Sink, format_string: [*:0]const u8, source: anytype) void {
     var at: usize = 0;
     while (format_string[at] != 0) : (at += 1) {
         const char = format_string[at];
@@ -119,7 +175,7 @@ pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaLi
             else => break,
         };
         if (format_string[at] == '*') {
-            const width = @cVaArg(args, c_int);
+            const width = source.take(c_int);
             if (width < 0) {
                 spec.left = true;
                 spec.width = @intCast(-width);
@@ -132,7 +188,7 @@ pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaLi
             at += 1;
             var precision: usize = 0;
             if (format_string[at] == '*') {
-                const given = @cVaArg(args, c_int);
+                const given = source.take(c_int);
                 precision = if (given < 0) 0 else @intCast(given);
                 at += 1;
             } else while (format_string[at] >= '0' and format_string[at] <= '9') : (at += 1) {
@@ -153,11 +209,11 @@ pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaLi
         };
         switch (format_string[at]) {
             'd', 'i' => {
-                const value: i64 = if (wide) @cVaArg(args, i64) else @cVaArg(args, c_int);
+                const value: i64 = if (wide) source.take(i64) else source.take(c_int);
                 number(sink, spec, @abs(value), value < 0, 10, false);
             },
             'u', 'x', 'X', 'o' => |conversion| {
-                const value: u64 = if (wide) @cVaArg(args, u64) else @cVaArg(args, c_uint);
+                const value: u64 = if (wide) source.take(u64) else source.take(c_uint);
                 const base: u8 = switch (conversion) {
                     'u' => 10,
                     'o' => 8,
@@ -166,22 +222,22 @@ pub fn format(sink: *Sink, format_string: [*:0]const u8, args: *std.builtin.VaLi
                 number(sink, spec, value, false, base, conversion == 'X');
             },
             'p' => {
-                const value = @cVaArg(args, usize);
+                const value = source.take(usize);
                 number(sink, .{ .alt = true, .width = spec.width, .left = spec.left }, value, false, 16, false);
             },
             'c' => {
-                const value = @cVaArg(args, c_int);
+                const value = source.take(c_int);
                 const fill = if (spec.width > 1) spec.width - 1 else 0;
                 if (!spec.left) pad(sink, fill, ' ');
                 sink.put(@truncate(@as(c_uint, @bitCast(value))));
                 if (spec.left) pad(sink, fill, ' ');
             },
             's' => {
-                const value = @cVaArg(args, ?[*:0]const u8);
+                const value = source.take(?[*:0]const u8);
                 text(sink, spec, value orelse "(null)");
             },
             'f', 'F', 'e', 'E', 'g', 'G' => {
-                _ = @cVaArg(args, f64);
+                _ = source.take(f64);
                 sink.put('?');
             },
             '%' => sink.put('%'),
@@ -213,4 +269,39 @@ test format {
     var small: [4]u8 = undefined;
     try testing.expectEqual(@as(usize, 6), testFormat(&small, small.len, "%s", "abcdef"));
     try testing.expectEqualStrings("abc", std.mem.sliceTo(&small, 0));
+}
+
+/// A list as the libraries' compiler builds it on Xtensa, by hand: the six
+/// argument registers' save area, and the stack words, which `__va_stk`
+/// points 32 bytes before.
+fn libraryList(registers: *[6]c_int, stack: *[4]c_int, index: c_int) std.builtin.VaListXtensa {
+    return .{
+        .__va_stk = @ptrFromInt(@intFromPtr(stack) - LibraryList.stack_start),
+        .__va_reg = &registers[0],
+        .__va_ndx = index,
+    };
+}
+
+test "a list the libraries made is read by their compiler's rule" {
+    const testing = std.testing;
+    var buffer: [64]u8 = undefined;
+    // Four named arguments, as the libraries' log call has: two of the
+    // address's bytes are still in registers, four are on the stack.
+    var registers = [6]c_int{ 0, 0, 0, 0, 0x9c, 0x05 };
+    var stack = [4]c_int{ 0xd6, 0x3c, 0xb7, 0x76 };
+    var list = libraryList(&registers, &stack, 16);
+    var sink: Sink = .{ .buffer = &buffer };
+    formatFrom(&sink, "mac=%02x:%02x:%02x:%02x:%02x:%02x", LibraryList{ .list = &list });
+    sink.finish();
+    try testing.expectEqualStrings("mac=9c:05:d6:3c:b7:76", std.mem.sliceTo(&buffer, 0));
+
+    // A 64-bit value after one word: it would straddle the registers, so
+    // it is on the stack as a whole, at an eight-byte boundary.
+    var wide_registers = [6]c_int{ 0, 0, 0, 0, 7, 0 };
+    var wide_stack = [4]c_int{ @bitCast(@as(u32, 0x2A05F200)), 1, 9, 0 };
+    list = libraryList(&wide_registers, &wide_stack, 16);
+    sink = .{ .buffer = &buffer };
+    formatFrom(&sink, "%d %lld %d", LibraryList{ .list = &list });
+    sink.finish();
+    try testing.expectEqualStrings("7 5000000000 9", std.mem.sliceTo(&buffer, 0));
 }

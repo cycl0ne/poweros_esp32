@@ -12,6 +12,12 @@
 //! answers a reference nothing else defines, so a program's own memcpy
 //! stays its own and the ROM fills in what is left. The program's script
 //! comes first, unchanged.
+//!
+//! Every ROM address is also given a second name, `rom.<name>`, which no C
+//! symbol can take. A program that must replace a ROM function under its
+//! own name - for code built against the ROM's behaviour, such as a memcpy
+//! that stores whole words into registers - still reaches the ROM's through
+//! it.
 
 const std = @import("std");
 const mem = std.mem;
@@ -71,6 +77,7 @@ pub fn main(init: std.process.Init) !void {
         while (lines.next()) |line| {
             const found = assignment(line) orelse continue;
             try out.print(arena, "PROVIDE({s} = {s});\n", .{ found.name, found.value });
+            if (isHex(found.value)) try out.print(arena, "PROVIDE(rom.{s} = {s});\n", .{ found.name, found.value });
             count += 1;
         }
     }
@@ -86,4 +93,9 @@ test assignment {
     try std.testing.expectEqualStrings("crc32_le", alias.value);
     try std.testing.expect(assignment("MEMORY {") == null);
     try std.testing.expect(assignment("  /* Group libgcc */") == null);
+}
+
+test "an address has a second name, an alias does not" {
+    try std.testing.expect(isHex(assignment("memcpy = 0x400011f4;").?.value));
+    try std.testing.expect(!isHex(assignment("PROVIDE ( esp_rom_crc32_le = crc32_le );").?.value));
 }
