@@ -216,9 +216,16 @@ offset there fails a test instead of agreeing with itself.
 
 ## Proved on the board
 
-- A 1 MB download takes about 15 s (66 KiB/s), and takes the same while
-  three more megabytes are written to the flash disk beside it: the flash's
-  erases, with interrupts masked for each, do not drop the link.
+- A 1 MB download from a machine on the same network takes 2 to 4 s
+  (260 to 480 KiB/s) over IPv4 and IPv6; one from the internet took 15 s
+  (66 KiB/s) before the receive buffers below, and took the same while
+  three more megabytes were written to the flash disk beside it: the
+  flash's erases, with interrupts masked for each, do not drop the link.
+- **The receive buffers** are IDF's defaults, 10 static and 32 dynamic.
+  With 6 and 16, a burst the access point sent aggregated found no buffer
+  for its later frames and the libraries dropped them before handing them
+  on: TCP sent again, slowly, and a packet in fragments never arrived at
+  all - both families, straight after the boot.
 
 On the Waveshare 7B: the radio up and calibrated, a scan listing the
 networks in range with their security, an open network joined with DHCP,
@@ -231,10 +238,9 @@ up, and it takes its address once the radio has been joined to a network.
 
 ## Not done yet
 
-- **Throughput is low**: 66 KiB/s for a download from the internet, where
-  the link carries megabytes a second. Not yet looked into: the TCP
-  windows, the receive ring of eight frames, and what is left of the
-  panel's noise are the first places to measure.
+- **Throughput** is held by the TCP windows (8 KiB each way) as much as
+  by the radio now: larger windows, and window scaling, are the next thing
+  to measure.
 - **The panel still costs the radio something.** With the pads at their
   weakest, a ping takes 4 to 40 ms and now and then a few hundred; with the
   panel stopped, 4 to 20.

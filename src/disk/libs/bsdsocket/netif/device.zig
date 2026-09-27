@@ -179,9 +179,13 @@ pub fn start(stack: *StackBase, device: *Device, port: *exec.MsgPort) void {
         request.req.req.message.reply_port = port;
         request.req.req.message.length = @sizeOf(net.IOSana2Req);
         if (index < device.reads) {
-            // A quarter of the reads for ARP, a quarter for IPv6 when the
-            // interface speaks it, the rest for IPv4.
-            request.kind = if (index % 4 == 3) .read_arp else if (index % 4 == 1 and device.interface.ip6.enabled != 0) .read_ip6 else .read_ip;
+            // Of each eight reads one for ARP, three for IPv6 when the
+            // interface speaks it, the rest for IPv4. A read is answered
+            // with one frame, and a frame no read of its type waits for
+            // is lost: a burst - a TCP window's segments, a packet's
+            // fragments - needs as many waiting as it has frames.
+            const place = index % 8;
+            request.kind = if (place == 7) .read_arp else if (place % 2 == 1 and device.interface.ip6.enabled != 0) .read_ip6 else .read_ip;
             read(stack, request);
         } else {
             request.kind = .write;

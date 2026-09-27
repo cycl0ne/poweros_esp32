@@ -59,9 +59,12 @@ const Address = @import("../ip6/address.zig").Address;
 /// The device is opened with the stack's copy calls, asked what its link
 /// is, and put on line with the address it came with, unless it is on
 /// line already. The first interface on a device starts the stack task,
-/// which keeps reads outstanding on it from then on - a quarter of them
-/// for ARP, a quarter for IPv6 when the interface speaks it, the rest for
-/// IPv4 - as many as the link's speed calls for unless the tags say. An
+/// which keeps reads outstanding on it from then on - of each eight one
+/// for ARP, three for IPv6 when the interface speaks it, the rest for
+/// IPv4 - as many as the link's speed calls for unless the tags say: 8,
+/// 24 from 10 Mbit/s, 32 from 100 Mbit/s. A frame that finds no read of
+/// its type waiting is lost, so a burst - a TCP window, a packet's
+/// fragments - needs that many. An
 /// interface that speaks IPv6 is given its link-local address; a stable
 /// identifier needs crypto.library, which is opened for it, and without
 /// which the link's EUI-64 is taken. Without `IFA_StableSecret` the
@@ -153,7 +156,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     @memcpy(link.name[0..device_length], device_name.?[0..device_length]);
     link.unit = unit;
     const bps = link.bps();
-    link.reads = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Reads, if (bps >= 100_000_000) 16 else if (bps >= 10_000_000) 8 else 4, tags))), device.reads_max);
+    link.reads = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Reads, if (bps >= 100_000_000) 32 else if (bps >= 10_000_000) 24 else 8, tags))), device.reads_max);
     link.writes = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Writes, if (bps >= 100_000_000) 8 else if (bps >= 10_000_000) 4 else 2, tags))), device.writes_max);
     if (link.reads == 0) link.reads = 1;
     if (link.writes == 0) link.writes = 1;

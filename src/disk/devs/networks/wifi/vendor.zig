@@ -25,8 +25,12 @@ pub const init_magic: c_int = 0x1F2F3F4F;
 pub const InitConfig = extern struct {
     osi_funcs: *const osi_table.OsiFuncs = &osi_table.funcs,
     wpa_crypto_funcs: crypto.CryptoFuncs = crypto.funcs,
-    static_rx_buf_num: c_int = 6,
-    dynamic_rx_buf_num: c_int = 16,
+    /// The receive buffers: IDF's defaults. With fewer, a burst the
+    /// access point sends aggregated finds no buffer for its later
+    /// frames, and the libraries drop them before they are handed on -
+    /// TCP sends again, but a packet's fragments are lost for good.
+    static_rx_buf_num: c_int = 10,
+    dynamic_rx_buf_num: c_int = 32,
     /// 1: send buffers allocated as frames are sent.
     tx_buf_type: c_int = 1,
     static_tx_buf_num: c_int = 0,

@@ -182,9 +182,12 @@ bsdsocket.library/WaitSelect
 	The device is opened with the stack's copy calls, asked what its link
 	is, and put on line with the address it came with, unless it is on
 	line already. The first interface on a device starts the stack task,
-	which keeps reads outstanding on it from then on - a quarter of them
-	for ARP, a quarter for IPv6 when the interface speaks it, the rest for
-	IPv4 - as many as the link's speed calls for unless the tags say. An
+	which keeps reads outstanding on it from then on - of each eight one
+	for ARP, three for IPv6 when the interface speaks it, the rest for
+	IPv4 - as many as the link's speed calls for unless the tags say: 8,
+	24 from 10 Mbit/s, 32 from 100 Mbit/s. A frame that finds no read of
+	its type waiting is lost, so a burst - a TCP window, a packet's
+	fragments - needs that many. An
 	interface that speaks IPv6 is given its link-local address; a stable
 	identifier needs crypto.library, which is opened for it, and without
 	which the link's EUI-64 is taken. Without `IFA_StableSecret` the
