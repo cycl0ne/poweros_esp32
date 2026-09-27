@@ -9,6 +9,8 @@ test {
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/openeth.zig");
     _ = @import("devs/networks/wifi/tests/wifi.zig");
+    _ = @import("devs/networks/wifi/tests/wpa.zig");
+    _ = @import("devs/networks/wifi/tests/eapol.zig");
     _ = @import("devs/telnet/filter.zig");
     _ = @import("libs/bsdsocket/tests/bsdsocket.zig");
     _ = @import("libs/bsdsocket/tests/arp.zig");
