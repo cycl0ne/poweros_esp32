@@ -29,8 +29,8 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "27.9.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++

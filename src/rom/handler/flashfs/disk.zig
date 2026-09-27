@@ -20,6 +20,19 @@
 //! - **The collector** frees a sector when the volume runs short: what is
 //!   still live in it is appended again at the head, and the sector is
 //!   forgotten so the next segment erases it.
+//! - **A full volume stays usable.** What adds to the live data - a new
+//!   object, a file's bytes - may take a new segment only while more than
+//!   `free_floor` sectors stay free; everything else - a deletion, a
+//!   truncation, an object's record written again, what the collector
+//!   moves - may use those last sectors. So the collector always has room
+//!   to move what it must, a delete on a full disk goes through, and the
+//!   space it frees comes back to the next write. The collector runs only
+//!   when the segments hold two sectors' worth of records no longer
+//!   needed - packing the rest forward loses up to a sector's tail again;
+//!   when a whole turn round the volume wins no sector back, the volume
+//!   is full, and a growing write is refused at once until something is
+//!   deleted, cut or overwritten - rather than every write copying the
+//!   volume over for room it cannot get.
 //!
 //! The medium must offer what volume.zig asks for, plus `now()` for the
 //! date on a new file.
@@ -45,6 +58,10 @@ const bucket_count = 256;
 /// The collector runs when fewer than this many sectors hold no segment, so
 /// there is always room to write what moving costs.
 const free_floor = 3;
+/// What an append does to the live data: adds to it (a new object, a
+/// file's bytes), or not (a deletion, a truncation, an object's record
+/// written again, what the collector moves).
+const Growth = enum { grows, keeps };
 
 pub const Error = error{
     NotFound,
@@ -231,6 +248,12 @@ pub fn FileSystem(comptime Media: type) type {
         /// Set while a collection runs: what it appends must not start
         /// another one, which is what `free_floor` keeps room for.
         collecting: bool = false,
+        /// A whole turn of the collector won nothing back: growing writes
+        /// are refused until something frees space, which `frees` counts
+        /// (deletions, truncations, overwrites).
+        full: bool = false,
+        frees: u32 = 0,
+        full_frees: u32 = 0,
         /// de_NumBuffers, as the mountlist gave it. Nothing here keeps
         /// buffers - the medium is read through its mapping - but
         /// ACTION_MORE_CACHE has to answer with something, and this is the
@@ -524,7 +547,9 @@ pub fn FileSystem(comptime Media: type) type {
                     continue;
                 }
                 if (e.offset >= end) break;
-                // They overlap. What is left of the old one keeps its place.
+                // They overlap. What is left of the old one keeps its place;
+                // an overwrite frees what it replaces.
+                if (!fs.collecting) fs.frees +%= 1;
                 const front = if (e.offset < offset) offset - e.offset else 0;
                 const back = if (e_end > end) e_end - end else 0;
                 fs.vol.kill(e.at, @intCast(e.length - front - back));
@@ -626,10 +651,34 @@ pub fn FileSystem(comptime Media: type) type {
 
         // --- appending ------------------------------------------------------
 
-        /// A record at the head, with a collection first if the volume is
-        /// running out of sectors, and one more try if it still says no.
-        fn append(fs: *Fs, kind: flashfs.Kind, fixed: []const u8, tail: []const u8, more: []const u8) Error!u32 {
-            if (!fs.collecting and fs.vol.freeSegments() < free_floor) try fs.collect();
+        /// A record at the head. One that `grows` the live data is refused
+        /// when it would eat into the reserve. Collections first while the
+        /// volume is short of free sectors - as many as it takes, each of
+        /// the oldest segment - and one more try if it still says no.
+        fn append(fs: *Fs, growth: Growth, kind: flashfs.Kind, fixed: []const u8, tail: []const u8, more: []const u8) Error!u32 {
+            const payload: u32 = @intCast(fixed.len + tail.len + more.len);
+            if (growth == .grows and fs.full and fs.frees == fs.full_frees) return error.DiskFull;
+            if (!fs.collecting and !fs.vol.fitsHead(payload)) {
+                // A new segment is to be taken: first win sectors back
+                // while there is something to win. A segment full of live
+                // data frees nothing when moved, but brings the next one
+                // up, so one turn round the volume reaches all there is.
+                const wanted: u32 = if (growth == .grows) free_floor + 1 else free_floor;
+                var turns: u32 = 0;
+                while (fs.vol.freeSegments() < wanted and turns < fs.vol.sectors and
+                    fs.vol.reclaimable() >= 2 * fs.vol.sector_size) : (turns += 1)
+                {
+                    fs.collect() catch |e| switch (e) {
+                        error.DiskFull => break,
+                        else => return e,
+                    };
+                }
+                if (growth == .grows and fs.vol.freeSegments() < wanted) {
+                    fs.full = true;
+                    fs.full_frees = fs.frees;
+                    return error.DiskFull;
+                }
+            }
             if (fs.vol.append(kind, fixed, tail, more)) |at| return at else |e| {
                 if (e != error.MediumFull) return fromVolume(e);
             }
@@ -657,7 +706,9 @@ pub fn FileSystem(comptime Media: type) type {
             };
             const was_at = n.meta_at;
             const was_size = n.meta_size;
-            const at = try fs.append(.meta, flashfs.bytesOf(&meta), name, comment);
+            // An object's first record adds to the live data; writing it
+            // again replaces what it had.
+            const at = try fs.append(if (was_at == 0) .grows else .keeps, .meta, flashfs.bytesOf(&meta), name, comment);
             if (was_at != 0) fs.vol.kill(was_at, was_size);
             n.meta_at = at;
             n.meta_size = @intCast(flashfs.recordSize(@sizeOf(flashfs.Meta) + name.len + comment.len));
@@ -670,14 +721,16 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         fn writeKill(fs: *Fs, n: *Node) Error!void {
+            fs.frees +%= 1;
             const gone: flashfs.Kill = .{ .inode = n.inode };
-            _ = try fs.append(.kill, flashfs.bytesOf(&gone), "", "");
+            _ = try fs.append(.keeps, .kill, flashfs.bytesOf(&gone), "", "");
             if (n.meta_at != 0) fs.vol.kill(n.meta_at, n.meta_size);
         }
 
         fn writeTrunc(fs: *Fs, n: *Node, size: u64) Error!void {
+            fs.frees +%= 1;
             const trunc: flashfs.Trunc = .{ .inode = n.inode, .size = size };
-            _ = try fs.append(.trunc, flashfs.bytesOf(&trunc), "", "");
+            _ = try fs.append(.keeps, .trunc, flashfs.bytesOf(&trunc), "", "");
         }
 
         // --- the collector ---------------------------------------------------
@@ -733,7 +786,7 @@ pub fn FileSystem(comptime Media: type) type {
                 const piece: u32 = @min(@as(u32, @intCast(buffer.len)), length - done);
                 if (!fs.vol.readAt(at + done, buffer[0..piece])) return error.MediumFailed;
                 const data: flashfs.Data = .{ .inode = n.inode, .offset = offset + done };
-                const put = try fs.append(.data, flashfs.bytesOf(&data), buffer[0..piece], "");
+                const put = try fs.append(.keeps, .data, flashfs.bytesOf(&data), buffer[0..piece], "");
                 try fs.place(n, offset + done, piece, put + @sizeOf(flashfs.Data));
                 done += piece;
             }
@@ -994,7 +1047,7 @@ pub fn FileSystem(comptime Media: type) type {
             while (done < len) {
                 const piece: u32 = @intCast(@min(len - done, chunk));
                 const data: flashfs.Data = .{ .inode = n.inode, .offset = l.pos };
-                const at = try fs.append(.data, flashfs.bytesOf(&data), buf[done..][0..piece], "");
+                const at = try fs.append(.grows, .data, flashfs.bytesOf(&data), buf[done..][0..piece], "");
                 try fs.place(n, l.pos, piece, at + @sizeOf(flashfs.Data));
                 done += piece;
                 l.pos += piece;
@@ -1205,12 +1258,19 @@ pub fn FileSystem(comptime Media: type) type {
         fn info(fs: *Fs, data: ?*dos.InfoData) Error!void {
             const d = data orelse return error.InvalidLock;
             const total = fs.vol.sectors - 1;
+            // Free is what a file can still have: the sectors above the
+            // floor the collector keeps, and what it can win back from
+            // records that no longer count.
+            const free_sectors = fs.vol.freeSegments();
+            const above_floor = if (free_sectors > free_floor) free_sectors - free_floor else 0;
+            const winnable: u32 = @intCast(fs.vol.reclaimable() / fs.vol.sector_size);
+            const available = @min(total, above_floor + winnable);
             d.* = .{
                 .num_soft_errors = 0,
                 .unit_number = 0,
                 .disk_state = dos.ID_VALIDATED,
                 .num_blocks = total,
-                .num_blocks_used = total - fs.vol.freeSegments(),
+                .num_blocks_used = total - available,
                 .bytes_per_block = fs.vol.sector_size,
                 .disk_type = flashfs.ID_FLASHFS_DISK,
                 .volume_node = fs.volume_node,
@@ -1693,6 +1753,96 @@ test "a full volume says so instead of losing data" {
     // What was written before it filled up is still readable.
     var buffer: [512]u8 = undefined;
     try testing.expectEqual(@as(usize, 400), try readFile(&fs, "f0", &buffer));
+    fs.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+/// Files `f0`, `f1`, ... of 400 bytes each until the volume refuses one;
+/// how many were written whole.
+fn fillUp(fs: *TestFs) !u32 {
+    var text: [400]u8 = undefined;
+    @memset(&text, 'z');
+    var made: u32 = 0;
+    while (made < 60) : (made += 1) {
+        var name: [16]u8 = undefined;
+        const called = std.fmt.bufPrintZ(&name, "f{d}", .{made}) catch unreachable;
+        var fh: FileHandle = .{};
+        const opened = sendArgs(fs, .findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = called.ptr } });
+        if (opened.res1 == dos.DOSFALSE) {
+            try testing.expectEqual(dos.ERROR_DISK_FULL, opened.res2);
+            return made;
+        }
+        const count = sendArgs(fs, .write, .{ .io = .{ .fh = &fh, .buffer = &text, .length = text.len } });
+        _ = sendArgs(fs, .end, .{ .file = .{ .fh = &fh } });
+        if (count.res1 != text.len) {
+            try testing.expectEqual(dos.ERROR_DISK_FULL, count.res2);
+            return made;
+        }
+    }
+    return error.NeverFull;
+}
+
+test "a full volume still deletes, and takes files again after" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = MemMedia.init(&store, test_sector, test_page);
+    var fs = TestFs.init(&media, null);
+    try fs.format("System");
+    const made = try fillUp(&fs);
+    try testing.expect(made > 2);
+    // Full: a delete needs a record written, and must still get it.
+    const first = send(&fs, .delete_object, .{ 0, @bitCast(@intFromPtr("f0")), 0, 0 });
+    try testing.expectEqual(dos.DOSTRUE, first.res1);
+    try testing.expectEqual(dos.DOSTRUE, send(&fs, .delete_object, .{ 0, @bitCast(@intFromPtr("f1")), 0, 0 }).res1);
+    // The space the two had is there again.
+    try writeFile(&fs, "after", "x" ** 400);
+    var buffer: [512]u8 = undefined;
+    try testing.expectEqual(@as(usize, 400), try readFile(&fs, "after", &buffer));
+    try testing.expectEqual(@as(usize, 400), try readFile(&fs, "f2", &buffer));
+    fs.deinit();
+
+    // And all of it is on the medium.
+    var again = TestFs.init(&media, null);
+    try again.mount();
+    try testing.expectEqual(@as(usize, 400), try readFile(&again, "after", &buffer));
+    try testing.expectEqual(@as(usize, 400), try readFile(&again, "f2", &buffer));
+    again.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+test "two files filling the volume at once are refused, not held" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = MemMedia.init(&store, test_sector, test_page);
+    var fs = TestFs.init(&media, null);
+    try fs.format("System");
+    var one: FileHandle = .{};
+    var two: FileHandle = .{};
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findoutput, .{ .find = .{ .fh = &one, .lock = null, .name = "one" } }).res1);
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findoutput, .{ .find = .{ .fh = &two, .lock = null, .name = "two" } }).res1);
+    var piece: [100]u8 = undefined;
+    @memset(&piece, 'p');
+    var written: u32 = 0;
+    var refused: u32 = 0;
+    var round: u32 = 0;
+    // Far more than fits; each refusal must come at once.
+    while (round < 200 and refused < 4) : (round += 1) {
+        const fh = if (round % 2 == 0) &one else &two;
+        const erases_before = media.erases;
+        const count = sendArgs(&fs, .write, .{ .io = .{ .fh = fh, .buffer = &piece, .length = piece.len } });
+        if (count.res1 == piece.len) {
+            written += piece.len;
+        } else {
+            try testing.expectEqual(dos.ERROR_DISK_FULL, count.res2);
+            refused += 1;
+        }
+        // No write copies the volume over to make room it cannot get.
+        try testing.expect(media.erases - erases_before <= 2);
+    }
+    try testing.expect(refused == 4);
+    try testing.expect(written > test_sector * 8);
+    _ = sendArgs(&fs, .end, .{ .file = .{ .fh = &one } });
+    _ = sendArgs(&fs, .end, .{ .file = .{ .fh = &two } });
+    try testing.expectEqual(dos.DOSTRUE, send(&fs, .delete_object, .{ 0, @bitCast(@intFromPtr("one")), 0, 0 }).res1);
+    try writeFile(&fs, "after", "room again");
     fs.deinit();
     try testing.expectEqual(@as(usize, 0), media.live);
 }

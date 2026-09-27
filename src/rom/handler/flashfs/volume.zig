@@ -74,7 +74,9 @@ const Segment = struct {
     erases: u32 = 0,
     /// Bytes in use: the header and the records after it.
     used: u32 = 0,
-    /// Of those, the bytes of records that still say something.
+    /// Of those, the bytes of records - not the padding a flush leaves -
+    /// and of these the ones that still say something.
+    records: u32 = 0,
     live: u32 = 0,
     /// Known to be all ones, so it can be written without erasing first.
     blank: bool = false,
@@ -285,6 +287,7 @@ pub fn Volume(comptime Media: type) type {
                     .size = size,
                 };
                 v.segs[sector].live += try apply(ctx, v, record);
+                v.segs[sector].records += size;
                 off += size;
                 end = off;
             }
@@ -410,6 +413,7 @@ pub fn Volume(comptime Media: type) type {
             v.next_seq += 1;
             seg.seq = h.seq;
             seg.live = 0;
+            seg.records = 0;
             seg.used = @sizeOf(flashfs.SegmentHeader);
             seg.blank = false;
             @memset(v.head_buf, 0xFF);
@@ -435,6 +439,25 @@ pub fn Volume(comptime Media: type) type {
                 if (seg.erases < v.segs[chosen].erases) best = sector;
             }
             return best;
+        }
+
+        /// Whether a record of `payload` bytes fits in the head as it is,
+        /// with no new segment.
+        pub fn fitsHead(v: *const V, payload: u32) bool {
+            return v.head != 0 and v.head_used + flashfs.recordSize(payload) <= v.sector_size;
+        }
+
+        /// The bytes the collector could win back: the records in
+        /// segments other than the head that no longer count. The padding
+        /// flushes leave and the tail of a sector no record fits in are not
+        /// among them - moving records forward leaves as much again.
+        pub fn reclaimable(v: *V) u64 {
+            var total: u64 = 0;
+            for (v.segs[1..], 1..) |seg, sector| {
+                if (seg.seq == 0 or sector == v.head) continue;
+                total += seg.records - @min(seg.records, seg.live);
+            }
+            return total;
         }
 
         /// How many sectors hold no segment.
@@ -468,6 +491,7 @@ pub fn Volume(comptime Media: type) type {
             v.head_used = @intCast(flashfs.padded(v.head_used));
             v.segs[v.head].used = v.head_used;
             v.segs[v.head].live += @intCast(flashfs.recordSize(payload));
+            v.segs[v.head].records += @intCast(flashfs.recordSize(payload));
             try v.write();
             return at;
         }
@@ -520,9 +544,12 @@ pub fn Volume(comptime Media: type) type {
 
         /// A sector's segment forgotten: what was worth keeping in it has
         /// been appended at the head, so the next segment that needs a
-        /// sector may erase this one and take it.
+        /// sector may erase this one and take it. Nothing is flushed here:
+        /// a sector is only erased by `newHead`, which flushes the head
+        /// first, so what was moved is on the medium before the old copy
+        /// can go - and a flush per collection would pad away up to a page
+        /// each time, more than moving a full segment frees.
         pub fn forget(v: *V, sector: u32) Error!void {
-            try v.flush();
             v.segs[sector] = .{};
         }
 
