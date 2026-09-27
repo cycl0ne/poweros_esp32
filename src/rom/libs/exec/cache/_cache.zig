@@ -253,9 +253,23 @@ const rom = struct {
 /// data needs.
 extern fn cache_writeback_line_frozen(addr: u32) callconv(.c) void;
 
-/// Writes the whole data cache back to memory.
+extern fn cache_writeback_range_frozen(addr: u32, size: u32) callconv(.c) void;
+
+/// What one frozen write-back covers: interrupts are off for its length,
+/// so it is kept short.
+const frozen_chunk = 256 * 1024;
+
+/// Writes the whole data cache back to memory: the data bus a chunk at a
+/// time, each with interrupts off and the cache frozen. The ROM's
+/// Cache_WriteBack_All runs with neither, and on this chip a line that is
+/// touched while it is being written back can read back wrong (the
+/// ESP32-S3's cache write-back errata): an interrupt that spills registers
+/// onto a task's stack in PSRAM got some of them back changed.
 fn writebackAll() void {
-    rom.Cache_WriteBack_All();
+    var at: usize = data_bus.start;
+    while (at < data_bus.start + chip_code_map.size) : (at += frozen_chunk) {
+        cache_writeback_range_frozen(@intCast(at), frozen_chunk);
+    }
 }
 
 /// Invalidates the whole instruction cache, so every instruction is
