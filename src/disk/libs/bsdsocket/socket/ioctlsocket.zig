@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! IoctlSocket: whether a socket waits, and what it has waiting.
+//! IoctlSocket: whether a socket waits, what it has waiting, and whether
+//! it is at the mark.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -24,7 +25,9 @@ const _tcp = @import("../tcp/_tcp.zig");
 /// - `request` - `FIONBIO`: `argument` is an i32, not 0 for a socket
 ///   whose calls never wait, 0 for one that does; `FIONREAD`: `argument`
 ///   is an u32 that gets the bytes of the next datagram, 0 if none - on a
-///   stream socket, every byte there is to read.
+///   stream socket, every byte there is to read; `SIOCATMARK`: `argument`
+///   is an i32 that gets 1 when a stream socket's next byte is the one
+///   after its urgent byte (reads stop there), else 0.
 /// - `argument` - as the request says.
 ///
 /// RESULT:
@@ -75,6 +78,10 @@ pub fn IoctlSocket(sb: *SocketBase, descriptor: i32, request: u32, argument: *an
                 next = _tcp.of(socket).receive.count;
             } else if (socket.receive.first()) |node| next = @as(*Frame, @fieldParentPtr("node", node)).length;
             @as(*align(1) u32, @ptrCast(argument)).* = next;
+        },
+        bsd.SIOCATMARK => {
+            const at_mark = socket.socket_type == bsd.SOCK_STREAM and @import("../tcp/user.zig").atMark(socket);
+            @as(*align(1) i32, @ptrCast(argument)).* = @intFromBool(at_mark);
         },
         else => return _socket.fail(sb, bsd.EINVAL, "IoctlSocket"),
     }

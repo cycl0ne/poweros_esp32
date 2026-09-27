@@ -71,7 +71,7 @@ pub fn release(stack: *StackBase, tcb: *Tcb) u32 {
         const end = start +% frame.length;
         if (_tcp.after(end, tcb.rcv_nxt)) {
             const skip = tcb.rcv_nxt -% start;
-            const taken = tcb.receive.write(frame.bytes()[skip..]);
+            const taken = _tcp.deliver(tcb, frame.bytes()[skip..]);
             tcb.rcv_nxt +%= taken;
             moved += taken;
         }

@@ -6,6 +6,9 @@
 //! A segment is built from the send ring into a fresh frame each time it
 //! is sent, so nothing is kept per segment: sending again after a loss
 //! reads the same bytes from the ring once more.
+//!
+//! Urgent data (MSG_OOB) goes in the ring like any other; SND.UP marks
+//! its end, and each segment before it carries URG and the pointer.
 
 const sdk = @import("sdk");
 const _inet = @import("../inet/_inet.zig");
@@ -48,11 +51,14 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     _ip.put16(header, 2, socket.remote_port);
     _ip.put32(header, 4, sequence);
     _ip.put32(header, 8, if (flags & _tcp.ACK != 0) tcb.rcv_nxt else 0);
+    // While urgent data is out, every segment before its end says where
+    // it ends (BSD's pointer: one past the last urgent byte).
+    const urgent = flags & (_tcp.ACK | _tcp.RST) == _tcp.ACK and tcb.flags & _tcp.urgent_out != 0 and _tcp.after(tcb.snd_up, sequence);
     header[12] = @intCast((header_length / 4) << 4);
-    header[13] = flags;
+    header[13] = if (urgent) flags | _tcp.URG else flags;
     _ip.put16(header, 14, @intCast(offered));
     _ip.put16(header, 16, 0);
-    _ip.put16(header, 18, 0);
+    _ip.put16(header, 18, if (urgent) @intCast(@min(tcb.snd_up -% sequence, 0xFFFF)) else 0);
     if (with_mss) {
         header[20] = _tcp.option_mss;
         header[21] = 4;
@@ -79,7 +85,7 @@ pub fn localMss(mtu: u32, peer: Address) u32 {
 
 /// Everything the connection may send now, sent: data as far as the
 /// peer's window and the congestion window go - a small tail waits while
-/// data is in flight, unless TCP_NODELAY (Nagle) - the FIN once the data
+/// data is in flight, unless TCP_NODELAY or urgent data (Nagle) - the FIN once the data
 /// before it has gone, and an acknowledgement if one is owed and nothing
 /// else carried it. After a timeout SND.NXT is back at SND.UNA, and the
 /// same loop sends everything again, FIN included.
@@ -103,7 +109,7 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         const usable: u32 = if (allowed > in_flight) allowed - in_flight else 0;
         var length: u32 = @min(unsent, @min(usable, tcb.mss));
         const small_tail = length > 0 and length < tcb.mss and length == unsent and in_flight > 0;
-        if (small_tail and tcb.flags & (_tcp.no_delay | _tcp.fin_wanted) == 0) length = 0;
+        if (small_tail and tcb.flags & (_tcp.no_delay | _tcp.fin_wanted | _tcp.urgent_out) == 0) length = 0;
         const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and length == unsent and tcb.snd_nxt +% length == data_end;
         if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) break;
         var flags: u8 = _tcp.ACK;

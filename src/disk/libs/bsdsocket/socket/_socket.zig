@@ -345,6 +345,12 @@ pub fn readable(socket: *Socket) bool {
     return !socket.receive.isEmpty();
 }
 
+/// Whether a socket has something exceptional: urgent data not read.
+pub fn exceptional(socket: *Socket) bool {
+    if (socket.socket_type == bsd.SOCK_STREAM) return @import("../tcp/user.zig").exceptional(socket);
+    return false;
+}
+
 /// Whether a send would not wait. A datagram is sent or refused at once;
 /// a stream socket needs its connection standing and room in its ring.
 pub fn writable(socket: *Socket) bool {

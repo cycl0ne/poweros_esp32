@@ -41,8 +41,12 @@ const _lock = @import("../lock/_lock.zig");
 ///
 /// BEHAVIOR:
 /// A datagram socket is always ready to send, and ready to receive once a
-/// datagram or an error waits on it. Nothing is exceptional for a
-/// datagram socket, so `except` only ever comes back empty. The wait is on
+/// datagram or an error waits on it. A stream socket is ready to receive
+/// with data, the end of the stream, or its connection gone; a listener
+/// with a connection to accept; one that never had a connection is ready
+/// for neither. A stream socket is exceptional while urgent data
+/// is announced and its byte not read (Recv with `MSG_OOB`); nothing is
+/// exceptional for a datagram socket. The wait is on
 /// the opener's readiness signal, the break signals, the timer and
 /// `*signals` together, and the sets are looked at afresh after each: the
 /// program waits on its sockets and on its windows' ports in one call.
@@ -86,6 +90,7 @@ pub fn WaitSelect(sb: *SocketBase, count: i32, read: ?*bsd.fd_set, write: ?*bsd.
     while (true) {
         var ready_read: bsd.fd_set = .{};
         var ready_write: bsd.fd_set = .{};
+        var ready_except: bsd.fd_set = .{};
         var ready: i32 = 0;
         var descriptor: i32 = 0;
         while (descriptor < count) : (descriptor += 1) {
@@ -102,10 +107,14 @@ pub fn WaitSelect(sb: *SocketBase, count: i32, read: ?*bsd.fd_set, write: ?*bsd.
                 ready_write.set(descriptor);
                 ready += 1;
             }
+            if (in_except and _socket.exceptional(socket)) {
+                ready_except.set(descriptor);
+                ready += 1;
+            }
         }
         const done = ready > 0 or (timeout != null and _socket.isZero(timeout.?.*));
         if (done) {
-            answer(read, &ready_read, write, &ready_write, except);
+            answer(read, &ready_read, write, &ready_write, except, &ready_except);
             if (signals) |mask| mask.* = 0;
             return ready;
         }
@@ -117,7 +126,7 @@ pub fn WaitSelect(sb: *SocketBase, count: i32, read: ?*bsd.fd_set, write: ?*bsd.
             .broken => return _socket.fail(sb, bsd.EINTR, "WaitSelect"),
             .signalled, .timed_out => {
                 const empty: bsd.fd_set = .{};
-                answer(read, &empty, write, &empty, except);
+                answer(read, &empty, write, &empty, except, &empty);
                 if (signals) |mask| mask.* = came;
                 return 0;
             },
@@ -126,8 +135,8 @@ pub fn WaitSelect(sb: *SocketBase, count: i32, read: ?*bsd.fd_set, write: ?*bsd.
     }
 }
 
-fn answer(read: ?*bsd.fd_set, ready_read: *const bsd.fd_set, write: ?*bsd.fd_set, ready_write: *const bsd.fd_set, except: ?*bsd.fd_set) void {
+fn answer(read: ?*bsd.fd_set, ready_read: *const bsd.fd_set, write: ?*bsd.fd_set, ready_write: *const bsd.fd_set, except: ?*bsd.fd_set, ready_except: *const bsd.fd_set) void {
     if (read) |set| set.* = ready_read.*;
     if (write) |set| set.* = ready_write.*;
-    if (except) |set| set.zero();
+    if (except) |set| set.* = ready_except.*;
 }

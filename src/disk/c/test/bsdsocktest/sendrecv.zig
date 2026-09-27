@@ -13,9 +13,6 @@ const Run = _run.Run;
 const Pair = _run.Pair;
 const helper = @import("helper.zig");
 
-/// Out-of-band data: a flag the SDK has no name for.
-const MSG_OOB: u32 = 0x1;
-
 pub fn tests(run: *Run) void {
     const sb = run.sb;
     const send = &run.buffers.send;
@@ -74,12 +71,12 @@ pub fn tests(run: *Run) void {
     pair = Pair.open(run, 23);
     if (pair.ready()) {
         send[0] = 0xAB;
-        if (sb.Send(pair.client, send, 1, MSG_OOB) < 0) {
+        if (sb.Send(pair.client, send, 1, bsd.MSG_OOB) < 0) {
             run.tap.skip("MSG_OOB send not supported");
         } else {
             run.setReceiveTimeout(pair.server, 2);
             receive[0] = 0;
-            const got = sb.Recv(pair.server, receive, 1, MSG_OOB);
+            const got = sb.Recv(pair.server, receive, 1, bsd.MSG_OOB);
             run.tap.ok(got == 1 and receive[0] == 0xAB, "recv(MSG_OOB): urgent data delivery [BSD 4.4]");
             if (got != 1 or receive[0] != 0xAB) run.tap.diag("  recv(MSG_OOB): rc=%d byte=0x%02x errno=%d", .{ got, @as(u32, receive[0]), run.errno() });
         }

@@ -24,6 +24,10 @@
 //! when it starts at RCV.NXT and goes into the receive ring; data that
 //! comes before its turn is dropped and a duplicate acknowledgement sent,
 //! so the peer sends it again.
+//!
+//! **Urgent data** (URG): the pointer marks one past the last urgent
+//! byte. That byte is set aside from the stream when it comes, for
+//! Recv with MSG_OOB, and the place it was taken from is the mark.
 
 const sdk = @import("sdk");
 const _inet = @import("../inet/_inet.zig");
@@ -56,6 +60,8 @@ const Segment = struct {
     ack: u32,
     flags: u8,
     window: u32,
+    /// The urgent pointer, read with URG.
+    urgent: u32,
     /// The MSS option, if it came.
     mss: ?u32,
     /// The data after the header, and what the segment occupies of the
@@ -87,6 +93,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
         .ack = _ip.get32(bytes, 8),
         .flags = flags,
         .window = _ip.get16(bytes, 14),
+        .urgent = _ip.get16(bytes, 18),
         .mss = mssOption(bytes[_tcp.header_bytes..offset]),
         .data = data,
         .length = @as(u32, @intCast(data.len)) + @intFromBool(flags & _tcp.SYN != 0) + @intFromBool(flags & _tcp.FIN != 0),
@@ -330,6 +337,9 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
         else => {},
     }
 
+    // Sixth: URG, from the segment as it came, before any trimming.
+    if (original.flags & _tcp.URG != 0 and original.urgent != 0) urgent(tcb, original.seq +% original.urgent);
+
     // Seventh and eighth: the data, and the FIN.
     if (!takeText(stack, tcb, &seg)) return;
     if (tcb.state != .closed) output.output(stack, tcb);
@@ -361,7 +371,7 @@ fn predicted(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
     timers.heard(stack, tcb, now);
     tcb.snd_wl1 = seg.seq;
     tcb.snd_wl2 = seg.ack;
-    tcb.rcv_nxt +%= tcb.receive.write(seg.data);
+    tcb.rcv_nxt +%= _tcp.deliver(tcb, seg.data);
     _socket.wake(tcb.socket, bsd.FD_READ);
     timers.owe(stack, tcb, now);
     stack.counts.tcp_predicted += 1;
@@ -452,6 +462,7 @@ fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32, now: u64) void {
         timers.grow(tcb, ack -% tcb.snd_una);
     }
     tcb.snd_una = ack;
+    if (tcb.flags & _tcp.urgent_out != 0 and _tcp.atOrAfter(ack, tcb.snd_up)) tcb.flags &= ~_tcp.urgent_out;
     if (_tcp.after(ack, tcb.ring_seq)) {
         const data_acked: u32 = @min(ack -% tcb.ring_seq, tcb.send.count);
         tcb.send.drop(data_acked);
@@ -488,7 +499,7 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
             }
             tcb.rcv_nxt +%= @intCast(seg.data.len);
         } else {
-            const taken = tcb.receive.write(seg.data);
+            const taken = _tcp.deliver(tcb, seg.data);
             tcb.rcv_nxt +%= taken;
             if (tcb.held_bytes > 0 and reorder.release(stack, tcb) > 0) {
                 // A hole filled: said at once.
@@ -517,6 +528,25 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
         }
     }
     return true;
+}
+
+/// Urgent data announced, ending before `up` (the last urgent byte is
+/// the one before it). A pointer further on than any before replaces
+/// what was announced; one whose byte was taken in already comes too
+/// late to be set aside. The program is told (FD_OOB).
+fn urgent(tcb: *Tcb, up: u32) void {
+    switch (tcb.state) {
+        .established, .fin_wait_1, .fin_wait_2, .syn_received => {},
+        else => return,
+    }
+    if (tcb.flags & _tcp.read_shut != 0) return;
+    if (tcb.oob_state != _tcp.oob_none and _tcp.atOrBefore(up, tcb.rcv_up)) return;
+    tcb.rcv_up = up;
+    const last = up -% 1;
+    if (_tcp.before(last, tcb.rcv_nxt)) return;
+    tcb.oob_seq = last;
+    tcb.oob_state = _tcp.oob_pending;
+    _socket.wake(tcb.socket, bsd.FD_OOB);
 }
 
 /// A reset from a connection that is going: its next sequence number, no

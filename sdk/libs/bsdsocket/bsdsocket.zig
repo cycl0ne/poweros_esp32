@@ -188,8 +188,10 @@ pub const ipv6_mreq = extern struct {
 /// mapped addresses (::ffff:a.b.c.d) as well, the default.
 pub const IPV6_V6ONLY: i32 = 27;
 
-/// Flags of the send and receive calls: look at what is there without
-/// taking it, and do not wait for this one call.
+/// Flags of the send and receive calls: urgent data on a stream socket
+/// (out of band), look at what is there without taking it, and do not
+/// wait for this one call.
+pub const MSG_OOB: u32 = 0x1;
 pub const MSG_PEEK: u32 = 0x2;
 pub const MSG_DONTWAIT: u32 = 0x80;
 
@@ -251,9 +253,12 @@ pub const SHUT_RDWR: i32 = 2;
 pub const SOMAXCONN: i32 = 8;
 
 /// IoctlSocket's requests: the bytes the next receive would get (an u32
-/// out), and whether the socket waits (an i32 in: not 0 for never).
+/// out), whether the socket waits (an i32 in: not 0 for never), and
+/// whether a stream socket's next byte is the one after its urgent byte
+/// (an i32 out: 1 at the mark).
 pub const FIONREAD: u32 = 0x4004_667F;
 pub const FIONBIO: u32 = 0x8004_667E;
+pub const SIOCATMARK: u32 = 0x4004_7307;
 
 // --- WaitSelect --------------------------------------------------------------
 

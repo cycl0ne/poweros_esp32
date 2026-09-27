@@ -27,14 +27,18 @@ const tcp_user = @import("../tcp/user.zig");
 /// - `buffer` - where the data goes.
 /// - `length` - its size.
 /// - `flags` - `MSG_PEEK` leaves the datagram to be read again;
-///   `MSG_DONTWAIT` does not wait for this one call.
+///   `MSG_DONTWAIT` does not wait for this one call; `MSG_OOB` reads a
+///   stream socket's urgent byte instead, and never waits.
 /// - `from` - where the sender's `sockaddr_in` goes, or null.
 /// - `from_length` - in, the room at `from`; out, the address's size. Null
 ///   when `from` is.
 ///
 /// RESULT:
 /// The bytes put in `buffer` - 0 at the end of a stream, once the peer
-/// has closed and everything before it is read - or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
+/// has closed and everything before it is read - or -1 with Errno(): `EBADF`, `ENOTCONN` (a stream socket
+/// that never connected, or a listener), `EINVAL` (`MSG_OOB` with no urgent byte, or one
+/// read already), `EOPNOTSUPP` (`MSG_OOB` on a socket that is no stream
+/// socket), `EWOULDBLOCK`
 /// (nothing waiting and the socket does not wait, or `SO_RCVTIMEO`
 /// passed), `EINTR` (a break signal came), or an error the network
 /// reported for the socket.
@@ -86,12 +90,24 @@ pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u3
     _ = sys.SetSignal(0, sb.ready_mask);
     while (true) {
         const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "RecvFrom");
+        if (flags & bsd.MSG_OOB != 0) {
+            if (socket.socket_type != bsd.SOCK_STREAM) return _socket.fail(sb, bsd.EOPNOTSUPP, "RecvFrom");
+            switch (tcp_user.receiveUrgent(socket, flags & bsd.MSG_PEEK != 0)) {
+                .errno => |errno| return _socket.fail(sb, errno, "RecvFrom"),
+                .byte => |byte| {
+                    if (length == 0) return 0;
+                    @as([*]u8, @ptrCast(buffer))[0] = byte;
+                    return 1;
+                },
+            }
+        }
         if (socket.pending_error != 0) {
             const errno = socket.pending_error;
             socket.pending_error = 0;
             return _socket.fail(sb, errno, "RecvFrom");
         }
         if (socket.socket_type == bsd.SOCK_STREAM) {
+            if (tcp_user.unconnected(socket)) return _socket.fail(sb, bsd.ENOTCONN, "RecvFrom");
             const into: [*]u8 = @ptrCast(buffer);
             if (tcp_user.receive(stack, socket, into[0..length], flags & bsd.MSG_PEEK != 0)) |taken| {
                 if (from) |address| _socket.addressOut(stack, socket, socket.remote_address, socket.remote_port, socket.scope, address, from_length.?);

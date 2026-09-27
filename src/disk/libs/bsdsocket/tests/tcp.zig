@@ -480,6 +480,88 @@ test "a connection over lo0 to the stack itself" {
     try rig.deinit();
 }
 
+test "urgent data is set aside at its mark, read with MSG_OOB, and makes the socket exceptional" {
+    var rig = try Rig.init();
+    const a = rig.a.sb;
+    const listener = try stream(a);
+    var here = at(bsd.INADDR_LOOPBACK, 86);
+    _ = a.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    _ = a.Listen(listener, 2);
+    const client = try stream(a);
+    _ = a.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    const server = a.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+
+    var byte: [1]u8 = undefined;
+    try testing.expectEqual(@as(i32, -1), a.Recv(server, &byte, 1, bsd.MSG_OOB));
+    try testing.expectEqual(bsd.EINVAL, a.Errno());
+
+    try testing.expectEqual(@as(i32, 2), a.Send(client, "ab", 2, 0));
+    try testing.expectEqual(@as(i32, 1), a.Send(client, "X", 1, bsd.MSG_OOB));
+    try testing.expectEqual(@as(i32, 2), a.Send(client, "cd", 2, 0));
+
+    var except: bsd.fd_set = .{};
+    except.set(server);
+    var now: bsd.timeval = .{};
+    try testing.expectEqual(@as(i32, 1), a.WaitSelect(server + 1, null, null, &except, &now, null));
+    try testing.expect(except.isSet(server));
+
+    var mark: i32 = -1;
+    _ = a.IoctlSocket(server, bsd.SIOCATMARK, &mark);
+    try testing.expectEqual(@as(i32, 0), mark);
+    var got: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, 2), a.Recv(server, &got, got.len, 0));
+    try testing.expectEqualSlices(u8, "ab", got[0..2]);
+    _ = a.IoctlSocket(server, bsd.SIOCATMARK, &mark);
+    try testing.expectEqual(@as(i32, 1), mark);
+
+    try testing.expectEqual(@as(i32, 1), a.Recv(server, &byte, 1, bsd.MSG_OOB | bsd.MSG_PEEK));
+    try testing.expectEqual(@as(i32, 1), a.Recv(server, &byte, 1, bsd.MSG_OOB));
+    try testing.expectEqual(@as(u8, 'X'), byte[0]);
+    try testing.expectEqual(@as(i32, -1), a.Recv(server, &byte, 1, bsd.MSG_OOB));
+    try testing.expectEqual(bsd.EINVAL, a.Errno());
+    except.set(server);
+    try testing.expectEqual(@as(i32, 0), a.WaitSelect(server + 1, null, null, &except, &now, null));
+
+    try testing.expectEqual(@as(i32, 2), a.Recv(server, &got, got.len, 0));
+    try testing.expectEqualSlices(u8, "cd", got[0..2]);
+    _ = a.IoctlSocket(server, bsd.SIOCATMARK, &mark);
+    try testing.expectEqual(@as(i32, 0), mark);
+
+    const datagram = a.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    try testing.expectEqual(@as(i32, -1), a.Send(datagram, "X", 1, bsd.MSG_OOB));
+    try testing.expectEqual(bsd.EOPNOTSUPP, a.Errno());
+    try testing.expectEqual(@as(i32, -1), a.Recv(datagram, &byte, 1, bsd.MSG_OOB));
+    try testing.expectEqual(bsd.EOPNOTSUPP, a.Errno());
+    _ = a.CloseSocket(datagram);
+
+    _ = a.CloseSocket(client);
+    _ = a.CloseSocket(server);
+    rig.advance(2 * _tcp.msl_us);
+    _ = a.CloseSocket(listener);
+    try rig.deinit();
+}
+
+test "a stream socket that never connected is not readable, and a receive says ENOTCONN" {
+    var rig = try Rig.init();
+    const a = rig.a.sb;
+    const fresh = try stream(a);
+    var read: bsd.fd_set = .{};
+    read.set(fresh);
+    var now: bsd.timeval = .{};
+    try testing.expectEqual(@as(i32, 0), a.WaitSelect(fresh + 1, &read, null, null, &now, null));
+    var got: [4]u8 = undefined;
+    try testing.expectEqual(@as(i32, -1), a.Recv(fresh, &got, got.len, 0));
+    try testing.expectEqual(bsd.ENOTCONN, a.Errno());
+    var here = at(bsd.INADDR_LOOPBACK, 87);
+    _ = a.Bind(fresh, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    _ = a.Listen(fresh, 1);
+    try testing.expectEqual(@as(i32, -1), a.Recv(fresh, &got, got.len, 0));
+    try testing.expectEqual(bsd.ENOTCONN, a.Errno());
+    _ = a.CloseSocket(fresh);
+    try rig.deinit();
+}
+
 // --- a link that loses --------------------------------------------------------------
 
 /// Sends `data` from A to B over a link with `link`'s odds, reading at B

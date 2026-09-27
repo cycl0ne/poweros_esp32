@@ -13,9 +13,6 @@ const _run = @import("run.zig");
 const Run = _run.Run;
 const Pair = _run.Pair;
 
-/// Out-of-band data: a flag the SDK has no name for.
-const MSG_OOB: u32 = 0x1;
-
 pub fn tests(run: *Run) void {
     const sb = run.sb;
     var bytes: [100]u8 = undefined;
@@ -114,7 +111,7 @@ pub fn tests(run: *Run) void {
     pair = Pair.open(run, 65);
     if (pair.ready()) {
         bytes[0] = 0xAB;
-        if (sb.Send(pair.client, &bytes, 1, MSG_OOB) < 0) {
+        if (sb.Send(pair.client, &bytes, 1, bsd.MSG_OOB) < 0) {
             run.tap.skip("MSG_OOB not supported");
         } else {
             var except: bsd.fd_set = .{};

@@ -20,12 +20,13 @@ const Tcb = _tcp.Tcb;
 const output = @import("output.zig");
 
 /// Whether a receive would not wait: data, the end of the stream, or the
-/// connection gone; for a listener, a connection ready to be accepted.
+/// connection gone; for a listener, a connection ready to be accepted. A
+/// socket that never had a connection has nothing to tell.
 pub fn readable(socket: *Socket) bool {
     const tcb = _tcp.of(socket);
     return switch (tcb.state) {
         .listen => ready(tcb) != null,
-        .closed => true,
+        .closed => socket.flags & _socket.connected != 0,
         else => tcb.receive.count > 0 or tcb.flags & (_tcp.fin_received | _tcp.read_shut) != 0,
     };
 }
@@ -110,8 +111,9 @@ pub fn accept(stack: *StackBase, listener: *Socket) ?*Socket {
 }
 
 /// As much of `bytes` as the send ring takes, and sent as the window
-/// lets it. How many bytes were taken, or an errno.
-pub fn send(stack: *StackBase, socket: *Socket, bytes: []const u8) union(enum) { taken: u32, errno: i32 } {
+/// lets it; with `urgent`, SND.UP moved to their end. How many bytes
+/// were taken, or an errno.
+pub fn send(stack: *StackBase, socket: *Socket, bytes: []const u8, urgent: bool) union(enum) { taken: u32, errno: i32 } {
     const tcb = _tcp.of(socket);
     switch (tcb.state) {
         .established, .close_wait => {},
@@ -121,21 +123,45 @@ pub fn send(stack: *StackBase, socket: *Socket, bytes: []const u8) union(enum) {
     }
     if (tcb.flags & _tcp.fin_wanted != 0) return .{ .errno = bsd.EPIPE };
     const taken = tcb.send.write(bytes);
+    if (urgent and taken > 0) {
+        tcb.snd_up = tcb.ring_seq +% tcb.send.count;
+        tcb.flags |= _tcp.urgent_out;
+    }
     if (taken > 0) output.output(stack, tcb);
     return .{ .taken = taken };
 }
 
+/// Whether the socket has no connection to read from: it never had one,
+/// or it listens. A receive then fails with ENOTCONN.
+pub fn unconnected(socket: *Socket) bool {
+    const tcb = _tcp.of(socket);
+    return tcb.state == .listen or (tcb.state == .closed and socket.flags & _socket.connected == 0);
+}
+
 /// What there is to read, into `into`: how much; 0 at the end of the
 /// stream. `peek` leaves it in the ring. Null when there is nothing yet.
+/// A read stops at the mark, so the program can see it has come to it.
 pub fn receive(stack: *StackBase, socket: *Socket, into: []u8, peek: bool) ?u32 {
     const tcb = _tcp.of(socket);
     if (tcb.receive.count == 0) {
         if (tcb.state == .closed or tcb.flags & (_tcp.fin_received | _tcp.read_shut) != 0) return 0;
         return null;
     }
-    const taken: u32 = @min(tcb.receive.count, @as(u32, @intCast(into.len)));
+    const marked = tcb.oob_state == _tcp.oob_held or tcb.oob_state == _tcp.oob_taken;
+    const most: u32 = if (marked and tcb.oob_mark > 0) tcb.oob_mark else tcb.receive.count;
+    const taken: u32 = @min(most, @as(u32, @intCast(into.len)));
     tcb.receive.copyOut(0, into[0..taken]);
     if (peek) return taken;
+    if (marked) {
+        if (tcb.oob_mark > 0) {
+            tcb.oob_mark -= taken;
+        } else if (taken > 0) {
+            // Read on past the mark: an urgent byte already read is done
+            // with; one not read yet can still be.
+            tcb.oob_passed = 1;
+            if (tcb.oob_state == _tcp.oob_taken) tcb.oob_state = _tcp.oob_none;
+        }
+    }
     const before = output.window(tcb);
     tcb.receive.drop(taken);
     // A window that opened by a segment or by half the ring is said at
@@ -148,6 +174,36 @@ pub fn receive(stack: *StackBase, socket: *Socket, into: []u8, peek: bool) ?u32 
     return taken;
 }
 
+/// The urgent byte, read with MSG_OOB: the byte, or the errno - EINVAL
+/// when none was announced or it was read already, EWOULDBLOCK while it
+/// is announced and has not come. `peek` leaves it to be read again.
+pub fn receiveUrgent(socket: *Socket, peek: bool) union(enum) { byte: u8, errno: i32 } {
+    const tcb = _tcp.of(socket);
+    switch (tcb.oob_state) {
+        _tcp.oob_pending => return .{ .errno = bsd.EWOULDBLOCK },
+        _tcp.oob_held => {
+            if (!peek) tcb.oob_state = if (tcb.oob_passed != 0) _tcp.oob_none else _tcp.oob_taken;
+            return .{ .byte = tcb.oob_byte };
+        },
+        else => return .{ .errno = bsd.EINVAL },
+    }
+}
+
+/// Whether the socket has something exceptional: urgent data announced
+/// and not read yet.
+pub fn exceptional(socket: *Socket) bool {
+    const tcb = _tcp.of(socket);
+    return tcb.oob_state == _tcp.oob_pending or tcb.oob_state == _tcp.oob_held;
+}
+
+/// Whether the next byte to read is the one after the urgent byte
+/// (SIOCATMARK).
+pub fn atMark(socket: *Socket) bool {
+    const tcb = _tcp.of(socket);
+    const marked = tcb.oob_state == _tcp.oob_held or tcb.oob_state == _tcp.oob_taken;
+    return marked and tcb.oob_mark == 0 and tcb.oob_passed == 0;
+}
+
 /// No more receiving, sending, or either (SHUT_*). 0, or an errno.
 pub fn shutdown(stack: *StackBase, socket: *Socket, how: i32) i32 {
     const tcb = _tcp.of(socket);
@@ -158,6 +214,7 @@ pub fn shutdown(stack: *StackBase, socket: *Socket, how: i32) i32 {
     if (how == bsd.SHUT_RD or how == bsd.SHUT_RDWR) {
         tcb.flags |= _tcp.read_shut;
         tcb.receive.drop(tcb.receive.count);
+        tcb.oob_state = _tcp.oob_none;
     }
     if (how == bsd.SHUT_WR or how == bsd.SHUT_RDWR) {
         tcb.flags |= _tcp.fin_wanted;

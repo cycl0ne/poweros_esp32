@@ -88,6 +88,16 @@ pub const passive: u32 = 1 << 7;
 /// A window probe's byte is out, one past SND.MAX: an acknowledgement
 /// that covers it takes it as sent.
 pub const probing: u32 = 1 << 8;
+/// Urgent data is going out: SND.UP lies ahead of SND.UNA.
+pub const urgent_out: u32 = 1 << 9;
+
+/// Where urgent data coming in stands (`oob_state`): none announced; one
+/// announced, its byte not here yet; the byte here, set aside from the
+/// stream; the byte read with MSG_OOB.
+pub const oob_none: u8 = 0;
+pub const oob_pending: u8 = 1;
+pub const oob_held: u8 = 2;
+pub const oob_taken: u8 = 3;
 
 // --- sequence numbers --------------------------------------------------------
 
@@ -225,7 +235,40 @@ pub const Tcb = extern struct {
     held_bytes: u32 = 0,
     /// When a segment last came, for keepalive.
     last_heard: u64 align(4) = 0,
+    /// Urgent data going out: one past its last byte (SND.UP), while
+    /// `urgent_out` is set.
+    snd_up: u32 = 0,
+    /// Urgent data coming in: one past the last urgent byte announced
+    /// (RCV.UP), that byte's sequence number, and how many bytes of the
+    /// receive ring lie in front of the place it was taken from (the mark).
+    rcv_up: u32 = 0,
+    oob_seq: u32 = 0,
+    oob_mark: u32 = 0,
+    oob_state: u8 = oob_none,
+    oob_byte: u8 = 0,
+    /// A read went on past the mark: the socket is no longer at it.
+    oob_passed: u8 = 0,
+    pad3: u8 = 0,
 };
+
+/// In-order data that starts at RCV.NXT, into the receive ring as far as
+/// there is room; an urgent byte it carries is set aside instead, and the
+/// mark put where it was. How much of the sequence space was taken.
+pub fn deliver(tcb: *Tcb, data: []const u8) u32 {
+    if (tcb.oob_state == oob_pending) {
+        const at = tcb.oob_seq -% tcb.rcv_nxt;
+        if (at < data.len) {
+            const in_front = tcb.receive.write(data[0..at]);
+            if (in_front < at) return in_front;
+            tcb.oob_byte = data[at];
+            tcb.oob_state = oob_held;
+            tcb.oob_mark = tcb.receive.count;
+            tcb.oob_passed = 0;
+            return at + 1 + tcb.receive.write(data[at + 1 ..]);
+        }
+    }
+    return tcb.receive.write(data);
+}
 
 pub fn of(socket: *Socket) *Tcb {
     return @ptrCast(@alignCast(socket.tcb.?));

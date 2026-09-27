@@ -173,7 +173,8 @@ cores.
   IPv4 with fragments put back together, TCP (connections that close on
   their own after the program has gone, retransmission with measured
   timeouts, congestion control, delayed acknowledgements, segments put
-  back in order, keepalive, RFC 5961's checks against forged resets,
+  back in order, keepalive, urgent data (`MSG_OOB`, the mark and
+  `SIOCATMARK`), RFC 5961's checks against forged resets,
   keyed initial sequence numbers from the chip's random number
   generator),
   UDP, ICMP (echoes answered,

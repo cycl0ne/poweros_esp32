@@ -1903,7 +1903,9 @@ fn IoctlSocket(base: *SocketBase, socket: i32, request: u32, argument: *anyopaqu
 - `request` - `FIONBIO`: `argument` is an i32, not 0 for a socket
   whose calls never wait, 0 for one that does; `FIONREAD`: `argument`
   is an u32 that gets the bytes of the next datagram, 0 if none - on a
-  stream socket, every byte there is to read.
+  stream socket, every byte there is to read; `SIOCATMARK`: `argument`
+  is an i32 that gets 1 when a stream socket's next byte is the one
+  after its urgent byte (reads stop there), else 0.
 - `argument` - as the request says.
 
 **RESULT**
@@ -2280,7 +2282,8 @@ fn RecvFrom(base: *SocketBase, socket: i32, buffer: *anyopaque, length: u32, fla
 - `buffer` - where the data goes.
 - `length` - its size.
 - `flags` - `MSG_PEEK` leaves the datagram to be read again;
-  `MSG_DONTWAIT` does not wait for this one call.
+  `MSG_DONTWAIT` does not wait for this one call; `MSG_OOB` reads a
+  stream socket's urgent byte instead, and never waits.
 - `from` - where the sender's `sockaddr_in` goes, or null.
 - `from_length` - in, the room at `from`; out, the address's size. Null
   when `from` is.
@@ -2288,7 +2291,10 @@ fn RecvFrom(base: *SocketBase, socket: i32, buffer: *anyopaque, length: u32, fla
 **RESULT**
 
 The bytes put in `buffer` - 0 at the end of a stream, once the peer
-has closed and everything before it is read - or -1 with Errno(): `EBADF`, `EWOULDBLOCK`
+has closed and everything before it is read - or -1 with Errno(): `EBADF`, `ENOTCONN` (a stream socket
+that never connected, or a listener), `EINVAL` (`MSG_OOB` with no urgent byte, or one
+read already), `EOPNOTSUPP` (`MSG_OOB` on a socket that is no stream
+socket), `EWOULDBLOCK`
 (nothing waiting and the socket does not wait, or `SO_RCVTIMEO`
 passed), `EINTR` (a break signal came), or an error the network
 reported for the socket.
@@ -2653,7 +2659,8 @@ fn SendTo(base: *SocketBase, socket: i32, message: *const anyopaque, length: u32
 - `length` - its bytes; 0 sends an empty datagram.
 - `flags` - 0, or `MSG_DONTWAIT`: a stream socket takes what fits
   now and does not wait for the rest. A datagram is sent or refused at
-  once either way.
+  once either way. `MSG_OOB` on a stream socket sends the bytes as
+  urgent data.
 - `to` - a `sockaddr_in`, or null on a connected socket; null on a
   stream socket.
 - `to_length` - its size.
@@ -2665,7 +2672,8 @@ ring - or -1 with Errno(): `EPIPE` (the stream was shut for writing or
 has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
 does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 not connected), `EISCONN` (an address on a connected socket),
-`EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket), `EMSGSIZE`
+`EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket, or
+`MSG_OOB` on one that is no stream socket), `EMSGSIZE`
 (more than the interface takes),
 `ENETUNREACH` (no route), `EACCES` (a broadcast without
 `SO_BROADCAST`), `ENOBUFS` (no frame free), or an error the network
@@ -3179,8 +3187,12 @@ signal came, and was taken).
 **BEHAVIOR**
 
 A datagram socket is always ready to send, and ready to receive once a
-datagram or an error waits on it. Nothing is exceptional for a
-datagram socket, so `except` only ever comes back empty. The wait is on
+datagram or an error waits on it. A stream socket is ready to receive
+with data, the end of the stream, or its connection gone; a listener
+with a connection to accept; one that never had a connection is ready
+for neither. A stream socket is exceptional while urgent data
+is announced and its byte not read (Recv with `MSG_OOB`); nothing is
+exceptional for a datagram socket. The wait is on
 the opener's readiness signal, the break signals, the timer and
 `*signals` together, and the sets are looked at afresh after each: the
 program waits on its sockets and on its windows' ports in one call.

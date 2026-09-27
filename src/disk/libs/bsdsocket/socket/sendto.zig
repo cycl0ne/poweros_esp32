@@ -31,7 +31,8 @@ const tcp_user = @import("../tcp/user.zig");
 /// - `length` - its bytes; 0 sends an empty datagram.
 /// - `flags` - 0, or `MSG_DONTWAIT`: a stream socket takes what fits
 ///   now and does not wait for the rest. A datagram is sent or refused at
-///   once either way.
+///   once either way. `MSG_OOB` on a stream socket sends the bytes as
+///   urgent data.
 /// - `to` - a `sockaddr_in`, or null on a connected socket; null on a
 ///   stream socket.
 /// - `to_length` - its size.
@@ -42,7 +43,8 @@ const tcp_user = @import("../tcp/user.zig");
 /// has ended), `ENOTCONN` (not connected), `EWOULDBLOCK` (no room, and it
 /// does not wait), `EINTR`, `EBADF`, `EDESTADDRREQ` (no address and
 /// not connected), `EISCONN` (an address on a connected socket),
-/// `EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket), `EMSGSIZE`
+/// `EAFNOSUPPORT`, `EINVAL`, `EOPNOTSUPP` (a capture socket, or
+/// `MSG_OOB` on one that is no stream socket), `EMSGSIZE`
 /// (more than the interface takes),
 /// `ENETUNREACH` (no route), `EACCES` (a broadcast without
 /// `SO_BROADCAST`), `ENOBUFS` (no frame free), or an error the network
@@ -103,6 +105,7 @@ pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, lengt
         if (to != null) return _socket.fail(sb, bsd.EISCONN, "SendTo");
         return sendStream(sb, descriptor, socket, bytes[0..length], flags, &held);
     }
+    if (flags & bsd.MSG_OOB != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "SendTo");
     var destination = socket.remote_address;
     var port: u16 = socket.remote_port;
     var scope: ?*@import("../netif/_netif.zig").Interface = null;
@@ -143,7 +146,7 @@ fn sendStream(sb: *SocketBase, descriptor: i32, socket: *_socket.Socket, bytes: 
             socket.pending_error = 0;
             return _socket.fail(sb, errno, "SendTo");
         }
-        switch (tcp_user.send(sb.stack, socket, bytes[sent..])) {
+        switch (tcp_user.send(sb.stack, socket, bytes[sent..], flags & bsd.MSG_OOB != 0)) {
             .errno => |errno| return if (sent > 0) @intCast(sent) else _socket.fail(sb, errno, "SendTo"),
             .taken => |taken| sent += taken,
         }
