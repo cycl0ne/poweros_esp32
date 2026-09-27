@@ -102,7 +102,8 @@ pub const wifi_device: Program = .{ .disk = "devs/networks/wifi.device", .source
 pub const wifi_archives = [_][]const u8{ "libcore.a", "libnet80211.a", "libpp.a", "libphy.a" };
 pub const wifi_rom_scripts = [_][]const u8{ "esp32s3.rom.ld", "esp32s3.rom.libc.ld", "esp32s3.rom.libgcc.ld", "esp32s3.rom.api.ld" };
 
-/// The scripts in S:, and what HANDLERS: holds for Mount to read.
+/// The scripts in S:, what HANDLERS: holds for Mount to read, the
+/// interface files and the settings in ENVARC:.
 pub const files = [_]File{
     .{ .disk = "s/startup-sequence", .source = "s/startup-sequence" },
     .{ .disk = "s/shell-startup", .source = "s/shell-startup" },
@@ -110,6 +111,12 @@ pub const files = [_]File{
     .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
     .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/WLAN0" },
+    // ENVARC: as a fresh disk has it: what each settings file says, and
+    // its value to start with.
+    .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
+    .{ .disk = "prefs/env-archive/Sys/net/timeserver", .source = "prefs/env-archive/Sys/net/timeserver" },
+    .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
+    .{ .disk = "prefs/env-archive/Sys/net/nameservers", .source = "prefs/env-archive/Sys/net/nameservers" },
 };
 
 pub fn build(b: *std.Build) void {

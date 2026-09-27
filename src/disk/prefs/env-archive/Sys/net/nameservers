@@ -1,0 +1,6 @@
+# ENVARC:Sys/net/nameservers - name servers to ask when none came from
+# DHCP, a router's advertisement or an interface file: an address, IPv4 or
+# IPv6, to a line. With servers from the network, this file is not read.
+#
+#   9.9.9.9
+#   2620:fe::fe

@@ -6,7 +6,8 @@
 //!
 //! SERVER is a name or a dotted address; without it, the first time
 //! server DHCP named for an interface, else the one in
-//! `ENVARC:Sys/net/timeserver`, else pool.ntp.org. PORT is 123 unless
+//! `ENVARC:Sys/net/timeserver` (its first line that is not a `#`
+//! comment), else pool.ntp.org. PORT is 123 unless
 //! given. The time is set and printed, unless QUIET; TEST prints it and
 //! sets nothing.
 //!
@@ -22,7 +23,8 @@
 //!
 //! **Local time.** The system clock keeps local time. The zone is a POSIX
 //! TZ rule in `ENVARC:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`,
-//! zone.zig); with no file, the clock keeps UTC.
+//! zone.zig), its first line that is not a `#` comment; with no rule, the
+//! clock keeps UTC.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -38,7 +40,7 @@ const Printf = dos.stdio.Printf;
 const zone = @import("zone.zig");
 
 pub const COMMAND_NAME = "TimeSync";
-const VERSION_STRING = "\x00$VER: TimeSync 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TimeSync 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SERVER,PORT/K/N,QUIET/S,TEST/S";
@@ -216,22 +218,33 @@ fn chooseServer(dl: *DosBase, sb: *SocketBase, text: *[64]u8) [*:0]const u8 {
     return server_default;
 }
 
-/// The first line of `name`, trimmed, into `text`: false when there is no
-/// such file or the line is empty.
+/// The first line of `name` that is neither blank nor a comment (`#`),
+/// trimmed, into `text`, cut to fit: false when there is no such file or
+/// no such line in its first KiB.
 fn firstLine(dl: *DosBase, name: [*:0]const u8, text: []u8) bool {
     const file = dl.Open(name, dos.MODE_OLDFILE) orelse return false;
     defer _ = dl.Close(file);
-    const got = dl.Read(file, text.ptr, @intCast(text.len - 1));
+    var whole: [1024]u8 = undefined;
+    const got = dl.Read(file, &whole, whole.len);
     if (got <= 0) return false;
-    var end: usize = 0;
-    while (end < @as(usize, @intCast(got)) and text[end] != '\n' and text[end] != '\r') end += 1;
-    var start: usize = 0;
-    while (start < end and (text[start] == ' ' or text[start] == '\t')) start += 1;
-    while (end > start and (text[end - 1] == ' ' or text[end - 1] == '\t')) end -= 1;
-    if (end == start) return false;
-    if (start != 0) @memmove(text[0 .. end - start], text[start..end]);
-    text[end - start] = 0;
-    return true;
+    const length: usize = @intCast(got);
+    var line_start: usize = 0;
+    while (line_start < length) {
+        var end = line_start;
+        while (end < length and whole[end] != '\n' and whole[end] != '\r') end += 1;
+        const next = end + 1;
+        var start = line_start;
+        while (start < end and (whole[start] == ' ' or whole[start] == '\t')) start += 1;
+        while (end > start and (whole[end - 1] == ' ' or whole[end - 1] == '\t')) end -= 1;
+        if (end > start and whole[start] != '#') {
+            const kept = @min(end - start, text.len - 1);
+            @memcpy(text[0..kept], whole[start..][0..kept]);
+            text[kept] = 0;
+            return true;
+        }
+        line_start = next;
+    }
+    return false;
 }
 
 /// The zone in the timezone file; UTC without one, or with one that is no

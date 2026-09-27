@@ -1,0 +1,4 @@
+# ENVARC:Sys/net/timeserver - the time server C:net/TimeSync asks when no
+# DHCP server named one: a name or an address. The first line that is not
+# a comment counts; without one it asks pool.ntp.org.
+pool.ntp.org

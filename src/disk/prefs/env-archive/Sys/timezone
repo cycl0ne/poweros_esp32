@@ -1,0 +1,12 @@
+# ENVARC:Sys/timezone - the local time, as a POSIX TZ rule, which
+# C:net/TimeSync sets the clock by: the zone's name and its offset west
+# of UTC, then the summer zone and when it starts and ends. The first line
+# that is not a comment is the rule; without one the clock keeps UTC.
+#
+#   CET-1CEST,M3.5.0,M10.5.0/3     Central Europe (Berlin, Paris, Rome)
+#   GMT0BST,M3.5.0/1,M10.5.0       United Kingdom
+#   EST5EDT,M3.2.0,M11.1.0         US Eastern
+#   PST8PDT,M3.2.0,M11.1.0         US Pacific
+#   JST-9                          Japan
+#   UTC0                           UTC
+CET-1CEST,M3.5.0,M10.5.0/3

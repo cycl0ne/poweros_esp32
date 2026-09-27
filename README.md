@@ -212,7 +212,10 @@ cores.
   times the answers, over IPv6 for an IPv6 address or with `-6`; `C:net/TimeSync` sets the date from a time server
   (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
   local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives, and runs
-  at boot once the network is up;
+  at boot once the network is up; a fresh disk brings
+  `ENVARC:Sys/timezone` (Central European time), `Sys/net/timeserver`,
+  `Sys/net/hosts` and `Sys/net/nameservers`, each saying in its comments
+  what it holds and how to change it;
   `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
   redirects, `http://[v6]/` hosts, each address tried in turn), plain
   http until there is TLS; `C:net/PacketCapture`

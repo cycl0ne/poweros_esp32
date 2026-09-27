@@ -1,0 +1,8 @@
+# ENVARC:Sys/net/hosts - names this machine knows without asking a name
+# server: an address, IPv4 or IPv6, then the names it has, the first its
+# own name and the rest aliases. Looked in before the name servers.
+#
+#   192.168.1.10   printer printer.home.lan
+#   fd00::10       printer
+127.0.0.1      localhost
+::1            localhost

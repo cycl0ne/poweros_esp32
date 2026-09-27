@@ -55,8 +55,13 @@ const image_dirs = [_][]const u8{
     // that are not in the ROM.
     "handlers",
     // ENVARC: lives here: the global variables that survive a reboot.
+    // Sys/ holds the system's settings, Sys/net/ the network's, and
+    // Sys/net/networks/ a Wi-Fi network's passphrase per file.
     "prefs",
     "prefs/env-archive",
+    "prefs/env-archive/Sys",
+    "prefs/env-archive/Sys/net",
+    "prefs/env-archive/Sys/net/networks",
 };
 
 pub fn build(b: *std.Build) void {
