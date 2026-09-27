@@ -4,7 +4,8 @@
 //!
 //!   ShellServer PORT/K/N,QUIET/S
 //!
-//! It listens on PORT (23, Telnet's) until Ctrl-C, and then waits for the
+//! It listens on PORT (23, Telnet's), over IPv6 and IPv4 alike, until
+//! Ctrl-C, and then waits for the
 //! shells it started to end. A Telnet client that connects gets a shell
 //! with everything a console has: line editing, history, Ctrl-C as the
 //! break. EndShell ends it, and so does the client hanging up.
@@ -36,7 +37,7 @@ const filehandler = dos.filehandler;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S";
@@ -111,12 +112,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .quiet = quiet,
     };
 
-    const listener = sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    // One AF_INET6 socket takes both families: an IPv4 client comes as
+    // its mapped address.
+    const listener = sb.Socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
     if (listener < 0) return failed(dl, sb, "Socket");
     const on: i32 = 1;
     _ = sb.SetSockOpt(listener, bsd.SOL_SOCKET, bsd.SO_REUSEADDR, &on, @sizeOf(i32));
-    var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port) };
-    if (sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0 or sb.Listen(listener, 4) < 0) {
+    var here: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(port) };
+    if (sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in6)) < 0 or sb.Listen(listener, 4) < 0) {
         const result = failed(dl, sb, "Bind");
         _ = sb.CloseSocket(listener);
         return result;
@@ -125,8 +128,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var result: i32 = dos.RETURN_OK;
     while (true) {
-        var peer: bsd.sockaddr_in = .{};
-        var peer_length: u32 = @sizeOf(bsd.sockaddr_in);
+        var peer: bsd.sockaddr_in6 = .{};
+        var peer_length: u32 = @sizeOf(bsd.sockaddr_in6);
         const connection = sb.Accept(listener, peer.any(), &peer_length);
         if (connection < 0) {
             if (sb.Errno() != bsd.EINTR) result = failed(dl, sb, "Accept");
@@ -137,13 +140,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = sb.CloseSocket(connection);
             continue;
         }
-        var from: [16]u8 = @splat(0);
-        const text = sb.Inet_NtoA(peer.sin_addr.s_addr);
-        var at: usize = 0;
-        while (at < 15 and text[at] != 0) : (at += 1) from[at] = text[at];
+        var from: [bsd.INET6_ADDRSTRLEN]u8 = @splat(0);
+        peerText(sb, &peer, &from);
         if (!start(sys, dl, sb, &server, id, @ptrCast(&from))) {
             // Taken back and closed: no session for it.
-            const back = sb.ObtainSocket(id, bsd.PF_INET, bsd.SOCK_STREAM, 0);
+            const back = sb.ObtainSocket(id, bsd.PF_INET6, bsd.SOCK_STREAM, 0);
             if (back >= 0) _ = sb.CloseSocket(back);
         }
     }
@@ -167,6 +168,20 @@ fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
 }
 
 /// A session process for the connection left under `id`.
+/// Who connected, as text: an IPv4 client dotted, an IPv6 one as IPv6
+/// writes it.
+fn peerText(sb: *SocketBase, peer: *const bsd.sockaddr_in6, into: *[bsd.INET6_ADDRSTRLEN]u8) void {
+    const bytes = peer.sin6_addr.s6_addr;
+    const mapped = for (bytes[0..10]) |byte| {
+        if (byte != 0) break false;
+    } else bytes[10] == 0xff and bytes[11] == 0xff;
+    if (mapped) {
+        _ = sb.Inet_NtoP(bsd.AF_INET, bytes[12..16], into, into.len);
+    } else {
+        _ = sb.Inet_NtoP(bsd.AF_INET6, &peer.sin6_addr, into, into.len);
+    }
+}
+
 fn start(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, server: *Server, id: i32, from: [*:0]const u8) bool {
     _ = sb;
     const memory = sys.AllocVec(@sizeOf(Session), exec.MEMF_CLEAR) orelse return false;

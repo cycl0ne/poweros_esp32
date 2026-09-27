@@ -12,11 +12,13 @@
 //! packet before any of it is read.
 
 const _ip = @import("../ip/_ip.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 pub const port: u16 = 53;
 pub const type_a: u16 = 1;
 pub const type_cname: u16 = 5;
 pub const type_ptr: u16 = 12;
+pub const type_aaaa: u16 = 28;
 const class_in: u16 = 1;
 pub const name_max = 255;
 const jumps_max = 16;
@@ -100,8 +102,8 @@ pub fn readName(packet: []const u8, start: usize, into: ?*[name_max + 1]u8) ?usi
 /// What an answer says.
 pub const Answer = struct {
     rcode: u8 = 0,
-    /// A records, in network order.
-    addresses: [8]u32 = @splat(0),
+    /// What A records (mapped) or AAAA records held.
+    addresses: [8]Address = @splat(.{}),
     count: usize = 0,
     /// The name a PTR record gave, or the answer's own name.
     name: [name_max + 1]u8 = @splat(0),
@@ -139,7 +141,11 @@ pub fn answer(packet: []const u8, id: u16, kind: u16) ?Answer {
         const data = packet[at..][0..length];
         if (record_class == class_in and record_type == kind) {
             if (kind == type_a and length == 4 and result.count < result.addresses.len) {
-                result.addresses[result.count] = @bitCast(data[0..4].*);
+                result.addresses[result.count] = Address.fromV4(_ip.get32(data, 0));
+                result.count += 1;
+                result.ttl = @min(result.ttl, ttl);
+            } else if (kind == type_aaaa and length == 16 and result.count < result.addresses.len) {
+                result.addresses[result.count] = .{ .bytes = data[0..16].* };
                 result.count += 1;
                 result.ttl = @min(result.ttl, ttl);
             } else if (kind == type_ptr and !result.has_name) {

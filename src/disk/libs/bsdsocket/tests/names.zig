@@ -15,6 +15,8 @@ const _ip = @import("../ip/_ip.zig");
 const dns = @import("../names/dns.zig");
 const hosts = @import("../names/hosts.zig");
 const _names = @import("../names/_names.zig");
+const Address = @import("../ip6/address.zig").Address;
+const parse = @import("../ip6/address.zig").parse;
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
 
@@ -52,8 +54,8 @@ test "an honest answer gives its addresses and the shortest time to live" {
     const length = exampleAnswer(&packet, 0x4242);
     const found = dns.answer(packet[0..length], 0x4242, dns.type_a).?;
     try testing.expectEqual(@as(usize, 2), found.count);
-    try testing.expectEqual(bsd.htonl(0x6814_1A88), found.addresses[0]);
-    try testing.expectEqual(bsd.htonl(0xAC42_9DED), found.addresses[1]);
+    try testing.expect(found.addresses[0].eql(Address.fromV4(0x6814_1A88)));
+    try testing.expect(found.addresses[1].eql(Address.fromV4(0xAC42_9DED)));
     try testing.expectEqual(@as(u32, 60), found.ttl);
     // Another id: not ours.
     try testing.expectEqual(@as(?dns.Answer, null), dns.answer(packet[0..length], 0x4243, dns.type_a));
@@ -131,20 +133,26 @@ test "a PTR answer gives its name" {
     try testing.expectEqualStrings("gateway", std.mem.sliceTo(&found.name, 0));
 }
 
-test "the hosts file: names, aliases, comments, case" {
+test "the hosts file: names, aliases, comments, case, both families" {
     const text =
         \\# this machine's friends
         \\127.0.0.1   localhost
         \\192.168.1.10 printer Printer.home.lan  # the one upstairs
+        \\fd00::10     printer
         \\bad.address nothing
         \\10.0.0.5
     ;
-    try testing.expectEqual(bsd.htonl(0xC0A8_010A), hosts.find(text, "PRINTER.home.lan").?);
-    try testing.expectEqual(bsd.htonl(0x7F00_0001), hosts.find(text, "localhost").?);
-    try testing.expectEqual(@as(?u32, null), hosts.find(text, "upstairs"));
-    try testing.expectEqual(@as(?u32, null), hosts.find(text, "nothing"));
-    try testing.expectEqualStrings("printer", hosts.reverse(text, bsd.htonl(0xC0A8_010A)).?);
-    try testing.expectEqual(@as(?[]const u8, null), hosts.reverse(text, bsd.htonl(0x0A00_0005)));
+    const v4 = bsd.AF_INET;
+    const v6 = bsd.AF_INET6;
+    try testing.expect(hosts.find(text, "PRINTER.home.lan", v4).?.eql(Address.fromV4(0xC0A8_010A)));
+    try testing.expect(hosts.find(text, "localhost", v4).?.eql(Address.fromV4(0x7F00_0001)));
+    try testing.expect(hosts.find(text, "printer", v6).?.eql(parse("fd00::10").?));
+    try testing.expect(hosts.find(text, "localhost", v6) == null);
+    try testing.expect(hosts.find(text, "upstairs", v4) == null);
+    try testing.expect(hosts.find(text, "nothing", v4) == null);
+    try testing.expectEqualStrings("printer", hosts.reverse(text, Address.fromV4(0xC0A8_010A)).?);
+    try testing.expectEqualStrings("printer", hosts.reverse(text, parse("fd00::10").?).?);
+    try testing.expectEqual(@as(?[]const u8, null), hosts.reverse(text, Address.fromV4(0x0A00_0005)));
 }
 
 test "the cache keeps an answer for its time, within its bounds" {
@@ -152,14 +160,17 @@ test "the cache keeps an answer for its time, within its bounds" {
     const made = kexec.InitResident(kexec.SysBase, &bsdsocket.bsdsocket_library_tag, null) orelse return error.NoLibrary;
     const lib: *exec.Library = @ptrCast(@alignCast(made));
     const stack = _base.stackBase(lib);
-    var addresses: [_names.addresses_max]u32 = undefined;
-    _names.remember(stack, "example.org", &.{ 1, 2 }, 5, 0);
-    try testing.expectEqual(@as(usize, 2), _names.cached(stack, "EXAMPLE.org", 29_000_000, &addresses));
+    var addresses: [_names.addresses_max]Address = undefined;
+    const v4 = bsd.AF_INET;
+    _names.remember(stack, "example.org", v4, &.{ Address.fromV4(1), Address.fromV4(2) }, 5, 0);
+    try testing.expectEqual(@as(usize, 2), _names.cached(stack, "EXAMPLE.org", v4, 29_000_000, &addresses));
+    // Not what IPv6 asks for.
+    try testing.expectEqual(@as(usize, 0), _names.cached(stack, "example.org", bsd.AF_INET6, 29_000_000, &addresses));
     // Held to 30 s at the least.
-    try testing.expectEqual(@as(usize, 0), _names.cached(stack, "example.org", 30_000_000, &addresses));
-    _names.remember(stack, "long.example", &.{3}, 999_999, 0);
-    try testing.expectEqual(@as(usize, 1), _names.cached(stack, "long.example", 3_599_000_000, &addresses));
-    try testing.expectEqual(@as(usize, 0), _names.cached(stack, "long.example", 3_600_000_000, &addresses));
+    try testing.expectEqual(@as(usize, 0), _names.cached(stack, "example.org", v4, 30_000_000, &addresses));
+    _names.remember(stack, "long.example", v4, &.{Address.fromV4(3)}, 999_999, 0);
+    try testing.expectEqual(@as(usize, 1), _names.cached(stack, "long.example", v4, 3_599_000_000, &addresses));
+    try testing.expectEqual(@as(usize, 0), _names.cached(stack, "long.example", v4, 3_600_000_000, &addresses));
 
     // GetHostByName without a network: dotted text, localhost, and no
     // name server to ask.
@@ -175,8 +186,9 @@ test "the cache keeps an answer for its time, within its bounds" {
     _ = sb.SocketBaseTagList(&tags);
     try testing.expectEqual(@as(u32, @bitCast(bsd.NO_RECOVERY)), h_errno);
     // Cached, it needs no server.
-    _names.remember(stack, "cached.example", &.{bsd.htonl(0x0A00_0009)}, 60, 0);
-    try testing.expect(sb.GetHostByName("cached.example") != null);
+    _names.remember(stack, "cached.example", bsd.AF_INET, &.{Address.fromV4(0x0A00_0009)}, 60, 0);
+    const cached_host = sb.GetHostByName("cached.example").?;
+    try testing.expectEqual(bsd.htonl(0x0A00_0009), @as(*align(1) const u32, @ptrCast(cached_host.h_addr_list.?[0].?)).*);
     var name: [16]u8 = undefined;
     try testing.expectEqual(@as(i32, 0), sb.GetHostName(&name, name.len));
     try testing.expectEqualStrings("poweros", std.mem.sliceTo(&name, 0));

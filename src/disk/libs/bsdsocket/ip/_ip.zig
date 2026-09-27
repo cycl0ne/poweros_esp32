@@ -26,6 +26,7 @@ const _udp = @import("../udp/_udp.zig");
 const _icmp = @import("../icmp/_icmp.zig");
 const _tcp_input = @import("../tcp/input.zig");
 const reassembly = @import("reassembly.zig");
+const _inet = @import("../inet/_inet.zig");
 
 pub const header_bytes = 20;
 /// IPv4's EtherType, the packet type a network device reads it by.
@@ -129,9 +130,9 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
     }
     frame.pull(header_length);
     switch (header.protocol) {
-        @as(u8, @intCast(bsd.IPPROTO_UDP)) => _udp.input(stack, interface, frame, header),
+        @as(u8, @intCast(bsd.IPPROTO_UDP)) => _udp.input(stack, interface, frame, _inet.Packet.fromV4(header)),
         @as(u8, @intCast(bsd.IPPROTO_ICMP)) => _icmp.input(stack, interface, frame, header),
-        @as(u8, @intCast(bsd.IPPROTO_TCP)) => _tcp_input.input(stack, interface, frame, header),
+        @as(u8, @intCast(bsd.IPPROTO_TCP)) => _tcp_input.input(stack, interface, frame, _inet.Packet.fromV4(header)),
         else => {
             stack.counts.ip_unknown_protocol += 1;
             stack.frames.give(sys, frame);

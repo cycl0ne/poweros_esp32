@@ -42,7 +42,7 @@ pub fn unitTask(sys: *ExecBase) callconv(.c) void {
     const lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return finish(sys, unit);
     const sb: *SocketBase = @ptrCast(lib);
     unit.socket_base = sb;
-    unit.socket = sb.ObtainSocket(unit.id, bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    unit.socket = sb.ObtainSocket(unit.id, bsd.PF_UNSPEC, bsd.SOCK_STREAM, 0);
     if (unit.socket < 0) {
         sys.CloseLibrary(lib);
         unit.socket_base = null;

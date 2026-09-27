@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: MIT
-//! The resolver: a name's addresses, and an address's name, looked up in
-//! turn in the dotted text itself, the hosts file, the cache and DNS - on
-//! the caller's task, which reads the file through dos.library and asks
-//! the name servers through a socket of its own, made with the library's
-//! own calls.
+//! The resolver: a name's addresses of one family, and an address's
+//! name, looked up in turn in the address text itself, the hosts file,
+//! the cache and DNS (A records for IPv4, AAAA for IPv6) - on the
+//! caller's task, which reads the file through dos.library and asks the
+//! name servers through a socket of its own, made with the library's own
+//! calls.
+//!
+//! **The name servers** are the ones the interfaces and DHCP named (IPv4),
+//! then the ones routers named in their advertisements (IPv6, RFC 8106);
+//! only when there are none, the ones `ENVARC:Sys/net/nameservers` lists,
+//! of either family. One AF_INET6 socket asks them all, an IPv4 server
+//! through its mapped address.
 //!
 //! **Asking a name server.** Each server is asked in turn, three times,
 //! two seconds each, with a random id; an answer counts only if it comes
@@ -28,6 +35,9 @@ const _timer = @import("../timer/_timer.zig");
 const _names = @import("_names.zig");
 const hosts = @import("hosts.zig");
 const dns = @import("dns.zig");
+const address_file = @import("../ip6/address.zig");
+const Address = address_file.Address;
+const router = @import("../nd/router.zig");
 
 const tries = 3;
 const wait_s = 2;
@@ -42,24 +52,57 @@ fn textOf(name: [*:0]const u8) []const u8 {
     return name[0..length];
 }
 
-/// The addresses `name` has, as a hostent in the opener's buffer; null
-/// with `h_errno` set when it has none.
+/// The IPv4 addresses `name` has, as a hostent in the opener's buffer;
+/// null with `h_errno` set when it has none.
 pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
-    const text = textOf(name);
-    if (text.len == 0 or text.len > 253) return missing(sb, bsd.HOST_NOT_FOUND);
-    if (hosts.dotted(text)) |address| return sb.host.fill(text, &.{address});
+    var found: Found = .{};
+    if (!lookup(sb, textOf(name), bsd.AF_INET, &found)) return null;
+    return sb.host.fill(found.nameText(), found.addresses[0..found.count]);
+}
+
+/// What a lookup found: addresses of one family (IPv4 ones mapped), and
+/// the name as the answer spelled it.
+pub const Found = struct {
+    addresses: [_names.addresses_max]Address = @splat(.{}),
+    count: usize = 0,
+    name: [256]u8 = @splat(0),
+    name_length: usize = 0,
+
+    pub fn nameText(found: *const Found) []const u8 {
+        return found.name[0..found.name_length];
+    }
+
+    fn set(found: *Found, name: []const u8, addresses: []const Address) void {
+        found.name_length = @min(name.len, found.name.len - 1);
+        @memcpy(found.name[0..found.name_length], name[0..found.name_length]);
+        found.count = @min(addresses.len, found.addresses.len);
+        @memcpy(found.addresses[0..found.count], addresses[0..found.count]);
+    }
+};
+
+/// The addresses of `family` (AF_INET or AF_INET6) `name` has, into
+/// `found`: false with `h_errno` set when it has none.
+pub fn lookup(sb: *SocketBase, text: []const u8, family: u8, found: *Found) bool {
+    if (text.len == 0 or text.len > 253) return fails(sb, bsd.HOST_NOT_FOUND);
+    if (family == bsd.AF_INET) {
+        if (hosts.dotted(text)) |address| return done(found, text, &.{Address.fromV4(bsd.ntohl(address))});
+    } else if (address_file.parse(text)) |address| {
+        if (!address.isV4()) return done(found, text, &.{address});
+    }
 
     // The hosts file; `localhost` is known without it.
-    if (hostsAddress(sb, text)) |address| return sb.host.fill(text, &.{address});
-    if (hosts.same(text, "localhost")) return sb.host.fill(text, &.{bsd.htonl(bsd.INADDR_LOOPBACK)});
+    if (hostsAddress(sb, text, family)) |address| return done(found, text, &.{address});
+    if (hosts.same(text, "localhost")) {
+        return done(found, text, &.{if (family == bsd.AF_INET) Address.fromV4(bsd.INADDR_LOOPBACK) else Address.loopback});
+    }
 
     const stack = sb.stack;
-    var addresses: [_names.addresses_max]u32 = undefined;
     {
+        var addresses: [_names.addresses_max]Address = undefined;
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
-        const count = _names.cached(stack, text, _timer.clock(stack), &addresses);
-        if (count > 0) return sb.host.fill(text, addresses[0..count]);
+        const count = _names.cached(stack, text, family, _timer.clock(stack), &addresses);
+        if (count > 0) return done(found, text, addresses[0..count]);
     }
 
     // DNS: in the domain first, for a name without dots.
@@ -77,30 +120,42 @@ pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
     candidates[candidate_count] = text;
     candidate_count += 1;
     var failure: i32 = bsd.HOST_NOT_FOUND;
+    const kind = if (family == bsd.AF_INET) dns.type_a else dns.type_aaaa;
     for (candidates[0..candidate_count]) |candidate| {
-        const found = ask(sb, candidate, dns.type_a) orelse {
+        const answer = ask(sb, candidate, kind) orelse {
             failure = sb.h_errno;
             if (failure == bsd.TRY_AGAIN or failure == bsd.NO_RECOVERY) break;
             continue;
         };
-        if (found.count == 0) {
+        if (answer.count == 0) {
             failure = bsd.NO_DATA;
             continue;
         }
         {
             const held = _lock.take(stack);
             defer _lock.give(stack, held);
-            _names.remember(stack, text, found.addresses[0..found.count], found.ttl, _timer.clock(stack));
+            _names.remember(stack, text, family, answer.addresses[0..answer.count], answer.ttl, _timer.clock(stack));
         }
-        return sb.host.fill(candidate, found.addresses[0..found.count]);
+        return done(found, candidate, answer.addresses[0..answer.count]);
     }
-    return missing(sb, failure);
+    return fails(sb, failure);
+}
+
+fn done(found: *Found, name: []const u8, addresses: []const Address) bool {
+    found.set(name, addresses);
+    return true;
+}
+
+fn fails(sb: *SocketBase, errno: i32) bool {
+    sb.h_errno = errno;
+    return false;
 }
 
 /// The name `address` (network order) has; null with `h_errno` set.
 pub fn byAddress(sb: *SocketBase, address: u32) ?*bsd.hostent {
-    if (hostsName(sb, address)) |entry| return entry;
-    if (address == bsd.htonl(bsd.INADDR_LOOPBACK)) return sb.host.fill("localhost", &.{address});
+    const mapped = Address.fromV4(bsd.ntohl(address));
+    if (hostsName(sb, mapped)) |entry| return entry;
+    if (address == bsd.htonl(bsd.INADDR_LOOPBACK)) return sb.host.fill("localhost", &.{mapped});
     const octets: [4]u8 = @bitCast(address);
     var name: [32]u8 = undefined;
     var at: usize = 0;
@@ -116,7 +171,7 @@ pub fn byAddress(sb: *SocketBase, address: u32) ?*bsd.hostent {
     at += suffix.len;
     const found = ask(sb, name[0..at], dns.type_ptr) orelse return missing(sb, sb.h_errno);
     if (!found.has_name) return missing(sb, bsd.NO_DATA);
-    return sb.host.fill(textOf(@ptrCast(&found.name)), &.{address});
+    return sb.host.fill(textOf(@ptrCast(&found.name)), &.{mapped});
 }
 
 fn decimal(into: []u8, value: u8) usize {
@@ -151,19 +206,19 @@ fn domainOf(stack: *StackBase) []const u8 {
     return stack.domain[0..length];
 }
 
-/// The address `name` has in the hosts file, if it is there. The file is
-/// read into memory of its own: the caller's stack may be a command's,
-/// too small for it.
-fn hostsAddress(sb: *SocketBase, name: []const u8) ?u32 {
+/// The address of `family` `name` has in the hosts file, if it is there.
+/// The file is read into memory of its own: the caller's stack may be a
+/// command's, too small for it.
+fn hostsAddress(sb: *SocketBase, name: []const u8, family: u8) ?Address {
     const sys = sb.sys_base;
     const memory = sys.AllocVec(hosts_bytes, exec.MEMF_ANY) orelse return null;
     defer sys.FreeVec(memory);
-    return hosts.find(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), name);
+    return hosts.find(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), name, family);
 }
 
 /// The first name `address` has in the hosts file, as a hostent in the
 /// opener's buffer; null when it is not there.
-fn hostsName(sb: *SocketBase, address: u32) ?*bsd.hostent {
+fn hostsName(sb: *SocketBase, address: Address) ?*bsd.hostent {
     const sys = sb.sys_base;
     const memory = sys.AllocVec(hosts_bytes, exec.MEMF_ANY) orelse return null;
     defer sys.FreeVec(memory);
@@ -185,10 +240,35 @@ fn readHosts(sb: *SocketBase, into: []u8) []const u8 {
     return into[0..@intCast(got)];
 }
 
-/// The name servers ENVARC:Sys/net/nameservers lists, an address to a
-/// line, in the chip's order: how many. For a machine whose interfaces
-/// name none and get none from DHCP.
-fn serversFromFile(sb: *SocketBase, into: *[bsd.NAMESERVERS_MAX]u32) usize {
+/// The name servers there are to ask: the interfaces' and DHCP's, then
+/// the routers'; the file's when there are none. How many.
+fn servers(sb: *SocketBase, into: *[servers_max]Address) usize {
+    const stack = sb.stack;
+    var count: usize = 0;
+    {
+        const held = _lock.take(stack);
+        defer _lock.give(stack, held);
+        for (stack.nameservers[0..stack.nameserver_count]) |server| {
+            into[count] = Address.fromV4(server);
+            count += 1;
+        }
+        const now = _timer.clock(stack);
+        for (&stack.interfaces) |*interface| {
+            if (interface.used == 0 or interface.ip6.enabled == 0 or count == into.len) continue;
+            count += router.nameServers(interface, now, into[count..]);
+        }
+    }
+    if (count == 0) count = serversFromFile(sb, into);
+    return count;
+}
+
+/// The most name servers asked in all.
+const servers_max = bsd.NAMESERVERS_MAX + 2 * router.servers_max;
+
+/// The name servers ENVARC:Sys/net/nameservers lists, an address of
+/// either family to a line: how many. For a machine whose interfaces name
+/// none and get none from DHCP or its routers.
+fn serversFromFile(sb: *SocketBase, into: *[servers_max]Address) usize {
     const sys = sb.sys_base;
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return 0;
     defer sys.CloseLibrary(lib);
@@ -207,8 +287,8 @@ fn serversFromFile(sb: *SocketBase, into: *[bsd.NAMESERVERS_MAX]u32) usize {
         var line = text[start..index];
         while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
         while (line.len > 0 and (line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
-        if (hosts.dotted(line)) |address| {
-            into[count] = bsd.ntohl(address);
+        if (hosts.addressOf(line)) |address| {
+            into[count] = address;
             count += 1;
         }
         start = index + 1;
@@ -222,21 +302,14 @@ fn serversFromFile(sb: *SocketBase, into: *[bsd.NAMESERVERS_MAX]u32) usize {
 /// server to ask.
 fn ask(sb: *SocketBase, name: []const u8, kind: u16) ?dns.Answer {
     const stack = sb.stack;
-    var servers: [bsd.NAMESERVERS_MAX]u32 = undefined;
-    var server_count: usize = 0;
-    {
-        const held = _lock.take(stack);
-        defer _lock.give(stack, held);
-        server_count = stack.nameserver_count;
-        servers = stack.nameservers;
-    }
-    if (server_count == 0) server_count = serversFromFile(sb, &servers);
+    var asked: [servers_max]Address = undefined;
+    const server_count = servers(sb, &asked);
     if (server_count == 0) {
         sb.h_errno = bsd.NO_RECOVERY;
         return null;
     }
     const calls = _base.iface(sb);
-    const socket = calls.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    const socket = calls.Socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
     if (socket < 0) {
         sb.h_errno = bsd.NO_RECOVERY;
         return null;
@@ -244,7 +317,7 @@ fn ask(sb: *SocketBase, name: []const u8, kind: u16) ?dns.Answer {
     defer _ = calls.CloseSocket(socket);
     var message: [300]u8 = undefined;
     var packet: [512]u8 = undefined;
-    for (servers[0..server_count]) |server| {
+    for (asked[0..server_count]) |server| {
         var try_count: usize = 0;
         while (try_count < tries) : (try_count += 1) {
             const id = _names.random16(stack);
@@ -253,8 +326,8 @@ fn ask(sb: *SocketBase, name: []const u8, kind: u16) ?dns.Answer {
                 sb.h_errno = bsd.HOST_NOT_FOUND;
                 return null;
             }
-            var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(dns.port), .sin_addr = .{ .s_addr = bsd.htonl(server) } };
-            if (calls.SendTo(socket, &message, @intCast(length), 0, to.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) break;
+            var to: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(dns.port), .sin6_addr = .{ .s6_addr = server.bytes } };
+            if (calls.SendTo(socket, &message, @intCast(length), 0, to.anyConst(), @sizeOf(bsd.sockaddr_in6)) < 0) break;
             var strays: usize = 0;
             while (strays < strays_max) : (strays += 1) {
                 var read: bsd.fd_set = .{};
@@ -266,12 +339,13 @@ fn ask(sb: *SocketBase, name: []const u8, kind: u16) ?dns.Answer {
                     return null;
                 }
                 if (ready == 0) break;
-                var from: bsd.sockaddr_in = .{};
-                var from_length: u32 = @sizeOf(bsd.sockaddr_in);
+                var from: bsd.sockaddr_in6 = .{};
+                var from_length: u32 = @sizeOf(bsd.sockaddr_in6);
                 const got = calls.RecvFrom(socket, &packet, packet.len, 0, from.any(), &from_length);
                 if (got <= 0) continue;
                 // Only the server asked, from its port, with our id.
-                if (from.sin_addr.s_addr != bsd.htonl(server) or from.sin_port != bsd.htons(dns.port)) continue;
+                const sender: Address = .{ .bytes = from.sin6_addr.s6_addr };
+                if (!sender.eql(server) or from.sin6_port != bsd.htons(dns.port)) continue;
                 const found = dns.answer(packet[0..@intCast(got)], id, kind) orelse continue;
                 if (found.rcode == dns.rcode_name_error) {
                     sb.h_errno = bsd.HOST_NOT_FOUND;

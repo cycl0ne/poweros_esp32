@@ -166,7 +166,8 @@ cores.
   starts the radio, scans, and joins a network (the SANA-II wireless
   requests), WPA2-Personal included - the key handshake is written here,
   on crypto.library. `C:net/Wireless` lists the networks in range and
-  joins or leaves one.
+  joins or leaves one; an interface file's `Network` line has one joined at
+  boot, its passphrase kept in `ENVARC:Sys/net/networks/`.
 - `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
   a base per opener (its own descriptors, error number and signals),
   IPv4 with fragments put back together, TCP (connections that close on
@@ -177,36 +178,47 @@ cores.
   generator),
   UDP, ICMP (echoes answered,
   errors told to the socket they concern, raw sockets for a ping), ARP,
+  and IPv6 beside IPv4: extension headers and fragments, ICMPv6 with its
+  rate limit and path MTU, Neighbor Discovery with duplicate address
+  detection, MLDv2, router advertisements with SLAAC (stable RFC 7217
+  addresses or EUI-64), RDNSS and redirects, an IPv6 route table, and
+  `AF_INET6` sockets that take IPv4 too through mapped addresses
+  (`IPV6_V6ONLY`, `If_NameToIndex` for a link-local peer's scope),
   the loopback interface, and interfaces on network devices
   (`AddInterfaceTagList`) served by a stack task that sleeps until a
   frame or a deadline comes. `WaitSelect` waits for sockets and the
   program's own signals at once; socket events tell of readiness on a
   signal of the program's choosing; a socket can be handed to another
   task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
-  `C:net/Tcp` fetches a page over HTTP or echoes a connection - over the
-  network in QEMU.
+  `C:net/Tcp` fetches a page over HTTP or echoes a connection - either
+  family, over the network in QEMU.
 - The network comes up at boot, in the background (`S:Network-Startup`),
   from `DEVS:NetInterfaces/`, a file per
   interface in the mountlist's keyword format (`Device`, `Configure =
-  DHCP` or a fixed `Address` with `Gateway` and `NameServer`, ...), its
-  address from DHCP - a 169.254.x.y one while no server answers - and
-  names are looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS
-  (`GetHostByName`, `C:net/Resolve`); `C:net/AddNetInterface` and
+  DHCP` or a fixed `Address` with `Gateway` and `NameServer`, `IPv6 =
+  AUTO|FIXED|OFF` with `InterfaceID`, `Address6`, `Prefix6`, `Gateway6`,
+  ...), its address from DHCP - a 169.254.x.y one while no server
+  answers - and its IPv6 addresses from the routers, stable from boot to
+  boot through the secret in `ENVARC:Sys/net/ipv6-secret`; names are
+  looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS, A and AAAA
+  (`GetHostByName`, `GetAddrInfo` in RFC 6724's order, `C:net/Resolve`); `C:net/AddNetInterface` and
   `RemNetInterface` bring one up and down by hand, and a program can do
   the same through the library's interface calls. `C:net/NetStatus`
-  shows the interfaces, routes, sockets, ARP cache and counters
-  (`GetNetworkStatistics`); `C:net/Offline` and `Online` take an
+  shows the interfaces with their IPv6 addresses and lifetimes, the
+  routes of both families, sockets, the ARP and neighbor caches and
+  counters (`GetNetworkStatistics`); `C:net/Offline` and `Online` take an
   interface's device off its link and put it back, and a link that goes
   or comes by itself is followed. `C:net/Ping` sends echo requests and
-  times the answers; `C:net/TimeSync` sets the date from a time server
+  times the answers, over IPv6 for an IPv6 address or with `-6`; `C:net/TimeSync` sets the date from a time server
   (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
   local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives, and runs
   at boot once the network is up;
   `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
-  redirects), plain http until there is TLS; `C:net/PacketCapture`
+  redirects, `http://[v6]/` hosts, each address tried in turn), plain
+  http until there is TLS; `C:net/PacketCapture`
   writes what an interface sends and takes to a pcap file, through a
   capture socket (`PF_PACKET`) a program can open too.
-- A shell over the network: `C:net/ShellServer` listens on port 23 and
+- A shell over the network: `C:net/ShellServer` listens on port 23, IPv6 and IPv4, and
   gives each Telnet connection a shell of its own, on a console with
   line editing, history and Ctrl-C - con-handler on `DEVS:telnet.device`,
   which turns a connection into a stream of bytes. A password, if

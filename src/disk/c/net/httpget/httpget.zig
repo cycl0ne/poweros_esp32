@@ -3,7 +3,10 @@
 //!
 //!   HTTPGet URL/A,TO/K,QUIET/S
 //!
-//! URL is `http://host[:port]/path`. The body goes to TO, or to standard
+//! URL is `http://host[:port]/path`, the host a name, an IPv4 address,
+//! or an IPv6 one in brackets (`http://[fec0::2]:8080/`); a name's
+//! addresses are tried in the order GetAddrInfo gives them, IPv6 and
+//! IPv4, until one connects. The body goes to TO, or to standard
 //! output; with TO, how many bytes came and how fast is printed at the
 //! end unless QUIET. A redirect (301, 302, 303, 307, 308) is followed,
 //! five at the most, to a whole URL or a path. An answer other than 2xx
@@ -29,7 +32,7 @@ const Printf = dos.stdio.Printf;
 const http = @import("http.zig");
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S";
@@ -198,16 +201,29 @@ fn sendAll(sb: *SocketBase, socket: i32, data: []const u8) bool {
 /// a redirect leads (in `work.next`).
 fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]const u8, total: *u64) Outcome {
     var host: [256:0]u8 = @splat(0);
-    if (url.host.len >= host.len) return say(dl, MSG_NOHOST, .{@as([*:0]const u8, "(too long)")});
-    @memcpy(host[0..url.host.len], url.host);
-    const entry = sb.GetHostByName(&host) orelse return say(dl, MSG_NOHOST, .{@as([*:0]const u8, &host)});
-    var peer: bsd.sockaddr_in = .{ .sin_port = bsd.htons(url.port) };
-    @memcpy(@as(*[4]u8, @ptrCast(&peer.sin_addr.s_addr)), entry.h_addr_list.?[0].?[0..4]);
+    const host_name = url.hostName();
+    if (host_name.len >= host.len) return say(dl, MSG_NOHOST, .{@as([*:0]const u8, "(too long)")});
+    @memcpy(host[0..host_name.len], host_name);
+    var port_digits: [8]u8 = @splat(0);
+    _ = portText(url.port, &port_digits);
+    const service: [*:0]const u8 = @ptrCast(port_digits[1..]);
+    const hints: bsd.addrinfo = .{ .ai_socktype = bsd.SOCK_STREAM, .ai_flags = bsd.AI_NUMERICSERV };
+    var list: ?*bsd.addrinfo = null;
+    if (sb.GetAddrInfo(&host, service, &hints, &list) != 0) return say(dl, MSG_NOHOST, .{@as([*:0]const u8, &host)});
+    defer sb.FreeAddrInfo(list.?);
 
-    const socket = sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
-    if (socket < 0) return failed(dl, sb, "Socket");
+    // Each address in turn, in the order they came, until one connects.
+    var socket: i32 = -1;
+    var entry = list;
+    while (entry) |each| : (entry = each.ai_next) {
+        socket = sb.Socket(each.ai_family, each.ai_socktype, each.ai_protocol);
+        if (socket < 0) continue;
+        if (sb.Connect(socket, each.ai_addr.?, each.ai_addrlen) == 0) break;
+        _ = sb.CloseSocket(socket);
+        socket = -1;
+    }
+    if (socket < 0) return failed(dl, sb, "Connect");
     defer _ = sb.CloseSocket(socket);
-    if (sb.Connect(socket, peer.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return failed(dl, sb, "Connect");
 
     // The request, built in the buffer the answer comes into afterwards.
     const buffer = work.buffer;

@@ -24,6 +24,10 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const _timer = @import("timer/_timer.zig");
 const _arp = @import("arp/_arp.zig");
 const reassembly = @import("ip/reassembly.zig");
+const reassembly6 = @import("ip6/reassembly.zig");
+const _ip6 = @import("ip6/_ip6.zig");
+const _icmp6 = @import("icmp6/_icmp6.zig");
+const CryptoBase = sdk.interface.crypto.CryptoBase;
 const _dhcp = @import("dhcp/_dhcp.zig");
 const _names = @import("names/_names.zig");
 const _frame = @import("frame/_frame.zig");
@@ -53,6 +57,7 @@ pub const StackBase = extern struct {
     lock: exec.SignalSemaphore = .{},
     interfaces: [interfaces_max]_netif.Interface = @splat(.{}),
     routes: [routes_max]_route.Route = @splat(.{}),
+    routes6: @import("route6/_route6.zig").Table = .{},
     /// Every socket of every opener, for finding the one a packet is for.
     sockets: exec.List = .{},
     frames: _frame.Pool = .{},
@@ -65,7 +70,16 @@ pub const StackBase = extern struct {
     captures: u32 = 0,
     timers: _timer.Heap = .{},
     arp: _arp.Cache = .{},
+    nd: @import("nd/_nd.zig").Cache = .{},
     reassembly: reassembly.Slots = .{},
+    reassembly6: reassembly6.Slots = .{},
+    /// What the stack believes of IPv6 paths' MTUs, and what ICMPv6's
+    /// rate limit has left.
+    path_mtus: _ip6.PathMtus = .{},
+    icmp6_limit: _icmp6.Limit = .{},
+    /// crypto.library, for IPv6's stable interface identifiers: opened
+    /// with the first interface that makes them.
+    crypto: ?*CryptoBase = null,
     dhcp: _dhcp.Clients = .{},
     /// The key initial sequence numbers are hashed with.
     isn_key: [16]u8 = @splat(0),

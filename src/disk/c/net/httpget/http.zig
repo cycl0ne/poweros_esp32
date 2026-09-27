@@ -5,6 +5,8 @@
 //! comes in pieces.
 
 pub const Url = struct {
+    /// As the URL writes it, and the Host header sends it: an IPv6
+    /// address in its brackets.
     host: []const u8,
     port: u16,
     /// From its `/`, query included; "/" when the URL has none, and just
@@ -12,6 +14,13 @@ pub const Url = struct {
     /// before it.
     path: []const u8,
     secure: bool,
+
+    /// The host as a name or address to look up: an IPv6 one without its
+    /// brackets.
+    pub fn hostName(url: Url) []const u8 {
+        if (url.host.len >= 2 and url.host[0] == '[') return url.host[1 .. url.host.len - 1];
+        return url.host;
+    }
 };
 
 fn lower(char: u8) u8 {
@@ -31,8 +40,9 @@ fn same(text: []const u8, other: []const u8) bool {
     return text.len == other.len and startsWith(text, other);
 }
 
-/// `http://host[:port][/path]` or `https://...` taken apart; null when it
-/// is not one.
+/// `http://host[:port][/path]` or `https://...` taken apart - the host a
+/// name, an IPv4 address or an IPv6 one in brackets (RFC 3986, 3.2.2);
+/// null when it is not one.
 pub fn parseUrl(text: []const u8) ?Url {
     var rest = text;
     var secure = false;
@@ -55,7 +65,15 @@ pub fn parseUrl(text: []const u8) ?Url {
     }
     if (path.len == 0) path = "/";
     var port: u16 = if (secure) 443 else 80;
-    for (host, 0..) |char, index| {
+    // The port's colon is the one past an IPv6 address's bracket.
+    var from: usize = 0;
+    if (host.len > 0 and host[0] == '[') {
+        from = (for (host, 0..) |char, index| {
+            if (char == ']') break index;
+        } else return null) + 1;
+        if (from == 2) return null;
+    }
+    for (host[from..], from..) |char, index| {
         if (char != ':') continue;
         const digits = host[index + 1 ..];
         if (digits.len == 0 or digits.len > 5) return null;
@@ -347,7 +365,12 @@ test "URLs taken apart" {
     try testing.expectEqualStrings("/dir/file.txt?a=1", full.path);
     try testing.expect(parseUrl("https://example.org/").?.secure);
     try testing.expectEqualStrings("?q=1", parseUrl("http://h?q=1").?.path);
-    for ([_][]const u8{ "ftp://x/", "http://", "http://:80/", "http://h:0/", "http://h:65536/", "http://h:8a/", "example.org" }) |text| {
+    const six = parseUrl("http://[fec0::2]:8080/x").?;
+    try testing.expectEqualStrings("[fec0::2]", six.host);
+    try testing.expectEqualStrings("fec0::2", six.hostName());
+    try testing.expectEqual(@as(u16, 8080), six.port);
+    try testing.expectEqual(@as(u16, 80), parseUrl("http://[::1]/").?.port);
+    for ([_][]const u8{ "ftp://x/", "http://", "http://:80/", "http://h:0/", "http://h:65536/", "http://h:8a/", "example.org", "http://[::1/", "http://[]/" }) |text| {
         try testing.expectEqual(@as(?Url, null), parseUrl(text));
     }
 }

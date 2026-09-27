@@ -76,7 +76,7 @@ pub fn Accept(sb: *SocketBase, descriptor: i32, address: ?*bsd.sockaddr, address
             sb.table.?[index] = connection;
             connection.descriptor = @intCast(index);
             connection.owner = sb;
-            if (address) |into| _socket.addressOut(connection.remote_address, connection.remote_port, into, address_length.?);
+            if (address) |into| _socket.addressOut(sb.stack, connection, connection.remote_address, connection.remote_port, connection.scope, into, address_length.?);
             return @intCast(index);
         }
         if (listener.flags & _socket.nonblocking != 0) return _socket.fail(sb, bsd.EWOULDBLOCK, "Accept");

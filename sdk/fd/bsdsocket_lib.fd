@@ -114,4 +114,23 @@ i32 SetHostName([*:0]const u8 name)
 /// The stack's counters (NETSTATUS_COUNTS), routes, sockets or ARP
 /// cache, into `buffer`: how many there are, or -1.
 i32 GetNetworkStatistics(u32 kind, ?*anyopaque buffer, u32 size)
+/// An address of `family` (AF_INET: an in_addr, AF_INET6: an in6_addr)
+/// as text in `destination`, `size` bytes: `destination`, or null (errno
+/// EAFNOSUPPORT, or ENOSPC when it does not fit).
+?[*:0]u8 Inet_NtoP(i32 family, *const anyopaque source, [*]u8 destination, u32 size)
+/// Text as an address of `family` in `destination` (an in_addr or an
+/// in6_addr): 1, 0 for text that is no address, -1 for a family there is
+/// none of (errno EAFNOSUPPORT).
+i32 Inet_PtoN(i32 family, [*:0]const u8 text, *anyopaque destination)
+/// The index of the interface called `name`, as sin6_scope_id has it, or
+/// 0 (errno ENXIO).
+u32 If_NameToIndex([*:0]const u8 name)
+/// The name of the interface at `index` in `name` (IFNAMSIZ bytes):
+/// `name`, or null (errno ENXIO).
+?[*:0]u8 If_IndexToName(u32 index, [*]u8 name)
+/// The addresses of `node` for `service` as a list of addrinfo in
+/// `*result`, in RFC 6724's order: 0, or an EAI_* code.
+i32 GetAddrInfo(?[*:0]const u8 node, ?[*:0]const u8 service, ?*const bsd.addrinfo hints, *?*bsd.addrinfo result)
+/// A list GetAddrInfo made, given back whole with its first entry.
+void FreeAddrInfo(*bsd.addrinfo list)
 ##end

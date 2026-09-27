@@ -20,6 +20,10 @@ test {
     _ = @import("libs/bsdsocket/tests/netif.zig");
     _ = @import("libs/bsdsocket/tests/dhcp.zig");
     _ = @import("libs/bsdsocket/tests/names.zig");
+    _ = @import("libs/bsdsocket/tests/address.zig");
+    _ = @import("libs/bsdsocket/tests/ip6.zig");
+    _ = @import("libs/bsdsocket/tests/nd.zig");
+    _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/zone.zig");

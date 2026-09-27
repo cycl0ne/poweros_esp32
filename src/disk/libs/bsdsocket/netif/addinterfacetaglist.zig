@@ -16,6 +16,9 @@ const device = @import("device.zig");
 const _route = @import("../route/_route.zig");
 const _arp = @import("../arp/_arp.zig");
 const _task = @import("../task/_task.zig");
+const _ip6 = @import("../ip6/_ip6.zig");
+const _route6 = @import("../route6/_route6.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 /// An interface on a network device, up and with its routes.
 ///
@@ -35,7 +38,13 @@ const _task = @import("../task/_task.zig");
 ///   address on its net, the net's mask (255.255.255.0 unless given) and
 ///   a gateway made the default route; `IFA_MTU`: less than the link
 ///   takes; `IFA_Reads`, `IFA_Writes`: how many requests the stack keeps
-///   with the device. Stack-wide: `IFA_NameServer` (any number),
+///   with the device; `IFA_IPv6` (`IFIPV6_AUTO` unless given, or
+///   `IFIPV6_OFF`), `IFA_InterfaceID` (`IFID_STABLE` unless given, or
+///   `IFID_EUI64`) and `IFA_StableSecret`: whether the interface speaks
+///   IPv6, and how its addresses end; `IFA_Address6`, `IFA_Prefix6` and
+///   `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
+///   and a router for the default route (`IFIPV6_FIXED` takes no address
+///   from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
 ///   `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
 ///
 /// RESULT:
@@ -50,10 +59,15 @@ const _task = @import("../task/_task.zig");
 /// is, and put on line with the address it came with, unless it is on
 /// line already. The first interface on a device starts the stack task,
 /// which keeps reads outstanding on it from then on - a quarter of them
-/// for ARP, the rest for IPv4 - as many as the link's speed calls for
-/// unless the tags say. A route to the interface's own net is added, and
-/// the default route through the gateway if there is one, and every
-/// station on the net is told where the address is (a gratuitous ARP).
+/// for ARP, a quarter for IPv6 when the interface speaks it, the rest for
+/// IPv4 - as many as the link's speed calls for unless the tags say. An
+/// interface that speaks IPv6 is given its link-local address; a stable
+/// identifier needs crypto.library, which is opened for it, and without
+/// which the link's EUI-64 is taken. Without `IFA_StableSecret` the
+/// secret is random, and the addresses change at the next boot. A route
+/// to the interface's own net is added, and the default route through the
+/// gateway if there is one, and every station on the net is told where
+/// the address is (a gratuitous ARP).
 ///
 /// CONTEXT:
 /// - Waits: yes: the device is opened and asked, and the task started.
@@ -95,6 +109,13 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     const gateway = bsd.ntohl(@truncate(ub.GetTagData(bsd.IFA_Gateway, 0, tags)));
     const dhcp = ub.GetTagData(bsd.IFA_Configure, bsd.IFCONFIGURE_FIXED, tags) == bsd.IFCONFIGURE_DHCP;
     const mtu: u32 = @truncate(ub.GetTagData(bsd.IFA_MTU, 0, tags));
+    const ipv6_mode = ub.GetTagData(bsd.IFA_IPv6, bsd.IFIPV6_AUTO, tags);
+    const ipv6 = ipv6_mode != bsd.IFIPV6_OFF;
+    const address6: ?*align(1) const bsd.in6_addr = @ptrFromInt(ub.GetTagData(bsd.IFA_Address6, 0, tags));
+    const prefix6: u8 = @intCast(@min(ub.GetTagData(bsd.IFA_Prefix6, 64, tags), 128));
+    const gateway6: ?*align(1) const bsd.in6_addr = @ptrFromInt(ub.GetTagData(bsd.IFA_Gateway6, 0, tags));
+    const identifier: u8 = if (ub.GetTagData(bsd.IFA_InterfaceID, bsd.IFID_STABLE, tags) == bsd.IFID_EUI64) bsd.IFID_EUI64 else bsd.IFID_STABLE;
+    const given_secret: ?[*]const u8 = @ptrFromInt(ub.GetTagData(bsd.IFA_StableSecret, 0, tags));
     var name_length: usize = 0;
     while (name[name_length] != 0) name_length += 1;
     var device_length: usize = 0;
@@ -111,6 +132,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         if (_netif.free(stack) == null) return _socket.fail(sb, bsd.ENOBUFS, "AddInterfaceTagList");
     }
     settings(stack, tags);
+    if (ipv6 and identifier == bsd.IFID_STABLE) openCrypto(stack);
     if (!_task.start(stack)) return _socket.fail(sb, bsd.ENOMEM, "AddInterfaceTagList");
 
     const memory = sys.AllocMem(@sizeOf(device.Device), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
@@ -156,6 +178,16 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         .device = link,
     };
     @memcpy(slot.name[0..name_length], name[0..name_length]);
+    slot.ip6.identifier = identifier;
+    if (given_secret) |secret| {
+        @memcpy(&slot.ip6.secret, secret[0..bsd.IFSECRET_BYTES]);
+    } else if (stack.crypto) |cb| {
+        cb.RandomBytes(&slot.ip6.secret, bsd.IFSECRET_BYTES);
+    }
+    // The reads for IPv6 are sent with the others; the addresses come once
+    // the device can join their groups.
+    slot.ip6.enabled = @intFromBool(ipv6);
+    slot.ip6.autoconf = @intFromBool(ipv6_mode != bsd.IFIPV6_FIXED);
     link.interface = slot;
     if (address != 0) _ = _route.add(stack, address, netmask, 0, slot);
     if (gateway != 0) _ = _route.setDefault(stack, gateway);
@@ -164,9 +196,36 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     stack.lib.open_cnt += 1;
     sys.Permit();
     device.start(stack, link, &stack.port);
+    if (ipv6) {
+        _ip6.start(stack, slot);
+        if (address6) |given| {
+            const own: Address = .{ .bytes = given.s6_addr };
+            _ = _ip6.addAddress(stack, slot, own, prefix6, .tentative);
+            if (prefix6 < 128) _ = _route6.set(stack, slot, own, prefix6, Address.any, .manual, 0);
+        }
+        if (gateway6) |given| _ = _route6.set(stack, slot, Address.any, 0, .{ .bytes = given.s6_addr }, .manual, 0);
+    }
     if (address != 0) _arp.announce(stack, slot);
     if (dhcp) @import("../dhcp/_dhcp.zig").start(stack, slot);
     return 0;
+}
+
+/// crypto.library opened for the stack, the first time an interface wants
+/// it; the stack keeps it until it goes.
+fn openCrypto(stack: *StackBase) void {
+    const sys = stack.sys_base;
+    const held = _lock.take(stack);
+    const wanted = stack.crypto == null;
+    _lock.give(stack, held);
+    if (!wanted) return;
+    const opened = sys.OpenLibrary(sdk.crypto.CRYPTONAME, 1) orelse return;
+    const again = _lock.take(stack);
+    defer _lock.give(stack, again);
+    if (stack.crypto == null) {
+        stack.crypto = @ptrCast(opened);
+    } else {
+        sys.CloseLibrary(opened);
+    }
 }
 
 /// Whether an interface runs on `device_name`'s `unit` already: one link,

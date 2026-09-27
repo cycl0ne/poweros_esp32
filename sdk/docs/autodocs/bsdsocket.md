@@ -19,6 +19,8 @@ Generated from the source by `./zig build autodoc`.
 - [Connect](#connect) - A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
 - [DeleteRouteTagList](#deleteroutetaglist) - A route taken away: the one to a net or host, or the default route.
 - [Errno](#errno) - The error number of the opener's last call that failed.
+- [FreeAddrInfo](#freeaddrinfo) - A list GetAddrInfo made, given back whole.
+- [GetAddrInfo](#getaddrinfo) - The addresses of `node` for `service`, as a list of `addrinfo` ready for Socket and Connect (or Bind).
 - [GetDTableSize](#getdtablesize) - How many sockets the opener may have open at once.
 - [GetHostByAddr](#gethostbyaddr) - The name an address has.
 - [GetHostByName](#gethostbyname) - The addresses a name has.
@@ -28,8 +30,12 @@ Generated from the source by `./zig build autodoc`.
 - [GetSockName](#getsockname) - The address and port the socket is bound to.
 - [GetSockOpt](#getsockopt) - One of the socket's options read into `value`.
 - [GetSocketEvents](#getsocketevents) - The next of the opener's sockets that has events to tell of, and which.
+- [If_IndexToName](#if_indextoname) - The name of the interface at `index`, into `name`.
+- [If_NameToIndex](#if_nametoindex) - The index of the interface called `name`: what `sin6_scope_id` names it by.
 - [Inet_Addr](#inet_addr) - Dotted text, "10.0.2.2", as an IPv4 address.
 - [Inet_NtoA](#inet_ntoa) - An IPv4 address as dotted text, "10.0.2.15".
+- [Inet_NtoP](#inet_ntop) - An address as text: IPv4's dotted quad, or IPv6's as RFC 5952 writes it.
+- [Inet_PtoN](#inet_pton) - Text as an address: IPv4's dotted quad, or IPv6 in any form RFC 4291 allows.
 - [IoctlSocket](#ioctlsocket) - A socket's control requests.
 - [Listen](#listen) - A stream socket made a listener: connections to its port are taken and wait for Accept.
 - [ObtainInterfaceList](#obtaininterfacelist) - A list of every interface's name, the caller's to walk.
@@ -198,7 +204,13 @@ fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const T
   address on its net, the net's mask (255.255.255.0 unless given) and
   a gateway made the default route; `IFA_MTU`: less than the link
   takes; `IFA_Reads`, `IFA_Writes`: how many requests the stack keeps
-  with the device. Stack-wide: `IFA_NameServer` (any number),
+  with the device; `IFA_IPv6` (`IFIPV6_AUTO` unless given, or
+  `IFIPV6_OFF`), `IFA_InterfaceID` (`IFID_STABLE` unless given, or
+  `IFID_EUI64`) and `IFA_StableSecret`: whether the interface speaks
+  IPv6, and how its addresses end; `IFA_Address6`, `IFA_Prefix6` and
+  `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
+  and a router for the default route (`IFIPV6_FIXED` takes no address
+  from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
   `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
 
 **RESULT**
@@ -215,10 +227,15 @@ The device is opened with the stack's copy calls, asked what its link
 is, and put on line with the address it came with, unless it is on
 line already. The first interface on a device starts the stack task,
 which keeps reads outstanding on it from then on - a quarter of them
-for ARP, the rest for IPv4 - as many as the link's speed calls for
-unless the tags say. A route to the interface's own net is added, and
-the default route through the gateway if there is one, and every
-station on the net is told where the address is (a gratuitous ARP).
+for ARP, a quarter for IPv6 when the interface speaks it, the rest for
+IPv4 - as many as the link's speed calls for unless the tags say. An
+interface that speaks IPv6 is given its link-local address; a stable
+identifier needs crypto.library, which is opened for it, and without
+which the link's EUI-64 is taken. Without `IFA_StableSecret` the
+secret is random, and the addresses change at the next boot. A route
+to the interface's own net is added, and the default route through the
+gateway if there is one, and every station on the net is told where
+the address is (a gratuitous ARP).
 
 **CONTEXT**
 
@@ -710,6 +727,154 @@ None known.
 if (sb.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0) < 0 and sb.Errno() == bsd.EMFILE) return;
 ```
 
+## FreeAddrInfo
+
+A list GetAddrInfo made, given back whole.
+
+**SYNOPSIS**
+
+```zig
+fn FreeAddrInfo(base: *SocketBase, list: *addrinfo) void
+```
+
+**SINCE**
+
+1.1. LVO -204.
+
+**INPUTS**
+
+- `list` - the first entry, as GetAddrInfo answered it.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The list is one block, which goes with its first entry; every entry
+and what they point at are gone after it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is the library's again.
+
+**NOTES**
+
+An entry further down the list is not a list of its own: only the
+first may be given.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetAddrInfo`
+
+**EXAMPLES**
+
+```zig
+var list: ?*bsd.addrinfo = null;
+if (sb.GetAddrInfo("example.org", "80", null, &list) == 0) sb.FreeAddrInfo(list.?);
+```
+
+## GetAddrInfo
+
+The addresses of `node` for `service`, as a list of `addrinfo` ready for Socket and Connect (or Bind).
+
+**SYNOPSIS**
+
+```zig
+fn GetAddrInfo(base: *SocketBase, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: ?*const addrinfo, result: *?*addrinfo) i32
+```
+
+**SINCE**
+
+1.1. LVO -200.
+
+**INPUTS**
+
+- `node` - a name, a dotted IPv4 address, or IPv6 text - a link-local
+  one may carry its interface, `fe80::1%eth0`; null for this machine.
+- `service` - a port number, or one of the names `ftp`, `ssh`,
+  `telnet`, `smtp`, `domain`, `http`, `ntp`, `https`; null for port 0.
+- `hints` - null, or an `addrinfo` whose `ai_family` (AF_UNSPEC,
+  AF_INET, AF_INET6), `ai_socktype` (0, SOCK_STREAM, SOCK_DGRAM),
+  `ai_protocol` and `ai_flags` (AI_*) narrow what is wanted; every
+  other field 0.
+- `result` - where the list goes.
+
+**RESULT**
+
+0 with the list in `*result`, or an EAI_* code with `*result` null:
+`EAI_NONAME` (no such host, or neither node nor service), `EAI_AGAIN`
+(no name server answered), `EAI_FAIL` (no name server to ask, or an
+answer that made no sense), `EAI_FAMILY`, `EAI_SOCKTYPE`,
+`EAI_SERVICE` (a service with no port for it), `EAI_BADFLAGS`,
+`EAI_MEMORY`.
+
+**BEHAVIOR**
+
+A name is looked up as GetHostByName looks it up - hosts file, cache,
+DNS - for AAAA and A records as the family asks; IPv4 addresses come
+as `sockaddr_in`, IPv6 ones as `sockaddr_in6`, and for AF_INET6 with
+AI_V4MAPPED the IPv4 ones mapped when there are no IPv6 ones (with
+AI_ALL too, as well as them). Without AI_PASSIVE a null node is the
+loopback, with it the address that means all of the machine's. With
+no socket type there is an entry for each of TCP and UDP per address.
+The addresses come in the order RFC 6724 has for them: the ones there
+is a route to first, then by scope, the policy table's precedence
+and the longest prefix shared with the source that would be used.
+AI_ADDRCONFIG leaves out a family no interface but lo0 has an address
+of - an IPv6 link-local address does not count.
+
+**CONTEXT**
+
+- Waits: yes: for the name servers, as GetHostByName.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a process, to read the hosts file; a Task will do for an
+  address given as text.
+
+**OWNERSHIP**
+
+The list is the caller's, one block, given back whole with
+FreeAddrInfo on its first entry.
+
+**NOTES**
+
+The canonical name is the name the lookup found the addresses under -
+in the stack's domain, for a name without dots that was found there.
+
+**BUGS**
+
+No services database: a service is a number or one of the names above.
+
+**SEE ALSO**
+
+`FreeAddrInfo`, `GetHostByName`, `Inet_PtoN`
+
+**EXAMPLES**
+
+```zig
+const hints: bsd.addrinfo = .{ .ai_socktype = bsd.SOCK_STREAM };
+var list: ?*bsd.addrinfo = null;
+if (sb.GetAddrInfo("example.org", "80", &hints, &list) != 0) return;
+defer sb.FreeAddrInfo(list.?);
+var entry = list;
+while (entry) |each| : (entry = each.ai_next) {
+    const socket = sb.Socket(each.ai_family, each.ai_socktype, each.ai_protocol);
+    if (socket >= 0 and sb.Connect(socket, each.ai_addr.?, each.ai_addrlen) == 0) break;
+}
+```
+
 ## GetDTableSize
 
 How many sockets the opener may have open at once.
@@ -974,7 +1139,10 @@ fn GetNetworkStatistics(base: *SocketBase, kind: u32, buffer: ?*anyopaque, size:
 
 - `kind` - `NETSTATUS_COUNTS` (a `NetCounts`), `NETSTATUS_ROUTES` (a
   `RouteInfo` per route), `NETSTATUS_SOCKETS` (a `SocketInfo` per
-  socket) or `NETSTATUS_ARP` (an `ArpInfo` per entry).
+  socket), `NETSTATUS_ARP` (an `ArpInfo` per entry),
+  `NETSTATUS_ADDRESSES6` (an `Address6Info` per IPv6 address),
+  `NETSTATUS_ROUTES6` (a `Route6Info` per IPv6 route) or
+  `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry).
 - `buffer` - where they go; may be null when `size` is 0.
 - `size` - the bytes `buffer` holds.
 
@@ -1163,7 +1331,7 @@ fn GetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *a
 **INPUTS**
 
 - `socket` - a descriptor from Socket.
-- `level` - `SOL_SOCKET`.
+- `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
 - `option` - any SetSockOpt takes, and `SO_ERROR` (the socket's
   pending error, which reading clears) and `SO_TYPE` (its SOCK_*), each
   an i32.
@@ -1273,6 +1441,125 @@ None known.
 var events: u32 = 0;
 var socket = sb.GetSocketEvents(&events);
 while (socket >= 0) : (socket = sb.GetSocketEvents(&events)) handle(socket, events);
+```
+
+## If_IndexToName
+
+The name of the interface at `index`, into `name`.
+
+**SYNOPSIS**
+
+```zig
+fn If_IndexToName(base: *SocketBase, index: u32, name: [*]u8) ?[*:0]u8
+```
+
+**SINCE**
+
+1.1. LVO -196.
+
+**INPUTS**
+
+- `index` - an interface's index, as If_NameToIndex or a
+  `sin6_scope_id` has it.
+- `name` - room for `IFNAMSIZ` bytes.
+
+**RESULT**
+
+`name`, holding the interface's name, or null with errno ENXIO when no
+interface has that index.
+
+**BEHAVIOR**
+
+The name is copied with its NUL.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`name` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`If_NameToIndex`
+
+**EXAMPLES**
+
+```zig
+var name: [bsd.IFNAMSIZ]u8 = undefined;
+const text = sb.If_IndexToName(from.sin6_scope_id, &name) orelse return;
+```
+
+## If_NameToIndex
+
+The index of the interface called `name`: what `sin6_scope_id` names it by.
+
+**SYNOPSIS**
+
+```zig
+fn If_NameToIndex(base: *SocketBase, name: [*:0]const u8) u32
+```
+
+**SINCE**
+
+1.1. LVO -192.
+
+**INPUTS**
+
+- `name` - the interface's name, "eth0".
+
+**RESULT**
+
+Its index, 1 or more, or 0 with errno ENXIO when there is no such
+interface.
+
+**BEHAVIOR**
+
+lo0 is 1, and the others count up in the order of the stack's
+interface slots; an index stays the interface's until it is removed,
+and the next interface added may take it then.
+
+**CONTEXT**
+
+- Waits: only for the stack's lock.
+- Interrupts: no.
+- Forbid: not held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+A link-local address means something only with its interface:
+`fe80::1%eth0` is `fe80::1` with this index in `sin6_scope_id`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`If_IndexToName`, `Inet_PtoN`
+
+**EXAMPLES**
+
+```zig
+var to: bsd.sockaddr_in6 = .{ .sin6_scope_id = sb.If_NameToIndex("eth0") };
+_ = sb.Inet_PtoN(bsd.AF_INET6, "fe80::2", &to.sin6_addr);
 ```
 
 ## Inet_Addr
@@ -1385,6 +1672,135 @@ None known.
 
 ```zig
 _ = Printf(dl, "from %s\n", .{sb.Inet_NtoA(from.sin_addr.s_addr)});
+```
+
+## Inet_NtoP
+
+An address as text: IPv4's dotted quad, or IPv6's as RFC 5952 writes it.
+
+**SYNOPSIS**
+
+```zig
+fn Inet_NtoP(base: *SocketBase, family: i32, source: *const anyopaque, destination: [*]u8, size: u32) ?[*:0]u8
+```
+
+**SINCE**
+
+1.1. LVO -184.
+
+**INPUTS**
+
+- `family` - AF_INET or AF_INET6.
+- `source` - an `in_addr` for AF_INET, an `in6_addr` for AF_INET6.
+- `destination` - where the text goes, NUL-terminated.
+- `size` - its bytes: INET_ADDRSTRLEN and INET6_ADDRSTRLEN always do.
+
+**RESULT**
+
+`destination`, or null with the errno set: EAFNOSUPPORT for another
+family, ENOSPC when the text and its NUL do not fit.
+
+**BEHAVIOR**
+
+IPv4 as four decimal numbers with dots between. IPv6 in lower case,
+each group without its leading zeros, the longest run of two or more
+zero groups as `::` (the first of runs equally long), and an IPv4
+address mapped into IPv6 (`::ffff:0:0/96`) with its last 32 bits
+dotted: `::ffff:10.0.2.15`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The text is the caller's, in the caller's buffer.
+
+**NOTES**
+
+A zone (`%eth0`) is not part of an address and is not written.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Inet_PtoN`, `Inet_NtoA`
+
+**EXAMPLES**
+
+```zig
+var text: [bsd.INET6_ADDRSTRLEN]u8 = undefined;
+_ = sb.Inet_NtoP(bsd.AF_INET6, &from.sin6_addr, &text, text.len);
+```
+
+## Inet_PtoN
+
+Text as an address: IPv4's dotted quad, or IPv6 in any form RFC 4291 allows.
+
+**SYNOPSIS**
+
+```zig
+fn Inet_PtoN(base: *SocketBase, family: i32, text: [*:0]const u8, destination: *anyopaque) i32
+```
+
+**SINCE**
+
+1.1. LVO -188.
+
+**INPUTS**
+
+- `family` - AF_INET or AF_INET6.
+- `text` - the address, NUL-terminated.
+- `destination` - an `in_addr` for AF_INET, an `in6_addr` for AF_INET6.
+
+**RESULT**
+
+1 with the address in `destination`; 0 when the text is no address of
+the family, `destination` untouched; -1 with errno EAFNOSUPPORT for
+another family.
+
+**BEHAVIOR**
+
+AF_INET takes exactly four decimal numbers from 0 to 255 with dots
+between, none with a leading zero but a lone 0 - not the shorter or
+octal forms Inet_Addr also reads. AF_INET6 takes eight groups of one
+to four hex digits, one run of them written `::`, and the last two as a
+dotted IPv4 address if the text likes.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+A zone (`fe80::1%eth0`) is not an address and answers 0; its
+interface belongs in `sin6_scope_id`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Inet_NtoP`, `Inet_Addr`
+
+**EXAMPLES**
+
+```zig
+var to: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(80) };
+if (sb.Inet_PtoN(bsd.AF_INET6, "fec0::2", &to.sin6_addr) != 1) return;
 ```
 
 ## IoctlSocket
@@ -1592,14 +2008,16 @@ fn ObtainSocket(base: *SocketBase, id: i32, domain: i32, socket_type: i32, proto
 **INPUTS**
 
 - `id` - what ReleaseSocket answered.
-- `domain` - `PF_INET`.
+- `domain` - the socket's family, `PF_INET` or `PF_INET6`, as a
+  check; or `PF_UNSPEC` for either, when the taker does not know it.
 - `socket_type` - the socket's type, as a check.
 - `protocol` - its protocol, or 0.
 
 **RESULT**
 
 Its descriptor in the opener's table, or -1 with Errno(): `EINVAL`
-(nothing waits under that id, or not of that type), `EMFILE`.
+(nothing waits under that id, or not of that family or type),
+`EMFILE`.
 
 **BEHAVIOR**
 
@@ -2348,14 +2766,17 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 **INPUTS**
 
 - `socket` - a descriptor from Socket.
-- `level` - `SOL_SOCKET`.
+- `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
 - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
   i32 of FD_* events to be told of with the event signal),
   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
-  only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
+  only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
+  `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
+  for IPv6 only; before Bind) and `IPV6_UNICAST_HOPS` (an i32, the hop
+  limit its packets go with, -1 for the interface's).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -2363,7 +2784,7 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 
 0, or -1 with Errno(): `EBADF`, `ENOPROTOOPT` (another level or an
 option there is not, or one that can only be read), `EINVAL` (a value
-of the wrong size).
+of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound).
 
 **BEHAVIOR**
 
@@ -2485,14 +2906,16 @@ fn Socket(base: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
 
 **INPUTS**
 
-- `domain` - `PF_INET`; or `PF_PACKET` for a capture socket.
+- `domain` - `PF_INET` (IPv4, `sockaddr_in`), `PF_INET6` (IPv6, and
+  IPv4 through mapped addresses, `sockaddr_in6`); or `PF_PACKET` for a
+  capture socket.
 - `socket_type` - `SOCK_STREAM`: a connection, TCP; `SOCK_DGRAM`:
-  datagrams, UDP; `SOCK_RAW`: ICMP messages as they are, for a program
-  such as Ping, or with `PF_PACKET` the frames an interface sends and
-  takes.
+  datagrams, UDP; `SOCK_RAW`: ICMP or ICMPv6 messages as they are, for
+  a program such as Ping, or with `PF_PACKET` the frames an interface
+  sends and takes.
 - `protocol` - 0, or `IPPROTO_TCP` for a stream socket, `IPPROTO_UDP`
-  for a datagram socket; `IPPROTO_ICMP` for a raw one; 0 for a capture
-  socket.
+  for a datagram socket; `IPPROTO_ICMP` for a raw `PF_INET` one,
+  `IPPROTO_ICMPV6` for a raw `PF_INET6` one; 0 for a capture socket.
 
 **RESULT**
 
@@ -2525,7 +2948,10 @@ library, which closes every socket still open.
 A raw ICMP socket receives a copy of every ICMP message that comes
 in, its IPv4 header first; what it sends is the ICMP message, header
 and checksum made by the program, and the stack puts the IPv4 header
-in front. A stream socket has two rings of 8 KiB, one each way, which
+in front. A raw ICMPv6 socket receives every ICMPv6 message without
+its IPv6 header, and the stack makes the checksum of what it sends
+(RFC 3542, 3.1). A `PF_INET6` socket takes IPv4 as well until
+IPV6_V6ONLY is set; its IPv4 peers are `::ffff:a.b.c.d`. A stream socket has two rings of 8 KiB, one each way, which
 SO_SNDBUF and SO_RCVBUF resize, and its first one starts the stack
 task, which runs its timers.
 

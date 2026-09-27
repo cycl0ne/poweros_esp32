@@ -6,6 +6,18 @@
 //! the stack's list of every socket, where a packet coming in finds it.
 //! It is made and freed under the stack's lock.
 //!
+//! **Families.** An `AF_INET` socket speaks IPv4 and takes and gives
+//! `sockaddr_in`; an `AF_INET6` socket takes and gives `sockaddr_in6`,
+//! and speaks IPv6 and - unless IPV6_V6ONLY - IPv4 too, through
+//! addresses mapped as `::ffff:a.b.c.d` (RFC 4291, 2.5.5.2; RFC 3493,
+//! 3.7). Inside, every address is one type (`ip6/address.zig`), so a
+//! socket bound to no address takes what its family and IPV6_V6ONLY let
+//! it (`takes`), and two sockets bound to one port clash when what they
+//! take meets (`portTaken`). A link-local IPv6 address means something
+//! only with its interface: `sin6_scope_id` names it by index, 1 for
+//! lo0 and up from there in the order the interfaces were added
+//! (If_NameToIndex).
+//!
 //! **Waiting.** A call that has to wait - a receive with nothing queued,
 //! a WaitSelect with nothing ready - lets go of the lock and waits for the
 //! opener's readiness signal, which whoever queues something for one of
@@ -25,6 +37,9 @@ const StackBase = _base.StackBase;
 const SocketBase = _base.SocketBase;
 const Frame = @import("../frame/_frame.zig").Frame;
 const _lock = @import("../lock/_lock.zig");
+const Address = @import("../ip6/address.zig").Address;
+const _netif = @import("../netif/_netif.zig");
+const Interface = _netif.Interface;
 
 /// A socket's flags.
 pub const bound: u32 = 1 << 0;
@@ -58,9 +73,21 @@ pub const Socket = extern struct {
     descriptor: i32 = -1,
     socket_type: i32 = 0,
     protocol: i32 = 0,
-    /// Where it is bound and whom it is connected to, in the chip's order.
-    local_address: u32 = 0,
-    remote_address: u32 = 0,
+    /// AF_INET or AF_INET6; an AF_INET6 socket that takes IPv6 only
+    /// (IPV6_V6ONLY); the hop limit its packets go with
+    /// (IPV6_UNICAST_HOPS), 0 for the interface's.
+    family: u8 = bsd.AF_INET,
+    v6only: u8 = 0,
+    hop_limit: u8 = 0,
+    pad: u8 = 0,
+    /// The interface a link-local peer is on, when it was named or a
+    /// connection came in on it.
+    scope: ?*Interface = null,
+    /// Where it is bound and whom it is connected to: IPv6's sixteen
+    /// bytes, an IPv4 address mapped (`ip6/address.zig`); unspecified
+    /// until bound or connected.
+    local_address: Address = .{},
+    remote_address: Address = .{},
     local_port: u16 = 0,
     remote_port: u16 = 0,
     flags: u32 = 0,
@@ -189,15 +216,39 @@ pub fn destroyAll(sb: *SocketBase) void {
 
 // --- ports ---------------------------------------------------------------------
 
-/// Whether a socket of `socket_type` other than `except` is bound to
-/// `port` on an address that overlaps `address`.
-pub fn portTaken(stack: *StackBase, socket_type: i32, address: u32, port: u16, except: ?*Socket) ?*Socket {
+/// Whether a packet to `address` is one `socket`'s local address takes:
+/// that address, or when it is bound to none, any its family lets it.
+pub fn takes(socket: *const Socket, address: Address) bool {
+    if (!socket.local_address.isUnspecified()) return socket.local_address.eql(address);
+    if (socket.family == bsd.AF_INET) return address.isV4();
+    return !(socket.v6only != 0 and address.isV4());
+}
+
+/// Whether what `socket` would take bound to `address` meets what
+/// `other` takes as it is bound.
+fn overlaps(socket: *const Socket, address: Address, other: *const Socket) bool {
+    if (!address.isUnspecified()) return takes(other, address);
+    if (!other.local_address.isUnspecified()) {
+        var probe = socket.*;
+        probe.local_address = address;
+        return takes(&probe, other.local_address);
+    }
+    // Both on every address: they meet unless one takes IPv4 only and
+    // the other IPv6 only.
+    const v4_only = socket.family == bsd.AF_INET or other.family == bsd.AF_INET;
+    const v6_only = (socket.family == bsd.AF_INET6 and socket.v6only != 0) or (other.family == bsd.AF_INET6 and other.v6only != 0);
+    return !(v4_only and v6_only);
+}
+
+/// A socket of `socket`'s type, not `socket`, bound to `port` where
+/// `socket` would be bound to `address`.
+pub fn portTaken(stack: *StackBase, socket: *const Socket, address: Address, port: u16) ?*Socket {
     var it = stack.sockets.iterator();
     while (it.next()) |node| {
         const other = fromNode(node);
-        if (other == except or other.socket_type != socket_type) continue;
+        if (other == socket or other.socket_type != socket.socket_type) continue;
         if (other.flags & bound == 0 or other.local_port != port) continue;
-        if (other.local_address == bsd.INADDR_ANY or address == bsd.INADDR_ANY or other.local_address == address) return other;
+        if (overlaps(socket, address, other)) return other;
     }
     return null;
 }
@@ -209,7 +260,7 @@ pub fn bindAnyPort(stack: *StackBase, socket: *Socket) bool {
     while (tries < 65536 - @as(u32, _base.port_first)) : (tries += 1) {
         const port = stack.next_port;
         stack.next_port = if (port == 65535) _base.port_first else port + 1;
-        if (portTaken(stack, socket.socket_type, socket.local_address, port, socket) != null) continue;
+        if (portTaken(stack, socket, socket.local_address, port) != null) continue;
         socket.local_port = port;
         socket.flags |= bound;
         return true;
@@ -328,9 +379,44 @@ pub fn isZero(time: timer.TimeVal) bool {
 
 // --- addresses -----------------------------------------------------------------
 
-/// An IPv4 address and port out of a sockaddr the caller gave, in the
-/// chip's order; null with errno set when it is none.
-pub fn addressIn(sb: *SocketBase, address: *const bsd.sockaddr, length: u32) ?struct { address: u32, port: u16 } {
+/// What a sockaddr the caller gave says: the address (an IPv4 one
+/// mapped), the port in the chip's order, and the interface a link-local
+/// address is on, if it named one.
+pub const Peer = struct {
+    address: Address,
+    port: u16,
+    scope: ?*Interface = null,
+};
+
+/// The sockaddr the caller gave, read as `socket`'s family has it; null
+/// with errno set when it is not one: `EINVAL` for one too short, a
+/// mapped address on an IPV6_V6ONLY socket, `EAFNOSUPPORT` for another
+/// family, `ENXIO` for a scope that is no interface.
+pub fn addressIn(sb: *SocketBase, socket: *const Socket, address: *const bsd.sockaddr, length: u32) ?Peer {
+    if (socket.family == bsd.AF_INET6) {
+        if (length < @sizeOf(bsd.sockaddr_in6)) {
+            setErrno(sb, bsd.EINVAL);
+            return null;
+        }
+        const in6: *const bsd.sockaddr_in6 = @ptrCast(@alignCast(address));
+        if (in6.sin6_family != bsd.AF_INET6) {
+            setErrno(sb, bsd.EAFNOSUPPORT);
+            return null;
+        }
+        const peer: Address = .{ .bytes = in6.sin6_addr.s6_addr };
+        if (peer.isV4() and socket.v6only != 0) {
+            setErrno(sb, bsd.EINVAL);
+            return null;
+        }
+        var scope: ?*Interface = null;
+        if (in6.sin6_scope_id != 0) {
+            scope = _netif.byIndex(sb.stack, in6.sin6_scope_id) orelse {
+                setErrno(sb, bsd.ENXIO);
+                return null;
+            };
+        }
+        return .{ .address = peer, .port = bsd.ntohs(in6.sin6_port), .scope = scope };
+    }
     if (length < @sizeOf(bsd.sockaddr_in)) {
         setErrno(sb, bsd.EINVAL);
         return null;
@@ -340,19 +426,32 @@ pub fn addressIn(sb: *SocketBase, address: *const bsd.sockaddr, length: u32) ?st
         setErrno(sb, bsd.EAFNOSUPPORT);
         return null;
     }
-    return .{ .address = bsd.ntohl(in.sin_addr.s_addr), .port = bsd.ntohs(in.sin_port) };
+    return .{ .address = Address.fromV4(bsd.ntohl(in.sin_addr.s_addr)), .port = bsd.ntohs(in.sin_port) };
 }
 
-/// An IPv4 address and port written into a sockaddr of the caller's, as
-/// much as `*length` has room for; `*length` becomes the whole size.
-pub fn addressOut(address: u32, port: u16, into: *bsd.sockaddr, length: *u32) void {
+/// An address and port written into a sockaddr of the caller's, of
+/// `socket`'s family, as much as `*length` has room for; `*length`
+/// becomes the whole size. `scope` is the interface a link-local address
+/// is on.
+pub fn addressOut(stack: *StackBase, socket: *const Socket, address: Address, port: u16, scope: ?*Interface, into: *bsd.sockaddr, length: *u32) void {
+    const to: [*]u8 = @ptrCast(into);
+    if (socket.family == bsd.AF_INET6) {
+        var whole: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(port), .sin6_addr = .{ .s6_addr = address.bytes } };
+        if (address.isLinkLocal() or (address.isMulticast() and address.scope() <= 2)) {
+            if (scope) |interface| whole.sin6_scope_id = _netif.index(stack, interface);
+        }
+        const room: u32 = @min(length.*, @as(u32, @sizeOf(bsd.sockaddr_in6)));
+        const from: [*]const u8 = @ptrCast(&whole);
+        @memcpy(to[0..room], from[0..room]);
+        length.* = @sizeOf(bsd.sockaddr_in6);
+        return;
+    }
     const whole: bsd.sockaddr_in = .{
         .sin_port = bsd.htons(port),
-        .sin_addr = .{ .s_addr = bsd.htonl(address) },
+        .sin_addr = .{ .s_addr = bsd.htonl(address.v4()) },
     };
     const room: u32 = @min(length.*, @as(u32, @sizeOf(bsd.sockaddr_in)));
     const from: [*]const u8 = @ptrCast(&whole);
-    const to: [*]u8 = @ptrCast(into);
     @memcpy(to[0..room], from[0..room]);
     length.* = @sizeOf(bsd.sockaddr_in);
 }

@@ -8,6 +8,8 @@
 //! reads the same bytes from the ring once more.
 
 const sdk = @import("sdk");
+const _inet = @import("../inet/_inet.zig");
+const Address = @import("../ip6/address.zig").Address;
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
@@ -34,7 +36,7 @@ pub fn window(tcb: *const Tcb) u32 {
 /// that says why it could not go.
 pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offset: u32, length: u32) i32 {
     const socket = tcb.socket;
-    const hop = _route.lookup(stack, socket.remote_address) orelse return bsd.EHOSTUNREACH;
+    const path = _inet.route(stack, socket.remote_address, socket.scope) orelse return bsd.EHOSTUNREACH;
     const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
     if (length > 0) tcb.send.copyOut(ring_offset, frame.room()[frame.start..][0..length]);
     frame.length = length;
@@ -54,10 +56,10 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     if (with_mss) {
         header[20] = _tcp.option_mss;
         header[21] = 4;
-        _ip.put16(header, 22, @intCast(localMss(hop.interface.mtu)));
+        _ip.put16(header, 22, @intCast(localMss(path.mtu, socket.remote_address)));
     }
     const total = frame.length;
-    const checksum = _ip.finish(_ip.sum(_ip.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes()));
+    const checksum = _ip.finish(_ip.sum(_inet.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes()));
     _ip.put16(header, 16, checksum);
     if (flags & _tcp.ACK != 0) {
         tcb.rcv_adv = tcb.rcv_nxt +% offered;
@@ -65,13 +67,14 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
         timers.paid(stack, tcb);
     }
     stack.counts.tcp_sent += 1;
-    return _ip.output(stack, frame, socket.local_address, socket.remote_address, protocol, hop);
+    return _inet.output(stack, frame, socket.local_address, socket.remote_address, protocol, path, socket.hop_limit);
 }
 
-/// The MSS an interface of `mtu` takes: its MTU less the IPv4 and TCP
-/// headers.
-pub fn localMss(mtu: u32) u32 {
-    return mtu - 40;
+/// The MSS this machine takes over an interface of `mtu` to `peer`: what is
+/// left of a packet once the IP header of the peer's family and TCP's own
+/// are taken off.
+pub fn localMss(mtu: u32, peer: Address) u32 {
+    return mtu - _inet.headerBytes(peer) - _tcp.header_bytes;
 }
 
 /// Everything the connection may send now, sent: data as far as the
@@ -150,9 +153,9 @@ pub fn sendSyn(stack: *StackBase, tcb: *Tcb) i32 {
 /// connection refuses. `header` is the IPv4 header of the segment, `seq`
 /// and `ack` its numbers, `length` what it occupies of the sequence
 /// space, `flags` its flags.
-pub fn sendReset(stack: *StackBase, header: _ip.Header, local_port: u16, remote_port: u16, seq: u32, ack: u32, length: u32, flags: u8) void {
+pub fn sendReset(stack: *StackBase, header: _inet.Packet, local_port: u16, remote_port: u16, seq: u32, ack: u32, length: u32, flags: u8) void {
     if (flags & _tcp.RST != 0) return;
-    const hop = _route.lookup(stack, header.source) orelse return;
+    const path = _inet.route(stack, header.source, header.arrived) orelse return;
     const frame = stack.frames.take(stack.sys_base) orelse return;
     const out = frame.push(_tcp.header_bytes);
     _ip.put16(out, 0, local_port);
@@ -170,7 +173,7 @@ pub fn sendReset(stack: *StackBase, header: _ip.Header, local_port: u16, remote_
     _ip.put16(out, 14, 0);
     _ip.put16(out, 16, 0);
     _ip.put16(out, 18, 0);
-    _ip.put16(out, 16, _ip.finish(_ip.sum(_ip.pseudoSum(header.destination, header.source, protocol, _tcp.header_bytes), out)));
+    _ip.put16(out, 16, _ip.finish(_ip.sum(_inet.pseudoSum(header.destination, header.source, protocol, _tcp.header_bytes), out)));
     stack.counts.tcp_resets_sent += 1;
-    _ = _ip.output(stack, frame, header.destination, header.source, protocol, hop);
+    _ = _inet.output(stack, frame, header.destination, header.source, protocol, path, 0);
 }

@@ -26,6 +26,8 @@
 //! so the peer sends it again.
 
 const sdk = @import("sdk");
+const _inet = @import("../inet/_inet.zig");
+const Address = @import("../ip6/address.zig").Address;
 const bsd = sdk.bsdsocket;
 const exec = sdk.exec;
 const _base = @import("../bsdsocket_base.zig");
@@ -64,7 +66,7 @@ const Segment = struct {
 
 /// A TCP segment that came in, the frame starting at it; `header` is the
 /// IPv4 header in front of it.
-pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _ip.Header) void {
+pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _inet.Packet) void {
     _ = interface;
     const sys = stack.sys_base;
     defer stack.frames.give(sys, frame);
@@ -74,8 +76,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     const offset: u32 = @as(u32, bytes[12] >> 4) * 4;
     if (offset < _tcp.header_bytes or offset > bytes.len) return bad(stack);
     const total: u32 = @intCast(bytes.len);
-    if (_ip.finish(_ip.sum(_ip.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
-    if (_netif.isBroadcast(stack, header.destination)) return;
+    if (_ip.finish(_ip.sum(_inet.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
+    if (header.destination.isV4() and _netif.isBroadcast(stack, header.destination.v4())) return;
     const flags = bytes[13];
     const data = bytes[offset..];
     var seg: Segment = .{
@@ -127,14 +129,14 @@ fn mssOption(options: []const u8) ?u32 {
 /// The MSS to send with: the peer's, if it named one, held to what our
 /// own interface takes.
 fn sendMss(stack: *StackBase, socket: *Socket, peer: ?u32) u32 {
-    const own: u32 = if (_route.lookup(stack, socket.remote_address)) |hop| output.localMss(hop.interface.mtu) else _tcp.default_mss;
+    const own: u32 = if (_inet.route(stack, socket.remote_address, socket.scope)) |path| output.localMss(path.mtu, socket.remote_address) else _tcp.default_mss;
     const wanted = peer orelse _tcp.default_mss;
     return @max(@as(u32, 64), @min(wanted, own));
 }
 
 // --- LISTEN --------------------------------------------------------------------------
 
-fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: _ip.Header) void {
+fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: _inet.Packet) void {
     if (seg.flags & _tcp.RST != 0) return;
     if (seg.flags & _tcp.ACK != 0) {
         return output.sendReset(stack, header, seg.destination_port, seg.source_port, seg.seq, seg.ack, seg.length, seg.flags);
@@ -153,6 +155,10 @@ fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: 
     child.local_port = listener.local_port;
     child.remote_address = header.source;
     child.remote_port = seg.source_port;
+    child.family = listener.family;
+    child.v6only = listener.v6only;
+    child.hop_limit = listener.hop_limit;
+    child.scope = if (header.source.isLinkLocal()) header.arrived else null;
     child.flags |= _socket.bound | _socket.connected | (listener.flags & _socket.nonblocking);
     tcb.flags = _tcp.passive | (_tcp.of(listener).flags & _tcp.no_delay);
     tcb.state = .syn_received;
@@ -176,7 +182,7 @@ fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: 
 
 // --- SYN-SENT ------------------------------------------------------------------------
 
-fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _ip.Header) void {
+fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _inet.Packet) void {
     const socket = tcb.socket;
     var ack_acceptable = false;
     if (seg.flags & _tcp.ACK != 0) {
@@ -224,7 +230,7 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _ip.Header
 
 // --- the synchronized states ------------------------------------------------------------
 
-fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: _ip.Header) void {
+fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: _inet.Packet) void {
     const socket = tcb.socket;
     var seg = original.*;
     if (predicted(stack, tcb, &seg)) return;

@@ -59,6 +59,6 @@ pub fn GetSockName(sb: *SocketBase, descriptor: i32, address: *bsd.sockaddr, add
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "GetSockName");
-    _socket.addressOut(socket.local_address, socket.local_port, address, address_length);
+    _socket.addressOut(sb.stack, socket, socket.local_address, socket.local_port, socket.scope, address, address_length);
     return 0;
 }

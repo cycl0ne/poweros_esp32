@@ -19,13 +19,15 @@ const _lock = @import("../lock/_lock.zig");
 ///
 /// INPUTS:
 /// - `id` - what ReleaseSocket answered.
-/// - `domain` - `PF_INET`.
+/// - `domain` - the socket's family, `PF_INET` or `PF_INET6`, as a
+///   check; or `PF_UNSPEC` for either, when the taker does not know it.
 /// - `socket_type` - the socket's type, as a check.
 /// - `protocol` - its protocol, or 0.
 ///
 /// RESULT:
 /// Its descriptor in the opener's table, or -1 with Errno(): `EINVAL`
-/// (nothing waits under that id, or not of that type), `EMFILE`.
+/// (nothing waits under that id, or not of that family or type),
+/// `EMFILE`.
 ///
 /// BEHAVIOR:
 /// The socket is the opener's from now on: its readiness raises the
@@ -57,13 +59,14 @@ pub fn ObtainSocket(sb: *SocketBase, id: i32, domain: i32, socket_type: i32, pro
     const stack = sb.stack;
     const held = _lock.take(stack);
     defer _lock.give(stack, held);
-    if (domain != bsd.PF_INET) return _socket.fail(sb, bsd.EINVAL, "ObtainSocket");
+    if (domain != bsd.PF_UNSPEC and domain != bsd.PF_INET and domain != bsd.PF_INET6) return _socket.fail(sb, bsd.EINVAL, "ObtainSocket");
     var it = stack.sockets.iterator();
     const socket = while (it.next()) |node| {
         const candidate = _socket.fromNode(node);
         if (candidate.owner == null and candidate.release_id == id) break candidate;
     } else return _socket.fail(sb, bsd.EINVAL, "ObtainSocket");
     if (socket.socket_type != socket_type or (protocol != 0 and socket.protocol != protocol)) return _socket.fail(sb, bsd.EINVAL, "ObtainSocket");
+    if (domain != bsd.PF_UNSPEC and socket.family != domain) return _socket.fail(sb, bsd.EINVAL, "ObtainSocket");
     const table = sb.table.?;
     var index: u32 = 0;
     while (index < sb.table_size and table[index] != null) index += 1;

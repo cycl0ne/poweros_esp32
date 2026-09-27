@@ -59,6 +59,12 @@ pub const LVO = struct {
     pub const GetHostName = libraries.lvo(42);
     pub const SetHostName = libraries.lvo(43);
     pub const GetNetworkStatistics = libraries.lvo(44);
+    pub const Inet_NtoP = libraries.lvo(45);
+    pub const Inet_PtoN = libraries.lvo(46);
+    pub const If_NameToIndex = libraries.lvo(47);
+    pub const If_IndexToName = libraries.lvo(48);
+    pub const GetAddrInfo = libraries.lvo(49);
+    pub const FreeAddrInfo = libraries.lvo(50);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -105,6 +111,12 @@ pub const Fn = struct {
     pub const GetHostName = *const fn (*SocketBase, [*]u8, u32) callconv(.c) i32;
     pub const SetHostName = *const fn (*SocketBase, [*:0]const u8) callconv(.c) i32;
     pub const GetNetworkStatistics = *const fn (*SocketBase, u32, ?*anyopaque, u32) callconv(.c) i32;
+    pub const Inet_NtoP = *const fn (*SocketBase, i32, *const anyopaque, [*]u8, u32) callconv(.c) ?[*:0]u8;
+    pub const Inet_PtoN = *const fn (*SocketBase, i32, [*:0]const u8, *anyopaque) callconv(.c) i32;
+    pub const If_NameToIndex = *const fn (*SocketBase, [*:0]const u8) callconv(.c) u32;
+    pub const If_IndexToName = *const fn (*SocketBase, u32, [*]u8) callconv(.c) ?[*:0]u8;
+    pub const GetAddrInfo = *const fn (*SocketBase, ?[*:0]const u8, ?[*:0]const u8, ?*const bsd.addrinfo, *?*bsd.addrinfo) callconv(.c) i32;
+    pub const FreeAddrInfo = *const fn (*SocketBase, *bsd.addrinfo) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -339,5 +351,42 @@ pub const SocketBase = opaque {
     /// cache, into `buffer`: how many there are, or -1.
     pub fn GetNetworkStatistics(self: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) i32 {
         return libraries.call(self, LVO.GetNetworkStatistics, Fn.GetNetworkStatistics, .{ kind, buffer, size });
+    }
+
+    /// An address of `family` (AF_INET: an in_addr, AF_INET6: an in6_addr)
+    /// as text in `destination`, `size` bytes: `destination`, or null (errno
+    /// EAFNOSUPPORT, or ENOSPC when it does not fit).
+    pub fn Inet_NtoP(self: *SocketBase, family: i32, source: *const anyopaque, destination: [*]u8, size: u32) ?[*:0]u8 {
+        return libraries.call(self, LVO.Inet_NtoP, Fn.Inet_NtoP, .{ family, source, destination, size });
+    }
+
+    /// Text as an address of `family` in `destination` (an in_addr or an
+    /// in6_addr): 1, 0 for text that is no address, -1 for a family there is
+    /// none of (errno EAFNOSUPPORT).
+    pub fn Inet_PtoN(self: *SocketBase, family: i32, text: [*:0]const u8, destination: *anyopaque) i32 {
+        return libraries.call(self, LVO.Inet_PtoN, Fn.Inet_PtoN, .{ family, text, destination });
+    }
+
+    /// The index of the interface called `name`, as sin6_scope_id has it, or
+    /// 0 (errno ENXIO).
+    pub fn If_NameToIndex(self: *SocketBase, name: [*:0]const u8) u32 {
+        return libraries.call(self, LVO.If_NameToIndex, Fn.If_NameToIndex, .{name});
+    }
+
+    /// The name of the interface at `index` in `name` (IFNAMSIZ bytes):
+    /// `name`, or null (errno ENXIO).
+    pub fn If_IndexToName(self: *SocketBase, index: u32, name: [*]u8) ?[*:0]u8 {
+        return libraries.call(self, LVO.If_IndexToName, Fn.If_IndexToName, .{ index, name });
+    }
+
+    /// The addresses of `node` for `service` as a list of addrinfo in
+    /// `*result`, in RFC 6724's order: 0, or an EAI_* code.
+    pub fn GetAddrInfo(self: *SocketBase, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: ?*const bsd.addrinfo, result: *?*bsd.addrinfo) i32 {
+        return libraries.call(self, LVO.GetAddrInfo, Fn.GetAddrInfo, .{ node, service, hints, result });
+    }
+
+    /// A list GetAddrInfo made, given back whole with its first entry.
+    pub fn FreeAddrInfo(self: *SocketBase, list: *bsd.addrinfo) void {
+        return libraries.call(self, LVO.FreeAddrInfo, Fn.FreeAddrInfo, .{list});
     }
 };

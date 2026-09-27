@@ -4,8 +4,10 @@
 //!
 //!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S
 //!
-//! It sends TEXT ("hello") to TO:PORT (127.0.0.1:7) and prints what comes
-//! back within two seconds, and from where. When TO is a loopback
+//! It sends TEXT ("hello") to TO:PORT (127.0.0.1:7) - TO an IPv4 or an
+//! IPv6 address - and prints what comes back within two seconds, and
+//! from where. Every datagram socket is an AF_INET6 one, an IPv4 peer its
+//! mapped address. When TO is a loopback
 //! address, the program is its own echo as well: a second socket bound to
 //! PORT takes the datagram, WaitSelect wakes it, and it sends the text
 //! back - both ends in one program, over `lo0`, with no network device.
@@ -14,8 +16,8 @@
 //! first, on DEVICE (networks/openeth.device) with ADDRESS (10.0.2.15/24)
 //! and GATEWAY (10.0.2.2) - the addresses QEMU's user network gives - unless
 //! it is there already. REMOVE takes `eth0` down again and sends nothing.
-//! PING sends an ICMP echo request with TEXT to TO through a raw socket
-//! instead, and prints the echo that comes back.
+//! PING sends an ICMP echo request with TEXT to an IPv4 TO through a raw
+//! socket instead, and prints the echo that comes back.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -27,7 +29,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Udp";
-const VERSION_STRING = "\x00$VER: Udp 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Udp 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S";
@@ -41,7 +43,8 @@ const arg_remove = 6;
 const arg_ping = 7;
 
 const MSG_NOLIBRARY = "Can't open %s\n";
-const MSG_BADADDRESS = "%s is not an IPv4 address\n";
+const MSG_BADADDRESS = "%s is not an address\n";
+const MSG_PINGV4 = "PING is for IPv4; C:net/Ping -6 pings %s\n";
 const MSG_FAILED = "%s failed: errno %d\n";
 const MSG_SENT = "Sent %d bytes to %s port %u\n";
 const MSG_ECHOED = "Echoed %d bytes from port %u\n";
@@ -157,36 +160,51 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var text_length: u32 = 0;
     while (text[text_length] != 0) text_length += 1;
 
+    // An IPv4 address mapped, or IPv6 as it is.
+    var to6: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(port) };
     const address = sb.Inet_Addr(to_text);
-    if (address == bsd.INADDR_NONE) {
+    const is_v4 = address != bsd.INADDR_NONE;
+    if (is_v4) {
+        to6.sin6_addr.s6_addr[10] = 0xff;
+        to6.sin6_addr.s6_addr[11] = 0xff;
+        to6.sin6_addr.s6_addr[12..16].* = @bitCast(address);
+    } else if (sb.Inet_PtoN(bsd.AF_INET6, to_text, &to6.sin6_addr) != 1) {
         _ = Printf(dl, MSG_BADADDRESS, .{to_text});
         return dos.RETURN_ERROR;
     }
-    var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port), .sin_addr = .{ .s_addr = address } };
-    const loopback = bsd.ntohl(address) >> 24 == 127;
+    const loopback = if (is_v4) bsd.ntohl(address) >> 24 == 127 else for (to6.sin6_addr.s6_addr, bsd.in6addr_loopback.s6_addr) |a, b| {
+        if (a != b) break false;
+    } else true;
     if (!loopback) {
         const outcome = addInterface(sb, &argv);
         if (outcome < 0) return failed(dl, sb, "AddInterfaceTagList");
         if (outcome > 0) _ = Printf(dl, MSG_INTERFACE, .{ argText(&argv, arg_address, "10.0.2.15"), argText(&argv, arg_device, "networks/openeth.device") });
     }
 
-    if (argv[arg_ping] != 0) return ping(dl, sb, &to, to_text, text, text_length);
+    if (argv[arg_ping] != 0) {
+        if (!is_v4) {
+            _ = Printf(dl, MSG_PINGV4, .{to_text});
+            return dos.RETURN_ERROR;
+        }
+        var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port), .sin_addr = .{ .s_addr = address } };
+        return ping(dl, sb, &to, to_text, text, text_length);
+    }
 
     // The echo, when the answer is to come from this machine.
     var echo: i32 = -1;
     if (loopback) {
-        echo = sb.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+        echo = sb.Socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
         if (echo < 0) return failed(dl, sb, "Socket");
-        if (sb.Bind(echo, to.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return failed(dl, sb, "Bind");
+        if (sb.Bind(echo, to6.anyConst(), @sizeOf(bsd.sockaddr_in6)) < 0) return failed(dl, sb, "Bind");
     }
     defer if (echo >= 0) {
         _ = sb.CloseSocket(echo);
     };
 
-    const socket = sb.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    const socket = sb.Socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
     if (socket < 0) return failed(dl, sb, "Socket");
     defer _ = sb.CloseSocket(socket);
-    const sent = sb.SendTo(socket, text, text_length, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in));
+    const sent = sb.SendTo(socket, text, text_length, 0, to6.anyConst(), @sizeOf(bsd.sockaddr_in6));
     if (sent < 0) return failed(dl, sb, "SendTo");
     _ = Printf(dl, MSG_SENT, .{ sent, to_text, @as(u32, port) });
 
@@ -212,20 +230,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return dos.RETURN_WARN;
         }
         if (echo >= 0 and read.isSet(echo)) {
-            var from: bsd.sockaddr_in = .{};
-            var from_length: u32 = @sizeOf(bsd.sockaddr_in);
+            var from: bsd.sockaddr_in6 = .{};
+            var from_length: u32 = @sizeOf(bsd.sockaddr_in6);
             const got = sb.RecvFrom(echo, &buffer, buffer.len, 0, from.any(), &from_length);
             if (got < 0) return failed(dl, sb, "RecvFrom");
-            _ = Printf(dl, MSG_ECHOED, .{ got, @as(u32, bsd.ntohs(from.sin_port)) });
+            _ = Printf(dl, MSG_ECHOED, .{ got, @as(u32, bsd.ntohs(from.sin6_port)) });
             if (sb.SendTo(echo, &buffer, @intCast(got), 0, from.anyConst(), from_length) < 0) return failed(dl, sb, "SendTo");
         }
         if (read.isSet(socket)) {
-            var from: bsd.sockaddr_in = .{};
-            var from_length: u32 = @sizeOf(bsd.sockaddr_in);
+            var from: bsd.sockaddr_in6 = .{};
+            var from_length: u32 = @sizeOf(bsd.sockaddr_in6);
             const got = sb.RecvFrom(socket, &buffer, buffer.len - 1, 0, from.any(), &from_length);
             if (got < 0) return failed(dl, sb, "RecvFrom");
             buffer[@intCast(got)] = 0;
-            _ = Printf(dl, MSG_ANSWER, .{ sb.Inet_NtoA(from.sin_addr.s_addr), @as(u32, bsd.ntohs(from.sin_port)), @as([*:0]const u8, @ptrCast(&buffer)) });
+            var from_text: [bsd.INET6_ADDRSTRLEN]u8 = @splat(0);
+            _ = sb.Inet_NtoP(bsd.AF_INET6, &from.sin6_addr, &from_text, from_text.len);
+            _ = Printf(dl, MSG_ANSWER, .{ @as([*:0]const u8, @ptrCast(&from_text)), @as(u32, bsd.ntohs(from.sin6_port)), @as([*:0]const u8, @ptrCast(&buffer)) });
             return dos.RETURN_OK;
         }
     }

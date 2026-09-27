@@ -20,6 +20,7 @@
 //! it holds the library open. It is freed when it reaches CLOSED.
 
 const sdk = @import("sdk");
+const Address = @import("../ip6/address.zig").Address;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -282,7 +283,7 @@ pub fn free(stack: *StackBase, socket: *Socket) void {
 /// The connection a segment from `remote_address:remote_port` to
 /// `local_address:local_port` belongs to: one with exactly these four,
 /// else a listener on the local port.
-pub fn find(stack: *StackBase, local_address: u32, local_port: u16, remote_address: u32, remote_port: u16) ?*Socket {
+pub fn find(stack: *StackBase, local_address: Address, local_port: u16, remote_address: Address, remote_port: u16) ?*Socket {
     var listener: ?*Socket = null;
     var it = stack.sockets.iterator();
     while (it.next()) |node| {
@@ -292,12 +293,12 @@ pub fn find(stack: *StackBase, local_address: u32, local_port: u16, remote_addre
         switch (tcb.state) {
             .closed => continue,
             .listen => {
-                if (socket.local_address == bsd.INADDR_ANY or socket.local_address == local_address) {
-                    if (listener == null or socket.local_address != bsd.INADDR_ANY) listener = socket;
+                if (_socket.takes(socket, local_address)) {
+                    if (listener == null or !socket.local_address.isUnspecified()) listener = socket;
                 }
             },
             else => {
-                if (socket.local_address == local_address and socket.remote_address == remote_address and
+                if (socket.local_address.eql(local_address) and socket.remote_address.eql(remote_address) and
                     socket.remote_port == remote_port) return socket;
             },
         }

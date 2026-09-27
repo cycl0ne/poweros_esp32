@@ -38,8 +38,12 @@ pub inline fn ntohl(value: u32) u32 {
 
 /// Address families.
 pub const AF_UNSPEC: u8 = 0;
+/// PF_UNSPEC: any family, where a call takes it (ObtainSocket).
+pub const PF_UNSPEC: i32 = AF_UNSPEC;
 pub const AF_INET: u8 = 2;
 pub const PF_INET: i32 = AF_INET;
+pub const AF_INET6: u8 = 28;
+pub const PF_INET6: i32 = AF_INET6;
 /// Frames as an interface sends and takes them, for a capture socket
 /// (`Socket(PF_PACKET, SOCK_RAW, 0)`): see CaptureHeader.
 pub const AF_PACKET: u8 = 17;
@@ -80,6 +84,62 @@ pub const sockaddr_in = extern struct {
     }
 };
 
+/// struct in6_addr: an IPv6 address, its sixteen bytes in network order.
+pub const in6_addr = extern struct {
+    s6_addr: [16]u8 = @splat(0),
+};
+
+/// struct sockaddr_in6: an IPv6 address, a port, the flow label and, for
+/// a link-local address, the interface it is on.
+pub const sockaddr_in6 = extern struct {
+    /// sin6_len: @sizeOf(sockaddr_in6).
+    sin6_len: u8 = @sizeOf(sockaddr_in6),
+    /// sin6_family: AF_INET6.
+    sin6_family: u8 = AF_INET6,
+    /// sin6_port: in network order.
+    sin6_port: u16 = 0,
+    /// sin6_flowinfo: the flow label, in network order; 0.
+    sin6_flowinfo: u32 = 0,
+    sin6_addr: in6_addr = .{},
+    /// sin6_scope_id: which interface a link-local address is on - its
+    /// index, as `If_NameToIndex` answers it; 0 for any other address.
+    sin6_scope_id: u32 = 0,
+
+    /// As the calls take it.
+    pub fn any(address: *sockaddr_in6) *sockaddr {
+        return @ptrCast(address);
+    }
+    pub fn anyConst(address: *const sockaddr_in6) *const sockaddr {
+        return @ptrCast(address);
+    }
+};
+
+/// struct sockaddr_storage: room for any family's address, for a caller
+/// that does not know the family yet (RecvFrom, Accept).
+pub const sockaddr_storage = extern struct {
+    ss_len: u8 = @sizeOf(sockaddr_storage),
+    ss_family: u8 = AF_UNSPEC,
+    ss_pad: [126]u8 = @splat(0),
+
+    pub fn any(address: *sockaddr_storage) *sockaddr {
+        return @ptrCast(address);
+    }
+};
+
+comptime {
+    if (@sizeOf(sockaddr_in6) != 28) @compileError("sockaddr_in6 is 28 bytes");
+    if (@sizeOf(sockaddr_storage) != 128) @compileError("sockaddr_storage is 128 bytes");
+}
+
+/// IPv6 addresses with a meaning of their own: none (bind to every
+/// address of the machine) and the loopback, ::1.
+pub const in6addr_any: in6_addr = .{};
+pub const in6addr_loopback: in6_addr = .{ .s6_addr = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } };
+
+/// The longest text Inet_NtoP writes for each family, its NUL included.
+pub const INET_ADDRSTRLEN: u32 = 16;
+pub const INET6_ADDRSTRLEN: u32 = 46;
+
 /// Addresses with a meaning of their own, in the chip's order.
 pub const INADDR_ANY: u32 = 0x0000_0000;
 pub const INADDR_LOOPBACK: u32 = 0x7F00_0001;
@@ -99,6 +159,17 @@ pub const IPPROTO_IP: i32 = 0;
 pub const IPPROTO_ICMP: i32 = 1;
 pub const IPPROTO_TCP: i32 = 6;
 pub const IPPROTO_UDP: i32 = 17;
+/// IPv6's own: its options' level, ICMPv6, and "no next header".
+pub const IPPROTO_IPV6: i32 = 41;
+pub const IPPROTO_ICMPV6: i32 = 58;
+pub const IPPROTO_NONE: i32 = 59;
+
+/// IPPROTO_IPV6's options. Each takes an i32.
+/// The hop limit of unicast packets the socket sends; -1: the interface's.
+pub const IPV6_UNICAST_HOPS: i32 = 4;
+/// An AF_INET6 socket that takes IPv6 only; 0 lets it take IPv4 as
+/// mapped addresses (::ffff:a.b.c.d) as well, the default.
+pub const IPV6_V6ONLY: i32 = 27;
 
 /// Flags of the send and receive calls: look at what is there without
 /// taking it, and do not wait for this one call.
@@ -239,6 +310,8 @@ pub const EACCES: i32 = 13;
 pub const EFAULT: i32 = 14;
 pub const EINVAL: i32 = 22;
 pub const EMFILE: i32 = 24;
+/// No room: the buffer given is too small for what goes into it.
+pub const ENOSPC: i32 = 28;
 pub const EPIPE: i32 = 32;
 pub const EWOULDBLOCK: i32 = 35;
 pub const EAGAIN: i32 = EWOULDBLOCK;
@@ -306,9 +379,40 @@ pub const IFA_TCPRecvSpace: u32 = IFA_Dummy + 13;
 /// ti_Data: ConfigureInterfaceTagList's IFSTATE_UP set puts the
 /// interface's device on line, clear takes it off.
 pub const IFA_State: u32 = IFA_Dummy + 14;
+/// ti_Data: whether the interface speaks IPv6 - IFIPV6_AUTO (the default:
+/// a link-local address, and addresses from the routers' prefixes) or
+/// IFIPV6_OFF.
+pub const IFA_IPv6: u32 = IFA_Dummy + 15;
+/// ti_Data: how the interface's IPv6 addresses end: IFID_STABLE (the
+/// default: a hash of the prefix, the link's address and the stable
+/// secret) or IFID_EUI64 (the link's address itself).
+pub const IFA_InterfaceID: u32 = IFA_Dummy + 16;
+/// ti_Data: a pointer to IFSECRET_BYTES bytes, the secret IFID_STABLE
+/// hashes with; the same secret gives the same addresses on the same
+/// network at every boot. Random unless given.
+pub const IFA_StableSecret: u32 = IFA_Dummy + 17;
+/// ti_Data: a pointer to an in6_addr, an IPv6 address of the interface's
+/// beside the link-local one; with IFA_Prefix6, its prefix length (64
+/// unless given), whose prefix is then on the link.
+pub const IFA_Address6: u32 = IFA_Dummy + 18;
+pub const IFA_Prefix6: u32 = IFA_Dummy + 19;
+/// ti_Data: a pointer to an in6_addr, a router on the link made the
+/// IPv6 default route - a link-local address, as routers have.
+pub const IFA_Gateway6: u32 = IFA_Dummy + 20;
 
 pub const IFCONFIGURE_FIXED: u32 = 0;
 pub const IFCONFIGURE_DHCP: u32 = 1;
+
+pub const IFIPV6_OFF: u32 = 0;
+pub const IFIPV6_AUTO: u32 = 1;
+/// IPv6 with the link-local address and IFA_Address6 only: no address is
+/// made from a router's prefix, though routers still give routes.
+pub const IFIPV6_FIXED: u32 = 2;
+
+pub const IFID_STABLE: u32 = 0;
+pub const IFID_EUI64: u32 = 1;
+/// The bytes of IFA_StableSecret's secret.
+pub const IFSECRET_BYTES: u32 = 16;
 
 /// QueryInterfaceTagList's tags: ti_Data points at where the answer goes.
 pub const IFQ_Dummy: u32 = TAG_USER + 0xB3000;
@@ -401,6 +505,52 @@ pub const NO_DATA: i32 = 4;
 /// The error of the last name lookup that failed.
 pub const SBTC_HERRNO: u32 = 7;
 
+/// struct addrinfo: one address GetAddrInfo found, of a list that
+/// FreeAddrInfo gives back whole.
+pub const addrinfo = extern struct {
+    /// ai_flags: the AI_* the caller gave.
+    ai_flags: i32 = 0,
+    /// ai_family: AF_INET or AF_INET6; AF_UNSPEC in hints for either.
+    ai_family: i32 = AF_UNSPEC,
+    /// ai_socktype, ai_protocol: SOCK_STREAM with IPPROTO_TCP, SOCK_DGRAM
+    /// with IPPROTO_UDP; 0 in hints for both.
+    ai_socktype: i32 = 0,
+    ai_protocol: i32 = 0,
+    /// ai_addrlen, ai_addr: the address and port, a sockaddr_in or a
+    /// sockaddr_in6, ready for Connect, SendTo or Bind.
+    ai_addrlen: u32 = 0,
+    /// ai_canonname: the name as the answer spelled it, on the first
+    /// entry, with AI_CANONNAME.
+    ai_canonname: ?[*:0]u8 = null,
+    ai_addr: ?*sockaddr = null,
+    ai_next: ?*addrinfo = null,
+};
+
+/// GetAddrInfo's flags. AI_PASSIVE: with no node, the address that means
+/// every one of the machine's (to Bind), not the loopback. AI_CANONNAME:
+/// the canonical name on the first entry. AI_NUMERICHOST: the node is an
+/// address, never a name to look up; AI_NUMERICSERV: the service is a
+/// number. AI_ADDRCONFIG: a family only when an interface other than lo0
+/// has an address of it. AI_V4MAPPED: for AF_INET6, IPv4 addresses
+/// mapped when there are no IPv6 ones; AI_ALL: and with them too.
+pub const AI_PASSIVE: i32 = 0x0001;
+pub const AI_CANONNAME: i32 = 0x0002;
+pub const AI_NUMERICHOST: i32 = 0x0004;
+pub const AI_NUMERICSERV: i32 = 0x0008;
+pub const AI_ALL: i32 = 0x0100;
+pub const AI_ADDRCONFIG: i32 = 0x0400;
+pub const AI_V4MAPPED: i32 = 0x0800;
+
+/// GetAddrInfo's answers other than 0.
+pub const EAI_AGAIN: i32 = 2;
+pub const EAI_BADFLAGS: i32 = 3;
+pub const EAI_FAIL: i32 = 4;
+pub const EAI_FAMILY: i32 = 5;
+pub const EAI_MEMORY: i32 = 6;
+pub const EAI_NONAME: i32 = 8;
+pub const EAI_SERVICE: i32 = 9;
+pub const EAI_SOCKTYPE: i32 = 10;
+
 /// Where names are looked up first, and the name servers kept on the
 /// disk: files a program and a user edit.
 pub const HOSTS_FILE = "ENVARC:Sys/net/hosts";
@@ -422,6 +572,13 @@ pub const NETSTATUS_ROUTES: u32 = 2;
 pub const NETSTATUS_SOCKETS: u32 = 3;
 /// NETSTATUS_ARP: an ArpInfo per entry of the ARP cache.
 pub const NETSTATUS_ARP: u32 = 4;
+/// NETSTATUS_ADDRESSES6: an Address6Info per IPv6 address of every
+/// interface.
+pub const NETSTATUS_ADDRESSES6: u32 = 5;
+/// NETSTATUS_ROUTES6: a Route6Info per IPv6 route.
+pub const NETSTATUS_ROUTES6: u32 = 6;
+/// NETSTATUS_NEIGHBORS: a NeighborInfo per entry of the neighbor cache.
+pub const NETSTATUS_NEIGHBORS: u32 = 7;
 
 /// What the stack counts, since it started.
 pub const NetCounts = extern struct {
@@ -477,6 +634,38 @@ pub const NetCounts = extern struct {
     arp_replies_sent: u32 = 0,
     arp_bad: u32 = 0,
     arp_dropped: u32 = 0,
+    /// IPv6: packets in and out; headers that were not IPv6 or longer
+    /// than the packet, or extension headers that could not be read;
+    /// packets for an address that is not this machine's; packets whose
+    /// next header nothing here speaks.
+    ip6_received: u64 align(4) = 0,
+    ip6_sent: u64 align(4) = 0,
+    ip6_bad_header: u32 = 0,
+    ip6_not_ours: u32 = 0,
+    ip6_unknown_protocol: u32 = 0,
+    /// Fragments received, datagrams put back together, and the ones
+    /// given up on.
+    ip6_fragments: u32 = 0,
+    ip6_reassembled: u32 = 0,
+    ip6_reassembly_dropped: u32 = 0,
+    /// ICMPv6: messages in, the ones too short or with a bad checksum,
+    /// echo requests answered, errors sent, and errors the rate limit
+    /// held back.
+    icmp6_received: u32 = 0,
+    icmp6_bad: u32 = 0,
+    icmp6_echoes_answered: u32 = 0,
+    icmp6_errors_sent: u32 = 0,
+    icmp6_errors_limited: u32 = 0,
+    /// Neighbor Discovery: solicitations and advertisements sent,
+    /// messages that failed its checks, packets dropped while their
+    /// neighbor went unanswered, and addresses another station turned out
+    /// to have; MLD reports sent.
+    nd_solicits_sent: u32 = 0,
+    nd_adverts_sent: u32 = 0,
+    nd_bad: u32 = 0,
+    nd_dropped: u32 = 0,
+    nd_duplicates: u32 = 0,
+    mld_reports_sent: u32 = 0,
 };
 
 /// A route: addresses in network order.
@@ -508,14 +697,17 @@ pub const SOCKINFO_RELEASED: u8 = 1 << 0;
 pub const SOCKINFO_CLOSING: u8 = 1 << 1;
 pub const SOCKINFO_UNACCEPTED: u8 = 1 << 2;
 
-/// A socket: addresses in network order, ports in the chip's.
+/// A socket: its addresses as IPv6 has them (an IPv4 one mapped,
+/// `::ffff:a.b.c.d`), ports in the chip's order.
 pub const SocketInfo = extern struct {
     /// Its descriptor in its owner's table, or -1.
     descriptor: i32 = -1,
     socket_type: i32 = 0,
     protocol: i32 = 0,
-    local_address: u32 = 0,
-    remote_address: u32 = 0,
+    /// AF_INET or AF_INET6, as it was made.
+    family: i32 = AF_INET,
+    local_address: in6_addr = .{},
+    remote_address: in6_addr = .{},
     local_port: u16 = 0,
     remote_port: u16 = 0,
     /// TCPS_* for a stream socket, else 0.
@@ -546,6 +738,76 @@ pub const ArpInfo = extern struct {
     /// ARPSTATE_*.
     state: u8 = 0,
     pad: u8 = 0,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// An Address6Info's state.
+pub const ADDR6_TENTATIVE: u8 = 1;
+pub const ADDR6_PREFERRED: u8 = 2;
+pub const ADDR6_DEPRECATED: u8 = 3;
+pub const ADDR6_DUPLICATE: u8 = 4;
+
+/// Lifetimes that never end, in the infos' seconds.
+pub const LIFETIME_INFINITE: u32 = 0xFFFF_FFFF;
+
+/// One IPv6 address of an interface.
+pub const Address6Info = extern struct {
+    address: in6_addr = .{},
+    prefix_length: u8 = 0,
+    /// ADDR6_*.
+    state: u8 = 0,
+    /// Made from a router's prefix.
+    autoconf: u8 = 0,
+    pad: u8 = 0,
+    /// The seconds it stays preferred and valid, or LIFETIME_INFINITE.
+    preferred_s: u32 = LIFETIME_INFINITE,
+    valid_s: u32 = LIFETIME_INFINITE,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+    /// The interface's last router advertisement's M and O flags
+    /// (RA_MANAGED, RA_OTHER), on every entry of it.
+    router_flags: u8 = 0,
+    pad2: [3]u8 = .{ 0, 0, 0 },
+};
+
+/// A router advertisement's flags: addresses (M) or other settings (O)
+/// are to be had from DHCPv6.
+pub const RA_MANAGED: u8 = 0x80;
+pub const RA_OTHER: u8 = 0x40;
+
+/// A Route6Info's origin.
+pub const ROUTE6_MANUAL: u8 = 1;
+pub const ROUTE6_ROUTER: u8 = 2;
+pub const ROUTE6_REDIRECT: u8 = 3;
+
+/// An IPv6 route.
+pub const Route6Info = extern struct {
+    destination: in6_addr = .{},
+    /// The router it goes through; `::` for a prefix on the link.
+    gateway: in6_addr = .{},
+    prefix_length: u8 = 0,
+    /// ROUTE6_*.
+    origin: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
+    /// The seconds it is still used, or LIFETIME_INFINITE.
+    lifetime_s: u32 = LIFETIME_INFINITE,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// A NeighborInfo's state (RFC 4861, 7.3.2).
+pub const NDSTATE_INCOMPLETE: u8 = 1;
+pub const NDSTATE_REACHABLE: u8 = 2;
+pub const NDSTATE_STALE: u8 = 3;
+pub const NDSTATE_DELAY: u8 = 4;
+pub const NDSTATE_PROBE: u8 = 5;
+
+/// An entry of the neighbor cache.
+pub const NeighborInfo = extern struct {
+    address: in6_addr = .{},
+    hardware: [6]u8 = @splat(0),
+    /// NDSTATE_*.
+    state: u8 = 0,
+    /// It said it is a router.
+    router: u8 = 0,
     interface: [IFNAMSIZ]u8 = @splat(0),
 };
 

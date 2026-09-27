@@ -20,14 +20,16 @@ const _task = @import("../task/_task.zig");
 /// SINCE: 1.0. LVO -20.
 ///
 /// INPUTS:
-/// - `domain` - `PF_INET`; or `PF_PACKET` for a capture socket.
+/// - `domain` - `PF_INET` (IPv4, `sockaddr_in`), `PF_INET6` (IPv6, and
+///   IPv4 through mapped addresses, `sockaddr_in6`); or `PF_PACKET` for a
+///   capture socket.
 /// - `socket_type` - `SOCK_STREAM`: a connection, TCP; `SOCK_DGRAM`:
-///   datagrams, UDP; `SOCK_RAW`: ICMP messages as they are, for a program
-///   such as Ping, or with `PF_PACKET` the frames an interface sends and
-///   takes.
+///   datagrams, UDP; `SOCK_RAW`: ICMP or ICMPv6 messages as they are, for
+///   a program such as Ping, or with `PF_PACKET` the frames an interface
+///   sends and takes.
 /// - `protocol` - 0, or `IPPROTO_TCP` for a stream socket, `IPPROTO_UDP`
-///   for a datagram socket; `IPPROTO_ICMP` for a raw one; 0 for a capture
-///   socket.
+///   for a datagram socket; `IPPROTO_ICMP` for a raw `PF_INET` one,
+///   `IPPROTO_ICMPV6` for a raw `PF_INET6` one; 0 for a capture socket.
 ///
 /// RESULT:
 /// The descriptor, from 0 up, or -1 with Errno(): `EAFNOSUPPORT` for
@@ -55,7 +57,10 @@ const _task = @import("../task/_task.zig");
 /// A raw ICMP socket receives a copy of every ICMP message that comes
 /// in, its IPv4 header first; what it sends is the ICMP message, header
 /// and checksum made by the program, and the stack puts the IPv4 header
-/// in front. A stream socket has two rings of 8 KiB, one each way, which
+/// in front. A raw ICMPv6 socket receives every ICMPv6 message without
+/// its IPv6 header, and the stack makes the checksum of what it sends
+/// (RFC 3542, 3.1). A `PF_INET6` socket takes IPv4 as well until
+/// IPV6_V6ONLY is set; its IPv4 peers are `::ffff:a.b.c.d`. A stream socket has two rings of 8 KiB, one each way, which
 /// SO_SNDBUF and SO_RCVBUF resize, and its first one starts the stack
 /// task, which runs its timers.
 ///
@@ -82,10 +87,11 @@ const _task = @import("../task/_task.zig");
 /// ```
 pub fn Socket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32 {
     if (domain == bsd.PF_PACKET) return capture(sb, socket_type, protocol);
-    if (domain != bsd.PF_INET) return _socket.fail(sb, bsd.EAFNOSUPPORT, "Socket");
+    if (domain != bsd.PF_INET and domain != bsd.PF_INET6) return _socket.fail(sb, bsd.EAFNOSUPPORT, "Socket");
+    const raw_protocol = if (domain == bsd.PF_INET6) bsd.IPPROTO_ICMPV6 else bsd.IPPROTO_ICMP;
     const kind = switch (socket_type) {
         bsd.SOCK_DGRAM => if (protocol == 0 or protocol == bsd.IPPROTO_UDP) bsd.IPPROTO_UDP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
-        bsd.SOCK_RAW => if (protocol == bsd.IPPROTO_ICMP) bsd.IPPROTO_ICMP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
+        bsd.SOCK_RAW => if (protocol == raw_protocol) raw_protocol else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
         bsd.SOCK_STREAM => if (protocol == 0 or protocol == bsd.IPPROTO_TCP) bsd.IPPROTO_TCP else return _socket.fail(sb, bsd.EPROTONOSUPPORT, "Socket"),
         else => return _socket.fail(sb, bsd.ESOCKTNOSUPPORT, "Socket"),
     };
@@ -93,6 +99,7 @@ pub fn Socket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) i32
         const held = _lock.take(sb.stack);
         defer _lock.give(sb.stack, held);
         const socket = _socket.create(sb, socket_type, kind) orelse return _socket.fail(sb, sb.errno, "Socket");
+        socket.family = @intCast(domain);
         if (socket_type == bsd.SOCK_STREAM and !_tcp.create(sb.stack, socket)) {
             _socket.destroy(sb, socket);
             return _socket.fail(sb, bsd.ENOMEM, "Socket");

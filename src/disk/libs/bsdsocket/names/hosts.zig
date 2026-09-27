@@ -6,21 +6,35 @@
 //!
 //! ```
 //! 127.0.0.1     localhost
+//! ::1           localhost
 //! 192.168.1.10  printer printer.home.lan
+//! fd00::10      printer
 //! ```
 //!
-//! These read the file's text, already in memory, and nothing else.
+//! An address is IPv4's dotted quad or IPv6 text. These read the file's
+//! text, already in memory, and nothing else.
 
+const bsd = @import("sdk").bsdsocket;
 const dns = @import("dns.zig");
+const address_file = @import("../ip6/address.zig");
+const Address = address_file.Address;
 
-/// The address `name` has in `text`, in network order, or null. Names
-/// match without regard to case.
-pub fn find(text: []const u8, name: []const u8) ?u32 {
+/// An address as the file writes it: a dotted IPv4 one (mapped), or IPv6
+/// text.
+pub fn addressOf(text: []const u8) ?Address {
+    if (dotted(text)) |network| return Address.fromV4(bsd.ntohl(network));
+    return address_file.parse(text);
+}
+
+/// The first address of `family` (AF_INET or AF_INET6) that `name` has
+/// in `text`, or null. Names match without regard to case.
+pub fn find(text: []const u8, name: []const u8, family: u8) ?Address {
     var lines = Lines{ .text = text };
     while (lines.next()) |line| {
         var words = Words{ .text = line };
         const address_text = words.next() orelse continue;
-        const address = dotted(address_text) orelse continue;
+        const address = addressOf(address_text) orelse continue;
+        if (address.isV4() != (family == bsd.AF_INET)) continue;
         while (words.next()) |word| {
             if (same(word, name)) return address;
         }
@@ -28,13 +42,13 @@ pub fn find(text: []const u8, name: []const u8) ?u32 {
     return null;
 }
 
-/// The first name `address` (network order) has in `text`, or null.
-pub fn reverse(text: []const u8, address: u32) ?[]const u8 {
+/// The first name `address` has in `text`, or null.
+pub fn reverse(text: []const u8, address: Address) ?[]const u8 {
     var lines = Lines{ .text = text };
     while (lines.next()) |line| {
         var words = Words{ .text = line };
         const address_text = words.next() orelse continue;
-        if ((dotted(address_text) orelse continue) != address) continue;
+        if (!(addressOf(address_text) orelse continue).eql(address)) continue;
         return words.next();
     }
     return null;

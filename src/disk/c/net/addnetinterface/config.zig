@@ -20,6 +20,9 @@
 //! | `ReadRequests`, `WriteRequests` | how many requests the stack keeps with the device |
 //! | `TCPSendSpace`, `TCPRecvSpace` | the ring sizes of every TCP connection |
 //! | `Network` | the Wi-Fi network to join, for a Wi-Fi device |
+//! | `IPv6` | `AUTO` (the default: a link-local address, and addresses from the routers' prefixes), `FIXED` (the link-local one and `Address6` only) or `OFF` |
+//! | `InterfaceID` | how IPv6 addresses end: `STABLE` (the default, RFC 7217, with the secret in `ENVARC:Sys/net/ipv6-secret`) or `EUI64` (the link's address) |
+//! | `Address6`, `Prefix6`, `Gateway6` | an IPv6 address, its prefix length (64), and a router for the IPv6 default route |
 //!
 //! Every keyword not in the table is an error, reported with its line and
 //! column: a misspelt one would otherwise leave the interface without what
@@ -29,7 +32,7 @@ const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
 const Scanner = sdk.dos.keywords.Scanner;
 
-pub const Keyword = enum { device, unit, configure, address, netmask, gateway, nameserver, domain, mtu, read_requests, write_requests, tcp_send_space, tcp_recv_space, network };
+pub const Keyword = enum { device, unit, configure, address, netmask, gateway, nameserver, domain, mtu, read_requests, write_requests, tcp_send_space, tcp_recv_space, network, ipv6, interface_id, address6, prefix6, gateway6 };
 
 const names = [_]struct { name: []const u8, keyword: Keyword }{
     .{ .name = "DEVICE", .keyword = .device },
@@ -46,6 +49,23 @@ const names = [_]struct { name: []const u8, keyword: Keyword }{
     .{ .name = "TCPSENDSPACE", .keyword = .tcp_send_space },
     .{ .name = "TCPRECVSPACE", .keyword = .tcp_recv_space },
     .{ .name = "NETWORK", .keyword = .network },
+    .{ .name = "IPV6", .keyword = .ipv6 },
+    .{ .name = "INTERFACEID", .keyword = .interface_id },
+    .{ .name = "ADDRESS6", .keyword = .address6 },
+    .{ .name = "PREFIX6", .keyword = .prefix6 },
+    .{ .name = "GATEWAY6", .keyword = .gateway6 },
+};
+
+/// IPv6 text as the file gave it, and where, for the program to read -
+/// and to say where it was wrong.
+pub const Text6 = struct {
+    text: [bsd.INET6_ADDRSTRLEN:0]u8 = @splat(0),
+    line: u32 = 0,
+    column: u32 = 0,
+
+    pub fn given(text6: *const Text6) bool {
+        return text6.text[0] != 0;
+    }
 };
 
 pub const Config = struct {
@@ -65,11 +85,18 @@ pub const Config = struct {
     tcp_send_space: u32 = 0,
     tcp_recv_space: u32 = 0,
     network: [33:0]u8 = @splat(0),
+    /// IFIPV6_*, IFID_*, and the IPv6 address, its prefix length (0 when
+    /// not given) and router.
+    ipv6: u32 = bsd.IFIPV6_AUTO,
+    interface_id: u32 = bsd.IFID_STABLE,
+    address6: Text6 = .{},
+    prefix6: u32 = 0,
+    gateway6: Text6 = .{},
 };
 
 /// What is wrong, and where.
 pub const Problem = struct {
-    kind: enum { none, unknown, equal, number, text, address, configure, missing } = .none,
+    kind: enum { none, unknown, equal, number, text, address, configure, missing, ipv6, interface_id } = .none,
     /// The token it is about, and where it began.
     token: [sdk.dos.keywords.max_token:0]u8 = @splat(0),
     line: u32 = 0,
@@ -141,6 +168,19 @@ pub fn read(scanner: *Scanner, config: *Config) Problem {
             .device => copyText(&config.device, scanner),
             .domain => copyText(&config.domain, scanner),
             .network => copyText(&config.network, scanner),
+            .ipv6 => config.ipv6 = if (keywordIs(value, "AUTO")) bsd.IFIPV6_AUTO else if (keywordIs(value, "FIXED")) bsd.IFIPV6_FIXED else if (keywordIs(value, "OFF")) bsd.IFIPV6_OFF else return problem(scanner, .ipv6),
+            .interface_id => config.interface_id = if (keywordIs(value, "STABLE")) bsd.IFID_STABLE else if (keywordIs(value, "EUI64")) bsd.IFID_EUI64 else return problem(scanner, .interface_id),
+            .address6, .gateway6 => {
+                const into = if (keyword == .address6) &config.address6 else &config.gateway6;
+                if (scanner.len >= into.text.len) return problem(scanner, .address);
+                copyText(&into.text, scanner);
+                into.line = scanner.token_line;
+                into.column = scanner.token_column;
+            },
+            .prefix6 => {
+                if (scanner.kind != .number or scanner.number < 1 or scanner.number > 128) return problem(scanner, .number);
+                config.prefix6 = number;
+            },
             .configure => {
                 if (keywordIs(value, "DHCP")) {
                     config.dhcp = true;
@@ -175,6 +215,7 @@ pub fn read(scanner: *Scanner, config: *Config) Problem {
     }
     if (config.device[0] == 0) return .{ .kind = .missing, .token = tokenOf("Device") };
     if (!config.dhcp and config.address == 0) return .{ .kind = .missing, .token = tokenOf("Address") };
+    if (config.ipv6 == bsd.IFIPV6_FIXED and !config.address6.given()) return .{ .kind = .missing, .token = tokenOf("Address6") };
     return .{};
 }
 
@@ -229,6 +270,39 @@ test "a file with every keyword" {
     try testing.expectEqualStrings("home.lan", std.mem.sliceTo(&config.domain, 0));
     try testing.expectEqual(@as(u32, 4), config.writes);
     try testing.expectEqual(@as(u32, 16384), config.tcp_recv_space);
+}
+
+test "the IPv6 keywords" {
+    var config: Config = .{};
+    try testing.expectEqual(.none, readText(
+        \\Device = x.device
+        \\Configure = DHCP
+        \\IPv6 = fixed
+        \\InterfaceID = EUI64
+        \\Address6 = 2001:db8::20
+        \\Prefix6 = 48
+        \\Gateway6 = fe80::1
+    , &config).kind);
+    try testing.expectEqual(bsd.IFIPV6_FIXED, config.ipv6);
+    try testing.expectEqual(bsd.IFID_EUI64, config.interface_id);
+    try testing.expectEqualStrings("2001:db8::20", std.mem.sliceTo(&config.address6.text, 0));
+    try testing.expectEqual(@as(u32, 5), config.address6.line);
+    try testing.expectEqual(@as(u32, 48), config.prefix6);
+    try testing.expectEqualStrings("fe80::1", std.mem.sliceTo(&config.gateway6.text, 0));
+    config = .{};
+    try testing.expectEqual(.none, readText("Device = x\nConfigure = DHCP\n", &config).kind);
+    try testing.expectEqual(bsd.IFIPV6_AUTO, config.ipv6);
+    try testing.expectEqual(bsd.IFID_STABLE, config.interface_id);
+    config = .{};
+    try testing.expectEqual(.ipv6, readText("Device = x\nConfigure = DHCP\nIPv6 = sometimes\n", &config).kind);
+    config = .{};
+    try testing.expectEqual(.interface_id, readText("Device = x\nConfigure = DHCP\nInterfaceID = random\n", &config).kind);
+    config = .{};
+    const missing = readText("Device = x\nConfigure = DHCP\nIPv6 = FIXED\n", &config);
+    try testing.expectEqual(.missing, missing.kind);
+    try testing.expectEqualStrings("Address6", std.mem.sliceTo(&missing.token, 0));
+    config = .{};
+    try testing.expectEqual(.number, readText("Device = x\nConfigure = DHCP\nPrefix6 = 129\n", &config).kind);
 }
 
 test "DHCP needs no address" {

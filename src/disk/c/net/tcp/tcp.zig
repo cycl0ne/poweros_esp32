@@ -4,11 +4,12 @@
 //!
 //!   Tcp TO/K,PORT/K/N,TEXT/K,GET/K,LISTEN/S
 //!
-//! With TO it connects to TO:PORT (10.0.2.2:80) and sends TEXT, or with
+//! With TO - an IPv4 or IPv6 address, or a name - it connects to TO:PORT
+//! (10.0.2.2:80) and sends TEXT, or with
 //! GET an HTTP/1.0 request for that path; then it reads until the peer
 //! closes, printing the first line it got, how many bytes came, and how
-//! fast. With LISTEN it waits for one connection on PORT (2323), prints
-//! where it came from, and sends back every line it gets, as it gets it,
+//! fast. With LISTEN it waits for one connection on PORT (2323), over
+//! IPv6 or IPv4, prints where it came from, and sends back every line it gets, as it gets it,
 //! until the peer closes.
 //!
 //! The interface `eth0` on networks/openeth.device, at 10.0.2.15/24 via
@@ -26,7 +27,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Tcp";
-const VERSION_STRING = "\x00$VER: Tcp 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Tcp 1.1 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/K,PORT/K/N,TEXT/K,GET/K,LISTEN/S";
@@ -106,12 +107,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseDevice(&clock.node);
 
     const to_text: [*:0]const u8 = if (argv[arg_to] != 0) @ptrFromInt(argv[arg_to]) else "10.0.2.2";
-    var to: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port), .sin_addr = .{ .s_addr = sb.Inet_Addr(to_text) } };
-    const socket = sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    const hints: bsd.addrinfo = .{ .ai_socktype = bsd.SOCK_STREAM };
+    var list: ?*bsd.addrinfo = null;
+    if (sb.GetAddrInfo(to_text, null, &hints, &list) != 0) return failed(dl, sb, "GetAddrInfo");
+    defer sb.FreeAddrInfo(list.?);
+    const target = list.?;
+    // The port into whichever sockaddr it is: both have it at offset 2.
+    @as(*align(1) u16, @ptrCast(@as([*]u8, @ptrCast(target.ai_addr.?)) + 2)).* = bsd.htons(port);
+    const socket = sb.Socket(target.ai_family, bsd.SOCK_STREAM, 0);
     if (socket < 0) return failed(dl, sb, "Socket");
     defer _ = sb.CloseSocket(socket);
     const started = now(&clock);
-    if (sb.Connect(socket, to.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return failed(dl, sb, "Connect");
+    if (sb.Connect(socket, target.ai_addr.?, target.ai_addrlen) < 0) return failed(dl, sb, "Connect");
     _ = Printf(dl, MSG_CONNECTED, .{ to_text, @as(u32, port) });
 
     var request: [256]u8 = undefined;
@@ -154,21 +161,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
 /// One connection taken on `port`, and everything it sends sent back.
 fn serve(dl: *DosBase, sb: *SocketBase, port: u16) i32 {
-    const listener = sb.Socket(bsd.PF_INET, bsd.SOCK_STREAM, 0);
+    const listener = sb.Socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
     if (listener < 0) return failed(dl, sb, "Socket");
     defer _ = sb.CloseSocket(listener);
     const on: i32 = 1;
     _ = sb.SetSockOpt(listener, bsd.SOL_SOCKET, bsd.SO_REUSEADDR, &on, @sizeOf(i32));
-    var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(port) };
-    if (sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return failed(dl, sb, "Bind");
+    var here: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(port) };
+    if (sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in6)) < 0) return failed(dl, sb, "Bind");
     if (sb.Listen(listener, 1) < 0) return failed(dl, sb, "Listen");
     _ = Printf(dl, MSG_LISTENING, .{@as(u32, port)});
-    var peer: bsd.sockaddr_in = .{};
-    var peer_length: u32 = @sizeOf(bsd.sockaddr_in);
+    var peer: bsd.sockaddr_in6 = .{};
+    var peer_length: u32 = @sizeOf(bsd.sockaddr_in6);
     const connection = sb.Accept(listener, peer.any(), &peer_length);
     if (connection < 0) return failed(dl, sb, "Accept");
     defer _ = sb.CloseSocket(connection);
-    _ = Printf(dl, MSG_ACCEPTED, .{ sb.Inet_NtoA(peer.sin_addr.s_addr), @as(u32, bsd.ntohs(peer.sin_port)) });
+    var peer_text: [bsd.INET6_ADDRSTRLEN]u8 = @splat(0);
+    _ = sb.Inet_NtoP(bsd.AF_INET6, &peer.sin6_addr, &peer_text, peer_text.len);
+    _ = Printf(dl, MSG_ACCEPTED, .{ @as([*:0]const u8, @ptrCast(&peer_text)), @as(u32, bsd.ntohs(peer.sin6_port)) });
     var buffer: [512]u8 = undefined;
     var total: u64 = 0;
     while (true) {

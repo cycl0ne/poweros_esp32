@@ -16,12 +16,13 @@ const _socket = @import("socket/_socket.zig");
 const _netif = @import("netif/_netif.zig");
 const _arp = @import("arp/_arp.zig");
 const reassembly = @import("ip/reassembly.zig");
+const reassembly6 = @import("ip6/reassembly.zig");
 const bsdsocket_lvo = @import("bsdsocket_lvo.zig");
 
 pub const LIBRARY_NAME = bsd.SOCKETNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "25.09.2026";
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "27.09.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -43,8 +44,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     stack.loopback_queue.init(.unknown);
     stack.frames.init();
     _arp.init(stack);
+    @import("nd/_nd.zig").init(stack);
     @import("tcp/isn.zig").makeKey(stack);
     reassembly.init(stack);
+    reassembly6.init(stack);
     @import("dhcp/_dhcp.zig").init(stack);
     _netif.addLoopback(stack);
     // The task's ports take messages from the start; the task gives them
@@ -127,7 +130,9 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     // datagrams half put together.
     while (stack.sockets.first()) |node| _socket.free(stack, _socket.fromNode(node));
     reassembly.deinit(stack);
+    reassembly6.deinit(stack);
     stack.frames.deinit(sys);
+    if (stack.crypto) |cb| sys.CloseLibrary(cb.lib());
     if (stack.dos) |dos| sys.CloseLibrary(dos.lib());
     if (stack.utility) |utility| sys.CloseLibrary(utility.lib());
     // A stack made without being added - a second one, in the tests - is

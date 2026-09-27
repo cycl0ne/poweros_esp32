@@ -308,6 +308,33 @@ test "addresses as text and back, and the opener's settings" {
     try rig.deinit();
 }
 
+test "Inet_NtoP and Inet_PtoN, both families, through the jump table" {
+    var rig = try Rig.init();
+    const sb = try rig.open();
+    var in6: bsd.in6_addr = .{};
+    try testing.expectEqual(@as(i32, 1), sb.Inet_PtoN(bsd.AF_INET6, "FEC0:0:0::2", &in6));
+    var text: [bsd.INET6_ADDRSTRLEN]u8 = undefined;
+    try testing.expectEqualStrings("fec0::2", std.mem.span(sb.Inet_NtoP(bsd.AF_INET6, &in6, &text, text.len).?));
+    var in4: bsd.in_addr = .{};
+    try testing.expectEqual(@as(i32, 1), sb.Inet_PtoN(bsd.AF_INET, "10.0.2.15", &in4));
+    try testing.expectEqual(bsd.htonl(0x0A00_020F), in4.s_addr);
+    try testing.expectEqualStrings("10.0.2.15", std.mem.span(sb.Inet_NtoP(bsd.AF_INET, &in4, &text, text.len).?));
+    // Text that is no address answers 0 and leaves the address alone.
+    try testing.expectEqual(@as(i32, 0), sb.Inet_PtoN(bsd.AF_INET6, "fe80::1%eth0", &in6));
+    try testing.expectEqual(@as(i32, 0), sb.Inet_PtoN(bsd.AF_INET, "10.0.2", &in4));
+    try testing.expectEqual(bsd.htonl(0x0A00_020F), in4.s_addr);
+    // Another family is -1 and EAFNOSUPPORT; too small a buffer ENOSPC.
+    try testing.expectEqual(@as(i32, -1), sb.Inet_PtoN(99, "::1", &in6));
+    try testing.expectEqual(bsd.EAFNOSUPPORT, sb.Errno());
+    try testing.expect(sb.Inet_NtoP(99, &in6, &text, text.len) == null);
+    try testing.expectEqual(bsd.EAFNOSUPPORT, sb.Errno());
+    try testing.expect(sb.Inet_NtoP(bsd.AF_INET6, &in6, &text, 7) == null);
+    try testing.expectEqual(bsd.ENOSPC, sb.Errno());
+    try testing.expect(sb.Inet_NtoP(bsd.AF_INET6, &in6, &text, 8) != null); // "fec0::2" and its NUL
+    rig.close(sb);
+    try rig.deinit();
+}
+
 test "the Internet checksum of a known IPv4 header" {
     const header = [_]u8{ 0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0xB8, 0x61, 0xC0, 0xA8, 0x00, 0x01, 0xC0, 0xA8, 0x00, 0xC7 };
     try testing.expectEqual(@as(u16, 0), _ip.finish(_ip.sum(0, &header)));

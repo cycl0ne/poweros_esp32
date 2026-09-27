@@ -59,6 +59,6 @@ pub fn GetPeerName(sb: *SocketBase, descriptor: i32, address: *bsd.sockaddr, add
     defer _lock.give(sb.stack, held);
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "GetPeerName");
     if (socket.flags & _socket.connected == 0) return _socket.fail(sb, bsd.ENOTCONN, "GetPeerName");
-    _socket.addressOut(socket.remote_address, socket.remote_port, address, address_length);
+    _socket.addressOut(sb.stack, socket, socket.remote_address, socket.remote_port, socket.scope, address, address_length);
     return 0;
 }

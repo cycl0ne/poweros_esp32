@@ -8,6 +8,7 @@
 //! takes from the chip's random number generator when it starts.
 
 const sdk = @import("sdk");
+const Address = @import("../ip6/address.zig").Address;
 const builtin = @import("builtin");
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
@@ -24,14 +25,14 @@ pub fn makeKey(stack: *StackBase) void {
 }
 
 /// The initial sequence number for a connection from `local` to `remote`.
-pub fn initialSequence(stack: *StackBase, local_address: u32, local_port: u16, remote_address: u32, remote_port: u16) u32 {
-    var message: [12]u8 = undefined;
-    put32(message[0..4], local_address);
-    put32(message[4..8], remote_address);
-    message[8] = @truncate(local_port >> 8);
-    message[9] = @truncate(local_port);
-    message[10] = @truncate(remote_port >> 8);
-    message[11] = @truncate(remote_port);
+pub fn initialSequence(stack: *StackBase, local_address: Address, local_port: u16, remote_address: Address, remote_port: u16) u32 {
+    var message: [36]u8 = undefined;
+    message[0..16].* = local_address.bytes;
+    message[16..32].* = remote_address.bytes;
+    message[32] = @truncate(local_port >> 8);
+    message[33] = @truncate(local_port);
+    message[34] = @truncate(remote_port >> 8);
+    message[35] = @truncate(remote_port);
     const clock: u32 = @truncate(_timer.clock(stack) / 4);
     return clock +% @as(u32, @truncate(sipHash(&stack.isn_key, &message)));
 }

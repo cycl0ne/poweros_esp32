@@ -3,7 +3,8 @@
 //!
 //! **In**: the header inside the packet, its length at least the header
 //! and at most the packet, and its checksum right unless it is 0, which
-//! means the sender made none. The datagram goes to the socket bound to
+//! over IPv4 means the sender made none (over IPv6 a checksum is always
+//! there, and 0 is refused). The datagram goes to the socket bound to
 //! its destination port that fits it best - bound to exactly its
 //! destination address before bound to any, connected to exactly its
 //! source before not connected - and waits in that socket's queue until
@@ -29,6 +30,9 @@ const _socket = @import("../socket/_socket.zig");
 const _icmp = @import("../icmp/_icmp.zig");
 const _dhcp = @import("../dhcp/_dhcp.zig");
 const Socket = _socket.Socket;
+const Address = @import("../ip6/address.zig").Address;
+const _inet = @import("../inet/_inet.zig");
+const Packet = _inet.Packet;
 
 pub const header_bytes = 8;
 const protocol: u8 = @intCast(bsd.IPPROTO_UDP);
@@ -36,35 +40,38 @@ const protocol: u8 = @intCast(bsd.IPPROTO_UDP);
 /// headers.
 pub const data_max: u32 = 65535 - _ip.header_bytes - header_bytes;
 
-pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _ip.Header) void {
+pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Packet) void {
     const sys = stack.sys_base;
     const datagram = frame.bytes();
     if (datagram.len < header_bytes) return drop(stack, frame, &stack.counts.udp_bad);
     const length = _ip.get16(datagram, 4);
     if (length < header_bytes or length > datagram.len) return drop(stack, frame, &stack.counts.udp_bad);
+    // IPv6 has no datagram without a checksum (RFC 8200, 8.1).
+    if (_ip.get16(datagram, 6) == 0 and !packet.source.isV4()) return drop(stack, frame, &stack.counts.udp_bad);
     if (_ip.get16(datagram, 6) != 0) {
-        const total = _ip.sum(_ip.pseudoSum(header.source, header.destination, protocol, length), datagram[0..length]);
+        const total = _ip.sum(_inet.pseudoSum(packet.source, packet.destination, protocol, length), datagram[0..length]);
         if (_ip.finish(total) != 0) return drop(stack, frame, &stack.counts.udp_bad);
     }
     const source_port = _ip.get16(datagram, 0);
     const destination_port = _ip.get16(datagram, 2);
-    if (destination_port == _dhcp.client_port and source_port == _dhcp.server_port and
+    if (packet.source.isV4() and destination_port == _dhcp.client_port and source_port == _dhcp.server_port and
         _dhcp.input(stack, interface, datagram[header_bytes..length]))
     {
         return stack.frames.give(stack.sys_base, frame);
     }
-    const socket = find(stack, header.destination, destination_port, header.source, source_port) orelse {
+    const socket = find(stack, packet.destination, destination_port, packet.source, source_port) orelse {
         // Nobody is bound there: the sender is told, unless it sent to
         // many.
-        _ = frame.push(header.header_length);
-        _icmp.sendUnreachable(stack, frame, header, _icmp.code_port);
+        _ = frame.push(packet.header_length);
+        _inet.sendUnreachable(stack, interface, frame, packet, .port);
         return drop(stack, frame, &stack.counts.udp_no_port);
     };
     const data_length = length - header_bytes;
     if (socket.receive_bytes + data_length > socket.receive_limit) return drop(stack, frame, &stack.counts.udp_full);
     frame.trim(length);
     frame.pull(header_bytes);
-    frame.from_address = header.source;
+    frame.from_address = packet.source;
+    frame.from_interface = interface;
     frame.from_port = source_port;
     sys.AddTail(&socket.receive, &frame.node);
     socket.receive_bytes += data_length;
@@ -78,21 +85,21 @@ fn drop(stack: *StackBase, frame: *Frame, count: *u32) void {
 }
 
 /// The datagram socket a datagram from `remote_address:remote_port` to
-/// `local_address:local_port` belongs to, the best fitting one.
-pub fn find(stack: *StackBase, local_address: u32, local_port: u16, remote_address: u32, remote_port: u16) ?*Socket {
+/// `local_address:local_port` belongs to, the best fitting one: bound to
+/// exactly its address before bound to none, whose family then has to
+/// take it (`_socket.takes`).
+pub fn find(stack: *StackBase, local_address: Address, local_port: u16, remote_address: Address, remote_port: u16) ?*Socket {
     var best: ?*Socket = null;
     var best_fit: u32 = 0;
     var it = stack.sockets.iterator();
     while (it.next()) |node| {
         const socket = _socket.fromNode(node);
         if (socket.socket_type != bsd.SOCK_DGRAM or socket.local_port != local_port) continue;
+        if (!_socket.takes(socket, local_address)) continue;
         var fit: u32 = 1;
-        if (socket.local_address != bsd.INADDR_ANY) {
-            if (socket.local_address != local_address) continue;
-            fit += 1;
-        }
+        if (!socket.local_address.isUnspecified()) fit += 1;
         if (socket.flags & _socket.connected != 0) {
-            if (socket.remote_address != remote_address or socket.remote_port != remote_port) continue;
+            if (!socket.remote_address.eql(remote_address) or socket.remote_port != remote_port) continue;
             fit += 2;
         }
         if (fit > best_fit) {
@@ -103,17 +110,17 @@ pub fn find(stack: *StackBase, local_address: u32, local_port: u16, remote_addre
     return best;
 }
 
-/// `data` sent from `socket` to `destination:port`: 0, or the errno that
-/// says why not.
-pub fn output(stack: *StackBase, socket: *Socket, destination: u32, port: u16, data: []const u8) i32 {
-    const hop = _route.lookup(stack, destination) orelse return bsd.ENETUNREACH;
-    if (data.len + header_bytes + _ip.header_bytes > hop.interface.mtu) return bsd.EMSGSIZE;
-    const broadcast = destination == bsd.INADDR_BROADCAST or destination == hop.interface.broadcast;
-    if (broadcast and socket.flags & _socket.broadcast_allowed == 0) return bsd.EACCES;
+/// `data` sent from `socket` to `destination:port`, a link-local
+/// destination on `scope` (the socket's own when null): 0, or the errno
+/// that says why not.
+pub fn output(stack: *StackBase, socket: *Socket, destination: Address, port: u16, scope: ?*Interface, data: []const u8) i32 {
+    const path = _inet.route(stack, destination, scope orelse socket.scope) orelse return bsd.ENETUNREACH;
+    if (data.len + header_bytes + _inet.headerBytes(destination) > path.mtu) return bsd.EMSGSIZE;
+    if (_inet.isBroadcast(destination, path) and socket.flags & _socket.broadcast_allowed == 0) return bsd.EACCES;
     if (socket.flags & _socket.bound == 0) {
         if (!_socket.bindAnyPort(stack, socket)) return bsd.EADDRNOTAVAIL;
     }
-    const source = if (socket.local_address != bsd.INADDR_ANY) socket.local_address else hop.interface.address;
+    const source = if (!socket.local_address.isUnspecified()) socket.local_address else (_inet.sourceFor(path, destination) orelse return bsd.EADDRNOTAVAIL);
     const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
     @memcpy(frame.buffer[frame.start..][0..data.len], data);
     frame.length = @intCast(data.len);
@@ -123,11 +130,11 @@ pub fn output(stack: *StackBase, socket: *Socket, destination: u32, port: u16, d
     _ip.put16(header, 2, port);
     _ip.put16(header, 4, length);
     _ip.put16(header, 6, 0);
-    var checksum = _ip.finish(_ip.sum(_ip.pseudoSum(source, destination, protocol, length), frame.bytes()));
+    var checksum = _ip.finish(_ip.sum(_inet.pseudoSum(source, destination, protocol, length), frame.bytes()));
     // A checksum that comes out 0 is sent as its other form, since 0
     // means none.
     if (checksum == 0) checksum = 0xFFFF;
     _ip.put16(header, 6, checksum);
     stack.counts.udp_sent += 1;
-    return _ip.output(stack, frame, source, destination, protocol, hop);
+    return _inet.output(stack, frame, source, destination, protocol, path, socket.hop_limit);
 }

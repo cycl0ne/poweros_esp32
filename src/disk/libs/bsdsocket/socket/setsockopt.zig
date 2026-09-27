@@ -24,21 +24,24 @@ const buffer_max: u32 = 256 * 1024;
 ///
 /// INPUTS:
 /// - `socket` - a descriptor from Socket.
-/// - `level` - `SOL_SOCKET`.
+/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
 /// - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
 ///   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
 ///   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
 ///   i32 of FD_* events to be told of with the event signal),
 ///   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
 ///   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
-///   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32).
+///   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
+///   `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
+///   for IPv6 only; before Bind) and `IPV6_UNICAST_HOPS` (an i32, the hop
+///   limit its packets go with, -1 for the interface's).
 /// - `value` - the option's value.
 /// - `value_length` - its size.
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `EBADF`, `ENOPROTOOPT` (another level or an
 /// option there is not, or one that can only be read), `EINVAL` (a value
-/// of the wrong size).
+/// of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound).
 ///
 /// BEHAVIOR:
 /// `SO_RCVBUF` is how many bytes of datagrams wait on the socket before
@@ -83,6 +86,22 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
         const tcb = _tcp.of(socket);
         if (@as(*align(1) const i32, @ptrCast(value)).* != 0) tcb.flags |= _tcp.no_delay else tcb.flags &= ~_tcp.no_delay;
+        return 0;
+    }
+    if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6) {
+        if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+        const number = @as(*align(1) const i32, @ptrCast(value)).*;
+        switch (option) {
+            bsd.IPV6_V6ONLY => {
+                if (socket.flags & _socket.bound != 0) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+                socket.v6only = @intFromBool(number != 0);
+            },
+            bsd.IPV6_UNICAST_HOPS => {
+                if (number < -1 or number > 255) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+                socket.hop_limit = if (number <= 0) 0 else @intCast(number);
+            },
+            else => return _socket.fail(sb, bsd.ENOPROTOOPT, "SetSockOpt"),
+        }
         return 0;
     }
     if (level != bsd.SOL_SOCKET) return _socket.fail(sb, bsd.ENOPROTOOPT, "SetSockOpt");

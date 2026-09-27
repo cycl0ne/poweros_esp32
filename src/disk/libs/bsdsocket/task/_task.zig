@@ -228,6 +228,7 @@ fn remove(stack: *StackBase, interface: *Interface) void {
         }
         _route.removeAll(stack, interface);
         _arp.forget(stack, interface);
+        @import("../ip6/_ip6.zig").stop(stack, interface);
     }
     device.drain(stack, link);
     sys.CloseDevice(&link.opened.req);

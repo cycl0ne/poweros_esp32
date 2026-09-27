@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! GetNetworkStatistics: the stack's counters, routes, sockets and ARP
-//! cache, copied out as they are at the call.
+//! GetNetworkStatistics: the stack's counters, routes, sockets, ARP
+//! cache, IPv6 addresses, IPv6 routes and neighbor cache, copied out as
+//! they are at the call.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -12,6 +13,8 @@ const _lock = @import("../lock/_lock.zig");
 const _netif = @import("../netif/_netif.zig");
 const _tcp = @import("../tcp/_tcp.zig");
 const _arp = @import("../arp/_arp.zig");
+const _timer = @import("../timer/_timer.zig");
+const _nd = @import("../nd/_nd.zig");
 
 comptime {
     // SocketInfo's tcp_state is the connection block's state as it is.
@@ -41,7 +44,10 @@ comptime {
 /// INPUTS:
 /// - `kind` - `NETSTATUS_COUNTS` (a `NetCounts`), `NETSTATUS_ROUTES` (a
 ///   `RouteInfo` per route), `NETSTATUS_SOCKETS` (a `SocketInfo` per
-///   socket) or `NETSTATUS_ARP` (an `ArpInfo` per entry).
+///   socket), `NETSTATUS_ARP` (an `ArpInfo` per entry),
+///   `NETSTATUS_ADDRESSES6` (an `Address6Info` per IPv6 address),
+///   `NETSTATUS_ROUTES6` (a `Route6Info` per IPv6 route) or
+///   `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry).
 /// - `buffer` - where they go; may be null when `size` is 0.
 /// - `size` - the bytes `buffer` holds.
 ///
@@ -90,6 +96,9 @@ pub fn GetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, siz
         bsd.NETSTATUS_ROUTES => routes(stack, buffer, size),
         bsd.NETSTATUS_SOCKETS => sockets(stack, buffer, size),
         bsd.NETSTATUS_ARP => arp(stack, buffer, size),
+        bsd.NETSTATUS_ADDRESSES6 => addresses6(stack, buffer, size),
+        bsd.NETSTATUS_ROUTES6 => routes6(stack, buffer, size),
+        bsd.NETSTATUS_NEIGHBORS => neighbors(stack, buffer, size),
         else => _socket.fail(sb, bsd.EINVAL, "GetNetworkStatistics"),
     };
 }
@@ -141,8 +150,9 @@ fn sockets(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
             .descriptor = socket.descriptor,
             .socket_type = socket.socket_type,
             .protocol = socket.protocol,
-            .local_address = bsd.htonl(socket.local_address),
-            .remote_address = bsd.htonl(socket.remote_address),
+            .family = socket.family,
+            .local_address = .{ .s6_addr = socket.local_address.bytes },
+            .remote_address = .{ .s6_addr = socket.remote_address.bytes },
             .local_port = socket.local_port,
             .remote_port = socket.remote_port,
             .receive_queued = socket.receive_bytes,
@@ -184,6 +194,90 @@ fn arp(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
             .address = bsd.htonl(entry.address),
             .hardware = entry.hardware,
             .state = state,
+            .interface = if (entry.interface) |interface| interface.name else @splat(0),
+        };
+        count += 1;
+    }
+    return @intCast(count);
+}
+
+/// Seconds from `now` to `until`, a time on the stack's clock (0 for
+/// never).
+fn secondsLeft(until: u64, now: u64) u32 {
+    if (until == 0) return bsd.LIFETIME_INFINITE;
+    return @intCast(@min((until -| now) / 1_000_000, bsd.LIFETIME_INFINITE - 1));
+}
+
+fn addresses6(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
+    const into = room(bsd.Address6Info, buffer, size);
+    const now = _timer.clock(stack);
+    var count: u32 = 0;
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0 or interface.ip6.enabled == 0) continue;
+        for (&interface.ip6.addresses) |*entry| {
+            const state: u8 = switch (entry.state) {
+                .unused => continue,
+                .tentative => bsd.ADDR6_TENTATIVE,
+                .preferred => bsd.ADDR6_PREFERRED,
+                .deprecated => bsd.ADDR6_DEPRECATED,
+                .duplicate => bsd.ADDR6_DUPLICATE,
+            };
+            if (count < into.len) into[count] = .{
+                .address = .{ .s6_addr = entry.address.bytes },
+                .prefix_length = entry.prefix_length,
+                .state = state,
+                .autoconf = entry.autoconf,
+                .preferred_s = if (entry.state == .deprecated) 0 else secondsLeft(entry.preferred_until, now),
+                .valid_s = secondsLeft(entry.valid_until, now),
+                .interface = interface.name,
+                .router_flags = interface.ip6.routers.flags,
+            };
+            count += 1;
+        }
+    }
+    return @intCast(count);
+}
+
+fn routes6(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
+    const into = room(bsd.Route6Info, buffer, size);
+    const now = _timer.clock(stack);
+    var count: u32 = 0;
+    for (&stack.routes6.routes) |*route| {
+        if (!route.live(now)) continue;
+        if (count < into.len) into[count] = .{
+            .destination = .{ .s6_addr = route.destination.bytes },
+            .gateway = .{ .s6_addr = route.gateway.bytes },
+            .prefix_length = route.prefix_length,
+            .origin = switch (route.origin) {
+                .advertised => bsd.ROUTE6_ROUTER,
+                .redirect => bsd.ROUTE6_REDIRECT,
+                else => bsd.ROUTE6_MANUAL,
+            },
+            .lifetime_s = secondsLeft(route.until, now),
+            .interface = if (route.interface) |interface| interface.name else @splat(0),
+        };
+        count += 1;
+    }
+    return @intCast(count);
+}
+
+fn neighbors(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
+    const into = room(bsd.NeighborInfo, buffer, size);
+    var count: u32 = 0;
+    for (&stack.nd.entries) |*entry| {
+        const state: u8 = switch (entry.state) {
+            .free => continue,
+            .incomplete => bsd.NDSTATE_INCOMPLETE,
+            .reachable => bsd.NDSTATE_REACHABLE,
+            .stale => bsd.NDSTATE_STALE,
+            .delay => bsd.NDSTATE_DELAY,
+            .probe => bsd.NDSTATE_PROBE,
+        };
+        if (count < into.len) into[count] = .{
+            .address = .{ .s6_addr = entry.address.bytes },
+            .hardware = entry.hardware,
+            .state = state,
+            .router = entry.router,
             .interface = if (entry.interface) |interface| interface.name else @splat(0),
         };
         count += 1;

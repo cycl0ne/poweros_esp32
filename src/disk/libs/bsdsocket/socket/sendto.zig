@@ -9,6 +9,7 @@ const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const _udp = @import("../udp/_udp.zig");
 const _icmp = @import("../icmp/_icmp.zig");
+const _icmp6 = @import("../icmp6/_icmp6.zig");
 const tcp_user = @import("../tcp/user.zig");
 
 /// A datagram of `length` bytes sent to `to`, or to the peer the socket is
@@ -102,22 +103,26 @@ pub fn SendTo(sb: *SocketBase, descriptor: i32, message: *const anyopaque, lengt
         if (to != null) return _socket.fail(sb, bsd.EISCONN, "SendTo");
         return sendStream(sb, descriptor, socket, bytes[0..length], flags, &held);
     }
-    var destination: u32 = socket.remote_address;
+    var destination = socket.remote_address;
     var port: u16 = socket.remote_port;
+    var scope: ?*@import("../netif/_netif.zig").Interface = null;
     if (to) |address| {
         if (socket.flags & _socket.connected != 0) return _socket.fail(sb, bsd.EISCONN, "SendTo");
-        const peer = _socket.addressIn(sb, address, to_length) orelse return _socket.fail(sb, sb.errno, "SendTo");
+        const peer = _socket.addressIn(sb, socket, address, to_length) orelse return _socket.fail(sb, sb.errno, "SendTo");
         destination = peer.address;
         port = peer.port;
+        scope = peer.scope;
     } else if (socket.flags & _socket.connected == 0) {
         return _socket.fail(sb, bsd.EDESTADDRREQ, "SendTo");
     }
     if (length > _udp.data_max) return _socket.fail(sb, bsd.EMSGSIZE, "SendTo");
     const data: [*]const u8 = @ptrCast(message);
-    const refused = if (socket.socket_type == bsd.SOCK_RAW)
-        _icmp.output(stack, socket, destination, data[0..length])
+    const refused = if (socket.socket_type != bsd.SOCK_RAW)
+        _udp.output(stack, socket, destination, port, scope, data[0..length])
+    else if (socket.protocol == bsd.IPPROTO_ICMPV6)
+        _icmp6.output(stack, socket, destination, scope, data[0..length])
     else
-        _udp.output(stack, socket, destination, port, data[0..length]);
+        _icmp.output(stack, socket, destination, data[0..length]);
     if (refused != 0) return _socket.fail(sb, refused, "SendTo");
     return @intCast(length);
 }

@@ -8,6 +8,7 @@ const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const hosts = @import("hosts.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 /// Names the cache keeps, and for how long at the least and the most.
 pub const cache_max = 32;
@@ -15,10 +16,14 @@ pub const ttl_min_us: u64 = 30_000_000;
 pub const ttl_max_us: u64 = 3_600_000_000;
 pub const addresses_max = 8;
 
+/// A name's addresses of one family: IPv4 ones mapped.
 pub const CacheEntry = extern struct {
     name: [64]u8 = @splat(0),
-    addresses: [addresses_max]u32 = @splat(0),
+    addresses: [addresses_max]Address = @splat(.{}),
     count: u32 = 0,
+    /// AF_INET or AF_INET6.
+    family: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
     expires: u64 align(4) = 0,
 };
 
@@ -28,11 +33,11 @@ pub const Cache = extern struct {
     random_state: u32 = 0x9E37_79B9,
 };
 
-/// The addresses `name` had when it was last looked up, while they are
-/// still good. Under the lock.
-pub fn cached(stack: *StackBase, name: []const u8, now: u64, into: *[addresses_max]u32) usize {
+/// The addresses of `family` `name` had when it was last looked up,
+/// while they are still good. Under the lock.
+pub fn cached(stack: *StackBase, name: []const u8, family: u8, now: u64, into: *[addresses_max]Address) usize {
     for (&stack.names.entries) |*entry| {
-        if (entry.count == 0 or entry.expires <= now) continue;
+        if (entry.count == 0 or entry.expires <= now or entry.family != family) continue;
         if (!hosts.same(entryName(entry), name)) continue;
         into.* = entry.addresses;
         return entry.count;
@@ -40,9 +45,9 @@ pub fn cached(stack: *StackBase, name: []const u8, now: u64, into: *[addresses_m
     return 0;
 }
 
-/// A name's addresses kept for `ttl_s` seconds, held to 30 s .. 1 h; the
-/// entry closest to its end makes room. Under the lock.
-pub fn remember(stack: *StackBase, name: []const u8, addresses: []const u32, ttl_s: u32, now: u64) void {
+/// A name's addresses of `family` kept for `ttl_s` seconds, held to
+/// 30 s .. 1 h; the entry closest to its end makes room. Under the lock.
+pub fn remember(stack: *StackBase, name: []const u8, family: u8, addresses: []const Address, ttl_s: u32, now: u64) void {
     if (name.len >= 64 or addresses.len == 0) return;
     var slot: *CacheEntry = &stack.names.entries[0];
     for (&stack.names.entries) |*entry| {
@@ -57,6 +62,7 @@ pub fn remember(stack: *StackBase, name: []const u8, addresses: []const u32, ttl
     const count = @min(addresses.len, addresses_max);
     @memcpy(slot.addresses[0..count], addresses[0..count]);
     slot.count = @intCast(count);
+    slot.family = family;
     const ttl = @max(ttl_min_us, @min(@as(u64, ttl_s) * 1_000_000, ttl_max_us));
     slot.expires = now + ttl;
 }
@@ -80,14 +86,15 @@ pub const HostBuffer = extern struct {
     addresses: [addresses_max][4]u8 = @splat(@splat(0)),
     list: [addresses_max + 1]?[*]u8 = @splat(null),
 
-    /// The buffer filled with `name` and `addresses`: the hostent.
-    pub fn fill(buffer: *HostBuffer, name: []const u8, addresses: []const u32) *bsd.hostent {
+    /// The buffer filled with `name` and `addresses`, IPv4 ones mapped:
+    /// the hostent.
+    pub fn fill(buffer: *HostBuffer, name: []const u8, addresses: []const Address) *bsd.hostent {
         const length = @min(name.len, buffer.name.len - 1);
         @memcpy(buffer.name[0..length], name[0..length]);
         buffer.name[length] = 0;
         const count = @min(addresses.len, addresses_max);
         for (addresses[0..count], 0..) |address, index| {
-            buffer.addresses[index] = @bitCast(address);
+            buffer.addresses[index] = address.bytes[12..16].*;
             buffer.list[index] = &buffer.addresses[index];
         }
         buffer.list[count] = null;

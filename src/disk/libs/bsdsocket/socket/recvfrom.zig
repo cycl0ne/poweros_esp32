@@ -94,7 +94,7 @@ pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u3
         if (socket.socket_type == bsd.SOCK_STREAM) {
             const into: [*]u8 = @ptrCast(buffer);
             if (tcp_user.receive(stack, socket, into[0..length], flags & bsd.MSG_PEEK != 0)) |taken| {
-                if (from) |address| _socket.addressOut(socket.remote_address, socket.remote_port, address, from_length.?);
+                if (from) |address| _socket.addressOut(stack, socket, socket.remote_address, socket.remote_port, socket.scope, address, from_length.?);
                 return @intCast(taken);
             }
         } else if (socket.receive.first()) |node| {
@@ -103,7 +103,7 @@ pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u3
             const taken: u32 = @min(length, @as(u32, @intCast(data.len)));
             const into: [*]u8 = @ptrCast(buffer);
             @memcpy(into[0..taken], data[0..taken]);
-            if (from) |address| _socket.addressOut(frame.from_address, frame.from_port, address, from_length.?);
+            if (from) |address| _socket.addressOut(stack, socket, frame.from_address, frame.from_port, frame.from_interface, address, from_length.?);
             if (flags & bsd.MSG_PEEK == 0) {
                 sys.Remove(node);
                 socket.receive_bytes -= @intCast(data.len);

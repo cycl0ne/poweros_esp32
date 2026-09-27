@@ -34,6 +34,12 @@ const GetDTableSize = @import("socket/getdtablesize.zig").GetDTableSize;
 const Errno = @import("socket/errno.zig").Errno;
 const SetErrnoPtr = @import("socket/seterrnoptr.zig").SetErrnoPtr;
 const Inet_NtoA = @import("socket/inet_ntoa.zig").Inet_NtoA;
+const Inet_NtoP = @import("socket/inet_ntop.zig").Inet_NtoP;
+const Inet_PtoN = @import("socket/inet_pton.zig").Inet_PtoN;
+const If_NameToIndex = @import("netif/if_nametoindex.zig").If_NameToIndex;
+const If_IndexToName = @import("netif/if_indextoname.zig").If_IndexToName;
+const GetAddrInfo = @import("names/getaddrinfo.zig").GetAddrInfo;
+const FreeAddrInfo = @import("names/freeaddrinfo.zig").FreeAddrInfo;
 const Inet_Addr = @import("socket/inet_addr.zig").Inet_Addr;
 const SocketBaseTagList = @import("socket/socketbasetaglist.zig").SocketBaseTagList;
 const AddInterfaceTagList = @import("netif/addinterfacetaglist.zig").AddInterfaceTagList;
@@ -122,6 +128,12 @@ const contract_files = [_][]const u8{
     @embedFile("names/gethostbyaddr.zig"),
     @embedFile("names/gethostname.zig"),
     @embedFile("names/sethostname.zig"),
+    @embedFile("socket/inet_ntop.zig"),
+    @embedFile("socket/inet_pton.zig"),
+    @embedFile("netif/if_nametoindex.zig"),
+    @embedFile("netif/if_indextoname.zig"),
+    @embedFile("names/getaddrinfo.zig"),
+    @embedFile("names/freeaddrinfo.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -244,6 +256,24 @@ fn lvoGetHostName(sb: *SocketBase, name: [*]u8, length: u32) callconv(.c) i32 {
 fn lvoSetHostName(sb: *SocketBase, name: [*:0]const u8) callconv(.c) i32 {
     return SetHostName(sb, name);
 }
+fn lvoInet_NtoP(sb: *SocketBase, family: i32, source: *const anyopaque, destination: [*]u8, size: u32) callconv(.c) ?[*:0]u8 {
+    return Inet_NtoP(sb, family, source, destination, size);
+}
+fn lvoInet_PtoN(sb: *SocketBase, family: i32, text: [*:0]const u8, destination: *anyopaque) callconv(.c) i32 {
+    return Inet_PtoN(sb, family, text, destination);
+}
+fn lvoIf_NameToIndex(sb: *SocketBase, name: [*:0]const u8) callconv(.c) u32 {
+    return If_NameToIndex(sb, name);
+}
+fn lvoIf_IndexToName(sb: *SocketBase, index: u32, name: [*]u8) callconv(.c) ?[*:0]u8 {
+    return If_IndexToName(sb, index, name);
+}
+fn lvoGetAddrInfo(sb: *SocketBase, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: ?*const bsd.addrinfo, result: *?*bsd.addrinfo) callconv(.c) i32 {
+    return GetAddrInfo(sb, node, service, hints, result);
+}
+fn lvoFreeAddrInfo(sb: *SocketBase, list: *bsd.addrinfo) callconv(.c) void {
+    FreeAddrInfo(sb, list);
+}
 fn lvoGetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) callconv(.c) i32 {
     return GetNetworkStatistics(sb, kind, buffer, size);
 }
@@ -296,6 +326,12 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetHostName),
     vec(lvoSetHostName),
     vec(lvoGetNetworkStatistics),
+    vec(lvoInet_NtoP),
+    vec(lvoInet_PtoN),
+    vec(lvoIf_NameToIndex),
+    vec(lvoIf_IndexToName),
+    vec(lvoGetAddrInfo),
+    vec(lvoFreeAddrInfo),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

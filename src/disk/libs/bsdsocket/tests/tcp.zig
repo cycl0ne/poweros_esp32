@@ -316,7 +316,9 @@ test "GetNetworkStatistics tells of the sockets, the routes and the counters" {
     try testing.expectEqual(pair.listener, listening.?.descriptor);
     try testing.expectEqual(@as(u16, 80), listening.?.local_port);
     try testing.expectEqual(pair.server, established.?.descriptor);
-    try testing.expectEqual(bsd.htonl(address_a), established.?.remote_address);
+    // IPv4 as IPv6 has it: mapped.
+    try testing.expectEqual(bsd.htonl(address_a), @as(*align(1) const u32, @ptrCast(established.?.remote_address.s6_addr[12..16])).*);
+    try testing.expectEqual(@as(u8, 0xff), established.?.remote_address.s6_addr[11]);
     try testing.expectEqual(@as(u32, 5), established.?.receive_queued);
     try testing.expectEqual(@as(u8, 0), established.?.flags);
     // Room for one: one written, both counted.

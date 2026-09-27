@@ -81,7 +81,8 @@ pub fn Connect(sb: *SocketBase, descriptor: i32, address: *const bsd.sockaddr, a
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "Connect");
     if (socket.flags & _socket.capture != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "Connect");
     if (socket.socket_type == bsd.SOCK_STREAM) {
-        const peer = _socket.addressIn(sb, address, address_length) orelse return _socket.fail(sb, sb.errno, "Connect");
+        const peer = _socket.addressIn(sb, socket, address, address_length) orelse return _socket.fail(sb, sb.errno, "Connect");
+        if (peer.scope) |scope| socket.scope = scope;
         const refused = tcp_user.connect(stack, socket, peer.address, peer.port);
         if (refused != 0) return _socket.fail(sb, refused, "Connect");
         if (socket.flags & _socket.nonblocking != 0) return _socket.fail(sb, bsd.EINPROGRESS, "Connect");
@@ -110,12 +111,13 @@ pub fn Connect(sb: *SocketBase, descriptor: i32, address: *const bsd.sockaddr, a
     }
     if (address_length >= 2 and address.sa_family == bsd.AF_UNSPEC) {
         socket.flags &= ~_socket.connected;
-        socket.remote_address = 0;
+        socket.remote_address = .{};
         socket.remote_port = 0;
         return 0;
     }
-    const peer = _socket.addressIn(sb, address, address_length) orelse return _socket.fail(sb, sb.errno, "Connect");
-    if (peer.port == 0) return _socket.fail(sb, bsd.EINVAL, "Connect");
+    const peer = _socket.addressIn(sb, socket, address, address_length) orelse return _socket.fail(sb, sb.errno, "Connect");
+    if (peer.port == 0 and socket.socket_type != bsd.SOCK_RAW) return _socket.fail(sb, bsd.EINVAL, "Connect");
+    if (peer.scope) |scope| socket.scope = scope;
     if (socket.flags & _socket.bound == 0) {
         if (!_socket.bindAnyPort(stack, socket)) return _socket.fail(sb, bsd.EADDRNOTAVAIL, "Connect");
     }

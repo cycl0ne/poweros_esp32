@@ -8,6 +8,7 @@ const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const _netif = @import("../netif/_netif.zig");
+const _ip6 = @import("../ip6/_ip6.zig");
 
 /// The local address and port a socket takes datagrams on and sends from.
 ///
@@ -68,21 +69,28 @@ pub fn Bind(sb: *SocketBase, descriptor: i32, address: *const bsd.sockaddr, addr
     const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "Bind");
     if (socket.flags & _socket.capture != 0) return _socket.fail(sb, bsd.EOPNOTSUPP, "Bind");
     if (socket.flags & _socket.bound != 0) return _socket.fail(sb, bsd.EINVAL, "Bind");
-    const wanted = _socket.addressIn(sb, address, address_length) orelse return _socket.fail(sb, sb.errno, "Bind");
-    if (wanted.address != bsd.INADDR_ANY and !_netif.isOurs(stack, wanted.address)) return _socket.fail(sb, bsd.EADDRNOTAVAIL, "Bind");
+    const wanted = _socket.addressIn(sb, socket, address, address_length) orelse return _socket.fail(sb, sb.errno, "Bind");
+    if (!wanted.address.isUnspecified() and !isOurs(stack, wanted.address)) return _socket.fail(sb, bsd.EADDRNOTAVAIL, "Bind");
     socket.local_address = wanted.address;
+    if (wanted.address.isLinkLocal()) socket.scope = wanted.scope orelse _ip6.owner(stack, wanted.address);
     if (wanted.port == 0) {
         if (!_socket.bindAnyPort(stack, socket)) return _socket.fail(sb, bsd.EADDRNOTAVAIL, "Bind");
         return 0;
     }
-    if (_socket.portTaken(stack, socket.socket_type, wanted.address, wanted.port, socket)) |other| {
+    if (_socket.portTaken(stack, socket, wanted.address, wanted.port)) |other| {
         const both_reuse = socket.flags & other.flags & _socket.reuse_address != 0;
         if (!both_reuse) {
-            socket.local_address = bsd.INADDR_ANY;
+            socket.local_address = .{};
             return _socket.fail(sb, bsd.EADDRINUSE, "Bind");
         }
     }
     socket.local_port = wanted.port;
     socket.flags |= _socket.bound;
     return 0;
+}
+
+/// Whether a socket may be bound to `address`: one of this machine's.
+fn isOurs(stack: *@import("../bsdsocket_base.zig").StackBase, address: @import("../ip6/address.zig").Address) bool {
+    if (address.isV4()) return _netif.isOurs(stack, address.v4());
+    return address.eql(@import("../ip6/address.zig").Address.loopback) or _ip6.owner(stack, address) != null;
 }

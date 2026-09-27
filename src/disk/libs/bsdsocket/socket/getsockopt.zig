@@ -21,7 +21,7 @@ const _tcp = @import("../tcp/_tcp.zig");
 ///
 /// INPUTS:
 /// - `socket` - a descriptor from Socket.
-/// - `level` - `SOL_SOCKET`.
+/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
 /// - `option` - any SetSockOpt takes, and `SO_ERROR` (the socket's
 ///   pending error, which reading clears) and `SO_TYPE` (its SOCK_*), each
 ///   an i32.
@@ -66,6 +66,12 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
     if (level == bsd.IPPROTO_TCP and socket.socket_type == bsd.SOCK_STREAM and option == bsd.TCP_NODELAY) {
         if (value_length.* < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
         @as(*align(1) i32, @ptrCast(value)).* = @intFromBool(_tcp.of(socket).flags & _tcp.no_delay != 0);
+        value_length.* = @sizeOf(i32);
+        return 0;
+    }
+    if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_V6ONLY or option == bsd.IPV6_UNICAST_HOPS)) {
+        if (value_length.* < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
+        @as(*align(1) i32, @ptrCast(value)).* = if (option == bsd.IPV6_V6ONLY) socket.v6only else if (socket.hop_limit == 0) -1 else socket.hop_limit;
         value_length.* = @sizeOf(i32);
         return 0;
     }

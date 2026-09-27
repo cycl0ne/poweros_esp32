@@ -21,6 +21,7 @@
 //! program's - behind an IPv4 header the stack makes.
 
 const sdk = @import("sdk");
+const Address = @import("../ip6/address.zig").Address;
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
@@ -89,8 +90,8 @@ fn reportUnreachable(stack: *StackBase, message: []const u8) void {
     const quoted_length: u32 = @as(u32, quoted[0] & 0xF) * 4;
     if (quoted_length < _ip.header_bytes or quoted.len < quoted_length + 4) return;
     if (quoted[9] != @as(u8, @intCast(bsd.IPPROTO_UDP))) return;
-    const local_address = _ip.get32(quoted, 12);
-    const remote_address = _ip.get32(quoted, 16);
+    const local_address = Address.fromV4(_ip.get32(quoted, 12));
+    const remote_address = Address.fromV4(_ip.get32(quoted, 16));
     const local_port = _ip.get16(quoted, quoted_length);
     const remote_port = _ip.get16(quoted, quoted_length + 2);
     const socket = sender(stack, local_address, local_port, remote_address, remote_port) orelse return;
@@ -104,13 +105,13 @@ fn reportUnreachable(stack: *StackBase, message: []const u8) void {
 
 /// The datagram socket a datagram from `local_port` to
 /// `remote_address:remote_port` went out of.
-fn sender(stack: *StackBase, local_address: u32, local_port: u16, remote_address: u32, remote_port: u16) ?*Socket {
+fn sender(stack: *StackBase, local_address: Address, local_port: u16, remote_address: Address, remote_port: u16) ?*Socket {
     var it = stack.sockets.iterator();
     while (it.next()) |node| {
         const socket = _socket.fromNode(node);
         if (socket.socket_type != bsd.SOCK_DGRAM or socket.local_port != local_port) continue;
-        if (socket.local_address != bsd.INADDR_ANY and socket.local_address != local_address) continue;
-        if (socket.flags & _socket.connected != 0 and (socket.remote_address != remote_address or socket.remote_port != remote_port)) continue;
+        if (!_socket.takes(socket, local_address)) continue;
+        if (socket.flags & _socket.connected != 0 and (!socket.remote_address.eql(remote_address) or socket.remote_port != remote_port)) continue;
         return socket;
     }
     return null;
@@ -134,7 +135,7 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, header: _ip.Header) void {
         const packet = frame.room()[frame.start - header.header_length ..][0..packet_length];
         @memcpy(copy.room()[copy.start..][0..packet_length], packet);
         copy.length = packet_length;
-        copy.from_address = header.source;
+        copy.from_address = Address.fromV4(header.source);
         sys.AddTail(&socket.receive, &copy.node);
         socket.receive_bytes += packet_length;
         _socket.wake(socket, bsd.FD_READ);
@@ -169,13 +170,14 @@ pub fn sendUnreachable(stack: *StackBase, frame: *Frame, header: _ip.Header, cod
 
 /// `data`, an ICMP message a raw socket was given, sent to `destination`:
 /// 0, or the errno that says why not.
-pub fn output(stack: *StackBase, socket: *Socket, destination: u32, data: []const u8) i32 {
+pub fn output(stack: *StackBase, socket: *Socket, to: Address, data: []const u8) i32 {
+    const destination = to.v4();
     const hop = _route.lookup(stack, destination) orelse return bsd.ENETUNREACH;
     if (data.len < header_bytes) return bsd.EINVAL;
     if (data.len + _ip.header_bytes > hop.interface.mtu) return bsd.EMSGSIZE;
     const broadcast = destination == bsd.INADDR_BROADCAST or destination == hop.interface.broadcast;
     if (broadcast and socket.flags & _socket.broadcast_allowed == 0) return bsd.EACCES;
-    const source = if (socket.local_address != bsd.INADDR_ANY) socket.local_address else hop.interface.address;
+    const source = if (!socket.local_address.isUnspecified()) socket.local_address.v4() else hop.interface.address;
     const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
     @memcpy(frame.room()[frame.start..][0..data.len], data);
     frame.length = @intCast(data.len);

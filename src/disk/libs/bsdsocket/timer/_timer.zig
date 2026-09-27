@@ -21,7 +21,7 @@ const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 
 /// How many timers can wait at once.
-pub const timers_max = 64;
+pub const timers_max = 128;
 /// A timer that is not in the heap.
 const nowhere: u32 = 0xFFFF_FFFF;
 

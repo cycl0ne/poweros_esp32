@@ -17,11 +17,13 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const Address = @import("../ip6/address.zig").Address;
+const Interface = @import("../netif/_netif.zig").Interface;
 
 /// Room in front for the headers of a packet going out: the link's (14 on
-/// Ethernet), IPv4's (20) and the transport's (8 for UDP, 20 for TCP),
-/// rounded up.
-pub const headroom = 64;
+/// Ethernet), IPv6's (40; IPv4's is 20) and the transport's (8 for UDP,
+/// 20 for TCP, 24 with the MSS option), rounded up.
+pub const headroom = 96;
 /// A frame's buffer: the headroom and the largest packet a link takes,
 /// 1500 bytes of IP and a 14-byte header, with its checksum.
 pub const buffer_bytes = headroom + 1536;
@@ -35,10 +37,17 @@ pub const Frame = extern struct {
     /// Where the valid bytes start in `buffer`, and how many there are.
     start: u32 = headroom,
     length: u32 = 0,
-    /// Who sent the datagram, in the chip's order, once the transport has
-    /// taken its header off.
-    from_address: u32 = 0,
+    /// Who sent the datagram, once the transport has taken its header off:
+    /// IPv6's sixteen bytes, an IPv4 sender mapped.
+    from_address: Address = .{},
     from_port: u16 = 0,
+    pad0: u16 = 0,
+    /// The interface it came in on, which a link-local sender's address
+    /// needs.
+    from_interface: ?*Interface = null,
+    /// Held out of order by a connection: where its data starts in the
+    /// sequence space (`tcp/reorder.zig`).
+    sequence: u32 = 0,
     /// Going out on a network device: the type of what it carries, and
     /// the station it goes to, kept while it waits for the device.
     link_type: u16 = 0,
@@ -111,8 +120,10 @@ pub const Pool = extern struct {
         frame.node = .{};
         frame.start = headroom;
         frame.length = 0;
-        frame.from_address = 0;
+        frame.from_address = .{};
         frame.from_port = 0;
+        frame.from_interface = null;
+        frame.sequence = 0;
         frame.link_type = 0;
         frame.large = 0;
         frame.capacity = buffer_bytes;
@@ -127,8 +138,10 @@ pub const Pool = extern struct {
         frame.node = .{};
         frame.start = headroom;
         frame.length = 0;
-        frame.from_address = 0;
+        frame.from_address = .{};
         frame.from_port = 0;
+        frame.from_interface = null;
+        frame.sequence = 0;
         frame.link_type = 0;
         frame.large = 1;
         frame.capacity = @max(capacity, buffer_bytes);

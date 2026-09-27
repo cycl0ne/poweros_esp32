@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! An interface on a network device (sdk/devices/network.zig): the
 //! device opened with the stack's copy calls, reads kept outstanding
-//! for IPv4 and for ARP, and writes sent as the device takes them.
+//! for IPv4, for ARP and for IPv6, and writes sent as the device takes
+//! them.
 //!
 //! **Frames go straight to the device and back.** Every read carries an
 //! empty frame as its data; the device's task copies a packet into it
@@ -25,6 +26,14 @@
 //! going back at once. When it comes back the reads go out again and DHCP
 //! renews its lease.
 //!
+//! **Groups.** The Ethernet groups the interface's IPv6 listens on - all
+//! nodes, and each address's solicited-node group - are joined on the
+//! device with S2_ADDMULTICASTADDRESS and left with
+//! S2_DELMULTICASTADDRESS, one request at a time: `join` and `leave`
+//! count the users of each group, and whenever the device's membership
+//! differs from what they ask for, the one control request goes out to
+//! make one group right, and its answer sends the next.
+//!
 //! All the answers come to the stack task's port, where `complete` takes
 //! them under the lock.
 
@@ -41,6 +50,7 @@ const _netif = @import("_netif.zig");
 const Interface = _netif.Interface;
 const _ip = @import("../ip/_ip.zig");
 const _arp = @import("../arp/_arp.zig");
+const _ip6 = @import("../ip6/_ip6.zig");
 
 /// The most bytes a read takes: a frame's buffer past its headroom.
 const read_bytes: u32 = _frame.buffer_bytes - _frame.headroom;
@@ -50,7 +60,17 @@ pub const queue_max = 64;
 pub const reads_max = 32;
 pub const writes_max = 16;
 
-pub const Kind = enum(u8) { read_ip, read_arp, write, event };
+pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };
+
+/// The Ethernet groups one interface can be in.
+pub const groups_max = 8;
+
+/// A group: how many ask for it, and whether the device has it.
+pub const Group = extern struct {
+    station: [6]u8 = @splat(0),
+    users: u8 = 0,
+    joined: u8 = 0,
+};
 
 /// One request to the device, and what it carries.
 pub const Request = extern struct {
@@ -95,6 +115,11 @@ pub const Device = extern struct {
     unit: u32 = 0,
     /// The S2_ONEVENT that waits for the link to change.
     event: Request = .{},
+    /// The groups asked for, and the request that joins and leaves them;
+    /// the group it is out for.
+    groups: [groups_max]Group = @splat(.{}),
+    control: Request = .{},
+    control_group: ?*Group = null,
 
     pub fn bps(link: *const Device) u64 {
         return @as(u64, link.bps_high) << 32 | link.bps_low;
@@ -154,8 +179,9 @@ pub fn start(stack: *StackBase, device: *Device, port: *exec.MsgPort) void {
         request.req.req.message.reply_port = port;
         request.req.req.message.length = @sizeOf(net.IOSana2Req);
         if (index < device.reads) {
-            // A quarter of the reads for ARP, the rest for IPv4.
-            request.kind = if (index % 4 == 3) .read_arp else .read_ip;
+            // A quarter of the reads for ARP, a quarter for IPv6 when the
+            // interface speaks it, the rest for IPv4.
+            request.kind = if (index % 4 == 3) .read_arp else if (index % 4 == 1 and device.interface.ip6.enabled != 0) .read_ip6 else .read_ip;
             read(stack, request);
         } else {
             request.kind = .write;
@@ -165,7 +191,60 @@ pub fn start(stack: *StackBase, device: *Device, port: *exec.MsgPort) void {
     device.event = .{ .req = device.opened, .kind = .event, .device = device };
     device.event.req.req.message.reply_port = port;
     device.event.req.req.message.length = @sizeOf(net.IOSana2Req);
+    device.control = .{ .req = device.opened, .kind = .control, .device = device };
+    device.control.req.req.message.reply_port = port;
+    device.control.req.req.message.length = @sizeOf(net.IOSana2Req);
     watch(stack, device);
+    syncGroups(stack, device);
+}
+
+// --- groups ----------------------------------------------------------------------
+
+/// One more user of the group at `station`. Under the lock.
+pub fn join(stack: *StackBase, device: *Device, station: [6]u8) void {
+    const group = for (&device.groups) |*group| {
+        if ((group.users != 0 or group.joined != 0) and eqlStation(group.station, station)) break group;
+    } else for (&device.groups) |*group| {
+        if (group.users == 0 and group.joined == 0) {
+            group.* = .{ .station = station };
+            break group;
+        }
+    } else return;
+    group.users +|= 1;
+    syncGroups(stack, device);
+}
+
+/// One user fewer of the group at `station`. Under the lock.
+pub fn leave(stack: *StackBase, device: *Device, station: [6]u8) void {
+    for (&device.groups) |*group| {
+        if (group.users != 0 and eqlStation(group.station, station)) {
+            group.users -= 1;
+            break;
+        }
+    }
+    syncGroups(stack, device);
+}
+
+fn eqlStation(a: [6]u8, b: [6]u8) bool {
+    for (a, b) |x, y| if (x != y) return false;
+    return true;
+}
+
+/// The control request sent for the first group whose membership on the
+/// device is not what its users ask, unless it is out already.
+fn syncGroups(stack: *StackBase, device: *Device) void {
+    if (device.control_group != null or device.going != 0 or device.control.device == null) return;
+    const group = for (&device.groups) |*group| {
+        if ((group.users != 0) != (group.joined != 0)) break group;
+    } else return;
+    device.control_group = group;
+    const req = &device.control.req;
+    req.req.command = if (group.users != 0) net.S2_ADDMULTICASTADDRESS else net.S2_DELMULTICASTADDRESS;
+    req.req.flags = 0;
+    req.src_addr = @splat(0);
+    req.src_addr[0..6].* = group.station;
+    device.in_flight += 1;
+    stack.sys_base.SendIO(&req.req);
 }
 
 /// The S2_ONEVENT sent, for the state the link is not in now.
@@ -202,7 +281,7 @@ fn read(stack: *StackBase, request: *Request) void {
     const req = &request.req;
     req.req.command = exec.CMD_READ;
     req.req.flags = 0;
-    req.packet_type = if (request.kind == .read_arp) _arp.ethertype else _ip.ethertype;
+    req.packet_type = packetType(request.kind);
     req.data = frame;
     req.data_length = read_bytes;
     device.in_flight += 1;
@@ -246,6 +325,15 @@ pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *co
     return 0;
 }
 
+/// The packet type a read of `kind` takes.
+fn packetType(kind: Kind) u16 {
+    return switch (kind) {
+        .read_arp => _arp.ethertype,
+        .read_ip6 => _ip6.ethertype,
+        else => _ip.ethertype,
+    };
+}
+
 fn write(stack: *StackBase, request: *Request, frame: *Frame) void {
     const device = request.device.?;
     request.frame = frame;
@@ -253,7 +341,8 @@ fn write(stack: *StackBase, request: *Request, frame: *Frame) void {
     const broadcast = for (frame.link_address) |octet| {
         if (octet != 0xFF) break false;
     } else true;
-    req.req.command = if (broadcast) net.S2_BROADCAST else exec.CMD_WRITE;
+    const group = frame.link_address[0] & 1 != 0;
+    req.req.command = if (broadcast) net.S2_BROADCAST else if (group) net.S2_MULTICAST else exec.CMD_WRITE;
     req.req.flags = 0;
     req.dst_addr = @splat(0);
     req.dst_addr[0..6].* = frame.link_address;
@@ -271,6 +360,16 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
     const device = request.device.?;
     const interface = device.interface;
     device.in_flight -= 1;
+    if (request.kind == .control) {
+        const group = device.control_group.?;
+        device.control_group = null;
+        const joining = request.req.req.command == net.S2_ADDMULTICASTADDRESS;
+        // A group the device refuses is not asked for again until its
+        // users change.
+        group.joined = @intFromBool(joining);
+        if (device.going != 0) return;
+        return syncGroups(stack, device);
+    }
     if (request.kind == .event) {
         device.event_armed = 0;
         if (device.going != 0) return;
@@ -284,13 +383,12 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
     request.frame = null;
     const req = &request.req;
     switch (request.kind) {
-        .read_ip, .read_arp => {
+        .read_ip, .read_arp, .read_ip6 => {
             if (req.req.err != 0 or device.going != 0) {
                 stack.frames.give(sys, frame);
                 if (req.req.err == net.S2ERR_OUTOFSERVICE) setLink(stack, device, false);
             } else {
-                const packet_type: u16 = if (request.kind == .read_arp) _arp.ethertype else _ip.ethertype;
-                _netif.receive(stack, interface, frame, req.src_addr[0..6], req.dst_addr[0..6], packet_type, now);
+                _netif.receive(stack, interface, frame, req.src_addr[0..6], req.dst_addr[0..6], packetType(request.kind), now);
             }
             if (device.going != 0) return;
             if (device.offline != 0) return sys.AddTail(&device.idle_reads, &request.req.req.message.node);
@@ -307,7 +405,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 sys.AddTail(&device.idle_writes, &request.req.req.message.node);
             }
         },
-        .event => unreachable,
+        .event, .control => unreachable,
     }
 }
 
@@ -326,6 +424,10 @@ pub fn drain(stack: *StackBase, device: *Device) void {
         _ = sys.AbortIO(&device.event.req.req);
         _ = sys.WaitIO(&device.event.req.req);
         device.event_armed = 0;
+    }
+    if (device.control_group != null) {
+        _ = sys.WaitIO(&device.control.req.req);
+        device.control_group = null;
     }
     const held = @import("../lock/_lock.zig").take(stack);
     defer @import("../lock/_lock.zig").give(stack, held);

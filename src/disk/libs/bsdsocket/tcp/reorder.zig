@@ -17,7 +17,7 @@ const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
 
 fn sequenceOf(frame: *const Frame) u32 {
-    return frame.from_address;
+    return frame.sequence;
 }
 
 /// `data`, which starts at `sequence` past RCV.NXT, held.
@@ -45,7 +45,7 @@ pub fn hold(stack: *StackBase, tcb: *Tcb, sequence: u32, data: []const u8) void 
     }
     @memcpy(frame.room()[frame.start..][0..length], data);
     frame.length = length;
-    frame.from_address = sequence;
+    frame.sequence = sequence;
     if (before) |next| {
         // Insert puts a node at the list's head when it has no
         // predecessor, which the first node's is the head of the list.

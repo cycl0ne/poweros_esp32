@@ -5,6 +5,8 @@
 //! runs under the stack's lock; the calls that wait do so around these.
 
 const sdk = @import("sdk");
+const _inet = @import("../inet/_inet.zig");
+const Address = @import("../ip6/address.zig").Address;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
@@ -52,7 +54,7 @@ fn ready(listener: *Tcb) ?*Tcb {
 
 /// A connection to `address:port` opened: bound first if it is not,
 /// its SYN sent. 0, or the errno that says why not.
-pub fn connect(stack: *StackBase, socket: *Socket, address: u32, port: u16) i32 {
+pub fn connect(stack: *StackBase, socket: *Socket, address: Address, port: u16) i32 {
     const tcb = _tcp.of(socket);
     switch (tcb.state) {
         .closed => if (socket.flags & _socket.connected != 0) return bsd.EISCONN,
@@ -60,10 +62,10 @@ pub fn connect(stack: *StackBase, socket: *Socket, address: u32, port: u16) i32 
         .listen => return bsd.EOPNOTSUPP,
         else => return bsd.EISCONN,
     }
-    if (address == bsd.INADDR_ANY or port == 0 or _netif.isBroadcast(stack, address)) return bsd.EADDRNOTAVAIL;
-    const hop = _route.lookup(stack, address) orelse return bsd.ENETUNREACH;
-    if (socket.local_address == bsd.INADDR_ANY) {
-        socket.local_address = if (hop.interface.loopback != 0) bsd.INADDR_LOOPBACK else hop.interface.address;
+    if (address.isUnspecified() or port == 0 or (address.isV4() and _netif.isBroadcast(stack, address.v4()))) return bsd.EADDRNOTAVAIL;
+    const path = _inet.route(stack, address, socket.scope) orelse return bsd.ENETUNREACH;
+    if (socket.local_address.isUnspecified()) {
+        socket.local_address = _inet.sourceFor(path, address) orelse return bsd.EADDRNOTAVAIL;
     }
     if (socket.flags & _socket.bound == 0 and !_socket.bindAnyPort(stack, socket)) return bsd.EADDRNOTAVAIL;
     socket.remote_address = address;
@@ -74,7 +76,7 @@ pub fn connect(stack: *StackBase, socket: *Socket, address: u32, port: u16) i32 
     tcb.snd_nxt = tcb.iss +% 1;
     tcb.snd_max = tcb.snd_nxt;
     tcb.ring_seq = tcb.iss +% 1;
-    tcb.mss = @min(_tcp.default_mss, output.localMss(hop.interface.mtu));
+    tcb.mss = @min(_tcp.default_mss, output.localMss(path.mtu, address));
     tcb.state = .syn_sent;
     const refused = output.sendSyn(stack, tcb);
     if (refused != 0) {

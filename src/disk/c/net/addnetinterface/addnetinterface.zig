@@ -13,11 +13,23 @@
 //! is up already is left as it is. QUIET says nothing, not even that a
 //! device is missing - what the boot runs, on every board, whether it has
 //! the device or not.
+//!
+//! A file that names a Wi-Fi `Network` has it joined first, with the
+//! passphrase kept for it in ENVARC:Sys/net/networks/<network> if there
+//! is one; the address follows once the station is on it.
+//!
+//! An interface with IPv6 and stable identifiers (the default) is given
+//! the secret in ENVARC:Sys/net/ipv6-secret - 32 hex digits - so that
+//! its IPv6 addresses stay the same on the same network from boot to
+//! boot. The first time, the secret is made from crypto.library's random
+//! bytes and the file written; without crypto.library or a writable
+//! ENVARC:, the stack makes a secret of its own for this boot.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
+const wireless = sdk.devices.wireless;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -27,7 +39,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.0 (26.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.2 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -38,15 +50,19 @@ const arg_timeout = 3;
 const arg_nowait = 4;
 
 const directory = "DEVS:NetInterfaces/";
+const secret_file = "ENVARC:Sys/net/ipv6-secret";
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOFILE = "%s: no file %s\n";
+const MSG_NOJOIN = "%s: can't join %s: error %d\n";
 const MSG_UNKNOWN = "%s: unknown keyword '%s' in %s, line %u column %u\n";
 const MSG_EQUAL = "%s: '=' expected after the keyword in %s, line %u column %u\n";
 const MSG_NUMBER = "%s: a number was expected, not '%s', in %s, line %u column %u\n";
 const MSG_TEXT = "%s: a value was expected in %s, line %u column %u\n";
 const MSG_ADDRESS = "%s: '%s' is not an address, in %s, line %u column %u\n";
 const MSG_CONFIGURE = "%s: Configure is DHCP or FIXED, not '%s', in %s, line %u column %u\n";
+const MSG_IPV6 = "%s: IPv6 is AUTO, FIXED or OFF, not '%s', in %s, line %u column %u\n";
+const MSG_INTERFACEID = "%s: InterfaceID is STABLE or EUI64, not '%s', in %s, line %u column %u\n";
 const MSG_MISSING = "%s: %s says nothing about its %s\n";
 const MSG_FAILED = "%s: %s could not be added: errno %d\n";
 const MSG_UP = "%s: %s/%u on %s\n";
@@ -118,7 +134,6 @@ fn addAll(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, options: Options) i32 {
 
 /// The interface one file describes.
 fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, options: Options) i32 {
-    _ = sys;
     var path: [128:0]u8 = @splat(0);
     var interface_name: [bsd.IFNAMSIZ:0]u8 = @splat(0);
     const path_text = join(&path, directory, name);
@@ -142,10 +157,12 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
         return dos.RETURN_ERROR;
     }
 
-    var tags: [24]TagItem = @splat(.{});
+    if (config.network[0] != 0) joinNetwork(sys, dl, &config, options);
+
+    var tags: [32]TagItem = @splat(.{});
     var count: usize = 0;
     const add = struct {
-        fn one(list: *[24]TagItem, index: *usize, tag: u32, data: usize) void {
+        fn one(list: *[32]TagItem, index: *usize, tag: u32, data: usize) void {
             list[index.*] = .{ .tag = tag, .data = data };
             index.* += 1;
         }
@@ -163,8 +180,27 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
     if (config.writes != 0) add(&tags, &count, bsd.IFA_Writes, config.writes);
     if (config.tcp_send_space != 0) add(&tags, &count, bsd.IFA_TCPSendSpace, config.tcp_send_space);
     if (config.tcp_recv_space != 0) add(&tags, &count, bsd.IFA_TCPRecvSpace, config.tcp_recv_space);
+    add(&tags, &count, bsd.IFA_IPv6, config.ipv6);
+    add(&tags, &count, bsd.IFA_InterfaceID, config.interface_id);
+    var secret: [bsd.IFSECRET_BYTES]u8 = @splat(0);
+    if (config.ipv6 != bsd.IFIPV6_OFF and config.interface_id == bsd.IFID_STABLE and stableSecret(sys, dl, &secret)) {
+        add(&tags, &count, bsd.IFA_StableSecret, @intFromPtr(&secret));
+    }
+    var address6: bsd.in6_addr = .{};
+    var gateway6: bsd.in6_addr = .{};
+    if (config.address6.given()) {
+        if (!address6Of(dl, sb, &config.address6, &address6, path_text)) return dos.RETURN_ERROR;
+        add(&tags, &count, bsd.IFA_Address6, @intFromPtr(&address6));
+        if (config.prefix6 != 0) add(&tags, &count, bsd.IFA_Prefix6, config.prefix6);
+    }
+    if (config.gateway6.given()) {
+        if (!address6Of(dl, sb, &config.gateway6, &gateway6, path_text)) return dos.RETURN_ERROR;
+        add(&tags, &count, bsd.IFA_Gateway6, @intFromPtr(&gateway6));
+    }
 
-    if (sb.AddInterfaceTagList(interface, &tags) < 0) {
+    const added = sb.AddInterfaceTagList(interface, &tags);
+    @memset(&secret, 0);
+    if (added < 0) {
         if (sb.Errno() == bsd.EADDRINUSE) {
             if (!options.quiet) _ = Printf(dl, MSG_ALREADY, .{interface});
             return dos.RETURN_OK;
@@ -182,6 +218,19 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
     }
     if (!options.quiet) report(dl, sb, interface, &config);
     return dos.RETURN_OK;
+}
+
+/// The Wi-Fi network the file names, joined through its device, with the
+/// passphrase kept for it if there is one. The join is taken at once and
+/// finishes on its own; the interface's address comes after. The
+/// passphrase is cleared from the stack once the device has it.
+fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Options) void {
+    const network: [*:0]const u8 = @ptrCast(&config.network);
+    var kept: [wireless.PASSPHRASE_MAX + 1]u8 = @splat(0);
+    defer @memset(@as(*volatile [kept.len]u8, &kept), 0);
+    const passphrase = wireless.knownPassphrase(dl, network, &kept);
+    const err = wireless.join(sys, @ptrCast(&config.device), config.unit, network, passphrase);
+    if (err != 0 and !options.quiet) _ = Printf(dl, MSG_NOJOIN, .{ COMMAND_NAME, network, @as(i32, err) });
 }
 
 /// Until DHCP has an address for the interface, or a link-local one
@@ -227,9 +276,62 @@ fn say(dl: *DosBase, found: config_file.Problem, file: [*:0]const u8) void {
         .text => Printf(dl, MSG_TEXT, .{ COMMAND_NAME, file, found.line, found.column }),
         .address => Printf(dl, MSG_ADDRESS, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .configure => Printf(dl, MSG_CONFIGURE, .{ COMMAND_NAME, token, file, found.line, found.column }),
+        .ipv6 => Printf(dl, MSG_IPV6, .{ COMMAND_NAME, token, file, found.line, found.column }),
+        .interface_id => Printf(dl, MSG_INTERFACEID, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .missing => Printf(dl, MSG_MISSING, .{ COMMAND_NAME, file, token }),
         .none => 0,
     };
+}
+
+/// IPv6 text from the file as an address; said, with its place, when it
+/// is none.
+fn address6Of(dl: *DosBase, sb: *SocketBase, text6: *const config_file.Text6, into: *bsd.in6_addr, file: [*:0]const u8) bool {
+    const text: [*:0]const u8 = @ptrCast(&text6.text);
+    if (sb.Inet_PtoN(bsd.AF_INET6, text, into) == 1) return true;
+    _ = Printf(dl, MSG_ADDRESS, .{ COMMAND_NAME, text, file, text6.line, text6.column });
+    return false;
+}
+
+fn hexDigit(char: u8) ?u8 {
+    return switch (char) {
+        '0'...'9' => char - '0',
+        'a'...'f' => char - 'a' + 10,
+        'A'...'F' => char - 'A' + 10,
+        else => null,
+    };
+}
+
+/// The stable secret, from its file, or made and written there the first
+/// time: false when there is none to be had.
+fn stableSecret(sys: *ExecBase, dl: *DosBase, secret: *[bsd.IFSECRET_BYTES]u8) bool {
+    var text: [2 * bsd.IFSECRET_BYTES]u8 = undefined;
+    if (dl.Open(secret_file, dos.MODE_OLDFILE)) |file| {
+        const got = dl.Read(file, &text, text.len);
+        _ = dl.Close(file);
+        if (got == text.len) {
+            for (secret, 0..) |*byte, index| {
+                const high = hexDigit(text[2 * index]) orelse return false;
+                const low = hexDigit(text[2 * index + 1]) orelse return false;
+                byte.* = high << 4 | low;
+            }
+            return true;
+        }
+    }
+    const crypto_lib = sys.OpenLibrary(sdk.crypto.CRYPTONAME, 1) orelse return false;
+    const cb: *sdk.interface.crypto.CryptoBase = @ptrCast(crypto_lib);
+    cb.RandomBytes(secret, bsd.IFSECRET_BYTES);
+    sys.CloseLibrary(crypto_lib);
+    const digits = "0123456789abcdef";
+    for (secret, 0..) |byte, index| {
+        text[2 * index] = digits[byte >> 4];
+        text[2 * index + 1] = digits[byte & 15];
+    }
+    const file = dl.Open(secret_file, dos.MODE_NEWFILE) orelse return true;
+    _ = dl.Write(file, &text, text.len);
+    _ = dl.Write(file, "\n", 1);
+    _ = dl.Close(file);
+    @memset(&text, 0);
+    return true;
 }
 
 fn join(into: *[128:0]u8, first: []const u8, second: [*:0]const u8) [*:0]const u8 {
