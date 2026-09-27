@@ -54,8 +54,9 @@ pub const orphan: u32 = 1 << 5;
 pub const capture: u32 = 1 << 6;
 pub const capture_detached: u32 = 1 << 7;
 
-/// What a new socket buffers.
-pub const receive_limit_default: u32 = 16 * 1024;
+/// What a new socket buffers, counted as the frames its datagrams hold
+/// (`Frame.cost`): about forty of up to 1.5 KiB.
+pub const receive_limit_default: u32 = 64 * 1024;
 pub const send_limit_default: u32 = 16 * 1024;
 
 pub const Socket = extern struct {
@@ -102,7 +103,8 @@ pub const Socket = extern struct {
     flags: u32 = 0,
     /// An error that came from the network, told at the next call.
     pending_error: i32 = 0,
-    /// The datagrams waiting to be read, oldest first, and their bytes.
+    /// The datagrams waiting to be read, oldest first, and the memory
+    /// their frames hold (`Frame.cost`).
     receive: exec.List = .{},
     receive_bytes: u32 = 0,
     receive_limit: u32 = receive_limit_default,
@@ -343,6 +345,13 @@ pub fn readable(socket: *Socket) bool {
     if (socket.pending_error != 0) return true;
     if (socket.socket_type == bsd.SOCK_STREAM) return @import("../tcp/user.zig").readable(socket);
     return !socket.receive.isEmpty();
+}
+
+/// Whether a datagram in a frame that costs `cost` fits in the socket's
+/// queue: an empty queue takes one whatever its limit, so a limit smaller
+/// than a frame means one datagram at a time.
+pub fn hasRoom(socket: *const Socket, cost: u32) bool {
+    return socket.receive_bytes == 0 or socket.receive_bytes + cost <= socket.receive_limit;
 }
 
 /// Whether a socket has something exceptional: urgent data not read.

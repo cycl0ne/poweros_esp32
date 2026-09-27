@@ -78,15 +78,14 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
         _inet.sendUnreachable(stack, interface, frame, packet, .port);
         return drop(stack, frame, &stack.counts.udp_no_port);
     };
-    const data_length = length - header_bytes;
-    if (socket.receive_bytes + data_length > socket.receive_limit) return drop(stack, frame, &stack.counts.udp_full);
+    if (!_socket.hasRoom(socket, frame.cost())) return drop(stack, frame, &stack.counts.udp_full);
     frame.trim(length);
     frame.pull(header_bytes);
     frame.from_address = packet.source;
     frame.from_interface = interface;
     frame.from_port = source_port;
     sys.AddTail(&socket.receive, &frame.node);
-    socket.receive_bytes += data_length;
+    socket.receive_bytes += frame.cost();
     stack.counts.udp_received += 1;
     _socket.wake(socket, bsd.FD_READ);
 }
@@ -129,12 +128,12 @@ fn toGroup(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pack
 /// A datagram, its header off, into `socket`'s queue - or dropped when
 /// the queue is full.
 fn queue(stack: *StackBase, socket: *Socket, frame: *Frame, source: Address, source_port: u16, interface: *Interface) void {
-    if (socket.receive_bytes + frame.length > socket.receive_limit) return drop(stack, frame, &stack.counts.udp_full);
+    if (!_socket.hasRoom(socket, frame.cost())) return drop(stack, frame, &stack.counts.udp_full);
     frame.from_address = source;
     frame.from_port = source_port;
     frame.from_interface = interface;
     stack.sys_base.AddTail(&socket.receive, &frame.node);
-    socket.receive_bytes += frame.length;
+    socket.receive_bytes += frame.cost();
     stack.counts.udp_received += 1;
     _socket.wake(socket, bsd.FD_READ);
 }

@@ -2885,8 +2885,12 @@ groups as it can be), `ENOBUFS` (so is the interface).
 
 **BEHAVIOR**
 
-`SO_RCVBUF` is how many bytes of datagrams wait on the socket before
-the next is dropped; it is held to between 1 byte and 256 KiB. On a
+`SO_RCVBUF` is how much datagrams may hold waiting on the socket
+before the next is dropped (64 KiB to start with), counted as the
+memory of the frames they are in - about 1.6 KiB each, whatever their
+size - so small datagrams cannot fill the stack's frames; an empty
+queue takes one datagram whatever the limit. It is held to between 1
+byte and 256 KiB. On a
 stream socket it and `SO_SNDBUF` are the sizes of its rings, from 1 KiB
 to 64 KiB, and change only while the ring is empty (`EINVAL` else).
 `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept

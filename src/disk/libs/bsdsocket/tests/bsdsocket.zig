@@ -164,6 +164,29 @@ test "what the calls refuse, and why" {
     try rig.deinit();
 }
 
+test "a queue of tiny datagrams is charged for its frames, and cannot take them all" {
+    var rig = try Rig.init();
+    const sb = try rig.open();
+    const receiving = try udp(sb);
+    const sending = try udp(sb);
+    // Room for four frames, which would be 8 KiB of data counted by bytes.
+    const limit: i32 = 4 * @sizeOf(@import("../frame/_frame.zig").Frame);
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(receiving, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &limit, @sizeOf(i32)));
+    var here = loopback(7005);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(receiving, here.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    var sent: u32 = 0;
+    while (sent < 10) : (sent += 1) try testing.expectEqual(@as(i32, 1), sb.SendTo(sending, "x", 1, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    try testing.expectEqual(@as(u32, 6), rig.stackBase().counts.udp_full);
+    var byte: [1]u8 = undefined;
+    var never: i32 = 1;
+    _ = sb.IoctlSocket(receiving, bsd.FIONBIO, &never);
+    var queued: u32 = 0;
+    while (sb.Recv(receiving, &byte, 1, 0) == 1) queued += 1;
+    try testing.expectEqual(@as(u32, 4), queued);
+    rig.close(sb);
+    try rig.deinit();
+}
+
 test "a full queue drops what comes, and SO_REUSEADDR shares a port" {
     var rig = try Rig.init();
     const sb = try rig.open();

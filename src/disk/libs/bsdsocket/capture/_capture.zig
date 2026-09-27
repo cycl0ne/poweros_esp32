@@ -99,7 +99,7 @@ pub fn tap(stack: *StackBase, interface: *Interface, packet: []const u8, directi
         @memcpy(body[link_part..][0..packet_part], packet[0..packet_part]);
         frame.length = header_bytes + kept;
         sys.AddTail(&socket.receive, &frame.node);
-        socket.receive_bytes += frame.length;
+        socket.receive_bytes += frame.cost();
         _socket.wake(socket, bsd.FD_READ);
     }
 }

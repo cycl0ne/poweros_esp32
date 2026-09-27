@@ -205,7 +205,9 @@ pub const SO_KEEPALIVE: i32 = 0x0008;
 pub const SO_BROADCAST: i32 = 0x0020;
 /// What CloseSocket does with data not yet sent: a `linger`.
 pub const SO_LINGER: i32 = 0x0080;
-/// The bytes of data a socket buffers for sending and receiving.
+/// The bytes a socket buffers for sending and receiving: a stream
+/// socket's rings, or the memory the frames of a datagram socket's
+/// waiting datagrams hold.
 pub const SO_SNDBUF: i32 = 0x1001;
 pub const SO_RCVBUF: i32 = 0x1002;
 /// How long a send or a receive may wait: a TimeVal; zero waits for ever.

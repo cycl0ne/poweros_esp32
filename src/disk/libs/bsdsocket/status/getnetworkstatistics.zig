@@ -9,6 +9,7 @@ const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
 const StackBase = _base.StackBase;
 const _socket = @import("../socket/_socket.zig");
+const Frame = @import("../frame/_frame.zig").Frame;
 const _lock = @import("../lock/_lock.zig");
 const _netif = @import("../netif/_netif.zig");
 const _tcp = @import("../tcp/_tcp.zig");
@@ -159,7 +160,7 @@ fn sockets(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
             .remote_address = .{ .s6_addr = socket.remote_address.bytes },
             .local_port = socket.local_port,
             .remote_port = socket.remote_port,
-            .receive_queued = socket.receive_bytes,
+            .receive_queued = queuedData(socket),
         };
         if (socket.owner) |owner| {
             if (owner.task.node.name) |name| {
@@ -307,4 +308,12 @@ fn nameServers(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
         }
     }
     return @intCast(count);
+}
+
+/// The bytes of the datagrams waiting on a socket.
+fn queuedData(socket: *_socket.Socket) u32 {
+    var bytes: u32 = 0;
+    var frames = socket.receive.iterator();
+    while (frames.next()) |node| bytes += @as(*const Frame, @fieldParentPtr("node", node)).length;
+    return bytes;
 }

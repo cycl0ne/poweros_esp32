@@ -27,8 +27,9 @@ pub const headroom = 96;
 /// A frame's buffer: the headroom and the largest packet a link takes,
 /// 1500 bytes of IP and a 14-byte header, with its checksum.
 pub const buffer_bytes = headroom + 1536;
-/// The most frames there are at once: about 200 KiB.
-pub const frames_max = 128;
+/// The most frames there are at once: about 400 KiB, made only as a
+/// busy moment needs them.
+pub const frames_max = 256;
 
 pub const Frame = extern struct {
     /// On the free list, a socket's receive queue, or an interface's
@@ -59,6 +60,13 @@ pub const Frame = extern struct {
     /// The bytes `buffer` holds: `buffer_bytes`, more for a large frame.
     capacity: u32 = buffer_bytes,
     buffer: [buffer_bytes]u8 = undefined,
+
+    /// The memory the frame holds while it waits in a queue: its buffer
+    /// and its record. A socket's receive limit is counted in this, so a
+    /// queue of small datagrams is charged for the frames they fill.
+    pub fn cost(frame: *const Frame) u32 {
+        return @intCast(@offsetOf(Frame, "buffer") + @as(usize, frame.capacity));
+    }
 
     /// The whole buffer, as far as it goes.
     pub fn room(frame: *Frame) []u8 {

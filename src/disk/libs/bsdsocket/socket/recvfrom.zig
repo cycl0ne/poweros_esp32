@@ -122,7 +122,7 @@ pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u3
             if (from) |address| _socket.addressOut(stack, socket, frame.from_address, frame.from_port, frame.from_interface, address, from_length.?);
             if (flags & bsd.MSG_PEEK == 0) {
                 sys.Remove(node);
-                socket.receive_bytes -= @intCast(data.len);
+                socket.receive_bytes -= frame.cost();
                 stack.frames.give(sys, frame);
             }
             return @intCast(taken);

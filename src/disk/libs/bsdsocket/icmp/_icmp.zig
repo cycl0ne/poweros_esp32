@@ -126,8 +126,11 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, header: _ip.Header) void {
         const socket = _socket.fromNode(node);
         if (socket.socket_type != bsd.SOCK_RAW or socket.protocol != bsd.IPPROTO_ICMP) continue;
         const packet_length = frame.length + header.header_length;
-        if (socket.receive_bytes + packet_length > socket.receive_limit) continue;
         const copy = stack.frames.take(sys) orelse return;
+        if (!_socket.hasRoom(socket, copy.cost())) {
+            stack.frames.give(sys, copy);
+            continue;
+        }
         if (packet_length > copy.capacity - copy.start) {
             stack.frames.give(sys, copy);
             continue;
@@ -137,7 +140,7 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, header: _ip.Header) void {
         copy.length = packet_length;
         copy.from_address = Address.fromV4(header.source);
         sys.AddTail(&socket.receive, &copy.node);
-        socket.receive_bytes += packet_length;
+        socket.receive_bytes += copy.cost();
         _socket.wake(socket, bsd.FD_READ);
     }
 }

@@ -246,16 +246,19 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, packet: _inet.Packet) void {
         if (socket.socket_type != bsd.SOCK_RAW or socket.protocol != bsd.IPPROTO_ICMPV6) continue;
         if (!_socket.takes(socket, packet.destination)) continue;
         if (socket.flags & _socket.connected != 0 and !socket.remote_address.eql(packet.source)) continue;
-        if (socket.receive_bytes + frame.length > socket.receive_limit) continue;
         // A message put back together from fragments may be larger than a
         // frame: its copy gets a frame of its size.
         const copy = (if (frame.length <= _frame.buffer_bytes - _frame.headroom) stack.frames.take(sys) else stack.frames.takeLarge(sys, _frame.headroom + frame.length)) orelse return;
+        if (!_socket.hasRoom(socket, copy.cost())) {
+            stack.frames.give(sys, copy);
+            continue;
+        }
         @memcpy(copy.room()[copy.start..][0..frame.length], frame.bytes());
         copy.length = frame.length;
         copy.from_address = packet.source;
         copy.from_interface = packet.arrived;
         sys.AddTail(&socket.receive, &copy.node);
-        socket.receive_bytes += copy.length;
+        socket.receive_bytes += copy.cost();
         _socket.wake(socket, bsd.FD_READ);
     }
 }
