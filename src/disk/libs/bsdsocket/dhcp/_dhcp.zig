@@ -352,7 +352,7 @@ pub fn input(stack: *StackBase, interface: *Interface, data: []const u8) bool {
     }
     // The name servers and the domain, from the ACK.
     if (reply.kind == ack) {
-        for (reply.dns[0..reply.dns_count]) |server| _ = _names.addServer(stack, server);
+        for (reply.dns[0..reply.dns_count]) |server| _ = _names.addServer(stack, @import("../ip6/address.zig").Address.fromV4(server));
         if (reply.domain.len > 0) {
             const length = @min(reply.domain.len, stack.domain.len - 1);
             @memcpy(stack.domain[0..length], reply.domain[0..length]);

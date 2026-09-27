@@ -225,8 +225,9 @@ fn textOf(text: [*:0]const u8) []const u8 {
     return text[0..length];
 }
 
-const Service = struct { name: []const u8, port: u16 };
-const services = [_]Service{
+pub const Service = struct { name: []const u8, port: u16 };
+/// The services known by name, GetNameInfo's as well.
+pub const services = [_]Service{
     .{ .name = "ftp", .port = 21 },
     .{ .name = "ssh", .port = 22 },
     .{ .name = "telnet", .port = 23 },

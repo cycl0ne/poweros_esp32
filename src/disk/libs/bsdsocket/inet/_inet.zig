@@ -87,7 +87,9 @@ pub fn route(stack: *StackBase, destination: Address, scope: ?*Interface) ?Path 
         const lo = _netif.loopbackOf(stack);
         return .{ .interface = lo, .next_hop = destination, .mtu = lo.mtu };
     }
-    if (destination.isLinkLocal() or (destination.isMulticast() and destination.scope() == 2)) {
+    // A link-local address, and a group of any scope beyond the
+    // interface: sent on the link itself, never through a router.
+    if (destination.isLinkLocal() or destination.isMulticast()) {
         const interface = scope orelse firstLink(stack) orelse return null;
         if (interface.ip6.enabled == 0 or interface.up == 0) return null;
         return pathOn(stack, interface, destination, destination);

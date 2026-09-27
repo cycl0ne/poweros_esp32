@@ -8,6 +8,7 @@ const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
+const _netif = @import("../netif/_netif.zig");
 const _tcp = @import("../tcp/_tcp.zig");
 
 /// The most a socket may buffer: SO_RCVBUF and SO_SNDBUF are held to it.
@@ -33,15 +34,24 @@ const buffer_max: u32 = 256 * 1024;
 ///   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
 ///   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
 ///   `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
-///   for IPv6 only; before Bind) and `IPV6_UNICAST_HOPS` (an i32, the hop
-///   limit its packets go with, -1 for the interface's).
+///   for IPv6 only; before Bind), `IPV6_UNICAST_HOPS` (an i32, the hop
+///   limit its packets go with, -1 for the interface's),
+///   `IPV6_JOIN_GROUP`/`IPV6_LEAVE_GROUP` (an `ipv6_mreq`: a group, on an
+///   interface by index or on the route's with 0), `IPV6_MULTICAST_IF` (a
+///   u32 index, 0 for the route's), `IPV6_MULTICAST_HOPS` (an i32, -1 for
+///   1) and `IPV6_MULTICAST_LOOP` (an i32, 0 to keep this machine's own
+///   members from getting a copy).
 /// - `value` - the option's value.
 /// - `value_length` - its size.
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `EBADF`, `ENOPROTOOPT` (another level or an
 /// option there is not, or one that can only be read), `EINVAL` (a value
-/// of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound).
+/// of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound, a
+/// group that is no group), `ENXIO` (no interface of that index),
+/// `EADDRINUSE` (in the group already), `EADDRNOTAVAIL` (not in the group
+/// to leave, or no route to it), `ETOOMANYREFS` (the socket is in as many
+/// groups as it can be), `ENOBUFS` (so is the interface).
 ///
 /// BEHAVIOR:
 /// `SO_RCVBUF` is how many bytes of datagrams wait on the socket before
@@ -88,10 +98,28 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         if (@as(*align(1) const i32, @ptrCast(value)).* != 0) tcb.flags |= _tcp.no_delay else tcb.flags &= ~_tcp.no_delay;
         return 0;
     }
+    if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_JOIN_GROUP or option == bsd.IPV6_LEAVE_GROUP)) {
+        if (value_length < @sizeOf(bsd.ipv6_mreq)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+        const request = @as(*align(1) const bsd.ipv6_mreq, @ptrCast(value)).*;
+        const refused = membership(sb, socket, option == bsd.IPV6_JOIN_GROUP, request);
+        if (refused != 0) return _socket.fail(sb, refused, "SetSockOpt");
+        return 0;
+    }
     if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6) {
         if (value_length < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
         const number = @as(*align(1) const i32, @ptrCast(value)).*;
         switch (option) {
+            bsd.IPV6_MULTICAST_IF => {
+                const index: u32 = @bitCast(number);
+                socket.multicast_interface = if (index == 0) null else (_netif.byIndex(sb.stack, index) orelse return _socket.fail(sb, bsd.ENXIO, "SetSockOpt"));
+            },
+            bsd.IPV6_MULTICAST_HOPS => {
+                if (number < -1 or number > 255) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
+                // 0 is kept as "1", the default; a hop limit of 0 sends
+                // to nobody but this machine, which the loop still does.
+                socket.multicast_hops = if (number <= 0) 0 else @intCast(number);
+            },
+            bsd.IPV6_MULTICAST_LOOP => socket.multicast_no_loop = @intFromBool(number == 0),
             bsd.IPV6_V6ONLY => {
                 if (socket.flags & _socket.bound != 0) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
                 socket.v6only = @intFromBool(number != 0);
@@ -181,4 +209,35 @@ fn bytesOf(number: i32) u32 {
     if (number < 1) return 1;
     const bytes: u32 = @intCast(number);
     return @min(bytes, buffer_max);
+}
+
+/// A group joined or left, as an ipv6_mreq asks: 0, or the errno.
+fn membership(sb: *SocketBase, socket: *_socket.Socket, join: bool, request: bsd.ipv6_mreq) i32 {
+    const stack = sb.stack;
+    const Address = @import("../ip6/address.zig").Address;
+    const group: Address = .{ .bytes = request.ipv6mr_multiaddr.s6_addr };
+    if (!group.isMulticast()) return bsd.EINVAL;
+    const interface = if (request.ipv6mr_interface != 0)
+        (_netif.byIndex(stack, request.ipv6mr_interface) orelse return bsd.ENXIO)
+    else
+        ((@import("../inet/_inet.zig").route(stack, group, null) orelse return bsd.EADDRNOTAVAIL).interface);
+    const _ip6 = @import("../ip6/_ip6.zig");
+    if (!join) {
+        for (&socket.groups) |*member| {
+            if (member.interface == interface and member.group.eql(group)) {
+                _ip6.leaveSocketGroup(stack, interface, group);
+                member.* = .{};
+                return 0;
+            }
+        }
+        return bsd.EADDRNOTAVAIL;
+    }
+    if (_socket.isMember(socket, group, interface)) return bsd.EADDRINUSE;
+    for (&socket.groups) |*member| {
+        if (member.interface != null) continue;
+        if (!_ip6.joinSocketGroup(stack, interface, group)) return bsd.ENOBUFS;
+        member.* = .{ .group = group, .interface = interface };
+        return 0;
+    }
+    return bsd.ETOOMANYREFS;
 }

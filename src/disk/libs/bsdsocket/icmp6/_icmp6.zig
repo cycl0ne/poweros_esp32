@@ -34,7 +34,8 @@ const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
-const Frame = @import("../frame/_frame.zig").Frame;
+const _frame = @import("../frame/_frame.zig");
+const Frame = _frame.Frame;
 const _netif = @import("../netif/_netif.zig");
 const Interface = _netif.Interface;
 const _ip = @import("../ip/_ip.zig");
@@ -246,7 +247,9 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, packet: _inet.Packet) void {
         if (!_socket.takes(socket, packet.destination)) continue;
         if (socket.flags & _socket.connected != 0 and !socket.remote_address.eql(packet.source)) continue;
         if (socket.receive_bytes + frame.length > socket.receive_limit) continue;
-        const copy = stack.frames.take(sys) orelse return;
+        // A message put back together from fragments may be larger than a
+        // frame: its copy gets a frame of its size.
+        const copy = (if (frame.length <= _frame.buffer_bytes - _frame.headroom) stack.frames.take(sys) else stack.frames.takeLarge(sys, _frame.headroom + frame.length)) orelse return;
         @memcpy(copy.room()[copy.start..][0..frame.length], frame.bytes());
         copy.length = frame.length;
         copy.from_address = packet.source;
@@ -264,9 +267,12 @@ pub fn output(stack: *StackBase, socket: *Socket, destination: Address, scope: ?
     if (destination.isV4() or destination.isUnspecified()) return bsd.EAFNOSUPPORT;
     if (data.len < 4) return bsd.EINVAL;
     const path = _inet.route(stack, destination, scope orelse socket.scope) orelse return bsd.ENETUNREACH;
-    if (data.len + _ip6.header_bytes > path.mtu) return bsd.EMSGSIZE;
+    if (data.len > 65535 - 8) return bsd.EMSGSIZE;
     const source = if (!socket.local_address.isUnspecified()) socket.local_address else (_inet.sourceFor(path, destination) orelse return bsd.EADDRNOTAVAIL);
-    const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
+    // Larger than the path takes, it goes in fragments, from a frame of
+    // its own.
+    const fits = data.len + _ip6.header_bytes <= path.mtu;
+    const frame = (if (fits) stack.frames.take(stack.sys_base) else stack.frames.takeLarge(stack.sys_base, _frame.headroom + @as(u32, @intCast(data.len)))) orelse return bsd.ENOBUFS;
     const message = frame.room()[frame.start..][0..data.len];
     @memcpy(message, data);
     frame.length = @intCast(data.len);

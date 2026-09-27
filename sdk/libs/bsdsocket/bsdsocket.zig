@@ -167,6 +167,23 @@ pub const IPPROTO_NONE: i32 = 59;
 /// IPPROTO_IPV6's options. Each takes an i32.
 /// The hop limit of unicast packets the socket sends; -1: the interface's.
 pub const IPV6_UNICAST_HOPS: i32 = 4;
+/// The interface a datagram to a group goes out of (a u32 index, 0 for
+/// the route's), its hop limit (an i32, -1 for 1), and whether this
+/// machine's own members of the group get a copy (an i32, 1 unless 0).
+pub const IPV6_MULTICAST_IF: i32 = 9;
+pub const IPV6_MULTICAST_HOPS: i32 = 10;
+pub const IPV6_MULTICAST_LOOP: i32 = 11;
+/// A group joined, or left, on an interface: an ipv6_mreq.
+pub const IPV6_JOIN_GROUP: i32 = 12;
+pub const IPV6_LEAVE_GROUP: i32 = 13;
+
+/// struct ipv6_mreq: a group, and the interface to be in it on (its
+/// index, If_NameToIndex's; 0 for the one a packet to the group would
+/// go out of).
+pub const ipv6_mreq = extern struct {
+    ipv6mr_multiaddr: in6_addr = .{},
+    ipv6mr_interface: u32 = 0,
+};
 /// An AF_INET6 socket that takes IPv6 only; 0 lets it take IPv4 as
 /// mapped addresses (::ffff:a.b.c.d) as well, the default.
 pub const IPV6_V6ONLY: i32 = 27;
@@ -338,6 +355,7 @@ pub const ENOBUFS: i32 = 55;
 pub const EISCONN: i32 = 56;
 pub const ENOTCONN: i32 = 57;
 pub const ESHUTDOWN: i32 = 58;
+pub const ETOOMANYREFS: i32 = 59;
 pub const ETIMEDOUT: i32 = 60;
 pub const ECONNREFUSED: i32 = 61;
 pub const EHOSTDOWN: i32 = 64;
@@ -399,6 +417,9 @@ pub const IFA_Prefix6: u32 = IFA_Dummy + 19;
 /// ti_Data: a pointer to an in6_addr, a router on the link made the
 /// IPv6 default route - a link-local address, as routers have.
 pub const IFA_Gateway6: u32 = IFA_Dummy + 20;
+/// ti_Data: a pointer to an in6_addr, an IPv6 name server to ask; may be
+/// given more than once. IFA_NameServer's IPv6 twin, stack-wide as it is.
+pub const IFA_NameServer6: u32 = IFA_Dummy + 21;
 
 pub const IFCONFIGURE_FIXED: u32 = 0;
 pub const IFCONFIGURE_DHCP: u32 = 1;
@@ -550,6 +571,20 @@ pub const EAI_MEMORY: i32 = 6;
 pub const EAI_NONAME: i32 = 8;
 pub const EAI_SERVICE: i32 = 9;
 pub const EAI_SOCKTYPE: i32 = 10;
+pub const EAI_OVERFLOW: i32 = 14;
+
+/// GetNameInfo's flags. NI_NUMERICHOST: the address as text, never a
+/// lookup; NI_NUMERICSERV: the port as a number. NI_NOFQDN: a name in
+/// the stack's domain without it. NI_NAMEREQD: EAI_NONAME rather than the
+/// address as text when there is no name. NI_DGRAM: the service is UDP's.
+pub const NI_NUMERICHOST: i32 = 0x01;
+pub const NI_NUMERICSERV: i32 = 0x02;
+pub const NI_NOFQDN: i32 = 0x04;
+pub const NI_NAMEREQD: i32 = 0x08;
+pub const NI_DGRAM: i32 = 0x10;
+/// Room enough for any host and service GetNameInfo writes.
+pub const NI_MAXHOST = 1025;
+pub const NI_MAXSERV = 32;
 
 /// Where names are looked up first, and the name servers kept on the
 /// disk: files a program and a user edit.
@@ -579,6 +614,9 @@ pub const NETSTATUS_ADDRESSES6: u32 = 5;
 pub const NETSTATUS_ROUTES6: u32 = 6;
 /// NETSTATUS_NEIGHBORS: a NeighborInfo per entry of the neighbor cache.
 pub const NETSTATUS_NEIGHBORS: u32 = 7;
+/// NETSTATUS_NAMESERVERS: a NameServerInfo per name server the stack
+/// asks, in the order it asks them.
+pub const NETSTATUS_NAMESERVERS: u32 = 8;
 
 /// What the stack counts, since it started.
 pub const NetCounts = extern struct {
@@ -648,6 +686,8 @@ pub const NetCounts = extern struct {
     ip6_fragments: u32 = 0,
     ip6_reassembled: u32 = 0,
     ip6_reassembly_dropped: u32 = 0,
+    /// Fragments sent, of packets larger than their path.
+    ip6_fragments_sent: u32 = 0,
     /// ICMPv6: messages in, the ones too short or with a bad checksum,
     /// echo requests answered, errors sent, and errors the rate limit
     /// held back.
@@ -790,6 +830,21 @@ pub const Route6Info = extern struct {
     pad: [2]u8 = .{ 0, 0 },
     /// The seconds it is still used, or LIFETIME_INFINITE.
     lifetime_s: u32 = LIFETIME_INFINITE,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// Where a name server came from: an interface file, DHCP or a program
+/// (AddDomainNameServer); a router's advertisement (RDNSS).
+pub const NAMESERVER_GIVEN: u8 = 1;
+pub const NAMESERVER_ROUTER: u8 = 2;
+
+/// A name server: its address as IPv6 has it (an IPv4 one mapped).
+pub const NameServerInfo = extern struct {
+    address: in6_addr = .{},
+    /// NAMESERVER_*.
+    origin: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
+    /// The interface whose router named it; empty for one given.
     interface: [IFNAMSIZ]u8 = @splat(0),
 };
 

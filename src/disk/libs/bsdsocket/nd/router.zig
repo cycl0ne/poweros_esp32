@@ -17,8 +17,10 @@
 //! interface takes and no less than 1280; for each prefix, an on-link
 //! route for its valid lifetime when its L flag is set, and an address
 //! made from it when its A flag is (`slaac.zig`); the name servers of an
-//! RDNSS option (RFC 8106) for their lifetime; and its M and O flags,
-//! kept for NetStatus. A prefix that is link-local is passed over.
+//! RDNSS option (RFC 8106) for their lifetime, and the first domain of a
+//! DNSSL option for its lifetime - where a name without dots is looked
+//! for when no domain was given by hand or by DHCP; and its M and O
+//! flags, kept for NetStatus. A prefix that is link-local is passed over.
 //!
 //! **A redirect** is taken only from the router that is the current next
 //! hop for its destination; its target is link-local, or the destination
@@ -50,6 +52,7 @@ pub const redirect_life_us: u64 = 10 * 60 * 1_000_000;
 pub const option_prefix: u8 = 3;
 pub const option_mtu: u8 = 5;
 pub const option_rdnss: u8 = 25;
+pub const option_dnssl: u8 = 31;
 
 pub const flag_managed: u8 = 0x80;
 pub const flag_other: u8 = 0x40;
@@ -71,6 +74,9 @@ pub const Routers = extern struct {
     mtu: u32 = 0,
     servers: [servers_max]Address = @splat(.{}),
     servers_until: [servers_max]u64 align(4) = @splat(0),
+    /// The search domain a DNSSL option named, dotted, and until when.
+    domain: [64]u8 = @splat(0),
+    domain_until: u64 align(4) = 0,
     interface: ?*Interface = null,
 };
 
@@ -186,6 +192,7 @@ pub fn advertised(stack: *StackBase, interface: *Interface, bytes: []const u8, p
             },
             option_prefix => if (option.len == 32) prefix(stack, interface, option, now),
             option_rdnss => if (option.len >= 24 and (option.len - 8) % 16 == 0) servers(routers, option, now),
+            option_dnssl => if (option.len >= 16) searchDomain(routers, option, now),
             else => {},
         }
     }
@@ -227,6 +234,43 @@ fn servers(routers: *Routers, option: []const u8, now: u64) void {
             routers.servers_until[slot] = until(now, lifetime_s);
         }
     }
+}
+
+/// A DNSSL option's first domain - labels, each its length and its
+/// bytes, to an empty one - kept dotted for the option's lifetime; a
+/// lifetime of 0 takes it away.
+fn searchDomain(routers: *Routers, option: []const u8, now: u64) void {
+    const lifetime_s = _ip.get32(option, 4);
+    if (lifetime_s == 0) {
+        routers.domain = @splat(0);
+        return;
+    }
+    var text: [64]u8 = @splat(0);
+    var written: usize = 0;
+    var at: usize = 8;
+    while (at < option.len) {
+        const length = option[at];
+        if (length == 0) break;
+        if (length > 63 or at + 1 + length > option.len) return;
+        const dot: usize = @intFromBool(written > 0);
+        if (written + dot + length >= text.len) return;
+        if (dot != 0) text[written] = '.';
+        @memcpy(text[written + dot ..][0..length], option[at + 1 ..][0..length]);
+        written += dot + length;
+        at += 1 + length;
+    }
+    if (written == 0) return;
+    routers.domain = text;
+    routers.domain_until = until(now, lifetime_s);
+}
+
+/// The search domain a router named on `interface`, while it is valid.
+pub fn searchDomainOf(interface: *const Interface, now: u64) ?[]const u8 {
+    const routers = &interface.ip6.routers;
+    if (routers.domain[0] == 0 or (routers.domain_until != 0 and routers.domain_until <= now)) return null;
+    var length: usize = 0;
+    while (length < routers.domain.len and routers.domain[length] != 0) length += 1;
+    return routers.domain[0..length];
 }
 
 /// The name servers routers named on `interface` that are still valid,

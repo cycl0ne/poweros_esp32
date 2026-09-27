@@ -20,6 +20,7 @@ const _arp = @import("../arp/_arp.zig");
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
 
+const Address = @import("../ip6/address.zig").Address;
 const testing = std.testing;
 
 fn discard(stack: *StackBase, _: *Interface, frame: *Frame, _: *const [6]u8, _: u16) i32 {
@@ -190,7 +191,8 @@ test "the list of interfaces, routes by hand, and name servers" {
     try testing.expectEqual(@as(i32, -1), sb.AddDomainNameServer(sb.Inet_Addr("10.0.0.5")));
     try testing.expectEqual(bsd.ENOBUFS, sb.Errno());
     try testing.expectEqual(@as(i32, 0), sb.RemoveDomainNameServer(sb.Inet_Addr("10.0.0.2")));
-    try testing.expectEqualSlices(u32, &.{ 0x0A00_0001, 0x0A00_0003, 0x0A00_0004 }, rig.stack.nameservers[0..rig.stack.nameserver_count]);
+    try testing.expectEqual(@as(u32, 3), rig.stack.nameserver_count);
+    for ([_]u32{ 0x0A00_0001, 0x0A00_0003, 0x0A00_0004 }, rig.stack.nameservers[0..3]) |want, got| try testing.expect(got.eql(Address.fromV4(want)));
     try testing.expectEqual(@as(i32, -1), sb.RemoveDomainNameServer(sb.Inet_Addr("10.0.0.2")));
     try rig.deinit();
 }

@@ -15,6 +15,8 @@ const _tcp = @import("../tcp/_tcp.zig");
 const _arp = @import("../arp/_arp.zig");
 const _timer = @import("../timer/_timer.zig");
 const _nd = @import("../nd/_nd.zig");
+const router = @import("../nd/router.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 comptime {
     // SocketInfo's tcp_state is the connection block's state as it is.
@@ -47,7 +49,8 @@ comptime {
 ///   socket), `NETSTATUS_ARP` (an `ArpInfo` per entry),
 ///   `NETSTATUS_ADDRESSES6` (an `Address6Info` per IPv6 address),
 ///   `NETSTATUS_ROUTES6` (a `Route6Info` per IPv6 route) or
-///   `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry).
+///   `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry) or
+///   `NETSTATUS_NAMESERVERS` (a `NameServerInfo` per name server).
 /// - `buffer` - where they go; may be null when `size` is 0.
 /// - `size` - the bytes `buffer` holds.
 ///
@@ -99,6 +102,7 @@ pub fn GetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, siz
         bsd.NETSTATUS_ADDRESSES6 => addresses6(stack, buffer, size),
         bsd.NETSTATUS_ROUTES6 => routes6(stack, buffer, size),
         bsd.NETSTATUS_NEIGHBORS => neighbors(stack, buffer, size),
+        bsd.NETSTATUS_NAMESERVERS => nameServers(stack, buffer, size),
         else => _socket.fail(sb, bsd.EINVAL, "GetNetworkStatistics"),
     };
 }
@@ -281,6 +285,26 @@ fn neighbors(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
             .interface = if (entry.interface) |interface| interface.name else @splat(0),
         };
         count += 1;
+    }
+    return @intCast(count);
+}
+
+fn nameServers(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
+    const into = room(bsd.NameServerInfo, buffer, size);
+    var count: u32 = 0;
+    for (stack.nameservers[0..stack.nameserver_count]) |server| {
+        if (count < into.len) into[count] = .{ .address = .{ .s6_addr = server.bytes }, .origin = bsd.NAMESERVER_GIVEN };
+        count += 1;
+    }
+    const now = _timer.clock(stack);
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0 or interface.ip6.enabled == 0) continue;
+        var servers: [router.servers_max]Address = undefined;
+        const found = router.nameServers(interface, now, &servers);
+        for (servers[0..found]) |server| {
+            if (count < into.len) into[count] = .{ .address = .{ .s6_addr = server.bytes }, .origin = bsd.NAMESERVER_ROUTER, .interface = interface.name };
+            count += 1;
+        }
     }
     return @intCast(count);
 }

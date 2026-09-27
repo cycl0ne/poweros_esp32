@@ -133,4 +133,7 @@ u32 If_NameToIndex([*:0]const u8 name)
 i32 GetAddrInfo(?[*:0]const u8 node, ?[*:0]const u8 service, ?*const bsd.addrinfo hints, *?*bsd.addrinfo result)
 /// A list GetAddrInfo made, given back whole with its first entry.
 void FreeAddrInfo(*bsd.addrinfo list)
+/// A sockaddr as a host's name and a service's, GetAddrInfo's reverse: 0,
+/// or an EAI_* code.
+i32 GetNameInfo(*const bsd.sockaddr address, u32 address_length, ?[*]u8 host, u32 host_length, ?[*]u8 service, u32 service_length, i32 flags)
 ##end

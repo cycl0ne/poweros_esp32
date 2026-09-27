@@ -183,7 +183,9 @@ cores.
   detection, MLDv2, router advertisements with SLAAC (stable RFC 7217
   addresses or EUI-64), RDNSS and redirects, an IPv6 route table, and
   `AF_INET6` sockets that take IPv4 too through mapped addresses
-  (`IPV6_V6ONLY`, `If_NameToIndex` for a link-local peer's scope),
+  (`IPV6_V6ONLY`, `If_NameToIndex` for a link-local peer's scope), in
+  IPv6 multicast groups (`IPV6_JOIN_GROUP`, MLDv2 with MLDv1 routers),
+  fragments going out, DNSSL,
   the loopback interface, and interfaces on network devices
   (`AddInterfaceTagList`) served by a stack task that sleeps until a
   frame or a deadline comes. `WaitSelect` waits for sockets and the
@@ -201,7 +203,8 @@ cores.
   answers - and its IPv6 addresses from the routers, stable from boot to
   boot through the secret in `ENVARC:Sys/net/ipv6-secret`; names are
   looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS, A and AAAA
-  (`GetHostByName`, `GetAddrInfo` in RFC 6724's order, `C:net/Resolve`); `C:net/AddNetInterface` and
+  (`GetHostByName`, `GetAddrInfo` in RFC 6724's order, `C:net/Resolve`)
+  and the other way (`GetHostByAddr`, `GetNameInfo`, both families); `C:net/AddNetInterface` and
   `RemNetInterface` bring one up and down by hand, and a program can do
   the same through the library's interface calls. `C:net/NetStatus`
   shows the interfaces with their IPv6 addresses and lifetimes, the

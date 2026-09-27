@@ -69,9 +69,17 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         value_length.* = @sizeOf(i32);
         return 0;
     }
-    if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_V6ONLY or option == bsd.IPV6_UNICAST_HOPS)) {
+    if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_V6ONLY or option == bsd.IPV6_UNICAST_HOPS or
+        option == bsd.IPV6_MULTICAST_IF or option == bsd.IPV6_MULTICAST_HOPS or option == bsd.IPV6_MULTICAST_LOOP))
+    {
         if (value_length.* < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
-        @as(*align(1) i32, @ptrCast(value)).* = if (option == bsd.IPV6_V6ONLY) socket.v6only else if (socket.hop_limit == 0) -1 else socket.hop_limit;
+        @as(*align(1) i32, @ptrCast(value)).* = switch (option) {
+            bsd.IPV6_V6ONLY => socket.v6only,
+            bsd.IPV6_UNICAST_HOPS => if (socket.hop_limit == 0) -1 else socket.hop_limit,
+            bsd.IPV6_MULTICAST_IF => if (socket.multicast_interface) |interface| @bitCast(@import("../netif/_netif.zig").index(sb.stack, interface)) else 0,
+            bsd.IPV6_MULTICAST_HOPS => if (socket.multicast_hops == 0) 1 else socket.multicast_hops,
+            else => @intFromBool(socket.multicast_no_loop == 0),
+        };
         value_length.* = @sizeOf(i32);
         return 0;
     }

@@ -5,9 +5,10 @@
 //! reaches it.
 //!
 //! **The groups** are all nodes, which every node is in and which is
-//! never reported, and the solicited-node group of each of the
-//! interface's addresses that is not a duplicate; two addresses ending in
-//! the same 24 bits share one. `joinGroup` and `leaveGroup` count them on
+//! never reported, the solicited-node group of each of the interface's
+//! addresses that is not a duplicate - two addresses ending in the same
+//! 24 bits share one - and the groups sockets joined on it
+//! (IPV6_JOIN_GROUP). `joinGroup` and `leaveGroup` count them on
 //! the device (`netif/device.zig`).
 //!
 //! **Reports** go to `ff02::16` from the interface's link-local address -
@@ -21,6 +22,13 @@
 //! maximum response time with every group (or that one) as
 //! MODE_IS_EXCLUDE. A query is taken only from a link-local address with
 //! a hop limit of 1.
+//!
+//! **MLDv1 routers** (RFC 3810, 8): a query of MLDv1's size puts the
+//! interface in compatibility mode for the Older Version Querier Present
+//! Timeout (260 seconds, the defaults'), renewed by every such query.
+//! While in it, each group is reported on its own as an MLDv1 Report sent
+//! to the group itself, and a group left is told with an MLDv1 Done to
+//! all routers.
 
 const sdk = @import("sdk");
 const _base = @import("../bsdsocket_base.zig");
@@ -41,6 +49,13 @@ pub const query: u8 = 130;
 pub const report_v1: u8 = 131;
 pub const done_v1: u8 = 132;
 pub const report: u8 = 143;
+
+/// How long an MLDv1 querier is believed to be there after its query:
+/// the robustness variable times the query interval, and the maximum
+/// response delay (RFC 3810, 9.12).
+pub const v1_present_us: u64 = 260_000_000;
+/// `ff02::2`, every router, where an MLDv1 Done goes.
+const all_routers_v1 = Address.all_routers;
 
 /// A report's record types.
 pub const mode_is_exclude: u8 = 2;
@@ -66,6 +81,8 @@ pub const Mld = extern struct {
     asked: Address = .{},
     leaving: [leaving_max]Address = @splat(.{}),
     leaving_count: u32 = 0,
+    /// Until when an MLDv1 querier is believed there; 0 for none.
+    v1_until: u64 align(4) = 0,
     interface: ?*Interface = null,
 };
 
@@ -87,13 +104,42 @@ pub fn stop(stack: *StackBase, interface: *Interface) void {
     _timer.cancel(stack, &interface.ip6.mld.timer);
 }
 
-/// Whether `interface` is in `group`, as its addresses make it.
-fn inGroup(interface: *Interface, group: Address) bool {
+/// What has `interface` in `group`: its addresses whose solicited-node
+/// group it is, and a socket group's entry.
+fn memberships(interface: *Interface, group: Address) u32 {
+    var count: u32 = 0;
     for (&interface.ip6.addresses) |*entry| {
         if (entry.state == .unused or entry.state == .duplicate) continue;
-        if (entry.address.solicitedNode().eql(group)) return true;
+        if (entry.address.solicitedNode().eql(group)) count += 1;
     }
-    return false;
+    if (_ip6.socketGroup(interface, group) != null) count += 1;
+    return count;
+}
+
+fn inGroup(interface: *Interface, group: Address) bool {
+    return memberships(interface, group) != 0;
+}
+
+/// The most groups one interface is in.
+const groups_max = _ip6.addresses_max + _ip6.socket_groups_max;
+
+/// Every group the interface is in, each once, into `into`: how many.
+fn currentGroups(interface: *Interface, into: *[groups_max]Address) usize {
+    var count: usize = 0;
+    for (&interface.ip6.addresses) |*entry| {
+        if (entry.state == .unused or entry.state == .duplicate) continue;
+        count = addOnce(into, count, entry.address.solicitedNode());
+    }
+    for (&interface.ip6.groups) |*joined| {
+        if (joined.users != 0) count = addOnce(into, count, joined.address);
+    }
+    return count;
+}
+
+fn addOnce(into: *[groups_max]Address, count: usize, group: Address) usize {
+    for (into[0..count]) |had| if (had.eql(group)) return count;
+    into[count] = group;
+    return count + 1;
 }
 
 /// One more address of `interface` in `group`.
@@ -117,13 +163,8 @@ pub fn leaveGroup(stack: *StackBase, interface: *Interface, group: Address) void
     if (interface.loopback != 0) return;
     if (deviceOf(interface)) |link| device.leave(stack, link, _netif.groupStation(group));
     const state = &interface.ip6.mld;
-    // Still in it through another address: nothing to report.
-    var others: u32 = 0;
-    for (&interface.ip6.addresses) |*entry| {
-        if (entry.state == .unused or entry.state == .duplicate) continue;
-        if (entry.address.solicitedNode().eql(group)) others += 1;
-    }
-    if (others > 1) return;
+    // Still in it through another address or a socket: nothing to report.
+    if (memberships(interface, group) > 1) return;
     if (state.leaving_count < leaving_max) {
         state.leaving[state.leaving_count] = group;
         state.leaving_count += 1;
@@ -150,6 +191,8 @@ pub fn input(stack: *StackBase, interface: *Interface, bytes: []const u8, packet
     if (bytes.len < 24 or bytes[0] != query) return;
     if (packet.hop_limit != 1 or !packet.source.isLinkLocal()) return;
     const group: Address = .{ .bytes = bytes[8..24].* };
+    // MLDv1's query is 24 bytes; MLDv2's at least 28.
+    if (bytes.len < 28) interface.ip6.mld.v1_until = _timer.clock(stack) + v1_present_us;
     if (!group.isUnspecified() and !inGroup(interface, group)) return;
     // The maximum response time in milliseconds: MLDv1's as it is,
     // MLDv2's code with its exponent above 32767.
@@ -181,21 +224,17 @@ fn fire(stack: *StackBase, fired: *Timer, now: u64) void {
 }
 
 /// A report: the interface's groups (or only `only`) as records of
-/// `kind`, and with `leaving` the groups it left as CHANGE_TO_INCLUDE.
+/// `kind`, and with `leaving` the groups it left as CHANGE_TO_INCLUDE -
+/// or, while an MLDv1 querier is there, the same as MLDv1 messages.
 fn send(stack: *StackBase, interface: *Interface, kind: u8, only: ?Address, leaving: bool) void {
+    if (interface.ip6.mld.v1_until > _timer.clock(stack)) return sendV1(stack, interface, only, leaving);
     const frame = stack.frames.take(stack.sys_base) orelse return;
     const bytes = frame.room()[frame.start..];
     var records: u16 = 0;
     var at: u32 = 8;
-    // Each group once, however many addresses share it.
-    for (&interface.ip6.addresses, 0..) |*entry, index| {
-        if (entry.state == .unused or entry.state == .duplicate) continue;
-        const group = entry.address.solicitedNode();
+    var groups: [groups_max]Address = undefined;
+    for (groups[0..currentGroups(interface, &groups)]) |group| {
         if (only) |wanted| if (!wanted.eql(group)) continue;
-        const seen = for (interface.ip6.addresses[0..index]) |*before| {
-            if (before.state != .unused and before.state != .duplicate and before.address.solicitedNode().eql(group)) break true;
-        } else false;
-        if (seen) continue;
         at = record(bytes, at, kind, group);
         records += 1;
     }
@@ -232,4 +271,37 @@ fn record(bytes: []u8, at: u32, kind: u8, group: Address) u32 {
     _ip.put16(bytes, at + 2, 0);
     bytes[at + 4 ..][0..16].* = group.bytes;
     return at + 20;
+}
+
+/// Each group (or only `only`) as an MLDv1 Report to itself, and with
+/// `leaving` each group left as an MLDv1 Done to all routers.
+fn sendV1(stack: *StackBase, interface: *Interface, only: ?Address, leaving: bool) void {
+    var groups: [groups_max]Address = undefined;
+    for (groups[0..currentGroups(interface, &groups)]) |group| {
+        if (only) |wanted| if (!wanted.eql(group)) continue;
+        messageV1(stack, interface, report_v1, group, group);
+    }
+    if (leaving) {
+        const state = &interface.ip6.mld;
+        for (state.leaving[0..state.leaving_count]) |group| messageV1(stack, interface, done_v1, group, all_routers_v1);
+    }
+}
+
+/// One MLDv1 message of `kind` about `group`, to `destination`.
+fn messageV1(stack: *StackBase, interface: *Interface, kind: u8, group: Address, destination: Address) void {
+    const frame = stack.frames.take(stack.sys_base) orelse return;
+    const bytes = frame.room()[frame.start..][0..24];
+    frame.length = 24;
+    @memset(bytes, 0);
+    bytes[0] = kind;
+    bytes[8..24].* = group.bytes;
+    const source = _ip6.linkLocal(interface) orelse Address.any;
+    _ip.put16(bytes, 2, _ip.finish(_ip.sum(_inet.pseudoSum(source, destination, _ip6.protocol_icmp6, 24), bytes)));
+    const options = frame.push(8);
+    @memcpy(options, &[8]u8{ _ip6.protocol_icmp6, 0, 5, 2, 0, 0, 1, 0 });
+    _ip6.prepend(stack, frame, source, destination, _ip6.hop_by_hop, 1);
+    stack.counts.mld_reports_sent += 1;
+    interface.sent += 1;
+    const station = _netif.groupStation(destination);
+    _ = _netif.transmit(stack, interface, frame, if (interface.no_arp != 0) &@import("../arp/_arp.zig").broadcast else &station, _ip6.ethertype);
 }

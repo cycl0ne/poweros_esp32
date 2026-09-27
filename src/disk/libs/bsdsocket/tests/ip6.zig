@@ -518,3 +518,44 @@ test "without crypto.library a stable interface takes its EUI-64" {
     try testing.expect(_ip6.addressFor(rig.stack, rig.interface, &_ip6.link_local_prefix, 0).eql(own));
     try rig.deinit();
 }
+
+test "a reply larger than the path goes in fragments that put back together" {
+    var rig = try Rig.init();
+    // A path of 1280, IPv6's least.
+    _ = _ip6.learnMtu(rig.stack, peer, 1280, rig.stack.fixed_time);
+    var rest: [2996]u8 = undefined;
+    for (&rest, 0..) |*byte, at| byte.* = @truncate(at *% 7);
+    rest[0..4].* = .{ 0x12, 0x34, 0, 9 };
+    var data: [3000]u8 = undefined;
+    const echo = icmp6(&data, peer, own, _icmp6.echo_request, &rest);
+    var buffer: [1300]u8 = undefined;
+    // The request comes in three fragments.
+    rig.arrive(peer, own, _ip6.fragment, piece(&buffer, _ip6.protocol_icmp6, 0, true, 21, echo[0..1200]));
+    rig.arrive(peer, own, _ip6.fragment, piece(&buffer, _ip6.protocol_icmp6, 1200, true, 21, echo[1200..2400]));
+    rig.arrive(peer, own, _ip6.fragment, piece(&buffer, _ip6.protocol_icmp6, 2400, false, 21, echo[2400..]));
+    // The reply: fragments of at most 1280 bytes, one identification, in
+    // order, the last without M.
+    try testing.expectEqual(@as(usize, 3), sent_count);
+    var whole: [3000]u8 = undefined;
+    var filled: usize = 0;
+    const id = _ip.get32(&sent[0].bytes, 44);
+    for (sent[0..sent_count], 0..) |*entry, index| {
+        try testing.expect(entry.length <= 1280);
+        try testing.expectEqual(_ip6.fragment, entry.bytes[6]);
+        try testing.expectEqual(_ip6.protocol_icmp6, entry.bytes[40]);
+        try testing.expectEqual(id, _ip.get32(&entry.bytes, 44));
+        const word = _ip.get16(&entry.bytes, 42);
+        try testing.expectEqual(@as(usize, filled), word & 0xFFF8);
+        try testing.expectEqual(index + 1 < sent_count, word & 1 != 0);
+        const part = entry.bytes[48..entry.length];
+        @memcpy(whole[filled..][0..part.len], part);
+        filled += part.len;
+    }
+    try testing.expectEqual(@as(usize, 3000), filled);
+    try testing.expectEqual(_icmp6.echo_reply, whole[0]);
+    try testing.expectEqualSlices(u8, echo[4..], whole[4..3000]);
+    // Its checksum is the whole message's.
+    try testing.expectEqual(@as(u16, 0), _ip.finish(_ip.sum(_inet.pseudoSum(own, peer, _ip6.protocol_icmp6, 3000), &whole)));
+    try testing.expectEqual(@as(u32, 3), rig.stack.counts.ip6_fragments_sent);
+    try rig.deinit();
+}

@@ -55,6 +55,6 @@ pub fn AddDomainNameServer(sb: *SocketBase, address: u32) i32 {
     if (address == 0) return _socket.fail(sb, bsd.EINVAL, "AddDomainNameServer");
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
-    if (!_names.addServer(sb.stack, bsd.ntohl(address))) return _socket.fail(sb, bsd.ENOBUFS, "AddDomainNameServer");
+    if (!_names.addServer(sb.stack, @import("../ip6/address.zig").Address.fromV4(bsd.ntohl(address)))) return _socket.fail(sb, bsd.ENOBUFS, "AddDomainNameServer");
     return 0;
 }

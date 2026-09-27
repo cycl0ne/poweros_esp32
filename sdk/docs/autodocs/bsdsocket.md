@@ -25,6 +25,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetHostByAddr](#gethostbyaddr) - The name an address has.
 - [GetHostByName](#gethostbyname) - The addresses a name has.
 - [GetHostName](#gethostname) - The machine's name, into the caller's buffer.
+- [GetNameInfo](#getnameinfo) - A sockaddr's address as a host name and its port as a service's, the reverse of GetAddrInfo.
 - [GetNetworkStatistics](#getnetworkstatistics) - The stack's counters, its routes, its sockets or its ARP cache, as they are now.
 - [GetPeerName](#getpeername) - The address and port the socket is connected to.
 - [GetSockName](#getsockname) - The address and port the socket is bound to.
@@ -211,7 +212,8 @@ fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const T
   `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
   and a router for the default route (`IFIPV6_FIXED` takes no address
   from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
-  `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
+  `IFA_NameServer6` (the same, IPv6), `IFA_Domain`, `IFA_TCPSendSpace`,
+  `IFA_TCPRecvSpace`.
 
 **RESULT**
 
@@ -947,22 +949,24 @@ fn GetHostByAddr(base: *SocketBase, address: *const anyopaque, length: u32, addr
 
 **INPUTS**
 
-- `address` - an IPv4 address, four bytes in network order, as
-  `in_addr` holds it.
-- `length` - 4.
-- `address_type` - `AF_INET`.
+- `address` - an IPv4 address, four bytes in network order as
+  `in_addr` holds it, or an IPv6 one, sixteen as `in6_addr` does.
+- `length` - 4 for `AF_INET`, 16 for `AF_INET6`.
+- `address_type` - `AF_INET` or `AF_INET6`.
 
 **RESULT**
 
-A `hostent` with the name and the address, or null with `SBTC_HERRNO`
-saying why, as GetHostByName: also `NO_RECOVERY` for another length or
-family.
+A `hostent` of that family with the name and the address, or null
+with `SBTC_HERRNO` saying why, as GetHostByName: also `NO_RECOVERY` for
+another length or family.
 
 **BEHAVIOR**
 
-The hosts file first, then a PTR question for
-`d.c.b.a.in-addr.arpa` to the name servers, as GetHostByName asks
-them. Reverse answers are not cached.
+The hosts file first, `localhost` for a loopback address, then a PTR
+question to the name servers, as GetHostByName asks them: for
+`d.c.b.a.in-addr.arpa`, or for an IPv6 address its 32 nibbles in
+reverse under `ip6.arpa` (RFC 3596). An IPv4 address mapped into IPv6
+is looked up as IPv4. Reverse answers are not cached.
 
 **CONTEXT**
 
@@ -977,7 +981,7 @@ As GetHostByName.
 
 **NOTES**
 
-None.
+GetNameInfo answers the same for a sockaddr, and a port's service too.
 
 **BUGS**
 
@@ -985,7 +989,7 @@ None known.
 
 **SEE ALSO**
 
-`GetHostByName`
+`GetHostByName`, `GetNameInfo`
 
 **EXAMPLES**
 
@@ -1121,6 +1125,78 @@ var name: [64]u8 = undefined;
 _ = sb.GetHostName(&name, name.len);
 ```
 
+## GetNameInfo
+
+A sockaddr's address as a host name and its port as a service's, the reverse of GetAddrInfo.
+
+**SYNOPSIS**
+
+```zig
+fn GetNameInfo(base: *SocketBase, address: *const sockaddr, address_length: u32, host: ?[*]u8, host_length: u32, service: ?[*]u8, service_length: u32, flags: i32) i32
+```
+
+**SINCE**
+
+1.1. LVO -208.
+
+**INPUTS**
+
+- `address`, `address_length` - a `sockaddr_in` or a `sockaddr_in6`.
+- `host`, `host_length` - where the host goes, NUL-terminated; null
+  for none. `NI_MAXHOST` bytes always do.
+- `service`, `service_length` - where the service goes; null for none.
+  `NI_MAXSERV` bytes always do.
+- `flags` - `NI_*`.
+
+**RESULT**
+
+0, or an EAI_* code: `EAI_FAMILY` (another family, or a sockaddr too
+short for its own), `EAI_NONAME` (no name, with `NI_NAMEREQD`, or
+neither host nor service asked for), `EAI_AGAIN` (no name server
+answered, with `NI_NAMEREQD`), `EAI_OVERFLOW` (a buffer too small).
+
+**BEHAVIOR**
+
+The host is the name GetHostByAddr finds - the hosts file, `localhost`,
+a PTR question - or, with `NI_NUMERICHOST` or when there is none, the
+address as Inet_NtoP writes it: an IPv4 one mapped into IPv6 as its
+dotted quad, a link-local one followed by `%` and its interface. With
+`NI_NOFQDN` a name ending in the stack's domain loses it. The service is
+the port's name if GetAddrInfo knows one, else its number.
+
+**CONTEXT**
+
+- Waits: yes, for the name servers, unless `NI_NUMERICHOST`.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a process, to read the hosts file.
+
+**OWNERSHIP**
+
+The buffers are the caller's; nothing is kept.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+No services database: a port has a name only among GetAddrInfo's.
+
+**SEE ALSO**
+
+`GetAddrInfo`, `GetHostByAddr`, `Inet_NtoP`
+
+**EXAMPLES**
+
+```zig
+var host: [bsd.NI_MAXHOST]u8 = undefined;
+var service: [bsd.NI_MAXSERV]u8 = undefined;
+if (sb.GetNameInfo(from.any(), from_length, &host, host.len, &service, service.len, 0) == 0) {
+    _ = Printf(dl, "%s port %s\n", .{ @as([*:0]const u8, @ptrCast(&host)), @as([*:0]const u8, @ptrCast(&service)) });
+}
+```
+
 ## GetNetworkStatistics
 
 The stack's counters, its routes, its sockets or its ARP cache, as they are now.
@@ -1142,7 +1218,8 @@ fn GetNetworkStatistics(base: *SocketBase, kind: u32, buffer: ?*anyopaque, size:
   socket), `NETSTATUS_ARP` (an `ArpInfo` per entry),
   `NETSTATUS_ADDRESSES6` (an `Address6Info` per IPv6 address),
   `NETSTATUS_ROUTES6` (a `Route6Info` per IPv6 route) or
-  `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry).
+  `NETSTATUS_NEIGHBORS` (a `NeighborInfo` per entry) or
+  `NETSTATUS_NAMESERVERS` (a `NameServerInfo` per name server).
 - `buffer` - where they go; may be null when `size` is 0.
 - `size` - the bytes `buffer` holds.
 
@@ -2775,8 +2852,13 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
   `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
-  for IPv6 only; before Bind) and `IPV6_UNICAST_HOPS` (an i32, the hop
-  limit its packets go with, -1 for the interface's).
+  for IPv6 only; before Bind), `IPV6_UNICAST_HOPS` (an i32, the hop
+  limit its packets go with, -1 for the interface's),
+  `IPV6_JOIN_GROUP`/`IPV6_LEAVE_GROUP` (an `ipv6_mreq`: a group, on an
+  interface by index or on the route's with 0), `IPV6_MULTICAST_IF` (a
+  u32 index, 0 for the route's), `IPV6_MULTICAST_HOPS` (an i32, -1 for
+  1) and `IPV6_MULTICAST_LOOP` (an i32, 0 to keep this machine's own
+  members from getting a copy).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -2784,7 +2866,11 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 
 0, or -1 with Errno(): `EBADF`, `ENOPROTOOPT` (another level or an
 option there is not, or one that can only be read), `EINVAL` (a value
-of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound).
+of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound, a
+group that is no group), `ENXIO` (no interface of that index),
+`EADDRINUSE` (in the group already), `EADDRNOTAVAIL` (not in the group
+to leave, or no route to it), `ETOOMANYREFS` (the socket is in as many
+groups as it can be), `ENOBUFS` (so is the interface).
 
 **BEHAVIOR**
 

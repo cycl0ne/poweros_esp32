@@ -14,7 +14,7 @@
 //! | `Device`, `Unit` | the network device in DEVS: and its unit |
 //! | `Configure` | `DHCP`, or `FIXED` (the default) with the three below |
 //! | `Address`, `NetMask`, `Gateway` | the address, its net, the default route |
-//! | `NameServer` | a name server to ask; up to four, one per line |
+//! | `NameServer` | a name server to ask, IPv4 or IPv6; up to four of each, one per line |
 //! | `Domain` | where a name without dots is looked for |
 //! | `MTU` | less than the link takes |
 //! | `ReadRequests`, `WriteRequests` | how many requests the stack keeps with the device |
@@ -78,6 +78,9 @@ pub const Config = struct {
     gateway: u32 = 0,
     nameservers: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
     nameserver_count: usize = 0,
+    /// IPv6 name servers, as text for the program to read.
+    nameservers6: [bsd.NAMESERVERS_MAX]Text6 = @splat(.{}),
+    nameserver6_count: usize = 0,
     domain: [64:0]u8 = @splat(0),
     mtu: u32 = 0,
     reads: u32 = 0,
@@ -189,6 +192,19 @@ pub fn read(scanner: *Scanner, config: *Config) Problem {
                 } else return problem(scanner, .configure);
             },
             .address, .netmask, .gateway, .nameserver => {
+                // A name server with a colon in it is IPv6.
+                const colon = for (value) |char| {
+                    if (char == ':') break true;
+                } else false;
+                if (keyword == .nameserver and colon) {
+                    if (scanner.len >= bsd.INET6_ADDRSTRLEN or config.nameserver6_count == config.nameservers6.len) return problem(scanner, .address);
+                    const into = &config.nameservers6[config.nameserver6_count];
+                    copyText(&into.text, scanner);
+                    into.line = scanner.token_line;
+                    into.column = scanner.token_column;
+                    config.nameserver6_count += 1;
+                    continue;
+                }
                 const address = parseAddress(value) orelse return problem(scanner, .address);
                 switch (keyword) {
                     .address => config.address = address,
@@ -289,6 +305,11 @@ test "the IPv6 keywords" {
     try testing.expectEqual(@as(u32, 5), config.address6.line);
     try testing.expectEqual(@as(u32, 48), config.prefix6);
     try testing.expectEqualStrings("fe80::1", std.mem.sliceTo(&config.gateway6.text, 0));
+    config = .{};
+    try testing.expectEqual(.none, readText("Device = x\nConfigure = DHCP\nNameServer = 9.9.9.9\nNameServer = 2620:fe::fe\n", &config).kind);
+    try testing.expectEqual(@as(usize, 1), config.nameserver_count);
+    try testing.expectEqual(@as(usize, 1), config.nameserver6_count);
+    try testing.expectEqualStrings("2620:fe::fe", std.mem.sliceTo(&config.nameservers6[0].text, 0));
     config = .{};
     try testing.expectEqual(.none, readText("Device = x\nConfigure = DHCP\n", &config).kind);
     try testing.expectEqual(bsd.IFIPV6_AUTO, config.ipv6);

@@ -97,8 +97,9 @@ pub const StackBase = extern struct {
     pad3: [2]u8 = .{ 0, 0 },
     /// The time, for a stack without its task.
     fixed_time: u64 align(4) = 0,
-    /// The name servers asked, in the chip's order, and how many there are.
-    nameservers: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
+    /// The name servers asked - an IPv4 one mapped - and how many there
+    /// are.
+    nameservers: [bsd.NAMESERVERS_MAX]@import("ip6/address.zig").Address = @splat(.{}),
     nameserver_count: u32 = 0,
     /// The domain a name without dots is looked for in, and the machine's
     /// own name.

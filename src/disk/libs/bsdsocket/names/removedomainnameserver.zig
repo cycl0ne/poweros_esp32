@@ -52,6 +52,6 @@ const _names = @import("_names.zig");
 pub fn RemoveDomainNameServer(sb: *SocketBase, address: u32) i32 {
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
-    if (!_names.removeServer(sb.stack, bsd.ntohl(address))) return _socket.fail(sb, bsd.ENXIO, "RemoveDomainNameServer");
+    if (!_names.removeServer(sb.stack, @import("../ip6/address.zig").Address.fromV4(bsd.ntohl(address)))) return _socket.fail(sb, bsd.ENXIO, "RemoveDomainNameServer");
     return 0;
 }

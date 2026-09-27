@@ -83,18 +83,23 @@ pub const HostBuffer = extern struct {
     entry: bsd.hostent = .{},
     name: [256]u8 = @splat(0),
     aliases: [1]?[*:0]u8 = .{null},
-    addresses: [addresses_max][4]u8 = @splat(@splat(0)),
+    addresses: [addresses_max][16]u8 = @splat(@splat(0)),
     list: [addresses_max + 1]?[*]u8 = @splat(null),
 
-    /// The buffer filled with `name` and `addresses`, IPv4 ones mapped:
-    /// the hostent.
-    pub fn fill(buffer: *HostBuffer, name: []const u8, addresses: []const Address) *bsd.hostent {
+    /// The buffer filled with `name` and `addresses`, IPv4 ones mapped,
+    /// as a hostent of `family`: AF_INET's four bytes an address, or
+    /// AF_INET6's sixteen.
+    pub fn fill(buffer: *HostBuffer, name: []const u8, addresses: []const Address, family: u8) *bsd.hostent {
         const length = @min(name.len, buffer.name.len - 1);
         @memcpy(buffer.name[0..length], name[0..length]);
         buffer.name[length] = 0;
         const count = @min(addresses.len, addresses_max);
         for (addresses[0..count], 0..) |address, index| {
-            buffer.addresses[index] = address.bytes[12..16].*;
+            if (family == bsd.AF_INET) {
+                buffer.addresses[index][0..4].* = address.bytes[12..16].*;
+            } else {
+                buffer.addresses[index] = address.bytes;
+            }
             buffer.list[index] = &buffer.addresses[index];
         }
         buffer.list[count] = null;
@@ -102,6 +107,8 @@ pub const HostBuffer = extern struct {
         buffer.entry = .{
             .h_name = @ptrCast(&buffer.name),
             .h_aliases = &buffer.aliases,
+            .h_addrtype = family,
+            .h_length = if (family == bsd.AF_INET) 4 else 16,
             .h_addr_list = &buffer.list,
         };
         return &buffer.entry;
@@ -114,12 +121,12 @@ fn entryName(entry: *const CacheEntry) []const u8 {
     return entry.name[0..length];
 }
 
-/// A name server added, if it is not there already; false when the list
-/// is full. Under the lock.
-pub fn addServer(stack: *StackBase, address: u32) bool {
-    if (address == 0) return false;
+/// A name server added, of either family, if it is not there already;
+/// false when the list is full. Under the lock.
+pub fn addServer(stack: *StackBase, address: Address) bool {
+    if (address.isUnspecified()) return false;
     for (stack.nameservers[0..stack.nameserver_count]) |server| {
-        if (server == address) return true;
+        if (server.eql(address)) return true;
     }
     if (stack.nameserver_count == bsd.NAMESERVERS_MAX) return false;
     stack.nameservers[stack.nameserver_count] = address;
@@ -129,10 +136,10 @@ pub fn addServer(stack: *StackBase, address: u32) bool {
 
 /// A name server taken off the list; false if it was not on it. Under
 /// the lock.
-pub fn removeServer(stack: *StackBase, address: u32) bool {
+pub fn removeServer(stack: *StackBase, address: Address) bool {
     const count = stack.nameserver_count;
     for (stack.nameservers[0..count], 0..) |server, index| {
-        if (server != address) continue;
+        if (!server.eql(address)) continue;
         var at = index;
         while (at + 1 < count) : (at += 1) stack.nameservers[at] = stack.nameservers[at + 1];
         stack.nameserver_count -= 1;

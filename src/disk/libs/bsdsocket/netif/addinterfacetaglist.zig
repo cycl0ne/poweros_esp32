@@ -45,7 +45,8 @@ const Address = @import("../ip6/address.zig").Address;
 ///   `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
 ///   and a router for the default route (`IFIPV6_FIXED` takes no address
 ///   from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
-///   `IFA_Domain`, `IFA_TCPSendSpace`, `IFA_TCPRecvSpace`.
+///   `IFA_NameServer6` (the same, IPv6), `IFA_Domain`, `IFA_TCPSendSpace`,
+///   `IFA_TCPRecvSpace`.
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
@@ -251,7 +252,10 @@ fn settings(stack: *StackBase, tags: ?[*]const utility.TagItem) void {
     var walk = tags;
     while (ub.NextTagItem(&walk)) |item| {
         switch (item.tag) {
-            bsd.IFA_NameServer => _ = @import("../names/_names.zig").addServer(stack, bsd.ntohl(@truncate(item.data))),
+            bsd.IFA_NameServer => _ = @import("../names/_names.zig").addServer(stack, Address.fromV4(bsd.ntohl(@truncate(item.data)))),
+            bsd.IFA_NameServer6 => if (@as(?*align(1) const bsd.in6_addr, @ptrFromInt(item.data))) |server| {
+                _ = @import("../names/_names.zig").addServer(stack, .{ .bytes = server.s6_addr });
+            },
             bsd.IFA_Domain => {
                 const text: [*:0]const u8 = @ptrFromInt(item.data);
                 var at: usize = 0;

@@ -7,10 +7,10 @@
 //! IPv4's, then each IPv6 one with its prefix length, state and
 //! lifetimes, and what the last router advertisement said of DHCPv6 (its
 //! M and O flags) - state and packets, and each device's link; the IPv4
-//! and the IPv6 routes; every socket with its addresses, TCP state,
-//! queued bytes and the task it belongs to; the ARP cache; the IPv6
-//! neighbor cache; the stack's counters. With none, the interfaces and
-//! the routes; ALL is every table.
+//! and the IPv6 routes, and the name servers asked; every socket with its
+//! addresses, TCP state, queued bytes and the task it belongs to; the ARP
+//! cache; the IPv6 neighbor cache; the stack's counters. With none, the
+//! interfaces and the routes; ALL is every table.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -73,6 +73,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (all or none or argv[arg_routes] != 0) {
         routes(dl, sb, &first);
         routes6(dl, sb, &first);
+        nameServers(dl, sb, &first);
     }
     if (all or argv[arg_sockets] != 0) sockets(dl, sb, &first);
     if (all or argv[arg_arp] != 0) arp(dl, sb, &first);
@@ -341,6 +342,26 @@ fn routes6(dl: *DosBase, sb: *SocketBase, first: *bool) void {
     more(dl, count, shown);
 }
 
+fn nameServers(dl: *DosBase, sb: *SocketBase, first: *bool) void {
+    var table: [rows_max]bsd.NameServerInfo = undefined;
+    const count = sb.GetNetworkStatistics(bsd.NETSTATUS_NAMESERVERS, &table, @sizeOf(@TypeOf(table)));
+    if (count <= 0) return;
+    const shown: usize = @min(@as(usize, @intCast(count)), table.len);
+    gap(dl, first);
+    _ = Printf(dl, "%-28s %s\n", .{ "Name server", "From" });
+    for (table[0..shown]) |*server| {
+        var text: [endpoint_max]u8 = undefined;
+        // An IPv4 server as its dotted address, without a port.
+        const shown_text = endpoint(sb, &server.address, 0, &text);
+        if (server.origin == bsd.NAMESERVER_ROUTER) {
+            _ = Printf(dl, "%-28s the router on %s\n", .{ shown_text, @as([*:0]const u8, @ptrCast(&server.interface)) });
+        } else {
+            _ = Printf(dl, "%-28s given\n", .{shown_text});
+        }
+    }
+    more(dl, count, shown);
+}
+
 fn tcpState(state: u8) [*:0]const u8 {
     return switch (state) {
         bsd.TCPS_CLOSED => "CLOSED",
@@ -538,7 +559,7 @@ fn counts(dl: *DosBase, sb: *SocketBase, first: *bool) void {
     _ = Printf(dl, "IPv6: %ld received, %ld sent; %u bad header, %u not ours, %u unknown next header\n", .{
         all.ip6_received, all.ip6_sent, all.ip6_bad_header, all.ip6_not_ours, all.ip6_unknown_protocol,
     });
-    _ = Printf(dl, "      fragments: %u received, %u reassembled, %u dropped\n", .{ all.ip6_fragments, all.ip6_reassembled, all.ip6_reassembly_dropped });
+    _ = Printf(dl, "      fragments: %u received, %u reassembled, %u dropped, %u sent\n", .{ all.ip6_fragments, all.ip6_reassembled, all.ip6_reassembly_dropped, all.ip6_fragments_sent });
     _ = Printf(dl, "ICMPv6: %u received, %u bad, %u echoes answered, %u errors sent, %u held back\n", .{
         all.icmp6_received, all.icmp6_bad, all.icmp6_echoes_answered, all.icmp6_errors_sent, all.icmp6_errors_limited,
     });

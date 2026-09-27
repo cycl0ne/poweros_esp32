@@ -545,3 +545,173 @@ test "a redirect from the router sends a destination elsewhere" {
     try testing.expect(_inet.route(rig.stack, far, null).?.next_hop.eql(gateway));
     try rig.deinit();
 }
+
+test "a DNSSL option names the domain a name without dots is looked for in" {
+    var rig = try Rig.init();
+    rig.ready();
+    var body: [16 + 24]u8 = @splat(0);
+    body[0] = _nd.router_advertisement;
+    _ip.put16(&body, 6, 1800);
+    body[16] = router.option_dnssl;
+    body[17] = 3;
+    _ip.put32(&body, 16 + 4, 600);
+    const labels = [_]u8{ 4, 'h', 'o', 'm', 'e', 3, 'l', 'a', 'n', 0 };
+    @memcpy(body[24..][0..labels.len], &labels);
+    rig.arrive(gateway, Address.all_nodes, 255, &body);
+    try testing.expectEqualStrings("home.lan", router.searchDomainOf(rig.interface, rig.stack.fixed_time).?);
+    rig.pass(601_000_000);
+    try testing.expect(router.searchDomainOf(rig.interface, rig.stack.fixed_time) == null);
+    try rig.deinit();
+}
+
+test "an MLDv1 querier is answered in MLDv1, until it has gone quiet" {
+    var rig = try Rig.init();
+    rig.ready();
+    var query: [24]u8 = @splat(0);
+    query[0] = mld.query;
+    _ip.put16(&query, 4, 1000);
+    rig.arrive(address("fe80::1"), Address.all_nodes, 1, &query);
+    rig.pass(1_100_000);
+    // One Report per group, to the group itself.
+    try testing.expectEqual(@as(usize, 1), count(mld.report_v1));
+    try testing.expectEqual(@as(usize, 0), count(mld.report));
+    const answer = &sent[0];
+    try testing.expect(answer.checksumRight());
+    try testing.expect(answer.destination().eql(own.solicitedNode()));
+    try testing.expectEqualSlices(u8, &own.solicitedNode().bytes, answer.message()[8..24]);
+    // A group left is told with a Done, to all routers.
+    sent_count = 0;
+    const extra = address("2001:db8::7:8:9");
+    const entry = _ip6.addAddress(rig.stack, rig.interface, extra, 64, .preferred).?;
+    rig.pass(3_000_000);
+    sent_count = 0;
+    _ip6.removeAddress(rig.stack, entry);
+    rig.pass(3_000_000);
+    try testing.expect(count(mld.done_v1) >= 1);
+    for (sent[0..sent_count]) |*message| {
+        if (message.kind() == mld.done_v1) try testing.expect(message.destination().eql(Address.all_routers));
+    }
+    // After the timeout, MLDv2 again.
+    rig.pass(mld.v1_present_us);
+    sent_count = 0;
+    var query2: [28]u8 = @splat(0);
+    query2[0] = mld.query;
+    _ip.put16(&query2, 4, 1000);
+    rig.arrive(address("fe80::1"), Address.all_nodes, 1, &query2);
+    rig.pass(1_100_000);
+    try testing.expectEqual(@as(usize, 1), count(mld.report));
+    try rig.deinit();
+}
+
+// --- sockets in groups -----------------------------------------------------------
+
+const mdns = address("ff02::fb");
+
+fn groupSocket(rig: *Rig) !i32 {
+    const sb = rig.sb;
+    const socket = sb.Socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    if (socket < 0) return error.NoSocket;
+    _ = sb.IoctlSocket(socket, bsd.FIONBIO, @constCast(&@as(u32, 1)));
+    const on: i32 = 1;
+    _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_REUSEADDR, &on, @sizeOf(i32));
+    var here: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(5353) };
+    try testing.expectEqual(@as(i32, 0), sb.Bind(socket, here.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    const request: bsd.ipv6_mreq = .{ .ipv6mr_multiaddr = .{ .s6_addr = mdns.bytes }, .ipv6mr_interface = _netif.index(rig.stack, rig.interface) };
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(socket, bsd.IPPROTO_IPV6, bsd.IPV6_JOIN_GROUP, &request, @sizeOf(bsd.ipv6_mreq)));
+    return socket;
+}
+
+/// A UDP datagram from the peer to the group.
+fn toGroup(rig: *Rig, text: []const u8) void {
+    var body: [64]u8 = undefined;
+    const datagram = body[0 .. 8 + text.len];
+    _ip.put16(datagram, 0, 5353);
+    _ip.put16(datagram, 2, 5353);
+    _ip.put16(datagram, 4, @intCast(datagram.len));
+    _ip.put16(datagram, 6, 0);
+    @memcpy(datagram[8..], text);
+    _ip.put16(datagram, 6, _ip.finish(_ip.sum(_inet.pseudoSum(peer, mdns, @intCast(bsd.IPPROTO_UDP), @intCast(datagram.len)), datagram)));
+    const frame = rig.stack.frames.take(rig.stack.sys_base).?;
+    const packet = frame.buffer[frame.start..][0 .. _ip6.header_bytes + datagram.len];
+    frame.length = @intCast(packet.len);
+    _ip.put32(packet, 0, 0x6000_0000);
+    _ip.put16(packet, 4, @intCast(datagram.len));
+    packet[6] = @intCast(bsd.IPPROTO_UDP);
+    packet[7] = 255;
+    packet[8..24].* = peer.bytes;
+    packet[24..40].* = mdns.bytes;
+    @memcpy(packet[_ip6.header_bytes..], datagram);
+    _netif.receive(rig.stack, rig.interface, frame, &peer_hardware, &[6]u8{ 0x33, 0x33, 0, 0, 0, 0xfb }, _ip6.ethertype, rig.stack.fixed_time);
+}
+
+test "sockets in a group: joined, reported, each given what comes, and left" {
+    var rig = try Rig.init();
+    rig.ready();
+    const sb = rig.sb;
+    const one = try groupSocket(&rig);
+    const two = try groupSocket(&rig);
+    // The group is reported, once for both.
+    rig.pass(3_000_000);
+    var reported = false;
+    for (sent[0..sent_count]) |*entry| {
+        if (entry.kind() != mld.report) continue;
+        const body = entry.message();
+        const records = _ip.get16(body, 6);
+        var at: usize = 8;
+        for (0..records) |_| {
+            if (std.mem.eql(u8, body[at + 4 ..][0..16], &mdns.bytes)) reported = true;
+            at += 20;
+        }
+    }
+    try testing.expect(reported);
+
+    // What comes to the group, both get.
+    toGroup(&rig, "hello");
+    var buffer: [64]u8 = undefined;
+    try testing.expectEqual(@as(i32, 5), sb.Recv(one, &buffer, buffer.len, 0));
+    try testing.expectEqual(@as(i32, 5), sb.Recv(two, &buffer, buffer.len, 0));
+
+    // Sent to the group: out on the link to its Ethernet group with a hop
+    // limit of 1, and a copy for this machine's members.
+    sent_count = 0;
+    var to: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(5353), .sin6_addr = .{ .s6_addr = mdns.bytes }, .sin6_scope_id = _netif.index(rig.stack, rig.interface) };
+    try testing.expectEqual(@as(i32, 3), sb.SendTo(one, "ask", 3, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    try testing.expectEqual(@as(usize, 1), sent_count);
+    try testing.expectEqual([6]u8{ 0x33, 0x33, 0, 0, 0, 0xfb }, sent[0].to);
+    try testing.expectEqual(@as(u8, 1), sent[0].bytes[7]);
+    try testing.expectEqual(@as(i32, 3), sb.Recv(one, &buffer, buffer.len, 0));
+    try testing.expectEqual(@as(i32, 3), sb.Recv(two, &buffer, buffer.len, 0));
+    // Without the loop, no copy; with a hop limit set, that one.
+    const off: i32 = 0;
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(one, bsd.IPPROTO_IPV6, bsd.IPV6_MULTICAST_LOOP, &off, @sizeOf(i32)));
+    const hops: i32 = 255;
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(one, bsd.IPPROTO_IPV6, bsd.IPV6_MULTICAST_HOPS, &hops, @sizeOf(i32)));
+    _ = sb.SendTo(one, "ask", 3, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    try testing.expectEqual(@as(u8, 255), sent[1].bytes[7]);
+    try testing.expectEqual(@as(i32, -1), sb.Recv(two, &buffer, buffer.len, 0));
+
+    // One leaves: still in the group through the other. Both gone: left,
+    // and said so.
+    const request: bsd.ipv6_mreq = .{ .ipv6mr_multiaddr = .{ .s6_addr = mdns.bytes }, .ipv6mr_interface = _netif.index(rig.stack, rig.interface) };
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(one, bsd.IPPROTO_IPV6, bsd.IPV6_LEAVE_GROUP, &request, @sizeOf(bsd.ipv6_mreq)));
+    try testing.expectEqual(@as(i32, -1), sb.SetSockOpt(one, bsd.IPPROTO_IPV6, bsd.IPV6_LEAVE_GROUP, &request, @sizeOf(bsd.ipv6_mreq)));
+    try testing.expect(_ip6.isOurs(rig.stack, rig.interface, mdns));
+    sent_count = 0;
+    _ = sb.CloseSocket(two);
+    try testing.expect(!_ip6.isOurs(rig.stack, rig.interface, mdns));
+    rig.pass(3_000_000);
+    var left = false;
+    for (sent[0..sent_count]) |*entry| {
+        if (entry.kind() != mld.report) continue;
+        const body = entry.message();
+        const records = _ip.get16(body, 6);
+        var at: usize = 8;
+        for (0..records) |_| {
+            if (body[at] == mld.to_include and std.mem.eql(u8, body[at + 4 ..][0..16], &mdns.bytes)) left = true;
+            at += 20;
+        }
+    }
+    try testing.expect(left);
+    _ = sb.CloseSocket(one);
+    try rig.deinit();
+}

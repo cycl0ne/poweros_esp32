@@ -8,7 +8,8 @@
 //! link-local one followed by `%` and its interface, `fe80::2%eth0`. With
 //! INET6 (or -6) a name is looked up as IPv6. COUNT requests are sent (4;
 //! 0 goes on until Ctrl-C), each carrying SIZE bytes of data (56, at most
-//! 1472 over IPv4, 1452 over IPv6) and INTERVAL seconds apart (1). Each
+//! 1472 over IPv4, and 8000 over IPv6, which sends what the link does not
+//! take in fragments) and INTERVAL seconds apart (1). Each
 //! answer is printed with its size, its sender, its sequence number, its
 //! time to live (IPv4) and the round trip in milliseconds; a request with
 //! no answer in TIMEOUT seconds (1), and an error about one, are printed
@@ -76,9 +77,10 @@ const header_bytes = 8;
 const size_default = 56;
 /// What fits in one Ethernet frame unfragmented.
 const size_most = 1472;
-const size_most6 = 1452;
+/// Over IPv6 a larger request goes in fragments.
+const size_most6 = 8000;
 /// A request, or an answer with its IP header.
-const buffer_bytes = 60 + header_bytes + size_most;
+const buffer_bytes = 60 + header_bytes + size_most6;
 
 /// The round trips so far, in microseconds.
 const Tally = struct {
@@ -123,7 +125,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const host: [*:0]const u8 = @ptrFromInt(argv[arg_host]);
     const count = number(argv[arg_count], 4);
-    var size = @min(number(argv[arg_size], size_default), size_most);
+    var size = @min(number(argv[arg_size], size_default), size_most6);
     const interval_us = @as(u64, @max(number(argv[arg_interval], 1), 1)) * 1_000_000;
     const timeout_us = @as(u64, @max(number(argv[arg_timeout], 1), 1)) * 1_000_000;
 
@@ -141,7 +143,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var target: Target = .{};
     if (!target.find(dl, sb, host, argv[arg_inet6] != 0)) return dos.RETURN_ERROR;
-    if (target.six) size = @min(size, size_most6);
+    if (!target.six) size = @min(size, size_most);
 
     const memory = sys.AllocVec(buffer_bytes, exec.MEMF_ANY) orelse return dos.RETURN_FAIL;
     defer sys.FreeVec(memory);

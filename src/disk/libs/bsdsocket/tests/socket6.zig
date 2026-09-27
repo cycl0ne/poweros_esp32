@@ -336,3 +336,95 @@ test "GetAddrInfo: this machine, localhost in RFC 6724's order, and what it refu
     try testing.expectEqual(bsd.EAI_FAIL, sb.GetAddrInfo("example.org", "80", null, &list));
     try rig.deinit();
 }
+
+test "a datagram larger than the link goes in fragments and comes back whole" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const server = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    var here = any6(7010);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(server, here.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    var size: i32 = 64 * 1024;
+    _ = sb.SetSockOpt(server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32));
+    const client = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    var big: [5000]u8 = undefined;
+    for (&big, 0..) |*byte, at| byte.* = @truncate(at *% 13);
+    var to = loopback6(7010);
+    try testing.expectEqual(@as(i32, big.len), sb.SendTo(client, &big, big.len, 0, to.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    var got: [6000]u8 = undefined;
+    try testing.expectEqual(@as(i32, big.len), sb.Recv(server, &got, got.len, 0));
+    try testing.expectEqualSlices(u8, &big, got[0..big.len]);
+    const stack = _base.stackBase(rig.stack);
+    try testing.expect(stack.counts.ip6_fragments_sent >= 4);
+    try testing.expectEqual(@as(u32, 1), stack.counts.ip6_reassembled);
+    // IPv4 still sends nothing in fragments.
+    const four = try rig.socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    var to4 = loopback4(7010);
+    try testing.expectEqual(@as(i32, -1), sb.SendTo(four, &big, big.len, 0, to4.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    try testing.expectEqual(bsd.EMSGSIZE, sb.Errno());
+    try rig.deinit();
+}
+
+test "name servers of both families, as GetNetworkStatistics lists them" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    try testing.expectEqual(@as(i32, 0), sb.AddDomainNameServer(sb.Inet_Addr("9.9.9.9")));
+    const six = @import("../ip6/address.zig").parse("2620:fe::fe").?;
+    try testing.expect(@import("../names/_names.zig").addServer(_base.stackBase(rig.stack), six));
+    var table: [4]bsd.NameServerInfo = undefined;
+    try testing.expectEqual(@as(i32, 2), sb.GetNetworkStatistics(bsd.NETSTATUS_NAMESERVERS, &table, @sizeOf(@TypeOf(table))));
+    try testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 9, 9, 9, 9 }, &table[0].address.s6_addr);
+    try testing.expectEqualSlices(u8, &six.bytes, &table[1].address.s6_addr);
+    try testing.expectEqual(bsd.NAMESERVER_GIVEN, table[1].origin);
+    try testing.expectEqual(@as(i32, 0), sb.RemoveDomainNameServer(sb.Inet_Addr("9.9.9.9")));
+    try testing.expectEqual(@as(i32, 1), sb.GetNetworkStatistics(bsd.NETSTATUS_NAMESERVERS, &table, @sizeOf(@TypeOf(table))));
+    try rig.deinit();
+}
+
+test "names the other way: GetHostByAddr for IPv6, GetNameInfo, the PTR question" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const resolver = @import("../names/resolver.zig");
+    const parse = @import("../ip6/address.zig").parse;
+    var question: [80]u8 = undefined;
+    const asked = question[0..resolver.reverseName(parse("2001:db8::567:89ab").?, &question)];
+    try testing.expectEqualStrings("b.a.9.8.7.6.5.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa", asked);
+    try testing.expectEqualStrings("4.3.2.1.in-addr.arpa", question[0..resolver.reverseName(@import("../ip6/address.zig").Address.fromV4(0x0102_0304), &question)]);
+
+    const host = sb.GetHostByAddr(&bsd.in6addr_loopback, 16, bsd.AF_INET6).?;
+    try testing.expectEqualStrings("localhost", std.mem.span(host.h_name.?));
+    try testing.expectEqual(@as(i32, bsd.AF_INET6), host.h_addrtype);
+    try testing.expectEqual(@as(i32, 16), host.h_length);
+    try testing.expectEqualSlices(u8, &bsd.in6addr_loopback.s6_addr, host.h_addr_list.?[0].?[0..16]);
+    try testing.expect(sb.GetHostByAddr(&bsd.in6addr_loopback, 4, bsd.AF_INET6) == null);
+
+    var name: [bsd.NI_MAXHOST]u8 = undefined;
+    var service: [bsd.NI_MAXSERV]u8 = undefined;
+    var six = loopback6(80);
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(six.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, &service, service.len, 0));
+    try testing.expectEqualStrings("localhost", std.mem.sliceTo(&name, 0));
+    try testing.expectEqualStrings("http", std.mem.sliceTo(&service, 0));
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(six.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, &service, service.len, bsd.NI_NUMERICHOST | bsd.NI_NUMERICSERV));
+    try testing.expectEqualStrings("::1", std.mem.sliceTo(&name, 0));
+    try testing.expectEqualStrings("80", std.mem.sliceTo(&service, 0));
+    // A link-local address with its interface.
+    var link: bsd.sockaddr_in6 = .{ .sin6_port = bsd.htons(7), .sin6_addr = .{ .s6_addr = parse("fe80::1").?.bytes }, .sin6_scope_id = 1 };
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(link.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, null, 0, bsd.NI_NUMERICHOST));
+    try testing.expectEqualStrings("fe80::1%lo0", std.mem.sliceTo(&name, 0));
+    // IPv4, and IPv4 mapped.
+    var four = loopback4(23);
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(four.anyConst(), @sizeOf(bsd.sockaddr_in), &name, name.len, &service, service.len, 0));
+    try testing.expectEqualStrings("localhost", std.mem.sliceTo(&name, 0));
+    try testing.expectEqualStrings("telnet", std.mem.sliceTo(&service, 0));
+    var mapped: bsd.sockaddr_in6 = .{ .sin6_addr = .{ .s6_addr = mapped_loopback } };
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(mapped.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, null, 0, bsd.NI_NUMERICHOST));
+    try testing.expectEqualStrings("127.0.0.1", std.mem.sliceTo(&name, 0));
+    // No name to be had: the address, unless a name is required.
+    var far: bsd.sockaddr_in6 = .{ .sin6_addr = .{ .s6_addr = parse("2001:db8::1").?.bytes } };
+    try testing.expectEqual(@as(i32, 0), sb.GetNameInfo(far.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, null, 0, 0));
+    try testing.expectEqualStrings("2001:db8::1", std.mem.sliceTo(&name, 0));
+    try testing.expectEqual(bsd.EAI_NONAME, sb.GetNameInfo(far.anyConst(), @sizeOf(bsd.sockaddr_in6), &name, name.len, null, 0, bsd.NI_NAMEREQD));
+    var small: [4]u8 = undefined;
+    try testing.expectEqual(bsd.EAI_OVERFLOW, sb.GetNameInfo(far.anyConst(), @sizeOf(bsd.sockaddr_in6), &small, small.len, null, 0, bsd.NI_NUMERICHOST));
+    try testing.expectEqual(bsd.EAI_FAMILY, sb.GetNameInfo(far.anyConst(), 8, &name, name.len, null, 0, 0));
+    try rig.deinit();
+}

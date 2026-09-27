@@ -24,8 +24,12 @@
 //! **Out**: a header of 40 bytes, traffic class and flow label 0, and
 //! the hop limit its caller gives - the interface's (64 unless a router
 //! said otherwise) for a transport, 255 for Neighbor Discovery, 1 for
-//! MLD. A packet larger than its path's MTU is refused: nothing is
-//! fragmented going out.
+//! MLD. A packet larger than its path's MTU goes in fragments (RFC 8200,
+//! 4.5): each a base header and a fragment header with the packet's
+//! identification - random, so no one off the path can guess the next
+//! (RFC 7739) - and as many of its bytes as fit, a multiple of 8 but the
+//! last. What the base header names goes in the first fragment's
+//! fragment header; there is nothing unfragmentable but the base header.
 //!
 //! **Path MTU** (RFC 8201): a packet-too-big lowers what the stack
 //! believes of one destination's path, never below 1280, IPv6's least;
@@ -127,6 +131,15 @@ pub const InterfaceAddress = extern struct {
     }
 };
 
+/// The groups sockets have joined on one interface.
+pub const socket_groups_max = 8;
+
+/// A group sockets joined on an interface, and how many of them.
+pub const Joined = extern struct {
+    address: Address = .{},
+    users: u32 = 0,
+};
+
 /// An interface's IPv6: whether it is on, how its identifiers are made,
 /// its hop limit and addresses.
 pub const Link = extern struct {
@@ -143,6 +156,8 @@ pub const Link = extern struct {
     /// What IFID_STABLE hashes with.
     secret: [bsd.IFSECRET_BYTES]u8 = @splat(0),
     addresses: [addresses_max]InterfaceAddress = @splat(.{}),
+    /// The groups sockets are in on it (IPV6_JOIN_GROUP).
+    groups: [socket_groups_max]Joined = @splat(.{}),
     mld: mld.Mld = .{},
     routers: router.Routers = .{},
 
@@ -191,6 +206,39 @@ pub fn ready(stack: *StackBase, entry: *InterfaceAddress, now: u64) void {
     if (entry.address.isLinkLocal()) router.start(stack, entry.interface.?);
 }
 
+/// The entry of a group sockets joined on `interface`, if they did.
+pub fn socketGroup(interface: *Interface, group: Address) ?*Joined {
+    for (&interface.ip6.groups) |*joined| {
+        if (joined.users != 0 and joined.address.eql(group)) return joined;
+    }
+    return null;
+}
+
+/// One more socket in `group` on `interface`: the group joined on the
+/// device and reported the first time. False when the interface is in as
+/// many groups as it can be.
+pub fn joinSocketGroup(stack: *StackBase, interface: *Interface, group: Address) bool {
+    if (socketGroup(interface, group)) |joined| {
+        joined.users += 1;
+        return true;
+    }
+    for (&interface.ip6.groups) |*joined| {
+        if (joined.users != 0) continue;
+        joined.* = .{ .address = group, .users = 1 };
+        mld.joinGroup(stack, interface, group);
+        return true;
+    }
+    return false;
+}
+
+/// One socket fewer in `group` on `interface`: the last one leaves it on
+/// the device and says so.
+pub fn leaveSocketGroup(stack: *StackBase, interface: *Interface, group: Address) void {
+    const joined = socketGroup(interface, group) orelse return;
+    if (joined.users == 1) mld.leaveGroup(stack, interface, group);
+    joined.users -= 1;
+}
+
 /// The interface one of whose usable addresses `address` is, if any.
 pub fn owner(stack: *StackBase, address: Address) ?*Interface {
     for (&stack.interfaces) |*interface| {
@@ -219,7 +267,7 @@ pub fn isOurs(stack: *StackBase, interface: *Interface, address: Address) bool {
         for (&interface.ip6.addresses) |*entry| {
             if (entry.state != .unused and entry.state != .duplicate and address.eql(entry.address.solicitedNode())) return true;
         }
-        return false;
+        return socketGroup(interface, address) != null;
     }
     if (interface.loopback != 0) return address.eql(Address.loopback) or owner(stack, address) != null;
     const entry = addressOf(interface, address);
@@ -320,6 +368,8 @@ pub fn stop(stack: *StackBase, interface: *Interface) void {
         if (entry.state != .unused) removeAddress(stack, entry);
     }
     _nd.forget(stack, interface);
+    interface.ip6.groups = @splat(.{});
+    @import("../socket/_socket.zig").forgetInterface(stack, interface);
     mld.stop(stack, interface);
     router.stop(stack, interface);
     _route6.removeAll(stack, interface);
@@ -553,12 +603,45 @@ fn options(header: []const u8, destination: Address) Verdict {
 /// sent on its way by `path` with `hop_limit`. The frame goes with it. 0,
 /// or the errno of a packet that could not go.
 pub fn output(stack: *StackBase, frame: *Frame, source: Address, destination: Address, next_header: u8, hop_limit: u8, path: _inet.Path) i32 {
-    if (frame.length + header_bytes > path.mtu) {
-        stack.frames.give(stack.sys_base, frame);
-        return bsd.EMSGSIZE;
-    }
+    if (frame.length + header_bytes > path.mtu) return fragmentOut(stack, frame, source, destination, next_header, hop_limit, path);
     prepend(stack, frame, source, destination, next_header, hop_limit);
     return _netif.output6(stack, path.interface, frame, path.next_hop);
+}
+
+/// The fragment header's bytes.
+const fragment_bytes = 8;
+
+/// `frame`'s bytes sent in fragments that each fit the path; the frame
+/// goes with it. 0, or the errno of the first fragment that could not go
+/// - the rest are not sent then, since the packet cannot be whole.
+fn fragmentOut(stack: *StackBase, frame: *Frame, source: Address, destination: Address, next_header: u8, hop_limit: u8, path: _inet.Path) i32 {
+    const sys = stack.sys_base;
+    defer stack.frames.give(sys, frame);
+    const whole = frame.bytes();
+    if (whole.len > 65535 - fragment_bytes) return bsd.EMSGSIZE;
+    // Room for data in each fragment, in whole 8-byte units.
+    const room = (path.mtu - header_bytes - fragment_bytes) & ~@as(u32, 7);
+    if (room == 0) return bsd.EMSGSIZE;
+    const identification = _nd.random(stack);
+    var offset: u32 = 0;
+    while (offset < whole.len) {
+        const length: u32 = @min(room, @as(u32, @intCast(whole.len)) - offset);
+        const more = offset + length < whole.len;
+        const piece = stack.frames.take(sys) orelse return bsd.ENOBUFS;
+        @memcpy(piece.room()[piece.start..][0..length], whole[offset..][0..length]);
+        piece.length = length;
+        const header = piece.push(fragment_bytes);
+        header[0] = next_header;
+        header[1] = 0;
+        _ip.put16(header, 2, @intCast(offset | @intFromBool(more)));
+        _ip.put32(header, 4, identification);
+        prepend(stack, piece, source, destination, fragment, hop_limit);
+        stack.counts.ip6_fragments_sent += 1;
+        const refused = _netif.output6(stack, path.interface, piece, path.next_hop);
+        if (refused != 0) return refused;
+        offset += length;
+    }
+    return 0;
 }
 
 /// The IPv6 header put in front of what `frame` holds.

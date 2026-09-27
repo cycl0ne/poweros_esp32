@@ -23,6 +23,7 @@ const _dhcp = @import("../dhcp/_dhcp.zig");
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
 
+const Address = @import("../ip6/address.zig").Address;
 const testing = std.testing;
 
 const own_hardware = [6]u8{ 0x02, 0, 0, 0, 0x12, 0x34 };
@@ -222,7 +223,8 @@ test "discover, offer, request, ack, and the address checked before it is taken"
     try testing.expectEqual(@as(u32, 0xFFFF_FF00), interface.netmask);
     try testing.expectEqual(@as(u8, 1), interface.bound);
     try testing.expectEqual(server, _route.defaultThrough(rig.stack, interface));
-    try testing.expectEqualSlices(u32, &.{ 0x0A00_0003, 0x0909_0909 }, rig.stack.nameservers[0..rig.stack.nameserver_count]);
+    try testing.expectEqual(@as(u32, 2), rig.stack.nameserver_count);
+    for ([_]u32{ 0x0A00_0003, 0x0909_0909 }, rig.stack.nameservers[0..2]) |want, got| try testing.expect(got.eql(Address.fromV4(want)));
     try testing.expectEqualStrings("lab1", std.mem.sliceTo(&rig.stack.domain, 0));
     try rig.deinit();
 }

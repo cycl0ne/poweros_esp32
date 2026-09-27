@@ -83,6 +83,15 @@ pub const Socket = extern struct {
     /// The interface a link-local peer is on, when it was named or a
     /// connection came in on it.
     scope: ?*Interface = null,
+    /// The IPv6 groups it is in, each on an interface; where a datagram
+    /// to a group goes out (null: the route's), its hop limit (0: 1), and
+    /// whether this machine's own members are left without a copy - all
+    /// zero to start with, which is what a socket wants.
+    groups: [groups_max]Membership = @splat(.{}),
+    multicast_interface: ?*Interface = null,
+    multicast_hops: u8 = 0,
+    multicast_no_loop: u8 = 0,
+    pad2: [2]u8 = .{ 0, 0 },
     /// Where it is bound and whom it is connected to: IPv6's sixteen
     /// bytes, an IPv4 address mapped (`ip6/address.zig`); unspecified
     /// until bound or connected.
@@ -110,6 +119,45 @@ pub const Socket = extern struct {
     capture_interface: ?*@import("../netif/_netif.zig").Interface = null,
     capture_dropped: u32 = 0,
 };
+
+/// The groups one socket can be in.
+pub const groups_max = 4;
+
+/// A group a socket joined, and the interface it is in it on.
+pub const Membership = extern struct {
+    group: Address = .{},
+    interface: ?*Interface = null,
+};
+
+/// Whether `socket` is in `group` on `interface`.
+pub fn isMember(socket: *const Socket, group: Address, interface: *const Interface) bool {
+    for (&socket.groups) |*member| {
+        if (member.interface == interface and member.group.eql(group)) return true;
+    }
+    return false;
+}
+
+/// Every group `socket` is in, left. Under the lock.
+pub fn leaveAll(stack: *StackBase, socket: *Socket) void {
+    for (&socket.groups) |*member| {
+        const interface = member.interface orelse continue;
+        @import("../ip6/_ip6.zig").leaveSocketGroup(stack, interface, member.group);
+        member.* = .{};
+    }
+}
+
+/// `interface` is going: no socket keeps a pointer to it. Under the lock.
+pub fn forgetInterface(stack: *StackBase, interface: *Interface) void {
+    var it = stack.sockets.iterator();
+    while (it.next()) |node| {
+        const socket = fromNode(node);
+        for (&socket.groups) |*member| {
+            if (member.interface == interface) member.* = .{};
+        }
+        if (socket.multicast_interface == interface) socket.multicast_interface = null;
+        if (socket.scope == interface) socket.scope = null;
+    }
+}
 
 pub fn fromNode(node: *exec.Node) *Socket {
     return @fieldParentPtr("node", node);
@@ -193,6 +241,7 @@ pub fn destroy(sb: *SocketBase, socket: *Socket) void {
 /// A socket freed, in anyone's table or none. Under the lock.
 pub fn free(stack: *StackBase, socket: *Socket) void {
     const sys = stack.sys_base;
+    leaveAll(stack, socket);
     while (sys.RemHead(&socket.receive)) |node| stack.frames.give(sys, @fieldParentPtr("node", node));
     if (socket.flags & capture != 0) stack.captures -= 1;
     sys.Remove(&socket.node);

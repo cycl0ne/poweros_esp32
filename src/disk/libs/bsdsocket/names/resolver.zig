@@ -6,8 +6,9 @@
 //! name servers through a socket of its own, made with the library's own
 //! calls.
 //!
-//! **The name servers** are the ones the interfaces and DHCP named (IPv4),
-//! then the ones routers named in their advertisements (IPv6, RFC 8106);
+//! **The name servers** are the ones the interfaces and DHCP named, of
+//! either family, then the ones routers named in their advertisements
+//! (RFC 8106);
 //! only when there are none, the ones `ENVARC:Sys/net/nameservers` lists,
 //! of either family. One AF_INET6 socket asks them all, an IPv4 server
 //! through its mapped address.
@@ -57,7 +58,7 @@ fn textOf(name: [*:0]const u8) []const u8 {
 pub fn byName(sb: *SocketBase, name: [*:0]const u8) ?*bsd.hostent {
     var found: Found = .{};
     if (!lookup(sb, textOf(name), bsd.AF_INET, &found)) return null;
-    return sb.host.fill(found.nameText(), found.addresses[0..found.count]);
+    return sb.host.fill(found.nameText(), found.addresses[0..found.count], bsd.AF_INET);
 }
 
 /// What a lookup found: addresses of one family (IPv4 ones mapped), and
@@ -151,27 +152,67 @@ fn fails(sb: *SocketBase, errno: i32) bool {
     return false;
 }
 
-/// The name `address` (network order) has; null with `h_errno` set.
-pub fn byAddress(sb: *SocketBase, address: u32) ?*bsd.hostent {
-    const mapped = Address.fromV4(bsd.ntohl(address));
-    if (hostsName(sb, mapped)) |entry| return entry;
-    if (address == bsd.htonl(bsd.INADDR_LOOPBACK)) return sb.host.fill("localhost", &.{mapped});
-    const octets: [4]u8 = @bitCast(address);
-    var name: [32]u8 = undefined;
-    var at: usize = 0;
-    var index: usize = 4;
-    while (index > 0) {
-        index -= 1;
-        at += decimal(name[at..], octets[index]);
-        name[at] = '.';
-        at += 1;
+/// The name `address` has, as a hostent of `family` in the opener's
+/// buffer; null with `h_errno` set.
+pub fn byAddress(sb: *SocketBase, address: Address, family: u8) ?*bsd.hostent {
+    var name: [256]u8 = undefined;
+    const length = nameOf(sb, address, &name) orelse return null;
+    return sb.host.fill(name[0..length], &.{address}, family);
+}
+
+/// The name `address` has - an IPv4 one mapped - into `into`: its length,
+/// or null with `h_errno` set. The hosts file first, `localhost` for the
+/// loopback addresses, then a PTR question: `d.c.b.a.in-addr.arpa` for
+/// IPv4, the 32 nibbles in reverse under `ip6.arpa` for IPv6 (RFC 3596).
+pub fn nameOf(sb: *SocketBase, address: Address, into: *[256]u8) ?usize {
+    if (hostsNameText(sb, address, into)) |length| return length;
+    if (address.isLoopback()) return copyName(into, "localhost");
+    var question: [80]u8 = undefined;
+    const at = reverseName(address, &question);
+    const found = ask(sb, question[0..at], dns.type_ptr) orelse return null;
+    if (!found.has_name) {
+        sb.h_errno = bsd.NO_DATA;
+        return null;
     }
-    const suffix = "in-addr.arpa";
-    @memcpy(name[at..][0..suffix.len], suffix);
-    at += suffix.len;
-    const found = ask(sb, name[0..at], dns.type_ptr) orelse return missing(sb, sb.h_errno);
-    if (!found.has_name) return missing(sb, bsd.NO_DATA);
-    return sb.host.fill(textOf(@ptrCast(&found.name)), &.{mapped});
+    return copyName(into, textOf(@ptrCast(&found.name)));
+}
+
+/// The name a PTR question for `address` asks about, into `into`: its
+/// length.
+pub fn reverseName(address: Address, into: *[80]u8) usize {
+    var at: usize = 0;
+    if (address.isV4()) {
+        var index: usize = 16;
+        while (index > 12) {
+            index -= 1;
+            at += decimal(into[at..], address.bytes[index]);
+            into[at] = '.';
+            at += 1;
+        }
+        const suffix = "in-addr.arpa";
+        @memcpy(into[at..][0..suffix.len], suffix);
+        at += suffix.len;
+    } else {
+        const digits = "0123456789abcdef";
+        var index: usize = 16;
+        while (index > 0) {
+            index -= 1;
+            const byte = address.bytes[index];
+            into[at..][0..4].* = .{ digits[byte & 15], '.', digits[byte >> 4], '.' };
+            at += 4;
+        }
+        const suffix = "ip6.arpa";
+        @memcpy(into[at..][0..suffix.len], suffix);
+        at += suffix.len;
+    }
+    return at;
+}
+
+fn copyName(into: *[256]u8, name: []const u8) usize {
+    const length = @min(name.len, into.len - 1);
+    @memcpy(into[0..length], name[0..length]);
+    into[length] = 0;
+    return length;
 }
 
 fn decimal(into: []u8, value: u8) usize {
@@ -200,10 +241,18 @@ fn indexOf(text: []const u8, wanted: u8) ?usize {
     return null;
 }
 
+/// Where a name without dots is looked for: the domain given by hand or
+/// by DHCP, else the one a router's DNSSL named.
 fn domainOf(stack: *StackBase) []const u8 {
     var length: usize = 0;
     while (length < stack.domain.len and stack.domain[length] != 0) length += 1;
-    return stack.domain[0..length];
+    if (length > 0) return stack.domain[0..length];
+    const now = _timer.clock(stack);
+    for (&stack.interfaces) |*interface| {
+        if (interface.used == 0 or interface.ip6.enabled == 0) continue;
+        if (router.searchDomainOf(interface, now)) |domain| return domain;
+    }
+    return stack.domain[0..0];
 }
 
 /// The address of `family` `name` has in the hosts file, if it is there.
@@ -216,14 +265,14 @@ fn hostsAddress(sb: *SocketBase, name: []const u8, family: u8) ?Address {
     return hosts.find(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), name, family);
 }
 
-/// The first name `address` has in the hosts file, as a hostent in the
-/// opener's buffer; null when it is not there.
-fn hostsName(sb: *SocketBase, address: Address) ?*bsd.hostent {
+/// The first name `address` has in the hosts file, into `into`: its
+/// length, or null when it is not there.
+fn hostsNameText(sb: *SocketBase, address: Address, into: *[256]u8) ?usize {
     const sys = sb.sys_base;
     const memory = sys.AllocVec(hosts_bytes, exec.MEMF_ANY) orelse return null;
     defer sys.FreeVec(memory);
     const name = hosts.reverse(readHosts(sb, @as([*]u8, @ptrCast(memory))[0..hosts_bytes]), address) orelse return null;
-    return sb.host.fill(name, &.{address});
+    return copyName(into, name);
 }
 
 /// The hosts file's text, as much as fits in `into`; empty when there is
@@ -249,7 +298,7 @@ fn servers(sb: *SocketBase, into: *[servers_max]Address) usize {
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
         for (stack.nameservers[0..stack.nameserver_count]) |server| {
-            into[count] = Address.fromV4(server);
+            into[count] = server;
             count += 1;
         }
         const now = _timer.clock(stack);

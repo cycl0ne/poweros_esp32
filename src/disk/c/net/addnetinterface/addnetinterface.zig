@@ -159,10 +159,10 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
 
     if (config.network[0] != 0) joinNetwork(sys, dl, &config, options);
 
-    var tags: [32]TagItem = @splat(.{});
+    var tags: [40]TagItem = @splat(.{});
     var count: usize = 0;
     const add = struct {
-        fn one(list: *[32]TagItem, index: *usize, tag: u32, data: usize) void {
+        fn one(list: *[40]TagItem, index: *usize, tag: u32, data: usize) void {
             list[index.*] = .{ .tag = tag, .data = data };
             index.* += 1;
         }
@@ -192,6 +192,11 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
         if (!address6Of(dl, sb, &config.address6, &address6, path_text)) return dos.RETURN_ERROR;
         add(&tags, &count, bsd.IFA_Address6, @intFromPtr(&address6));
         if (config.prefix6 != 0) add(&tags, &count, bsd.IFA_Prefix6, config.prefix6);
+    }
+    var servers6: [bsd.NAMESERVERS_MAX]bsd.in6_addr = @splat(.{});
+    for (config.nameservers6[0..config.nameserver6_count], 0..) |*text6, index| {
+        if (!address6Of(dl, sb, text6, &servers6[index], path_text)) return dos.RETURN_ERROR;
+        add(&tags, &count, bsd.IFA_NameServer6, @intFromPtr(&servers6[index]));
     }
     if (config.gateway6.given()) {
         if (!address6Of(dl, sb, &config.gateway6, &gateway6, path_text)) return dos.RETURN_ERROR;
