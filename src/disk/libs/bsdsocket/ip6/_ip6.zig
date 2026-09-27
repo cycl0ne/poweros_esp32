@@ -298,9 +298,11 @@ pub const link_local_prefix = [8]u8{ 0xfe, 0x80, 0, 0, 0, 0, 0, 0 };
 /// its link-local address made and checked. Under the lock.
 pub fn start(stack: *StackBase, interface: *Interface) void {
     interface.ip6.enabled = 1;
-    // Made here rather than taken from the interface's default: built
-    // for the chip, the defaults of these two, whose files import this
-    // one, came out as zeros - a timer that believed itself armed.
+    // Set here, not left to the interface's defaults: on the chip,
+    // defaults inside the stack's large base have come out as zeros.
+    interface.ip6.hop_limit = default_hop_limit;
+    interface.ip6.reachable_us = _nd.reachable_us;
+    interface.ip6.retrans_us = @intCast(_nd.retrans_us);
     interface.ip6.routers = .{ .interface = interface };
     if (interface.loopback != 0) {
         _ = addAddress(stack, interface, Address.loopback, 128, .preferred);

@@ -22,21 +22,28 @@ const StackBase = _base.StackBase;
 
 /// How many timers can wait at once.
 pub const timers_max = 128;
-/// A timer that is not in the heap.
-const nowhere: u32 = 0xFFFF_FFFF;
 
 pub const FireFn = *const fn (stack: *StackBase, fired: *Timer, now: u64) void;
 
 pub const Timer = extern struct {
     deadline: u64 align(4) = 0,
-    /// Where it is in the heap, or `nowhere`.
-    index: u32 = nowhere,
+    /// Where it is in the heap, counted from 1; 0 when it is not in it.
+    /// So a timer in memory that is all zeros is one that waits for
+    /// nothing, whatever the struct around it and however it was made: on
+    /// the chip, defaults inside a large struct have been seen to come
+    /// out as zeros, and a timer that took itself for armed cancelled
+    /// another's place in the heap.
+    slot: u32 = 0,
     /// Run, under the lock, when the deadline has passed; the timer is
     /// out of the heap by then and may be set again.
     fire: ?FireFn = null,
 
     pub fn armed(entry: *const Timer) bool {
-        return entry.index != nowhere;
+        return entry.slot != 0;
+    }
+
+    fn at(entry: *const Timer) u32 {
+        return entry.slot - 1;
     }
 };
 
@@ -52,11 +59,11 @@ pub fn set(stack: *StackBase, entry: *Timer, deadline: u64) bool {
     if (entry.armed()) cancel(stack, entry);
     if (heap.count == timers_max) return false;
     entry.deadline = deadline;
-    entry.index = heap.count;
+    entry.slot = heap.count + 1;
     heap.entries[heap.count] = entry;
     heap.count += 1;
-    up(heap, entry.index);
-    if (entry.index == 0) stack.rethink();
+    up(heap, entry.at());
+    if (entry.at() == 0) stack.rethink();
     return true;
 }
 
@@ -64,16 +71,16 @@ pub fn set(stack: *StackBase, entry: *Timer, deadline: u64) bool {
 pub fn cancel(stack: *StackBase, entry: *Timer) void {
     const heap = &stack.timers;
     if (!entry.armed()) return;
-    const at = entry.index;
+    const place = entry.at();
     heap.count -= 1;
     const last = heap.entries[heap.count].?;
     heap.entries[heap.count] = null;
-    entry.index = nowhere;
+    entry.slot = 0;
     if (last == entry) return;
-    heap.entries[at] = last;
-    last.index = at;
-    up(heap, at);
-    down(heap, last.index);
+    heap.entries[place] = last;
+    last.slot = place + 1;
+    up(heap, place);
+    down(heap, last.at());
 }
 
 /// The earliest deadline, if a timer waits.
@@ -98,8 +105,8 @@ fn swap(heap: *Heap, a: u32, b: u32) void {
     const held = heap.entries[a].?;
     heap.entries[a] = heap.entries[b];
     heap.entries[b] = held;
-    heap.entries[a].?.index = a;
-    heap.entries[b].?.index = b;
+    heap.entries[a].?.slot = a + 1;
+    heap.entries[b].?.slot = b + 1;
 }
 
 fn up(heap: *Heap, from: u32) void {
