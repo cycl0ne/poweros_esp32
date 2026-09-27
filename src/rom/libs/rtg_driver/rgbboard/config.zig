@@ -81,6 +81,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     setup.hsync_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_HSyncPin, 0, tag_list));
     setup.vsync_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_VSyncPin, 0, tag_list));
     setup.de_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_DePin, 0, tag_list));
+    setup.drive_strength = @intCast(@min(get.u32At(rb, tags.RTGA_RGB_DriveStrength, 3, tag_list), 3));
 
     config.reset_pin = pinFrom(rb, st.PART_PinReset, tag_list);
     config.display_pin = pinFrom(rb, st.PART_PinEnable, tag_list);

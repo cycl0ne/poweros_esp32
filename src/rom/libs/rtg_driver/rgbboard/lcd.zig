@@ -142,6 +142,8 @@ pub const Setup = extern struct {
     hsync_pin: u8 = 0,
     vsync_pin: u8 = 0,
     de_pin: u8 = 0,
+    /// How hard the pads drive (RTGA_RGB_DriveStrength).
+    drive_strength: u8 = 3,
 };
 
 /// The sync pulse the peripheral can actually emit. Its width field is
@@ -184,19 +186,20 @@ fn divideFor(want_hz: u32) Divide {
 pub fn pins(setup: *const Setup) void {
     var i: u32 = 0;
     while (i < setup.data_width and i < setup.data_pins.len) : (i += 1) {
-        route(setup.data_pins[i], sig_data0 + i);
+        route(setup.data_pins[i], sig_data0 + i, @intCast(setup.drive_strength));
     }
-    route(setup.pclk_pin, sig_pclk);
-    route(setup.hsync_pin, sig_hsync);
-    route(setup.vsync_pin, sig_vsync);
-    route(setup.de_pin, sig_de);
+    route(setup.pclk_pin, sig_pclk, @intCast(setup.drive_strength));
+    route(setup.hsync_pin, sig_hsync, @intCast(setup.drive_strength));
+    route(setup.vsync_pin, sig_vsync, @intCast(setup.drive_strength));
+    route(setup.de_pin, sig_de, @intCast(setup.drive_strength));
 }
 
-/// One pad, driven by the peripheral. Push-pull, hardest drive: these
-/// switch at 30 MHz into a ribbon cable.
-fn route(pin: u8, signal: u32) void {
+/// One pad, driven by the peripheral, push-pull, at the board's strength:
+/// these switch at the pixel clock into a ribbon cable, and the harder
+/// they are driven the more their edges radiate.
+fn route(pin: u8, signal: u32, strength: u2) void {
     gpio.toMatrix(pin);
-    gpio.driveStrength(pin, 3);
+    gpio.driveStrength(pin, strength);
     gpio.outputEnable(pin, true);
     gpio.connectOut(pin, signal, false);
 }

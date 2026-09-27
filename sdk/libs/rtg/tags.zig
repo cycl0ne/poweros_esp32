@@ -103,6 +103,12 @@ pub const RTGA_RGB_DePin = RTGA_RGB_Dummy + 15;
 pub const RTGA_RGB_BounceLines = RTGA_RGB_Dummy + 16;
 /// u32: where the stream sits on the bus. Absent: the highest there is.
 pub const RTGA_RGB_DmaPriority = RTGA_RGB_Dummy + 17;
+/// u32, 0 to 3: how hard the pads drive the panel's lines (the chip's
+/// FUN_DRV, about 5, 10, 20 and 40 mA). Absent: 3. Every edge on these
+/// twenty lines radiates, and the harder they are driven the more of it
+/// reaches a radio on the same board: a board whose panel is clean at a
+/// weaker drive should say so.
+pub const RTGA_RGB_DriveStrength = RTGA_RGB_Dummy + 18;
 
 /// RTGA_RGB_Flags: which way round the timing signals rest.
 pub const RTGRGBF_HSYNC_IDLE_LOW: u32 = 1 << 0;

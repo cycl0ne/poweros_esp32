@@ -24,6 +24,7 @@ without them builds everything but this device.
 | `scan.zig` | S2_GETNETWORKS: what a scan found, as a tag list in the caller's pool |
 | `join.zig` | S2_SETOPTIONS and S2_GETNETWORKINFO: joining, leaving, and what the station is joined to; and why it came off a network |
 | `link.zig` | frames in and out, and the unit's carrier |
+| `rejoin.zig` | joining again, after a pause, when the station comes off a network it was asked to be on |
 | `wpa/` | the supplicant: security elements, the keys, the key handshake |
 
 ## The adapter
@@ -78,7 +79,14 @@ be held up:
 
 The request is answered at once. The join's outcome is the link: the unit's
 carrier comes when the station has joined and goes when it leaves or is
-thrown off. `join.zig`'s `left` says why it came off, in words, because a
+thrown off.
+
+A network joined stays wanted until it is left. Coming off it for any
+reason but its own leave, the station tries again after a pause - a second,
+doubling each time up to a minute, back to a second once it has joined
+(`rejoin.zig`). The first join after the board restarts is often refused,
+the access point still holding the station from before; the next is let
+in. `join.zig`'s `left` says why it came off, in words, because a
 wrong passphrase and a network out of reach are otherwise the same silence.
 
 ### The element buffer
@@ -158,6 +166,25 @@ dereference it. `format.zig` reads those lists by the libraries' own
 compiler's rule (`LibraryList`), and its own lists as the compiler reads
 them (`OwnList`).
 
+### The adapter's timed waits
+
+Every thread the adapter makes waits with a timer.device request of its
+own. A wait that is woken early aborts the request, and the abort's reply
+sets the port's signal without anyone waiting for it; the port's signal is
+cleared before each request, or the next wait returns at once, aborts
+again, and the thread spins. Uncleared, the adapter's timer task went round
+68,000 times a second, the device's task starved, and seven frames of eight
+were lost off its ring.
+
+### The panel beside the radio
+
+On the Waveshare 7B the RGB panel's twenty lines run beside the antenna,
+and at the pads' hardest drive their edges drown what the radio hears:
+ten times the frames failing their check sum, and pings of half a second
+or none. The board's tag list sets the pads to the weakest drive
+(`RTGA_RGB_DriveStrength`), which takes the errors down by three quarters
+and the pings to milliseconds.
+
 ## Tests
 
 `tests/` holds the host tests: the adapter's ring and timer ordering, the
@@ -186,13 +213,9 @@ up, and it takes its address once the radio has been joined to a network.
 
 ## Not done yet
 
-- **Pings to the gateway lose some and wait long** (half lost, 75 to 400 ms,
-  through the weakest access point of the network at -82 dBm). Whether
-  that is the signal or the device is not known yet.
-- **The first join after the board restarts is often refused** (the
-  authentication fails, 202): the access point still holds the station from
-  before. The libraries go on to the next access point of the network, or a
-  second JOIN takes.
+- **The panel still costs the radio something.** With the pads at their
+  weakest, a ping takes 4 to 40 ms and now and then a few hundred; with the
+  panel stopped, 4 to 20. What is left is the panel's own noise.
 - **The group key rekey has not been seen on the board**; it is in the host
   tests.
 - **The group key's TKIP form is untested.** A mixed WPA/WPA2 network hands
@@ -200,8 +223,6 @@ up, and it takes its address once the radio has been joined to a network.
 - **The reason the station came off a network only reaches the raw port.**
   It belongs in the wireless API as well, so that `C:net/Wireless` can say
   why a join did not take instead of only that it did not.
-- **A join is not retried.** `STA_DISCONNECTED` takes the carrier down and
-  stops there; the backoff and the rejoin are still to come.
 - **The calibration runs in full on every start.** It belongs in a file in
   `ENVARC:`, with a full run only when the stored one does not fit the
   board.

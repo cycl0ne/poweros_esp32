@@ -117,6 +117,10 @@ const panel = [_]Tag{
     .value(tags.RTGA_RGB_HSyncPin, 46),
     .value(tags.RTGA_RGB_VSyncPin, 3),
     .value(tags.RTGA_RGB_DePin, 5),
+    // The weakest drive. At the hardest the panel's lines drown the radio,
+    // whose antenna is beside them: ten times the frames with a bad check
+    // sum, and pings that take half a second or never come back.
+    .value(tags.RTGA_RGB_DriveStrength, 0),
     .done,
 };
 
