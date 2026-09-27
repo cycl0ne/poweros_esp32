@@ -82,11 +82,13 @@ pub fn semphrDelete(semaphore: ?*anyopaque) callconv(.c) void {
 }
 
 pub fn semphrTake(handle: ?*anyopaque, ticks: u32) callconv(.c) i32 {
+    _osi.trace2("semphr_take", @intFromPtr(handle), ticks);
     const semaphore: *Semaphore = @ptrCast(@alignCast(handle.?));
     return @intFromBool(_osi.waitUntil(&semaphore.waiters, _osi.deadline(ticks), semaphore, Semaphore.take));
 }
 
 pub fn semphrGive(handle: ?*anyopaque) callconv(.c) i32 {
+    _osi.trace2("semphr_give", @intFromPtr(handle), 0);
     const semaphore: *Semaphore = @ptrCast(@alignCast(handle.?));
     const sys = _osi.get().sys;
     sys.Disable();
@@ -138,12 +140,14 @@ pub fn mutexDelete(mutex: ?*anyopaque) callconv(.c) void {
 }
 
 pub fn mutexLock(handle: ?*anyopaque) callconv(.c) i32 {
+    _osi.trace2("mutex_lock", @intFromPtr(handle), 0);
     const mutex: *Mutex = @ptrCast(@alignCast(handle.?));
     const task = _osi.get().sys.FindTask(null).?;
     return @intFromBool(_osi.waitUntil(&mutex.waiters, null, Take{ .mutex = mutex, .task = task }, Take.attempt));
 }
 
 pub fn mutexUnlock(handle: ?*anyopaque) callconv(.c) i32 {
+    _osi.trace2("mutex_unlock", @intFromPtr(handle), 0);
     const mutex: *Mutex = @ptrCast(@alignCast(handle.?));
     const sys = _osi.get().sys;
     sys.Disable();
@@ -216,6 +220,7 @@ pub fn eventGroupClearBits(handle: ?*anyopaque, bits: u32) callconv(.c) u32 {
 }
 
 pub fn eventGroupWaitBits(handle: ?*anyopaque, wanted: u32, clear_on_exit: c_int, wait_for_all: c_int, ticks: u32) callconv(.c) u32 {
+    _osi.trace2("event_group_wait_bits", wanted, ticks);
     const group: *EventGroup = @ptrCast(@alignCast(handle.?));
     var seen: u32 = 0;
     _ = _osi.waitUntil(&group.waiters, _osi.deadline(ticks), Bits{

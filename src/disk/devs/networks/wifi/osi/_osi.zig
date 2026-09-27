@@ -293,6 +293,14 @@ pub fn realloc(memory: ?*anyopaque, size: usize, internal: bool) ?*anyopaque {
 
 // --- the trace ------------------------------------------------------------
 
+/// A call's name and two words of it on the raw port, when the adapter
+/// traces.
+pub fn trace2(comptime name: []const u8, a: usize, b: usize) void {
+    const state = adapter orelse return;
+    if (!state.trace) return;
+    sdk.exec.kprintf(state.sys, "wifi: %s %lx %lx\n", .{ @as([*:0]const u8, name ++ ""), @as(u64, a), @as(u64, b) });
+}
+
 /// A call's name on the raw port, when the adapter traces.
 pub fn trace(comptime name: []const u8) void {
     const state = adapter orelse return;

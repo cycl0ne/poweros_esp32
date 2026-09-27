@@ -135,6 +135,7 @@ const Get = struct {
 };
 
 fn send(handle: ?*anyopaque, item: ?*anyopaque, ticks: u32, front: bool) i32 {
+    _osi.trace2("queue_send", @intFromPtr(handle), ticks);
     const queue: *Queue = @ptrCast(@alignCast(handle.?));
     const put: Put = .{ .queue = queue, .item = @ptrCast(item.?), .front = front };
     return @intFromBool(_osi.waitUntil(&queue.senders, _osi.deadline(ticks), put, Put.attempt));
@@ -165,6 +166,7 @@ pub fn queueSendFromIsr(handle: ?*anyopaque, item: ?*anyopaque, higher_priority_
 }
 
 pub fn queueRecv(handle: ?*anyopaque, item: ?*anyopaque, ticks: u32) callconv(.c) i32 {
+    _osi.trace2("queue_recv", @intFromPtr(handle), ticks);
     const queue: *Queue = @ptrCast(@alignCast(handle.?));
     const get: Get = .{ .queue = queue, .item = @ptrCast(item.?) };
     return @intFromBool(_osi.waitUntil(&queue.receivers, _osi.deadline(ticks), get, Get.attempt));

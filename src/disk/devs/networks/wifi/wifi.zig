@@ -43,6 +43,7 @@ const efuse = @import("phy/efuse.zig");
 const events = @import("events.zig");
 const vendor = @import("vendor.zig");
 const scan = @import("scan.zig");
+const supplicant = @import("wpa/supplicant.zig");
 const link = @import("link.zig");
 
 comptime {
@@ -67,7 +68,7 @@ const stack_size = 8192;
 /// As the other network devices' tasks.
 const task_pri = 5;
 /// Every adapter call on the raw port.
-const trace_calls = true;
+const trace_calls = false;
 
 // --- the task -------------------------------------------------------------
 
@@ -130,6 +131,7 @@ fn startRadio(base: *WifiBase) bool {
 
     const config: vendor.InitConfig = .{};
     if (!report(sys, "esp_wifi_init_internal", vendor.esp_wifi_init_internal(&config))) return false;
+    if (!supplicant.register()) return fail(sys, "the supplicant's table was refused");
     if (!report(sys, "esp_wifi_set_mode", vendor.esp_wifi_set_mode(vendor.mode_sta))) return false;
     if (!report(sys, "esp_wifi_start", vendor.esp_wifi_start())) return false;
     return true;

@@ -3,13 +3,15 @@
 //! radio's libraries touch the MAC, and the PHY library's calibration.
 //!
 //! **Power** (`powerOn`, once, before the libraries start): the Wi-Fi
-//! power domain forced on in RTC_CNTL, the modem's clocks on, its blocks
-//! reset once as they power up, and the domain's isolation lifted.
+//! block's clocks on, the Wi-Fi power domain forced on in RTC_CNTL, the
+//! modem's blocks reset once as they power up, and the domain's isolation
+//! lifted.
 //!
 //! **The PHY** (`enable`, whenever the libraries start the radio): the
 //! modem's common clocks and the PHY's own, then the PHY library. The
 //! first time it calibrates in full from the init data
-//! (`register_chipv7_phy`) into a calibration block it keeps; after that
+//! (`register_chipv7_phy`) into a calibration block it keeps, told to
+//! leave the USB port's clock running (the console is on it); after that
 //! it only wakes (`phy_wakeup_init`). Once a second the PLL is tracked
 //! against the temperature (`phy_param_track_tot`), on one of the
 //! adapter's timers.
@@ -38,6 +40,10 @@ const slow_clock_cal = map.RTC_CNTL + 0x54;
 /// SYSCON_WIFI_CLK_EN and _WIFI_RST_EN.
 const wifi_clk_en = map.SYSCON + 0x14;
 const wifi_rst_en = map.SYSCON + 0x18;
+/// Every clock of the Wi-Fi block (SYSTEM_WIFI_CLK_EN): the MAC's among
+/// them, which nothing else turns on. Without them the MAC does not
+/// answer, and the libraries wait for it for good.
+const wifi_clocks: u32 = 0x00FB_9FCF;
 /// The Wi-Fi and Bluetooth blocks' common clocks.
 const common_clocks: u32 = 0x0078_078F;
 /// The PHY's calibration clock, and the random number generator's.
@@ -82,6 +88,7 @@ extern fn phy_wait_freq_hw_hop_done() callconv(.c) void;
 extern fn phy_param_track_tot(wifi: bool, ble: bool) callconv(.c) void;
 extern fn phy_wifi_enable_set(on: u8) callconv(.c) void;
 extern fn get_phy_version_str() callconv(.c) [*:0]const u8;
+extern fn phy_bbpll_en_usb(on: bool) callconv(.c) void;
 
 /// How often the PLL is tracked.
 const track_period_ms = 1000;
@@ -99,6 +106,7 @@ pub const Phy = struct {
 /// The Wi-Fi domain powered, once.
 pub fn powerOn(phy: *Phy) void {
     if (phy.powered) return;
+    change(wifi_clk_en, wifi_clocks, 0);
     change(dig_pwc, 0, wifi_force_pd);
     // 10 µs for the domain to come up.
     const until = _osi.now() + 10;
@@ -128,6 +136,9 @@ pub fn enable(phy: *Phy) void {
         const memory = _osi.alloc(@sizeOf(CalData), true, true) orelse return;
         const cal: *CalData = @ptrCast(@alignCast(memory));
         cal.mac = efuse.stationAddress();
+        // The PHY's calibration would stop the BBPLL's clock to the USB
+        // port, which the console and JTAG run on: it is told to keep it.
+        phy_bbpll_en_usb(true);
         _ = register_chipv7_phy(&init_data_file.init_data, cal, cal_full);
         phy.cal = cal;
         phy.calibrated = true;

@@ -140,6 +140,7 @@ pub fn taskDelete(handle: ?*anyopaque) callconv(.c) void {
 /// Nothing wakes a delay early: the wake signal is cleared first, and a
 /// task that delays is on no object's list.
 pub fn taskDelay(ticks: u32) callconv(.c) void {
+    _osi.trace2("task_delay", ticks, 0);
     const thread = _osi.current();
     const until = _osi.deadline(ticks);
     _ = _osi.get().sys.SetSignal(0, thread.wake);

@@ -84,6 +84,7 @@ pub fn timerSetfn(handle: ?*anyopaque, func: ?*anyopaque, arg: ?*anyopaque) call
 }
 
 fn arm(handle: ?*anyopaque, us: u64, repeat: bool) void {
+    _osi.trace2("timer_arm", @intFromPtr(handle), @intCast(us | (@as(u64, @intFromBool(repeat)) << 31)));
     const ets: *EtsTimer = @ptrCast(@alignCast(handle.?));
     const record = recordOf(ets) orelse return;
     const state = _osi.get();
@@ -163,6 +164,7 @@ fn run(sys: *ExecBase) callconv(.c) void {
         }
         sys.Enable();
         if (func) |call| {
+            _osi.trace2("timer_fire", @intFromPtr(call), @intFromPtr(arg));
             call(arg);
             continue;
         }
