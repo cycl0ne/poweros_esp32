@@ -44,7 +44,8 @@ pub const RTGA_DisplayMemorySize = RTGA_Dummy + 8;
 /// u32: what every buffer starts on and every row is rounded to. Absent: a
 /// cache line, which is also what a display reads in one go.
 pub const RTGA_Alignment = RTGA_Dummy + 9;
-/// u32: how many buffers to leave room for. Absent: 1.
+/// u32: how many buffers to leave room for - on a board whose buffers
+/// come from system memory, the most it may have at once. Absent: 1.
 pub const RTGA_Buffers = RTGA_Dummy + 10;
 // RTGA_Dummy + 11 to 13 are not used: a panel's reset, display enable
 // and backlight are its part's PART_PinReset, PART_PinEnable and

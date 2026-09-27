@@ -99,8 +99,9 @@ const panel = [_]Tag{
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),
     .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565)),
-    // Three pictures: a screen, a second screen or a back buffer, and one
-    // more - a program's own screen double buffered beside the Workbench.
+    // Three pictures at most: a screen, a second screen or a back buffer,
+    // and one more - a program's own screen double buffered beside the
+    // Workbench. Each is taken from memory when it is opened.
     .value(tags.RTGA_Buffers, 3),
     .value(tags.RTGA_RGB_PixelClock, pixel_clock_hz),
     .value(tags.RTGA_RGB_HSyncPulse, 162),

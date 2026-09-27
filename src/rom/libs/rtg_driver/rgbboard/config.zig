@@ -29,8 +29,8 @@ pub const Config = struct {
     /// How many lines one of the two buffers the panel is really fed from
     /// holds. The height has to divide by it.
     bounce_lines: u32 = 10,
-    /// How many pictures the display memory holds (`RTGA_Buffers`): as
-    /// many as there is room for, down to one.
+    /// How many pictures the board may have at once (`RTGA_Buffers`),
+    /// each taken from system memory as it is asked for.
     buffers: u32 = 1,
     /// Where the stream sits on the bus.
     dma_priority: u32 = sdk.resources.dma.DMA_MAXPRI,

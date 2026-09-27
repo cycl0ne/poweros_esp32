@@ -19,10 +19,20 @@
 //! The book-keeping is in the library's own memory and never in the region
 //! itself, which may be memory the CPU should not be writing into between
 //! frames.
+//!
+//! **A board without a region** (RTGRF_SYSTEM_MEMORY) has its buffers
+//! taken from exec as they are asked for, external memory first, and
+//! given back when they are freed: a picture nobody shows costs nothing.
+//! The arena then only counts them against the most the board may hold
+//! at once, and aligns each by taking a little more than it needs.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+
+/// Where a buffer's memory is: what the arena needs to give it back
+/// (`offset`, `taken`), and where its pixels start.
+pub const Piece = struct { offset: usize, taken: usize, pixels: usize };
 
 /// A stretch of the region that is free. One of these is a few words in
 /// the library's memory, not a header inside the region.
@@ -50,6 +60,10 @@ pub const Arena = struct {
     /// Memory that was given back and could not be recorded. It stays
     /// counted so that what is missing is at least visible.
     lost_bytes: usize = 0,
+    /// Buffers from system memory rather than a region: `size` is then
+    /// the most they may hold at once, and `used` what they hold.
+    system: bool = false,
+    used: usize = 0,
 
     /// `base` is where the region starts, because the alignment has to be
     /// true of the addresses a display reads and not merely of the offsets
@@ -82,6 +96,67 @@ pub const Arena = struct {
         block.size = whole;
         sys.AddTail(&arena.blocks, &block.node);
         arena.free_bytes = whole;
+    }
+
+    /// An arena of buffers taken from system memory as they are asked for,
+    /// at most `limit` bytes of them at once.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping.
+    /// - `sys` - exec.
+    /// - `limit` - the most the buffers may hold together.
+    /// - `alignment` - what every buffer and row is aligned to.
+    pub fn initSystem(arena: *Arena, sys: *ExecBase, limit: usize, alignment: u32) void {
+        arena.* = .{ .size = limit, .alignment = if (alignment == 0) 64 else alignment, .system = true };
+        sys.NewList(&arena.blocks);
+        arena.free_bytes = limit;
+    }
+
+    /// Whether buffers can be had at all: a region with room, or system
+    /// memory.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping.
+    pub fn usable(arena: *const Arena) bool {
+        return arena.system or arena.origin != 0;
+    }
+
+    /// Memory for a buffer of `bytes`, aligned: cut from the region, or
+    /// taken from exec. Null when there is no room, or the board holds
+    /// as much as it may.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping.
+    /// - `sys` - exec.
+    /// - `bytes` - how many.
+    pub fn take(arena: *Arena, sys: *ExecBase, bytes: usize) ?Piece {
+        if (!arena.system) {
+            const offset = arena.alloc(sys, bytes) orelse return null;
+            return .{ .offset = offset, .taken = arena.roundUp(bytes), .pixels = arena.origin + offset };
+        }
+        if (bytes == 0) return null;
+        const want = arena.roundUp(bytes);
+        if (arena.used + want > arena.size) return null;
+        const whole = want + arena.alignment - 1;
+        const memory = sys.AllocMem(whole, exec.MEMF_EXTERNAL) orelse sys.AllocMem(whole, exec.MEMF_ANY) orelse return null;
+        const at = @intFromPtr(memory);
+        arena.used += want;
+        arena.free_bytes = arena.size - arena.used;
+        return .{ .offset = at, .taken = whole, .pixels = arena.roundUp(at) };
+    }
+
+    /// A buffer's memory given back, as `take` answered it.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping.
+    /// - `sys` - exec.
+    /// - `offset`, `taken` - the piece's.
+    pub fn give(arena: *Arena, sys: *ExecBase, offset: usize, taken: usize) void {
+        if (!arena.system) return arena.free(sys, offset, taken);
+        if (taken == 0) return;
+        sys.FreeMem(@ptrFromInt(offset), taken);
+        arena.used -= taken - (arena.alignment - 1);
+        arena.free_bytes = arena.size - arena.used;
     }
 
     /// Give every block record back. The region itself is the driver's.
@@ -246,11 +321,18 @@ pub const Arena = struct {
         return false;
     }
 
-    /// The largest single piece still free.
+    /// The largest single piece still free: of system memory, what the
+    /// limit leaves and exec has in one piece.
     ///
     /// INPUTS:
     /// - `arena` - the region's bookkeeping.
-    pub fn largest(arena: *Arena) usize {
+    /// - `sys` - exec.
+    pub fn largest(arena: *Arena, sys: *ExecBase) usize {
+        if (arena.system) {
+            const piece = sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_LARGEST);
+            const whole = if (piece > arena.alignment) piece - (arena.alignment - 1) else 0;
+            return @min(arena.free_bytes, arena.roundDown(whole));
+        }
         var most: usize = 0;
         var node = arena.blocks.first();
         while (node) |n| : (node = n.next()) {

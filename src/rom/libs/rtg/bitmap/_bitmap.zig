@@ -74,7 +74,7 @@ pub fn emptyVolatile(rb: *RtgBase, board: *rtg.RtgBoard) void {
     while (node) |n| : (node = n.next()) {
         const bitmap = bitmapOf(n);
         if (bitmap.flags & bm_flags.RTGBMF_BOARD_MEMORY == 0) continue;
-        if (bitmap.pixels != null) private.arena.free(sys, bitmap.offset, bitmap.taken);
+        if (bitmap.pixels != null) private.arena.give(sys, bitmap.offset, bitmap.taken);
         bitmap.pixels = null;
         bitmap.size_bytes = 0;
         bitmap.taken = 0;

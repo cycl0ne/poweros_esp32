@@ -59,10 +59,10 @@ const _board = @import("_board.zig");
 /// var info: rtg.RtgBoardInfo = .{};
 /// _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
 /// ```
-pub fn GetBoardInfo(_: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo, size: u32) u32 {
+pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo, size: u32) u32 {
     const private = privateOf(board);
     board.info.memory_free = private.arena.free_bytes;
-    board.info.memory_largest = private.arena.largest();
+    board.info.memory_largest = private.arena.largest(rb.sys_base);
     board.info.modes = countModes(board);
     if (board.ops) |ops| {
         if (ops.brightness) |read| board.info.brightness = read(board);

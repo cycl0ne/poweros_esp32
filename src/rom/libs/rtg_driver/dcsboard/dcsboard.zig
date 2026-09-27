@@ -109,13 +109,10 @@ const Panel = struct {
     gpio_base: ?*GpioBase = null,
     held_pads: [2]u8 = .{ 0, 0 },
     held_count: u8 = 0,
-    /// The picture, on a cache line - every buffer the library cuts from
-    /// it starts on one - and the allocation it sits in.
-    frame: ?[*]u8 = null,
-    frame_memory: ?*anyopaque = null,
+    /// A picture's bytes, and how many pictures the board may have at
+    /// once - several, so one can be drawn while another is on the glass;
+    /// the library takes each from system memory as it is asked for.
     frame_bytes: usize = 0,
-    /// How many pictures the display memory holds: several when there was
-    /// room, so one can be drawn while another is on the glass.
     frames: u32 = 0,
     band: ?[*]align(4) u8 = null,
     band_rows: u32 = 0,
@@ -199,21 +196,9 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         return err.RTGERR_BAD_TAGS;
     }
     panel.frame_bytes = @as(usize, width) * height * 2;
-    const line = sdk.hardware.DCACHE_LINE_SIZE;
-    // As many pictures as the board asks for (`RTGA_Buffers`), or as many
-    // fewer as there is room for; one may live anywhere.
+    // As many pictures as the board asks for (`RTGA_Buffers`) at once, each
+    // taken by the library as it is asked for.
     panel.frames = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
-    const frame = while (true) : (panel.frames -= 1) {
-        const asked: u32 = @intCast(panel.frames * panel.frame_bytes + line);
-        if (sys.AllocVec(asked, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR)) |memory| break memory;
-        if (panel.frames > 1) continue;
-        break sys.AllocVec(asked, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-            giveBack(panel);
-            return err.RTGERR_NO_MEMORY;
-        };
-    };
-    panel.frame_memory = frame;
-    panel.frame = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(frame), line));
 
     // Dark until there is a picture, then out of reset and through the
     // maker's bring-up.
@@ -248,10 +233,9 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
 
     board.region = .{
-        .base = panel.frame,
         .size = panel.frames * panel.frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
+        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.ops = &ops;
     board.info.buffers = panel.frames;
@@ -313,10 +297,7 @@ fn giveBack(panel: *Panel) void {
     panel.gpio_base = null;
     panel.held_count = 0;
     if (panel.band) |band| panel.sys.FreeVec(band);
-    if (panel.frame_memory) |frame| panel.sys.FreeVec(frame);
     panel.band = null;
-    panel.frame = null;
-    panel.frame_memory = null;
 }
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {

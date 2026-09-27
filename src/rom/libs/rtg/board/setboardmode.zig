@@ -96,7 +96,11 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
     // The driver may have replaced the memory; what was cut out of the old
     // one has gone with it.
     private.arena.deinit(sys);
-    private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, board.region.alignment);
+    if (board.region.flags & rtg.boards.RTGRF_SYSTEM_MEMORY != 0) {
+        private.arena.initSystem(sys, board.region.size, board.region.alignment);
+    } else {
+        private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, board.region.alignment);
+    }
     board.region.alignment = private.arena.alignment;
     board.info.memory_total = private.arena.free_bytes;
     board.info.pitch = if (wanted.pitch != 0)

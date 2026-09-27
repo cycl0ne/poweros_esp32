@@ -131,12 +131,17 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     board.info.modes = countModes(board);
 
     // The display memory it reported, cut up from here on by the library.
-    private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, if (request.alignment != 0)
+    const alignment: u32 = if (request.alignment != 0)
         request.alignment
     else if (board.region.alignment != 0)
         board.region.alignment
     else
-        0);
+        0;
+    if (board.region.flags & rtg.boards.RTGRF_SYSTEM_MEMORY != 0) {
+        private.arena.initSystem(sys, board.region.size, alignment);
+    } else {
+        private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, alignment);
+    }
     board.region.alignment = private.arena.alignment;
     board.info.memory_total = private.arena.free_bytes;
 

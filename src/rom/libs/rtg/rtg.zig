@@ -333,6 +333,29 @@ test "modes: walked, found, and set" {
     try tearDown(rb);
 }
 
+test "display memory from the system: taken as asked for, aligned, held to its limit, given back" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const sys = rb.sys_base;
+    var arena: memory.Arena = .{};
+    arena.initSystem(sys, 3 * 2560, 64);
+    try testing.expect(arena.usable());
+    try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
+    var pieces: [3]memory.Piece = undefined;
+    for (&pieces) |*piece| {
+        piece.* = arena.take(sys, 2560) orelse return error.NoMemory;
+        try testing.expectEqual(@as(usize, 0), piece.pixels % 64);
+        try testing.expect(piece.pixels >= piece.offset and piece.pixels + 2560 <= piece.offset + piece.taken);
+    }
+    try testing.expectEqual(@as(usize, 0), arena.free_bytes);
+    try testing.expect(arena.take(sys, 2560) == null);
+    try testing.expectEqual(@as(usize, 0), arena.largest(sys));
+    for (pieces) |piece| arena.give(sys, piece.offset, piece.taken);
+    try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
+    arena.deinit(sys);
+    try tearDown(rb);
+}
+
 test "display memory: cut up, aligned, and put back together" {
     const rb = try setUp();
     defer kexec.deinit();

@@ -120,7 +120,9 @@ pub const RtgBitMap = extern struct {
     /// The board whose memory this is, as an *RtgBoard.
     board: ?*anyopaque = null,
     /// Where it starts in that board's display memory (RTGBMF_BOARD_MEMORY
-    /// only), and how many bytes were taken for it, alignment and all.
+    /// only), and how many bytes were taken for it, alignment and all; on a
+    /// board with RTGRF_SYSTEM_MEMORY, the address and size of the block
+    /// exec gave.
     offset: usize = 0,
     taken: usize = 0,
     /// The rows written since the last RefreshBitMap: `dirty_end` is one

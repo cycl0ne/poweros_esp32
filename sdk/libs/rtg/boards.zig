@@ -57,7 +57,9 @@ pub const RTGMF_DOUBLE_BUFFER: u32 = 1 << 2;
 /// A buffer larger than the display may be shown through a window of it.
 pub const RTGMF_PANNABLE: u32 = 1 << 3;
 
-/// A stretch of display memory, as its driver reports it.
+/// A stretch of display memory, as its driver reports it - or, with
+/// RTGRF_SYSTEM_MEMORY, no stretch at all: `base` is null and `size` the
+/// most its buffers may hold at once.
 pub const RtgRegion = extern struct {
     base: ?[*]u8 = null,
     size: usize = 0,
@@ -78,6 +80,10 @@ pub const RTGRF_DISPLAYABLE: u32 = 1 << 0;
 pub const RTGRF_CPU_CACHED: u32 = 1 << 1;
 /// The memory belongs to somebody else and is not the driver's to free.
 pub const RTGRF_ADOPTED: u32 = 1 << 2;
+/// The board shows buffers wherever they are: the library takes each from
+/// system memory (external first) when it is allocated and gives it back
+/// when it is freed, so memory is spent only on the pictures that exist.
+pub const RTGRF_SYSTEM_MEMORY: u32 = 1 << 3;
 
 /// What a board is and what it can do. GetBoardInfo fills it in; clear it,
 /// pass its size, and trust the count that comes back - a program on the

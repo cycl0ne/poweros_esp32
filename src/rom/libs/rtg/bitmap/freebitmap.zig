@@ -64,7 +64,7 @@ pub fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void {
     if (board) |b| {
         sys.Remove(&freed.node);
         if (freed.flags & bm_flags.RTGBMF_BOARD_MEMORY != 0 and freed.pixels != null) {
-            boards.privateOf(b).arena.free(sys, freed.offset, freed.taken);
+            boards.privateOf(b).arena.give(sys, freed.offset, freed.taken);
         }
     }
     sys.FreeVec(freed);

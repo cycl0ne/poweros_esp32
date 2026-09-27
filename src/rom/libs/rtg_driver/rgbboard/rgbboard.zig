@@ -99,13 +99,14 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     };
     state.sys.AddTail(&board.modes, &panel.mode.node);
 
-    // The frames are the board's display memory: the library cuts the
-    // buffers out of it, and the first one is the picture.
+    // The panel shows a picture wherever it is, so its buffers are taken
+    // from system memory as they are asked for - a line-aligned block
+    // each, since the DMA reaches PSRAM a cache line at a time - and no
+    // more than `frames` of them at once.
     board.region = .{
-        .base = panel.frame,
         .size = panel.frames * panel.frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
+        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.ops = &ops;
     board.info.buffers = panel.frames;

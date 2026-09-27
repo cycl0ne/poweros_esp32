@@ -54,12 +54,9 @@ pub const Panel = struct {
     /// The one mode this panel has.
     mode: rtg.RtgMode = .{},
 
-    /// The display memory: what AllocMem gave, and the frames inside it,
-    /// the first starting on a cache line - several, when there was room,
-    /// so one picture can be drawn while another is shown.
-    frame_memory: ?[*]u8 = null,
-    frame_taken: usize = 0,
-    frame: ?[*]u8 = null,
+    /// A picture's bytes, and how many pictures the board may have at
+    /// once: the library takes each from system memory as it is asked for
+    /// (RTGRF_SYSTEM_MEMORY), so one can be drawn while another is shown.
     frame_bytes: usize = 0,
     frames: u32 = 0,
 
@@ -201,8 +198,8 @@ fn sleep(ms: u32) void {
     systimer.spinUs(@as(u64, ms) * 1000);
 }
 
-/// Everything but the pixels: the panel out of reset, its memory, its two
-/// DMA channels and the buffers it is fed from. The stream is not started
+/// Everything but the pixels: the panel out of reset, its two DMA
+/// channels and the buffers it is fed from. The stream is not started
 /// here - the first picture is drawn and written back while nothing is
 /// reading it, and `start` is what sets it going.
 pub fn bringUp(panel: *Panel) i32 {
@@ -220,21 +217,10 @@ pub fn bringUp(panel: *Panel) i32 {
     _ = setLine(panel, panel.config.display_pin, true);
     sleep(panel.config.settle_ms);
 
-    // The display memory: as many frames as the board asks for, or as many
-    // fewer as there is room for, down to one. It starts on a cache line,
-    // and a frame is a whole number of them: the DMA reaches PSRAM through
-    // the cache controller and asks for whole lines, and exec's allocator
-    // promises eight bytes.
-    const line = sdk.hardware.DCACHE_LINE_SIZE;
+    // The pictures are the library's to take, as they are asked for; the
+    // panel only says how large one is and how many there may be.
     panel.frame_bytes = @as(usize, setup.width) * setup.height * (setup.bits_per_pixel / 8);
     panel.frames = panel.config.buffers;
-    const got = while (true) : (panel.frames -= 1) {
-        panel.frame_taken = panel.frames * panel.frame_bytes + line - 1;
-        if (sys.AllocMem(panel.frame_taken, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR)) |memory| break memory;
-        if (panel.frames == 1) return giveBack(panel, err.RTGERR_NO_MEMORY);
-    };
-    panel.frame_memory = @ptrCast(got);
-    panel.frame = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(got), line));
 
     // How the picture is cut into bufferfuls. A frame has to be a whole
     // number of them, or the two would drift apart by construction.
@@ -491,11 +477,6 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
     if (panel.bounce) |b| {
         sys.FreeMem(@ptrCast(b), 2 * panel.bounce_bytes);
         panel.bounce = null;
-    }
-    if (panel.frame_memory) |m| {
-        sys.FreeMem(@ptrCast(m), panel.frame_taken);
-        panel.frame_memory = null;
-        panel.frame = null;
     }
     // The panel itself goes dark and back into reset, while its lines are
     // still this driver's.

@@ -33,11 +33,15 @@ const _bitmap = @import("_bitmap.zig");
 ///
 /// RESULT:
 /// The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-/// a size of 0, `RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY`.
+/// a size of 0, `RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY` (no room, or
+/// the board holds as many buffers as it may).
 ///
 /// BEHAVIOR:
 /// Every row starts on the board's alignment, so a stretch of rows handed
-/// to `RefreshBitMap` is exactly the memory that was written. Its first
+/// to `RefreshBitMap` is exactly the memory that was written. On a board
+/// whose display memory is system memory (`RTGRF_SYSTEM_MEMORY`) the
+/// buffer is taken from exec now, external memory first, and given back by
+/// `FreeBitMap`; its pixels are whatever that memory held. Its first
 /// seven fields are a drawing surface: pixels, width, height, pitch, size
 /// and format.
 ///
@@ -88,19 +92,19 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
     const bitmap: *rtg.RtgBitMap = @ptrCast(@alignCast(memory));
     bitmap.* = .{};
 
-    const offset = private.arena.alloc(sys, bytes) orelse {
+    const piece = private.arena.take(sys, bytes) orelse {
         sys.FreeVec(memory);
         rb.last_error = err.RTGERR_NO_MEMORY;
         return null;
     };
-    if (private.arena.origin == 0) {
-        private.arena.free(sys, offset, bytes);
+    if (!private.arena.usable()) {
+        private.arena.give(sys, piece.offset, piece.taken);
         sys.FreeVec(memory);
         rb.last_error = err.RTGERR_NO_DISPLAY;
         return null;
     }
 
-    bitmap.pixels = @ptrFromInt(private.arena.origin + offset);
+    bitmap.pixels = @ptrFromInt(piece.pixels);
     bitmap.width = width;
     bitmap.height = height;
     bitmap.pitch = @truncate(pitch);
@@ -109,8 +113,8 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
     bitmap.flags = flags | bm_flags.PIXMAPF_MEMORY | bm_flags.RTGBMF_BOARD_MEMORY;
     if (board.region.flags & rtg.boards.RTGRF_CPU_CACHED != 0) bitmap.flags |= bm_flags.RTGBMF_CACHED;
     bitmap.board = @ptrCast(board);
-    bitmap.offset = offset;
-    bitmap.taken = private.arena.roundUp(bytes);
+    bitmap.offset = piece.offset;
+    bitmap.taken = piece.taken;
     bitmap.node.type = .graphics;
 
     sys.AddTail(&board.bitmaps, &bitmap.node);
