@@ -6,7 +6,8 @@
 //!
 //! It opens the device (networks/wifi.device, unit 0, unless told
 //! otherwise). LEAVE leaves the network the station is on. JOIN joins the
-//! network of that name - with PASSPHRASE for a protected one - and waits
+//! network of that name - with PASSPHRASE for a protected one, or else the
+//! passphrase kept for it in ENVARC:Sys/net/networks/<name> - and waits
 //! up to 15 seconds for the station to be on it, then says which access
 //! point it took, on which channel and how strong. SCAN - what it does
 //! when given nothing else - asks the radio for the networks in range and
@@ -25,7 +26,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Wireless";
-const VERSION_STRING = "\x00$VER: Wireless 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Wireless 1.2 (27.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/K,UNIT/K/N,SCAN/S,JOIN/K,PASSPHRASE/K,LEAVE/S";
@@ -229,8 +230,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_LEFT, .{});
     }
     if (argv[arg_join] != 0) {
-        const passphrase: ?[*:0]const u8 = if (argv[arg_passphrase] != 0) @ptrFromInt(argv[arg_passphrase]) else null;
-        const result = joinNetwork(sys, dl, utility, &req, @ptrFromInt(argv[arg_join]), passphrase);
+        const name: [*:0]const u8 = @ptrFromInt(argv[arg_join]);
+        var kept: [wireless.PASSPHRASE_MAX + 1]u8 = @splat(0);
+        defer @memset(@as(*volatile [kept.len]u8, &kept), 0);
+        const passphrase: ?[*:0]const u8 = if (argv[arg_passphrase] != 0) @ptrFromInt(argv[arg_passphrase]) else wireless.knownPassphrase(dl, name, &kept);
+        const result = joinNetwork(sys, dl, utility, &req, name, passphrase);
         if (result != dos.RETURN_OK or argv[arg_scan] == 0) return result;
     }
     if (argv[arg_leave] != 0 and argv[arg_scan] == 0) return dos.RETURN_OK;

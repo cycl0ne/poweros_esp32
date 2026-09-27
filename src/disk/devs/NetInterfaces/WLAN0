@@ -2,12 +2,18 @@
  * brings up as wlan0: the chip's radio as a station. The startup-sequence
  * brings up every file here.
  *
- * The radio has to be on a network before DHCP can answer:
+ * A line
+ *   Network = "<network>"
+ * has the network joined as the interface comes up, at every boot. A
+ * protected network's passphrase is kept apart from this file, which can
+ * then be shown or shared: the first line of
+ *   ENVARC:Sys/net/networks/<network>
+ * Without a Network the interface waits for
  *   C:net/Wireless JOIN "<network>" PASSPHRASE <passphrase>
- * Until then the interface waits, and takes a link-local address. On a
- * board without the radio the interface is not added, and nothing is
- * said. A keyword this file does not know is an error, with its line and
- * column; see C:net/AddNetInterface for the list.
+ * and takes a link-local address until then. On a board without the
+ * radio the interface is not added, and nothing is said. A keyword this
+ * file does not know is an error, with its line and column; see
+ * C:net/AddNetInterface for the list.
  */
 Device     = networks/wifi.device
 Unit       = 0

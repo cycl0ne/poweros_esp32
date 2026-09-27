@@ -81,6 +81,13 @@ The request is answered at once. The join's outcome is the link: the unit's
 carrier comes when the station has joined and goes when it leaves or is
 thrown off.
 
+An interface file with a `Network` line (`DEVS:NetInterfaces/WLAN0`) has
+the network joined as the boot brings the interface up. The passphrase is
+kept apart, as the first line of `ENVARC:Sys/net/networks/<network>`, so
+the interface file holds no secret; `C:net/Wireless JOIN` without
+`PASSPHRASE` takes it from there too (`sdk.devices.wireless.knownPassphrase`
+and `join`).
+
 A network joined stays wanted until it is left. Coming off it for any
 reason but its own leave, the station tries again after a pause - a second,
 doubling each time up to a minute, back to a second once it has joined
@@ -98,6 +105,13 @@ A buffer holding the element from its first byte comes back with its id and
 length overwritten, and the access point refuses the association with
 "invalid element" (reason 13). The station's element therefore has two bytes
 of room in front of it.
+
+### The calibration
+
+The PHY is calibrated in full at every start: it takes 29 ms on the 7B, and
+a full calibration is the one that gives the best result. Keeping the
+calibration in a file would save most of those 29 ms, at the price of the
+device's task becoming a process that reads and writes the flash disk.
 
 ## The key handshake
 
@@ -202,6 +216,10 @@ offset there fails a test instead of agreeing with itself.
 
 ## Proved on the board
 
+- A 1 MB download takes about 15 s (66 KiB/s), and takes the same while
+  three more megabytes are written to the flash disk beside it: the flash's
+  erases, with interrupts masked for each, do not drop the link.
+
 On the Waveshare 7B: the radio up and calibrated, a scan listing the
 networks in range with their security, an open network joined with DHCP,
 ARP and DNS behind it, and a WPA2-Personal network joined - the 4-way
@@ -213,9 +231,13 @@ up, and it takes its address once the radio has been joined to a network.
 
 ## Not done yet
 
+- **Throughput is low**: 66 KiB/s for a download from the internet, where
+  the link carries megabytes a second. Not yet looked into: the TCP
+  windows, the receive ring of eight frames, and what is left of the
+  panel's noise are the first places to measure.
 - **The panel still costs the radio something.** With the pads at their
   weakest, a ping takes 4 to 40 ms and now and then a few hundred; with the
-  panel stopped, 4 to 20. What is left is the panel's own noise.
+  panel stopped, 4 to 20.
 - **The group key rekey has not been seen on the board**; it is in the host
   tests.
 - **The group key's TKIP form is untested.** A mixed WPA/WPA2 network hands
@@ -223,13 +245,6 @@ up, and it takes its address once the radio has been joined to a network.
 - **The reason the station came off a network only reaches the raw port.**
   It belongs in the wireless API as well, so that `C:net/Wireless` can say
   why a join did not take instead of only that it did not.
-- **The calibration runs in full on every start.** It belongs in a file in
-  `ENVARC:`, with a full run only when the stored one does not fit the
-  board.
-- **The network is not joined at boot.** WLAN0 has no network to join
-  yet: a `Network` keyword and the passphrase in
-  `ENVARC:Sys/net/networks/<ssid>` are still to come, so that the boot joins
-  without the passphrase on a command line.
 - **Nothing is taken back.** The device never expunges: the libraries keep
   tasks, timers and an interrupt that cannot all be given up.
 - **WPA3, enterprise, OWE and the access point side are not there**, and the

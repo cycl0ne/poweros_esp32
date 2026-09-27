@@ -34,7 +34,79 @@
 //! management a network asks for, and a list of networks is little use
 //! without it.
 
-const TAG_USER = @import("../libs/utility/tagitem.zig").TAG_USER;
+const tagitem = @import("../libs/utility/tagitem.zig");
+const TAG_USER = tagitem.TAG_USER;
+const TagItem = tagitem.TagItem;
+const dos = @import("../libs/dos/dos.zig");
+const DosBase = @import("../interface/dos.zig").DosBase;
+const ExecBase = @import("../interface/exec.zig").ExecBase;
+const network = @import("network.zig");
+
+/// Where a known network's passphrase is kept: a file named after the
+/// network in this directory, the passphrase its first line. The interface
+/// file names the network and holds no secret, so it can be shown or
+/// shared; several networks can be known at once.
+pub const NETWORKS_DIRECTORY = "ENVARC:Sys/net/networks/";
+
+/// The longest passphrase: 63 characters, or the key itself in 64 hex
+/// digits.
+pub const PASSPHRASE_MAX = 64;
+
+/// The passphrase kept for the network `ssid`, NUL-terminated in `into`;
+/// null when none is kept (no file, or an empty first line).
+pub fn knownPassphrase(dl: *DosBase, ssid: [*:0]const u8, into: *[PASSPHRASE_MAX + 1]u8) ?[*:0]const u8 {
+    var path: [NETWORKS_DIRECTORY.len + 33:0]u8 = @splat(0);
+    @memcpy(path[0..NETWORKS_DIRECTORY.len], NETWORKS_DIRECTORY);
+    var at: usize = 0;
+    while (ssid[at] != 0) : (at += 1) {
+        if (at == 32) return null;
+        path[NETWORKS_DIRECTORY.len + at] = ssid[at];
+    }
+    const file = dl.Open(@ptrCast(&path), dos.MODE_OLDFILE) orelse return null;
+    defer _ = dl.Close(file);
+    const got = dl.Read(file, into, into.len);
+    if (got <= 0) return null;
+    var end: usize = 0;
+    while (end < @as(usize, @intCast(got)) and end < PASSPHRASE_MAX and into[end] != '\n' and into[end] != '\r') end += 1;
+    while (end > 0 and (into[end - 1] == ' ' or into[end - 1] == '\t')) end -= 1;
+    if (end == 0) return null;
+    into[end] = 0;
+    return @ptrCast(into);
+}
+
+/// The copy calls a device wants from every opener; an opener that only
+/// sends wireless requests has nothing to copy.
+fn noCopy(to: ?*anyopaque, from: ?*const anyopaque, length: u32) callconv(.c) bool {
+    _ = .{ to, from, length };
+    return false;
+}
+
+/// The network `ssid` joined through `device`'s `unit`, with `passphrase`
+/// for a protected one: the device opened, S2_SETOPTIONS sent, the device
+/// closed. Answers the request's error (0 when the join was taken; whether
+/// it worked comes as the link), or the open's.
+pub fn join(sys: *ExecBase, device: [*:0]const u8, unit: u32, ssid: [*:0]const u8, passphrase: ?[*:0]const u8) i32 {
+    const port = sys.CreateMsgPort() orelse return network.S2ERR_NO_RESOURCES;
+    defer sys.DeleteMsgPort(port);
+    const buffers = [_]TagItem{
+        .{ .tag = network.S2_CopyToBuff, .data = @intFromPtr(&noCopy) },
+        .{ .tag = network.S2_CopyFromBuff, .data = @intFromPtr(&noCopy) },
+        .{},
+    };
+    var req: network.IOSana2Req = .{};
+    req.req.message.reply_port = port;
+    req.req.message.length = @sizeOf(network.IOSana2Req);
+    req.buffer_management = @constCast(&buffers);
+    const opened = sys.OpenDevice(device, unit, &req.req, 0);
+    if (opened != 0) return opened;
+    defer sys.CloseDevice(&req.req);
+    var tags = [_]TagItem{ .{ .tag = S2INFO_SSID, .data = @intFromPtr(ssid) }, .{}, .{} };
+    if (passphrase) |text| tags[1] = .{ .tag = S2INFO_Passphrase, .data = @intFromPtr(text) };
+    req.req.command = S2_SETOPTIONS;
+    req.data = &tags;
+    _ = sys.DoIO(&req.req);
+    return req.req.err;
+}
 
 // Tags to get and set information.
 pub const S2INFO_SSID: u32 = TAG_USER + 0;
