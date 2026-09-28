@@ -3199,7 +3199,7 @@ there.
 
 **NOTES**
 
-`C:Show` is what this was added for.
+`C:ShowInfo` is what this was added for.
 
 **BUGS**
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! Show: what the machine is made of, from the lists it keeps. Built
+//! ShowInfo: what the machine is made of, from the lists it keeps. Built
 //! against the SDK only.
 //!
-//!   Show TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S,
+//!   ShowInfo TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S,
 //!        HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S
 //!
 //! With nothing asked for it prints a line per section saying how much
@@ -23,8 +23,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
-pub const COMMAND_NAME = "Show";
-const VERSION_STRING = "\x00$VER: Show 1.0 (17.9.2026)\r\n";
+pub const COMMAND_NAME = "ShowInfo";
+const VERSION_STRING = "\x00$VER: ShowInfo 1.1 (28.9.2026)\r\n";
 
 const template = "TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S," ++
     "HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S";
@@ -124,7 +124,7 @@ fn summary() i32 {
     _ = Printf(dl, "%-12s %d in use of %d\n", .{ "Interrupts", countInterrupts(), sdk.hardware.intbits.INTB_COUNT });
     _ = Printf(dl, "%-12s %d regions\n", .{ "Memory", countOf(exec.EXECLIST_MEMORY) });
     _ = Printf(dl, "%-12s %d\n", .{ "Segments", countSegments() });
-    _ = dl.PutStr("Show ALL, or a switch per section: Show ?\n");
+    _ = dl.PutStr("ShowInfo ALL, or a switch per section: ShowInfo ?\n");
     return dos.RETURN_OK;
 }
 

@@ -26,12 +26,12 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",       "dir",      "delete",  "makedir",       "rename",
-    "avail",      "assign",   "version", "addbuffers",    "which",
-    "list",       "format",   "protect", "changetaskpri", "wait",
-    "info",       "platform", "copy",    "rdb",           "i2c",
-    "backlight",  "rtg",      "show",    "setmap",        "mount",
-    "showconfig", "date",     "setdate", "fontprefs",     "fixfonts",
+    "type",       "dir",      "delete",   "makedir",       "rename",
+    "avail",      "assign",   "version",  "addbuffers",    "which",
+    "list",       "format",   "protect",  "changetaskpri", "wait",
+    "info",       "platform", "copy",     "rdb",           "i2c",
+    "backlight",  "rtg",      "showinfo", "setmap",        "mount",
+    "showconfig", "date",     "setdate",  "fontprefs",     "fixfonts",
     "listfonts",
 };
 const tests = [_][]const u8{

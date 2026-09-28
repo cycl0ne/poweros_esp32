@@ -2,7 +2,7 @@
 //! FontPrefs: the system's fonts, from ENV:Sys/font.prefs or as given.
 //! Built against the SDK only.
 //!
-//!   FontPrefs FROM/K,SCREEN/K,DEFAULT/K,FIXED/K
+//!   FontPrefs FROM/K,SCREEN/K,DEFAULT/K,FIXED/K,SHOW/S
 //!
 //! Each font is a family and a size: `spleen.font/16` for 16 rows,
 //! `spleen.font/10P` for 10 points. SCREEN is the font of screens' title
@@ -18,6 +18,16 @@
 //! in FONTS: will do, and handed to intuition.library, which uses them for
 //! every screen, window and console opened from then on. S:Startup-Sequence
 //! runs this once; run it again after changing the file.
+//!
+//! SHOW prints the three fonts intuition uses now - after setting them,
+//! if fonts are given, and on its own changes nothing:
+//!
+//!   SCREEN   go.font 24 rows
+//!   DEFAULT  go.font 21 rows
+//!   FIXED    pospaz.font 16 rows (ROM)
+//!
+//! A shell or window already open keeps the font it was opened with; the
+//! boot shell's window opens before S:Startup-Sequence runs this.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -37,8 +47,9 @@ pub const COMMAND_NAME = "FontPrefs";
 const VERSION_STRING = "\x00$VER: FontPrefs 1.0 (28.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FROM/K,SCREEN/K,DEFAULT/K,FIXED/K";
+const template = "FROM/K,SCREEN/K,DEFAULT/K,FIXED/K,SHOW/S";
 const arg_from = 0;
+const arg_show = 4;
 /// SCREEN, DEFAULT and FIXED follow, in that order.
 const arg_first_font = 1;
 const file_template = "SCREEN/K,DEFAULT/K,FIXED/K";
@@ -49,6 +60,7 @@ const MSG_NOLIBRARY = "No %s\n";
 const MSG_BADSIZE = "%s: a font is written family/size, as spleen.font/16 or spleen.font/10P\n";
 const MSG_NOFONT = "%s: not in FONTS:, at no size that will do\n";
 const MSG_NOTFIXED = "%s is proportional: consoles keep pospaz\n";
+const MSG_SHOWN = "%-8s %s %d rows%s\n";
 
 /// The three in the templates' order.
 const screen_at = 0;
@@ -114,6 +126,32 @@ fn readLine(dl: *DosBase, path: [*:0]const u8, line: *[max_line + 1]u8) ?usize {
     return null;
 }
 
+/// The three fonts intuition uses now, a line each.
+fn showFonts(sys: *ExecBase, dl: *DosBase) i32 {
+    const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(gfx_lib);
+    const gb: *GraphicsBase = @ptrCast(gfx_lib);
+    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(int_lib);
+    const ib: *IntuitionBase = @ptrCast(int_lib);
+    const sf = intuition.screens;
+    const which = [_]struct { name: [*:0]const u8, font: u32 }{
+        .{ .name = "SCREEN", .font = sf.SYSFONT_SCREEN },
+        .{ .name = "DEFAULT", .font = sf.SYSFONT_DEFAULT },
+        .{ .name = "FIXED", .font = sf.SYSFONT_FIXED },
+    };
+    for (which) |one| {
+        const font = ib.OpenSystemFont(one.font) orelse continue;
+        defer gb.CloseFont(font);
+        const rom: [*:0]const u8 = if (font.flags & graphics.FPF_ROMFONT != 0) " (ROM)" else "";
+        _ = Printf(dl, MSG_SHOWN, .{ one.name, font.node.name orelse "?", @as(u32, font.image.height), rom });
+    }
+    return dos.RETURN_OK;
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -121,7 +159,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -135,7 +173,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var file_argv: [3]usize = @splat(0);
     var line: [max_line + 1]u8 = undefined;
     defer if (file_args) |fa| dl.FreeArgs(fa);
-    if (given[0] == null and given[1] == null and given[2] == null) {
+    const show = argv[arg_show] != 0;
+    const none_given = given[0] == null and given[1] == null and given[2] == null;
+    if (show and none_given) return showFonts(sys, dl);
+    if (none_given) {
         const from = rdargs.string(argv[arg_from]) orelse default_file;
         const length = readLine(dl, from, &line) orelse return dos.RETURN_OK;
         var source: dos.RDArgs = .{ .source = .{ .buffer = &line, .length = @intCast(length) } };
@@ -190,5 +231,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
     }
     _ = ib.SetSystemFonts(fonts[screen_at], fonts[default_at], fonts[fixed_at]);
+    if (show) {
+        const shown = showFonts(sys, dl);
+        if (shown != dos.RETURN_OK) return shown;
+    }
     return result;
 }
