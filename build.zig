@@ -629,11 +629,14 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
     // second-stage bootloader. --ram-only-header shows the ROM only the RAM
     // segments (vectors, boot code, data), which it loads; the code segment
     // (.flash.text) follows them, 64 KiB-aligned, and the boot code maps it
-    // through the MMU (src/arch/esp32s3/flashmap.zig).
+    // through the MMU (src/arch/esp32s3/flashmap.zig). No SHA-256 digest:
+    // esptool's covers the whole file, the ROM hashes only the part the
+    // header shows it, so the check could only fail.
     const elf2image = b.addSystemCommand(&.{
         esptool,        "--chip", "esp32s3",           "elf2image",
         "--flash-mode", "dio",    "--flash-freq",      "80m",
-        "--flash-size", "16MB",   "--ram-only-header", "-o",
+        "--flash-size", "16MB",   "--ram-only-header", "--dont-append-digest",
+        "-o",
     });
     const unchecked = elf2image.addOutputFileArg("kernel.bin");
     elf2image.addFileArg(kernel_elf);
