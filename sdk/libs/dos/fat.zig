@@ -351,3 +351,175 @@ pub fn shortNameChecksum(name: []const u8) u8 {
     }
     return sum;
 }
+
+// --- exFAT -------------------------------------------------------------------
+//
+// An exFAT volume starts with a boot region of twelve sectors - the boot
+// sector, eight extended boot sectors, one of OEM parameters, one
+// reserved, and one that repeats a checksum over the eleven before it -
+// and a backup of the same twelve behind it. Its table (FAT) links the
+// clusters of a file only when they are not one run: a file whose
+// clusters follow one another says so (`exfat_no_fat_chain`) and its
+// table entries mean nothing. Which clusters are in use is a bitmap's to
+// say, not the table's.
+
+/// The boot sector's fields, at their offsets.
+pub const exfat_partition_offset: usize = 64;
+pub const exfat_volume_length: usize = 72;
+pub const exfat_fat_offset: usize = 80;
+pub const exfat_fat_length: usize = 84;
+pub const exfat_heap_offset: usize = 88;
+pub const exfat_cluster_count: usize = 92;
+pub const exfat_root_cluster: usize = 96;
+pub const exfat_serial: usize = 100;
+pub const exfat_revision: usize = 104;
+pub const exfat_volume_flags: usize = 106;
+pub const exfat_sector_shift: usize = 108;
+pub const exfat_cluster_shift: usize = 109;
+pub const exfat_fat_count: usize = 110;
+pub const exfat_percent_in_use: usize = 112;
+/// From byte 11 to here the boot sector must be zero: where a FAT volume
+/// keeps its BPB, so nothing that reads one takes this for one.
+pub const exfat_zero_from: usize = 11;
+pub const exfat_zero_to: usize = 64;
+
+/// VolumeFlags: which of two tables is in use, whether the volume was
+/// left in the middle of a change, whether the medium has reported
+/// failures.
+pub const exfat_active_fat: u16 = 1 << 0;
+pub const exfat_volume_dirty: u16 = 1 << 1;
+pub const exfat_media_failure: u16 = 1 << 2;
+
+/// The revision this reads: 1.00. A volume of a later major revision may
+/// be laid out differently and is not guessed at.
+pub const exfat_major_revision: u8 = 1;
+
+/// Sectors in a boot region, and where its checksum sector is.
+pub const exfat_boot_sectors: u32 = 12;
+pub const exfat_checksum_sector: u32 = 11;
+/// What PercentInUse holds when it says nothing.
+pub const exfat_percent_unknown: u8 = 0xFF;
+
+/// The boot region's checksum, over the first eleven sectors, carried
+/// forward from `sum` so the sectors can be given one at a time. Three
+/// bytes of the boot sector are left out: VolumeFlags and PercentInUse,
+/// which change while the volume is in use, so that changing them does not
+/// mean writing the checksum sector again.
+pub fn exfatBootChecksum(sum: u32, sector: []const u8, is_boot_sector: bool) u32 {
+    var checksum = sum;
+    for (sector, 0..) |byte, at| {
+        if (is_boot_sector and (at == exfat_volume_flags or at == exfat_volume_flags + 1 or at == exfat_percent_in_use)) continue;
+        checksum = ((checksum & 1) << 31 | checksum >> 1) +% byte;
+    }
+    return checksum;
+}
+
+/// The first cluster a volume can use, as on FAT: entries 0 and 1 of the
+/// table are not clusters.
+pub const exfat_first_cluster: u32 = 2;
+/// A cluster that must not be used, and the end of a chain.
+pub const exfat_bad: u32 = 0xFFFF_FFF7;
+pub const exfat_eoc: u32 = 0xFFFF_FFFF;
+
+// A directory entry is 32 bytes, as on FAT, and its first byte says what
+// it is: bit 7 that it is in use, bit 6 that it belongs to the entry
+// before it (a secondary), bit 5 that a reader may pass over it if it
+// does not know it (benign), and the low five bits which kind.
+
+pub const exfat_entry_in_use: u8 = 0x80;
+pub const exfat_entry_secondary: u8 = 0x40;
+pub const exfat_entry_benign: u8 = 0x20;
+/// The end of a directory: nothing past it is in use.
+pub const exfat_entry_end: u8 = 0x00;
+
+pub const exfat_type_bitmap: u8 = 0x81;
+pub const exfat_type_upcase: u8 = 0x82;
+pub const exfat_type_label: u8 = 0x83;
+pub const exfat_type_file: u8 = 0x85;
+pub const exfat_type_guid: u8 = 0xA0;
+pub const exfat_type_stream: u8 = 0xC0;
+pub const exfat_type_name: u8 = 0xC1;
+
+// The allocation bitmap's and the up-case table's entries: where each
+// lies and how long it is. The table's entry carries its checksum too.
+pub const exfat_bitmap_flags: usize = 1;
+pub const exfat_upcase_checksum: usize = 4;
+pub const exfat_region_cluster: usize = 20;
+pub const exfat_region_length: usize = 24;
+
+// The volume label's entry: up to eleven characters of UTF-16.
+pub const exfat_label_length: usize = 1;
+pub const exfat_label_chars: usize = 2;
+pub const exfat_label_max: usize = 11;
+
+// A file's entry: how many entries follow it, their checksum, the
+// attribute byte (FAT's, in a 16-bit field), and three moments.
+pub const exfat_file_secondaries: usize = 1;
+pub const exfat_file_checksum: usize = 2;
+pub const exfat_file_attributes: usize = 4;
+pub const exfat_file_created: usize = 8;
+pub const exfat_file_modified: usize = 12;
+pub const exfat_file_accessed: usize = 16;
+pub const exfat_file_created_10ms: usize = 20;
+pub const exfat_file_modified_10ms: usize = 21;
+pub const exfat_file_created_utc: usize = 22;
+pub const exfat_file_modified_utc: usize = 23;
+pub const exfat_file_accessed_utc: usize = 24;
+
+// The stream extension that follows it: where the data is and how much
+// of it there is. The valid length is how much has been written; what
+// lies between it and the data length reads as zeroes.
+pub const exfat_stream_flags: usize = 1;
+pub const exfat_stream_name_length: usize = 3;
+pub const exfat_stream_name_hash: usize = 4;
+pub const exfat_stream_valid_length: usize = 8;
+pub const exfat_stream_cluster: usize = 20;
+pub const exfat_stream_data_length: usize = 24;
+/// Stream flags: the stream may have clusters at all, and they are one
+/// run with no table chain.
+pub const exfat_allocation_possible: u8 = 1 << 0;
+pub const exfat_no_fat_chain: u8 = 1 << 1;
+
+/// A name entry carries fifteen characters of UTF-16 from byte 2.
+pub const exfat_name_chars_at: usize = 2;
+pub const exfat_name_chars: usize = 15;
+
+/// The most secondaries a file has: its stream and the name entries of
+/// the longest name.
+pub const exfat_max_secondaries: usize = 1 + (name_max + exfat_name_chars - 1) / exfat_name_chars;
+
+/// A UTC offset byte that holds one: bit 7 set, the offset in quarter
+/// hours in the seven bits below it.
+pub const exfat_utc_valid: u8 = 0x80;
+
+/// The checksum over a file's entry set: every byte of it except the two
+/// the checksum is kept in, carried forward from `sum` so the entries can
+/// be given one at a time. `first` says the entry given is the file entry.
+pub fn exfatSetChecksum(sum: u16, entry: []const u8, first: bool) u16 {
+    var checksum = sum;
+    for (entry[0..entry_bytes], 0..) |byte, at| {
+        if (first and (at == exfat_file_checksum or at == exfat_file_checksum + 1)) continue;
+        checksum = ((checksum & 1) << 15 | checksum >> 1) +% byte;
+    }
+    return checksum;
+}
+
+/// The hash of a name as the up-case table makes it, each character
+/// taken as two bytes, low one first: what a stream extension carries so
+/// a search can pass over a name without reading its entries.
+pub fn exfatNameHash(upcased: []const u16) u16 {
+    var hash: u16 = 0;
+    for (upcased) |unit| {
+        for ([_]u8{ @truncate(unit), @truncate(unit >> 8) }) |byte| {
+            hash = ((hash & 1) << 15 | hash >> 1) +% byte;
+        }
+    }
+    return hash;
+}
+
+/// The up-case table's checksum, over its bytes as they are stored.
+pub fn exfatTableChecksum(sum: u32, bytes: []const u8) u32 {
+    var checksum = sum;
+    for (bytes) |byte| checksum = ((checksum & 1) << 31 | checksum >> 1) +% byte;
+    return checksum;
+}

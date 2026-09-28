@@ -90,6 +90,35 @@ pub fn codeOf(e: Error) i32 {
     };
 }
 
+// --- finding the volume --------------------------------------------------------
+
+/// Where a medium's volume starts, and which format it is.
+pub const Volume = struct { first: u64, format: fat.Format };
+
+/// The volume on a medium: the medium itself if its first block is a
+/// boot sector of either format, else the first partition of its table
+/// worth mounting whose first block is one. `sector` is one block of
+/// scratch; the medium is duck-typed as the file systems' is.
+pub fn findVolume(media: anytype, sector: []u8) Error!Volume {
+    if (!media.read(0, 1, sector)) return error.MediumFailed;
+    switch (fat.formatOf(sector)) {
+        .unknown => {},
+        else => |format| return .{ .first = 0, .format = format },
+    }
+    if (!fat.signed(sector)) return error.MediumFailed;
+    var partitions: [fat.partition_count]fat.Partition = undefined;
+    for (&partitions, 0..) |*partition, which| partition.* = fat.partitionOf(sector, which);
+    for (partitions) |partition| {
+        if (!partition.real() or !fat.mountable(partition.kind)) continue;
+        if (!media.read(partition.first, 1, sector)) return error.MediumFailed;
+        switch (fat.formatOf(sector)) {
+            .unknown => {},
+            else => |format| return .{ .first = partition.first, .format = format },
+        }
+    }
+    return error.MediumFailed;
+}
+
 // --- the attribute byte ------------------------------------------------------
 
 /// The attribute bits a directory entry carries. Both formats use the
@@ -243,6 +272,50 @@ pub fn lastStamp() Stamp {
 }
 
 // --- names -------------------------------------------------------------------
+
+/// The longest name a FileInfoBlock holds, its NUL aside.
+pub const fib_name_max: usize = 107;
+
+/// Whether two names are the same name: compared without regard to case,
+/// over Latin-1, as dos compares them, through utility.library so a name
+/// is cased here exactly as everywhere else.
+pub fn same(ub: *UtilityBase, one: []const u8, other: []const u8) bool {
+    if (one.len != other.len) return false;
+    for (one, other) |mine, theirs| if (ub.ToUpper(mine) != ub.ToUpper(theirs)) return false;
+    return true;
+}
+
+/// Whether a name may be given to a new entry at all: a length both
+/// formats hold, no control characters, none of the characters a PC
+/// reserves, and not ending in a dot or a space - a PC drops those, and
+/// the file would then have a name nothing here can find.
+pub fn validLong(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > fat.name_max) return error.InvalidName;
+    // "." and "..": the entries every FAT32 directory but the root starts
+    // with, and names nothing may take on either format.
+    if (name[0] == '.' and (name.len == 1 or (name.len == 2 and name[1] == '.'))) return error.InvalidName;
+    for (name) |char| switch (char) {
+        0...0x1F, 0x7F, '"', '*', '/', ':', '<', '>', '?', '\\', '|' => return error.InvalidName,
+        else => {},
+    };
+    const last = name[name.len - 1];
+    if (last == '.' or last == ' ') return error.InvalidName;
+}
+
+/// A name stored as UTF-16 units, in Latin-1 - which is what this
+/// system's names are - or null if it has a character that is not, or
+/// is empty. It ends at the first 0 unit, if there is one.
+pub fn latin1Of(units: []const u16, into: *[fat.name_max]u8) ?[]const u8 {
+    var len: usize = 0;
+    for (units) |unit| {
+        if (unit == 0) break;
+        if (unit > 0xFF or len == fat.name_max) return null;
+        into[len] = @intCast(unit);
+        len += 1;
+    }
+    if (len == 0) return null;
+    return into[0..len];
+}
 
 /// The byte that marks a directory entry as erased.
 pub const entry_erased: u8 = 0xE5;

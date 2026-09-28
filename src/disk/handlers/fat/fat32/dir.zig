@@ -79,8 +79,8 @@ pub const Found = struct {
 
     /// Whether `wanted` is this entry's long name or its short one.
     pub fn named(found: *const Found, ub: *UtilityBase, wanted: []const u8) bool {
-        if (found.long_len != 0 and names.same(ub, found.long_buf[0..found.long_len], wanted)) return true;
-        return names.same(ub, found.short_buf[0..found.short_len], wanted);
+        if (found.long_len != 0 and _fat.same(ub, found.long_buf[0..found.long_len], wanted)) return true;
+        return _fat.same(ub, found.short_buf[0..found.short_len], wanted);
     }
 };
 
@@ -202,7 +202,7 @@ pub fn Directory(comptime Media: type) type {
             if (long) |pieces| {
                 if (pieces.latin1(&found.long_buf)) |text| found.long_len = text.len;
             }
-            const given = if (found.long_len != 0 and found.long_len <= names.fib_name_max)
+            const given = if (found.long_len != 0 and found.long_len <= _fat.fib_name_max)
                 found.long_buf[0..found.long_len]
             else
                 short;
@@ -349,7 +349,7 @@ pub fn Directory(comptime Media: type) type {
         /// has made sure is not taken. Its long name goes before it if it
         /// needs one. What was made, as a scan would find it.
         pub fn create(self: *Self, first: u32, name: []const u8, what: Entry, found: *Found) Error!void {
-            try names.validLong(name);
+            try _fat.validLong(name);
             var short: [fat.ent_name_bytes]u8 = undefined;
             var case: u8 = 0;
             var pieces: usize = 0;

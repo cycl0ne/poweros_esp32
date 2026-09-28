@@ -39,11 +39,20 @@ test {
     _ = @import("handlers/fat/fat32/names.zig");
     _ = @import("handlers/fat/fat32/dir.zig");
     _ = @import("handlers/fat/fat32/fs.zig");
+    _ = @import("handlers/fat/exfat/layout.zig");
+    _ = @import("handlers/fat/exfat/table.zig");
+    _ = @import("handlers/fat/exfat/bitmap.zig");
+    _ = @import("handlers/fat/exfat/upcase.zig");
+    _ = @import("handlers/fat/exfat/names.zig");
+    _ = @import("handlers/fat/exfat/dir.zig");
+    _ = @import("handlers/fat/exfat/fs.zig");
     _ = @import("handlers/fat/fat.zig");
     _ = @import("handlers/fat/tests/_fat.zig");
     _ = @import("handlers/fat/tests/names.zig");
     _ = @import("handlers/fat/tests/dir.zig");
     _ = @import("handlers/fat/tests/fs.zig");
+    _ = @import("handlers/fat/tests/exfat_dir.zig");
+    _ = @import("handlers/fat/tests/exfat_fs.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/gadgets/colorwheel/_colour.zig");
 }

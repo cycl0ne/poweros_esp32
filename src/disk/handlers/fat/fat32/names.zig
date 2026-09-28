@@ -17,9 +17,10 @@
 //! short - so every name examine hands out opens the file it came from.
 //! A lookup matches either name.
 //!
-//! Names compare without regard to case, over Latin-1, as dos's do, and
-//! every change of case goes through utility.library's ToUpper and
-//! ToLower, so a name is cased here exactly as everywhere else.
+//! Every change of case goes through utility.library's ToUpper and
+//! ToLower, so a name is cased here exactly as everywhere else. What both
+//! formats share - comparing two names, what a new name may be, turning
+//! UTF-16 into Latin-1 - is in `_fat.zig`.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -33,20 +34,8 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 pub const case_lower_base: u8 = 0x08;
 pub const case_lower_ext: u8 = 0x10;
 
-/// The longest name a FileInfoBlock holds, its NUL aside.
-pub const fib_name_max: usize = 107;
-
 /// A short name spelled out: up to eight, a dot, up to three.
 pub const short_max: usize = 12;
-
-// --- comparing -------------------------------------------------------------
-
-/// Whether two names are the same name.
-pub fn same(ub: *UtilityBase, one: []const u8, other: []const u8) bool {
-    if (one.len != other.len) return false;
-    for (one, other) |mine, theirs| if (ub.ToUpper(mine) != ub.ToUpper(theirs)) return false;
-    return true;
-}
 
 // --- the short name ----------------------------------------------------------
 
@@ -128,22 +117,6 @@ pub fn asShort(ub: *UtilityBase, name: []const u8) ?Short {
     if (base_case == .lower) short.case |= case_lower_base;
     if (ext_case == .lower) short.case |= case_lower_ext;
     return short;
-}
-
-/// Whether a name may be given to a new entry at all: a length the
-/// format holds, no control characters, none of the characters a PC
-/// reserves, and not ending in a dot or a space - a PC drops those, and
-/// the file would then have a name nothing here can find.
-pub fn validLong(name: []const u8) Error!void {
-    if (name.len == 0 or name.len > fat.name_max) return error.InvalidName;
-    // "." and "..": the entries every directory but the root starts with.
-    if (name[0] == '.' and (name.len == 1 or (name.len == 2 and name[1] == '.'))) return error.InvalidName;
-    for (name) |char| switch (char) {
-        0...0x1F, 0x7F, '"', '*', '/', ':', '<', '>', '?', '\\', '|' => return error.InvalidName,
-        else => {},
-    };
-    const last = name[name.len - 1];
-    if (last == '.' or last == ' ') return error.InvalidName;
 }
 
 /// The short name a long name starts from: capitals, the characters a
@@ -293,14 +266,6 @@ pub const LongName = struct {
 
     /// The name in Latin-1, or null if it has a character that is not.
     pub fn latin1(name: *const LongName, into: *[fat.name_max]u8) ?[]const u8 {
-        var len: usize = 0;
-        for (name.units[0 .. name.pieces * fat.lfn_chars]) |unit| {
-            if (unit == 0) break;
-            if (unit > 0xFF or len == fat.name_max) return null;
-            into[len] = @intCast(unit);
-            len += 1;
-        }
-        if (len == 0) return null;
-        return into[0..len];
+        return _fat.latin1Of(name.units[0 .. name.pieces * fat.lfn_chars], into);
     }
 };

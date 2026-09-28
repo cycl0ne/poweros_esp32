@@ -6,6 +6,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const subject = @import("../fat32/names.zig");
+const _fat = @import("../_fat.zig");
 const LongName = subject.LongName;
 const Short = subject.Short;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -18,10 +19,10 @@ const fat = sdk.dos.fat;
 const fillPiece = subject.fillPiece;
 const pieceCount = subject.pieceCount;
 const pieceUnits = subject.pieceUnits;
-const same = subject.same;
+const same = _fat.same;
 const shortName = subject.shortName;
 const short_max = subject.short_max;
-const validLong = subject.validLong;
+const validLong = _fat.validLong;
 const withTail = subject.withTail;
 
 const testing = std.testing;

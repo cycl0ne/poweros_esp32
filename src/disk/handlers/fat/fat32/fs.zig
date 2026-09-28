@@ -417,6 +417,15 @@ pub fn FileSystem(comptime Media: type) type {
             fs.free(key);
         }
 
+        /// Whether a lock - a FileLock's address, or a file handle's key -
+        /// is one this body made: for the handler, which keeps a body per
+        /// format, to hand a packet about a lock to the one it belongs to.
+        pub fn holdsLock(fs: *Fs, address: usize) bool {
+            var it = fs.locks;
+            while (it) |other| : (it = other.nextLock()) if (@intFromPtr(other) == address) return true;
+            return false;
+        }
+
         fn owns(fs: *Fs, lock: *FatLock) bool {
             var it = fs.locks;
             while (it) |other| : (it = other.nextLock()) if (other == lock) return true;
@@ -600,7 +609,7 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.writable();
             const start = try fs.keyArg(dir_arg);
             const spot = try fs.findDir(start, path);
-            try names.validLong(spot.name);
+            try _fat.validLong(spot.name);
             var object: Object = .{ .dir = spot.dir };
             if (try fs.dirs.find(spot.dir, spot.name, &object.found)) return error.Exists;
 
@@ -1024,7 +1033,7 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.locate(lockValue(args.from_lock), args.from_name orelse return error.InvalidName, &from);
             if (from.is_root) return error.WrongType;
             const target = try fs.findDir(try fs.keyArg(lockValue(args.to_lock)), args.to_name orelse return error.InvalidName);
-            try names.validLong(target.name);
+            try _fat.validLong(target.name);
 
             var there: Found = .{};
             if (try fs.dirs.find(target.dir, target.name, &there)) {

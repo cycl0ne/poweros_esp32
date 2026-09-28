@@ -62,7 +62,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
   PSRAM as memory with attributes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
-  log-structured flash file system (`DH0:`), FAT32 on SD cards (`SD0:`),
+  log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
   a shell with scripts and resident commands, 31 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! fat-handler: FAT32 on a card, as a handler on the disk -
+//! fat-handler: FAT32 and exFAT on a card, as a handler on the disk -
 //! `HANDLERS:fat-handler`, which dos loads the first time the device is
 //! used and keeps in the device node from then on. The mountlist gives it
 //! a whole device - sdcard.device's unit 0 - and it finds the volume on it
@@ -7,11 +7,20 @@
 //! partition table with the volume in one of its partitions, which is how
 //! cards are sold.
 //!
-//! The file system is `fat32/fs.zig`, generic over the medium and tested
-//! on the host. This file is what the machine needs: the handler's tag,
-//! the process, and the medium made out of the device. The tag has the
-//! shape a handler in the ROM has; dos finds it in the loaded file and
-//! starts the process at its entry.
+//! The file systems are `fat32/fs.zig` and `exfat/fs.zig`, generic over
+//! the medium and tested on the host. This file is what the machine needs:
+//! the handler's tag, the process, the medium made out of the device, and
+//! the choice between the two. The tag has the shape a handler in the ROM
+//! has; dos finds it in the loaded file and starts the process at its
+//! entry.
+//!
+//! **One handler, two bodies.** Which format a card is is known only once
+//! its first blocks are read, so the handler keeps both file systems and
+//! offers every card to each: the one whose format it is mounts it. They
+//! are kept side by side, not swapped, because locks on a card that has
+//! gone belong to the body that made them and are freed there - FREE_LOCK
+//! and END go to the body that holds the lock, everything else to the one
+//! with a volume.
 //!
 //! **A card comes and goes.** Before each packet the handler asks the
 //! device whether its card has changed. If it has, whatever it held of the
@@ -38,12 +47,13 @@ const DosPacket = dos.DosPacket;
 const Process = dos.Process;
 const MsgPort = exec.MsgPort;
 const _fat = @import("_fat.zig");
-const fs_area = @import("fat32/fs.zig");
+const fat32_fs = @import("fat32/fs.zig");
+const exfat_fs = @import("exfat/fs.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "23.09.2026";
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "28.09.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -140,13 +150,75 @@ pub const DeviceMedia = struct {
     }
 };
 
-const FileSystem = fs_area.FileSystem(DeviceMedia);
+const Fat32 = fat32_fs.FileSystem(DeviceMedia);
+const Exfat = exfat_fs.FileSystem(DeviceMedia);
+
+/// The two file systems, and which of them has the card's volume.
+const Bodies = struct {
+    fat32: Fat32,
+    exfat: Exfat,
+
+    const Which = enum { fat32, exfat };
+
+    fn init(media: *DeviceMedia, ub: *UtilityBase, port: *MsgPort) Bodies {
+        return .{ .fat32 = Fat32.init(media, ub, port), .exfat = Exfat.init(media, ub, port) };
+    }
+
+    /// The card offered to each; the one whose format it is mounts it.
+    fn mount(bodies: *Bodies) void {
+        bodies.fat32.mount() catch {};
+        if (!bodies.fat32.mounted) bodies.exfat.mount() catch {};
+    }
+
+    /// Whether the card changed; each body lets go of what it held of the
+    /// old one and tries the new one.
+    fn checkMedium(bodies: *Bodies) bool {
+        const one = bodies.fat32.checkMedium();
+        const other = bodies.exfat.checkMedium();
+        return one or other;
+    }
+
+    /// The body with a volume, if either has one.
+    fn active(bodies: *Bodies) ?Which {
+        if (bodies.fat32.mounted) return .fat32;
+        if (bodies.exfat.mounted) return .exfat;
+        return null;
+    }
+
+    /// The body a packet goes to: for FREE_LOCK and END, the one holding
+    /// the lock, which may be a card that has gone; otherwise the one with
+    /// a volume.
+    fn bodyFor(bodies: *Bodies, pkt: *DosPacket) ?Which {
+        const lock: usize = switch (pkt.getAction()) {
+            .free_lock => @bitCast(pkt.args.raw[0]),
+            .end => if (pkt.args.file.fh) |fh| @intFromPtr(fh.key) else 0,
+            else => 0,
+        };
+        if (lock != 0) {
+            if (bodies.fat32.holdsLock(lock)) return .fat32;
+            if (bodies.exfat.holdsLock(lock)) return .exfat;
+        }
+        return bodies.active();
+    }
+
+    fn volumeName(bodies: *Bodies) []const u8 {
+        return switch (bodies.active() orelse return "") {
+            .fat32 => bodies.fat32.volumeName(),
+            .exfat => bodies.exfat.volumeName(),
+        };
+    }
+
+    fn setVolumeNode(bodies: *Bodies, node: ?*dos.DosList) void {
+        bodies.fat32.volume_node = if (bodies.active() == .fat32) node else null;
+        bodies.exfat.volume_node = if (bodies.active() == .exfat) node else null;
+    }
+};
 
 /// Everything the process keeps, in one allocation.
 const State = struct {
     ub: *UtilityBase,
     media: DeviceMedia,
-    fs: FileSystem,
+    bodies: Bodies,
     io: exec.IOStdReq,
     /// The volume node, while a volume is mounted.
     volume: ?*dos.DosList = null,
@@ -174,18 +246,18 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     var code: i32 = 0;
     const st = start(sys, dl, fssm, &code) orelse return dl.ReplyPkt(startup, dos.DOSFALSE, code);
 
-    st.fs = FileSystem.init(&st.media, st.ub, &me.msg_port);
+    st.bodies = Bodies.init(&st.media, st.ub, &me.msg_port);
     // A card that is not there or not readable is not an error: the
     // handler stays for the one that will be.
-    st.fs.mount() catch {};
-    if (st.fs.mounted) addVolume(dl, st);
+    st.bodies.mount();
+    if (st.bodies.active() != null) addVolume(dl, st, &me.msg_port);
     if (node) |device_node| device_node.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
     while (dl.WaitPkt()) |pkt| {
-        if (st.fs.checkMedium()) {
+        if (st.bodies.checkMedium()) {
             removeVolume(dl, st);
-            if (st.fs.mounted) addVolume(dl, st);
+            if (st.bodies.active() != null) addVolume(dl, st, &me.msg_port);
         }
         const reply = serve(st, pkt);
         dl.ReplyPkt(pkt, reply.res1, reply.res2);
@@ -229,10 +301,13 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
     return st;
 }
 
-/// One packet. Without a volume only the ones that say what is in the
-/// slot get an answer that is not an error.
+/// One packet, to the body it is for. Without a volume only the ones that
+/// say what is in the slot get an answer that is not an error.
 fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
-    if (st.fs.mounted) return st.fs.answer(pkt);
+    if (st.bodies.bodyFor(pkt)) |which| return switch (which) {
+        .fat32 => st.bodies.fat32.answer(pkt),
+        .exfat => st.bodies.exfat.answer(pkt),
+    };
     const action = pkt.getAction();
     const card_in = st.media.present();
     switch (action) {
@@ -255,25 +330,25 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
 
 /// The volume on the device list under the card's name, so locks can
 /// point at it.
-fn addVolume(dl: *DosBase, st: *State) void {
-    var name: [16:0]u8 = @splat(0);
-    const label = st.fs.volumeName();
+fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
+    var name: [24:0]u8 = @splat(0);
+    const label = st.bodies.volumeName();
     @memcpy(name[0..label.len], label);
     const entry = dl.MakeDosEntry(&name, dos.DLT_VOLUME) orelse return;
     entry.misc.volume.disk_type = dos.ID_MSDOS_DISK;
-    entry.task = st.fs.port;
+    entry.task = port;
     if (!dl.AddDosEntry(entry)) {
         dl.FreeDosEntry(entry);
         return;
     }
     st.volume = entry;
-    st.fs.volume_node = entry;
+    st.bodies.setVolumeNode(entry);
 }
 
 fn removeVolume(dl: *DosBase, st: *State) void {
     const entry = st.volume orelse return;
     st.volume = null;
-    st.fs.volume_node = null;
+    st.bodies.setVolumeNode(null);
     if (dl.RemDosEntry(entry)) dl.FreeDosEntry(entry);
 }
 
