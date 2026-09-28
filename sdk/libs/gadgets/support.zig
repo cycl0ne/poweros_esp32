@@ -66,13 +66,25 @@ pub fn setPen(gb: *GraphicsBase, rp: *graphics.RastPort, pen: Pen) void {
 /// The pen and drawing mode a RastPort had before a gadget drew in it.
 pub const Saved = struct {
     pen: u32 = 0,
+    back_pen: u32 = 0,
     mode: u32 = 0,
+    /// The font and the styles drawn over it are in here because a
+    /// gadget - or a hook a gadget calls to draw a line its own way - may
+    /// set them, and a gadget is only passing through a RastPort that is
+    /// the window's. Without them the font of the last thing drawn stays
+    /// on, and everything drawn after it in that window comes out in a
+    /// font nobody asked for.
+    font: usize = 0,
+    style: u32 = 0,
 
     pub fn of(gb: *GraphicsBase, rp: *graphics.RastPort) Saved {
         var saved: Saved = .{};
         const ask = [_]TagItem{
             .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&saved.pen) },
+            .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&saved.back_pen) },
             .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&saved.mode) },
+            .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&saved.font) },
+            .{ .tag = graphics.RPTAG_TextStyle, .data = @intFromPtr(&saved.style) },
             .{},
         };
         gb.GetRPAttrs(rp, &ask);
@@ -82,7 +94,10 @@ pub const Saved = struct {
     pub fn restore(saved: Saved, gb: *GraphicsBase, rp: *graphics.RastPort) void {
         const put = [_]TagItem{
             .{ .tag = graphics.RPTAG_APen, .data = saved.pen },
+            .{ .tag = graphics.RPTAG_BPen, .data = saved.back_pen },
             .{ .tag = graphics.RPTAG_DrMd, .data = saved.mode },
+            .{ .tag = graphics.RPTAG_Font, .data = saved.font },
+            .{ .tag = graphics.RPTAG_TextStyle, .data = saved.style },
             .{},
         };
         gb.SetRPAttrs(rp, &put);
