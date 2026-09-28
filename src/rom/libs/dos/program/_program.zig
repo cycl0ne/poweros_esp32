@@ -100,13 +100,43 @@ const utility = sdk.utility;
 const TagItem = utility.TagItem;
 const FileHandle = dos.FileHandle;
 
-/// Makes the list empty and its semaphore ready, for dos's init.
+/// Makes the list empty and its semaphore ready, and the list of loaded
+/// files empty, for dos's init.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
 pub fn initSegments(db: *DosBase) void {
     db.segments = null;
     db.sys_base.InitSemaphore(&db.seg_lock);
+    db.loaded.init(.unknown);
+}
+
+/// Where an address lies in a loaded file: the file's name and the offset
+/// into its code, which is the address in the program's linked ELF (its
+/// code is linked at 0).
+pub const CodePlace = struct { name: [*:0]const u8, offset: usize };
+
+/// The loaded file whose code holds `address`, for a Guru to name it.
+/// Null when no loaded code holds it. The list is read without taking
+/// anything: this runs from an alert, when the machine may have stopped in
+/// the middle of anything.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `address` - an address on the instruction bus.
+pub fn codeAt(db: *DosBase, address: usize) ?CodePlace {
+    var node = db.loaded.first();
+    while (node) |file| : (node = file.next()) {
+        const first: *SegList = @fieldParentPtr("file", file);
+        var segment: ?*SegList = first;
+        while (segment) |seg| : (segment = seg.next) {
+            if (seg.kind != .code) continue;
+            const start = @intFromPtr(seg.run_address orelse continue);
+            if (address >= start and address - start < seg.mem_size)
+                return .{ .name = file.name orelse "?", .offset = address - start };
+        }
+    }
+    return null;
 }
 
 /// The most segments a file may have: the loader keeps a note per segment
@@ -181,14 +211,21 @@ pub const Loaded = struct {
 /// - `db` - the library's base.
 /// - `fh` - the load file, at the segment's header.
 /// - `note` - where the segment's base and relocation count go.
-pub fn readSegment(db: *DosBase, fh: *dos.FileHandle, note: *Loaded) ?*SegList {
+/// - `name` - for the first segment the file's name, kept in the same
+///   block after the bytes and named by `file`; null for the others.
+pub fn readSegment(db: *DosBase, fh: *dos.FileHandle, note: *Loaded, name: ?[*:0]const u8) ?*SegList {
     const sys = db.sys_base;
     const head = readValue(db, fh, loadfile.SegmentHeader) orelse return fail(db, dos.ERROR_BAD_HUNK);
     if (head.file_size > head.mem_size or head.mem_size > max_segment or head.mem_size == 0)
         return fail(db, dos.ERROR_BAD_HUNK);
     if (head.kind == .bss and head.file_size != 0) return fail(db, dos.ERROR_BAD_HUNK);
 
-    const block_size: u32 = @sizeOf(SegList) + loadfile.alignUp(head.mem_size);
+    var name_size: u32 = 0;
+    if (name) |text| {
+        while (text[name_size] != 0) name_size += 1;
+        name_size += 1; // and the NUL
+    }
+    const block_size: u32 = @sizeOf(SegList) + loadfile.alignUp(head.mem_size) + loadfile.alignUp(name_size);
     const block = sys.AllocMem(block_size, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR) orelse
         return fail(db, dos.ERROR_NO_FREE_STORE);
     const bytes: [*]u8 = @ptrFromInt(@intFromPtr(block) + @sizeOf(SegList));
@@ -199,6 +236,11 @@ pub fn readSegment(db: *DosBase, fh: *dos.FileHandle, note: *Loaded) ?*SegList {
         .kind = head.kind,
         .data = bytes,
     };
+    if (name) |text| {
+        const kept = bytes + loadfile.alignUp(head.mem_size);
+        @memcpy(kept[0..name_size], text[0..name_size]);
+        seg.file.name = @ptrCast(kept);
+    }
     note.groups = head.reloc_groups;
     note.base = @intFromPtr(bytes);
     if (head.kind == .code) {

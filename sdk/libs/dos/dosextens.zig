@@ -13,6 +13,7 @@
 const ports = @import("../exec/ports.zig");
 const tasks = @import("../exec/tasks.zig");
 const lists = @import("../exec/lists.zig");
+const nodes = @import("../exec/nodes.zig");
 const loadfile = @import("loadfile.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const DateStamp = @import("dos.zig").DateStamp;
@@ -649,6 +650,10 @@ pub const SegList = extern struct {
     /// program's entry is a CommandFn, a module's a stub that refuses to
     /// run (its ROM tag is what matters).
     entry: ?*const anyopaque = null,
+    /// The first node only: its place on dos's list of loaded files, named
+    /// after the file - what a Guru reads to say which file an address
+    /// is in.
+    file: nodes.Node = .{},
 };
 
 /// struct Segment: a resident segment, named code dos keeps (AddSegment).

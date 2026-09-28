@@ -18,6 +18,7 @@ const sdk = @import("sdk");
 const exec = @import("exec.zig");
 const _interrupt = @import("interrupt/_interrupt.zig");
 const _library = @import("library/_library.zig");
+const _log = @import("log/_log.zig");
 
 const interface = sdk.interface.exec;
 const IntVector = sdk.exec.IntVector;
@@ -81,6 +82,12 @@ pub const ExecBase = extern struct {
     /// it and a module keeps nothing in its own image. Null until
     /// SetRamLib is called.
     ram_lib: ?*anyopaque = null,
+    /// The tasks woken when the system log grows (SetLogSignal).
+    log_followers: [_log.max_followers]_log.Follower = @splat(.{}),
+    /// How far the log was when the followers were last signalled, and the
+    /// ticks that pace the signals.
+    log_told: u64 align(4) = 0,
+    log_ticks: u32 = 0,
 
     /// exec through its own jump table, the way everything else calls it.
     pub fn iface(base: *ExecBase) *interface.ExecBase {

@@ -35,6 +35,10 @@ pub const DosBase = extern struct {
     /// The resident segments and their lock.
     segments: ?*Segment,
     seg_lock: exec.SignalSemaphore,
+    /// The files LoadSeg loaded and UnLoadSeg has not freed yet: each
+    /// chain's first SegList, named after its file. Changed under Forbid,
+    /// read by a Guru without taking anything.
+    loaded: exec.List,
     /// dl_TimeReq: timer.device, opened for good for DateStamp; null
     /// without it.
     timer_io: ?*exec.IORequest,

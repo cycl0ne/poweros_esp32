@@ -296,6 +296,9 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoDeletePool),
     vec(lvoAllocPooled),
     vec(lvoFreePooled),
+    vec(lvoAlertAt),
+    vec(lvoReadLog),
+    vec(lvoSetLogSignal),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -436,7 +439,7 @@ fn lvoCause(base: *ExecBase, interrupt: *Interrupt) callconv(.c) void {
 }
 
 fn lvoAlert(_: *ExecBase, alert_num: u32) callconv(.c) void {
-    _interrupt.alertAt(alert_num, @returnAddress());
+    _interrupt.alertAt(alert_num, @returnAddress(), null);
 }
 
 fn lvoSetTrapCode(base: *ExecBase, code: ?TrapFn, data: ?*anyopaque) callconv(.c) ?TrapFn {
@@ -754,6 +757,18 @@ fn lvoAllocPooled(base: *ExecBase, pool: ?*anyopaque, byte_size: usize) callconv
 
 fn lvoFreePooled(base: *ExecBase, pool: ?*anyopaque, memory_block: ?*anyopaque, byte_size: usize) callconv(.c) void {
     exec.FreePooled(base, pool, memory_block, byte_size);
+}
+
+fn lvoAlertAt(base: *ExecBase, alert_num: u32, where: usize, text: ?[*:0]const u8) callconv(.c) void {
+    exec.AlertAt(base, alert_num, where, text);
+}
+
+fn lvoReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) callconv(.c) u32 {
+    return exec.ReadLog(base, position, buffer, size);
+}
+
+fn lvoSetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) callconv(.c) bool {
+    return exec.SetLogSignal(base, task, signal_mask);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

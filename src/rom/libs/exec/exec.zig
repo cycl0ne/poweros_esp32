@@ -60,12 +60,14 @@ pub const TrapInfo = sdk.exec.TrapInfo;
 pub const TrapFn = sdk.exec.TrapFn;
 pub const AlertFn = _interrupt.AlertFn;
 pub const Alert = @import("interrupt/alert.zig").Alert;
+pub const AlertAt = @import("interrupt/alertat.zig").AlertAt;
 pub const SetTrapCode = @import("interrupt/settrapcode.zig").SetTrapCode;
 pub const dispatchTrap = _interrupt.dispatchTrap;
 pub const AT_DeadEnd = sdk.exec.AT_DeadEnd;
 pub const AT_Recovery = sdk.exec.AT_Recovery;
 pub const ACPU_Base = sdk.exec.ACPU_Base;
 pub const AN_KernelPanic = sdk.exec.AN_KernelPanic;
+pub const AN_ProgramPanic = sdk.exec.AN_ProgramPanic;
 pub const kernelPanic = _interrupt.kernelPanic;
 pub const ColdReboot = @import("interrupt/coldreboot.zig").ColdReboot;
 
@@ -78,6 +80,14 @@ pub const RawDoFmt = @import("rawio/rawdofmt.zig").RawDoFmt;
 pub const RawPutChar = @import("rawio/rawputchar.zig").RawPutChar;
 pub const RawMayGetChar = @import("rawio/rawmaygetchar.zig").RawMayGetChar;
 pub const RawIOInit = @import("rawio/rawioinit.zig").RawIOInit;
+
+/// The system log (log/): everything the raw port writes, kept in a ring.
+const _log = @import("log/_log.zig");
+pub const ReadLog = @import("log/readlog.zig").ReadLog;
+pub const SetLogSignal = @import("log/setlogsignal.zig").SetLogSignal;
+pub const tickLog = _log.tickLog;
+/// The log's clock, microseconds since the boot; the kernel sets it.
+pub const log_clock = &_log.clock;
 pub const kprintf = _rawio.kprintf;
 pub const PutChProc = sdk.exec.PutChProc;
 pub const RawIOHardware = _rawio.RawIOHardware;
@@ -372,11 +382,14 @@ pub const MemRegion = struct {
 };
 
 /// What the bootstrap hands exec's init routine as its seg_list: where the
-/// other ROM tags are. Without it (the host tests) exec starts no residents
-/// and no exec task.
+/// other ROM tags are, and where SysBase is to be kept for code that has
+/// no base (`sdk.exec.AbsExecBase`). Without it (the host tests) exec starts
+/// no residents and no exec task.
 pub const BootInfo = extern struct {
     rom_start: usize,
     rom_end: usize,
+    /// The address of the AbsExecBase word, or 0 for none.
+    abs_exec_base: usize = 0,
 };
 
 /// Take exec.library down again, giving its memory back to its region.
@@ -1420,24 +1433,77 @@ test "Cause: software interrupts run once each, highest priority first" {
     try testing.expectEqualStrings("m", log.order[0..log.len]);
 }
 
+test "the system log: lines kept with a prefix, read by number, followers woken by the tick" {
+    try setUp();
+    defer deinit();
+    const sys = SysBase.iface();
+
+    // A line goes into the ring with its time and writer in front.
+    var position = _log.end();
+    kprintf("\nhello log %d\n", .{@as(u32, 7)});
+    var buffer: [256]u8 = undefined;
+    const count = sys.ReadLog(&position, &buffer, buffer.len);
+    const text = buffer[0..count];
+    try testing.expect(std.mem.indexOf(u8, text, "] hello log 7\n") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "[   0.000000 ") != null);
+    try testing.expectEqual(_log.end(), position);
+    // Nothing after the end.
+    try testing.expectEqual(@as(u32, 0), sys.ReadLog(&position, &buffer, buffer.len));
+
+    // A small buffer reads part, and the position moves by as much.
+    var partial = position;
+    kprintf("0123456789\n", .{});
+    try testing.expectEqual(@as(u32, 4), sys.ReadLog(&partial, &buffer, 4));
+    try testing.expectEqual(position + 4, partial);
+
+    // A reader that fell behind gets the oldest byte kept, and sees how
+    // much it missed.
+    var behind: u64 = 0;
+    for (0.._log.ring_size / 16 + 1) |_| kprintf("sixteen bytes..\n", .{});
+    const got = sys.ReadLog(&behind, &buffer, buffer.len);
+    try testing.expectEqual(@as(u32, buffer.len), got);
+    try testing.expectEqual(_log.end() - _log.ring_size, behind - got);
+
+    // A follower gets its signal on the tenth tick after something new,
+    // once.
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    const mask = @as(u32, 1) << @intCast(bit);
+    try testing.expect(sys.SetLogSignal(null, mask));
+    _ = sys.SetSignal(0, mask);
+    kprintf("wake up\n", .{});
+    for (0..10) |_| tickLog(SysBase);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    for (0..10) |_| tickLog(SysBase);
+    try testing.expect(sys.SetSignal(0, mask) & mask == 0);
+    try testing.expect(sys.SetLogSignal(null, 0));
+    kprintf("no one follows\n", .{});
+    for (0..10) |_| tickLog(SysBase);
+    try testing.expect(sys.SetSignal(0, mask) & mask == 0);
+    sys.FreeSignal(bit);
+}
+
 /// Alert hook for tests: records instead of halting.
 const FakeAlert = struct {
     var count: u32 = 0;
     var last_num: u32 = 0;
     var last_where: usize = 0;
     var last_info: ?*const TrapInfo = null;
+    var last_text: ?[*:0]const u8 = null;
 
-    fn show(alert_num: u32, where: usize, info: ?*const TrapInfo) void {
+    fn show(alert_num: u32, where: usize, info: ?*const TrapInfo, text: ?[*:0]const u8) void {
         count += 1;
         last_num = alert_num;
         last_where = where;
         last_info = info;
+        last_text = text;
     }
     fn install() void {
         count = 0;
         last_num = 0;
         last_where = 0;
         last_info = null;
+        last_text = null;
         alert_hook.* = show;
     }
     fn uninstall() void {
@@ -1496,6 +1562,14 @@ test "CPU exceptions: the trap code first, otherwise a dead-end Alert" {
     try testing.expectEqual(@as(u32, 0x0100_0000), FakeAlert.last_num);
     try testing.expect(SetTrapCode(SysBase, &decline, null) == null);
     try testing.expectEqual(@as(?TrapFn, &decline), SysBase.this_task.trap_code);
+    _ = SetTrapCode(SysBase, null, null);
+
+    // AlertAt, through the table: the caller's address and its text.
+    SysBase.iface().AlertAt(AT_Recovery | AN_ProgramPanic, 0x4200_1234, "integer overflow");
+    try testing.expectEqual(@as(u32, 5), FakeAlert.count);
+    try testing.expectEqual(AN_ProgramPanic, FakeAlert.last_num);
+    try testing.expectEqual(@as(usize, 0x4200_1234), FakeAlert.last_where);
+    try testing.expectEqualStrings("integer overflow", std.mem.span(FakeAlert.last_text.?));
 }
 
 /// Task hardware for tests: counts switch requests. The context of a task
@@ -2977,7 +3051,7 @@ const SwitchHooks = struct {
 /// Raw I/O for the test below: what RawPutChar sent, what RawMayGetChar
 /// gets.
 const TestRawIO = struct {
-    var sent: [32]u8 = undefined;
+    var sent: [96]u8 = undefined;
     var sent_len: usize = 0;
     var input: []const u8 = "";
     var inits: u32 = 0;
@@ -3001,17 +3075,18 @@ test "RawPutChar, RawMayGetChar and kprintf go to the kernel's raw I/O" {
     defer deinit();
     raw_io_hardware.* = .{ .init = TestRawIO.init, .put = TestRawIO.put, .get = TestRawIO.get };
     defer raw_io_hardware.* = _rawio.no_raw_io;
-    TestRawIO.sent_len = 0;
     TestRawIO.input = "z";
 
     const sys = SysBase.iface();
-    sys.RawPutChar('A');
+    sys.RawPutChar('\n'); // whatever came before ends its line
+    TestRawIO.sent_len = 0;
+    sys.RawPutChar('A'); // a line's first character: the time and the writer first
     try testing.expectEqual(@as(i32, 'z'), sys.RawMayGetChar());
     try testing.expectEqual(@as(i32, -1), sys.RawMayGetChar());
     sdk.exec.kprintf(sys, "k%d\n", .{@as(u32, 7)}); // "\n" as "\r\n", no final NUL
-    try testing.expectEqualStrings("Ak7\r\n", TestRawIO.sent[0..TestRawIO.sent_len]);
-    kprintf("[%s]", .{"kernel"}); // the kernel's own, without SysBase
-    try testing.expectEqualStrings("Ak7\r\n[kernel]", TestRawIO.sent[0..TestRawIO.sent_len]);
+    try testing.expectEqualStrings("[   0.000000 kernel] Ak7\r\n", TestRawIO.sent[0..TestRawIO.sent_len]);
+    kprintf("\n[%s]", .{"kernel"}); // the kernel's own, without SysBase; a blank line has no prefix
+    try testing.expectEqualStrings("[   0.000000 kernel] Ak7\r\n\r\n[   0.000000 kernel] [kernel]", TestRawIO.sent[0..TestRawIO.sent_len]);
     try expectNoLeaks();
 }
 

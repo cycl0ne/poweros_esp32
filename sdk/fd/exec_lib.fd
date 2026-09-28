@@ -170,4 +170,16 @@ void DeletePool(?*anyopaque pool)
 /// Give a block from AllocPooled back. `byte_size` must be what was asked
 /// for: a pooled block carries no header of its own, which is the point.
 void FreePooled(?*anyopaque pool, ?*anyopaque memory_block, usize byte_size)
+/// Raise an alert naming the place it is about and saying what went wrong:
+/// `where` stands for the Guru's second number, `text` (or null) is printed
+/// with it. What a panic handler calls.
+void AlertAt(u32 alert_num, usize where, ?[*:0]const u8 text)
+/// Copy the system log from the running number `position.*` on (0: the
+/// oldest byte kept) into `buffer`, and move `position` past it. Returns how
+/// many bytes were copied.
+u32 ReadLog(*u64 position, [*]u8 buffer, u32 size)
+/// Have `task` (null: the caller) sent `signal_mask` when the system log
+/// grows, at most every ten ticks; 0 stops it. False when four tasks
+/// follow already.
+bool SetLogSignal(?*exec.Task task, u32 signal_mask)
 ##end

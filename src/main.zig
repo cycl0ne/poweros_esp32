@@ -84,6 +84,7 @@ export fn kernel_early() linksection(".iram.text") callconv(.c) void {
 export fn kmain() callconv(.c) noreturn {
     exec.interrupt_hardware.* = intmatrix.hardware;
     exec.alert_hook.* = alert.show;
+    exec.log_clock.* = timer.uptimeUs;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();
     entropy.init();
@@ -138,9 +139,7 @@ export fn kmain() callconv(.c) noreturn {
     unreachable;
 }
 
-/// A kernel status line, the uptime in front.
+/// A kernel status line; the raw port puts the uptime in front.
 fn note(comptime format: [:0]const u8, args: anytype) void {
-    const us = timer.uptimeUs();
-    exec.kprintf("[%4ld.%06ld] ", .{ us / 1_000_000, us % 1_000_000 });
     exec.kprintf(std.fmt.comptimePrint("{s}\n", .{format}), args);
 }

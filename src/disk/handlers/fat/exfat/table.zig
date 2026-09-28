@@ -71,7 +71,18 @@ pub fn Table(comptime Media: type) type {
 
         /// The cluster `ordinal` steps into `chain`, walked from `place` if
         /// that is not past it. The place is moved there.
-        pub fn clusterAt(self: *Self, chain: Chain, place: *Place, ordinal: u64) Error!u32 {
+        pub inline fn clusterAt(self: *Self, chain: Chain, place: *Place, ordinal: u64) Error!u32 {
+            // No chain is longer than a volume has clusters, which a u32
+            // counts.
+            if (ordinal > std.math.maxInt(u32)) return error.MediumFailed;
+            return self.walkTo(chain, place, @intCast(ordinal));
+        }
+
+        /// clusterAt's walk. Every argument is 32 bits, so a call to it
+        /// passes them all in registers: with a 64-bit one among them the
+        /// compiler passed it on the stack and failed on the caller
+        /// (an LLVM register-scavenger error in exfat's spotOf).
+        noinline fn walkTo(self: *Self, chain: Chain, place: *Place, ordinal: u32) Error!u32 {
             if (!self.geo.usable(chain.first)) return error.MediumFailed;
             if (chain.contiguous) {
                 const cluster = @as(u64, chain.first) + ordinal;

@@ -208,3 +208,68 @@ The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.
 
+
+## When a check fails
+
+Programs are built ReleaseSafe, so an overflow, an index out of bounds or a
+null unwrapped is caught where it happens. `addProgram` gives every program
+the SDK's panic handler (`sdk/program.zig`, `sdk.exec.panic`), and a failed
+check stops the machine with a Guru on the serial console that says what
+failed and where:
+
+```
+*** Software Failure.
+*** Guru Meditation #81000101.42071B16
+*** index out of bounds: index 5, len 2
+*** in EchoArgs at +0x51A
+*** Task "Shell Process [2]" at 0x3C084148
+*** system halted
+```
+
+`81000101` is `AN_ProgramPanic`. The fourth line names the loaded file and
+the offset into its code, which is the address in the program's linked ELF
+(its code is linked at 0). The offset is the return address of the call
+into the handler, so the check itself is 3 bytes before it:
+
+```sh
+llvm-symbolizer --obj=<the program's ELF> 0x517
+```
+
+The ELF is what `addProgram` links before it makes the load file: the
+`compile exe <name>` step's output in Zig's cache. A failure in the ROM
+says `in the ROM` instead, and its address is looked up in
+`zig-out/bin/kernel`.
+
+A panic handler is handed no base, so it finds exec through
+`sdk.exec.AbsExecBase`, the one fixed address in the system, and reports
+with `AlertAt`. Code that is handed SysBase keeps using what it was
+handed.
+
+## The system log
+
+Everything written to the serial console - `sdk.exec.kprintf`, which is
+`RawDoFmt` to `RawPutChar`, and the kernel's own lines - is kept by exec
+in a ring of 16 KiB from the first byte of the boot. Each line gets the
+time since the boot and its writer in front, the running task's name, or
+`int` in an interrupt:
+
+```
+[   1.595693 Background CLI [2]] openeth.device: the Ethernet MAC does not answer
+```
+
+`Log` shows it (`LINES 20` for the last twenty lines), follows it
+(`FOLLOW`, until Ctrl-C) and saves it (`SAVE` into `RAM:Log/system.log`,
+`TO <file>` anywhere else). A program reads it the same way: every byte
+has a running number, and `ReadLog` copies what follows a number and
+moves the number on; `SetLogSignal` has a task signalled when the log
+grows, at most every ten ticks.
+
+```zig
+var position: u64 = 0; // the oldest byte the ring still holds
+var buffer: [512]u8 = undefined;
+while (true) {
+    const count = sys.ReadLog(&position, &buffer, buffer.len);
+    if (count == 0) break;
+    _ = dl.Write(dl.Output(), &buffer, count);
+}
+```

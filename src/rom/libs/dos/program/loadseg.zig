@@ -79,7 +79,7 @@ pub fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList {
     var last: ?*SegList = null;
     var i: u16 = 0;
     while (i < header.segments) : (i += 1) {
-        const seg = readSegment(db, fh, &loaded[i]) orelse {
+        const seg = readSegment(db, fh, &loaded[i], if (i == 0) dos_lib.FilePart(name) else null) orelse {
             dos_lib.UnLoadSeg(first);
             return null;
         };
@@ -102,6 +102,10 @@ pub fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList {
     }
     first.?.entry = @ptrCast(entry_seg.run_address.? + header.entry_offset);
     db.sys_base.CacheClearU(); // the code was written through the data bus
+    // On the list of loaded files, for a Guru to name.
+    db.sys_base.Forbid();
+    db.sys_base.AddTail(&db.loaded, &first.?.file);
+    db.sys_base.Permit();
     _ = dos_lib.SetIoErr(0);
     return first;
 }

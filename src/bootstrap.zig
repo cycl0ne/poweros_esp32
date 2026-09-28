@@ -9,6 +9,7 @@
 //! rest and starts the system: the ROM scan, the exec task and the
 //! RTF_SINGLETASK residents.
 
+const sdk = @import("sdk");
 const exec = @import("rom/libs/exec/exec.zig");
 const layout = @import("arch/esp32s3/layout.zig");
 
@@ -47,7 +48,11 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
 
     // exec's init routine does the rest. The ROM range tells it where the
     // other residents are.
-    const info: exec.BootInfo = .{ .rom_start = rom_start, .rom_end = rom_end };
+    const info: exec.BootInfo = .{
+        .rom_start = rom_start,
+        .rom_end = rom_end,
+        .abs_exec_base = @intFromPtr(sdk.exec.AbsExecBase),
+    };
     _ = init(lib, @constCast(&info), @ptrCast(sys)) orelse return error.ExecInitFailed;
     return sys;
 }

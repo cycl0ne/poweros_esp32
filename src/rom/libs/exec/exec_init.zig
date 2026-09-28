@@ -75,6 +75,9 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     exec.RawIOInit(sys);
     sys.tdn_nest_cnt = -1;
     sys.id_nest_cnt = -1;
+    sys.log_followers = @splat(.{});
+    sys.log_told = 0;
+    sys.log_ticks = 0;
     sys.lib_list.init(.library);
     sys.device_list.init(.device);
     sys.resource_list.init(.resource);
@@ -94,6 +97,11 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     _task.initTasks(sys) catch return null;
     exec.initialized = true;
     const boot: *const exec.BootInfo = @ptrCast(@alignCast(seg_list orelse return lib));
+    // Before any resident runs: from here code without a base finds exec.
+    if (boot.abs_exec_base != 0) {
+        const cell: *volatile *ExecBase = @ptrFromInt(boot.abs_exec_base);
+        cell.* = sys;
+    }
     startSystem(sys, boot) catch return null;
     return lib;
 }

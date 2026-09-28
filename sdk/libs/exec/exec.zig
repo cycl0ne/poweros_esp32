@@ -19,6 +19,13 @@ pub const cache = @import("cache.zig");
 /// SysBase: exec.library's base, with its functions.
 pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
+/// The one fixed address in the system: the word holding SysBase, written
+/// once while exec is made and never again. Code that is handed SysBase
+/// keeps what it was handed; this is for code that has no base to hand -
+/// a panic handler, whose signature is Zig's. The word sits in internal
+/// SRAM just above the kernel's stack, below the chip ROM's reserved area.
+pub const AbsExecBase: *const *ExecBase = @ptrFromInt(0x3FCE_9700);
+
 pub const NodeType = nodes.NodeType;
 pub const Node = nodes.Node;
 pub const MinNode = nodes.MinNode;
@@ -187,4 +194,6 @@ pub const AT_Recovery = alerts.AT_Recovery;
 pub const ACPU_Base = alerts.ACPU_Base;
 pub const AN_SemCorrupt = alerts.AN_SemCorrupt;
 pub const AN_KernelPanic = alerts.AN_KernelPanic;
+pub const AN_ProgramPanic = alerts.AN_ProgramPanic;
+pub const panic = @import("panic.zig").panic;
 pub const AG_MakeLib = alerts.AG_MakeLib;

@@ -126,6 +126,9 @@ pub const LVO = struct {
     pub const DeletePool = libraries.lvo(112);
     pub const AllocPooled = libraries.lvo(113);
     pub const FreePooled = libraries.lvo(114);
+    pub const AlertAt = libraries.lvo(115);
+    pub const ReadLog = libraries.lvo(116);
+    pub const SetLogSignal = libraries.lvo(117);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -242,6 +245,9 @@ pub const Fn = struct {
     pub const DeletePool = *const fn (*ExecBase, ?*anyopaque) callconv(.c) void;
     pub const AllocPooled = *const fn (*ExecBase, ?*anyopaque, usize) callconv(.c) ?*anyopaque;
     pub const FreePooled = *const fn (*ExecBase, ?*anyopaque, ?*anyopaque, usize) callconv(.c) void;
+    pub const AlertAt = *const fn (*ExecBase, u32, usize, ?[*:0]const u8) callconv(.c) void;
+    pub const ReadLog = *const fn (*ExecBase, *u64, [*]u8, u32) callconv(.c) u32;
+    pub const SetLogSignal = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -726,5 +732,26 @@ pub const ExecBase = opaque {
     /// for: a pooled block carries no header of its own, which is the point.
     pub fn FreePooled(self: *ExecBase, pool: ?*anyopaque, memory_block: ?*anyopaque, byte_size: usize) void {
         return libraries.call(self, LVO.FreePooled, Fn.FreePooled, .{ pool, memory_block, byte_size });
+    }
+
+    /// Raise an alert naming the place it is about and saying what went wrong:
+    /// `where` stands for the Guru's second number, `text` (or null) is printed
+    /// with it. What a panic handler calls.
+    pub fn AlertAt(self: *ExecBase, alert_num: u32, where: usize, text: ?[*:0]const u8) void {
+        return libraries.call(self, LVO.AlertAt, Fn.AlertAt, .{ alert_num, where, text });
+    }
+
+    /// Copy the system log from the running number `position.*` on (0: the
+    /// oldest byte kept) into `buffer`, and move `position` past it. Returns how
+    /// many bytes were copied.
+    pub fn ReadLog(self: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32 {
+        return libraries.call(self, LVO.ReadLog, Fn.ReadLog, .{ position, buffer, size });
+    }
+
+    /// Have `task` (null: the caller) sent `signal_mask` when the system log
+    /// grows, at most every ten ticks; 0 stops it. False when four tasks
+    /// follow already.
+    pub fn SetLogSignal(self: *ExecBase, task: ?*exec.Task, signal_mask: u32) bool {
+        return libraries.call(self, LVO.SetLogSignal, Fn.SetLogSignal, .{ task, signal_mask });
     }
 };

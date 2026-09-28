@@ -131,14 +131,25 @@ pub const Program = struct {
 /// `_program_entry`, which a command exports; a module's ROM tag is what
 /// ramlib or dos finds in it instead.
 pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) std.Build.LazyPath {
-    const module = b.createModule(.{
+    const own = b.createModule(.{
         .root_source_file = program.root,
         .target = b.resolveTargetQuery(target_query),
         .optimize = program.optimize,
         .single_threaded = true,
         .unwind_tables = .none,
     });
+    own.addImport("sdk", dep.module("sdk"));
+    // The root is the SDK's program.zig, which takes the program's own
+    // root in and gives it the SDK's panic handler.
+    const module = b.createModule(.{
+        .root_source_file = dep.path("program.zig"),
+        .target = b.resolveTargetQuery(target_query),
+        .optimize = program.optimize,
+        .single_threaded = true,
+        .unwind_tables = .none,
+    });
     module.addImport("sdk", dep.module("sdk"));
+    module.addImport("program", own);
     const artifact_name = b.dupe(program.name);
     for (artifact_name) |*char| if (char.* == '.' or char.* == '-') {
         char.* = '_';

@@ -36,6 +36,11 @@
 //!
 //! RawPutChar sends "\n" as "\r\n" and drops NULs, so a terminal need not
 //! be in any particular mode and RawDoFmt's terminating NUL costs nothing.
+//! Where a line starts it puts the time since the boot and the writer in
+//! front - `[  12.345678 exec] ` - the writer being the running task's
+//! name, `int` in an interrupt, or `boot` before there are tasks. Every
+//! character, prefix included, is also kept in the system log (log/),
+//! from the first byte on, whether or not the port is set up yet.
 //! `kprintf` is RawDoFmt to RawPutChar, for kernel code, which may run
 //! before SysBase exists.
 //!
@@ -56,6 +61,8 @@
 
 const builtin = @import("builtin");
 const sdk = @import("sdk");
+const exec = @import("../exec.zig");
+const _log = @import("../log/_log.zig");
 
 const PutChProc = sdk.exec.PutChProc;
 
@@ -74,6 +81,10 @@ pub var raw_io_hardware: RawIOHardware = if (builtin.is_test) no_raw_io else chi
 /// Set by RawIOInit: before it, the raw port is silent.
 pub var raw_ready = false;
 
+/// The next character starts a line, and gets the time and the writer in
+/// front of it.
+var line_start = true;
+
 /// No hardware (host tests): output is dropped, and there is no input.
 pub const no_raw_io: RawIOHardware = .{ .init = noInit, .put = noPut, .get = noGet };
 
@@ -86,15 +97,47 @@ fn noGet() ?u8 {
     return null;
 }
 
-/// One character out on the raw port, "\n" as "\r\n". A NUL, or anything
-/// before RawIOInit, goes nowhere.
+/// One character out on the raw port, "\n" as "\r\n", and into the
+/// system log; a line's first character gets the time and the writer in
+/// front. A NUL goes nowhere, and before RawIOInit only into the log.
 ///
 /// INPUTS:
 /// - `character` - the byte to send.
 pub fn putChar(character: u8) void {
-    if (!raw_ready or character == 0) return;
+    if (character == 0) return;
+    if (line_start and character != '\n') {
+        line_start = false;
+        linePrefix();
+    }
+    emit(character);
+    if (character == '\n') line_start = true;
+}
+
+/// A character to the log and the port, with nothing in front.
+fn emit(character: u8) void {
+    _log.keep(character);
+    if (!raw_ready) return;
     if (character == '\n') raw_io_hardware.put('\r');
     raw_io_hardware.put(character);
+}
+
+/// `format`'s output function for the prefix: `emit`, NUL dropped.
+fn emitPut(character: u8, _: ?*anyopaque) callconv(.c) void {
+    if (character != 0) emit(character);
+}
+
+/// A line's time and writer: `[  12.345678 exec] `.
+fn linePrefix() void {
+    const us = _log.clock();
+    const writer: [*:0]const u8 = if (!exec.initialized)
+        "boot"
+    else if (exec.SysBase.int_depth != 0)
+        "int"
+    else
+        exec.SysBase.this_task.node.name orelse "?";
+    const stream = sdk.exec.fmtStream(.{ us / 1_000_000, us % 1_000_000, writer });
+    comptime sdk.exec.checkFormat("[%4ld.%06ld %.24s] ", @TypeOf(.{ @as(u64, 0), @as(u64, 0), writer }));
+    _ = format("[%4ld.%06ld %.24s] ", &stream, &emitPut, null);
 }
 
 /// kprintf for kernel code: `format_string` with `args` (checked at compile

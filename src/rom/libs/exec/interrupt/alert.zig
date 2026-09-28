@@ -65,12 +65,12 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `SetTrapCode`, `ColdReboot`
+/// `AlertAt`, `SetTrapCode`, `ColdReboot`
 ///
 /// EXAMPLES:
 /// ```zig
 /// sys.Alert(exec.AT_DeadEnd | exec.AN_KernelPanic);
 /// ```
 pub fn Alert(_: *ExecBase, alert_num: u32) void {
-    _interrupt.alertAt(alert_num, @returnAddress());
+    _interrupt.alertAt(alert_num, @returnAddress(), null);
 }

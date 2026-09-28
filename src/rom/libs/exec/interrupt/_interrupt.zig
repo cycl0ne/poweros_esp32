@@ -240,15 +240,16 @@ pub fn dispatchTrap(base: *ExecBase, info: *TrapInfo) void {
     if (task.trap_code) |code| {
         if (code(info, task.trap_data) != 0) return;
     }
-    alert_hook(sdk.exec.ACPU_Base | info.number, info.pc, info);
+    alert_hook(sdk.exec.ACPU_Base | info.number, info.pc, info, null);
 }
 
 /// How an alert is shown. `alert_num` is what went wrong, `where` the
-/// guru's second number - the address that raised it - and `info` is set
-/// for a CPU exception and null otherwise.
+/// guru's second number - the address that raised it - `info` is set
+/// for a CPU exception and null otherwise, and `text` is a line saying
+/// what went wrong, or null.
 ///
 /// It **must not return** when `AT_DeadEnd` is set.
-pub const AlertFn = *const fn (alert_num: u32, where: usize, info: ?*const TrapInfo) void;
+pub const AlertFn = *const fn (alert_num: u32, where: usize, info: ?*const TrapInfo, text: ?[*:0]const u8) void;
 
 /// Where exec reaches the alert display. The kernel writes it before the
 /// bootstrap. It is the kernel's state rather than a module's, like
@@ -261,10 +262,11 @@ pub var alert_hook: AlertFn = default_alert;
 pub const default_alert: AlertFn = defaultAlert;
 
 /// `default_alert`'s body: a dead end panics, anything else is ignored.
-/// `where` and `info` have nowhere to go without a display.
-fn defaultAlert(alert_num: u32, where: usize, info: ?*const TrapInfo) void {
+/// `where`, `info` and `text` have nowhere to go without a display.
+fn defaultAlert(alert_num: u32, where: usize, info: ?*const TrapInfo, text: ?[*:0]const u8) void {
     _ = where;
     _ = info;
+    _ = text;
     if (alert_num & sdk.exec.AT_DeadEnd != 0) @panic("dead-end alert");
 }
 
@@ -274,14 +276,14 @@ fn defaultAlert(alert_num: u32, where: usize, info: ?*const TrapInfo) void {
 /// INPUTS:
 /// - `alert_num` - what went wrong.
 /// - `where` - the guru's second number.
-pub fn alertAt(alert_num: u32, where: usize) void {
-    alert_hook(alert_num, where, null);
+/// - `text` - what went wrong in words, or null.
+pub fn alertAt(alert_num: u32, where: usize, text: ?[*:0]const u8) void {
+    alert_hook(alert_num, where, null, text);
 }
 
-/// The kernel's Zig panic handler, which main.zig installs: the message
-/// and the address on the raw port with `kprintf`, then a dead-end alert
-/// (`AN_KernelPanic`), which halts. Before `RawIOInit` nothing is printed
-/// at all.
+/// The kernel's Zig panic handler, which main.zig installs: a dead-end
+/// alert (`AN_KernelPanic`) at the failed check with its message, which
+/// halts. Before `RawIOInit` nothing is printed at all.
 ///
 /// INPUTS:
 /// - `msg` - the panic's text, cut to 96 bytes because it is copied onto a
@@ -293,8 +295,6 @@ pub fn kernelPanic(msg: []const u8, ret_addr: ?usize) noreturn {
     const length = @min(msg.len, text.len - 1);
     @memcpy(text[0..length], msg[0..length]);
     text[length] = 0;
-    exec.kprintf("\n*** KERNEL PANIC: %s\n", .{text[0..length :0]});
-    if (ret_addr) |address| exec.kprintf("    at 0x%08x\n", .{@as(u32, @truncate(address))});
-    alertAt(sdk.exec.AT_DeadEnd | sdk.exec.AN_KernelPanic, ret_addr orelse @returnAddress());
+    alertAt(sdk.exec.AT_DeadEnd | sdk.exec.AN_KernelPanic, ret_addr orelse @returnAddress(), text[0..length :0]);
     while (true) {} // a dead-end alert doesn't come back
 }

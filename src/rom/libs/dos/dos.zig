@@ -3309,7 +3309,16 @@ test "LoadSeg, UnLoadSeg: segments relocated, the entry, a file that isn't one" 
     try testing.expectEqual(@as(u32, 0xAABBCCDD), @as(*align(1) const u32, @ptrCast(data.data.?)).*);
     try testing.expectEqual(@as(u8, 0), data.data.?[8]);
     try testing.expectEqual(@as(u8, 0), bss.data.?[0]);
+    // On the list of loaded files by its name: an address in its code is
+    // found with the offset into it, one in its data is not code.
+    try testing.expectEqualStrings("prog", std.mem.span(seg.file.name.?));
+    const place = segment.codeAt(db, @intFromPtr(seg.run_address.?) + 6).?;
+    try testing.expectEqualStrings("prog", std.mem.span(place.name));
+    try testing.expectEqual(@as(usize, 6), place.offset);
+    try testing.expect(segment.codeAt(db, @intFromPtr(data.data.?)) == null);
+    const code_start = @intFromPtr(seg.run_address.?);
     dl.UnLoadSeg(seg);
+    try testing.expect(segment.codeAt(db, code_start) == null);
 
     try fileWith(dl, "RAMT:notprog", "no magic here, just text");
     try testing.expect(dl.LoadSeg("RAMT:notprog") == null);

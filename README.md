@@ -60,11 +60,13 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Kernel (exec):** preemptive multitasking, signals, message ports,
   semaphores; libraries and devices opened by name, loaded from disk on
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
-  PSRAM as memory with attributes.
+  PSRAM as memory with attributes; a system log of everything written to
+  the serial console since the boot (`C:Log`), and a Guru that names the
+  failed check and the file and offset it is in.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 31 commands in `C:`, test
+  a shell with scripts and resident commands, 32 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing, layers.library for overlapping windows, and

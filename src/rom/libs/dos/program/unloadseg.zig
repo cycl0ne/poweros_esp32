@@ -45,6 +45,11 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// ```
 pub fn UnLoadSeg(db: *DosBase, seg_list: ?*dos.SegList) void {
     const sys = db.sys_base;
+    if (seg_list) |first| if (first.file.succ != null) {
+        sys.Forbid();
+        sys.Remove(&first.file);
+        sys.Permit();
+    };
     var seg = seg_list;
     while (seg) |s| {
         const next = s.next;

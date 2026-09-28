@@ -25,6 +25,8 @@ iram_to_dram = 0x6F0000;
    table's pointer, the Wi-Fi task's queue, ...) are at 0x3FCEF81C to
    0x3FCEFFFC. */
 dram_end = 0x3FCE9700;
+/* The word at dram_end, below the ROM's reserved area at 0x3FCE9704, is
+   AbsExecBase (sdk.exec.AbsExecBase): SysBase for code handed no base. */
 _stack_size = 16K;
 
 SECTIONS

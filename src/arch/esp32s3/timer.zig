@@ -65,4 +65,5 @@ fn onTick(_: u5) void {
     cpu.setCcompare0(next);
     ticks +%= 1;
     exec.tickQuantum(exec.SysBase);
+    exec.tickLog(exec.SysBase);
 }

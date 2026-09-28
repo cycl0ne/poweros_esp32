@@ -12,5 +12,8 @@ pub const AN_SemCorrupt: u32 = 0x0100_0008;
 /// A Zig panic in the kernel (exec.kernelPanic), past exec's other codes,
 /// which end at 0x0100000F.
 pub const AN_KernelPanic: u32 = 0x0100_0100;
+/// A Zig panic in a program, library, device or handler loaded from disk
+/// (the SDK's panic handler, `sdk.exec.panic`).
+pub const AN_ProgramPanic: u32 = 0x0100_0101;
 /// General alert: a library could not be made.
 pub const AG_MakeLib: u32 = 0x0002_0000;

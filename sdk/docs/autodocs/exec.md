@@ -22,6 +22,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddTail](#addtail) - Puts a node at the tail of a list.
 - [AddTask](#addtask) - Starts a task the caller has laid out, and makes it ready to run.
 - [Alert](#alert) - Reports that the system has a problem, and for a dead end stops.
+- [AlertAt](#alertat) - Reports a problem found at a place the caller names, with what went wrong in words, and for a dead end stops.
 - [AllocMem](#allocmem) - Allocates memory from the system, from the first region that suits.
 - [AllocPooled](#allocpooled) - Takes a block of memory from a pool.
 - [AllocSignal](#allocsignal) - Takes a signal bit for the calling task's own use.
@@ -90,6 +91,7 @@ Generated from the source by `./zig build autodoc`.
 - [RawIOInit](#rawioinit) - Sets exec's own console up, before anything can be printed.
 - [RawMayGetChar](#rawmaygetchar) - Takes a character from exec's own console if one is waiting.
 - [RawPutChar](#rawputchar) - Sends one character to exec's own console.
+- [ReadLog](#readlog) - Reads the system log from a byte's running number on.
 - [ReleaseSemaphore](#releasesemaphore) - Gives back one obtain, and hands the semaphore on when it was the last.
 - [ReleaseSemaphoreList](#releasesemaphorelist) - Gives back every semaphore on a list.
 - [RemDevice](#remdevice) - Asks a device to go away, through its own Expunge vector.
@@ -110,6 +112,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetExcept](#setexcept) - Chooses which of the calling task's signals raise its exception code.
 - [SetFunction](#setfunction) - Replaces one entry of a library's jump table and answers the old one.
 - [SetIntVector](#setintvector) - Installs the one handler of an interrupt number.
+- [SetLogSignal](#setlogsignal) - Asks for signals when something is added to the system log, or stops them.
 - [SetMem](#setmem) - Fills memory with one byte value.
 - [SetRamLib](#setramlib) - Tells exec where the module loader's base is.
 - [SetSignal](#setsignal) - Reads or changes the calling task's signals without waiting.
@@ -950,12 +953,78 @@ None known.
 
 **SEE ALSO**
 
-`SetTrapCode`, `ColdReboot`
+`AlertAt`, `SetTrapCode`, `ColdReboot`
 
 **EXAMPLES**
 
 ```zig
 sys.Alert(exec.AT_DeadEnd | exec.AN_KernelPanic);
+```
+
+## AlertAt
+
+Reports a problem found at a place the caller names, with what went wrong in words, and for a dead end stops.
+
+**SYNOPSIS**
+
+```zig
+fn AlertAt(_: *ExecBase, alert_num: u32, where: usize, text: ?[*:0]const u8) void
+```
+
+**SINCE**
+
+1.0. LVO -466.
+
+**INPUTS**
+
+- `alert_num` - what went wrong, with `AT_DeadEnd` set if the machine
+  cannot carry on.
+- `where` - the Guru's second number: the address the trouble is about.
+  A return address or an exact program counter will do.
+- `text` - a line saying what went wrong, or null for none.
+
+**RESULT**
+
+Nothing, and for `AT_DeadEnd` it does not return at all.
+
+**BEHAVIOR**
+
+`Alert` with two things added: the caller chooses the address instead
+of being named itself, and the text is shown with the alert. The display
+names the code `where` lies in - the ROM, or a file loaded from disk and
+the offset into it.
+
+A panic handler is the caller it is for: the address is the failed
+check's, handed to the handler, and the text is the check's message.
+
+**CONTEXT**
+
+- Waits: no, and it must not.
+- Interrupts: safe.
+- Forbid: not needed, and not taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `text` is only read, while the alert is shown.
+
+**NOTES**
+
+The text is cut at 96 characters on the display. A caller without a
+base finds exec through `AbsExecBase`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Alert`, `SetTrapCode`
+
+**EXAMPLES**
+
+```zig
+sys.AlertAt(exec.AT_DeadEnd | exec.AN_ProgramPanic, ret_addr, "integer overflow");
 ```
 
 ## AllocMem
@@ -5405,6 +5474,82 @@ None known.
 sys.RawPutChar('!');
 ```
 
+## ReadLog
+
+Reads the system log from a byte's running number on.
+
+**SYNOPSIS**
+
+```zig
+fn ReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -472.
+
+**INPUTS**
+
+- `position` - the running number of the first byte wanted: 0 for the
+  oldest the ring still holds. Moved past the last byte copied.
+- `buffer` - where the bytes go.
+- `size` - how many bytes `buffer` holds.
+
+**RESULT**
+
+How many bytes were copied; 0 when there is nothing after `position`.
+
+**BEHAVIOR**
+
+The log is everything written to the raw port - kprintf, RawPutChar -
+since the boot, each line with its time and writer in front. exec keeps
+the last 16 KiB of it. Every byte has a running number that never
+wraps, so a reader keeps the number it has read up to and calls again
+for what came after.
+
+A reader that fell further behind than the ring holds gets the oldest
+byte still kept: the new position less the count is where the copy
+started, and that less the position asked for is how much was lost.
+
+Any number of readers read beside each other; reading takes nothing
+away.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Forbid: not needed. It holds interrupts off while it copies.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are copied into the caller's buffer; nothing is allocated.
+
+**NOTES**
+
+The bytes are text but not NUL-terminated. A read may end in the middle
+of a line.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetLogSignal`, `RawPutChar`
+
+**EXAMPLES**
+
+```zig
+var position: u64 = 0;
+var buffer: [512]u8 = undefined;
+while (true) {
+    const count = sys.ReadLog(&position, &buffer, buffer.len);
+    if (count == 0) break;
+    _ = dl.Write(dl.Output(), &buffer, count);
+}
+```
+
 ## ReleaseSemaphore
 
 Gives back one obtain, and hands the semaphore on when it was the last.
@@ -6636,6 +6781,74 @@ None known.
 
 ```zig
 const old = sys.SetIntVector(intbits.INTB_UART0, &my_handler);
+```
+
+## SetLogSignal
+
+Asks for signals when something is added to the system log, or stops them.
+
+**SYNOPSIS**
+
+```zig
+fn SetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) bool
+```
+
+**SINCE**
+
+1.0. LVO -478.
+
+**INPUTS**
+
+- `task` - the task to signal; null for the caller.
+- `signal_mask` - the signals it is sent; 0 to send none any more.
+
+**RESULT**
+
+True when the task follows the log as asked (or, for 0, no longer
+does); false when there is no room for another follower.
+
+**BEHAVIOR**
+
+A follower is signalled at most every ten ticks, and only when
+something was added since the last time - not for every line - so it
+reads with `ReadLog` what came in a batch. A task that asks again gets
+the new mask in place of the old one.
+
+Four tasks may follow the log at once.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Forbid: not needed. It holds interrupts off while it changes the
+  followers.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+exec keeps the task's address until it is set to 0 again: a task must
+stop following before it ends.
+
+**NOTES**
+
+The signals are the task's own, allocated with `AllocSignal`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadLog`, `AllocSignal`, `Wait`
+
+**EXAMPLES**
+
+```zig
+const bit = sys.AllocSignal(-1);
+_ = sys.SetLogSignal(null, @as(u32, 1) << @intCast(bit));
+// ... Wait, ReadLog ...
+_ = sys.SetLogSignal(null, 0);
+sys.FreeSignal(bit);
 ```
 
 ## SetMem
