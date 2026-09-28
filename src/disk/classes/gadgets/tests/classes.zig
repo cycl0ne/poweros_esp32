@@ -919,6 +919,48 @@ test "slider.gadget: the level's room in pixels as well as in characters" {
     try rig.down();
 }
 
+test "scroller.gadget: an arrow's triangle sits in the middle of its button" {
+    // Every button from the smallest that takes an arrow up to a large
+    // one, square and oblong, upright and across.
+    var width: i32 = 5;
+    while (width <= 40) : (width += 1) {
+        var height: i32 = 4;
+        while (height <= 40) : (height += 1) {
+            for ([_]bool{ true, false }) |vertical| {
+                const at = gc.Box{ .left = 7, .top = 3, .width = width, .height = height };
+                const triangle = scroller.triangleIn(at, vertical) orelse continue;
+                const across_room = if (vertical) at.width else at.height;
+                const along_room = if (vertical) at.height else at.width;
+                const across_left = if (vertical) at.left else at.top;
+                const along_left = if (vertical) at.top else at.left;
+
+                // The same number of pixels at each edge, both ways.
+                const across_before = triangle.across_at - across_left;
+                const across_after = across_room - triangle.base - across_before;
+                try testing.expectEqual(across_before, across_after);
+                const along_before = triangle.along_at - along_left;
+                const along_after = along_room - triangle.rows - along_before;
+                try testing.expectEqual(along_before, along_after);
+                // And a pixel clear of the button's edge on every side.
+                try testing.expect(across_before >= 1 and along_before >= 1);
+
+                // Every row is as wide either side of the middle: what
+                // it leaves at the two ends of the base is the same.
+                var row: i32 = 0;
+                while (row < triangle.rows) : (row += 1) {
+                    const start = triangle.startAt(row);
+                    const w = triangle.widthAt(row);
+                    try testing.expectEqual(start - triangle.across_at, triangle.base - w - (start - triangle.across_at));
+                    try testing.expect(w >= 1 and w <= triangle.base);
+                }
+                // The tip is the first row and the base the last.
+                try testing.expectEqual(triangle.tip, triangle.widthAt(0));
+                try testing.expectEqual(triangle.base, triangle.widthAt(triangle.rows - 1));
+            }
+        }
+    }
+}
+
 /// The key that works a gadget, typed.
 fn keyed(typed: u32, qualifier: u32, termination: *i32) gc.GpKey {
     return .{ .key = typed, .qualifier = qualifier, .termination = termination };

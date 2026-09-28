@@ -190,43 +190,90 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
 
 // --- drawing ----------------------------------------------------------------
 
+/// The triangle of an arrow button: where it starts across the way the
+/// arrow points and along it, how wide its base and its tip are, and how
+/// many rows it takes from the tip to the base.
+pub const Triangle = struct {
+    across_at: i32,
+    along_at: i32,
+    tip: i32,
+    base: i32,
+    rows: i32,
+
+    /// The width of row `row`, counted from the tip.
+    pub fn widthAt(t: Triangle, row: i32) i32 {
+        return t.tip + 2 * row;
+    }
+
+    /// Where row `row` starts across the way the arrow points.
+    pub fn startAt(t: Triangle, row: i32) i32 {
+        return t.across_at + @divTrunc(t.base - t.widthAt(row), 2);
+    }
+};
+
+/// The triangle for a button `at` big, pointing along its height when
+/// `vertical`; null when the button is too small for one.
+///
+/// Every row is the same width either side of the middle, and the pixels
+/// left over at the two edges of the button are the same number, which is
+/// what makes the arrow look placed in the button rather than pushed to
+/// one side. Keeping it so needs the triangle and the room it sits in to
+/// have the same parity, since a triangle centred in a room of the other
+/// parity has one pixel more at one edge than at the other. So the tip is
+/// one pixel wide in an odd room and two in an even one and the rows grow
+/// by two, which makes every row the room's parity; and a row more or
+/// fewer does the same along the way the arrow points, without touching
+/// the width.
+pub fn triangleIn(at: gc.Box, vertical: bool) ?Triangle {
+    const across_room = if (vertical) at.width else at.height;
+    const along_room = if (vertical) at.height else at.width;
+    if (across_room < 5 or along_room < 4) return null;
+    const tip: i32 = 2 - @mod(across_room, 2);
+    // About half the button's smaller side.
+    const wanted = @max(@divTrunc(@min(at.width, at.height), 2), tip + 2);
+    var steps = @max(@divTrunc(wanted - tip + 1, 2), 1);
+    if (@mod(along_room - steps - 1, 2) != 0) steps += 1;
+    // Two at a time, so that what is taken off keeps the parity.
+    while (steps > 2 and (tip + 2 * steps > across_room - 2 or steps + 1 > along_room - 2)) steps -= 2;
+    if (tip + 2 * steps > across_room - 2 or steps + 1 > along_room - 2) return null;
+    const base = tip + 2 * steps;
+    const rows = steps + 1;
+    return .{
+        .across_at = (if (vertical) at.left else at.top) + @divTrunc(across_room - base, 2),
+        .along_at = (if (vertical) at.top else at.left) + @divTrunc(along_room - rows, 2),
+        .tip = tip,
+        .base = base,
+        .rows = rows,
+    };
+}
+
 /// One arrow: its frame, pressed while it is held with the pointer on it,
-/// and a triangle pointing the way it steps.
+/// and a triangle pointing the way it steps, drawn a row at a time - a
+/// column at a time for the horizontal arrows - rather than as a filled
+/// polygon, whose edges belong to one side and not the other.
 fn drawArrow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, at: gc.Box, which: u8) void {
     const gb = base.graphics_base;
     const pressed = own.held == which and own.over != 0;
     support.drawFrame(base.intuition_base, own.frame.?, rp, at, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info);
     const pens = info.draw_info.pens;
     support.setPen(gb, rp, if (pressed) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
-    // A triangle half the arrow's smaller side, in its middle.
-    const side = @max(@divTrunc(@min(at.width, at.height), 2), 3);
-    const cx = at.left + @divTrunc(at.width, 2);
-    const cy = at.top + @divTrunc(at.height, 2);
-    const half = @divTrunc(side, 2);
-    // The point, then the two corners of the base.
-    const points: [3][2]i32 = if (own.vertical != 0)
-        (if (which == BACK)
-            .{ .{ cx, cy - half }, .{ cx - side + half, cy + half }, .{ cx + side - half, cy + half } }
-        else
-            .{ .{ cx, cy + half }, .{ cx - side + half, cy - half }, .{ cx + side - half, cy - half } })
-    else if (which == BACK)
-        .{ .{ cx - half, cy }, .{ cx + half, cy - side + half }, .{ cx + half, cy + side - half } }
-    else
-        .{ .{ cx + half, cy }, .{ cx - half, cy - side + half }, .{ cx - half, cy + side - half } };
-    _ = gb.AreaMove(rp, points[0][0], points[0][1]);
-    _ = gb.AreaDraw(rp, points[1][0], points[1][1]);
-    _ = gb.AreaDraw(rp, points[2][0], points[2][1]);
-    _ = gb.AreaEnd(rp);
+    const vertical = own.vertical != 0;
+    const triangle = triangleIn(at, vertical) orelse return;
+    var row: i32 = 0;
+    while (row < triangle.rows) : (row += 1) {
+        // An arrow that points back has its tip first, one that points
+        // forward has it last.
+        const grown = if (which == BACK) row else triangle.rows - 1 - row;
+        const width = triangle.widthAt(grown);
+        const start = triangle.startAt(grown);
+        if (vertical) gb.DrawHLine(rp, start, triangle.along_at + row, width) else gb.DrawVLine(rp, triangle.along_at + row, start, width);
+    }
 }
 
 fn drawArrows(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo) void {
     if (own.arrows == 0) return;
-    const gb = base.graphics_base;
     const b = gc.boxFor(gc.gadget(o), info);
     const parts = partsOf(own, o, info);
-    // Room for a triangle's filled points.
-    if (!gb.InitArea(rp, 8)) return;
-    defer _ = gb.InitArea(rp, 0);
     for ([_]u8{ BACK, FORWARD }) |which| {
         const part = if (which == BACK) parts.back else parts.forward;
         drawArrow(base, own, rp, info, .{ .left = b.left + part.left, .top = b.top + part.top, .width = part.width, .height = part.height }, which);
