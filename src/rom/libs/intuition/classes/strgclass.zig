@@ -787,6 +787,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(ib, cl, o.?, r.gadget_info, r.rast_port);
             return 0;
         },
+        // The key that works a line of text gives it the keyboard: what
+        // the key does after that is typing, not a shortcut.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            return if (own(cl, o.?).buffer == null) gc.GMKR_NOTHING else gc.GMKR_ACTIVATE;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const p = own(cl, o.?);

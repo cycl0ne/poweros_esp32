@@ -272,6 +272,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             while (walk.next()) |member| _ = it.SendMessage(member, @ptrCast(msg));
             return 0;
         },
+        // Each member in turn until one takes the key. The first to take
+        // it names itself, so that a group inside a group hands back the
+        // gadget that did the work rather than the group it is in.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            const p = own(cl, o.?);
+            var walk = Walk.over(ib, p);
+            while (walk.next()) |member| {
+                const answer = it.SendMessage(member, @ptrCast(msg));
+                if (answer != gc.GMKR_NOTHING) {
+                    if (k.gadget == null) k.gadget = member;
+                    return answer;
+                }
+            }
+            return gc.GMKR_NOTHING;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const p = own(cl, o.?);

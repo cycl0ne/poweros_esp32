@@ -80,6 +80,11 @@ pub const LORIENT_VERT: u32 = 2;
 
 pub const CHILDA_Dummy = LAYOUTA_Dummy + 0x0100;
 /// Text beside the child, on its left: a C string, not copied.
+///
+/// An `_` in it marks the character after it as the key that works the
+/// child: the `_` is not drawn, the character it marks is underlined, and
+/// the child's `GA_Key` becomes that character. A label without one
+/// leaves the key the child already has.
 pub const CHILDA_Label = CHILDA_Dummy + 0x01;
 /// How much of the spare width it takes in a row, against the others'
 /// (100 unless told). 0 keeps it at its nominal width; across a column,

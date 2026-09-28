@@ -504,6 +504,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return gc.GMR_MEACTIVE;
         },
+        // The key moves it on by one, and back by one with a Shift key
+        // held, as an arrow beside it would.
+        gc.GM_KEY => {
+            const key: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, key)) return gc.GMKR_NOTHING;
+            const p = own(cl, o.?);
+            const back = key.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+            const last = if (p.total > p.visible) p.total - p.visible else 0;
+            const was = p.top;
+            p.top = if (back) (if (p.top > 0) p.top - 1 else 0) else @min(p.top + 1, last);
+            key.termination.* = @bitCast(p.top);
+            if (p.top == was) return gc.GMKR_DONE;
+            thingsChanged(p);
+            redraw(ib, o.?, key.gadget_info);
+            tell(ib, cl, o.?, key.gadget_info, 0);
+            return gc.GMKR_VERIFY;
+        },
         gc.GM_GOINACTIVE => {
             own(cl, o.?).flags &= ~pg.KNOBHIT;
             return 0;

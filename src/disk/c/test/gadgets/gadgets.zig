@@ -2,7 +2,7 @@
 //! Gadgets: the gadget classes on the disk, in a window. Built against the
 //! SDK only.
 //!
-//!   Gadgets
+//!   Gadgets TOUCH/S
 //!
 //! It opens the gadget classes of `SYS:classes/gadgets/` - checkbox,
 //! cycle, radiobutton, string, text, slider and palette - and a window object on
@@ -19,6 +19,16 @@
 //! that ended a line - and the text line shows the code, set in the
 //! window with SetGadgetAttrsTagList. OK prints the name and the number;
 //! OK, the close gadget or Ctrl-C end it.
+//!
+//! Every label has an `_` before the letter that works its gadget, and
+//! that letter is underlined: `b` turns the check box over, `e` steps the
+//! cycle gadget on and Shift-`e` back, `v` moves the slider, `o` presses
+//! OK, `n` gives the name field the keyboard. `Locked` is disabled, so
+//! its `l` does nothing and the key reaches the program instead.
+//!
+//! With `TOUCH` the check boxes and the radio group fill the room the
+//! layout gives them instead of being a line of text high, which is what
+//! a finger on a touch screen needs.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -44,10 +54,11 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gadgets";
-const VERSION_STRING = "\x00$VER: Gadgets 1.2 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gadgets 1.4 (28.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "";
+const template = "TOUCH/S";
+const arg_touch = 0;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display\n";
@@ -102,7 +113,7 @@ const Shown = struct {
 
 /// The layout and everything in it; null, with whatever was made freed,
 /// when one of them could not be made.
-fn build(ib: *IntuitionBase) ?Shown {
+fn build(ib: *IntuitionBase, touch: bool) ?Shown {
     const name = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_NAME },
         .{ .tag = gc.STRINGA_MaxChars, .data = 40 },
@@ -124,6 +135,9 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = sl.SLIDER_Level, .data = 32 },
         .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
         .{ .tag = sl.SLIDER_MaxLevelLen, .data = 2 },
+        // Room for the level in pixels as well, for a proportional font
+        // in which two characters say little about the width needed.
+        .{ .tag = sl.SLIDER_MaxLevelPixels, .data = 28 },
         .{ .tag = sl.SLIDER_LevelJustify, .data = tx.TEXT_JUSTIFY_RIGHT },
         .{},
     });
@@ -143,12 +157,14 @@ fn build(ib: *IntuitionBase) ?Shown {
     });
     const backups = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_BACKUPS },
+        .{ .tag = if (touch) cb.CHECKBOX_Scaled else sdk.utility.TAG_IGNORE, .data = 1 },
         .{},
     });
     const locked = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_LOCKED },
         .{ .tag = cb.CHECKBOX_Checked, .data = 1 },
         .{ .tag = gc.GA_Disabled, .data = 1 },
+        .{ .tag = if (touch) cb.CHECKBOX_Scaled else sdk.utility.TAG_IGNORE, .data = 1 },
         .{},
     });
     const level = ib.NewObjectTagList(null, cy.CYCLE_CLASS, &[_]TagItem{
@@ -160,10 +176,11 @@ fn build(ib: *IntuitionBase) ?Shown {
     const port = ib.NewObjectTagList(null, rb.RADIO_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_PORT },
         .{ .tag = rb.RADIO_Labels, .data = @intFromPtr(&ports) },
+        .{ .tag = if (touch) rb.RADIO_Scaled else sdk.utility.TAG_IGNORE, .data = 1 },
         .{},
     });
     const ok = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
-        .{ .tag = gc.GA_Text, .data = @intFromPtr("OK") },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_OK") },
         .{ .tag = gc.GA_ID, .data = ID_OK },
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
@@ -175,24 +192,24 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
         .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Name") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Name") },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(number) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Number") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("N_umber") },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(backups) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Backups") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Backups") },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(locked) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Locked") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Locked") },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(level) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Level") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("L_evel") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(port) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Port") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Port") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(volume) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Volume") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Volume") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(colour) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Colour") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Colour") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(last) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Last") },
@@ -221,6 +238,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
+    const touch = argv[arg_touch] != 0;
 
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
@@ -251,7 +269,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer ib.UnlockPubScreen(null, screen);
 
-    const shown = build(ib) orelse {
+    const shown = build(ib, touch) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };

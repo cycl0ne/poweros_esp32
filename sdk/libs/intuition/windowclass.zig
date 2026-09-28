@@ -18,9 +18,16 @@
 //! class it has no word for is replied and passed over.
 //!
 //! The window listens for `IDCMP_CLOSEWINDOW`, `IDCMP_GADGETUP`,
-//! `IDCMP_GADGETDOWN` and `IDCMP_MENUPICK` whatever it is told; `WA_IDCMP`
-//! adds to them - `IDCMP_VANILLAKEY`, `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
+//! `IDCMP_GADGETDOWN`, `IDCMP_MENUPICK` and `IDCMP_VANILLAKEY` whatever it
+//! is told; `WA_IDCMP` adds to them - `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
 //! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` have words of their own.
+//!
+//! A character typed is offered to the layout first: the gadget whose
+//! `GA_Key` it is - the letter underlined in its label - is worked as a
+//! press would work it, and what it did comes back as `WMHI_GADGETUP`
+//! with that gadget's `GA_ID` and its code. A gadget that only takes the
+//! keyboard, a line of text, is activated and nothing is reported. Only a
+//! character no gadget answers to is handed on as `WMHI_VANILLAKEY`.
 //!
 //! ```zig
 //! const win = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &.{

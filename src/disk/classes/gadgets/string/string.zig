@@ -241,6 +241,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // The key gives the line the keyboard, and the window activates
+        // it: what is typed after that is text, not a shortcut.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            return if (gc.keyIsFor(o.?, k)) gc.GMKR_ACTIVATE else gc.GMKR_NOTHING;
+        },
         gc.GM_GOACTIVE, gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);

@@ -12,7 +12,7 @@
 //!
 //! Given `SLIDER_LevelFormat`, the level is shown beside the slider -
 //! `SLIDER_LevelPlace` says which side - in room for `SLIDER_MaxLevelLen`
-//! characters. A `SLIDER_DispFunc` hook turns the level into the number
+//! characters, or `SLIDER_MaxLevelPixels` pixels where that is wider. A `SLIDER_DispFunc` hook turns the level into the number
 //! shown first.
 //!
 //!   const volume = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &.{
@@ -53,6 +53,12 @@ pub const SLIDER_LevelJustify = SLIDER_Dummy + 0x07;
 /// the gadget as its object and a `*const i32`, the level, as its message,
 /// and answers the number. Made only.
 pub const SLIDER_DispFunc = SLIDER_Dummy + 0x08;
+/// How many pixels the shown level has room for, as well as
+/// `SLIDER_MaxLevelLen` characters: the wider of the two is what it gets.
+/// 0, which is none, unless given. Made only. For a proportional font, in
+/// which a count of characters says little about the width the widest
+/// number needs.
+pub const SLIDER_MaxLevelPixels = SLIDER_Dummy + 0x09;
 
 pub const SLIDER_PLACE_LEFT: u32 = 0;
 pub const SLIDER_PLACE_RIGHT: u32 = 1;

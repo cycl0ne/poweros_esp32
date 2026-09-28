@@ -4240,6 +4240,121 @@ test "gadgets in a layout: Tab reaches them and goes round, ActivateGadget takes
     try tearDown(ib);
 }
 
+test "gadget shortcuts: a `_` names the key, the window works the gadget, and the label loses the mark" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const pg = intuition.propgclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    // A `_` in a button's own label, and in the labels a layout gives its
+    // other children.
+    const ok = framedButton(ib, "_Ok", 1);
+    try testing.expectEqual(@as(usize, 'o'), getAttr(ib, ok, gc.GA_Key));
+    // The mark is not drawn, so it takes no room: the same button as one
+    // labelled without it.
+    const plain = framedButton(ib, "Ok", 9);
+    var marked_size = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    var plain_size = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = it.SendMessage(ok, @ptrCast(&marked_size));
+    _ = it.SendMessage(plain, @ptrCast(&plain_size));
+    try testing.expectEqual(plain_size.domain.width, marked_size.domain.width);
+    it.DisposeObject(plain);
+
+    const name = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 2 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const volume = it.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 3 },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = pg.PGA_Total, .data = 10 },
+        .{ .tag = pg.PGA_Visible, .data = 1 },
+        .{ .tag = pg.PGA_Top, .data = 0 },
+        .{},
+    }).?;
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Name") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(volume) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Volume") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ok) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 'n'), getAttr(ib, name, gc.GA_Key));
+    try testing.expectEqual(@as(usize, 'v'), getAttr(ib, volume, gc.GA_Key));
+
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("K") },
+        .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    var code: u32 = 99;
+    var handle = wc.WmHandleInput{ .code = &code };
+
+    // A key no gadget answers to is the program's, as it always was.
+    rawKey(ib, 0x32); // 'x'
+    try testing.expectEqual(wc.WMHI_VANILLAKEY | 'x', it.SendMessage(object, @ptrCast(&handle)));
+
+    // The button's key: reported as a press that finished.
+    rawKey(ib, 0x18); // 'o'
+    try testing.expectEqual(wc.WMHI_GADGETUP | 1, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(@as(u32, 1), code);
+    // In upper case too: the case a key is typed in makes no difference.
+    const shifted_o: sdk.devices.inputevent.InputEvent = .{
+        .class = sdk.devices.inputevent.IECLASS_RAWKEY,
+        .code = 0x18,
+        .qualifier = sdk.devices.inputevent.IEQUALIFIER_LSHIFT,
+    };
+    _input.handle(ib, &shifted_o);
+    try testing.expectEqual(wc.WMHI_GADGETUP | 1, it.SendMessage(object, @ptrCast(&handle)));
+
+    // The scroller's key moves it on a thing, and back with Shift held.
+    rawKey(ib, 0x34); // 'v'
+    try testing.expectEqual(wc.WMHI_GADGETUP | 3, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(@as(u32, 1), code);
+    try testing.expectEqual(@as(usize, 1), getAttr(ib, volume, pg.PGA_Top));
+    const shifted_v: sdk.devices.inputevent.InputEvent = .{
+        .class = sdk.devices.inputevent.IECLASS_RAWKEY,
+        .code = 0x34,
+        .qualifier = sdk.devices.inputevent.IEQUALIFIER_LSHIFT,
+    };
+    _input.handle(ib, &shifted_v);
+    try testing.expectEqual(wc.WMHI_GADGETUP | 3, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, volume, pg.PGA_Top));
+
+    // A disabled gadget answers to nothing: its key is the program's.
+    _ = it.SetAttrsTagList(ok, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = 1 }, .{} });
+    rawKey(ib, 0x18);
+    try testing.expectEqual(wc.WMHI_VANILLAKEY | 'o', it.SendMessage(object, @ptrCast(&handle)));
+    _ = it.SetAttrsTagList(ok, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = 0 }, .{} });
+
+    // The line of text's key gives it the keyboard, with nothing reported;
+    // what is typed after that is text.
+    rawKey(ib, 0x36); // 'n'
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(ib.input.active.?, name);
+    rawKey(ib, 0x18); // 'o', into the line now
+    try testing.expectEqual(@as(usize, 'o'), firstChar(ib, name));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.DisposeObject(object);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "a plain button with a label is as small as its frame round the label" {
     const ib = try setUp();
     defer kexec.deinit();

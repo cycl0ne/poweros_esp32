@@ -204,7 +204,17 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
             lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight => {
                 const record = p.last orelse continue;
                 switch (item.tag) {
-                    lg.CHILDA_Label => record.label = @ptrFromInt(v),
+                    lg.CHILDA_Label => {
+                        record.label = @ptrFromInt(v);
+                        // A `_` in the label names the key the child is
+                        // worked by; a label without one leaves the key
+                        // the child already has.
+                        const key = gc.labelKey(record.label);
+                        if (key != 0) {
+                            const named = [_]TagItem{ .{ .tag = gc.GA_Key, .data = key }, .{} };
+                            _ = ib.iface().SetAttrsTagList(record.object, &named);
+                        }
+                    },
                     lg.CHILDA_WeightWidth => record.weight_width = @truncate(v),
                     lg.CHILDA_WeightHeight => record.weight_height = @truncate(v),
                     lg.CHILDA_MinWidth => record.min_width = @max(n, 0),
@@ -273,6 +283,11 @@ const Labels = struct {
     fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
         const text = record.label orelse return 0;
         const run = intuition.IntuiText{ .font = labels.measure.font, .text = text };
+        // Measured as it is drawn: without the `_` that marks its key.
+        if (gc.labelMark(text) != null) {
+            const mark = intuition.IntuiText{ .font = labels.measure.font, .text = "_" };
+            return ib.iface().IntuiTextLength(&run) - ib.iface().IntuiTextLength(&mark);
+        }
         return ib.iface().IntuiTextLength(&run);
     }
 
@@ -565,10 +580,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     var walk = Walk.over(p);
     while (walk.next()) |record| {
         const text = record.label orelse continue;
-        var len: u32 = 0;
-        while (text[len] != 0) len += 1;
-        gb.Move(rp, record.label_x, record.label_y + @as(i32, @intCast(baseline)));
-        gb.Text(rp, text, len);
+        d.labelText(gb, rp, record.label_x, record.label_y + @as(i32, @intCast(baseline)), text);
     }
 }
 

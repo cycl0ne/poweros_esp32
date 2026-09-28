@@ -48,6 +48,9 @@ const Data = extern struct {
     /// The box: sysiclass's CHECKIMAGE, at the size of `mark`.
     image: ?*Object = null,
     mark: gc.Box = .{},
+    /// `CHECKBOX_Scaled`: the box fills the room it is given.
+    scaled: u8 = 0,
+    pad: [3]u8 = @splat(0),
 };
 
 /// The box for a font whose lines are `line` high: three pixels more, and
@@ -57,10 +60,25 @@ fn markSize(line: i32) gc.Box {
     return .{ .width = @divTrunc(26 * height + 5, 11), .height = height };
 }
 
-fn markFor(base: *gadgets.Base, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) gc.Box {
+/// The box as big as the room allows, keeping its shape: as tall as the
+/// room and no wider than it.
+fn markScaled(room: gc.Box) gc.Box {
+    const by_width = @divTrunc(11 * room.width - 5, 26);
+    const height = @max(@min(room.height, by_width), 1);
+    return .{ .width = @divTrunc(26 * height + 5, 11), .height = height };
+}
+
+/// The box's size: a line of the font, or the room the gadget was given
+/// when it is a scaled one. `room` is false where the answer decides how
+/// much room there is - `GM_DOMAIN` - so that the two cannot chase each
+/// other.
+fn markFor(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, room: bool) gc.Box {
     const measure = support.Measure.of(base.intuition_base, g, gi);
     defer measure.done(base.intuition_base);
-    return markSize(measure.lineHeight(base.graphics_base));
+    const by_font = markSize(measure.lineHeight(base.graphics_base));
+    if (!room or own.scaled == 0) return by_font;
+    const fitted = markScaled(gc.boxFor(g, gi));
+    return if (fitted.height > by_font.height) fitted else by_font;
 }
 
 /// Where the box is drawn in the gadget's box: at its left, in the middle
@@ -103,7 +121,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     const info = gi orelse return;
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
-    fitImage(base, own, markFor(base, g, gi));
+    fitImage(base, own, markFor(base, own, g, gi, true));
     const image = own.image orelse return;
     const gb = base.graphics_base;
     const saved = support.Saved.of(gb, rp);
@@ -150,8 +168,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
             const g = gc.gadget(obj);
+            own.scaled = @intFromBool(base.utility_base.GetTagData(cb.CHECKBOX_Scaled, 0, new.attr_list) != 0);
             _ = setChecked(base, obj, new.attr_list);
-            fitImage(base, own, markFor(base, g, null));
+            fitImage(base, own, markFor(base, own, g, null, false));
             if (own.image == null) {
                 var gone = classusr.Msg{ .method_id = classusr.OM_DISPOSE };
                 _ = ib.SendSuperMessage(cl, obj, &gone);
@@ -198,7 +217,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         // there is at the most, which it leaves empty.
         gc.GM_DOMAIN => {
             const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
-            const mark = markFor(base, gc.gadget(o.?), ask.gadget_info);
+            const mark = markFor(base, classes.instData(Data, cl, o.?), gc.gadget(o.?), ask.gadget_info, false);
             ask.domain = if (ask.which == gc.GDOMAIN_MAXIMUM)
                 .{ .width = gc.GDOMAIN_UNLIMITED, .height = gc.GDOMAIN_UNLIMITED }
             else
@@ -210,6 +229,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const g = gc.gadget(o.?);
             const own = classes.instData(Data, cl, o.?);
             const b = gc.boxFor(g, ht.gadget_info);
+            fitImage(base, own, markFor(base, own, g, ht.gadget_info, true));
             const at = markIn(own, .{ .width = b.width, .height = b.height });
             const x = ht.mouse.x;
             const y = ht.mouse.y;
@@ -227,6 +247,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const result = ib.SendSuperMessage(cl, o, msg);
             if (in.event != null) tell(base, o.?, in.gadget_info);
+            return result;
+        },
+        // The key turns it over, as a press does, and the state is the
+        // code: the superclass does the turning over and the drawing.
+        gc.GM_KEY => {
+            const result = ib.SendSuperMessage(cl, o, msg);
+            if (result & gc.GMKR_VERIFY != 0) {
+                const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+                k.termination.* = @intFromBool(checked(gc.gadget(o.?)));
+                tell(base, o.?, k.gadget_info);
+            }
             return result;
         },
         // Let go over the box: the state is the code.

@@ -551,6 +551,34 @@ const ByTail = struct {
     }
 };
 
+/// Hides line 4 of the test's list from selection.
+fn fourthDisabled(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    const msg: *const lv.LVDrawMsg = @ptrCast(@alignCast(message.?));
+    if (msg.method_id == lv.LV_ISDISABLED and msg.line == 4) return lv.LVCB_DISABLED;
+    return lv.LVCB_UNKNOWN;
+}
+
+/// A press of the left button at a moment, with the Shift keys as given.
+fn pressing(secs: u32, micro: u32, qualifier: u32) ie.InputEvent {
+    return .{
+        .class = ie.IECLASS_RAWMOUSE,
+        .code = ie.IECODE_LBUTTON,
+        .qualifier = qualifier,
+        .time = .{ .secs = secs, .micro = micro },
+    };
+}
+
+/// The pointer moved with the button held, with the Shift keys as given.
+fn dragging(qualifier: u32) ie.InputEvent {
+    return .{
+        .class = ie.IECLASS_NEWPOINTERPOS,
+        .code = ie.IECODE_NOBUTTON,
+        .qualifier = qualifier,
+    };
+}
+
 /// Hides line 3 of the test's list from selection.
 fn thirdDisabled(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     _ = hook;
@@ -699,6 +727,475 @@ test "listview.gadget: read only, it selects nothing" {
     ib.DisposeObject(view);
     const sys = kexec.SysBase.iface();
     _ = sys.RemLibrary(lib);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "listview.gadget: the selected line's name written into a string gadget" {
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const string_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &string.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listview.Library.resident_tag, null).?));
+
+    var names: [4][8:0]u8 = undefined;
+    var nodes: [4]exec.Node = undefined;
+    var list: exec.List = .{};
+    list.init(.unknown);
+    for (&nodes, &names, 0..) |*node, *name, i| {
+        name.* = @splat(0);
+        name[0] = 'L';
+        name[1] = '0' + @as(u8, @intCast(i));
+        node.* = .{ .name = name };
+        kexec.SysBase.iface().AddTail(&list, node);
+    }
+
+    const field = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 32 },
+        .{},
+    }).?;
+    const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 150 },
+        .{ .tag = gc.GA_Height, .data = 80 },
+        .{ .tag = lv.LISTVIEW_ItemHeight, .data = 10 },
+        .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) },
+        .{ .tag = lv.LISTVIEW_SelectString, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    const cl = classes.objectClass(view);
+    const own = classes.instData(listview.Data, cl, view);
+    const parts = listview.partsOf(sdk.gadgets.baseOf(cl), own, view, null);
+
+    const shownName = struct {
+        fn of(base: *IntuitionBase, o: *Object) []const u8 {
+            var at: usize = 0;
+            _ = base.GetAttr(gc.STRINGA_TextVal, o, &at);
+            if (at == 0) return "";
+            return std.mem.span(@as([*:0]const u8, @ptrFromInt(at)));
+        }
+    }.of;
+
+    // A press on the second line puts its name in the field.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 10, parts.lines.top + parts.line_height + 2, &termination);
+    _ = ib.SendMessage(view, @ptrCast(&down));
+    try testing.expectEqualStrings("L1", shownName(ib, field));
+    var up = input(gc.GM_HANDLEINPUT, &release, 10, parts.lines.top + parts.line_height + 2, &termination);
+    _ = ib.SendMessage(view, @ptrCast(&up));
+
+    // So does naming the line.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 3 }, .{} });
+    try testing.expectEqualStrings("L3", shownName(ib, field));
+    // A list attached anew has nothing selected, and the field is empty.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
+    try testing.expectEqualStrings("", shownName(ib, field));
+    try testing.expectEqual(@intFromPtr(field), attr(ib, view, lv.LISTVIEW_SelectString));
+
+    ib.DisposeObject(view);
+    ib.DisposeObject(field);
+    const sys = kexec.SysBase.iface();
+    _ = sys.RemLibrary(lib);
+    _ = sys.RemLibrary(string_lib);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "checkbox and radiobutton: scaled marks fill the room they are given" {
+    var termination: i32 = -1;
+
+    // A box in a gadget 100 by 30: the mark at the left in the middle
+    // without scaling, the whole box with it.
+    {
+        var heard = Heard{ .tag = cb.CHECKBOX_Checked, .ib = undefined };
+        var rig = try Rig.up(&checkbox.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const plain = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Width, .data = 100 },
+            .{ .tag = gc.GA_Height, .data = 30 },
+            .{},
+        }).?;
+        const scaled = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Width, .data = 100 },
+            .{ .tag = gc.GA_Height, .data = 30 },
+            .{ .tag = cb.CHECKBOX_Scaled, .data = 1 },
+            .{},
+        }).?;
+        var far = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 60, .y = 3 } };
+        try testing.expectEqual(@as(usize, 0), ib.SendMessage(plain, @ptrCast(&far)));
+        try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(scaled, @ptrCast(&far)));
+        // What it says it needs is the font's size either way: a scaled
+        // box takes the room it is given, it does not ask for more.
+        var plain_size = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+        var scaled_size = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+        _ = ib.SendMessage(plain, @ptrCast(&plain_size));
+        _ = ib.SendMessage(scaled, @ptrCast(&scaled_size));
+        try testing.expectEqual(plain_size.domain.height, scaled_size.domain.height);
+        ib.DisposeObject(plain);
+        ib.DisposeObject(scaled);
+        try rig.down();
+    }
+
+    // Two choices in a group 80 tall: the lines a font apart without
+    // scaling, spread over the height with it.
+    {
+        var heard = Heard{ .tag = rb.RADIO_Active, .ib = undefined };
+        var rig = try Rig.up(&radiobutton.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const labels = [_:null]?[*:0]const u8{ "Serial", "USB" };
+        const tags = [_]TagItem{
+            .{ .tag = gc.GA_Width, .data = 120 },
+            .{ .tag = gc.GA_Height, .data = 80 },
+            .{ .tag = rb.RADIO_Labels, .data = @intFromPtr(&labels) },
+            .{},
+        };
+        const plain = ib.NewObjectTagList(null, rb.RADIO_CLASS, &tags).?;
+        const scaled = ib.NewObjectTagList(null, rb.RADIO_CLASS, &[_]TagItem{
+            .{ .tag = rb.RADIO_Scaled, .data = 1 },
+            .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&tags) },
+        }).?;
+        // A third of the way down: the second line in a group of two
+        // font-high lines, still the first when they are spread out.
+        var on_plain = input(gc.GM_GOACTIVE, &press, 10, 30, &termination);
+        _ = ib.SendMessage(plain, @ptrCast(&on_plain));
+        try testing.expectEqual(@as(usize, 1), attr(ib, plain, rb.RADIO_Active));
+        var on_scaled = input(gc.GM_GOACTIVE, &press, 10, 30, &termination);
+        _ = ib.SendMessage(scaled, @ptrCast(&on_scaled));
+        try testing.expectEqual(@as(usize, 0), attr(ib, scaled, rb.RADIO_Active));
+        // And the whole height is its own, which a group of two font-high
+        // lines does not ask for.
+        var most = gc.GpDomain{ .which = gc.GDOMAIN_MAXIMUM };
+        _ = ib.SendMessage(scaled, @ptrCast(&most));
+        try testing.expectEqual(gc.GDOMAIN_UNLIMITED, most.domain.height);
+        ib.DisposeObject(plain);
+        ib.DisposeObject(scaled);
+        try rig.down();
+    }
+}
+
+test "slider.gadget: the level's room in pixels as well as in characters" {
+    var heard = Heard{ .tag = sl.SLIDER_Level, .ib = undefined };
+    var rig = try Rig.up(&slider.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const shown = [_]TagItem{
+        .{ .tag = sl.SLIDER_Max, .data = 64 },
+        .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
+        .{ .tag = sl.SLIDER_MaxLevelLen, .data = 2 },
+        .{},
+    };
+    const by_characters = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &shown).?;
+    const by_pixels = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = sl.SLIDER_MaxLevelPixels, .data = 120 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&shown) },
+    }).?;
+    var narrow = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    var wide = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    _ = ib.SendMessage(by_characters, @ptrCast(&narrow));
+    _ = ib.SendMessage(by_pixels, @ptrCast(&wide));
+    try testing.expect(wide.domain.width > narrow.domain.width);
+    try testing.expect(wide.domain.width >= narrow.domain.width + 120);
+    // The pixels are for the level: a slider that does not show one is
+    // no wider for them.
+    const hidden = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = sl.SLIDER_Max, .data = 64 },
+        .{ .tag = sl.SLIDER_MaxLevelPixels, .data = 120 },
+        .{},
+    }).?;
+    const bare = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = sl.SLIDER_Max, .data = 64 },
+        .{},
+    }).?;
+    var none = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    var plain = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    _ = ib.SendMessage(hidden, @ptrCast(&none));
+    _ = ib.SendMessage(bare, @ptrCast(&plain));
+    try testing.expectEqual(plain.domain.width, none.domain.width);
+    ib.DisposeObject(by_characters);
+    ib.DisposeObject(by_pixels);
+    ib.DisposeObject(hidden);
+    ib.DisposeObject(bare);
+    try rig.down();
+}
+
+/// The key that works a gadget, typed.
+fn keyed(typed: u32, qualifier: u32, termination: *i32) gc.GpKey {
+    return .{ .key = typed, .qualifier = qualifier, .termination = termination };
+}
+
+test "gadget classes: the key that works each one, and the Shift that turns it round" {
+    var termination: i32 = -1;
+
+    // A check box turns over, and the state is the code.
+    {
+        var heard = Heard{ .tag = cb.CHECKBOX_Checked, .ib = undefined };
+        var rig = try Rig.up(&checkbox.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const box = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 1 },
+            .{ .tag = gc.GA_Key, .data = 'b' },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+            .{},
+        }).?;
+        // A key that is not this gadget's does nothing at all.
+        var other = keyed('z', 0, &termination);
+        try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(box, @ptrCast(&other)));
+        // Upper case is the same key.
+        var works = keyed('B', 0, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(box, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 1), termination);
+        try testing.expectEqual(@as(?usize, 1), heard.value);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(box, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 0), termination);
+        // Disabled, it answers to nothing.
+        _ = ib.SetAttrsTagList(box, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = 1 }, .{} });
+        try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(box, @ptrCast(&works)));
+        ib.DisposeObject(box);
+        try rig.down();
+    }
+
+    // A cycle gadget steps on, and back with Shift held.
+    {
+        var heard = Heard{ .tag = cy.CYCLE_Active, .ib = undefined };
+        var rig = try Rig.up(&cycle.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const labels = [_:null]?[*:0]const u8{ "Low", "Medium", "High" };
+        const gadget = ib.NewObjectTagList(null, cy.CYCLE_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 2 },
+            .{ .tag = gc.GA_Key, .data = 'l' },
+            .{ .tag = cy.CYCLE_Labels, .data = @intFromPtr(&labels) },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+            .{},
+        }).?;
+        var works = keyed('l', 0, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 1), termination);
+        var back = keyed('l', ie.IEQUALIFIER_LSHIFT, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&back)));
+        try testing.expectEqual(@as(i32, 0), termination);
+        // From the first it comes round to the last.
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&back)));
+        try testing.expectEqual(@as(i32, 2), termination);
+        ib.DisposeObject(gadget);
+        try rig.down();
+    }
+
+    // A radio group steps a line on, and comes round.
+    {
+        var heard = Heard{ .tag = rb.RADIO_Active, .ib = undefined };
+        var rig = try Rig.up(&radiobutton.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const labels = [_:null]?[*:0]const u8{ "Serial", "USB" };
+        const gadget = ib.NewObjectTagList(null, rb.RADIO_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 3 },
+            .{ .tag = gc.GA_Key, .data = 'p' },
+            .{ .tag = rb.RADIO_Labels, .data = @intFromPtr(&labels) },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+            .{},
+        }).?;
+        var works = keyed('p', 0, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 1), termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 0), termination);
+        ib.DisposeObject(gadget);
+        try rig.down();
+    }
+
+    // A slider moves a level, and stops at its ends.
+    {
+        var heard = Heard{ .tag = sl.SLIDER_Level, .ib = undefined };
+        var rig = try Rig.up(&slider.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const gadget = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 4 },
+            .{ .tag = gc.GA_Key, .data = 'v' },
+            .{ .tag = sl.SLIDER_Min, .data = 0 },
+            .{ .tag = sl.SLIDER_Max, .data = 2 },
+            .{ .tag = sl.SLIDER_Level, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+            .{},
+        }).?;
+        var works = keyed('v', 0, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 2), termination);
+        // At the end it has nothing to report, and says so.
+        try testing.expectEqual(gc.GMKR_DONE, ib.SendMessage(gadget, @ptrCast(&works)));
+        var back = keyed('v', ie.IEQUALIFIER_RSHIFT, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&back)));
+        try testing.expectEqual(@as(i32, 1), termination);
+        ib.DisposeObject(gadget);
+        try rig.down();
+    }
+
+    // A scroller moves the view a thing at a time.
+    {
+        var heard = Heard{ .tag = sr.SCROLLER_Top, .ib = undefined };
+        var rig = try Rig.up(&scroller.Library.resident_tag, &heard);
+        const ib = rig.ib;
+        const gadget = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 5 },
+            .{ .tag = gc.GA_Key, .data = 's' },
+            .{ .tag = sr.SCROLLER_Total, .data = 10 },
+            .{ .tag = sr.SCROLLER_Visible, .data = 4 },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+            .{},
+        }).?;
+        var works = keyed('s', 0, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&works)));
+        try testing.expectEqual(@as(i32, 1), termination);
+        var back = keyed('s', ie.IEQUALIFIER_LSHIFT, &termination);
+        try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(gadget, @ptrCast(&back)));
+        try testing.expectEqual(@as(i32, 0), termination);
+        try testing.expectEqual(gc.GMKR_DONE, ib.SendMessage(gadget, @ptrCast(&back)));
+        ib.DisposeObject(gadget);
+        try rig.down();
+    }
+}
+
+test "listview.gadget: several lines at once, a disabled line passed over, a double-click" {
+    var heard = Heard{ .tag = lv.LISTVIEW_Selected, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listview.Library.resident_tag, null).?));
+
+    var names: [12][8:0]u8 = undefined;
+    var nodes: [12]exec.Node = undefined;
+    var list: exec.List = .{};
+    list.init(.unknown);
+    for (&nodes, &names, 0..) |*node, *name, i| {
+        name.* = @splat(0);
+        name[0] = 'L';
+        name[1] = '0' + @as(u8, @intCast(i));
+        node.* = .{ .name = name };
+        kexec.SysBase.iface().AddTail(&list, node);
+    }
+
+    var hook = utility.Hook{ .entry = &fourthDisabled };
+    const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = gc.GA_Width, .data = 150 },
+        .{ .tag = gc.GA_Height, .data = 120 },
+        .{ .tag = lv.LISTVIEW_ItemHeight, .data = 10 },
+        .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) },
+        .{ .tag = lv.LISTVIEW_MultiSelect, .data = 1 },
+        .{ .tag = lv.LISTVIEW_CallBack, .data = @intFromPtr(&hook) },
+        .{},
+    }).?;
+    const cl = classes.objectClass(view);
+    const own = classes.instData(listview.Data, cl, view);
+    const parts = listview.partsOf(sdk.gadgets.baseOf(cl), own, view, null);
+    try testing.expect(parts.visible >= 8);
+    // Multi-select shows what is selected without being asked to.
+    try testing.expect(own.show_selected != 0);
+
+    const chosen: *const lv.LVSelected = @ptrFromInt(attr(ib, view, lv.LISTVIEW_SelectedArray));
+    try testing.expectEqual(@as(u32, 12), chosen.count);
+    try testing.expectEqual(@as(u32, 0), chosen.selected());
+
+    const y = struct {
+        fn of(line: u32, p: listview.Parts) i32 {
+            return p.lines.top + @as(i32, @intCast(line)) * p.line_height + 2;
+        }
+    }.of;
+    var termination: i32 = -1;
+
+    // A press on line 1 selects it alone; a drag without Shift moves that
+    // one selection rather than adding to it.
+    var down = input(gc.GM_GOACTIVE, &pressing(100, 0, 0), 10, y(1, parts), &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(view, @ptrCast(&down)));
+    try testing.expect(chosen.has(1));
+    var drag = input(gc.GM_HANDLEINPUT, &dragging(0), 10, y(2, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&drag));
+    try testing.expectEqual(@as(u32, 1), chosen.selected());
+    try testing.expect(chosen.has(2));
+    var up = input(gc.GM_HANDLEINPUT, &release, 10, y(2, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&up));
+    try testing.expectEqual(@as(i32, 2), termination);
+
+    // A press with Shift adds line 1, and a drag with Shift carries that
+    // state to line 5 - over line 4, which is disabled.
+    var shift_down = input(gc.GM_GOACTIVE, &pressing(200, 0, ie.IEQUALIFIER_LSHIFT), 10, y(1, parts), &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(view, @ptrCast(&shift_down)));
+    try testing.expectEqual(@as(u32, 2), chosen.selected());
+    var shift_drag = input(gc.GM_HANDLEINPUT, &dragging(ie.IEQUALIFIER_LSHIFT), 10, y(5, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&shift_drag));
+    try testing.expect(chosen.has(1) and chosen.has(2) and chosen.has(3) and chosen.has(5));
+    try testing.expect(!chosen.has(4));
+    try testing.expectEqual(@as(u32, 4), chosen.selected());
+    var shift_up = input(gc.GM_HANDLEINPUT, &release, 10, y(5, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&shift_up));
+    try testing.expectEqual(@as(i32, 5), termination);
+    try testing.expectEqual(@as(usize, 5), attr(ib, view, lv.LISTVIEW_Selected));
+
+    // A second press with Shift on a selected line takes it away again.
+    var shift_off = input(gc.GM_GOACTIVE, &pressing(300, 0, ie.IEQUALIFIER_RSHIFT), 10, y(2, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&shift_off));
+    try testing.expect(!chosen.has(2));
+    try testing.expectEqual(@as(u32, 3), chosen.selected());
+    var off_up = input(gc.GM_HANDLEINPUT, &release, 10, y(2, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&off_up));
+
+    // A press without Shift is the whole selection again.
+    var alone = input(gc.GM_GOACTIVE, &pressing(400, 0, 0), 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&alone));
+    try testing.expectEqual(@as(u32, 1), chosen.selected());
+    try testing.expect(chosen.has(6));
+    var alone_up = input(gc.GM_HANDLEINPUT, &release, 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&alone_up));
+    try testing.expectEqual(@as(i32, 6), termination);
+
+    // The same line again, soon enough: the code carries the flag, and
+    // the line is still the rest of it.
+    var again = input(gc.GM_GOACTIVE, &pressing(400, 100_000, 0), 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&again));
+    var again_up = input(gc.GM_HANDLEINPUT, &release, 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&again_up));
+    try testing.expect(@as(u32, @bitCast(termination)) & lv.LISTVIEW_DOUBLE != 0);
+    try testing.expectEqual(@as(u32, 6), @as(u32, @bitCast(termination)) & ~lv.LISTVIEW_DOUBLE);
+
+    // A third press is not another double-click, and one too late is none.
+    var third = input(gc.GM_GOACTIVE, &pressing(400, 150_000, 0), 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&third));
+    var third_up = input(gc.GM_HANDLEINPUT, &release, 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&third_up));
+    try testing.expectEqual(@as(i32, 6), termination);
+    var late = input(gc.GM_GOACTIVE, &pressing(500, 0, 0), 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&late));
+    var late_up = input(gc.GM_HANDLEINPUT, &release, 10, y(6, parts), &termination);
+    _ = ib.SendMessage(view, @ptrCast(&late_up));
+    try testing.expectEqual(@as(i32, 6), termination);
+
+    // The one line named clears the rest; a list attached anew clears all.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 9 }, .{} });
+    try testing.expectEqual(@as(u32, 1), chosen.selected());
+    try testing.expect(chosen.has(9));
+    kexec.SysBase.iface().Remove(&nodes[11]);
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
+    try testing.expectEqual(@as(u32, 11), chosen.count);
+    try testing.expectEqual(@as(u32, 0), chosen.selected());
+
+    // The key that works the list moves the selection a line on, and back
+    // with Shift held; with nothing selected it starts at the top.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = gc.GA_Key, .data = 'i' }, .{} });
+    var works = keyed('i', 0, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&works)));
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&works)));
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expect(chosen.has(1) and chosen.selected() == 1);
+    var up_a_line = keyed('i', ie.IEQUALIFIER_LSHIFT, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&up_a_line)));
+    try testing.expectEqual(@as(i32, 0), termination);
+
+    ib.DisposeObject(view);
+    const sys = kexec.SysBase.iface();
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(lv.LISTVIEW_CLASS) == null);
     _ = sys.RemLibrary(scroller_lib);
     ByTail.remove();
     try host_rom.intuition.tearDown(kib);

@@ -287,6 +287,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return gc.GMR_MEACTIVE;
         },
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const g = gadgetclass.gadgetOf(ib, o.?);
+            // A toggle turns over, as a press would. A plain button has
+            // nothing to show: the press it stands for is over as soon as
+            // the key is typed.
+            if (g.activation & gadgetclass.GACT_TOGGLESELECT != 0) {
+                g.flags ^= gadgetclass.GFLG_SELECTED;
+                redraw(ib, o.?, k.gadget_info);
+            }
+            const id: i32 = @bitCast(g.id);
+            tell(ib, o.?, k.gadget_info, id, 0);
+            k.termination.* = id;
+            return gc.GMKR_VERIFY;
+        },
         gc.GM_GOINACTIVE => {
             // Taken away while pressed: drawn let go.
             const gi: *gc.GpGoInactive = @ptrCast(@alignCast(msg));

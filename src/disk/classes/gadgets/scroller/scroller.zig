@@ -391,6 +391,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // The key moves the view on a line, and back with a Shift key
+        // held, as one of the arrows would.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const own = classes.instData(Data, cl, o.?);
+            const shift = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+            const was = own.top;
+            const held = own.held;
+            own.held = if (k.qualifier & shift != 0) BACK else FORWARD;
+            step(base, own, o.?, k.gadget_info);
+            own.held = held;
+            k.termination.* = @intCast(own.top);
+            if (own.top == was) return gc.GMKR_DONE;
+            tell(base, own, o.?, k.gadget_info, 0);
+            return gc.GMKR_VERIFY;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             if (in.event == null) return gc.GMR_NOREUSE;

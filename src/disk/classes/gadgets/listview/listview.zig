@@ -24,6 +24,16 @@
 //! view moves a line at each timer event, selecting the line that comes
 //! in. Let go, the press ends the way that counts, and the selected line
 //! is the code.
+//!
+//! `LISTVIEW_MultiSelect` keeps a bit for each line, allocated when the
+//! list is attached and sized to it. A press then selects one line and
+//! clears the rest; a press with Shift held turns the line it is on over
+//! and remembers it as the anchor, and a drag with Shift held gives every
+//! line it crosses the anchor's state. A disabled line is never given one.
+//!
+//! The press is timed: a second press on the line last pressed, inside
+//! the time `DoubleClick` allows, adds `LISTVIEW_DOUBLE` to the code the
+//! press ends with.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -83,8 +93,90 @@ pub const Data = extern struct {
     frame: ?*Object = null,
     /// Made with a size of its own.
     sized: u8 = 0,
-    pad: [3]u8 = @splat(0),
+    /// Several lines may be selected at once.
+    multi: u8 = 0,
+    /// What a drag with Shift held gives the lines it crosses: the state
+    /// the press that began it left the anchor in.
+    anchor_state: u8 = 0,
+    /// The press that holds the gadget was a double-click.
+    double: u8 = 0,
+    /// The line a drag with Shift held reaches from.
+    anchor: u32 = lv.LISTVIEW_NONE,
+    /// The line the last press was on, and when it was, for the
+    /// double-click.
+    last_line: u32 = lv.LISTVIEW_NONE,
+    last_secs: u32 = 0,
+    last_micros: u32 = 0,
+    /// The bits of `LISTVIEW_MultiSelect`, one for each line; none when
+    /// the list is not a multi-select one.
+    chosen: lv.LVSelected = .{},
+    /// `LISTVIEW_SelectString`: where the selected line's name is
+    /// written. The program's object, not this one's to dispose of.
+    select_string: ?*Object = null,
 };
+
+const shift_keys: u32 = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+
+// --- which lines are selected -----------------------------------------------
+
+/// How many words the bits of `count` lines take.
+fn wordsFor(count: u32) u32 {
+    return (count + 31) / 32;
+}
+
+/// The bits given back, and the count with them.
+fn freeBits(base: *gadgets.Base, own: *Data) void {
+    base.sys_base.FreeVec(@ptrCast(@constCast(own.chosen.bits)));
+    own.chosen = .{};
+}
+
+/// Bits for the list as it is now, all clear. Without the memory for
+/// them the list stays one that selects a single line.
+fn makeBits(base: *gadgets.Base, own: *Data) void {
+    freeBits(base, own);
+    if (own.multi == 0 or own.count == 0) return;
+    const bytes = wordsFor(own.count) * @sizeOf(u32);
+    const got = base.sys_base.AllocVec(bytes, exec.MEMF_CLEAR) orelse return;
+    own.chosen = .{ .bits = @ptrCast(@alignCast(got)), .count = own.count };
+}
+
+fn isOn(own: *const Data, line: u32) bool {
+    return own.chosen.has(line);
+}
+
+fn setOn(own: *Data, line: u32, on: bool) void {
+    if (line >= own.chosen.count) return;
+    const bits = @constCast(own.chosen.bits) orelse return;
+    const mask = @as(u32, 1) << @intCast(line % 32);
+    if (on) bits[line / 32] |= mask else bits[line / 32] &= ~mask;
+}
+
+fn clearBits(own: *Data) void {
+    const bits = @constCast(own.chosen.bits) orelse return;
+    var word: u32 = 0;
+    while (word < wordsFor(own.chosen.count)) : (word += 1) bits[word] = 0;
+}
+
+/// The selected line's name written into the string gadget that shows
+/// it, if there is one; an empty line when nothing is selected.
+fn showSelected(base: *gadgets.Base, own: *const Data, gi: ?*classusr.GadgetInfo) void {
+    const field = own.select_string orelse return;
+    const name: [*:0]const u8 = blk: {
+        if (own.selected == lv.LISTVIEW_NONE) break :blk "";
+        const list = own.labels orelse break :blk "";
+        const node = lv.nodeAt(list, own.selected) orelse break :blk "";
+        break :blk node.name orelse "";
+    };
+    const tags = [_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(name) }, .{} };
+    const ib = base.intuition_base;
+    if (gi) |info| _ = ib.SetGadgetAttrsTagList(field, info.window, &tags) else _ = ib.SetAttrsTagList(field, &tags);
+}
+
+/// Whether a line is drawn as selected: its bit in a multi-select list,
+/// the one selected line in any other.
+fn isSelected(own: *const Data, line: u32) bool {
+    return if (own.multi != 0) isOn(own, line) else line == own.selected;
+}
 
 fn countOf(list: ?*exec.List) u32 {
     const l = list orelse return 0;
@@ -196,7 +288,7 @@ fn drawLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info:
         return;
     };
     const disabled = isDisabled(base, own, n, line);
-    const selected = own.show_selected != 0 and line == own.selected;
+    const selected = own.show_selected != 0 and isSelected(own, line);
     if (own.hook) |hook| {
         var msg = lv.LVDrawMsg{
             .rast_port = rp,
@@ -339,6 +431,68 @@ fn select(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo
     redrawLine(base, own, o, gi, line);
 }
 
+/// Every line shown drawn again: what a change of several lines needs.
+fn redrawShown(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
+    const parts = partsOf(base, own, o, gi);
+    redrawLines(base, own, o, gi, own.top, own.top + parts.visible);
+}
+
+/// `line` selected and every other line cleared, which is what a press
+/// without Shift does. The anchor a later Shift reaches from is the line.
+fn selectOnly(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, line: u32) void {
+    if (own.multi == 0) return select(base, own, o, gi, line);
+    own.anchor = line;
+    own.anchor_state = 1;
+    if (own.selected == line and own.chosen.selected() == 1 and isOn(own, line)) return;
+    clearBits(own);
+    setOn(own, line, true);
+    own.selected = line;
+    if (own.show_selected != 0) redrawShown(base, own, o, gi);
+}
+
+/// `line` turned over, which is what a press with Shift does; it becomes
+/// the anchor, in the state the press left it.
+fn toggleAt(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, line: u32) void {
+    const on = !isOn(own, line);
+    setOn(own, line, on);
+    own.anchor = line;
+    own.anchor_state = @intFromBool(on);
+    const was = own.selected;
+    own.selected = line;
+    if (own.show_selected == 0) return;
+    redrawLine(base, own, o, gi, was);
+    redrawLine(base, own, o, gi, line);
+}
+
+/// The lines from the anchor to `line` given the anchor's state, which is
+/// what a drag with Shift held does. A disabled line is left alone.
+fn extendTo(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, line: u32) void {
+    if (own.anchor == lv.LISTVIEW_NONE) return selectOnly(base, own, o, gi, line);
+    const first = @min(own.anchor, line);
+    const last = @max(own.anchor, line);
+    const on = own.anchor_state != 0;
+    var node: ?*exec.Node = if (own.labels) |list| lv.nodeAt(list, first) else null;
+    var at = first;
+    while (at <= last) : (at += 1) {
+        const disabled = if (node) |n| isDisabled(base, own, n, at) else false;
+        if (!disabled) setOn(own, at, on);
+        if (node) |n| node = n.next();
+    }
+    own.selected = line;
+    if (own.show_selected != 0) redrawLines(base, own, o, gi, first, last + 1);
+}
+
+/// What a press or a drag at `line` does, as the Shift keys stand.
+fn pressAt(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, line: u32, qualifier: u32, dragging: bool) void {
+    if (own.multi == 0 or qualifier & shift_keys == 0)
+        selectOnly(base, own, o, gi, line)
+    else if (dragging)
+        extendTo(base, own, o, gi, line)
+    else
+        toggleAt(base, own, o, gi, line);
+    showSelected(base, own, gi);
+}
+
 /// The line under a point in the gadget's box, if it is one that can be
 /// selected.
 fn lineAt(base: *gadgets.Base, own: *const Data, parts: Parts, y: i32) ?u32 {
@@ -365,8 +519,16 @@ fn tell(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Gadget
 // --- attributes -------------------------------------------------------------
 
 /// What `tags` asked for: everything drawn again (`whole`), the view at
-/// a top, or a line made visible.
-const Change = struct { whole: bool = false, top: ?u32 = null, visible: ?u32 = null };
+/// a top, a line made visible, a list attached (`relabel`, which sizes
+/// the bits anew), or the one selected line named (`only`, which is the
+/// only one a multi-select list is then left with).
+const Change = struct {
+    whole: bool = false,
+    top: ?u32 = null,
+    visible: ?u32 = null,
+    relabel: bool = false,
+    only: bool = false,
+};
 
 fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool) Change {
     const ub = base.utility_base;
@@ -384,14 +546,22 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                     own.top = 0;
                     own.selected = lv.LISTVIEW_NONE;
                 }
+                own.anchor = lv.LISTVIEW_NONE;
+                own.last_line = lv.LISTVIEW_NONE;
                 change.whole = true;
+                change.relabel = true;
             },
             lv.LISTVIEW_Top => change.top = @truncate(item.data),
             lv.LISTVIEW_MakeVisible => change.visible = @truncate(item.data),
+            lv.LISTVIEW_SelectString => {
+                own.select_string = @ptrFromInt(item.data);
+                change.only = true;
+            },
             lv.LISTVIEW_Selected => {
                 const line: u32 = @truncate(item.data);
                 own.selected = if (line < own.count) line else lv.LISTVIEW_NONE;
                 change.whole = true;
+                change.only = true;
             },
             else => if (new) switch (item.tag) {
                 lv.LISTVIEW_ReadOnly => own.read_only = @intFromBool(item.data != 0),
@@ -399,9 +569,20 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                 lv.LISTVIEW_ItemHeight => own.item_height = @truncate(item.data),
                 lv.LISTVIEW_CallBack => own.hook = @ptrFromInt(item.data),
                 lv.LISTVIEW_ScrollWidth => own.scroll_width = @truncate(item.data),
+                lv.LISTVIEW_MultiSelect => own.multi = @intFromBool(item.data != 0),
                 else => {},
             },
         }
+    }
+    // Once the whole list is read: a multi-select list shows what is
+    // selected, and its bits follow the list and the one line named.
+    if (new and own.multi != 0) own.show_selected = 1;
+    if (change.relabel) makeBits(base, own);
+    if (change.only and own.multi != 0) {
+        clearBits(own);
+        if (own.selected != lv.LISTVIEW_NONE) setOn(own, own.selected, true);
+        own.anchor = own.selected;
+        own.anchor_state = 1;
     }
     return change;
 }
@@ -458,6 +639,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             if (own.frame != null) own.scroller = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &scroller_tags);
             if (own.scroller == null) {
+                freeBits(base, own);
                 ib.DisposeObject(own.frame);
                 var gone = classusr.Msg{ .method_id = classusr.OM_DISPOSE };
                 _ = ib.SendSuperMessage(cl, obj, &gone);
@@ -484,6 +666,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
+            freeBits(base, own);
             ib.DisposeObject(own.scroller);
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
@@ -499,6 +682,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             var changed = ib.SendSuperMessage(cl, o, msg);
             const change = setAttrs(base, own, set.attr_list, false);
+            // A list attached anew, or one line named, is a change of
+            // selection the string gadget that shows it follows.
+            if (change.only or change.relabel) showSelected(base, own, set.gadget_info);
             const parts = partsOf(base, own, o.?, set.gadget_info);
             var top = own.top;
             if (change.top) |wanted| top = wanted;
@@ -527,6 +713,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 lv.LISTVIEW_Labels => get.storage.* = @intFromPtr(own.labels),
                 lv.LISTVIEW_Top => get.storage.* = own.top,
                 lv.LISTVIEW_Selected => get.storage.* = own.selected,
+                lv.LISTVIEW_SelectString => get.storage.* = @intFromPtr(own.select_string),
+                lv.LISTVIEW_SelectedArray => get.storage.* = if (own.multi != 0) @intFromPtr(&own.chosen) else 0,
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;
@@ -545,6 +733,30 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // The key moves the selection down a line, and up with a Shift
+        // key held, keeping the line it moves to in view. A read-only
+        // list has no selection to move.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const own = classes.instData(Data, cl, o.?);
+            if (own.read_only != 0 or own.count == 0) return gc.GMKR_NOTHING;
+            const shift = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+            const back = k.qualifier & shift != 0;
+            const line: u32 = if (own.selected == lv.LISTVIEW_NONE)
+                (if (back) own.count - 1 else 0)
+            else if (back)
+                (if (own.selected == 0) 0 else own.selected - 1)
+            else
+                @min(own.selected + 1, own.count - 1);
+            selectOnly(base, own, o.?, k.gadget_info, line);
+            showSelected(base, own, k.gadget_info);
+            const parts = partsOf(base, own, o.?, k.gadget_info);
+            scrollTo(base, own, o.?, k.gadget_info, topShowing(own, line, parts.visible), true);
+            tell(base, own, o.?, k.gadget_info);
+            k.termination.* = @bitCast(own.selected);
+            return gc.GMKR_VERIFY;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             if (in.event == null) return gc.GMR_NOREUSE;
@@ -559,7 +771,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             if (own.read_only != 0) return gc.GMR_NOREUSE;
             const line = lineAt(base, own, parts, in.mouse.y) orelse return gc.GMR_NOREUSE;
-            select(base, own, o.?, in.gadget_info, line);
+            const event = in.event.?;
+            own.double = @intFromBool(line == own.last_line and
+                ib.DoubleClick(own.last_secs, own.last_micros, event.time.secs, event.time.micro));
+            own.last_line = line;
+            own.last_secs = event.time.secs;
+            own.last_micros = event.time.micro;
+            pressAt(base, own, o.?, in.gadget_info, line, event.qualifier, false);
             own.pressed = 1;
             return gc.GMR_MEACTIVE;
         },
@@ -577,7 +795,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (e.class == ie.IECLASS_NEWPOINTERPOS and e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
                 own.pressed = 0;
                 if (own.selected == lv.LISTVIEW_NONE) return gc.GMR_NOREUSE;
-                in.termination.* = @bitCast(own.selected);
+                const code = own.selected | (if (own.double != 0) lv.LISTVIEW_DOUBLE else 0);
+                // The click just reported cannot also be the first of the
+                // next double-click.
+                if (own.double != 0) own.last_line = lv.LISTVIEW_NONE;
+                own.double = 0;
+                in.termination.* = @bitCast(code);
                 tell(base, own, o.?, in.gadget_info);
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
             }
@@ -590,7 +813,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     if (below) scrollTo(base, own, o.?, in.gadget_info, own.top + 1, true);
                 }
             }
-            if (lineAt(base, own, parts, in.mouse.y)) |line| select(base, own, o.?, in.gadget_info, line);
+            if (lineAt(base, own, parts, in.mouse.y)) |line| pressAt(base, own, o.?, in.gadget_info, line, e.qualifier, true);
             return gc.GMR_MEACTIVE;
         },
         gc.GM_GOINACTIVE => {

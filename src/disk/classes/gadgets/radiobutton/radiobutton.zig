@@ -26,6 +26,7 @@ const sc = intuition.screens;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const rb = gadgets.radiobutton;
+const ie = sdk.devices.inputevent;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -54,6 +55,9 @@ const Data = extern struct {
     /// The mark: sysiclass's MXIMAGE, at the size of `mark`.
     image: ?*Object = null,
     mark: gc.Box = .{},
+    /// `RADIO_Scaled`: the marks fill the room the group is given.
+    scaled: u8 = 0,
+    pad: [3]u8 = @splat(0),
 };
 
 /// Between a mark and its text.
@@ -74,12 +78,22 @@ const Lines = struct {
     text_height: i32,
     width: i32,
 
-    fn of(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) Lines {
+    /// `room` is false where the answer decides how much room there is -
+    /// `GM_DOMAIN` - so that a scaled group and its layout cannot chase
+    /// each other.
+    fn of(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, room: bool) Lines {
         const ib = base.intuition_base;
         const measure = support.Measure.of(ib, g, gi);
         defer measure.done(ib);
         const text_height = measure.lineHeight(base.graphics_base);
-        const mark = markSize(text_height);
+        var mark = markSize(text_height);
+        // Scaled: the lines spread over the room, each mark as tall as
+        // its line, never smaller than the font would make it.
+        if (room and own.scaled != 0 and own.count > 0) {
+            const count: i32 = @intCast(own.count);
+            const line = @divTrunc(gc.boxFor(g, gi).height - (count - 1) * own.spacing, count);
+            if (line > mark.height) mark = markSize(line - 1);
+        }
         var widest: i32 = 0;
         for (0..own.count) |i| widest = @max(widest, measure.width(ib, own.labels.?[i].?));
         return .{
@@ -131,6 +145,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             }
         }
         if (ub.FindTagItem(rb.RADIO_Spacing, tags)) |item| own.spacing = @max(@as(i32, @bitCast(@as(u32, @truncate(item.data)))), 0);
+        own.scaled = @intFromBool(ub.GetTagData(rb.RADIO_Scaled, 0, tags) != 0);
     }
     var changed = false;
     if (ub.FindTagItem(rb.RADIO_Active, tags)) |item| {
@@ -147,7 +162,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     const gb = base.graphics_base;
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
-    const lines = Lines.of(base, own, g, gi);
+    const lines = Lines.of(base, own, g, gi, true);
     fitImage(base, own, lines.mark);
     const image = own.image orelse return;
     const b = gc.boxFor(g, gi);
@@ -185,7 +200,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.* = .{};
             _ = setAttrs(base, own, new.attr_list, true);
             const g = gc.gadget(obj);
-            const lines = Lines.of(base, own, g, null);
+            const lines = Lines.of(base, own, g, null, false);
             if (own.count > 0) fitImage(base, own, lines.mark);
             // No choices, or no mark to show them with: no gadget.
             if (own.count == 0 or own.image == null) {
@@ -235,10 +250,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_DOMAIN => {
             const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
-            const lines = Lines.of(base, own, gc.gadget(o.?), ask.gadget_info);
+            const lines = Lines.of(base, own, gc.gadget(o.?), ask.gadget_info, false);
             const height = lines.height(own.count);
+            // A scaled group takes whatever height it is given and
+            // spreads its lines over it; any other stays the height its
+            // font makes it.
             ask.domain = if (ask.which == gc.GDOMAIN_MAXIMUM)
-                .{ .width = gc.GDOMAIN_UNLIMITED, .height = height }
+                .{ .width = gc.GDOMAIN_UNLIMITED, .height = if (own.scaled != 0) gc.GDOMAIN_UNLIMITED else height }
             else
                 .{ .width = lines.width, .height = height };
             return 1;
@@ -254,12 +272,34 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, r.gadget_info, r.rast_port);
             return 0;
         },
+        // The key steps the group on a line, and back with a Shift key
+        // held; from the last line it comes round to the first.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const own = classes.instData(Data, cl, o.?);
+            if (own.count == 0) return gc.GMKR_NOTHING;
+            const shift = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+            own.active = if (k.qualifier & shift != 0)
+                (if (own.active == 0) own.count - 1 else own.active - 1)
+            else
+                (if (own.active + 1 >= own.count) 0 else own.active + 1);
+            support.redraw(ib, o.?, k.gadget_info);
+            const tags = [_]TagItem{
+                .{ .tag = rb.RADIO_Active, .data = own.active },
+                .{ .tag = gc.GA_ID, .data = gc.gadget(o.?).id },
+                .{},
+            };
+            support.notify(ib, o.?, k.gadget_info, &tags, 0);
+            k.termination.* = @intCast(own.active);
+            return gc.GMKR_VERIFY;
+        },
         // The line pressed: the one that is on now, unless it was.
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             if (in.event == null) return gc.GMR_NOREUSE;
             const own = classes.instData(Data, cl, o.?);
-            const lines = Lines.of(base, own, gc.gadget(o.?), in.gadget_info);
+            const lines = Lines.of(base, own, gc.gadget(o.?), in.gadget_info, true);
             if (in.mouse.y < 0 or own.count == 0) return gc.GMR_NOREUSE;
             const line: u32 = @min(@as(u32, @intCast(@divTrunc(in.mouse.y, lines.pitch))), own.count - 1);
             if (line == own.active) return gc.GMR_NOREUSE;

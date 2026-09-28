@@ -30,6 +30,7 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
+const d = @import("draw.zig");
 
 /// gadgetclass's part of an object: the gadget.
 pub const Data = extern struct {
@@ -63,6 +64,9 @@ pub const Data = extern struct {
     text: ?[*:0]const u8 = null,
     itext: ?*const intuition.IntuiText = null,
     label_image: ?*Object = null,
+    /// `GA_Key`: the character that works it from the keyboard, in lower
+    /// case; 0 for none.
+    key: u32 = 0,
     /// `GFLG_GADGH*`: how it shows being selected.
     highlight: u32 = gc.GFLG_GADGHCOMP,
     /// `GA_Bounds`, when `GFLG_BOUNDS`.
@@ -178,8 +182,13 @@ pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, fo
     }
     if (g.itext) |run| return .{ .width = it.IntuiTextLength(run), .height = @intCast(height) };
     if (g.text) |text| {
+        // Measured as it is drawn: without the `_` that marks its key.
         const run = intuition.IntuiText{ .font = font, .text = text };
-        const width: i32 = if (rp) |port| @intCast(gb.TextLength(port, text, textLen(text))) else it.IntuiTextLength(&run);
+        const mark = intuition.IntuiText{ .font = font, .text = "_" };
+        const whole: i32 = if (rp) |port| gb.TextLength(port, text, textLen(text)) else it.IntuiTextLength(&run);
+        const width = if (gc.labelMark(text) == null)
+            whole
+        else if (rp) |port| whole - gb.TextLength(port, "_", 1) else whole - it.IntuiTextLength(&mark);
         return .{ .width = width, .height = @intCast(height) };
     }
     return .{ .width = 0, .height = 0 };
@@ -240,8 +249,7 @@ pub fn drawLabel(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, lef
     const ink = if (selected) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN];
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(rp, &tags);
-    gb.Move(rp, x, y + @as(i32, @intCast(baseline)));
-    gb.Text(rp, text, textLen(text));
+    d.labelText(gb, rp, x, y + @as(i32, @intCast(baseline)), text);
 }
 
 /// Make gadgetclass, from rootclass, and put it on the public list.
@@ -307,6 +315,10 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
                 g.text = @ptrFromInt(v);
                 g.itext = null;
                 g.label_image = null;
+                // A `_` in the label names the key; a `GA_Key` of the
+                // same call has the last word, whichever order they come
+                // in, because it is read again at the end.
+                g.key = gc.labelKey(g.text);
                 changed = 1;
             },
             gc.GA_IntuiText => {
@@ -365,6 +377,10 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             gc.GA_Immediate => setFlag(&g.activation, GACT_IMMEDIATE, v != 0),
             gc.GA_RelVerify => setFlag(&g.activation, GACT_RELVERIFY, v != 0),
             gc.GA_DrawInfo => g.draw_info = @ptrFromInt(v),
+            gc.GA_Key => {
+                g.key = gc.keyOf(@truncate(v));
+                changed = 1;
+            },
             icc.ICA_TARGET => g.target = v,
             icc.ICA_MAP => g.map = @ptrFromInt(v),
             else => {},
@@ -381,6 +397,7 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Selected => out.* = @intFromBool(g.flags & GFLG_SELECTED != 0),
         gc.GA_Disabled => out.* = @intFromBool(g.flags & GFLG_DISABLED != 0),
         gc.GA_Text => out.* = @intFromPtr(g.text),
+        gc.GA_Key => out.* = g.key,
         gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
         gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
         gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
@@ -489,6 +506,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return 1;
         },
         gc.GM_RENDER, gc.GM_GOINACTIVE => return 0,
+        // A gadget with nothing of its own to do for a key does nothing:
+        // the window then reports the key to the program as it came.
+        gc.GM_KEY => return gc.GMKR_NOTHING,
         // Asked about a point already known to be in the box: it is this
         // gadget's, and it has nothing more particular to say about which
         // part of itself was pointed at.

@@ -18,6 +18,9 @@
 //!   - `GM_LAYOUT`: the room you are measured against has changed.
 //!   - `GM_DOMAIN`: how big would you be - at the least, as you look
 //!     right, at the most? Asked by a layout before it places you.
+//!   - `GM_KEY`: the key that works you was typed. Sent by the window the
+//!     gadget is in, down through the layout, when a character matches a
+//!     gadget's `GA_Key`.
 //!
 //! What a gadget did reaches the program as `IDCMP_GADGETDOWN` (pressed,
 //! with `GA_Immediate`) and `IDCMP_GADGETUP` (finished with `GMR_VERIFY`,
@@ -58,7 +61,11 @@ pub const GA_RelWidth = GA_Dummy + 0x06;
 pub const GA_Height = GA_Dummy + 0x07;
 /// Height, as the window's height plus this.
 pub const GA_RelHeight = GA_Dummy + 0x08;
-/// A label: a C string, not copied.
+/// A label: a C string, not copied. An `_` in it marks the character
+/// after it as the key that works the gadget: the `_` is not drawn, the
+/// character it marks is underlined, and the gadget's `GA_Key` becomes
+/// that character. A `_` at the end of the text marks nothing and is
+/// drawn as itself.
 pub const GA_Text = GA_Dummy + 0x09;
 /// An image object that is the gadget's look.
 pub const GA_Image = GA_Dummy + 0x0A;
@@ -159,6 +166,15 @@ pub const GA_TabCycle = GA_Dummy + 0x24;
 pub const GA_GadgetHelp = GA_Dummy + 0x25;
 /// The pens to draw with, for a class that wants them when it is made.
 pub const GA_DrawInfo = GA_Dummy + 0x21;
+/// The key that works the gadget from the keyboard: one character, which
+/// is matched whatever case it is typed in; 0 for none. It is set from
+/// the `_` of a `GA_Text` or of the `CHILDA_Label` a layout gives the
+/// gadget, and this tag names one where there is no label to mark - or a
+/// different one from the letter that is underlined. Made, set and read.
+///
+/// The number is far enough above the tags of the gadget attributes named
+/// here that any of them can still be added at the number it is known by.
+pub const GA_Key = GA_Dummy + 0x30;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -196,6 +212,9 @@ pub const Gadget = extern struct {
     text: ?[*:0]const u8 = null,
     itext: ?*const text_.IntuiText = null,
     label_image: ?*classusr.Object = null,
+    /// `GA_Key`: the character that works it from the keyboard, in lower
+    /// case; 0 for none.
+    key: u32 = 0,
     /// `GFLG_GADGH*`.
     highlight: u32 = GFLG_GADGHCOMP,
     bounds: Box = .{},
@@ -294,6 +313,12 @@ pub const GM_HELPTEST: MethodID = 5;
 /// itself - layoutgclass - before it decides where each one goes.
 pub const GM_DOMAIN: MethodID = 7;
 
+/// `GpKey`: the key that works you was typed. A window sends it to its
+/// layout, which hands it to each of its children in turn until one
+/// answers something other than `GMKR_NOTHING`; a child answers only for
+/// the key that is its own (`keyIsFor`).
+pub const GM_KEY: MethodID = 8;
+
 /// GM_DOMAIN's `which`: the smallest a gadget can be and still work, the
 /// size it looks right at, and the largest it is any use at.
 pub const GDOMAIN_MINIMUM: u32 = 0;
@@ -380,6 +405,65 @@ pub const GMR_VERIFY: usize = 1 << 3;
 pub const GMR_NEXTACTIVE: usize = 1 << 4;
 /// The same, backwards: shifted Tab.
 pub const GMR_PREVACTIVE: usize = 1 << 5;
+
+/// GM_KEY: the key that works a gadget was typed.
+pub const GpKey = extern struct {
+    method_id: MethodID = GM_KEY,
+    gadget_info: ?*GadgetInfo = null,
+    /// The character, as IDCMP_VANILLAKEY gave it.
+    key: u32 = 0,
+    /// The qualifiers as they were. A gadget that steps through choices
+    /// steps back with a Shift key held.
+    qualifier: u32 = 0,
+    /// What the window reports as the code, filled in with `GMKR_VERIFY`.
+    termination: *i32,
+    /// Filled in with the gadget that answered, by whatever handed the
+    /// message on, so that the window can name it.
+    gadget: ?*classusr.Object = null,
+};
+
+/// GM_KEY: the key is not this gadget's, or it did nothing.
+pub const GMKR_NOTHING: usize = 0;
+/// GM_KEY: it worked the gadget, and there is nothing to report.
+pub const GMKR_DONE: usize = 1 << 0;
+/// GM_KEY: it worked the gadget; the window reports it as a press that
+/// finished, with `termination` as the code.
+pub const GMKR_VERIFY: usize = 1 << 1;
+/// GM_KEY: give the gadget the keyboard, as a press on a line of text
+/// would.
+pub const GMKR_ACTIVATE: usize = 1 << 2;
+
+/// The character a `GM_KEY` names, in lower case; 0 when it is none.
+pub fn keyOf(key: u32) u32 {
+    return if (key >= 'A' and key <= 'Z') key + ('a' - 'A') else key;
+}
+
+/// Whether a `GM_KEY` is this gadget's: the character is the one the
+/// gadget answers to, and the gadget is not disabled. Every class that
+/// answers `GM_KEY` asks this first.
+pub fn keyIsFor(o: *classusr.Object, k: *const GpKey) bool {
+    const g = gadget(o);
+    return g.key != 0 and g.key == keyOf(k.key) and g.flags & GFLG_DISABLED == 0;
+}
+
+/// Where the key a label marks is: the index in `text` of the character
+/// the first `_` marks, or null when nothing is marked. A `_` at the end
+/// of the text marks nothing.
+pub fn labelMark(text: ?[*:0]const u8) ?u32 {
+    const s = text orelse return null;
+    var i: u32 = 0;
+    while (s[i] != 0) : (i += 1) {
+        if (s[i] == '_' and s[i + 1] != 0) return i + 1;
+    }
+    return null;
+}
+
+/// The key a label names: the character its `_` marks, in lower case, or
+/// 0 for none.
+pub fn labelKey(text: ?[*:0]const u8) u32 {
+    const at = labelMark(text) orelse return 0;
+    return keyOf(text.?[at]);
+}
 
 /// GM_LAYOUT: the room this gadget is measured against has changed.
 pub const GpLayout = extern struct {

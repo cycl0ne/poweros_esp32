@@ -8,6 +8,7 @@
 
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
+const gc = sdk.intuition.gadgetclass;
 const TagItem = sdk.utility.TagItem;
 const Pen = graphics.Pen;
 const sc = sdk.intuition.screens;
@@ -53,6 +54,71 @@ pub fn pen(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen) void {
         .{},
     };
     gb.SetRPAttrs(rp, &put);
+}
+
+fn textLen(s: [*:0]const u8) u32 {
+    var n: u32 = 0;
+    while (s[n] != 0) n += 1;
+    return n;
+}
+
+/// How wide a label is drawn in the RastPort's font: the text without the
+/// `_` that marks its key.
+pub fn labelWidth(gb: *GraphicsBase, rp: *graphics.RastPort, text: [*:0]const u8) i32 {
+    const len = textLen(text);
+    const whole = gb.TextLength(rp, text, len);
+    if (gc.labelMark(text) == null) return whole;
+    return whole - gb.TextLength(rp, "_", 1);
+}
+
+/// A label drawn with `x` at its left and `y` at its baseline: the `_`
+/// that marks its key left out, and the character it marks underlined.
+///
+/// The text is drawn in up to three runs - before the mark, the marked
+/// character, and the rest - so that nothing has to be copied to leave
+/// the `_` out, whatever the label's length.
+pub fn labelText(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, text: [*:0]const u8) void {
+    const len = textLen(text);
+    const at = gc.labelMark(text) orelse {
+        gb.Move(rp, x, y);
+        gb.Text(rp, text, len);
+        return;
+    };
+    const before = at - 1;
+    var pen_x = x;
+    if (before > 0) {
+        gb.Move(rp, pen_x, y);
+        gb.Text(rp, text, before);
+        pen_x += gb.TextLength(rp, text, before);
+    }
+    const marked = text + at;
+    const width = gb.TextLength(rp, marked, 1);
+    gb.Move(rp, pen_x, y);
+    gb.Text(rp, marked, 1);
+    if (len > at + 1) {
+        gb.Move(rp, pen_x + width, y);
+        gb.Text(rp, marked + 1, len - at - 1);
+    }
+    // The line under the letter, not under the cell it sits in: a
+    // character's width is its advance, which carries the gap to the next
+    // character, so a line that long runs past the letter's right edge.
+    // It is drawn a pixel to the left instead, where the gap the letter
+    // before it left is, and stops a pixel short on the right.
+    //
+    // How far below the baseline it goes: the row above the bottom of the
+    // font's cell, which leaves the letter clear without reaching into
+    // the line beneath. A font with only one row under the baseline gets
+    // that one.
+    var baseline: u32 = 0;
+    var height: u32 = 0;
+    const metrics = [_]TagItem{
+        .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
+        .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) },
+        .{},
+    };
+    gb.GetRPAttrs(rp, &metrics);
+    const below: i32 = if (height > baseline + 1) @min(@as(i32, @intCast(height - baseline - 1)), 2) else 1;
+    gb.DrawHLine(rp, pen_x - 1, y + below, width);
 }
 
 /// The ghost laid over a disabled gadget: one pixel in four, in rows that

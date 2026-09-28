@@ -31,6 +31,7 @@ const sc = intuition.screens;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const sl = gadgets.slider;
+const ie = sdk.devices.inputevent;
 const tx = gadgets.text;
 const Class = classes.Class;
 const Object = classes.Object;
@@ -59,6 +60,9 @@ pub const Data = extern struct {
     place_right: u8 = 0,
     pad: [2]u8 = @splat(0),
     max_level_len: u32 = 2,
+    /// `SLIDER_MaxLevelPixels`: room for the level in pixels as well, 0
+    /// for none.
+    max_level_pixels: i32 = 0,
     justify: u32 = tx.TEXT_JUSTIFY_LEFT,
     /// Shown through this, when there is one.
     format: ?[*:0]const u8 = null,
@@ -155,6 +159,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                 sl.SLIDER_LevelFormat => own.format = @ptrFromInt(item.data),
                 sl.SLIDER_LevelPlace => own.place_right = @intFromBool(item.data == sl.SLIDER_PLACE_RIGHT),
                 sl.SLIDER_MaxLevelLen => own.max_level_len = @min(@as(u32, @truncate(item.data)), own.written.len - 1),
+                sl.SLIDER_MaxLevelPixels => own.max_level_pixels = @max(@as(i32, @bitCast(@as(u32, @truncate(item.data)))), 0),
                 sl.SLIDER_LevelJustify => own.justify = @truncate(item.data),
                 sl.SLIDER_DispFunc => own.disp_func = @ptrFromInt(item.data),
                 pg.PGA_Freedom => own.vertical = @intFromBool(item.data & pg.FREEVERT != 0),
@@ -168,8 +173,9 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
 
 // --- where things are -------------------------------------------------------
 
-/// How wide the shown level is: its room in the font, or nothing when the
-/// level is not shown.
+/// How wide the shown level is: room for its characters in the font, or
+/// the pixels asked for where those are wider; nothing when the level is
+/// not shown.
 fn displayWidth(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) i32 {
     if (own.format == null) return 0;
     const ib = base.intuition_base;
@@ -177,7 +183,7 @@ fn displayWidth(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: 
     defer measure.done(ib);
     var zeros: [40]u8 = @splat('0');
     zeros[own.max_level_len] = 0;
-    return measure.width(ib, @ptrCast(&zeros));
+    return @max(measure.width(ib, @ptrCast(&zeros)), own.max_level_pixels);
 }
 
 /// The parts of a gadget `size` big, relative to its box: the shown level
@@ -419,6 +425,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_RENDER => {
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
+        },
+        // The key moves the knob one level on, and back with a Shift key
+        // held.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const own = classes.instData(Data, cl, o.?);
+            const shift = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+            const was = own.level;
+            own.level = if (k.qualifier & shift != 0) @max(own.level - 1, own.min) else @min(own.level + 1, own.max);
+            k.termination.* = own.level;
+            if (own.level == was) return gc.GMKR_DONE;
+            putKnob(base, own, k.gadget_info);
+            support.redraw(ib, o.?, k.gadget_info);
+            tell(base, own, o.?, k.gadget_info, 0);
+            return gc.GMKR_VERIFY;
         },
         gc.GM_GOACTIVE, gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));

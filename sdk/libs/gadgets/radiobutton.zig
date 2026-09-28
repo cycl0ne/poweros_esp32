@@ -32,3 +32,8 @@ pub const RADIO_Active = RADIO_Dummy + 0x02;
 /// Pixels between one line of choices and the next, beyond the line
 /// itself. Made only; 1 unless given.
 pub const RADIO_Spacing = RADIO_Dummy + 0x03;
+/// Bool, made only: the marks are as big as the room a layout gives the
+/// group, rather than a line of the font - the lines are spread over the
+/// height and each mark grown to its line. For a touch screen, where a
+/// mark a line of text high is smaller than a fingertip.
+pub const RADIO_Scaled = RADIO_Dummy + 0x04;

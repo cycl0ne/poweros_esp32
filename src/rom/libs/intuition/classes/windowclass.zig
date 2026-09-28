@@ -46,8 +46,10 @@ pub const Data = extern struct {
 };
 
 /// What the window hears whatever it is told: what `WM_HANDLEINPUT` is
-/// for.
-const idcmp_always = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_GADGETUP | wn.IDCMP_GADGETDOWN | wn.IDCMP_MENUPICK;
+/// for. The keys are among them because a key may be one that works a
+/// gadget of the layout, which is the window's own business; one that
+/// works none is handed on as `WMHI_VANILLAKEY`.
+const idcmp_always = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_GADGETUP | wn.IDCMP_GADGETDOWN | wn.IDCMP_MENUPICK | wn.IDCMP_VANILLAKEY;
 
 /// Make windowclass, from rootclass, and put it on the public list.
 pub fn make(ib: *IntuitionBase) ?*Class {
@@ -129,6 +131,30 @@ fn close(ib: *IntuitionBase, p: *Data) bool {
     return true;
 }
 
+/// What the key `said` does in the layout: null when no gadget there
+/// answers to it, so the key is the program's; `WMHI_LASTMSG` when a
+/// gadget took it and has nothing to report; and a `WMHI_GADGETUP` word
+/// with the code when it has.
+fn keyGadget(ib: *IntuitionBase, p: *Data, said: u32, qualifier: u32, code: ?*u32) ?usize {
+    const it = ib.iface();
+    const layout = p.layout orelse return null;
+    const window = p.window orelse return null;
+    var termination: i32 = 0;
+    var key = gc.GpKey{ .key = said, .qualifier = qualifier, .termination = &termination };
+    const answer = it.DoGadgetMethodA(layout, window, null, @ptrCast(&key));
+    if (answer == gc.GMKR_NOTHING) return null;
+    const worked = key.gadget orelse return null;
+    if (answer & gc.GMKR_ACTIVATE != 0) {
+        _ = it.ActivateGadget(worked, window, null);
+        return wc.WMHI_LASTMSG;
+    }
+    if (answer & gc.GMKR_VERIFY == 0) return wc.WMHI_LASTMSG;
+    var id: usize = 0;
+    _ = it.GetAttr(gc.GA_ID, worked, &id);
+    if (code) |out| out.* = @bitCast(termination);
+    return wc.WMHI_GADGETUP | (id & wc.WMHI_GADGETMASK);
+}
+
 /// The next message of a class it has a word for, replied, as that word;
 /// `WMHI_LASTMSG` when there is none.
 fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
@@ -138,7 +164,17 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
         const class = im.class;
         const said = im.code;
         const address = im.iaddress;
+        const qualifier = im.qualifier;
         it.ReplyIMsg(im);
+        // A key that works a gadget of the layout is that gadget's, not
+        // the program's: what it did is reported in the gadget's name, or
+        // not at all.
+        if (class == wn.IDCMP_VANILLAKEY) {
+            if (keyGadget(ib, p, said, qualifier, code)) |worked| {
+                if (worked == wc.WMHI_LASTMSG) continue;
+                return worked;
+            }
+        }
         const word: usize = switch (class) {
             wn.IDCMP_CLOSEWINDOW => wc.WMHI_CLOSEWINDOW,
             wn.IDCMP_GADGETUP, wn.IDCMP_GADGETDOWN => blk: {

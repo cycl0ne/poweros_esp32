@@ -271,6 +271,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, r.gadget_info, r.rast_port);
             return 0;
         },
+        // The key steps it on, and back with a Shift key held.
+        gc.GM_KEY => {
+            const k: *gc.GpKey = @ptrCast(@alignCast(msg));
+            if (!gc.keyIsFor(o.?, k)) return gc.GMKR_NOTHING;
+            const own = classes.instData(Data, cl, o.?);
+            const shift = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
+            step(own, k.qualifier & shift != 0);
+            k.termination.* = @intCast(own.active);
+            support.redraw(ib, o.?, k.gadget_info);
+            const tags = [_]TagItem{
+                .{ .tag = cy.CYCLE_Active, .data = own.active },
+                .{ .tag = gc.GA_ID, .data = gc.gadget(o.?).id },
+                .{},
+            };
+            support.notify(ib, o.?, k.gadget_info, &tags, 0);
+            return gc.GMKR_VERIFY;
+        },
         // Let go over it: the next choice, which is the code.
         gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
