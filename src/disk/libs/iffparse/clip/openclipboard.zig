@@ -77,6 +77,9 @@ pub fn OpenClipboard(ib: *IFFParseBase, unit: u32) ?*iffparse.ClipboardHandle {
     clip.satisfy_port.node.type = .msgport;
     clip.satisfy_port.msg_list.init(.message);
     clip.req.io.req.message.reply_port = &clip.port;
+    // How big the request really is, which is what the device checks
+    // before it reads the fields past the standard ones.
+    clip.req.io.req.message.length = @sizeOf(clipboard.IOClipReq);
     if (sys.OpenDevice(clipboard.CLIPBOARDNAME, unit, &clip.req.io.req, 0) != 0) {
         sys.FreeSignal(reply_signal);
         sys.FreeSignal(satisfy_signal);

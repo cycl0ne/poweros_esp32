@@ -48,7 +48,10 @@ fn clipStream(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
             clip.req.io.req.command = exec.CMD_READ;
             clip.req.io.data = cmd.buf;
             clip.req.io.length = bytes;
-            return @intCast(@as(u32, @bitCast(sys.DoIO(&clip.req.io.req))));
+            if (sys.DoIO(&clip.req.io.req) != 0) return 1;
+            // Short of what was asked for is the end of the clip, which
+            // to a reader of IFF is a file that stops mid-chunk.
+            return @intFromBool(clip.req.io.actual != bytes);
         },
         iffparse.IFFCMD_WRITE => {
             clip.req.io.req.command = exec.CMD_WRITE;

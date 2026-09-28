@@ -73,7 +73,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   programs in `C:test` and network tools in `C:net`.
   `LIBS:iffparse.library` reads and writes IFF, the shape a picture, a
   piece of text or a sound is kept in when one program hands it to
-  another.
+  another, and `DEVS:clipboard.device` is where it is handed over: a
+  unit is a clip, kept as a file in `CLIPS:`.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing, layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
