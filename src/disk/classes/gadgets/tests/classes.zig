@@ -676,17 +676,32 @@ test "listview.gadget: top and selection, the view kept full, detach, disabled l
     var on_third = input(gc.GM_GOACTIVE, &press, 10, parts.lines.top + 3 * parts.line_height + 2, &termination);
     try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(view, @ptrCast(&on_third)));
 
-    // Detached while the list changes, and given back: from the top,
-    // nothing selected.
+    // Detached while the list changes, and given back: nothing is
+    // selected while it is away, and the same list keeps the view and
+    // the selection it had, however much longer it has grown.
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = 3 }, .{} });
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 4 }, .{} });
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = lv.LISTVIEW_DETACH }, .{} });
     try testing.expectEqual(@as(usize, 0), attr(ib, view, lv.LISTVIEW_Labels));
     var on_nothing = input(gc.GM_GOACTIVE, &press, 10, second_y, &termination);
     try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(view, @ptrCast(&on_nothing)));
     kexec.SysBase.iface().Remove(&nodes[19]);
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
+    try testing.expectEqual(@as(usize, 3), attr(ib, view, lv.LISTVIEW_Top));
+    try testing.expectEqual(@as(usize, 4), attr(ib, view, lv.LISTVIEW_Selected));
+    try testing.expectEqual(@as(u32, 19), own.count);
+
+    // Another list starts at its top with nothing selected.
+    var other_nodes: [3]exec.Node = undefined;
+    var other: exec.List = .{};
+    other.init(.unknown);
+    for (&other_nodes) |*node| {
+        node.* = .{ .name = "other" };
+        kexec.SysBase.iface().AddTail(&other, node);
+    }
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&other) }, .{} });
     try testing.expectEqual(@as(usize, 0), attr(ib, view, lv.LISTVIEW_Top));
     try testing.expectEqual(lv.LISTVIEW_NONE, @as(u32, @truncate(attr(ib, view, lv.LISTVIEW_Selected))));
-    try testing.expectEqual(@as(u32, 19), own.count);
 
     ib.DisposeObject(view);
     ib.DisposeObject(listener);
@@ -788,8 +803,13 @@ test "listview.gadget: the selected line's name written into a string gadget" {
     // So does naming the line.
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 3 }, .{} });
     try testing.expectEqualStrings("L3", shownName(ib, field));
-    // A list attached anew has nothing selected, and the field is empty.
+    // The same list again keeps what was selected; another list has
+    // nothing selected, and the field goes empty with it.
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
+    try testing.expectEqualStrings("L3", shownName(ib, field));
+    var other: exec.List = .{};
+    other.init(.unknown);
+    _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&other) }, .{} });
     try testing.expectEqualStrings("", shownName(ib, field));
     try testing.expectEqual(@intFromPtr(field), attr(ib, view, lv.LISTVIEW_SelectString));
 
@@ -1212,27 +1232,28 @@ test "listview.gadget: several lines at once, a disabled line passed over, a dou
     _ = ib.SendMessage(view, @ptrCast(&late_up));
     try testing.expectEqual(@as(i32, 6), termination);
 
-    // The one line named clears the rest; a list attached anew clears all.
+    // The one line named clears the rest. The same list given back, one
+    // line shorter, keeps what was selected and what was ticked; another
+    // list clears both.
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 9 }, .{} });
     try testing.expectEqual(@as(u32, 1), chosen.selected());
     try testing.expect(chosen.has(9));
     kexec.SysBase.iface().Remove(&nodes[11]);
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Labels, .data = @intFromPtr(&list) }, .{} });
     try testing.expectEqual(@as(u32, 11), chosen.count);
-    try testing.expectEqual(@as(u32, 0), chosen.selected());
+    try testing.expectEqual(@as(u32, 1), chosen.selected());
+    try testing.expect(chosen.has(9));
 
     // The key that works the list moves the selection a line on, and back
-    // with Shift held; with nothing selected it starts at the top.
+    // with Shift held.
     _ = ib.SetAttrsTagList(view, &[_]TagItem{ .{ .tag = gc.GA_Key, .data = 'i' }, .{} });
     var works = keyed('i', 0, &termination);
     try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&works)));
-    try testing.expectEqual(@as(i32, 0), termination);
-    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&works)));
-    try testing.expectEqual(@as(i32, 1), termination);
-    try testing.expect(chosen.has(1) and chosen.selected() == 1);
+    try testing.expectEqual(@as(i32, 10), termination);
+    try testing.expect(chosen.has(10) and chosen.selected() == 1);
     var up_a_line = keyed('i', ie.IEQUALIFIER_LSHIFT, &termination);
     try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(view, @ptrCast(&up_a_line)));
-    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expectEqual(@as(i32, 9), termination);
 
     ib.DisposeObject(view);
     const sys = kexec.SysBase.iface();

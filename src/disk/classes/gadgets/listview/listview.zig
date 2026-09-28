@@ -76,6 +76,10 @@ const text_margin = 2;
 /// listview.gadget's part of an object.
 pub const Data = extern struct {
     labels: ?*exec.List = null,
+    /// The last list attached, which a detach does not forget: the same
+    /// list given back keeps the view and the selection, another one
+    /// starts afresh.
+    was_labels: ?*exec.List = null,
     /// How many lines the list has.
     count: u32 = 0,
     top: u32 = 0,
@@ -130,14 +134,33 @@ fn freeBits(base: *gadgets.Base, own: *Data) void {
     own.chosen = .{};
 }
 
-/// Bits for the list as it is now, all clear. Without the memory for
-/// them the list stays one that selects a single line.
-fn makeBits(base: *gadgets.Base, own: *Data) void {
-    freeBits(base, own);
-    if (own.multi == 0 or own.count == 0) return;
+/// Bits for the list as it is now. `keep` carries the bits of the list
+/// as it was over into them, which is what the same list given back
+/// again wants; without it they start clear. Without the memory for them
+/// the list stays one that selects a single line.
+fn makeBits(base: *gadgets.Base, own: *Data, keep: bool) void {
+    const was = own.chosen;
+    if (own.multi == 0 or own.count == 0) {
+        freeBits(base, own);
+        return;
+    }
     const bytes = wordsFor(own.count) * @sizeOf(u32);
-    const got = base.sys_base.AllocVec(bytes, exec.MEMF_CLEAR) orelse return;
-    own.chosen = .{ .bits = @ptrCast(@alignCast(got)), .count = own.count };
+    const got = base.sys_base.AllocVec(bytes, exec.MEMF_CLEAR) orelse {
+        freeBits(base, own);
+        return;
+    };
+    const bits: [*]u32 = @ptrCast(@alignCast(got));
+    if (keep) if (was.bits) |old| {
+        const words = @min(wordsFor(was.count), wordsFor(own.count));
+        var word: u32 = 0;
+        while (word < words) : (word += 1) bits[word] = old[word];
+        // A line that is no longer there is no longer selected.
+        if (own.count < was.count and own.count % 32 != 0) {
+            bits[own.count / 32] &= (@as(u32, 1) << @intCast(own.count % 32)) - 1;
+        }
+    };
+    own.chosen = .{ .bits = bits, .count = own.count };
+    base.sys_base.FreeVec(@ptrCast(@constCast(was.bits)));
 }
 
 fn isOn(own: *const Data, line: u32) bool {
@@ -527,6 +550,8 @@ const Change = struct {
     top: ?u32 = null,
     visible: ?u32 = null,
     relabel: bool = false,
+    /// The list attached is another list, not the same one grown.
+    afresh: bool = false,
     only: bool = false,
 };
 
@@ -541,10 +566,22 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                     own.labels = null;
                     own.count = 0;
                 } else {
-                    own.labels = @ptrFromInt(item.data);
+                    const list: ?*exec.List = @ptrFromInt(item.data);
+                    // The same list again is the same list, however much
+                    // longer it has grown: the view and the selection
+                    // stay where they were, so a list read a piece at a
+                    // time does not jump under the pointer.
+                    const afresh = list != own.was_labels;
+                    own.labels = list;
+                    own.was_labels = list;
                     own.count = countOf(own.labels);
-                    own.top = 0;
-                    own.selected = lv.LISTVIEW_NONE;
+                    change.afresh = afresh;
+                    if (afresh) {
+                        own.top = 0;
+                        own.selected = lv.LISTVIEW_NONE;
+                    } else if (own.selected != lv.LISTVIEW_NONE and own.selected >= own.count) {
+                        own.selected = lv.LISTVIEW_NONE;
+                    }
                 }
                 own.anchor = lv.LISTVIEW_NONE;
                 own.last_line = lv.LISTVIEW_NONE;
@@ -577,7 +614,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
     // Once the whole list is read: a multi-select list shows what is
     // selected, and its bits follow the list and the one line named.
     if (new and own.multi != 0) own.show_selected = 1;
-    if (change.relabel) makeBits(base, own);
+    if (change.relabel) makeBits(base, own, !change.afresh);
     if (change.only and own.multi != 0) {
         clearBits(own);
         if (own.selected != lv.LISTVIEW_NONE) setOn(own, own.selected, true);
@@ -690,7 +727,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (change.top) |wanted| top = wanted;
             if (change.visible) |line| top = topShowing(own, line, parts.visible);
             if (change.whole) {
-                own.top = @min(top, lastTop(own, parts.visible));
+                // Nothing to hold the top against while the list is
+                // away: it waits there for the list to come back.
+                own.top = if (own.labels == null) top else @min(top, lastTop(own, parts.visible));
                 putScroller(base, own, o.?, set.gadget_info);
                 changed = 1;
             } else if (top != own.top) {

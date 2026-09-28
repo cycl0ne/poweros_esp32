@@ -53,7 +53,12 @@ pub const LISTVIEW_CLASS = "listview.gadget";
 pub const LISTVIEW_Dummy = gadgets.GADGETS_Dummy + 7 * gadgets.GADGETS_Step;
 /// The list: a `*exec.List` whose nodes are the lines, not copied; null
 /// for none, `LISTVIEW_DETACH` to let go of it while it is changed. Made,
-/// set and read. A new list starts at its top with nothing selected.
+/// set and read.
+///
+/// Another list starts at its top with nothing selected; the same list
+/// given again keeps the view where it was and the line that was
+/// selected, so a list that grows while it is read can be handed back
+/// after each piece without the view jumping under the pointer.
 pub const LISTVIEW_Labels = LISTVIEW_Dummy + 0x01;
 /// The first line shown. Made, set and read.
 pub const LISTVIEW_Top = LISTVIEW_Dummy + 0x02;
