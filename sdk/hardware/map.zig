@@ -22,6 +22,7 @@ pub const TIMG0: usize = 0x6001_F000;
 pub const TIMG1: usize = 0x6002_0000;
 pub const SYSTIMER: usize = 0x6002_3000;
 pub const SPI2: usize = 0x6002_4000;
+pub const SPI3: usize = 0x6002_5000;
 /// SYSCON (APB_CTRL): among others, the random number generator's clock.
 pub const SYSCON: usize = 0x6002_6000;
 pub const I2C1: usize = 0x6002_7000;

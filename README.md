@@ -93,7 +93,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi; the card slot, RS-485 and CAN are described but not driven |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi; card slot on SPI written, not yet tried on the board; RS-485 and CAN described but not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and mouse | runs |
 

@@ -30,6 +30,7 @@ pub const Peripheral = enum {
     /// The FIFO memory the three UARTs share.
     uart_mem,
     spi2,
+    spi3,
     i2c0,
     i2c1,
     i2s0,
@@ -57,6 +58,7 @@ inline fn slotOf(comptime peripheral: Peripheral) Slot {
         .i2s0 => .{ .second = false, .bit = 1 << 4 },
         .uart1 => .{ .second = false, .bit = 1 << 5 },
         .spi2 => .{ .second = false, .bit = 1 << 6 },
+        .spi3 => .{ .second = false, .bit = 1 << 16 },
         .i2c0 => .{ .second = false, .bit = 1 << 7 },
         .i2c1 => .{ .second = false, .bit = 1 << 18 },
         .uart_mem => .{ .second = false, .bit = 1 << 24 },

@@ -6,6 +6,7 @@
 
 test {
     _ = @import("devs/sdcard/card.zig");
+    _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/openeth.zig");
     _ = @import("devs/networks/wifi/tests/wifi.zig");

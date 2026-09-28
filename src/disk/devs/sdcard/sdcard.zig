@@ -17,18 +17,30 @@
 //!   TD_CHANGENUM     io_Actual: how often a card has been identified.
 //!   TD_CHANGESTATE   io_Actual: 0 while a card is in.
 //!
+//! **Two ways a slot is wired.** The board's card-slot part says which.
+//! On the chip's SD/MMC host (`sdmmc.zig`) the card is spoken to in its
+//! own mode, four bits wide where it can. On SPI (`sdspi.zig`, over SPI3)
+//! it is one bit each way and a chip select, which the board may have put
+//! on the IO expander; the select is then held low for as long as a card
+//! is in use, because it is the only part on that bus and every change of
+//! it costs an I2C write. Everything above the card - the unit, the task,
+//! the queue, the geometry, what a card change means - is the same for
+//! both.
+//!
 //! **Every command runs on the device's own task.** A transfer waits for
-//! the controller's interrupt, and BeginIO may be called from anywhere -
+//! the card, and BeginIO may be called from anywhere -
 //! including from a caller that must not wait. So BeginIO checks what it
 //! can and queues the rest - TD_CHANGESTATE on an empty slot included,
 //! since only speaking to the slot finds a card put in since -
 //! as flash.device does; unlike flash.device the
 //! stack may be anywhere, because nothing here suspends a cache.
 //!
-//! **What the DMA can reach.** The controller's DMA reaches internal
+//! **What the DMA can reach.** The SD/MMC host's DMA reaches internal
 //! memory only, and a caller's buffer is usually external, so every
 //! transfer passes through the buffer in `_sdcard.zig`'s work block. A
-//! transfer longer than that buffer is done in rounds of it.
+//! transfer longer than that buffer is done in rounds of it. On SPI the
+//! bytes go through the controller's own 64-byte buffer, which the CPU
+//! fills and empties, so there is no work block and no interrupt.
 //!
 //! **A card can be taken out.** Nothing here is told when that happens -
 //! the slot has no switch - so it is found out the next time the card is
@@ -49,15 +61,20 @@ const BoardPin = expansion.BoardPin;
 const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
 const sdmmc = @import("sdmmc.zig");
+const sdspi = @import("sdspi.zig");
 const card = @import("card.zig");
+const pads = sdk.hardware.gpio;
+const spi = sdk.hardware.gpspi.spi3;
+const expander_resource = sdk.resources.expander;
+const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const _sdcard = @import("_sdcard.zig");
 const SdCardBase = _sdcard.SdCardBase;
 const Work = _sdcard.Work;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "23.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "28.09.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -389,6 +406,7 @@ fn layChain(sb: *SdCardBase, bytes: u32) *sdmmc.Descriptor {
 /// caller's buffer; for a write the bytes are copied in first, for a read
 /// they are copied out after.
 fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
+    if (sb.slot.spi != 0) return transferSpi(sb, way, block, count, bytes);
     const work = sb.work.?;
     var done: u32 = 0;
     while (done < count) {
@@ -434,12 +452,17 @@ fn lost(sb: *SdCardBase) void {
 /// the slot is empty or the card cannot be used.
 fn ready(sb: *SdCardBase) bool {
     if (sb.present != 0) return true;
-    if (!sdmmc.cardPresent()) return false;
-    // The reset puts the controller's interrupt gates back where they
-    // start, so what this device wants raised has to be said again.
-    sdmmc.reset();
-    sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
-    if (!identify(sb)) return false;
+    if (sb.slot.spi != 0) {
+        var bus = SpiBus{ .sb = sb };
+        if (!Spi.identify(&bus, &sb.card)) return false;
+    } else {
+        if (!sdmmc.cardPresent()) return false;
+        // The reset puts the controller's interrupt gates back where they
+        // start, so what this device wants raised has to be said again.
+        sdmmc.reset();
+        sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
+        if (!identify(sb)) return false;
+    }
     sb.present = 1;
     sb.change_num +%= 1;
     report(sb);
@@ -450,6 +473,15 @@ fn report(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     var name: [6]u8 = @splat(0);
     @memcpy(name[0..5], &sb.card.cid.name);
+    if (sb.slot.spi != 0) {
+        sdk.exec.kprintf(sys, "%s: %s, %ld MB, SPI at %d kHz\n", .{
+            DEVICE_NAME,
+            @as([*:0]const u8, @ptrCast(&name)),
+            sb.card.bytes() / (1024 * 1024),
+            sb.card.clock_hz / 1000,
+        });
+        return;
+    }
     sdk.exec.kprintf(sys, "%s: %s, %ld MB, %d bits at %d kHz\n", .{
         DEVICE_NAME,
         @as([*:0]const u8, @ptrCast(&name)),
@@ -457,6 +489,119 @@ fn report(sb: *SdCardBase) void {
         @as(u32, if (sb.card.wide) 4 else 1),
         sb.card.clock_hz / 1000,
     });
+}
+
+/// Whether the card may not be written: its own say, or the slot's
+/// write-protect switch where it has one.
+fn writeProtected(sb: *SdCardBase) bool {
+    if (sb.card.readOnly()) return true;
+    return sb.slot.spi == 0 and sdmmc.writeProtected();
+}
+
+// --- the SPI slot ---------------------------------------------------------
+
+/// The bus `sdspi.zig` speaks to the card over: SPI3's full-duplex
+/// exchange, a round of its 64-byte buffer at a time, the slot's chip
+/// select wherever the board put it, and the task's timer.
+const SpiBus = struct {
+    sb: *SdCardBase,
+
+    pub fn select(bus: *SpiBus, on: bool) bool {
+        const line = BoardPin.of(bus.sb.slot.select);
+        const high = on != (line.active_low != 0);
+        switch (line.kind) {
+            expansion.boardpin.BPIN_GPIO => {
+                pads.setLevel(line.number, high);
+                return true;
+            },
+            expansion.boardpin.BPIN_EXPANDER => {
+                const eb = bus.sb.expander orelse return false;
+                return eb.SetPin(line.number, high);
+            },
+            else => return false,
+        }
+    }
+
+    pub fn exchange(bus: *SpiBus, bytes: []u8) void {
+        _ = bus;
+        var at: usize = 0;
+        while (at < bytes.len) {
+            const piece = @min(bytes.len - at, spi.buffer_bytes);
+            spi.exchange(bytes[at..][0..piece]);
+            at += piece;
+        }
+    }
+
+    pub fn setClock(bus: *SpiBus, hz: u32) u32 {
+        _ = bus;
+        return spi.setClock(hz);
+    }
+
+    pub fn delay(bus: *SpiBus, us: u32) void {
+        const sb = bus.sb;
+        sb.timer_io.node.command = timer.TR_ADDREQUEST;
+        sb.timer_io.time = timer.TimeVal.fromMicros(us);
+        _ = sb.sys_base.DoIO(&sb.timer_io.node);
+    }
+};
+
+const Spi = sdspi.Protocol(SpiBus);
+
+/// A run of blocks over SPI, straight between the caller's buffer and the
+/// controller's. A card that stopped answering, or whose data did not
+/// check out, is taken for gone, as on the SD/MMC host.
+fn transferSpi(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
+    var bus = SpiBus{ .sb = sb };
+    const outcome = switch (way) {
+        .from_card => Spi.read(&bus, &sb.card, block, count, bytes),
+        .to_card => Spi.write(&bus, &sb.card, block, count, bytes),
+    };
+    if (outcome.lost()) lost(sb);
+    return outcome.code();
+}
+
+/// SPI3 on the slot's pads, and its chip select: claimed on the expander,
+/// or a pad driven high until a card is spoken to. False if the select
+/// cannot be had.
+fn setUpSpi(sb: *SdCardBase) bool {
+    const sys = sb.sys_base;
+    const slot = sb.slot;
+    const line = BoardPin.of(slot.select);
+    switch (line.kind) {
+        expansion.boardpin.BPIN_EXPANDER => {
+            const resource = sys.OpenResource(expander_resource.EXPANDERNAME) orelse {
+                say(sb, "no IO expander for the card's chip select");
+                return false;
+            };
+            const eb: *ExpanderBase = @ptrCast(@alignCast(resource));
+            if (!eb.ClaimPin(line.number, DEVICE_NAME)) {
+                say(sb, "the card's chip select is another driver's");
+                return false;
+            }
+            sb.expander = eb;
+        },
+        expansion.boardpin.BPIN_GPIO => {
+            pads.toMatrix(line.number);
+            pads.setLevel(line.number, line.active_low != 0);
+            pads.outputEnable(line.number, true);
+        },
+        else => return false,
+    }
+
+    _ = spi.init(sdspi.identify_hz);
+    // The controller drives the clock's and MOSI's output enable itself;
+    // MISO is only read, and the board's pull-up holds it high while no
+    // card drives it, which is what an empty slot reads as.
+    pads.toMatrix(slot.clock);
+    pads.connectOut(slot.clock, spi.signal_clock, false);
+    pads.toMatrix(slot.command);
+    pads.connectOut(slot.command, spi.signal_d, false);
+    const miso = slot.data[0];
+    pads.toMatrix(miso);
+    pads.inputEnable(miso, true);
+    pads.pullUp(miso, true);
+    pads.connectIn(spi.signal_q, miso);
+    return true;
 }
 
 // --- the task -------------------------------------------------------------
@@ -519,8 +664,9 @@ fn started(sb: *SdCardBase) void {
     }
 }
 
-/// The task's own port and timer, the controller and its interrupt. False
-/// if there is no controller here.
+/// The task's own port and timer, and the controller: the SD/MMC host and
+/// its interrupt, or SPI3 and the chip select. False if there is no
+/// controller here.
 fn setUp(sb: *SdCardBase) bool {
     const sys = sb.sys_base;
 
@@ -533,6 +679,12 @@ fn setUp(sb: *SdCardBase) bool {
     sb.timer_io.node.message.reply_port = sb.port;
     sb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &sb.timer_io.node, 0) != 0) return false;
+
+    if (sb.slot.spi != 0) {
+        if (!setUpSpi(sb)) return false;
+        sb.controller_ready = 1;
+        return true;
+    }
 
     const slot = sb.slot;
     if (!sdmmc.init(.{
@@ -547,7 +699,7 @@ fn setUp(sb: *SdCardBase) bool {
     }
 
     sys.AddIntServer(intbits.INTB_SDIO_HOST, &sb.work.?.int);
-    sb.hooked = 1;
+    sb.controller_ready = 1;
     sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
 
     return true;
@@ -586,7 +738,7 @@ fn slowIO(sb: *SdCardBase, io: *exec.IORequest) void {
         exec.CMD_WRITE => {
             if (!_sdcard.inside(sb, req.offset, req.length)) {
                 io.err = exec.IOERR_BADADDRESS;
-            } else if (sb.card.readOnly() or sdmmc.writeProtected()) {
+            } else if (writeProtected(sb)) {
                 io.err = td.TDERR_WriteProt;
             } else if (req.length == 0) {
                 req.actual = 0;
@@ -609,7 +761,7 @@ fn slowIO(sb: *SdCardBase, io: *exec.IORequest) void {
             }
         },
         td.TD_GETNUMTRACKS => req.actual = @intCast(sb.card.csd.blocks),
-        td.TD_PROTSTATUS => req.actual = if (sb.card.readOnly() or sdmmc.writeProtected()) 1 else 0,
+        td.TD_PROTSTATUS => req.actual = if (writeProtected(sb)) 1 else 0,
         td.TD_CHANGESTATE => req.actual = 0,
         else => io.err = exec.IOERR_NOCMD,
     }
@@ -687,7 +839,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     if (unit_number != 0) return td.TDERR_BadUnitNum;
     // The slot opens whether or not a card is in it: a handler that sits
     // on it has to be there before the card is, and finds out by asking.
-    if (sb.work == null or sb.hooked == 0) return exec.IOERR_OPENFAIL;
+    if (sb.controller_ready == 0) return exec.IOERR_OPENFAIL;
     dev.open_cnt += 1;
     dev.flags &= ~exec.LIBF_DELEXP;
     sb.unit.open_cnt += 1;
@@ -710,16 +862,26 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
     return null;
 }
 
-/// Every pad the slot has, in `into`: its clock, command and data lines,
-/// and its card-detect and write-protect where it has them.
+/// Every pad the slot has, in `into`: its clock, command and data lines
+/// (on SPI: the clock, MOSI and MISO), its card-detect and write-protect
+/// where it has them, and a chip select that is a pad of the chip.
 fn slotPads(slot: _sdcard.Slot, into: *[8]u8) []const u8 {
     into[0] = slot.clock;
     into[1] = slot.command;
-    for (slot.data, 0..) |data_pad, line| into[2 + line] = data_pad;
-    var count: usize = 6;
+    var count: usize = 2;
+    for (slot.data) |data_pad| {
+        if (data_pad == _sdcard.no_pin) continue;
+        into[count] = data_pad;
+        count += 1;
+    }
     for ([_]u8{ slot.detect, slot.write_protect }) |sense_pad| {
         if (sense_pad == _sdcard.no_pin) continue;
         into[count] = sense_pad;
+        count += 1;
+    }
+    const select = BoardPin.of(slot.select);
+    if (slot.spi != 0 and select.kind == expansion.boardpin.BPIN_GPIO) {
+        into[count] = select.number;
         count += 1;
     }
     return into[0..count];
@@ -739,9 +901,23 @@ fn findSlot(sb: *SdCardBase) void {
     const part = eb.FindBoardPart(null, st.PARTKIND_SDSLOT, st.CHIP_ANY) orelse return;
     const tags = part.tags;
 
-    // Every line the host drives is a pad of the chip; a slot wired some
-    // other way - its chip select on an expander, say - is not one this
-    // driver can run.
+    // On SPI: the clock, MOSI and MISO on pads of the chip, and a chip
+    // select wherever the board put it.
+    if (ub.GetTagData(st.PART_Bus, st.BUS_SDIO, tags) == st.BUS_SPI) {
+        var slot: _sdcard.Slot = .{ .spi = 1, .data = @splat(_sdcard.no_pin) };
+        slot.clock = pad(ub, st.PART_PinClock, tags) orelse return;
+        slot.command = pad(ub, st.PART_PinDataOut, tags) orelse return;
+        slot.data[0] = pad(ub, st.PART_PinDataIn, tags) orelse return;
+        const select = BoardPin.of(ub.GetTagData(st.PART_PinSelect, 0, tags));
+        if (!select.wired()) return;
+        slot.select = @intCast(select.data());
+        sb.slot = slot;
+        sb.has_slot = 1;
+        return;
+    }
+
+    // On the SD/MMC host every line is a pad of the chip, which drives
+    // them all.
     var slot: _sdcard.Slot = .{};
     slot.clock = pad(ub, st.PART_PinClock, tags) orelse return;
     slot.command = pad(ub, st.PART_PinCommand, tags) orelse return;
@@ -785,7 +961,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sdk.exec.kprintf(sys_base, "%s: no card slot on this board\n", .{DEVICE_NAME});
         return null;
     }
-    if (!sdmmc.present()) {
+    if (sb.slot.spi == 0 and !sdmmc.present()) {
         sdk.exec.kprintf(sys_base, "%s: no SD host controller on this machine\n", .{DEVICE_NAME});
         return null;
     }
@@ -807,26 +983,30 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // The base itself is wherever MakeLibrary put it, which on this board
     // is external memory - out of the DMA's reach, and out of an
     // interrupt's. So everything either of them touches is here instead,
-    // internal and on a cache line of its own.
+    // internal and on a cache line of its own. Only the SD/MMC host has
+    // either; on SPI the CPU moves every byte.
     const line = 64;
-    const memory = sys_base.AllocMem(@sizeOf(Work) + line, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
-        sdk.exec.kprintf(sys_base, "%s: no internal memory for the card's buffers\n", .{DEVICE_NAME});
-        if (gb) |taken_from| gpio_resource.freePads(taken_from, slot_pads);
-        return null;
-    };
-    sb.work_memory = memory;
-    const aligned = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
-    const work: *Work = @ptrFromInt(aligned);
-    work.* = .{};
-    sb.work = work;
-    work.int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
-        .data = sb,
-        .code = &intServer,
-    };
+    if (sb.slot.spi == 0) {
+        const memory = sys_base.AllocMem(@sizeOf(Work) + line, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
+            sdk.exec.kprintf(sys_base, "%s: no internal memory for the card's buffers\n", .{DEVICE_NAME});
+            if (gb) |taken_from| gpio_resource.freePads(taken_from, slot_pads);
+            return null;
+        };
+        sb.work_memory = memory;
+        const aligned = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
+        const work: *Work = @ptrFromInt(aligned);
+        work.* = .{};
+        sb.work = work;
+        work.int = .{
+            .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
+            .data = sb,
+            .code = &intServer,
+        };
+    }
 
     const stack = sys_base.AllocMem(stack_size, exec.MEMF_CLEAR) orelse {
-        sys_base.FreeMem(memory, @sizeOf(Work) + line);
+        if (sb.work_memory) |memory| sys_base.FreeMem(memory, @sizeOf(Work) + line);
+        sb.work_memory = null;
         sb.work = null;
         if (gb) |taken_from| gpio_resource.freePads(taken_from, slot_pads);
         return null;
@@ -874,8 +1054,8 @@ const init_table = exec.InitTable{
 ///
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
 /// refers to the tag, whoever loads the file looks for it.
-export const sd_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &sd_device_tag,
+export const sdcard_device_tag: exec.Resident linksection(".resident") = .{
+    .match_tag = &sdcard_device_tag,
     .flags = exec.RTF_AUTOINIT,
     .version = DEVICE_VERSION,
     .pri = 0,

@@ -26,6 +26,14 @@ pub const FSPIHD: u32 = 104;
 pub const FSPIWP: u32 = 105;
 pub const FSPICS0: u32 = 110;
 
+// SPI3, which has no more lines than these.
+pub const SPI3_CLK: u32 = 66;
+pub const SPI3_Q: u32 = 67;
+pub const SPI3_D: u32 = 68;
+pub const SPI3_HD: u32 = 69;
+pub const SPI3_WP: u32 = 70;
+pub const SPI3_CS0: u32 = 71;
+
 // LCD_CAM, as an RGB panel's controller. The data lines are
 // LCD_DATA_OUT0 up, one after another.
 pub const LCD_DATA_OUT0: u32 = 133;

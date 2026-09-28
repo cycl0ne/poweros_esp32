@@ -21,6 +21,7 @@ const exec = sdk.exec;
 const td = sdk.devices.trackdisk;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
+const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
 
@@ -80,8 +81,9 @@ pub const SdCardBase = extern struct {
     card: card.Card = .{},
     /// Whether a card is in and identified.
     present: u8 = 0,
-    /// Whether the interrupt server is hooked up.
-    hooked: u8 = 0,
+    /// Whether the controller is set up to take commands: on the SD/MMC
+    /// host, with its interrupt server hooked up.
+    controller_ready: u8 = 0,
     pad: [2]u8 = .{ 0, 0 },
     /// How often the card has been identified afresh, which is what
     /// TD_CHANGENUM counts.
@@ -101,6 +103,8 @@ pub const SdCardBase = extern struct {
     has_slot: u8 = 0,
     pad2: [1]u8 = .{0},
     slot: Slot = .{},
+    /// The expander, when the slot's chip select is one of its pins.
+    expander: ?*ExpanderBase = null,
     /// What the device was loaded from, for its expunge to hand back.
     seg_list: ?*anyopaque = null,
 };
@@ -108,13 +112,22 @@ pub const SdCardBase = extern struct {
 /// A line the slot does not have.
 pub const no_pin: u8 = 0xFF;
 
-/// The slot's pads, as the board wired them.
+/// The slot's pads, as the board wired them. On the SD/MMC host that is
+/// its clock, its command line and four data lines. On SPI it is the
+/// clock, MOSI in `command` (the card's CMD), MISO in `data[0]` (its D0),
+/// no other data lines, and a chip select that may be anywhere - so it is
+/// kept as the board gave it, a BoardPin.
 pub const Slot = extern struct {
     clock: u8 = 0,
     command: u8 = 0,
     data: [4]u8 = .{ 0, 0, 0, 0 },
     detect: u8 = 0xFF,
     write_protect: u8 = 0xFF,
+    /// Not 0: the slot is on SPI.
+    spi: u8 = 0,
+    pad: u8 = 0,
+    /// The chip select, as a BoardPin's data, on SPI.
+    select: u32 = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {
