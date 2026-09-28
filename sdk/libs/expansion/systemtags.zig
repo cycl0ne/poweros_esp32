@@ -103,6 +103,11 @@ pub const PART_Pin = PART_Dummy + 0x32;
 /// A panel's backlight, and the chip select of a part on a shared bus.
 pub const PART_PinBacklight = PART_Dummy + 0x33;
 pub const PART_PinSelect = PART_Dummy + 0x34;
+/// The line that switches a part's supply on.
+pub const PART_PinPower = PART_Dummy + 0x35;
+/// The line that gives a part pads it shares with another: asserted, the
+/// pads are this part's; not asserted, the other's.
+pub const PART_PinSwitch = PART_Dummy + 0x36;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -129,6 +134,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_Pin => "PIN",
         PART_PinBacklight => "BL",
         PART_PinSelect => "CS",
+        PART_PinPower => "PWR",
+        PART_PinSwitch => "SEL",
         else => null,
     };
 }
@@ -149,6 +156,14 @@ pub const PARTKIND_KEYBOARD: u32 = 10;
 pub const PARTKIND_MOUSE: u32 = 11;
 /// A network interface: a MAC, and the link behind it.
 pub const PARTKIND_NET: u32 = 12;
+/// A CAN bus transceiver and its connector.
+pub const PARTKIND_CAN: u32 = 13;
+/// An RS-485 transceiver and its connector.
+pub const PARTKIND_RS485: u32 = 14;
+/// A push button a program can read.
+pub const PARTKIND_BUTTON: u32 = 15;
+/// A connector that brings a pad out for whatever is plugged into it.
+pub const PARTKIND_HEADER: u32 = 16;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -172,6 +187,10 @@ pub const CHIP_OPENETH: u32 = 10;
 /// The chip's own 2.4 GHz radio, on a board whose module gives it an
 /// antenna (wifi.device).
 pub const CHIP_ESP32S3_RADIO: u32 = 11;
+pub const CHIP_TJA1051: u32 = 12;
+pub const CHIP_SP3485: u32 = 13;
+/// A battery charger, with the battery's voltage for a program to read.
+pub const CHIP_CS8501: u32 = 14;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -185,3 +204,7 @@ pub const BUS_ADC: u32 = 6;
 pub const BUS_LCD: u32 = 7;
 /// Memory-mapped: the emulator's devices.
 pub const BUS_MEMORY: u32 = 8;
+/// A UART of the chip.
+pub const BUS_UART: u32 = 9;
+/// The chip's CAN controller (TWAI).
+pub const BUS_TWAI: u32 = 10;

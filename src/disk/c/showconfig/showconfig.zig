@@ -178,6 +178,10 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_KEYBOARD => "keyboard",
         st.PARTKIND_MOUSE => "mouse",
         st.PARTKIND_NET => "network",
+        st.PARTKIND_CAN => "can bus",
+        st.PARTKIND_RS485 => "rs-485",
+        st.PARTKIND_BUTTON => "button",
+        st.PARTKIND_HEADER => "header",
         else => "?",
     };
 }
@@ -192,6 +196,8 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_ADC => "adc",
         st.BUS_LCD => "lcd",
         st.BUS_MEMORY => "memory",
+        st.BUS_UART => "uart",
+        st.BUS_TWAI => "twai",
         else => "?",
     };
 }

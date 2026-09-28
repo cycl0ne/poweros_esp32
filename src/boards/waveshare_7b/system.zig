@@ -1,9 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The Waveshare ESP32-S3-Touch-LCD-7B: a 7 inch 1024x600 RGB panel with a
-//! GT911 touch controller, an IO expander holding the panel's and the touch
-//! controller's control lines, 16 MB of flash and 8 MB of octal PSRAM. Its
-//! card slot is wired for SPI with its chip select on the expander, and is
-//! not described yet.
+//! The Waveshare ESP32-S3-Touch-LCD-7B: an ESP32-S3-WROOM-1-N16R8 module
+//! (16 MB of flash, 8 MB of octal PSRAM) with a 7 inch 1024x600 RGB panel,
+//! a GT911 touch controller, an IO expander holding the panel's and the
+//! touch controller's control lines, a microSD slot wired for SPI, an
+//! RS-485 and a CAN transceiver, a battery charger, and two USB-C ports.
+//! The pins are the maker's schematic: its pin table and its nets.
+//!
+//! **What the schematic shows and no part here carries**, because nothing
+//! reads it:
+//!
+//! - Two keys: RESET (K1) pulls the chip's EN low, BOOT (K2) GPIO0 - a
+//!   strapping pad and the panel's G3 at once, so it is read at reset and
+//!   not after.
+//! - The strapping pads: GPIO45 and GPIO46 (the panel's G4 and HSYNC) have
+//!   10 k to ground, GPIO3 (VSYNC) nothing fitted.
+//! - The PWR LED is on the 3.3 V rail; the charger's two LEDs, CHARGE and
+//!   DONE, are the charger's own.
+//! - The pixel clock (GPIO7) leaves through 150 ohm with 8.2 pF to ground.
+//! - The 3.3 V rail comes from 5 V through an SGM2212; 5 V is the USB
+//!   ports' VBUS or the charger's boost from the battery.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -21,8 +36,17 @@ const pins = sdk.expansion.boardpin;
 /// The board, as its maker names it.
 const name = "ESP32-S3-Touch-LCD-7B";
 
-/// Where the console is: the chip's USB port, the one connector the board
-/// brings out. UART0 is the kernel's own output and nothing else.
+/// Where the console is: the chip's own USB port. It is the USB-C socket
+/// marked USB, through a switch it shares with the CAN transceiver (see
+/// `can`); with the switch's select line low, which its pull-down holds
+/// until the expander drives it, the socket has the pads.
+///
+/// UART0 (GPIO43 TX, GPIO44 RX) is the kernel's own output. A second
+/// switch, moved by hand (SW1), gives it either to the CH343P behind the
+/// USB-C socket marked UART1 or to the four-pin header marked UART2
+/// (3V3, GND, RX, TX). The CH343P's DTR and RTS drive EN and GPIO0
+/// through a pair of transistors, so a host opening that port with those
+/// lines moving resets the chip, or starts its download mode.
 const console = st.CONSOLE_USBJTAG;
 
 /// The screen's size.
@@ -33,6 +57,9 @@ const screen = struct {
 
 // --- the I2C bus ------------------------------------------------------------------
 
+/// With 4.7 k pull-ups to 3.3 V. The expander and the touch controller
+/// are on it, and the four-pin header marked I2C (3V3, GND, SDA, SCL)
+/// brings it out.
 const i2c_bus = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_I2CBUS),
     .value(st.PART_PinSCL, pins.gpio(9)),
@@ -42,15 +69,21 @@ const i2c_bus = [_]Tag{
 
 // --- the IO expander ---------------------------------------------------------------
 
-/// The CH422G: eight pins that hold the panel's and the touch controller's
-/// lines, plus the backlight (the part's own PWM, run through TP3 and R52
-/// to BL_EN) and an analogue input. Pin 4 is the card slot's chip select
-/// and pin 5 picks which transceiver the shared pins go to (low USB, high
-/// CAN); neither has a part here yet.
+/// U10, which answers as a CH422G: eight pins (EXIO0 to EXIO7), plus a
+/// PWM output and an analogue input of its own. The PWM (EXIO_PWM) runs
+/// through TP3 and R52 to the backlight converter's enable; the analogue
+/// input (EXIO_ADC) reads the battery. EXIO0 and EXIO7 go nowhere.
 const expander_pin_touch_reset: u8 = 1;
 /// DISP: the panel's display enable.
 const expander_pin_disp: u8 = 2;
 const expander_pin_lcd_reset: u8 = 3;
+/// SDCS: the card slot's chip select.
+const expander_pin_sd_select: u8 = 4;
+/// USB_SEL: which of the chip's USB port and the CAN transceiver GPIO19
+/// and GPIO20 go to.
+const expander_pin_usb_select: u8 = 5;
+/// LCD_VDD_EN: the panel's supply.
+const expander_pin_lcd_power: u8 = 6;
 
 const io_expander = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_EXPANDER),
@@ -92,6 +125,7 @@ const panel = [_]Tag{
     .value(st.PART_PinClock, pins.gpio(7)),
     .value(st.PART_PinReset, pins.expander(expander_pin_lcd_reset)),
     .value(st.PART_PinEnable, pins.expander(expander_pin_disp)),
+    .value(st.PART_PinPower, pins.expander(expander_pin_lcd_power)),
     // The backlight is the expander's own brightness, which is why it is
     // the driver's to work out rather than a pin to set.
     .value(st.PART_PinBacklight, pins.driver(0)),
@@ -129,9 +163,8 @@ const panel = [_]Tag{
 
 /// The GT911 on the I2C bus. It answers at 0x5D because touch.device holds
 /// its interrupt line low while letting it out of reset; with the line
-/// high it would answer at 0x14. The interrupt line (TP_INT) is from the
-/// maker's pin table for this board family, and its reset is one of the
-/// expander's pins.
+/// high it would answer at 0x14. Its interrupt line (CTP_IRQ) is GPIO4
+/// and its reset one of the expander's pins.
 const touch_panel = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_TOUCH),
     .value(st.PART_Chip, st.CHIP_GT911),
@@ -141,6 +174,78 @@ const touch_panel = [_]Tag{
     .value(st.PART_Address, 0x5D),
     .value(st.PART_PinInt, pins.gpio(4)),
     .value(st.PART_PinReset, pins.expander(expander_pin_touch_reset)),
+    .done,
+};
+
+// --- the card slot ----------------------------------------------------------------
+
+/// A microSD slot on SPI: SCK GPIO12, MOSI GPIO11 (the card's CMD), MISO
+/// GPIO13 (its D0), and its chip select (D3) on the expander. D1 and D2
+/// are not wired, so the slot cannot run four bits wide. All four lines
+/// have 10 k pull-ups to 3.3 V. The socket's card-detect switch is tied
+/// to ground and there is no write-protect switch, so a card is found by
+/// speaking to it.
+const sd_slot = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_SDSLOT),
+    .value(st.PART_Bus, st.BUS_SPI),
+    .value(st.PART_PinClock, pins.gpio(12)),
+    .value(st.PART_PinDataOut, pins.gpio(11)),
+    .value(st.PART_PinDataIn, pins.gpio(13)),
+    .value(st.PART_PinSelect, pins.expanderLow(expander_pin_sd_select)),
+    .done,
+};
+
+// --- the transceivers -------------------------------------------------------------
+
+/// An SP3485 on GPIO15 (TX, to its DI) and GPIO16 (RX, from its RO), at
+/// the two-pin connector marked RS-485 (A, B). There is no direction line:
+/// the TX line itself turns the driver on while it sends, through a
+/// buffer and a transistor. A 120 ohm terminator is switched in by hand
+/// (SW2, marked 120R).
+const rs485 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RS485),
+    .value(st.PART_Chip, st.CHIP_SP3485),
+    .pointer(st.PART_ChipName, "sp3485"),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_PinDataOut, pins.gpio(15)),
+    .value(st.PART_PinDataIn, pins.gpio(16)),
+    .done,
+};
+
+/// A TJA1051 on GPIO20 (CANTX) and GPIO19 (CANRX), at the two-pin
+/// connector marked CAN (L, H); its standby pin is tied low, so it is
+/// always on. GPIO19 and GPIO20 are also the chip's USB port: a switch
+/// gives them to the transceiver while USB_SEL is high, and the console's
+/// USB socket is then cut off. The same hand switch as RS-485's (SW2)
+/// puts a 120 ohm terminator across the bus.
+const can = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CAN),
+    .value(st.PART_Chip, st.CHIP_TJA1051),
+    .pointer(st.PART_ChipName, "tja1051"),
+    .value(st.PART_Bus, st.BUS_TWAI),
+    .value(st.PART_PinDataOut, pins.gpio(20)),
+    .value(st.PART_PinDataIn, pins.gpio(19)),
+    .value(st.PART_PinSwitch, pins.expander(expander_pin_usb_select)),
+    .done,
+};
+
+// --- the rest ---------------------------------------------------------------------
+
+/// A CS8501 charges the cell on the two-pin battery connector from USB
+/// and boosts it to 5 V without USB. The battery's voltage reaches the
+/// expander's analogue input through 20 k over 10 k, a third of it.
+const battery = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_BATTERY),
+    .value(st.PART_Chip, st.CHIP_CS8501),
+    .pointer(st.PART_ChipName, "cs8501"),
+    .value(st.PART_Bus, st.BUS_ADC),
+    .done,
+};
+
+/// The three-pin header marked GPIO (3V3, GND, GPIO6).
+const header = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_HEADER),
+    .value(st.PART_Pin, pins.gpio(6)),
     .done,
 };
 
@@ -170,6 +275,11 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &io_expander),
     .pointer(st.SYSTAG_Part, &panel),
     .pointer(st.SYSTAG_Part, &touch_panel),
+    .pointer(st.SYSTAG_Part, &sd_slot),
+    .pointer(st.SYSTAG_Part, &rs485),
+    .pointer(st.SYSTAG_Part, &can),
+    .pointer(st.SYSTAG_Part, &battery),
+    .pointer(st.SYSTAG_Part, &header),
     .pointer(st.SYSTAG_Part, &radio),
     .done,
 };
