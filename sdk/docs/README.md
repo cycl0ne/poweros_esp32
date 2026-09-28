@@ -14,6 +14,7 @@ SDK has a `.fd` file for: one file per module, in two forms.
 | colorwheel.gadget | [colorwheel.doc](autodocs/colorwheel.doc) | [colorwheel.md](autodocs/colorwheel.md) |
 | console.device | [console.doc](autodocs/console.doc) | [console.md](autodocs/console.md) |
 | crypto.library | [crypto.doc](autodocs/crypto.doc) | [crypto.md](autodocs/crypto.md) |
+| diskfont.library | [diskfont.doc](autodocs/diskfont.doc) | [diskfont.md](autodocs/diskfont.md) |
 | dma.resource | [dma.doc](autodocs/dma.doc) | [dma.md](autodocs/dma.md) |
 | dos.library | [dos.doc](autodocs/dos.doc) | [dos.md](autodocs/dos.md) |
 | exec.library | [exec.doc](autodocs/exec.doc) | [exec.md](autodocs/exec.md) |
@@ -28,6 +29,7 @@ SDK has a `.fd` file for: one file per module, in two forms.
 | platform.resource | [platform.doc](autodocs/platform.doc) | [platform.md](autodocs/platform.md) |
 | rtg.library | [rtg.doc](autodocs/rtg.doc) | [rtg.md](autodocs/rtg.md) |
 | timer.device | [timer.doc](autodocs/timer.doc) | [timer.md](autodocs/timer.md) |
+| truetype.library | [truetype.doc](autodocs/truetype.doc) | [truetype.md](autodocs/truetype.md) |
 | utility.library | [utility.doc](autodocs/utility.doc) | [utility.md](autodocs/utility.md) |
 | watchdog.resource | [watchdog.doc](autodocs/watchdog.doc) | [watchdog.md](autodocs/watchdog.md) |
 
@@ -35,3 +37,16 @@ The files are generated: `./zig build autodoc` writes them from the doc
 comment above each call's `pub fn` in the source, and `./zig build test`
 fails when one no longer matches. A call without such a comment is
 described by the text of its `.fd` file.
+
+## Guides
+
+`guides/` holds what the reference does not: how the calls of one area
+work together, the data they share, and the files they read, written by
+hand.
+
+- [Fonts](guides/fonts.md) - the font image, drawing text, choosing a
+  font, sizes in points, font files and `FONTS:`, diskfont.library,
+  outline fonts, the system's fonts, and the tools.
+- [Network](guides/network.md) - sockets, waiting on them, names,
+  interfaces and their files, the network device API, wireless devices,
+  writing a network driver, telnet.device, and the commands.
