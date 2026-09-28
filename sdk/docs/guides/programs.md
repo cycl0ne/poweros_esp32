@@ -1,9 +1,47 @@
 # Writing programs
 
-A program is built against the SDK package (`sdk/`) with `addProgram`, as
-the top-level README shows for a command that prints to the shell. This
-guide carries on from there: a window drawn into, and a window of
-gadgets laid out for you.
+The SDK (`sdk/`) is a Zig package of its own. A program depends on it and
+builds with `addProgram`, which knows the chip, the linker script and how
+to make the load file. Every library, device and resource call is
+described in the [autodocs](../README.md), and the other guides say how
+they work together.
+
+```zig
+// build.zig
+const std = @import("std");
+const poweros_sdk = @import("poweros_sdk");
+
+pub fn build(b: *std.Build) void {
+    const sdk = b.dependency("poweros_sdk", .{});
+    const seg = poweros_sdk.addProgram(b, sdk, .{ .name = "hello", .root = b.path("hello.zig") });
+    b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "hello.seg").step);
+}
+```
+
+## Hello, world - in the shell
+
+A command is a function `_program_entry` that gets exec's base. It opens
+the libraries it needs by name and closes them again:
+
+```zig
+// hello.zig
+const sdk = @import("sdk");
+const dos = sdk.dos;
+const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
+
+export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
+    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(dos_lib);
+    const dl: *DosBase = @ptrCast(dos_lib);
+
+    _ = dos.stdio.Printf(dl, "Hello, world!\n", .{});
+    return dos.RETURN_OK;
+}
+```
+
+`zig build` makes `zig-out/bin/hello.seg`; put it on the disk with
+`-Dextra=c/hello=path/to/hello.seg` and run `hello` from the shell.
 
 ## Hello, world - in a window
 
@@ -160,7 +198,7 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 }
 ```
 
-Each gets its own `addProgram` in `build.zig`, as `hello` in the README,
+Each gets its own `addProgram` in `build.zig`, as `hello` above,
 and `zig build` makes `zig-out/bin/window.seg` and `buttons.seg`. Put them on the disk with
 `-Dextra=c/hello=path/to/hello.seg` (or drop them into the tree's
 `disk/c/`), and run them from the shell: `run window` keeps the shell free while

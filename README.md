@@ -1,26 +1,32 @@
 # PowerOS for ESP32
 
 PowerOS is an operating system for Espressif's ESP32 microcontrollers,
-written in Zig. It boots straight from the chip's ROM loader - no ESP-IDF,
-no second-stage bootloader - and brings up a complete little system: a
-multitasking kernel with libraries and devices behind jump tables, message
-passing, a DOS with processes, file systems and a shell, a TCP/IP stack,
-and a windowed desktop with screens, windows, menus, gadgets and
-requesters on the board's display.
+written in Zig. It boots straight from the chip's ROM loader and brings up
+a complete little system: a multitasking kernel with libraries and
+devices, a DOS with file systems and a shell, a TCP/IP stack, and a
+windowed desktop on the board's display. Programs are loaded from disk at
+run time and built against a separate SDK.
 
-Programs are loaded from the flash disk or an SD card at run time, and are
-built against a separate SDK package - so writing one needs nothing of the
-kernel's source.
-
-**Status: release 0.1.** It runs on the ESP32-S3 boards below and in
+**Status: release 0.1.** It runs on two ESP32-S3 boards and in
 Espressif's QEMU. The ESP32-P4 is next.
-
-[![PowerOS drawing with graphics.library](docs/screenshots/anim.png)](docs/screenshots/README.md)
 
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
-More in [the screenshots](docs/screenshots/README.md): the shell, a game in
-a window of its own, fonts, menus, a requester and gadgets.
+## Contents
+
+| | |
+|---|---|
+| [Screenshots](docs/screenshots/README.md) | the shell, drawing, a game, fonts, menus, gadgets, on the boards |
+| [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
+| [Quick start](#quick-start) | boards, building, QEMU, flashing |
+| [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
+| [The SDK](sdk/) | the package a program builds against |
+| [Autodocs](sdk/docs/README.md) | every library, device and resource call |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [network](sdk/docs/guides/network.md) |
+| [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
+| [Example programs](src/disk/c/) | every command on the disk, built the same way |
+| [Repository layout](#repository-layout) | where things are |
+| [License](#license) | MPL-2.0 for the system, MIT for the SDK and programs |
 
 ## What PowerOS is - and what it is not
 
@@ -49,7 +55,7 @@ a window of its own, fonts, menus, a requester and gadgets.
 - **It does not (yet)** have Bluetooth, USB host support, or use the
   chip's second core.
 
-## What is in it
+### What is in it
 
 - **Kernel (exec):** preemptive multitasking, signals, message ports,
   semaphores; libraries and devices opened by name, loaded from disk on
@@ -81,7 +87,9 @@ a window of its own, fonts, menus, a requester and gadgets.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 
-## Boards
+## Quick start
+
+### Boards
 
 | `-Dboard=` | Board | State |
 |---|---|---|
@@ -90,8 +98,6 @@ a window of its own, fonts, menus, a requester and gadgets.
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and mouse | runs |
 
 `C:ShowConfig` lists what the running board has.
-
-## Quick start
 
 You need Linux or macOS, `esptool` (v5) to flash, and for the emulator
 Espressif's QEMU. Always build with the `./zig` wrapper: it fetches the
@@ -131,54 +137,6 @@ More build steps and options:
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
-
-## Writing a program
-
-The SDK (`sdk/`) is a Zig package of its own. A program depends on it and
-builds with `addProgram`, which knows the chip, the linker script and how
-to make the load file. Every library, device and resource call is
-described in [`sdk/docs/autodocs/`](sdk/docs/README.md), and the
-[guides](sdk/docs/README.md#guides) say how they work together.
-
-```zig
-// build.zig
-const std = @import("std");
-const poweros_sdk = @import("poweros_sdk");
-
-pub fn build(b: *std.Build) void {
-    const sdk = b.dependency("poweros_sdk", .{});
-    const seg = poweros_sdk.addProgram(b, sdk, .{ .name = "hello", .root = b.path("hello.zig") });
-    b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "hello.seg").step);
-}
-```
-
-### Hello, world - in the shell
-
-A command is a function `_program_entry` that gets exec's base. It opens
-the libraries it needs by name and closes them again:
-
-```zig
-// hello.zig
-const sdk = @import("sdk");
-const dos = sdk.dos;
-const ExecBase = sdk.interface.exec.ExecBase;
-const DosBase = sdk.interface.dos.DosBase;
-
-export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
-    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(dos_lib);
-    const dl: *DosBase = @ptrCast(dos_lib);
-
-    _ = dos.stdio.Printf(dl, "Hello, world!\n", .{});
-    return dos.RETURN_OK;
-}
-```
-
-`zig build` makes `zig-out/bin/hello.seg`; put it on the disk with
-`-Dextra=c/hello=path/to/hello.seg` and run `hello` from the shell. A
-window drawn into and a window of buttons are in
-[the programs guide](sdk/docs/guides/programs.md); the programs in
-`src/disk/c/` are all built this way.
 
 ## Repository layout
 
