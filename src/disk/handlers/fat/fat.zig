@@ -144,6 +144,29 @@ pub const DeviceMedia = struct {
         media.sys.FreeVec(block.ptr);
     }
 
+    /// The zone the system clock keeps: the rule in the zone file, the
+    /// one C:net/TimeSync sets the clock by. UTC with no file, or with one
+    /// that holds no rule.
+    pub fn timeZone(media: *DeviceMedia) dos.timezone.Zone {
+        const file = media.dl.Open(dos.timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
+        defer _ = media.dl.Close(file);
+        var text: [256]u8 = undefined;
+        const got = media.dl.Read(file, &text, text.len);
+        if (got <= 0) return .{};
+        var rest: []const u8 = text[0..@intCast(got)];
+        while (rest.len > 0) {
+            var end: usize = 0;
+            while (end < rest.len and rest[end] != '\n') end += 1;
+            var line = rest[0..end];
+            rest = if (end < rest.len) rest[end + 1 ..] else rest[rest.len..];
+            while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
+            while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
+            if (line.len == 0 or line[0] == '#') continue;
+            return dos.timezone.parse(line) orelse .{};
+        }
+        return .{};
+    }
+
     pub fn now(media: *DeviceMedia) dos.DateStamp {
         var stamp: dos.DateStamp = .{};
         _ = media.dl.DateStamp(&stamp);

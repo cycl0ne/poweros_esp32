@@ -23,7 +23,7 @@
 //!
 //! **Local time.** The system clock keeps local time. The zone is a POSIX
 //! TZ rule in `ENVARC:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`,
-//! zone.zig), its first line that is not a `#` comment; with no rule, the
+//! sdk.dos.timezone), its first line that is not a `#` comment; with no rule, the
 //! clock keeps UTC.
 
 const sdk = @import("sdk");
@@ -37,7 +37,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
-const zone = @import("zone.zig");
+const zone = sdk.dos.timezone;
 
 pub const COMMAND_NAME = "TimeSync";
 const VERSION_STRING = "\x00$VER: TimeSync 1.1 (27.9.2026)\r\n";
@@ -50,7 +50,7 @@ const arg_quiet = 2;
 const arg_test = 3;
 
 /// The zone the system clock keeps, as a POSIX TZ rule.
-const TIMEZONE_FILE = "ENVARC:Sys/timezone";
+const TIMEZONE_FILE = zone.zone_file;
 const server_default = "pool.ntp.org";
 const port_default: u16 = 123;
 const tries = 3;

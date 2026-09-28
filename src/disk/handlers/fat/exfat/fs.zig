@@ -33,7 +33,13 @@
 //!   that has been written to. A volume that was dirty when it was mounted
 //!   is left dirty: it was not this handler that left it so.
 //! - **Names** are `names.zig`'s: a name dos can hold as it is, otherwise
-//!   its stand-in. A time zone a moment carries is not applied.
+//!   its stand-in.
+//! - **Moments are local time, in the system's zone** (the medium's
+//!   `timeZone`, the rule the system clock is set by). A moment on the
+//!   medium that says which zone it is in - its zone byte - is taken back
+//!   to UTC with that zone and on into the system's; one that does not is
+//!   shown as it is. What this writes is local time with the system's
+//!   offset from UTC in its zone byte, so another system reads it right.
 //! - **No comments, no owner**: SET_COMMENT and SET_OWNER answer
 //!   ERROR_ACTION_NOT_KNOWN.
 
@@ -50,6 +56,7 @@ const bitmap_area = @import("bitmap.zig");
 const dir_area = @import("dir.zig");
 const names = @import("names.zig");
 const Upcase = @import("upcase.zig").Upcase;
+const timezone = dos.timezone;
 const Error = _fat.Error;
 const Answer = _fat.Answer;
 const Geometry = layout.Geometry;
@@ -231,6 +238,8 @@ pub fn FileSystem(comptime Media: type) type {
         found_dirty: bool = false,
         /// The medium's change count when the volume was read.
         change_num: u32 = 0,
+        /// The zone the system clock keeps, read when the volume is.
+        zone: timezone.Zone = .{},
         /// The volume's name, as the device list shows it.
         name_buf: [fat.exfat_label_max * 2]u8 = @splat(0),
         name_len: usize = 0,
@@ -293,6 +302,7 @@ pub fn FileSystem(comptime Media: type) type {
             fs.geo = try Geometry.of(fs.sector, volume.first, fs.media.blocks(), block_bytes);
             if (!layout.checksumHolds(fs.media, volume.first, fs.sector)) return error.MediumFailed;
             fs.found_dirty = fs.geo.flags & fat.exfat_volume_dirty != 0;
+            fs.zone = fs.media.timeZone();
             fs.dirty = false;
 
             fs.cache = Cache.init(fs.media, cache_blocks) catch return error.NoMemory;
@@ -780,6 +790,43 @@ pub fn FileSystem(comptime Media: type) type {
             return dir_area.momentOf(_fat.stampOf(fs.ub, fs.media.now()));
         }
 
+        /// Seconds since the DateStamp epoch for a DateStamp, and back.
+        fn secondsOf(when: dos.DateStamp) i64 {
+            return @as(i64, when.days) * 86400 + @as(i64, when.minute) * 60 + @divTrunc(@as(i64, when.tick), _fat.ticks_per_second);
+        }
+
+        fn dateStampOf(seconds: i64) dos.DateStamp {
+            const whole = @max(seconds, 0);
+            return .{
+                .days = @intCast(@divTrunc(whole, 86400)),
+                .minute = @intCast(@divTrunc(@mod(whole, 86400), 60)),
+                .tick = @intCast(@mod(whole, 60) * _fat.ticks_per_second),
+            };
+        }
+
+        /// The zone byte a local moment is written with: the system's
+        /// offset from UTC then, in quarter hours, marked as there.
+        fn zoneByte(fs: *Fs, moment: u32) u8 {
+            const local = secondsOf(_fat.dateOf(fs.ub, dir_area.stampOf(moment)));
+            // The offset is the zone's at that moment in UTC; the standard
+            // offset is near enough to find which it is.
+            const utc = local - fs.zone.standard;
+            const offset = fs.zone.offsetAt(utc + timezone.datestamp_epoch);
+            const quarters: i8 = @intCast(@divTrunc(offset, 900));
+            return fat.exfat_utc_valid | (@as(u8, @bitCast(quarters)) & 0x7F);
+        }
+
+        /// A moment on the medium as a DateStamp in the system's zone.
+        fn shownDate(fs: *Fs, moment: u32, zone: u8) dos.DateStamp {
+            const stored = _fat.dateOf(fs.ub, dir_area.stampOf(moment));
+            if (zone & fat.exfat_utc_valid == 0) return stored;
+            // Seven bits, signed: quarter hours east of UTC.
+            const raw: i32 = zone & 0x7F;
+            const quarters: i32 = if (raw & 0x40 != 0) raw - 128 else raw;
+            const utc = secondsOf(stored) - @as(i64, quarters) * 900;
+            return dateStampOf(utc + fs.zone.offsetAt(utc + timezone.datestamp_epoch));
+        }
+
         /// What a key says - where its data is, how much, its attributes -
         /// written into its entry, and with a moment its date too.
         fn syncKey(fs: *Fs, key: *Key, when: ?u32) Error!void {
@@ -790,7 +837,7 @@ pub fn FileSystem(comptime Media: type) type {
             if (!try fs.dirs.readSet(parent.dir(), key.index, &set)) return error.MediumFailed;
             set.setStream(key.chain, key.valid, key.size);
             if (when) |moment| {
-                set.setModified(moment, false);
+                set.setModified(moment, fs.zoneByte(moment), false);
                 if (!key.isDir()) key.attr |= _fat.ATTR_ARCHIVE;
             }
             set.setAttributes(key.attr);
@@ -844,7 +891,8 @@ pub fn FileSystem(comptime Media: type) type {
             const utf16 = names.fromDos(name, &units);
             var set: Set = .{};
             const attr: u16 = if (directory) _fat.ATTR_DIRECTORY else _fat.ATTR_ARCHIVE;
-            set.compose(utf16, fs.upcase.hash(utf16), attr, fs.now());
+            const moment = fs.now();
+            set.compose(utf16, fs.upcase.hash(utf16), attr, moment, fs.zoneByte(moment));
             var made: Key = .{};
             if (directory) {
                 const cluster = try fs.growOne(&made);
@@ -1180,7 +1228,7 @@ pub fn FileSystem(comptime Media: type) type {
                 .protection = _fat.protectionOf(@truncate(attr)),
                 .size = shown,
                 .num_blocks = fs.geo.clustersFor(shown),
-                .date = _fat.dateOf(fs.ub, dir_area.stampOf(found.modified)),
+                .date = fs.shownDate(found.modified, found.modified_zone),
             };
             var buffer: [_fat.fib_name_max]u8 = undefined;
             const name = names.toDos(found.name(), found.hash, &buffer);
@@ -1293,7 +1341,7 @@ pub fn FileSystem(comptime Media: type) type {
             var units: [fat.name_max]u16 = undefined;
             const utf16 = names.fromDos(to_name, &units);
             var set: Set = .{};
-            set.compose(utf16, fs.upcase.hash(utf16), old.attributes(), 0);
+            set.compose(utf16, fs.upcase.hash(utf16), old.attributes(), 0, 0);
             // Everything of the old file entry past its checksum and
             // attributes - its three moments - and the old stream's fields.
             @memcpy(set.entry(0)[fat.exfat_file_created..], old.entry(0)[fat.exfat_file_created..]);
@@ -1338,7 +1386,7 @@ pub fn FileSystem(comptime Media: type) type {
                 else => {
                     const date: ?*const dos.DateStamp = @ptrFromInt(ptrArg(args.value));
                     const moment = if (date) |into| dir_area.momentOf(_fat.stampOf(fs.ub, into.*)) else fs.now();
-                    set.setModified(moment, false);
+                    set.setModified(moment, fs.zoneByte(moment), false);
                 },
             }
             try fs.dirs.writeSet(parent.dir(), key.index, &set);

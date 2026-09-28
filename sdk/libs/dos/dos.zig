@@ -11,6 +11,8 @@ pub const path = @import("path.zig");
 pub const exall = @import("exall.zig");
 pub const dosasl = @import("dosasl.zig");
 pub const datetime = @import("datetime.zig");
+/// POSIX TZ rules: a zone, and its offset from UTC at a moment.
+pub const timezone = @import("timezone.zig");
 pub const stdio = @import("stdio.zig");
 pub const rdargs = @import("rdargs.zig");
 pub const vars = @import("var.zig");

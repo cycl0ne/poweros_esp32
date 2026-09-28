@@ -67,6 +67,9 @@ pub const Found = struct {
     attr: u16 = 0,
     created: u32 = 0,
     modified: u32 = 0,
+    /// The zone `modified` is in: its offset from UTC in quarter hours,
+    /// in the low seven bits, if bit 7 says there is one.
+    modified_zone: u8 = 0,
     flags: u8 = 0,
     first: u32 = 0,
     valid: u64 = 0,
@@ -122,25 +125,25 @@ pub const Set = struct {
         return fat.u16At(set.entry(0), fat.exfat_file_attributes);
     }
 
-    /// The moment it was last changed; with `created`, when it was made
-    /// as well. The hundredths and the time zone are cleared: this system
-    /// keeps neither.
-    pub fn setModified(set: *Set, moment: u32, created: bool) void {
+    /// The moment it was last changed, and the zone byte that says which
+    /// time zone the moment is in; with `created`, when it was made as
+    /// well. The hundredths are cleared: this system does not keep them.
+    pub fn setModified(set: *Set, moment: u32, zone: u8, created: bool) void {
         const file = set.entry(0);
         fat.putU32(file, fat.exfat_file_modified, moment);
         fat.putU32(file, fat.exfat_file_accessed, moment);
         file[fat.exfat_file_modified_10ms] = 0;
-        file[fat.exfat_file_modified_utc] = 0;
-        file[fat.exfat_file_accessed_utc] = 0;
+        file[fat.exfat_file_modified_utc] = zone;
+        file[fat.exfat_file_accessed_utc] = zone;
         if (created) {
             fat.putU32(file, fat.exfat_file_created, moment);
             file[fat.exfat_file_created_10ms] = 0;
-            file[fat.exfat_file_created_utc] = 0;
+            file[fat.exfat_file_created_utc] = zone;
         }
     }
 
     /// A new set for a file named `name`, `hash` its name's hash.
-    pub fn compose(set: *Set, name: []const u16, hash: u16, attr: u16, moment: u32) void {
+    pub fn compose(set: *Set, name: []const u16, hash: u16, attr: u16, moment: u32, zone: u8) void {
         const name_entries = (name.len + fat.exfat_name_chars - 1) / fat.exfat_name_chars;
         set.* = .{};
         set.count = @intCast(2 + name_entries);
@@ -148,7 +151,7 @@ pub const Set = struct {
         file[0] = fat.exfat_type_file;
         file[fat.exfat_file_secondaries] = @intCast(set.count - 1);
         set.setAttributes(attr);
-        set.setModified(moment, true);
+        set.setModified(moment, zone, true);
         const stream = set.entry(1);
         stream[0] = fat.exfat_type_stream;
         stream[fat.exfat_stream_name_length] = @intCast(name.len);
@@ -254,6 +257,7 @@ pub fn Directory(comptime Media: type) type {
                 .attr = fat.u16At(file, fat.exfat_file_attributes),
                 .created = fat.u32At(file, fat.exfat_file_created),
                 .modified = fat.u32At(file, fat.exfat_file_modified),
+                .modified_zone = file[fat.exfat_file_modified_utc],
                 .flags = stream[fat.exfat_stream_flags],
                 .first = fat.u32At(stream, fat.exfat_stream_cluster),
                 .valid = fat.u64At(stream, fat.exfat_stream_valid_length),

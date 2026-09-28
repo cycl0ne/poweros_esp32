@@ -684,6 +684,61 @@ test "the kernel's volume takes a new file, and its old ones are untouched" {
     try testing.expectEqualStrings("inner\n", into[0..try rig.readFile("Sub Dir/inner.txt", &into)]);
 }
 
+// --- time zones ---------------------------------------------------------------
+
+/// The DateStamp of a calendar moment.
+fn dateOfClock(ub: *UtilityBase, year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u8) dos.DateStamp {
+    const clock: sdk.utility.ClockData = .{ .sec = second, .min = minute, .hour = hour, .mday = day, .month = month, .year = year };
+    const seconds = ub.Date2Amiga(&clock);
+    return .{ .days = @intCast(seconds / 86400), .minute = @intCast(seconds % 86400 / 60), .tick = @intCast(seconds % 60 * 50) };
+}
+
+test "a moment the kernel stored in UTC is shown in the system's zone" {
+    var rig: Rig = undefined;
+    try rig.initKernel();
+    defer rig.deinit();
+    var fib: FileInfoBlock = undefined;
+
+    // No rule: the system keeps UTC, and so the stored 05:08:10 is it.
+    var held = rig.lock("hello.txt", dos.SHARED_LOCK);
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(held, &fib).res1);
+    try testing.expectEqual(dateOfClock(rig.ub, 2020, 5, 6, 5, 8, 10), fib.date);
+    rig.unlock(held);
+
+    // Central Europe, in May: summer time, two hours east.
+    rig.own_media.time_zone = dos.timezone.parse("CET-1CEST,M3.5.0,M10.5.0/3").?;
+    try rig.remount();
+    held = rig.lock("hello.txt", dos.SHARED_LOCK);
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(held, &fib).res1);
+    try testing.expectEqual(dateOfClock(rig.ub, 2020, 5, 6, 7, 8, 10), fib.date);
+    rig.unlock(held);
+}
+
+test "a moment written carries the system's offset, and reads back as written" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    rig.media.time_zone = dos.timezone.parse("CET-1CEST,M3.5.0,M10.5.0/3").?;
+    try rig.remount();
+    try rig.writeFile("stamped", "x");
+    // The test medium's clock is in January: standard time, an hour east,
+    // four quarter hours.
+    var found: @import("../exfat/dir.zig").Found = .{};
+    var wanted: names.Wanted = undefined;
+    wanted.init("stamped", &rig.fs.upcase);
+    try testing.expect(try rig.fs.dirs.find(rig.fs.root_key.?.dir(), &wanted, &found));
+    try testing.expectEqual(@as(u8, fat.exfat_utc_valid | 4), found.modified_zone);
+    // And what was written is what is listed. The test medium's clock
+    // stands in 1978, before any date the medium holds, so what is written
+    // is its first moment, 1 January 1980 - and that comes back, the zone
+    // taken off and put on again.
+    const held = rig.lock("stamped", dos.SHARED_LOCK);
+    defer rig.unlock(held);
+    var fib: FileInfoBlock = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(held, &fib).res1);
+    try testing.expectEqual(dateOfClock(rig.ub, 1980, 1, 1, 0, 0, 0), fib.date);
+}
+
 // --- for fsck.exfat -------------------------------------------------------------
 
 test "a volume this made, written out for fsck.exfat if asked" {

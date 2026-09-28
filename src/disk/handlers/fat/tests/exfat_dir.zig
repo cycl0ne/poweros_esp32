@@ -239,7 +239,7 @@ test "a set written reads back, and erased is gone and its room reused" {
     defer rig.deinit();
     const name = utf16("Neu geschrieben, mit einem langen Namen.txt");
     var set: Set = .{};
-    set.compose(name, rig.upcase.hash(name), _fat.ATTR_ARCHIVE, dir_area.momentOf(_fat.firstStamp()));
+    set.compose(name, rig.upcase.hash(name), _fat.ATTR_ARCHIVE, dir_area.momentOf(_fat.firstStamp()), 0);
     set.setStream(.{ .first = 900, .contiguous = true }, 5000, 8192);
     const where = try rig.dirs.room(rig.root, set.count) orelse return error.NoRoom;
     try rig.dirs.writeSet(rig.root, where, &set);

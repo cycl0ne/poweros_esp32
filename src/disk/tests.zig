@@ -29,7 +29,7 @@ test {
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("c/net/addnetinterface/config.zig");
-    _ = @import("c/net/timesync/zone.zig");
+    _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/httpget/http.zig");
     _ = @import("handlers/fat/_fat.zig");
     _ = @import("handlers/fat/testmedia.zig");

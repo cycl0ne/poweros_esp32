@@ -43,6 +43,8 @@ pub const TestMedia = struct {
     /// everything back.
     live: usize = 0,
     clock: u32 = 0,
+    /// The zone the system clock keeps, as `timeZone` answers it.
+    time_zone: dos.timezone.Zone = .{},
 
     pub fn init(block_bytes: u32, block_count: u64) TestMedia {
         return .{
@@ -146,6 +148,10 @@ pub const TestMedia = struct {
     pub fn now(m: *TestMedia) dos.DateStamp {
         m.clock += 1;
         return .{ .days = 1, .minute = 2, .tick = @intCast(m.clock) };
+    }
+
+    pub fn timeZone(m: *TestMedia) dos.timezone.Zone {
+        return m.time_zone;
     }
 
     // --- what the tests reach for -----------------------------------------
