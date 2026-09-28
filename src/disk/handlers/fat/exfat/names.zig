@@ -6,8 +6,8 @@
 //! character in Latin-1, no longer than 107 - is given to dos as it is.
 //! Any other name is given as a **stand-in**: its Latin-1 characters kept,
 //! every other one made `_`, the part before the extension cut to make
-//! room, and `~` and the stream's name hash in four hex digits put before
-//! the extension - `日本.txt` is `__~4F2A.txt`. The hash is the one the
+//! room, and `=` and the stream's name hash in four hex digits put before
+//! the extension - `日本.txt` is `__=4F2A.txt`. The hash is the one the
 //! volume already keeps for the name, so the stand-in is the same every
 //! time the directory is listed, and two names in one directory give the
 //! same stand-in only if their hashes are the same as well as every
@@ -30,8 +30,12 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 /// The longest extension a stand-in keeps, its dot included. A name with
 /// a longer one is cut like any other.
 const ext_max: usize = 16;
-/// `~` and four hex digits.
+/// `tag_mark` and four hex digits.
 const tag_len: usize = 5;
+/// What starts the tag: a character a dos name may hold that is no
+/// pattern character, so a stand-in typed back as an argument names the
+/// file and is not read as a pattern.
+const tag_mark = '=';
 
 /// Whether a name can be given to dos as it is.
 pub fn fits(name: []const u16) bool {
@@ -78,7 +82,7 @@ pub fn standIn(name: []const u16, hash: u16, into: *[_fat.fib_name_max]u8) []con
         len += 1;
     }
     const digits = "0123456789ABCDEF";
-    into[len] = '~';
+    into[len] = tag_mark;
     for (0..4) |digit| into[len + 1 + digit] = digits[(hash >> @intCast(12 - digit * 4)) & 0xF];
     len += tag_len;
     for (ext) |unit| {
@@ -94,7 +98,7 @@ pub fn fromDos(name: []const u8, into: *[fat.name_max]u16) []const u16 {
     return into[0..name.len];
 }
 
-/// The hash a stand-in carries, if `name` has the shape of one: `~` and
+/// The hash a stand-in carries, if `name` has the shape of one: `=` and
 /// four hex digits before the extension, or at its end.
 pub fn tagOf(name: []const u8) ?u16 {
     var end = name.len;
@@ -108,9 +112,9 @@ pub fn tagOf(name: []const u8) ?u16 {
     }
     // With no dot, or none that leaves a tag before it, the tag is at the
     // end of the name.
-    if (end < tag_len or name[end - tag_len] != '~') {
+    if (end < tag_len or name[end - tag_len] != tag_mark) {
         end = name.len;
-        if (end < tag_len or name[end - tag_len] != '~') return null;
+        if (end < tag_len or name[end - tag_len] != tag_mark) return null;
     }
     var hash: u16 = 0;
     for (name[end - 4 .. end]) |char| {
@@ -175,12 +179,12 @@ test "a name that fits is given as it is" {
 
 test "a name outside Latin-1 is given a stand-in with its hash" {
     var into: [_fat.fib_name_max]u8 = undefined;
-    try testing.expectEqualStrings("__~4F2A.txt", toDos(utf16("日本.txt"), 0x4F2A, &into));
-    try testing.expectEqualStrings("_ Rechnung~91C3.pdf", toDos(utf16("€ Rechnung.pdf"), 0x91C3, &into));
+    try testing.expectEqualStrings("__=4F2A.txt", toDos(utf16("日本.txt"), 0x4F2A, &into));
+    try testing.expectEqualStrings("_ Rechnung=91C3.pdf", toDos(utf16("€ Rechnung.pdf"), 0x91C3, &into));
     // No extension: the tag goes at the end.
-    try testing.expectEqualStrings("___~0007", toDos(utf16("日本語"), 0x0007, &into));
+    try testing.expectEqualStrings("___=0007", toDos(utf16("日本語"), 0x0007, &into));
     // A dot at the start is not an extension.
-    try testing.expectEqualStrings("._~00AB", toDos(utf16(".日"), 0x00AB, &into));
+    try testing.expectEqualStrings("._=00AB", toDos(utf16(".日"), 0x00AB, &into));
 }
 
 test "a name too long for dos is cut, its extension and tag kept" {
@@ -190,14 +194,16 @@ test "a name too long for dos is cut, its extension and tag kept" {
     var into: [_fat.fib_name_max]u8 = undefined;
     const given = toDos(&long, 0x7E10, &into);
     try testing.expectEqual(_fat.fib_name_max, given.len);
-    try testing.expect(std.mem.endsWith(u8, given, "~7E10.mkv"));
+    try testing.expect(std.mem.endsWith(u8, given, "=7E10.mkv"));
     try testing.expectEqual(@as(u8, 'L'), given[0]);
 }
 
 test "the hash in a stand-in is read back" {
-    try testing.expectEqual(@as(?u16, 0x4F2A), tagOf("__~4F2A.txt"));
-    try testing.expectEqual(@as(?u16, 0x0007), tagOf("___~0007"));
-    try testing.expectEqual(@as(?u16, 0xABCD), tagOf("x~abcd.tar"));
+    try testing.expectEqual(@as(?u16, 0x4F2A), tagOf("__=4F2A.txt"));
+    try testing.expectEqual(@as(?u16, 0x0007), tagOf("___=0007"));
+    try testing.expectEqual(@as(?u16, 0xABCD), tagOf("x=abcd.tar"));
     try testing.expectEqual(@as(?u16, null), tagOf("plain.txt"));
-    try testing.expectEqual(@as(?u16, null), tagOf("~12G4.txt"));
+    try testing.expectEqual(@as(?u16, null), tagOf("=12G4.txt"));
+    // `~` is a pattern character and starts no tag.
+    try testing.expectEqual(@as(?u16, null), tagOf("__~4F2A.txt"));
 }
