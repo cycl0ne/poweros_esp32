@@ -472,6 +472,22 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     handleFree(ib, e);
 }
 
+/// What `tellAll` carries to each window.
+const Telling = struct {
+    ib: *IntuitionBase,
+    class: u32,
+
+    fn one(t: *Telling, w: *_window.Window) void {
+        _window.send(t.ib, w, t.class, 0);
+    }
+};
+
+/// One class of message to every open window that listens for it.
+pub fn tellAll(ib: *IntuitionBase, class: u32) void {
+    var telling = Telling{ .ib = ib, .class = class };
+    _window.eachWindow(ib, &telling, Telling.one);
+}
+
 /// An event with no gadget holding the input.
 fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
     switch (e.class) {
@@ -487,6 +503,12 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
             }
         },
         ie.IECLASS_RAWKEY => if (ib.active_window) |w| key(ib, w, e),
+        // News about the machine rather than about a window: every
+        // window that asked hears it, whichever screen it is on and
+        // whether or not it is the active one.
+        ie.IECLASS_DISKINSERTED => tellAll(ib, wn.IDCMP_DISKINSERTED),
+        ie.IECLASS_DISKREMOVED => tellAll(ib, wn.IDCMP_DISKREMOVED),
+        ie.IECLASS_NEWPREFS => tellAll(ib, wn.IDCMP_NEWPREFS),
         ie.IECLASS_TIMER => if (ib.active_window) |w| {
             _window.tick(ib, w);
             helpTick(ib, w);

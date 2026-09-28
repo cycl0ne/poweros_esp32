@@ -190,6 +190,9 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
             wn.IDCMP_NEWSIZE => wc.WMHI_NEWSIZE,
             wn.IDCMP_ACTIVEWINDOW => wc.WMHI_ACTIVE,
             wn.IDCMP_INACTIVEWINDOW => wc.WMHI_INACTIVE,
+            wn.IDCMP_DISKINSERTED => wc.WMHI_DISKINSERTED,
+            wn.IDCMP_DISKREMOVED => wc.WMHI_DISKREMOVED,
+            wn.IDCMP_NEWPREFS => wc.WMHI_NEWPREFS,
             else => continue,
         };
         if (code) |out| out.* = said;

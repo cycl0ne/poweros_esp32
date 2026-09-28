@@ -34,6 +34,10 @@ const _font = @import("_font.zig");
 /// console takes the new ones - and the default public screen when it is
 /// next opened.
 ///
+/// Every window that asked for `IDCMP_NEWPREFS` is told, since the fonts
+/// are a setting like any other and a window that draws in one may want
+/// to draw again. A screen already open keeps the font it opened with.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task reads the fonts.
 /// - Interrupts: no.
@@ -75,5 +79,8 @@ pub fn SetSystemFonts(ib: *IntuitionBase, screen_font: ?*graphics.TextFont, defa
     ib.system_fonts = held;
     sys.ReleaseSemaphore(&ib.system_font_lock);
     for (old) |font| if (font) |f| gb.CloseFont(f);
+    // The fonts are a setting like any other: a window that draws in one
+    // hears that it changed and can draw again.
+    @import("../input/_input.zig").tellAll(ib, sdk.intuition.windows.IDCMP_NEWPREFS);
     return true;
 }

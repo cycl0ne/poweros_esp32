@@ -342,4 +342,15 @@ void SetWindowPointerA(*intuition.Window window, ?[*]const utility.TagItem tags)
 bool SetSystemFonts(?*graphics.TextFont screen_font, ?*graphics.TextFont default_font, ?*graphics.TextFont fixed_font)
 /// One of the system's fonts (SYSFONT_*), opened: CloseFont it.
 ?*graphics.TextFont OpenSystemFont(u32 which)
+// The settings
+/// The settings as they are now, into `prefs`, of which `size` bytes are
+/// written: a caller built against an older SDK gets the part it knows.
+/// Answers `prefs`.
+*intuition.Preferences GetPrefs(*intuition.Preferences prefs, u32 size)
+/// The settings the system starts with, into `prefs`. Answers `prefs`.
+*intuition.Preferences GetDefPrefs(*intuition.Preferences prefs, u32 size)
+/// The settings taken from `prefs`, of which `size` bytes are read; what
+/// is not there keeps the value it had. With `announce`, every window
+/// that listens is told IDCMP_NEWPREFS. Answers what was taken.
+*intuition.Preferences SetPrefs(*const intuition.Preferences prefs, u32 size, bool announce)
 ##end

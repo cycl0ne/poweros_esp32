@@ -75,8 +75,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   pointer, and an object system of gadget classes with layouts that fit
   any display. More gadget classes on the disk in `SYS:classes/gadgets/`,
   worked by the pointer or by the letter underlined in each label.
-  `LIBS:asl.library` asks which file or which font, from a program or
-  from the shell (`C:RequestFile`, `C:RequestChoice`).
+  Settings a program can change while it runs (`SetPrefs`), and messages
+  for a medium going in or out. `LIBS:asl.library` asks which file or
+  which font, from a program or from the shell (`C:RequestFile`,
+  `C:RequestChoice`).
 - **Fonts:** of any size, proportional, in ink, smooth or colour; bitmap
   fonts and TrueType outlines in `FONTS:`, sizes in points, and the
   system's fonts set in `ENVARC:Sys/font.prefs`. `SYS:Programs/FontView`

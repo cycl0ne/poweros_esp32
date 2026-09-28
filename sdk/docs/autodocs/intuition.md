@@ -48,8 +48,10 @@ Generated from the source by `./zig build autodoc`.
 - [FreeSysRequest](#freesysrequest) - Closes a requester and gives back what was made for it.
 - [GadgetMouse](#gadgetmouse) - Answers where the pointer is, measured from a gadget's top-left corner.
 - [GetAttr](#getattr) - Reads one attribute of an object.
+- [GetDefPrefs](#getdefprefs) - The settings the system starts with.
 - [GetDefaultPubScreen](#getdefaultpubscreen) - Names the default public screen.
 - [GetIMsg](#getimsg) - Takes the next message off a window's port.
+- [GetPrefs](#getprefs) - The settings as they are now.
 - [GetScreenAttrs](#getscreenattrs) - Reads a screen.
 - [GetScreenDrawInfo](#getscreendrawinfo) - The pens and font a screen's parts are drawn in.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
@@ -104,6 +106,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetGadgetAttrsTagList](#setgadgetattrstaglist) - Changes a gadget's attributes, and lets it show the change.
 - [SetMenuStrip](#setmenustrip) - Gives a window its menus.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
+- [SetPrefs](#setprefs) - The settings changed.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
 - [SetSystemFonts](#setsystemfonts) - The fonts screens, windows and consoles use from now on.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
@@ -2554,6 +2557,58 @@ var width: usize = 0;
 _ = ib.GetAttr(IA_Width, image, &width);
 ```
 
+## GetDefPrefs
+
+The settings the system starts with.
+
+**SYNOPSIS**
+
+```zig
+fn GetDefPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
+```
+
+**SINCE**
+
+1.0. LVO -468.
+
+**INPUTS**
+
+- `ib` - intuition.library's base.
+- `prefs` - where to write them.
+- `size` - how many bytes of `prefs` there are.
+
+**RESULT**
+
+`prefs`.
+
+**BEHAVIOR**
+
+What the library was born with, whatever has been set since: this is
+what a settings editor's "use the defaults" hands to `SetPrefs`. As
+with `GetPrefs`, only as much as the caller knows is written.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The storage is the caller's.
+
+**SEE ALSO**
+
+`GetPrefs`, `SetPrefs`
+
+**EXAMPLES**
+
+```zig
+var prefs: intuition.Preferences = undefined;
+_ = ib.SetPrefs(ib.GetDefPrefs(&prefs, @sizeOf(@TypeOf(prefs))), @sizeOf(@TypeOf(prefs)), true);
+```
+
 ## GetDefaultPubScreen
 
 Names the default public screen.
@@ -2678,6 +2733,62 @@ while (ib.GetIMsg(window)) |im| {
     ib.ReplyIMsg(im);
     if (class == IDCMP_CLOSEWINDOW) done = true;
 }
+```
+
+## GetPrefs
+
+The settings as they are now.
+
+**SYNOPSIS**
+
+```zig
+fn GetPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
+```
+
+**SINCE**
+
+1.0. LVO -464.
+
+**INPUTS**
+
+- `ib` - intuition.library's base.
+- `prefs` - where to write them.
+- `size` - how many bytes of `prefs` there are, which a caller gives
+  as `@sizeOf(Preferences)` of the SDK it was built against.
+
+**RESULT**
+
+`prefs`.
+
+**BEHAVIOR**
+
+As much of the structure as both the caller and the library know is
+written; anything the library has and the caller does not is left
+out, and `struct_size` says how much was written. A caller built
+against an older SDK therefore reads the part it knows and nothing
+past the end of its own storage.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The storage is the caller's. What is written is a copy: changing it
+changes nothing until `SetPrefs`.
+
+**SEE ALSO**
+
+`SetPrefs`, `GetDefPrefs`
+
+**EXAMPLES**
+
+```zig
+var prefs: intuition.Preferences = undefined;
+_ = ib.GetPrefs(&prefs, @sizeOf(@TypeOf(prefs)));
 ```
 
 ## GetScreenAttrs
@@ -6102,6 +6213,72 @@ None known.
 _ = ib.SetMouseQueue(window, 16);
 ```
 
+## SetPrefs
+
+The settings changed.
+
+**SYNOPSIS**
+
+```zig
+fn SetPrefs(ib: *IntuitionBase, prefs: *const Preferences, size: u32, announce: bool) *Preferences
+```
+
+**SINCE**
+
+1.0. LVO -472.
+
+**INPUTS**
+
+- `ib` - intuition.library's base.
+- `prefs` - the settings to take.
+- `size` - how many bytes of `prefs` there are. Fields past that keep
+  the value they had, so a caller built against an older SDK changes
+  what it knows and leaves the rest alone.
+- `announce` - true to tell every window that listens.
+
+**RESULT**
+
+`prefs`, as it was handed in.
+
+**BEHAVIOR**
+
+Each field goes to what the library keeps it in and takes effect at
+once: the double-click time is used by the next press, the screen
+font height by the next screen opened without a font of its own. A
+screen already open keeps what it opened with.
+
+A number that means nothing - a double-click time of no time at all,
+a font of no height - is left alone rather than taken, since a
+caller that writes one has nothing to gain by it and everything
+after it to lose.
+
+With `announce`, every window that asked for `IDCMP_NEWPREFS` is
+sent one, whichever screen it is on. A window that draws something
+the settings decide reads them again and draws it anew; a window
+that asked for nothing hears nothing.
+
+**CONTEXT**
+
+- Waits: for the screen list, to walk the windows.
+- Interrupts: no.
+- Forbid: not held and not to be held while it announces.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The structure stays the caller's and is only read.
+
+**SEE ALSO**
+
+`GetPrefs`, `GetDefPrefs`
+
+**EXAMPLES**
+
+```zig
+prefs.double_click = .{ .secs = 0, .micro = 300_000 };
+_ = ib.SetPrefs(&prefs, @sizeOf(@TypeOf(prefs)), true);
+```
+
 ## SetPubScreenModes
 
 Sets how public screens behave, for every program.
@@ -6196,6 +6373,10 @@ Screens and windows already open keep the fonts they were made with:
 their layout was worked out for those. The next screen, window and
 console takes the new ones - and the default public screen when it is
 next opened.
+
+Every window that asked for `IDCMP_NEWPREFS` is told, since the fonts
+are a setting like any other and a window that draws in one may want
+to draw again. A screen already open keeps the font it opened with.
 
 **CONTEXT**
 

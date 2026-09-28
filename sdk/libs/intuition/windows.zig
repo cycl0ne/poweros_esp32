@@ -376,6 +376,15 @@ pub const IDCMP_CLOSEWINDOW: u32 = 0x0000_0200;
 /// `qualifier` the qualifiers.
 pub const IDCMP_RAWKEY: u32 = 0x0000_0400;
 /// It became the active window.
+/// The settings changed (`SetPrefs`): a window that draws something
+/// they decide reads them again and draws it anew.
+pub const IDCMP_NEWPREFS: u32 = 0x0000_4000;
+/// A medium was put into a drive. Every window that asked hears it,
+/// whichever drive it was: the message says nothing about which, so a
+/// program that shows what is mounted looks at the device list again.
+pub const IDCMP_DISKINSERTED: u32 = 0x0000_8000;
+/// A medium was taken out of a drive.
+pub const IDCMP_DISKREMOVED: u32 = 0x0001_0000;
 pub const IDCMP_ACTIVEWINDOW: u32 = 0x0004_0000;
 /// It stopped being the active window.
 pub const IDCMP_INACTIVEWINDOW: u32 = 0x0008_0000;

@@ -113,6 +113,14 @@ pub const SdCardBase = extern struct {
     /// The task's own port, for the timer it waits on.
     port: ?*exec.MsgPort = null,
     timer_io: timer.TimeRequest = .{},
+    /// input.device, opened once, and the request a card going in or out
+    /// is announced through. Null when it could not be opened: the
+    /// announcement is a courtesy to whatever is showing the device
+    /// list, and nothing here depends on it.
+    input_io: ?*exec.IOStdReq = null,
+    /// The event the request carries. One at a time, on the device's own
+    /// task, so one is enough.
+    input_event: sdk.devices.inputevent.InputEvent = .{},
     /// The task that started this one, and the signal it waits on until
     /// the slot has been looked at. Cleared once that is done.
     starter: ?*exec.Task = null,

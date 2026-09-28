@@ -20,7 +20,8 @@
 //! The window listens for `IDCMP_CLOSEWINDOW`, `IDCMP_GADGETUP`,
 //! `IDCMP_GADGETDOWN`, `IDCMP_MENUPICK` and `IDCMP_VANILLAKEY` whatever it
 //! is told; `WA_IDCMP` adds to them - `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
-//! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` have words of their own.
+//! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW`, `IDCMP_DISKINSERTED` and
+//! `IDCMP_DISKREMOVED` have words of their own.
 //!
 //! A character typed is offered to the layout first: the gadget whose
 //! `GA_Key` it is - the letter underlined in its label - is worked as a
@@ -122,3 +123,11 @@ pub const WMHI_RAWKEY: usize = 6 << 16;
 pub const WMHI_NEWSIZE: usize = 7 << 16;
 pub const WMHI_ACTIVE: usize = 8 << 16;
 pub const WMHI_INACTIVE: usize = 9 << 16;
+/// A medium was put into a drive, or taken out of one. Neither says
+/// which drive: a window that shows what is mounted looks at the device
+/// list again.
+pub const WMHI_DISKINSERTED: usize = 10 << 16;
+pub const WMHI_DISKREMOVED: usize = 11 << 16;
+/// The settings changed (`SetPrefs`): a window that draws something they
+/// decide reads them again.
+pub const WMHI_NEWPREFS: usize = 12 << 16;

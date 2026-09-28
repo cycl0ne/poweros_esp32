@@ -130,6 +130,9 @@ pub const LVO = struct {
     pub const SetWindowPointerA = libraries.lvo(112);
     pub const SetSystemFonts = libraries.lvo(113);
     pub const OpenSystemFont = libraries.lvo(114);
+    pub const GetPrefs = libraries.lvo(115);
+    pub const GetDefPrefs = libraries.lvo(116);
+    pub const SetPrefs = libraries.lvo(117);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -246,6 +249,9 @@ pub const Fn = struct {
     pub const SetWindowPointerA = *const fn (*IntuitionBase, *intuition.Window, ?[*]const utility.TagItem) callconv(.c) void;
     pub const SetSystemFonts = *const fn (*IntuitionBase, ?*graphics.TextFont, ?*graphics.TextFont, ?*graphics.TextFont) callconv(.c) bool;
     pub const OpenSystemFont = *const fn (*IntuitionBase, u32) callconv(.c) ?*graphics.TextFont;
+    pub const GetPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
+    pub const GetDefPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
+    pub const SetPrefs = *const fn (*IntuitionBase, *const intuition.Preferences, u32, bool) callconv(.c) *intuition.Preferences;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -916,5 +922,24 @@ pub const IntuitionBase = opaque {
     /// One of the system's fonts (SYSFONT_*), opened: CloseFont it.
     pub fn OpenSystemFont(self: *IntuitionBase, which: u32) ?*graphics.TextFont {
         return libraries.call(self, LVO.OpenSystemFont, Fn.OpenSystemFont, .{which});
+    }
+
+    /// The settings as they are now, into `prefs`, of which `size` bytes are
+    /// written: a caller built against an older SDK gets the part it knows.
+    /// Answers `prefs`.
+    pub fn GetPrefs(self: *IntuitionBase, prefs: *intuition.Preferences, size: u32) *intuition.Preferences {
+        return libraries.call(self, LVO.GetPrefs, Fn.GetPrefs, .{ prefs, size });
+    }
+
+    /// The settings the system starts with, into `prefs`. Answers `prefs`.
+    pub fn GetDefPrefs(self: *IntuitionBase, prefs: *intuition.Preferences, size: u32) *intuition.Preferences {
+        return libraries.call(self, LVO.GetDefPrefs, Fn.GetDefPrefs, .{ prefs, size });
+    }
+
+    /// The settings taken from `prefs`, of which `size` bytes are read; what
+    /// is not there keeps the value it had. With `announce`, every window
+    /// that listens is told IDCMP_NEWPREFS. Answers what was taken.
+    pub fn SetPrefs(self: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) *intuition.Preferences {
+        return libraries.call(self, LVO.SetPrefs, Fn.SetPrefs, .{ prefs, size, announce });
     }
 };

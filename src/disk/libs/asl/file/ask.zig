@@ -16,6 +16,10 @@
 //! What the requester is answered with is in the request structure: the
 //! drawer and the name, and with `ASLFR_DoMultiSelect` the pairs of
 //! `arg_list`, all of them in that one drawer.
+//!
+//! A card going in or out (`IDCMP_DISKINSERTED`, `IDCMP_DISKREMOVED`)
+//! has the drawer read again, or the volumes listed again when those are
+//! what is shown.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -528,8 +532,9 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
-        // The cursor keys, Return and Esc are the requester's own.
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY },
+        // The cursor keys, Return and Esc are the requester's own, and a
+        // card going in or out is a reason to look again.
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY | wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made) },
         .{},
     }) orelse {
@@ -630,6 +635,12 @@ fn act(s: *Session, word: usize, code: u32) bool {
             KEY_UP => moveSelection(s, true),
             KEY_DOWN => moveSelection(s, false),
             else => {},
+        },
+        // A card going in or out: what is listed may have come or gone
+        // with it, so the drawer is read again. Showing the volumes, the
+        // list of them is what changed.
+        wc.WMHI_DISKINSERTED, wc.WMHI_DISKREMOVED => {
+            if (s.showing_volumes) showVolumes(s) else refill(s);
         },
         wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
             CHAR_RETURN => {

@@ -134,6 +134,9 @@ const LayoutMenuItemsA = @import("menu/layoutmenuitemsa.zig").LayoutMenuItemsA;
 const SetWindowPointerA = @import("window/setwindowpointera.zig").SetWindowPointerA;
 const SetSystemFonts = @import("font/setsystemfonts.zig").SetSystemFonts;
 const OpenSystemFont = @import("font/opensystemfont.zig").OpenSystemFont;
+const GetPrefs = @import("prefs/getprefs.zig").GetPrefs;
+const GetDefPrefs = @import("prefs/getdefprefs.zig").GetDefPrefs;
+const SetPrefs = @import("prefs/setprefs.zig").SetPrefs;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -245,6 +248,9 @@ const contract_files = [_][]const u8{
     @embedFile("window/setwindowpointera.zig"),
     @embedFile("font/setsystemfonts.zig"),
     @embedFile("font/opensystemfont.zig"),
+    @embedFile("prefs/getprefs.zig"),
+    @embedFile("prefs/getdefprefs.zig"),
+    @embedFile("prefs/setprefs.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -580,6 +586,15 @@ fn lvoSetSystemFonts(ib: *IntuitionBase, screen_font: ?*graphics.TextFont, defau
 fn lvoOpenSystemFont(ib: *IntuitionBase, which: u32) callconv(.c) ?*graphics.TextFont {
     return OpenSystemFont(ib, which);
 }
+fn lvoGetPrefs(ib: *IntuitionBase, prefs: *intuition.Preferences, size: u32) callconv(.c) *intuition.Preferences {
+    return GetPrefs(ib, prefs, size);
+}
+fn lvoGetDefPrefs(ib: *IntuitionBase, prefs: *intuition.Preferences, size: u32) callconv(.c) *intuition.Preferences {
+    return GetDefPrefs(ib, prefs, size);
+}
+fn lvoSetPrefs(ib: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) callconv(.c) *intuition.Preferences {
+    return SetPrefs(ib, prefs, size, announce);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -697,6 +712,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetWindowPointerA),
     vec(lvoSetSystemFonts),
     vec(lvoOpenSystemFont),
+    vec(lvoGetPrefs),
+    vec(lvoGetDefPrefs),
+    vec(lvoSetPrefs),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

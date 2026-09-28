@@ -158,8 +158,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     @import("input/menus.zig").init(ib);
     @import("input/verify.zig").init(ib);
     // A second and a half, until there is a preference that says otherwise.
-    ib.double_seconds = 1;
-    ib.double_micros = 500_000;
+    ib.double_seconds = @import("prefs/_prefs.zig").default_double_seconds;
+    ib.double_micros = @import("prefs/_prefs.zig").default_double_micros;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
     if (ib.pointer_class == null) {
         _ = ib.iface().FreeClass(ib.window_class);

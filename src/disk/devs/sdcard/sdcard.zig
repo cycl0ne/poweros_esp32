@@ -138,6 +138,11 @@ fn portMask(sb: *SdCardBase) u32 {
     return sb.port.?.sigMask();
 }
 
+/// How often an empty slot is looked at. Long enough that the looking
+/// costs nothing worth counting, short enough that a card put in is
+/// noticed while the hand is still moving away.
+const empty_poll_us: u32 = 1_000_000;
+
 /// `us` microseconds on the timer, as a deadline to wait against.
 fn armDeadline(sb: *SdCardBase, us: u32) void {
     sb.timer_io.node.command = timer.TR_ADDREQUEST;
@@ -439,6 +444,31 @@ fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes
     return 0;
 }
 
+/// A card going in or out told to input.device, which hands it to
+/// intuition, which tells every window that asked
+/// (`IDCMP_DISKINSERTED`, `IDCMP_DISKREMOVED`). Nothing here waits on
+/// it or minds if it cannot be sent: it is how a window showing what is
+/// mounted hears that it should look again.
+fn announce(sb: *SdCardBase, class: u32) void {
+    const sys = sb.sys_base;
+    const io = sb.input_io orelse blk: {
+        const port = sb.port orelse return;
+        const made = sys.CreateIORequest(port, @sizeOf(exec.IOStdReq)) orelse return;
+        const req: *exec.IOStdReq = @ptrCast(@alignCast(made));
+        if (sys.OpenDevice(sdk.devices.input.INPUTNAME, 0, &req.req, 0) != 0) {
+            sys.DeleteIORequest(@ptrCast(req));
+            return;
+        }
+        sb.input_io = req;
+        break :blk req;
+    };
+    sb.input_event = .{ .class = class };
+    io.req.command = sdk.devices.input.IND_WRITEEVENT;
+    io.length = @sizeOf(sdk.devices.inputevent.InputEvent);
+    io.data = @ptrCast(&sb.input_event);
+    _ = sys.DoIO(&io.req);
+}
+
 /// The card stopped answering. Whatever it was is gone; the next command
 /// looks for one afresh, and the change count tells a handler its locks
 /// are worthless.
@@ -447,6 +477,7 @@ fn lost(sb: *SdCardBase) void {
     sb.present = 0;
     sb.change_num +%= 1;
     say(sb, "the card stopped answering");
+    announce(sb, sdk.devices.inputevent.IECLASS_DISKREMOVED);
 }
 
 /// A card in the slot, identified if it has not been already. False if
@@ -470,6 +501,7 @@ fn ready(sb: *SdCardBase) bool {
     sb.present = 1;
     sb.change_num +%= 1;
     report(sb);
+    announce(sb, sdk.devices.inputevent.IECLASS_DISKINSERTED);
     return true;
 }
 
@@ -829,7 +861,25 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
             slowIO(sb, io);
             sys.ReplyIO(io);
         }
-        _ = sys.Wait(queue_port.sigMask());
+        // With a card in, nothing is done until something asks: a card
+        // that goes is found by the command that fails on it. With the
+        // slot empty there is nothing to fail, so the slot is looked at
+        // now and then - that is how a card put in is noticed by a
+        // window that is only showing what is mounted, with nobody
+        // reading from it.
+        if (sb.present != 0 or sb.has_slot == 0) {
+            _ = sys.Wait(queue_port.sigMask());
+            continue;
+        }
+        armDeadline(sb, empty_poll_us);
+        // The timer answers on the task's own port, not on the queue, so
+        // the wait has to listen for both.
+        const got = sys.Wait(queue_port.sigMask() | portMask(sb));
+        dropDeadline(sb);
+        // A request that came in is served first; the slot is looked at
+        // only when nothing but the timer woke it.
+        if (got & queue_port.sigMask() != 0) continue;
+        _ = ready(sb);
     }
 }
 

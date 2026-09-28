@@ -52,6 +52,15 @@ pub const IECLASS_EVENT: u32 = 0x03;
 /// Time passed: a tick for whoever wants one.
 pub const IECLASS_TIMER: u32 = 0x06;
 /// A window became active, or stopped being: `address` is the window.
+/// The settings changed: every window that asked hears
+/// `IDCMP_NEWPREFS`.
+pub const IECLASS_NEWPREFS: u32 = 0x0E;
+/// A medium was taken out of a drive, or put in: every window that asked
+/// hears `IDCMP_DISKREMOVED` or `IDCMP_DISKINSERTED`. The driver of the
+/// drive writes the event (`IND_WRITEEVENT`); which drive it was is not
+/// in it, so a program that cares looks at the device list again.
+pub const IECLASS_DISKREMOVED: u32 = 0x0F;
+pub const IECLASS_DISKINSERTED: u32 = 0x10;
 pub const IECLASS_ACTIVEWINDOW: u32 = 0x11;
 pub const IECLASS_INACTIVEWINDOW: u32 = 0x12;
 

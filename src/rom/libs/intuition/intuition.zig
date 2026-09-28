@@ -4009,6 +4009,142 @@ test "layoutgclass: in a window, its smallest size, and a button that reports by
     try tearDown(ib);
 }
 
+test "preferences: read, changed, told about, and set back to what the system starts with" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const Preferences = intuition.Preferences;
+
+    const listening = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWPREFS },
+        .{},
+    }).?;
+
+    // What the system starts with is what it has before anything is set.
+    var prefs: Preferences = undefined;
+    var born: Preferences = undefined;
+    _ = it.GetPrefs(&prefs, @sizeOf(Preferences));
+    _ = it.GetDefPrefs(&born, @sizeOf(Preferences));
+    try testing.expectEqual(@as(u32, @sizeOf(Preferences)), prefs.struct_size);
+    try testing.expectEqual(@as(u32, 1), born.double_click.secs);
+    try testing.expectEqual(@as(u32, 16), born.screen_font_height);
+    // What it has now is what this rig set, which is not the default:
+    // the two are different questions.
+    try testing.expectEqual(@as(u32, 8), prefs.screen_font_height);
+    try testing.expect(it.DoubleClick(10, 0, 11, 0));
+
+    // Changed: the double-click time is what the next press is measured
+    // by, and the window is told.
+    prefs.double_click = .{ .secs = 0, .micro = 100_000 };
+    prefs.screen_font_height = 11;
+    _ = it.SetPrefs(&prefs, @sizeOf(Preferences), true);
+    try testing.expect(it.DoubleClick(10, 0, 10, 99_999));
+    try testing.expect(!it.DoubleClick(10, 0, 10, 100_001));
+    const told = it.GetIMsg(listening).?;
+    try testing.expectEqual(wn.IDCMP_NEWPREFS, told.class);
+    it.ReplyIMsg(told);
+
+    var again: Preferences = undefined;
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(@as(u32, 100_000), again.double_click.micro);
+    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+
+    // A number that means nothing is left alone rather than taken.
+    var silly = again;
+    silly.double_click = .{};
+    silly.screen_font_height = 0;
+    _ = it.SetPrefs(&silly, @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(@as(u32, 100_000), again.double_click.micro);
+    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+    // And that one was not announced.
+    try testing.expect(it.GetIMsg(listening) == null);
+
+    // A caller that knows less of the structure writes only what it
+    // knows: the height sits past the double-click time, so a size that
+    // stops before it leaves the height where it was.
+    var short = again;
+    short.double_click = .{ .secs = 0, .micro = 250_000 };
+    short.screen_font_height = 99;
+    _ = it.SetPrefs(&short, @offsetOf(Preferences, "screen_font_height"), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(@as(u32, 250_000), again.double_click.micro);
+    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+
+    // Back to what the system starts with.
+    _ = it.SetPrefs(it.GetDefPrefs(&prefs, @sizeOf(Preferences)), @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(born.double_click.secs, again.double_click.secs);
+    try testing.expectEqual(born.double_click.micro, again.double_click.micro);
+    try testing.expectEqual(born.screen_font_height, again.screen_font_height);
+
+    const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, listening, wn.WA_Screen));
+    it.CloseWindow(listening);
+    try testing.expect(it.CloseScreen(on));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "disk messages: every window that asked for one hears it, whichever screen it is on" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const ie = sdk.devices.inputevent;
+
+    // Two windows that listen and one that does not, the listeners on
+    // two different screens so the walk has to leave one screen for the
+    // other.
+    const first = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED },
+        .{},
+    }).?;
+    const screen = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = intuition.screens.SA_Width, .data = 64 },
+        .{ .tag = intuition.screens.SA_Height, .data = 40 },
+        .{},
+    }).?;
+    const second = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_DISKINSERTED },
+        .{},
+    }).?;
+
+    // A card put in: both listeners hear it.
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_DISKINSERTED });
+    const one = it.GetIMsg(first).?;
+    try testing.expectEqual(wn.IDCMP_DISKINSERTED, one.class);
+    it.ReplyIMsg(one);
+    const two = it.GetIMsg(second).?;
+    try testing.expectEqual(wn.IDCMP_DISKINSERTED, two.class);
+    it.ReplyIMsg(two);
+
+    // Taken out again: only the window that asked for that one, which is
+    // what says the classes are kept apart and not simply broadcast.
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_DISKREMOVED });
+    const gone = it.GetIMsg(first).?;
+    try testing.expectEqual(wn.IDCMP_DISKREMOVED, gone.class);
+    it.ReplyIMsg(gone);
+    try testing.expect(it.GetIMsg(second) == null);
+
+    it.CloseWindow(second);
+    try testing.expect(it.CloseScreen(screen));
+    const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, first, wn.WA_Screen));
+    it.CloseWindow(first);
+    try testing.expect(it.CloseScreen(on));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windowclass: opened at its layout's size in the middle, answered a word at a time, closed and opened again" {
     const ib = try setUp();
     defer kexec.deinit();
