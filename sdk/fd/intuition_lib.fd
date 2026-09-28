@@ -335,4 +335,11 @@ bool LayoutMenuItemsA(*intuition.MenuItem first_item, *intuition.Screen screen, 
 /// WA_HidePointer for none at all, and WA_PointerDelay to put the change
 /// off a little. No tags: the default.
 void SetWindowPointerA(*intuition.Window window, ?[*]const utility.TagItem tags)
+// The system's fonts
+/// The fonts screens, windows and consoles opened from now on use; null
+/// for pospaz from the ROM. False, and nothing changed, for a fixed font
+/// that is proportional.
+bool SetSystemFonts(?*graphics.TextFont screen_font, ?*graphics.TextFont default_font, ?*graphics.TextFont fixed_font)
+/// One of the system's fonts (SYSFONT_*), opened: CloseFont it.
+?*graphics.TextFont OpenSystemFont(u32 which)
 ##end

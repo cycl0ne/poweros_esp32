@@ -62,6 +62,10 @@ pub const Window = extern struct {
     /// Null for an ordinary window, whose one layer is both.
     inner_layer: ?*layers.Layer = null,
     inner_rp: ?*graphics.RastPort = null,
+    /// The font the program's text is in: one of the system's fonts
+    /// (`WA_SysFont`), held open for the window's life. Null when none
+    /// could be opened, and then the text is in the screen's font.
+    text_font: ?*graphics.TextFont = null,
     /// A second RastPort onto the same pixels, for the gadgets.
     ///
     /// `ObtainGIRPort` gives this one out, never the program's, so that a
@@ -365,6 +369,9 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
     const it = ib.iface();
     const saved = d.save(gb, rp);
     defer d.restore(gb, rp, saved);
+    // The bar was sized for the screen's font, whatever the window's
+    // text is in.
+    graphics.SetFont(gb, rp, w.screen.font);
 
     const dri = &w.screen.draw_info;
     const pens = dri.pens;

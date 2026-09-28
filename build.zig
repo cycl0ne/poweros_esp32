@@ -51,6 +51,9 @@ const image_dirs = [_][]const u8{
     // interfaces C:net/AddNetInterface brings up.
     "devs/networks",
     "devs/NetInterfaces",
+    // FONTS: - a contents file and a directory of sizes per family;
+    // empty without scripts/fetch-fonts.sh.
+    "fonts",
     // HANDLERS: - what a device is, for Mount to read, and the handlers
     // that are not in the ROM.
     "handlers",
@@ -169,6 +172,38 @@ pub fn build(b: *std.Build) void {
         const wifi_device = poweros_userland.wifi_device;
         make_disk.addPrefixedFileArg(b.fmt("{s}=", .{wifi_device.disk}), disk_dep.namedLazyPath(wifi_device.disk));
     }
+    // FONTS: - the fonts scripts/fetch-fonts.sh fetched, converted by
+    // tools/fontconv into the system's own files, when they are there.
+    if (fontsDir(b)) |dir| {
+        const fontconv = b.addExecutable(.{
+            .name = "fontconv",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/fontconv/fontconv.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseSafe,
+            }),
+        });
+        fontconv.root_module.addImport("sdk", sdk);
+        for (disk_fonts) |family| {
+            const run = b.addRunArtifact(fontconv);
+            const out = run.addOutputDirectoryArg(family.name);
+            run.addArg(family.name);
+            run.addArgs(family.options);
+            for (family.sources) |source| run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, source }) });
+            make_disk.addArg(b.fmt("fonts/{s}", .{family.name}));
+            make_disk.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
+            for (family.sizes) |rows| {
+                const size = b.fmt("{s}/{d}", .{ family.name, rows });
+                make_disk.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
+            }
+            for (family.outlines) |file| {
+                const at = b.fmt("{s}/{s}", .{ family.name, file });
+                make_disk.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
+            }
+        }
+        make_disk.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
+        make_disk.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
+    }
     // The `disk/` tree, and then -Dextra last, so that either may
     // replace a file the tree above put there.
     for (tree.files) |file| {
@@ -262,6 +297,13 @@ pub fn build(b: *std.Build) void {
     });
     wifi_check.root_module.addImport("sdk", sdk);
     test_step.dependOn(&wifi_check.step);
+    // fontconv's own tests: its readers and the images it writes.
+    const fontconv_tests = b.createModule(.{
+        .root_source_file = b.path("tools/fontconv/fontconv.zig"),
+        .target = b.graph.host,
+    });
+    fontconv_tests.addImport("sdk", sdk);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = fontconv_tests })).step);
     // Board facts are src/boards/'s and nothing a module imports: a
     // module asks expansion.library for its part (tools/boardcheck.zig).
     const boardcheck = b.addExecutable(.{
@@ -460,6 +502,49 @@ fn need(b: *std.Build, made: *std.ArrayList([]const u8), dirs: *std.ArrayList([]
 /// directory -Dwifi names, or toolchain/espressif-wifi if
 /// scripts/fetch-wifi.sh has filled it. Null without them: the build then
 /// has everything but wifi.device, and says so once.
+/// A font family on the disk: what fontconv makes it from, how, and the
+/// heights that come out.
+const DiskFont = struct {
+    name: []const u8,
+    options: []const []const u8 = &.{},
+    /// From toolchain/fonts.
+    sources: []const []const u8,
+    sizes: []const u32 = &.{},
+    /// TrueType files among the sources, copied beside the sizes.
+    outlines: []const []const u8 = &.{},
+};
+
+/// FONTS: as the disk has it. Spleen at every size a panel wants; the
+/// same at 16 rows smoothed from its 32-row drawing, whose coverage shows
+/// how an alpha font looks on a panel; at 16 with a shadow, a colour font
+/// drawn partly in the pen; and the Go faces as outlines, at any size.
+const disk_fonts = [_]DiskFont{
+    .{
+        .name = "spleen",
+        .sources = &.{ "spleen-2.2.0/spleen-5x8.bdf", "spleen-2.2.0/spleen-6x12.bdf", "spleen-2.2.0/spleen-8x16.bdf", "spleen-2.2.0/spleen-12x24.bdf", "spleen-2.2.0/spleen-16x32.bdf" },
+        .sizes = &.{ 8, 12, 16, 24, 32 },
+    },
+    .{ .name = "spleen-smooth", .options = &.{ "--alpha", "2" }, .sources = &.{"spleen-2.2.0/spleen-16x32.bdf"}, .sizes = &.{16} },
+    .{ .name = "spleen-shadow", .options = &.{"--shadow"}, .sources = &.{"spleen-2.2.0/spleen-8x16.bdf"}, .sizes = &.{17} },
+    .{ .name = "go", .sources = &.{"go/Go-Regular.ttf"}, .outlines = &.{"Go-Regular.ttf"} },
+    .{ .name = "go-bold", .sources = &.{"go/Go-Bold.ttf"}, .outlines = &.{"Go-Bold.ttf"} },
+    .{ .name = "go-italic", .sources = &.{"go/Go-Italic.ttf"}, .outlines = &.{"Go-Italic.ttf"} },
+    .{ .name = "go-mono", .sources = &.{"go/Go-Mono.ttf"}, .outlines = &.{"Go-Mono.ttf"} },
+    .{ .name = "go-mono-bold", .sources = &.{"go/Go-Mono-Bold.ttf"}, .outlines = &.{"Go-Mono-Bold.ttf"} },
+};
+
+/// Where scripts/fetch-fonts.sh put the fonts' sources, if it has.
+fn fontsDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/fonts");
+    var dir = std.Io.Dir.cwd().openDir(io, b.pathJoin(&.{ path, "go" }), .{}) catch {
+        std.log.info("no font sources (scripts/fetch-fonts.sh): the disk has no FONTS:", .{});
+        return null;
+    };
+    dir.close(io);
+    return path;
+}
+
 fn wifiDir(b: *std.Build, given: ?[]const u8) ?[]const u8 {
     const io = b.graph.io;
     const path = given orelse b.pathFromRoot("toolchain/espressif-wifi");

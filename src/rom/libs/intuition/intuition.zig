@@ -311,6 +311,60 @@ test "intuition.library: made from its tag, with its classes public" {
     try tearDown(ib);
 }
 
+/// A proportional font for the system-font test: two glyphs of two widths.
+const proportional_spec = graphics.fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 4,
+    .default_char = 'i',
+    .glyphs = &.{
+        .{ .code = 'i', .advance = 2, .width = 1, .rows = 1, .pixels = &.{0x80} },
+        .{ .code = 'm', .advance = 6, .width = 5, .rows = 1, .pixels = &.{0xF8} },
+    },
+};
+const proportional_image: [graphics.fontimage.imageSize(proportional_spec)]u8 align(4) = graphics.fontimage.build(proportional_spec);
+
+test "the system's fonts: pospaz until set, set for what opens next, and a fixed font that is fixed" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const it = ib.iface();
+    const gb = ib.graphics_base;
+    const sf = sdk.intuition.screens;
+
+    // Nothing set: pospaz at intuition's height, for each.
+    const rom = it.OpenSystemFont(sf.SYSFONT_FIXED).?;
+    try testing.expectEqual(@as(u16, @intCast(ib.font_height)), rom.image.height);
+    gb.CloseFont(rom);
+
+    // Set: pospaz 16 for screens, 8 for the rest; each held by intuition,
+    // so the caller closes its own.
+    const sixteen = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }).?;
+    const eight = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    try testing.expect(it.SetSystemFonts(sixteen, eight, eight));
+    gb.CloseFont(sixteen);
+    gb.CloseFont(eight);
+    const screen_font = it.OpenSystemFont(sf.SYSFONT_SCREEN).?;
+    try testing.expectEqual(@as(u16, 16), screen_font.image.height);
+    gb.CloseFont(screen_font);
+    try testing.expectEqual(@as(u32, 1), sixteen.open_count);
+
+    // A proportional font is no console's: refused, nothing changes.
+    var prop = graphics.TextFont{ .node = .{ .name = "prop.font" }, .image = @ptrCast(&proportional_image) };
+    try testing.expect(gb.AddFont(&prop));
+    try testing.expect(!it.SetSystemFonts(null, null, &prop));
+    try testing.expect(it.SetSystemFonts(null, &prop, null));
+    const text = it.OpenSystemFont(sf.SYSFONT_DEFAULT).?;
+    try testing.expectEqual(&prop, text);
+    gb.CloseFont(text);
+
+    // Back to pospaz, and every open given back.
+    try testing.expect(it.SetSystemFonts(null, null, null));
+    try testing.expectEqual(@as(u32, 0), sixteen.open_count);
+    try testing.expectEqual(@as(u32, 0), prop.open_count);
+    try testing.expect(gb.RemFont(&prop));
+    try tearDown(ib);
+}
+
 test "MakeClass: names, superclasses, offsets, and FreeClass waits for the last user" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -985,7 +1039,7 @@ test "screens: the depth gadget in the bar, and the tags a screen opens with or 
 
     // A system font in place of the one given; like the Workbench screen,
     // its pens.
-    const given = ib.graphics_base.OpenFont(graphics.POSPAZNAME, 16).?;
+    const given = ib.graphics_base.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }).?;
     defer ib.graphics_base.CloseFont(given);
     const sys_font = it.OpenScreenTagList(&[_]TagItem{
         .{ .tag = sc.SA_Font, .data = @intFromPtr(given) },
@@ -4957,7 +5011,7 @@ test "PrintIText: each run in its own pens and place, and the RastPort left as i
     const it = ib.iface();
     var canvas: Canvas = .{};
     const rp = canvas.up(ib);
-    const pospaz = gb.OpenFont(graphics.POSPAZNAME, 8).?;
+    const pospaz = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
 
     const green = graphics.penRGB(0, 255, 0);
     gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = green }, .{} });

@@ -28,11 +28,15 @@ const TextFont = _text.TextFont;
 /// RESULT:
 /// False while anything still has it open. Taking it off then would leave
 /// a RastPort drawing out of memory that is about to go, so it is refused
-/// rather than trusted.
+/// rather than trusted. True once it is off the list - also when it was
+/// not on it - so true means nobody holds it and nobody can open it: the
+/// one test a builder needs before freeing it.
 ///
 /// BEHAVIOR:
 /// The font leaves the list, so `OpenFont` no longer finds it; a font
-/// still open is refused.
+/// still open is refused. The count and the list are read and changed
+/// under the font list's lock, so no `OpenFont` can open it between the
+/// test and the removal.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the font list.
@@ -60,7 +64,5 @@ pub fn RemFont(gb: *GraphicsBase, font: *TextFont) bool {
     defer sys.ReleaseSemaphore(&gb.font_lock);
     // Taking a font off while something is drawing with it would leave a
     // RastPort pointing at freed memory, so it is refused instead.
-    if (font.open_count != 0) return false;
-    sys.Remove(&font.node);
-    return true;
+    return _text.takeOff(gb, font);
 }

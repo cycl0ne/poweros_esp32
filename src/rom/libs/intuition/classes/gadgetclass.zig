@@ -201,7 +201,7 @@ pub const Measure = struct {
 pub fn measureFont(ib: *IntuitionBase, g: *const Data, gi: ?*classusr.GadgetInfo) Measure {
     if (gi) |info| if (info.draw_info.font) |font| return .{ .font = font, .opened = false };
     if (g.draw_info) |dri| if (dri.font) |font| return .{ .font = font, .opened = false };
-    const font = ib.graphics_base.OpenFont(graphics.POSPAZNAME, ib.font_height);
+    const font = ib.iface().OpenSystemFont(intuition.screens.SYSFONT_DEFAULT);
     return .{ .font = font, .opened = font != null };
 }
 

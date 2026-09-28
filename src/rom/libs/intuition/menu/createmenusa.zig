@@ -341,7 +341,7 @@ const TestScreen = struct {
     font: *graphics.TextFont,
 
     fn up(ts: *TestScreen, ib: *IntuitionBase, width: i32, height: i32) !void {
-        const font = ib.graphics_base.OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
+        const font = ib.graphics_base.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
         ts.font = font;
         ts.screen = undefined;
         ts.screen.font = font;

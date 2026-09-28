@@ -40,6 +40,9 @@ pub const GraphicsBase = extern struct {
     /// count moves: RemFont reads that count and takes the font off in one
     /// step, so the two must not come apart.
     font_lock: exec.SignalSemaphore,
+    /// The screen's dots per inch, from the board's system tags at init:
+    /// what a size in points is turned into rows by. 72 without one.
+    screen_dpi: u32,
     /// The memory every region's rectangles come from. A region is a list
     /// of one-rectangle nodes and a cut makes up to four where there was
     /// one, so they are small, many, and taken and given back in bursts -

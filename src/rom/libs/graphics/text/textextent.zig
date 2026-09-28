@@ -7,7 +7,6 @@ const graphics = sdk.graphics;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
-const advance = _text.advance;
 const RastPort = _text.RastPort;
 const _text = @import("_text.zig");
 
@@ -34,8 +33,11 @@ const _text = @import("_text.zig");
 /// `width` is how far `Text` would move the point - the same number
 /// `TextLength` answers - and `extent` is where the ink lands **relative
 /// to the current point**: above the line by the font's baseline and below
-/// it by what is left. So a caller that wants to clear behind a line of
-/// text moves the extent to where the text will go and fills that.
+/// it by what is left, and across from the leftmost to past the rightmost
+/// column the text touches: a character that kerns back starts it left of
+/// the point, and bold or italic can carry it past `width`. So a caller
+/// that wants to clear behind a line of text moves the extent to where
+/// the text will go and fills that.
 ///
 /// Half-open like every rectangle here, so the height is `max_y - min_y`
 /// and there is no `+ 1` anywhere.
@@ -69,21 +71,20 @@ const _text = @import("_text.zig");
 /// gb.Text(rp, msg.ptr, msg.len);
 /// ```
 pub fn TextExtent(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent) void {
-    _ = string;
     rp.last_error = graphics.GERR_OK;
     const font = rp.font orelse {
         out.* = .{};
         rp.last_error = graphics.GERR_NO_FONT;
         return;
     };
-    const width = advance(font, rp.text_style) * @as(i32, @intCast(count));
-    const height: i32 = font.height;
-    const base: i32 = font.baseline;
+    const room = _text.measure(font, rp.text_style, string, count);
+    const height: i32 = font.image.height;
+    const base: i32 = font.image.baseline;
     out.* = .{
-        .width = width,
+        .width = room.width,
         .height = height,
         // Where the ink lands from the point: up by the baseline, down by
         // what is left. Half-open, so the height is a subtraction.
-        .extent = .{ .min_x = 0, .min_y = -base, .max_x = width, .max_y = height - base },
+        .extent = .{ .min_x = room.min_x, .min_y = -base, .max_x = room.max_x, .max_y = height - base },
     };
 }

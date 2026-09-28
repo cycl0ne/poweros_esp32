@@ -62,12 +62,22 @@ pub const SA_Title = SA_Dummy + 0x0008;
 /// Open only: a `*u32` that is given one of the `OSERR_` codes when it
 /// cannot be opened.
 pub const SA_ErrorCode = SA_Dummy + 0x000A;
-/// The font its title bar and windows use: a `*graphics.TextFont` the
-/// caller keeps open for as long as the screen is. Pospaz 16 by default.
+/// The font its title bar and menus use: a `*graphics.TextFont` the
+/// caller keeps open for as long as the screen is. The system's screen
+/// font by default (`SYSFONT_SCREEN`).
 pub const SA_Font = SA_Dummy + 0x000B;
-/// Open only: one of the system's fonts in place of `SA_Font` - 0 the
-/// default font, 1 the preferred one. Both are the ROM font for now.
+/// Open only: one of the system's fonts in place of `SA_Font`,
+/// `SYSFONT_DEFAULT` or `SYSFONT_SCREEN`.
 pub const SA_SysFont = SA_Dummy + 0x000C;
+
+// The system's fonts (`SetSystemFonts`, `OpenSystemFont`, `SA_SysFont`,
+// `WA_SysFont`). Each is pospaz from the ROM until set.
+/// Text in windows and gadgets that name no font of their own.
+pub const SYSFONT_DEFAULT: u32 = 0;
+/// Screens' title bars and menus.
+pub const SYSFONT_SCREEN: u32 = 1;
+/// Consoles: always a fixed-width font.
+pub const SYSFONT_FIXED: u32 = 2;
 /// `CUSTOMSCREEN` or `PUBLICSCREEN`. A screen given `SA_PubName` is public
 /// unless it says `CUSTOMSCREEN`. Read back, which it is.
 pub const SA_Type = SA_Dummy + 0x000D;

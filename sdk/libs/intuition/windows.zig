@@ -318,6 +318,10 @@ pub const WA_Position = WA_Dummy + 0x10A;
 /// `WA_Pointer` and `WA_BusyPointer`; the mouse still moves and the window
 /// still hears it. `OpenWindowTagList` and `SetWindowPointerA`.
 pub const WA_HidePointer = WA_Dummy + 0x10B;
+/// Which of the system's fonts the window's text is in (`SYSFONT_*`):
+/// `SYSFONT_DEFAULT` unless given. A console asks for `SYSFONT_FIXED`.
+/// The title bar is in the screen's font whatever this says.
+pub const WA_SysFont = WA_Dummy + 0x10C;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

@@ -389,7 +389,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
         .{},
     };
     gb.GetRPAttrs(rp, &metric);
-    const small = if (b.height < @as(i32, @intCast(height))) gb.OpenFont(graphics.POSPAZNAME, 8) else null;
+    const small = if (b.height < @as(i32, @intCast(height))) gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) else null;
     defer if (small) |font| gb.CloseFont(font);
     if (small) |font| {
         graphics.SetFont(gb, rp, font);

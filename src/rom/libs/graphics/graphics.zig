@@ -54,6 +54,8 @@ const testing = std.testing;
 const interface = sdk.interface.graphics;
 const rastport = @import("rastport/_rastport.zig");
 const fonts = @import("text/_text.zig");
+const drawing = @import("draw/_draw.zig");
+const rom_fonts = @import("fonts/_fonts.zig");
 const regions = @import("region/_region.zig");
 const LIBRARY_VERSION = graphics_init.LIBRARY_VERSION;
 const LIBRARY_REVISION = graphics_init.LIBRARY_REVISION;
@@ -2036,11 +2038,11 @@ test "fonts: two Pospaz in the ROM, told apart by height" {
     base(gb).Text(rp, "abc", 3);
     try testing.expectEqual(@as(u32, 0), litCount(&surface));
 
-    // A height that is not there is null, and a name that is not there.
-    try testing.expect(base(gb).OpenFont(graphics.POSPAZNAME, 10) == null);
-    try testing.expect(base(gb).OpenFont("nosuch.font", 8) == null);
+    // A name that is not there is null, and so is no height at all.
+    try testing.expect(base(gb).OpenFont(&.{ .name = "nosuch.font", .y_size = 8 }) == null);
+    try testing.expect(base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 0 }) == null);
 
-    const font = base(gb).OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
+    const font = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
     const use = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
     base(gb).SetRPAttrs(rp, &use);
 
@@ -2061,22 +2063,41 @@ test "fonts: two Pospaz in the ROM, told apart by height" {
 
     // Pospaz 16 is Pospaz 8 twice as tall: the same columns, every row
     // drawn twice.
-    const sixteen = base(gb).OpenFont(graphics.POSPAZNAME, 16) orelse return error.NoFont;
+    const sixteen = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }) orelse return error.NoFont;
     const use16 = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(sixteen) }, .{} };
     base(gb).SetRPAttrs(rp, &use16);
     base(gb).GetRPAttrs(rp, &ask);
     try testing.expectEqual(@as(u32, 16), height);
     try testing.expectEqual(@as(u32, 8), width);
     try testing.expectEqual(@as(u32, 13), baseline);
-    const eight_rows: [*]const u16 = @as(*fonts.TextFont, @ptrCast(@alignCast(font))).rows;
-    const sixteen_rows: [*]const u16 = @as(*fonts.TextFont, @ptrCast(@alignCast(sixteen))).rows;
-    const glyph_a = ('A' - 32);
-    for (0..8) |row| {
-        try testing.expectEqual(eight_rows[glyph_a * 8 + row], sixteen_rows[glyph_a * 16 + 2 * row]);
-        try testing.expectEqual(eight_rows[glyph_a * 8 + row], sixteen_rows[glyph_a * 16 + 2 * row + 1]);
+    const eight_image = @as(*fonts.TextFont, @ptrCast(@alignCast(font))).image;
+    const sixteen_image = @as(*fonts.TextFont, @ptrCast(@alignCast(sixteen))).image;
+    const eight_a = fontimage.glyphFor(eight_image, 'A');
+    const sixteen_a = fontimage.glyphFor(sixteen_image, 'A');
+    try testing.expectEqual(eight_a.width, sixteen_a.width);
+    try testing.expectEqual(eight_a.left, sixteen_a.left);
+    try testing.expectEqual(2 * eight_a.rows, sixteen_a.rows);
+    try testing.expectEqual(2 * eight_a.top, sixteen_a.top);
+    const eight_rows = fontimage.pixelsOf(eight_image, eight_a);
+    const sixteen_rows = fontimage.pixelsOf(sixteen_image, sixteen_a);
+    for (0..eight_a.rows) |row| {
+        try testing.expectEqual(eight_rows[row], sixteen_rows[2 * row]);
+        try testing.expectEqual(eight_rows[row], sixteen_rows[2 * row + 1]);
     }
-    try testing.expect(base(gb).OpenFont(graphics.POSPAZNAME, 9) == null);
-    try testing.expect(base(gb).OpenFont(graphics.POSPAZNAME, 11) == null);
+    // A code the font has no glyph for is drawn as the default, the
+    // stand-in after 255; so is one above 255 once text can carry it.
+    try testing.expectEqual(fontimage.glyphFor(eight_image, 256), fontimage.glyphFor(eight_image, 7));
+    try testing.expectEqual(fontimage.glyphFor(eight_image, 256), fontimage.glyphFor(eight_image, 0x20AC));
+    // A height that is not there gets the nearest, and a shorter font
+    // before a taller one: 12 is 8, 15 is 16.
+    for ([_]u16{ 9, 10, 11, 12 }) |rows| {
+        const near = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = rows }).?;
+        try testing.expectEqual(font, near);
+        base(gb).CloseFont(near);
+    }
+    const fifteen = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 15 }).?;
+    try testing.expectEqual(sixteen, fifteen);
+    base(gb).CloseFont(fifteen);
     base(gb).CloseFont(sixteen);
     base(gb).CloseFont(null);
 
@@ -2099,7 +2120,7 @@ test "text: ink, paper, styles and the baseline" {
         .size_bytes = pixels.len,
         .format = .rgb565,
     };
-    const font = base(gb).OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
+    const font = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
     const tags = [_]TagItem{
         .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
         .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
@@ -2391,7 +2412,7 @@ test "measuring text: the room it takes, and how much of it fits" {
     try testing.expectEqualStrings("the RastPort has no font set", std.mem.span(base(gb).GraphicsErrorText(why)));
     try testing.expectEqual(@as(u32, 0), base(gb).TextFit(rp, "abc", 3, &room, null, graphics.TEXT_FORWARD, 100, 100));
 
-    const font = base(gb).OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
+    const font = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
     const use = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
     base(gb).SetRPAttrs(rp, &use);
 
@@ -2426,7 +2447,7 @@ test "measuring text: the room it takes, and how much of it fits" {
     // A taller font needs a taller box for the same string.
     const low_box = graphics.TextExtent{ .width = 24, .height = 12 };
     try testing.expectEqual(@as(u32, 3), base(gb).TextFit(rp, "abcd", 4, &room, &low_box, graphics.TEXT_FORWARD, 0, 0));
-    const sixteen = base(gb).OpenFont(graphics.POSPAZNAME, 16) orelse return error.NoFont;
+    const sixteen = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }) orelse return error.NoFont;
     const use16 = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(sixteen) }, .{} };
     base(gb).SetRPAttrs(rp, &use16);
     try testing.expectEqual(@as(u32, 0), base(gb).TextFit(rp, "abcd", 4, &room, &low_box, graphics.TEXT_FORWARD, 0, 0));
@@ -2455,7 +2476,7 @@ test "text is assembled before it is drawn, so a lean is not erased" {
     const gb = try setUp();
     defer kexec.deinit();
 
-    const font = base(gb).OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
+    const font = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
     var one: [64 * 16 * 2]u8 = @splat(0);
     var two: [64 * 16 * 2]u8 = @splat(0);
     var plain = rtg.Surface{ .pixels = &one, .width = 64, .height = 16, .pitch = 128, .size_bytes = one.len, .format = .rgb565 };
@@ -2613,6 +2634,335 @@ test "a scroll reads through the clip, so a window moves its own pixels" {
     try tearDown(gb);
 }
 
+const fontimage = graphics.fontimage;
+
+/// A glyph of the tests' fonts: a box of `rows` rows of `bytes`, which
+/// are `rows * pitchOf(kind, width)` long.
+fn testGlyph(code: u32, advance: i16, left: i16, top: i16, width: u16, rows: u16, bytes: []const u8) fontimage.GlyphSpec {
+    return .{ .code = code, .advance = advance, .left = left, .top = top, .width = width, .rows = rows, .pixels = bytes };
+}
+
+/// 8 rows, 8 wide: '?' the default and 'a', 'b' a bar each.
+fn listSpec(style: graphics.FontStyle) fontimage.Spec {
+    return .{
+        .height = 8,
+        .baseline = 6,
+        .x_size = 8,
+        .style = style,
+        .default_char = '?',
+        .glyphs = &.{
+            testGlyph('?', 8, 0, 0, 8, 1, &.{0xFF}),
+            testGlyph('a', 8, 0, 2, 8, 1, &.{0xFF}),
+            testGlyph('b', 8, 0, 4, 8, 1, &.{0xFF}),
+        },
+    };
+}
+const list_font: [fontimage.imageSize(listSpec(0))]u8 align(4) = fontimage.build(listSpec(0));
+const list_font_extended: [fontimage.imageSize(listSpec(graphics.FSF_EXTENDED))]u8 align(4) =
+    fontimage.build(listSpec(graphics.FSF_EXTENDED));
+
+/// 10 rows, baseline 8, proportional: 'i' one column and two to the
+/// next, 'm' five and six, 'j' reaching one back under the one before,
+/// and 'W' 20 wide and 24 tall, past the old limits both ways. '?' is
+/// the default.
+const prop_spec = fontimage.Spec{
+    .height = 24,
+    .baseline = 20,
+    .x_size = 6,
+    .default_char = '?',
+    .glyphs = &.{
+        testGlyph('?', 6, 0, 10, 4, 1, &.{0xF0}),
+        testGlyph('W', 22, 1, 0, 20, 24, &(@as([72]u8, @splat(0xFF)))),
+        testGlyph('i', 2, 0, 12, 1, 8, &(@as([8]u8, @splat(0x80)))),
+        testGlyph('j', 2, -1, 12, 2, 1, &.{0xC0}),
+        testGlyph('m', 6, 0, 14, 5, 1, &.{0xF8}),
+    },
+};
+const prop_font: [fontimage.imageSize(prop_spec)]u8 align(4) = fontimage.build(prop_spec);
+
+/// 4 rows, coverage: 'o' two pixels, full and about half.
+const alpha_spec = fontimage.Spec{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 3,
+    .kind = .alpha4,
+    .default_char = 'o',
+    .glyphs = &.{testGlyph('o', 3, 0, 1, 2, 1, &.{0xF7})},
+};
+const alpha_font: [fontimage.imageSize(alpha_spec)]u8 align(4) = fontimage.build(alpha_spec);
+
+/// 4 rows, colour: 'c' is red, then the pen, then nothing.
+const colour_spec = fontimage.Spec{
+    .height = 4,
+    .baseline = 3,
+    .x_size = 4,
+    .kind = .indexed8,
+    .default_char = 'c',
+    .palette = &.{ 0, 0xFFFF_0000, 0xFFFF_FFFF },
+    .pen_index = 2,
+    .glyphs = &.{testGlyph('c', 4, 0, 1, 3, 1, &.{ 1, 2, 0 })},
+};
+const colour_font: [fontimage.imageSize(colour_spec)]u8 align(4) = fontimage.build(colour_spec);
+
+test "font images: built, checked, and refused when they do not hold together" {
+    try testing.expect(fontimage.check(&prop_font, prop_font.len));
+    try testing.expect(fontimage.check(&alpha_font, alpha_font.len));
+    try testing.expect(fontimage.check(&colour_font, colour_font.len));
+    const image: *const fontimage.FontImage = @ptrCast(&prop_font);
+    try testing.expect(image.flags & graphics.FPF_PROPORTIONAL != 0);
+    try testing.expectEqual(@as(u16, 20), image.max_width);
+    // Four ranges: '?', 'W', 'i'..'j', 'm'.
+    try testing.expectEqual(@as(u32, 4), image.range_count);
+    try testing.expectEqual(@as(i16, -1), fontimage.find(image, 'j').?.left);
+    try testing.expect(fontimage.find(image, 'k') == null);
+    try testing.expectEqual(fontimage.find(image, '?').?, fontimage.glyphFor(image, 'k'));
+
+    // Built whole: the longwords add up to zero, and a changed byte
+    // shows.
+    try testing.expect(fontimage.sound(&prop_font, prop_font.len));
+    try testing.expect(fontimage.sound(&rom_fonts.pospaz8_image, rom_fonts.pospaz8_image.len));
+    var bent: [alpha_font.len]u8 align(4) = alpha_font;
+    bent[bent.len - 1] ^= 1;
+    try testing.expect(!fontimage.sound(&bent, bent.len));
+    try testing.expectEqual(image.checksum, fontimage.checksumOf(&prop_font, prop_font.len));
+
+    // Cut short, or with the default gone, it is refused.
+    try testing.expect(!fontimage.check(&prop_font, prop_font.len - 1));
+    var broken: [prop_font.len]u8 align(4) = prop_font;
+    const header: *fontimage.FontImage = @ptrCast(&broken);
+    header.default_char = 'k';
+    try testing.expect(!fontimage.check(&broken, broken.len));
+    broken = prop_font;
+    header.kind = @enumFromInt(9);
+    try testing.expect(!fontimage.check(&broken, broken.len));
+    var colour: [colour_font.len]u8 align(4) = colour_font;
+    const colour_header: *fontimage.FontImage = @ptrCast(&colour);
+    colour_header.pen_index = 3;
+    try testing.expect(!fontimage.check(&colour, colour.len));
+}
+
+test "text in any shape: proportional, large, coverage and colour" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 32 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 32, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const white = graphics.penRGB(255, 255, 255);
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = white },
+        .{ .tag = graphics.RPTAG_BPen, .data = graphics.penRGB(0, 0, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var prop = fonts.TextFont{ .node = .{ .name = "prop.font" }, .image = @ptrCast(&prop_font) };
+    try testing.expect(base(gb).AddFont(@ptrCast(&prop)));
+    const use_prop = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&prop) }, .{} };
+    base(gb).SetRPAttrs(rp, &use_prop);
+
+    var proportional: u32 = 0;
+    var nominal: u32 = 0;
+    const ask = [_]TagItem{
+        .{ .tag = graphics.RPTAG_FontProportional, .data = @intFromPtr(&proportional) },
+        .{ .tag = graphics.RPTAG_FontWidth, .data = @intFromPtr(&nominal) },
+        .{},
+    };
+    base(gb).GetRPAttrs(rp, &ask);
+    try testing.expectEqual(@as(u32, 1), proportional);
+    try testing.expectEqual(@as(u32, 6), nominal);
+
+    // Each character its own advance; one it does not have is '?'.
+    try testing.expectEqual(@as(i32, 2 + 6 + 6), base(gb).TextLength(rp, "imk", 3));
+    // 'j' reaches one back: the extent starts left of the point.
+    var room: graphics.TextExtent = .{};
+    base(gb).TextExtent(rp, "j", 1, &room);
+    try testing.expectEqual(@as(i32, -1), room.extent.min_x);
+    try testing.expectEqual(@as(i32, 2), room.width);
+
+    // Drawn: 'i' at column 4 is one column eight rows tall, 'm' after it
+    // at 6 a run of five on row 14, and 'j' after that reaches back to 11.
+    base(gb).Move(rp, 4, 20);
+    base(gb).Text(rp, "imj", 3);
+    try testing.expectEqual(@as(u32, 8 + 5 + 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 4, 12) != 0 and pixelAt(&surface, 4, 19) != 0);
+    try testing.expect(pixelAt(&surface, 6, 14) != 0 and pixelAt(&surface, 10, 14) != 0);
+    try testing.expect(pixelAt(&surface, 11, 12) != 0 and pixelAt(&surface, 12, 12) != 0);
+    var at: graphics.Point = .{};
+    const where = [_]TagItem{ .{ .tag = graphics.RPTAG_Cursor, .data = @intFromPtr(&at) }, .{} };
+    base(gb).GetRPAttrs(rp, &where);
+    try testing.expectEqual(@as(i32, 14), at.x);
+
+    // 'W' is 20 wide and 24 tall, both past what one u16 row and one
+    // strip band held: every pixel of it lands.
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 20);
+    base(gb).Text(rp, "W", 1);
+    try testing.expectEqual(@as(u32, 20 * 24), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 1, 0) != 0 and pixelAt(&surface, 20, 23) != 0);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 0, 0));
+
+    // Fitting from the end: "mim" in 9 columns is "im" backward, "mi"
+    // forward.
+    const text = "mim";
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, text[2..].ptr, 3, &room, null, graphics.TEXT_BACKWARD, 9, 0));
+    try testing.expectEqual(@as(i32, 8), room.width);
+    try testing.expectEqual(@as(u32, 2), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 9, 0));
+    try testing.expectEqual(@as(u32, 1), base(gb).TextFit(rp, text, 3, &room, null, graphics.TEXT_FORWARD, 7, 0));
+
+    // Coverage: the pen at full and at 7/15 over black.
+    var alpha = fonts.TextFont{ .node = .{ .name = "alpha.font" }, .image = @ptrCast(&alpha_font) };
+    const use_alpha = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&alpha) }, .{} };
+    base(gb).SetRPAttrs(rp, &use_alpha);
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 3);
+    base(gb).Text(rp, "o", 1);
+    const half = rastport.packPen(.rgb565, drawing.over(graphics.penARGB(255 * 7 / 15, 255, 255, 255), 0xFF00_0000)).?;
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 0, 1));
+    try testing.expectEqual(@as(u16, @intCast(half)), pixelAt(&surface, 1, 1));
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    // JAM2 lays the paper over the cell first, and the ink over that.
+    const jam2 = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM2 }, .{} };
+    base(gb).SetRPAttrs(rp, &jam2);
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 3);
+    base(gb).Text(rp, "o", 1);
+    try testing.expectEqual(@as(u32, 3 * 4), litCount(&surface));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&surface, 2, 1));
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 0, 1));
+    const jam1 = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
+    base(gb).SetRPAttrs(rp, &jam1);
+
+    // Colour: red as the font has it, then the pen as the RastPort has it.
+    var colour = fonts.TextFont{ .node = .{ .name = "colour.font" }, .image = @ptrCast(&colour_font) };
+    const use_colour = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&colour) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0, 255, 0) },
+        .{},
+    };
+    base(gb).SetRPAttrs(rp, &use_colour);
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 3);
+    base(gb).Text(rp, "c", 1);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 0, 1));
+    try testing.expectEqual(@as(u16, 0x07E0), pixelAt(&surface, 1, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 2, 1));
+    // Bold draws it again one right: the pen where red was not.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_BOLD }, .{} });
+    @memset(&pixels, 0);
+    base(gb).Move(rp, 0, 3);
+    base(gb).Text(rp, "c", 1);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 0, 1));
+    try testing.expectEqual(@as(u16, 0x07E0), pixelAt(&surface, 1, 1));
+    try testing.expectEqual(@as(u16, 0x07E0), pixelAt(&surface, 2, 1));
+
+    base(gb).FreeRastPort(rp);
+    try testing.expect(base(gb).RemFont(@ptrCast(&prop)));
+    try tearDown(gb);
+}
+
+/// A font for the matching test: `listSpec` at `rows`, drawn in `style`,
+/// with `flags` in its image.
+fn matchSpec(rows: u16, style: graphics.FontStyle, flags: graphics.FontFlags) fontimage.Spec {
+    var spec = listSpec(style);
+    spec.height = rows;
+    spec.flags = flags;
+    return spec;
+}
+const match_8: [fontimage.imageSize(matchSpec(8, 0, graphics.FPF_DESIGNED))]u8 align(4) =
+    fontimage.build(matchSpec(8, 0, graphics.FPF_DESIGNED));
+const match_8_italic: [fontimage.imageSize(matchSpec(8, graphics.FSF_ITALIC, graphics.FPF_DESIGNED))]u8 align(4) =
+    fontimage.build(matchSpec(8, graphics.FSF_ITALIC, graphics.FPF_DESIGNED));
+const match_10_scaled: [fontimage.imageSize(matchSpec(10, 0, 0))]u8 align(4) =
+    fontimage.build(matchSpec(10, 0, 0));
+
+test "OpenFont: the nearest font of the name, by height, style and flags" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var list = [_]fonts.TextFont{
+        .{ .node = .{ .name = "match.font" }, .image = @ptrCast(&match_8) },
+        .{ .node = .{ .name = "match.font" }, .image = @ptrCast(&match_8_italic) },
+        .{ .node = .{ .name = "match.font" }, .image = @ptrCast(&match_10_scaled) },
+    };
+    for (&list) |*font| try testing.expect(base(gb).AddFont(font));
+
+    // Exact.
+    const plain = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 8 }).?;
+    try testing.expectEqual(&list[0], plain);
+    // Italic asked for: the font drawn italic, not the plain one leaned.
+    const leaning = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 8, .style = graphics.FSF_ITALIC }).?;
+    try testing.expectEqual(&list[1], leaning);
+    // Bold asked for: none is drawn bold, and the plain one costs least,
+    // since a style drawn and not asked for costs more than one missing.
+    const heavy = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 8, .style = graphics.FSF_BOLD }).?;
+    try testing.expectEqual(&list[0], heavy);
+    // 10 rows: the scaled one, unless only a drawn size will do.
+    const ten = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 10 }).?;
+    try testing.expectEqual(&list[2], ten);
+    const drawn = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 10, .flags = graphics.FPF_DESIGNED }).?;
+    try testing.expectEqual(&list[0], drawn);
+
+    // Points: at 72 DPI (no board to say otherwise) a point is a row; at
+    // 170, 10 points is 24 rows, rounded; OpenFont goes by the rows.
+    try testing.expectEqual(@as(u32, 10), base(gb).FontRows(&.{ .name = "", .y_size = 10, .flags = graphics.FPF_POINTS }));
+    gb.screen_dpi = 170;
+    try testing.expectEqual(@as(u32, 24), base(gb).FontRows(&.{ .name = "", .y_size = 10, .flags = graphics.FPF_POINTS }));
+    try testing.expectEqual(@as(u32, 10), base(gb).FontRows(&.{ .name = "", .y_size = 10 }));
+    try testing.expectEqual(@as(u32, 7), base(gb).FontRows(&.{ .name = "", .y_size = 3, .flags = graphics.FPF_POINTS }));
+    gb.screen_dpi = 144;
+    const by_points = base(gb).OpenFont(&.{ .name = "match.font", .y_size = 5, .flags = graphics.FPF_POINTS }).?;
+    try testing.expectEqual(&list[2], by_points);
+    base(gb).CloseFont(by_points);
+    gb.screen_dpi = 72;
+
+    // The weights themselves.
+    const want = graphics.TextAttr{ .name = "", .y_size = 11 };
+    const shorter = graphics.TextAttr{ .name = "", .y_size = 8, .flags = graphics.FPF_DISKFONT };
+    const taller = graphics.TextAttr{ .name = "", .y_size = 12 };
+    try testing.expectEqual(graphics.MAXFONTMATCHWEIGHT - 3 * 32, base(gb).WeighTAMatch(&want, &shorter, null));
+    try testing.expectEqual(graphics.MAXFONTMATCHWEIGHT - 128, base(gb).WeighTAMatch(&want, &taller, null));
+    try testing.expectEqual(graphics.MAXFONTMATCHWEIGHT, base(gb).WeighTAMatch(&want, &want, null));
+    const designed = graphics.TextAttr{ .name = "", .y_size = 11, .flags = graphics.FPF_DESIGNED };
+    try testing.expectEqual(@as(i32, 0), base(gb).WeighTAMatch(&designed, &taller, null));
+    try testing.expect(base(gb).WeighTAMatch(&designed, &shorter, null) > 0);
+
+    // AskFont describes what OpenFont would find again.
+    var pixels: [8 * 8 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 8, .height = 8, .pitch = 16, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var asked: graphics.TextAttr = undefined;
+    base(gb).AskFont(rp, &asked);
+    try testing.expectEqual(@as(u16, 0), asked.y_size);
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(leaning) }, .{} });
+    base(gb).AskFont(rp, &asked);
+    try testing.expectEqualStrings("match.font", std.mem.span(asked.name));
+    try testing.expectEqual(@as(u16, 8), asked.y_size);
+    try testing.expectEqual(graphics.FSF_ITALIC, asked.style);
+    const again = base(gb).OpenFont(&asked).?;
+    try testing.expectEqual(leaning, again);
+    base(gb).FreeRastPort(rp);
+
+    // The walk sees the ROM's two and the test's three, in list order.
+    base(gb).LockFonts();
+    var seen: u32 = 0;
+    var walked = base(gb).NextFont(null);
+    while (walked) |font| : (walked = base(gb).NextFont(font)) seen += 1;
+    base(gb).UnlockFonts();
+    try testing.expectEqual(@as(u32, 5), seen);
+    // Never waiting: refused while open, like RemFont.
+    try testing.expect(!base(gb).AttemptRemFont(&list[1]));
+
+    // Open, so RemFont refuses; closed, it takes it off; off already, it
+    // says the same, since nobody holds it.
+    try testing.expect(!base(gb).RemFont(&list[1]));
+    for ([_]*graphics.TextFont{ plain, leaning, heavy, ten, drawn, again }) |font| base(gb).CloseFont(font);
+    for (&list) |*font| try testing.expect(base(gb).RemFont(font));
+    try testing.expect(base(gb).RemFont(&list[0]));
+    try testing.expect(base(gb).OpenFont(&.{ .name = "match.font", .y_size = 8 }) == null);
+    try tearDown(gb);
+}
+
 test "the font list: added, found, and refused while it is open" {
     const gb = try setUp();
     defer kexec.deinit();
@@ -2622,39 +2972,28 @@ test "the font list: added, found, and refused while it is open" {
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} };
     const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
 
-    // A font of the test's own, over the glyphs of one that is there.
-    const borrowed = base(gb).OpenFont(graphics.POSPAZNAME, 8) orelse return error.NoFont;
-    var mine = fonts.TextFont{
-        .name = "test.font",
-        .width = 8,
-        .height = 8,
-        .baseline = 6,
-        .first_char = 32,
-        .count = 225,
-        .rows = @as(*fonts.TextFont, @ptrCast(@alignCast(borrowed))).rows,
-        .open_count = 0,
-    };
-    base(gb).CloseFont(borrowed);
+    // A font of the test's own.
+    var mine = fonts.TextFont{ .node = .{ .name = "test.font" }, .image = @ptrCast(&list_font) };
 
     // Not on the list, so not found.
-    try testing.expect(base(gb).OpenFont("test.font", 8) == null);
+    try testing.expect(base(gb).OpenFont(&.{ .name = "test.font", .y_size = 8 }) == null);
     try testing.expect(base(gb).AddFont(@ptrCast(&mine)));
     // Twice is refused rather than putting it on twice.
     try testing.expect(!base(gb).AddFont(@ptrCast(&mine)));
 
-    const found = base(gb).OpenFont("test.font", 8) orelse return error.NoFont;
+    const found = base(gb).OpenFont(&.{ .name = "test.font", .y_size = 8 }) orelse return error.NoFont;
     try testing.expectEqual(@as(*graphics.TextFont, @ptrCast(&mine)), found);
     // Open, so it cannot be taken away from under whoever has it.
     try testing.expect(!base(gb).RemFont(found));
     base(gb).CloseFont(found);
     try testing.expect(base(gb).RemFont(@ptrCast(&mine)));
-    try testing.expect(base(gb).OpenFont("test.font", 8) == null);
+    try testing.expect(base(gb).OpenFont(&.{ .name = "test.font", .y_size = 8 }) == null);
     // The ROM's two are untouched by all of that.
-    try testing.expect(base(gb).OpenFont(graphics.POSPAZNAME, 16) != null);
+    try testing.expect(base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }) != null);
 
     // What a font is, and which styles are left to ask for.
     var what: graphics.FontExtent = .{};
-    const sixteen = base(gb).OpenFont(graphics.POSPAZNAME, 16).?;
+    const sixteen = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }).?;
     base(gb).FontExtent(sixteen, &what);
     try testing.expectEqual(@as(i32, 8), what.width);
     try testing.expectEqual(@as(i32, 16), what.height);
@@ -2665,7 +3004,7 @@ test "the font list: added, found, and refused while it is open" {
     base(gb).CloseFont(sixteen);
 
     // A font drawn extended: extending it again is not on offer.
-    mine.style = graphics.FSF_EXTENDED;
+    mine.image = @ptrCast(&list_font_extended);
     base(gb).FontExtent(@ptrCast(&mine), &what);
     try testing.expectEqual(graphics.FSF_EXTENDED, what.style);
     const use_mine = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&mine) }, .{} };

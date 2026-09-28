@@ -93,7 +93,7 @@ pub fn TimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const
         rb.FreeBitMap(picture);
         return false;
     };
-    const font = gb.OpenFont(graphics.POSPAZNAME, ib.font_height);
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = @intCast(ib.font_height) });
     if (font) |f| graphics.SetFont(gb, rp, f);
 
     const colour = if (dead_end) graphics.penRGB(0xFF, 0x22, 0x00) else graphics.penRGB(0xFF, 0xAA, 0x22);

@@ -335,6 +335,27 @@ pub fn plotBack(rp: *RastPort, p: Piece, x: i32, y: i32) void {
     plotPen(rp, p, x, y, rp.bg_pen, rp.bg_packed);
 }
 
+/// One pixel of a colour laid over what is there by the colour's own
+/// alpha, whatever the draw mode: how a glyph's coverage or a colour
+/// font's palette lands. The caller has checked that it is inside the
+/// surface and decided the colour, and a transparent one writes nothing.
+///
+/// INPUTS:
+/// - `p` - the piece being written: its rectangle, surface and offset.
+/// - `x` - the column, in the RastPort's coordinates.
+/// - `y` - the row.
+/// - `pen` - the colour, 0xAARRGGBB.
+pub fn plotOver(p: Piece, x: i32, y: i32, pen: Pen) void {
+    const alpha = pen >> 24;
+    if (alpha == 0) return;
+    const surface = p.surface;
+    const bytes = pixelBytes(surface.format);
+    const at = surface.pixels.? + @as(usize, @intCast(y + p.dy)) * surface.pitch +
+        @as(usize, @intCast(x + p.dx)) * bytes;
+    const mixed = if (alpha == 0xFF) pen else over(pen, rastport.unpackPen(surface.format, getPixel(at, bytes)));
+    putPixel(at, bytes, rastport.packPen(surface.format, mixed) orelse return);
+}
+
 /// Whether the pattern says to draw here, and which pen if so.
 ///
 /// The bit decides the pen and `DRMD_INVERSVID` swaps the two, so the

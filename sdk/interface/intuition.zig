@@ -128,6 +128,8 @@ pub const LVO = struct {
     pub const LayoutMenusA = libraries.lvo(110);
     pub const LayoutMenuItemsA = libraries.lvo(111);
     pub const SetWindowPointerA = libraries.lvo(112);
+    pub const SetSystemFonts = libraries.lvo(113);
+    pub const OpenSystemFont = libraries.lvo(114);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -242,6 +244,8 @@ pub const Fn = struct {
     pub const LayoutMenusA = *const fn (*IntuitionBase, *intuition.Menu, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const LayoutMenuItemsA = *const fn (*IntuitionBase, *intuition.MenuItem, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const SetWindowPointerA = *const fn (*IntuitionBase, *intuition.Window, ?[*]const utility.TagItem) callconv(.c) void;
+    pub const SetSystemFonts = *const fn (*IntuitionBase, ?*graphics.TextFont, ?*graphics.TextFont, ?*graphics.TextFont) callconv(.c) bool;
+    pub const OpenSystemFont = *const fn (*IntuitionBase, u32) callconv(.c) ?*graphics.TextFont;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -900,5 +904,17 @@ pub const IntuitionBase = opaque {
     /// off a little. No tags: the default.
     pub fn SetWindowPointerA(self: *IntuitionBase, window: *intuition.Window, tags: ?[*]const utility.TagItem) void {
         return libraries.call(self, LVO.SetWindowPointerA, Fn.SetWindowPointerA, .{ window, tags });
+    }
+
+    /// The fonts screens, windows and consoles opened from now on use; null
+    /// for pospaz from the ROM. False, and nothing changed, for a fixed font
+    /// that is proportional.
+    pub fn SetSystemFonts(self: *IntuitionBase, screen_font: ?*graphics.TextFont, default_font: ?*graphics.TextFont, fixed_font: ?*graphics.TextFont) bool {
+        return libraries.call(self, LVO.SetSystemFonts, Fn.SetSystemFonts, .{ screen_font, default_font, fixed_font });
+    }
+
+    /// One of the system's fonts (SYSFONT_*), opened: CloseFont it.
+    pub fn OpenSystemFont(self: *IntuitionBase, which: u32) ?*graphics.TextFont {
+        return libraries.call(self, LVO.OpenSystemFont, Fn.OpenSystemFont, .{which});
     }
 };

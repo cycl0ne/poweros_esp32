@@ -21,7 +21,9 @@ Generated from the source by `./zig build autodoc`.
 - [AreaEllipse](#areaellipse) - A whole ellipse as a shape of its own.
 - [AreaEnd](#areaend) - Fills everything collected and begins again.
 - [AreaMove](#areamove) - Begins a shape.
+- [AskFont](#askfont) - The RastPort's font, described.
 - [AskSoftStyle](#asksoftstyle) - Which styles can still be asked for.
+- [AttemptRemFont](#attemptremfont) - RemFont that never waits.
 - [BeginDraw](#begindraw) - The drawing from here to the matching `EndDraw` is one piece of work.
 - [BitMapScale](#bitmapscale) - Stretches a rectangle to fill another.
 - [BltBitMap](#bltbitmap) - Moves a rectangle of pixels from one surface to another.
@@ -47,15 +49,18 @@ Generated from the source by `./zig build autodoc`.
 - [EndDraw](#enddraw) - The rows gathered since `BeginDraw` handed to the display, in one.
 - [EraseRect](#eraserect) - Paints part of a RastPort the way its empty parts are meant to look.
 - [FontExtent](#fontextent) - What a font is.
+- [FontRows](#fontrows) - How many rows a TextAttr asks for.
 - [FreeBitMap](#freebitmap) - Gives a bitmap back.
 - [FreeRastPort](#freerastport) - Gives a RastPort back.
 - [GetRPAttrs](#getrpattrs) - Reads a RastPort.
 - [GraphicsErrorText](#graphicserrortext) - What a GERR_ code means, in words.
 - [InitArea](#initarea) - Room to collect a filled shape in.
+- [LockFonts](#lockfonts) - Holds the font list still, for a walk with NextFont.
 - [Move](#move) - Puts the current point somewhere, drawing nothing.
 - [NewRegion](#newregion) - An empty region.
+- [NextFont](#nextfont) - The fonts on the list, one after another.
 - [OffsetRegion](#offsetregion) - Moves a whole region.
-- [OpenFont](#openfont) - A font by name and height.
+- [OpenFont](#openfont) - The nearest font of a name to what is asked for.
 - [OrRectRegion](#orrectregion) - Adds a rectangle to a region.
 - [OrRegionRegion](#orregionregion) - Adds everything in `source` to `dest`.
 - [PointInRegion](#pointinregion) - Whether a point is inside a region.
@@ -71,6 +76,8 @@ Generated from the source by `./zig build autodoc`.
 - [TextExtent](#textextent) - How much room some text would take.
 - [TextFit](#textfit) - How many characters fit in the room given.
 - [TextLength](#textlength) - How wide some text would be, without drawing it.
+- [UnlockFonts](#unlockfonts) - Lets the font list go again.
+- [WeighTAMatch](#weightamatch) - How well a font matches what is asked for.
 - [WriteLUTPixelArray](#writelutpixelarray) - Puts a rectangle of 8-bit colour numbers down through a table of 256 pens.
 - [WritePixel](#writepixel) - One pixel in the foreground pen.
 - [WritePixelArray](#writepixelarray) - Puts a rectangle of one's own pixels down, converted to the surface's format.
@@ -93,18 +100,21 @@ fn AddFont(gb: *GraphicsBase, font: *TextFont) bool
 
 **INPUTS**
 
-- `font` - a font somebody built. Its name and height are what
-  `OpenFont` will match on.
+- `font` - a font somebody built: `node.name` its name, `image` its
+  glyphs. The name, height and style are what `OpenFont` weighs.
 
 **RESULT**
 
-False if it is already on the list.
+False if it is already on the list, or if its image does not hold
+together (`fontimage.check`): a table or a glyph's pixels outside the
+block, ranges out of order, or no default character.
 
 **BEHAVIOR**
 
 This is the way in for fonts that are not in this ROM. Something that
 reads a font out of a file builds a `TextFont` and calls this, and a
 later plain `OpenFont` finds it - which is why `OpenFont` walks a list.
+The count of who has it open starts at 0.
 The library itself never reads files, for the same reason rtg.library
 does not read the board file and ramlib exists rather than exec loading
 libraries itself: each layer keeps to what it can do on its own.
@@ -118,8 +128,9 @@ libraries itself: each layer keeps to what it can do on its own.
 
 **OWNERSHIP**
 
-The font stays the caller's. The library only holds it on a list, and
-`RemFont` takes it off again.
+The font, its name and its image stay the caller's. The library only
+holds it on a list, and `RemFont` takes it off again; the caller frees
+it after that, never before.
 
 **BUGS**
 
@@ -686,6 +697,69 @@ None known.
 _ = gb.AreaMove(rp, 10, 10);
 ```
 
+## AskFont
+
+The RastPort's font, described.
+
+**SYNOPSIS**
+
+```zig
+fn AskFont(_: *GraphicsBase, rp: *RastPort, text_attr: *graphics.TextAttr) void
+```
+
+**SINCE**
+
+0.19. LVO -284.
+
+**INPUTS**
+
+- `rp` - the RastPort.
+- `text_attr` - where the answer goes: the font's name, its height,
+  the styles it was drawn with, and its flags - how it was made and
+  where it came from. No tags.
+
+**RESULT**
+
+Nothing; the answer is in `text_attr`. With no font set, the name is
+"", the rest 0, and the error is `GERR_NO_FONT`.
+
+**BEHAVIOR**
+
+What comes back is what `OpenFont` needs to open the same font again,
+so a font can be handed on as a description - to a window opened
+later, or another RastPort - rather than as a pointer someone must
+keep open. The name points into the font; copy it if the font may
+close first.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It reads the caller's RastPort, which an interrupt
+  does not share.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The name is the font's, for as long as the font
+is open.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenFont`, `WeighTAMatch`, `RPTAG_Font`
+
+**EXAMPLES**
+
+```zig
+var same: sdk.graphics.TextAttr = undefined;
+gb.AskFont(rp, &same);
+const again = gb.OpenFont(&same);
+```
+
 ## AskSoftStyle
 
 Which styles can still be asked for.
@@ -740,6 +814,61 @@ None known.
 const can = gb.AskSoftStyle(rp);
 ```
 
+## AttemptRemFont
+
+RemFont that never waits.
+
+**SYNOPSIS**
+
+```zig
+fn AttemptRemFont(gb: *GraphicsBase, font: *TextFont) bool
+```
+
+**SINCE**
+
+0.19. LVO -300.
+
+**INPUTS**
+
+- `font` - a font, on the list or not.
+
+**RESULT**
+
+True once the font is off the list, as `RemFont`. False while
+anything has it open, and false when another task holds the font
+list just now - where `RemFont` would wait for it.
+
+**BEHAVIOR**
+
+The one way to take a font off from where waiting is not allowed: a
+low-memory handler runs under Forbid, and a font loader freeing the
+fonts nobody holds there calls this, skipping any it cannot have.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: allowed; this is what it is for.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+As `RemFont`: on true the font is the caller's to free.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemFont`, `AddFont`
+
+**EXAMPLES**
+
+```zig
+if (gb.AttemptRemFont(font)) sys.FreeVec(record);
+```
+
 ## BeginDraw
 
 The drawing from here to the matching `EndDraw` is one piece of work.
@@ -752,7 +881,7 @@ fn BeginDraw(gb: *GraphicsBase, rp: *RastPort) void
 
 **SINCE**
 
-1.0. LVO -276.
+1.0. LVO -272.
 
 **INPUTS**
 
@@ -2202,7 +2331,7 @@ fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void
 
 **SINCE**
 
-1.0. LVO -280.
+1.0. LVO -276.
 
 **INPUTS**
 
@@ -2340,9 +2469,9 @@ fn FontExtent(_: *GraphicsBase, font: *const TextFont, out: *graphics.FontExtent
 **INPUTS**
 
 - `font` - the font.
-- `out` - where the answer goes: the width and height, the baseline, the
-  styles it was **drawn** with, and where one character's ink lands
-  relative to the point.
+- `out` - where the answer goes: the nominal width and the height, the
+  baseline, the styles it was **drawn** with, and where any
+  character's ink can land relative to the point.
 
 **RESULT**
 
@@ -2378,6 +2507,63 @@ None known.
 ```zig
 var about: graphics.FontExtent = .{};
 gb.FontExtent(font, &about);
+```
+
+## FontRows
+
+How many rows a TextAttr asks for.
+
+**SYNOPSIS**
+
+```zig
+fn FontRows(gb: *GraphicsBase, text_attr: *const graphics.TextAttr) u32
+```
+
+**SINCE**
+
+0.19. LVO -304.
+
+**INPUTS**
+
+- `text_attr` - a request; its `y_size` and `FPF_POINTS` are read.
+
+**RESULT**
+
+`y_size` as it is, or with `FPF_POINTS` that many points in rows:
+`points * dpi / 72`, to the nearest row, at least 1 for a size above 0.
+
+**BEHAVIOR**
+
+The DPI is the screen's, from the board's system tags
+(`SYSTAG_ScreenDPI`), read once when the library starts; without one
+it is 72 and a point is a row. So 10 points is 24 rows on a screen of
+170 DPI and 23 on one of 165: the same size on the glass on either.
+`OpenFont` and `WeighTAMatch` go through this, and diskfont.library
+does too, so a size in points means one thing everywhere.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its argument and the DPI.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenFont`, `WeighTAMatch`
+
+**EXAMPLES**
+
+```zig
+const rows = gb.FontRows(&.{ .name = "spleen.font", .y_size = 10, .flags = sdk.graphics.FPF_POINTS });
 ```
 
 ## FreeBitMap
@@ -2705,6 +2891,63 @@ None known.
 if (!gb.InitArea(rp, 360)) return error.NoMemory;
 ```
 
+## LockFonts
+
+Holds the font list still, for a walk with NextFont.
+
+**SYNOPSIS**
+
+```zig
+fn LockFonts(gb: *GraphicsBase) void
+```
+
+**SINCE**
+
+0.19. LVO -288.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Nothing. The list cannot change until `UnlockFonts`.
+
+**BEHAVIOR**
+
+The lock is shared: any number of tasks may walk the list at once,
+and a task that adds, removes, opens or closes a font waits until the
+last of them lets go. That includes the task holding it, so between
+`LockFonts` and `UnlockFonts` the only font call is `NextFont`.
+
+**CONTEXT**
+
+- Waits: yes, while a task changes the list.
+- Interrupts: no.
+- Forbid: must not be held: it may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The lock is the caller's until `UnlockFonts`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NextFont`, `UnlockFonts`
+
+**EXAMPLES**
+
+```zig
+gb.LockFonts();
+var font = gb.NextFont(null);
+while (font) |f| : (font = gb.NextFont(f)) count += 1;
+gb.UnlockFonts();
+```
+
 ## Move
 
 Puts the current point somewhere, drawing nothing.
@@ -2824,6 +3067,62 @@ const region = gb.NewRegion() orelse return error.NoMemory;
 defer gb.DisposeRegion(region);
 ```
 
+## NextFont
+
+The fonts on the list, one after another.
+
+**SYNOPSIS**
+
+```zig
+fn NextFont(gb: *GraphicsBase, previous: ?*TextFont) ?*TextFont
+```
+
+**SINCE**
+
+0.19. LVO -292.
+
+**INPUTS**
+
+- `previous` - the font `NextFont` answered last, or null to start.
+
+**RESULT**
+
+The next font on the list, or null after the last.
+
+**BEHAVIOR**
+
+A font answered is not opened: it is there to be read - its name,
+its image's measures, its flags - while `LockFonts` holds the list,
+and to be opened by what it says with `OpenFont` after.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do; it must hold `LockFonts`.
+
+**OWNERSHIP**
+
+Nothing changes hands; the font is the list's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockFonts`, `UnlockFonts`, `OpenFont`
+
+**EXAMPLES**
+
+```zig
+gb.LockFonts();
+defer gb.UnlockFonts();
+var font = gb.NextFont(null);
+while (font) |f| : (font = gb.NextFont(f)) show(f.node.name.?, f.image.height);
+```
+
 ## OffsetRegion
 
 Moves a whole region.
@@ -2882,12 +3181,12 @@ gb.OffsetRegion(region, -layer_x, -layer_y);
 
 ## OpenFont
 
-A font by name and height.
+The nearest font of a name to what is asked for.
 
 **SYNOPSIS**
 
 ```zig
-fn OpenFont(gb: *GraphicsBase, name: [*:0]const u8, height: u32) ?*TextFont
+fn OpenFont(gb: *GraphicsBase, text_attr: *const graphics.TextAttr) ?*TextFont
 ```
 
 **SINCE**
@@ -2896,15 +3195,27 @@ fn OpenFont(gb: *GraphicsBase, name: [*:0]const u8, height: u32) ?*TextFont
 
 **INPUTS**
 
-- `name` - the font's name. This ROM has `POSPAZNAME` and nothing else.
-- `height` - how many rows tall. Pospaz is here at 8 and 16.
+- `text_attr` - the name, the height - in rows, or in points with
+  `FPF_POINTS` - the styles and the flags asked for. This ROM has
+  `POSPAZNAME` at 8 and 16 rows.
 
 **RESULT**
 
-The font, or null if there is none of that name and height. A font is
-not made to fit: asking for 12 finds nothing rather than a stretched 8.
+The font, opened, or null if no font on the list has the name, the
+height asked for is 0, or every font of the name weighs 0 against the
+request (`FPF_DESIGNED` asked for and all of them scaled).
 
 **BEHAVIOR**
+
+Every font of the name is weighed with `WeighTAMatch`, and the
+heaviest is opened; a perfect match ends the search. So a height that
+is not there gets the nearest that is - a smaller one before a larger
+one the same distance off, since text short of its box reads better
+than text spilling out of it - and a style asked for is found drawn if
+a font of that style exists, or left for the soft styles to make.
+
+A font is not made here: asking for 12 rows of pospaz answers pospaz
+8. diskfont.library, asked the same, can load or scale one.
 
 Pospaz 16 has the same columns as Pospaz 8, each row drawn twice: text
 laid out in one lines up in the other, only twice as tall.
@@ -2918,8 +3229,9 @@ laid out in one lines up in the other, only twice as tall.
 
 **OWNERSHIP**
 
-A font in the ROM lasts for ever and `CloseFont` only counts. Closing
-it is still right: a font that is not in the ROM will want it.
+The font is open until `CloseFont`. A font in the ROM lasts for ever
+and `CloseFont` only counts; closing it is still right, since the font
+found may be one that is not in the ROM.
 
 **BUGS**
 
@@ -2927,12 +3239,13 @@ None known.
 
 **SEE ALSO**
 
-`CloseFont`, `Text`, `RPTAG_Font`
+`CloseFont`, `WeighTAMatch`, `AskFont`, `Text`, `RPTAG_Font`
 
 **EXAMPLES**
 
 ```zig
-const font = gb.OpenFont(sdk.graphics.POSPAZNAME, 8) orelse return;
+const want = sdk.graphics.TextAttr{ .name = sdk.graphics.POSPAZNAME, .y_size = 8 };
+const font = gb.OpenFont(&want) orelse return;
 defer gb.CloseFont(font);
 const use = [_]TagItem{ .{ .tag = sdk.graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
 gb.SetRPAttrs(rp, &use);
@@ -3356,12 +3669,16 @@ fn RemFont(gb: *GraphicsBase, font: *TextFont) bool
 
 False while anything still has it open. Taking it off then would leave
 a RastPort drawing out of memory that is about to go, so it is refused
-rather than trusted.
+rather than trusted. True once it is off the list - also when it was
+not on it - so true means nobody holds it and nobody can open it: the
+one test a builder needs before freeing it.
 
 **BEHAVIOR**
 
 The font leaves the list, so `OpenFont` no longer finds it; a font
-still open is refused.
+still open is refused. The count and the list are read and changed
+under the font list's lock, so no `OpenFont` can open it between the
+test and the removal.
 
 **CONTEXT**
 
@@ -3680,8 +3997,8 @@ fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void
 
 - `rp` - the RastPort. Its font, pens, draw mode, style and clip decide
   the result, and its current point is where the text starts.
-- `string` - the characters: bytes, and a character the font has no
-  glyph for gets the one at the end of it.
+- `string` - the characters: bytes, each a Latin-1 code. A character
+  the font has no glyph for is drawn as the font's default character.
 - `count` - how many.
 
 **RESULT**
@@ -3694,8 +4011,10 @@ not an answer, and `OpenFont` does not put a font on a RastPort -
 **BEHAVIOR**
 
 **The point is the left of the baseline**, so
-letters sit above it and a tail hangs below. The point moves to just
-past the last letter, so one `Text` follows another.
+letters sit above it and a tail hangs below. Each character moves the
+point by its own advance, and the point ends just past the last one,
+so one `Text` follows another. A character's ink may reach back under
+the one before it, where the font says so.
 
 The draw mode is the draw mode: `DRMD_JAM1` puts ink down and leaves
 the paper alone, `DRMD_JAM2` lays the background pen behind the
@@ -3703,8 +4022,14 @@ letters, `DRMD_INVERSVID` swaps them, and `DRMD_COMPLEMENT` inverts
 whatever is underneath. A console wants JAM2 and gets it for nothing,
 because text goes through the same plot as every other primitive.
 
+A font of coverage lays the pen over what is there by how much of each
+pixel the letter covers, so its edges are smooth on any paper; a
+colour font lays each pixel's own colour, and draws the part it marks
+as the pen in the pen. Both lay the paper first under `DRMD_JAM2`, and
+under `DRMD_COMPLEMENT` invert where a pixel is half covered or more.
+
 The styles are drawn rather than stored: **bold** is the glyph over
-itself one pixel right, *italic* leans each row further right as it
+itself one pixel right (or as far as the font says), *italic* leans each row further right as it
 goes up, and underlined is a run along the bottom of the whole string.
 Bold and extended each widen a character by one.
 
@@ -3766,8 +4091,11 @@ Nothing; the answer is in `out`.
 `width` is how far `Text` would move the point - the same number
 `TextLength` answers - and `extent` is where the ink lands **relative
 to the current point**: above the line by the font's baseline and below
-it by what is left. So a caller that wants to clear behind a line of
-text moves the extent to where the text will go and fills that.
+it by what is left, and across from the leftmost to past the rightmost
+column the text touches: a character that kerns back starts it left of
+the point, and bold or italic can carry it past `width`. So a caller
+that wants to clear behind a line of text moves the extent to where
+the text will go and fills that.
 
 Half-open like every rectangle here, so the height is `max_y - min_y`
 and there is no `+ 1` anywhere.
@@ -3842,10 +4170,11 @@ character that fits - and 0 with no font set, where the error is
 
 **BEHAVIOR**
 
-Every character of the fonts in this ROM is the same width, so this is
-a division today. It takes the direction anyway, and is a call rather
-than a sum the caller does, because a font that is not fixed-width will
-need to walk the string and callers should not change when one arrives.
+The string is walked a character at a time, from its start forward or
+from its end back, and a character fits while everything up to it -
+ink and paper, as `TextExtent` measures it - is no wider than the
+room. Backward, what fits is the tail of the string, and `out` is the
+extent of that tail.
 
 This is what a label does when its box is too small for it: ask how
 much fits, draw that, and put an ellipsis after it.
@@ -3906,10 +4235,11 @@ and the error is `GERR_NO_FONT`.
 
 **BEHAVIOR**
 
-Every character of these fonts is the same width, so this is a
-multiplication. It is a call rather than a sum the caller does because
-a font that is not fixed-width will want it to be, and callers should
-not have to change when one arrives.
+The characters' advances added up, each as its glyph gives it, so a
+proportional font measures as it draws. A character the font has no
+glyph for counts as the default character it is drawn as. Ink a kern
+or a lean puts outside that is not counted: `TextExtent` says where
+the ink goes.
 
 **CONTEXT**
 
@@ -3935,6 +4265,141 @@ None known.
 
 ```zig
 const w = gb.TextLength(rp, label.ptr, label.len);
+```
+
+## UnlockFonts
+
+Lets the font list go again.
+
+**SYNOPSIS**
+
+```zig
+fn UnlockFonts(gb: *GraphicsBase) void
+```
+
+**SINCE**
+
+0.19. LVO -296.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Nothing. A font `NextFont` answered may go from here on, so nothing
+read from one is to be used past this but what was copied.
+
+**BEHAVIOR**
+
+Ends one `LockFonts`; the list may change once every walker has
+ended theirs.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The lock goes back.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockFonts`, `NextFont`
+
+**EXAMPLES**
+
+```zig
+gb.LockFonts();
+defer gb.UnlockFonts();
+```
+
+## WeighTAMatch
+
+How well a font matches what is asked for.
+
+**SYNOPSIS**
+
+```zig
+fn WeighTAMatch(gb: *GraphicsBase, req: *const graphics.TextAttr, target: *const graphics.TextAttr, target_tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+0.19. LVO -280.
+
+**INPUTS**
+
+- `req` - what is asked for: height, style and flags.
+- `target` - a font as it is: its height, the styles it was drawn
+  with, and its flags (`FPF_ROMFONT`, `FPF_DISKFONT`, `FPF_DESIGNED`).
+- `target_tags` - more about the font, or null. None is weighed yet.
+
+**RESULT**
+
+`MAXFONTMATCHWEIGHT` for a perfect match, less the further off, and 0
+for a font that will not do. Weights of one request against several
+fonts compare; the names are not looked at, since only fonts of the
+name are weighed at all.
+
+**BEHAVIOR**
+
+The weight starts at `MAXFONTMATCHWEIGHT` and loses:
+
+- 32 for each row the font is shorter than asked, 128 for each row it
+  is taller: text short of its box reads better than text spilling
+  out of it;
+- for a style asked for that the font was not drawn with - which the
+  soft styles can add - italic 16, bold 8, underlined 4, extended 0;
+- for a style the font was drawn with and not asked for - which
+  nothing can take away - italic 1024, bold 512, underlined 2048,
+  extended 0;
+- everything when `FPF_DESIGNED` is asked for and the font was scaled
+  from another size. A font in the ROM or loaded from a disk counts
+  as designed.
+
+A height of 0 on either side will not do. What is left below 0 is 0.
+A height in points (`FPF_POINTS`) on either side is weighed in the
+rows it comes to.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads its arguments and nothing else.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated; the arguments are only read.
+
+**NOTES**
+
+diskfont.library weighs the sizes a font's contents file lists with
+it, before loading any of them, the same way `OpenFont` weighs the
+fonts on the list.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenFont`, `AskFont`
+
+**EXAMPLES**
+
+```zig
+const want = sdk.graphics.TextAttr{ .name = "topaz.font", .y_size = 11 };
+const have = sdk.graphics.TextAttr{ .name = "topaz.font", .y_size = 8, .flags = sdk.graphics.FPF_DISKFONT };
+const weight = gb.WeighTAMatch(&want, &have, null); // 32767 - 3 * 32
 ```
 
 ## WriteLUTPixelArray

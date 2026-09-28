@@ -102,6 +102,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Console, console),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    // The 7B's, whose screen this one stands in for, so text sized in points is laid out as the 7B will show it.
+    .value(st.SYSTAG_ScreenDPI, 170),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &keyboard),
     .pointer(st.SYSTAG_Part, &mouse),

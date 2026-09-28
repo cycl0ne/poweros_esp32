@@ -99,9 +99,10 @@ bool AreaArc(*graphics.RastPort rp, i32 cx, i32 cy, i32 radius, i32 from, i32 to
 /// Fill everything collected and begin again. Nothing collected fills
 /// nothing, which is not a failure.
 bool AreaEnd(*graphics.RastPort rp)
-/// A font of that name and height, or null if there is none. The fonts in
-/// this ROM are all POSPAZNAME, at heights 8 and 16.
-?*graphics.TextFont OpenFont([*:0]const u8 name, u32 height)
+/// The font of that name nearest to what is asked for, by height, style
+/// and flags, or null if there is none of the name or none that will do.
+/// The fonts in this ROM are all POSPAZNAME, at heights 8 and 16.
+?*graphics.TextFont OpenFont(*const graphics.TextAttr text_attr)
 /// Give a font back. Null is allowed. A font in the ROM stays whatever
 /// happens, so this only counts.
 void CloseFont(?*graphics.TextFont font)
@@ -253,4 +254,26 @@ void BeginDraw(*graphics.RastPort rp)
 /// to the display, in one. Nested BeginDraws need one of these each, and
 /// nothing goes until the last.
 void EndDraw(*graphics.RastPort rp)
+// Fonts, more
+/// How well a font described by `target` matches what `req` asks for:
+/// MAXFONTMATCHWEIGHT when perfectly, less the further off, 0 when it will
+/// not do. The names are not compared.
+i32 WeighTAMatch(*const graphics.TextAttr req, *const graphics.TextAttr target, ?[*]const utility.TagItem target_tags)
+/// The RastPort's font as a TextAttr: its name, height, style and flags.
+/// All zero but the name "" with no font set.
+void AskFont(*graphics.RastPort rp, *graphics.TextAttr text_attr)
+/// Hold the font list still, shared, for NextFont. No other font call
+/// until UnlockFonts.
+void LockFonts()
+/// The font after `previous` on the list, the first for null, null after
+/// the last. Only between LockFonts and UnlockFonts.
+?*graphics.TextFont NextFont(?*graphics.TextFont previous)
+/// Let the font list go again.
+void UnlockFonts()
+/// RemFont that never waits: false when the font is open or the list is
+/// busy. What a low-memory handler, under Forbid, calls.
+bool AttemptRemFont(*graphics.TextFont font)
+/// How many rows `text_attr` asks for: its y_size, or with FPF_POINTS
+/// that many points at the screen's DPI.
+u32 FontRows(*const graphics.TextAttr text_attr)
 ##end

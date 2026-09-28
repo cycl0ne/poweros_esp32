@@ -272,6 +272,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Console, console),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    // 480 by 320 on a 3.5 inch diagonal.
+    .value(st.SYSTAG_ScreenDPI, 165),
     .pointer(st.SYSTAG_Part, &i2c_bus),
     .pointer(st.SYSTAG_Part, &panel),
     .pointer(st.SYSTAG_Part, &touch_panel),

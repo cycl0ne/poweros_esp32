@@ -644,7 +644,7 @@ fn drawEverything(gb: *GraphicsBase) ?graphics.Rect {
     const tops = [_]i32{ 0, 18 };
     var line: i32 = 0;
     while (line < 2) : (line += 1) {
-        const font = gb.OpenFont(graphics.POSPAZNAME, heights[@intCast(line)]) orelse continue;
+        const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = @intCast(heights[@intCast(line)]) }) orelse continue;
         defer gb.CloseFont(font);
         const with_font = [_]TagItem{
             .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
@@ -661,7 +661,7 @@ fn drawEverything(gb: *GraphicsBase) ?graphics.Rect {
 
     // The styles, and JAM2 so the paper goes down behind the letters -
     // which is what makes a line of text readable over a picture.
-    const eight = gb.OpenFont(graphics.POSPAZNAME, 8);
+    const eight = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 });
     if (eight) |font| {
         defer gb.CloseFont(font);
         const styles = [_]struct { style: graphics.FontStyle, what: []const u8 }{
@@ -829,7 +829,7 @@ fn drawLayers(sys: *ExecBase, gb: *GraphicsBase) ?u32 {
     const info = lb.NewLayerInfo(screen) orelse return null;
     defer lb.DisposeLayerInfo(info);
 
-    const font = gb.OpenFont(graphics.POSPAZNAME, 8);
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 });
     defer if (font) |f| gb.CloseFont(f);
 
     // Three windows, each overlapping the one before, stepped across the
@@ -1010,7 +1010,7 @@ fn drawGuru(gb: *GraphicsBase) bool {
     gb.GetRPAttrs(rp, &ask);
     if (bounds.isEmpty()) return false;
 
-    const font = gb.OpenFont(graphics.POSPAZNAME, 8) orelse return false;
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return false;
     defer gb.CloseFont(font);
     // Opening a font does not put it on a RastPort - a font is shared, and
     // OpenFont has no RastPort to put it on. Without this the text calls

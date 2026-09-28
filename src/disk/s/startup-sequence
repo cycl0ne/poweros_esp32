@@ -20,6 +20,9 @@ Resident >NIL: C:List PURE
 ; as gadgets/<name>.gadget, which live in SYS:classes.
 Assign >NIL: LIBS: SYS:libs SYS:classes
 
+; FONTS: - each family a contents file and a directory of its sizes.
+Assign >NIL: FONTS: SYS:fonts
+
 ; The global variables that survive a reboot live on the disk; the ones a
 ; running system reads live in RAM:, and start as a copy of them.
 Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
@@ -28,6 +31,10 @@ C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
 Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T
 Assign >NIL: CLIPS: RAM:Clipboards
+
+; The system's fonts, as ENV:Sys/font.prefs names them: every screen,
+; window and console opened from here on uses them.
+C:FontPrefs >NIL:
 
 ; Where a command is looked for, before C:. C:test holds the programs that
 ; exercise a device or a library, C:net the network's tools, so they are

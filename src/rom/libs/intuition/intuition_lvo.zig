@@ -132,6 +132,8 @@ const FreeMenus = @import("menu/freemenus.zig").FreeMenus;
 const LayoutMenusA = @import("menu/layoutmenusa.zig").LayoutMenusA;
 const LayoutMenuItemsA = @import("menu/layoutmenuitemsa.zig").LayoutMenuItemsA;
 const SetWindowPointerA = @import("window/setwindowpointera.zig").SetWindowPointerA;
+const SetSystemFonts = @import("font/setsystemfonts.zig").SetSystemFonts;
+const OpenSystemFont = @import("font/opensystemfont.zig").OpenSystemFont;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -142,6 +144,7 @@ const LVO = interface.LVO;
 // Every function in LVO is an lvo* function here, with the SDK's
 // signature, in its slot.
 comptime {
+    @setEvalBranchQuota(10_000);
     for (@typeInfo(LVO).@"struct".decls) |d| {
         const f = @field(@This(), "lvo" ++ d.name);
         if (!exec.libraries.sameSignature(@TypeOf(&f), @field(interface.Fn, d.name))) {
@@ -240,6 +243,8 @@ const contract_files = [_][]const u8{
     @embedFile("request/buildsysrequesttaglist.zig"),
     @embedFile("input/doubleclick.zig"),
     @embedFile("window/setwindowpointera.zig"),
+    @embedFile("font/setsystemfonts.zig"),
+    @embedFile("font/opensystemfont.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -569,6 +574,12 @@ fn lvoLayoutMenuItemsA(ib: *IntuitionBase, first_item: *intuition.MenuItem, scre
 fn lvoSetWindowPointerA(ib: *IntuitionBase, window: *intuition.Window, tags: ?[*]const utility.TagItem) callconv(.c) void {
     SetWindowPointerA(ib, @ptrCast(@alignCast(window)), tags);
 }
+fn lvoSetSystemFonts(ib: *IntuitionBase, screen_font: ?*graphics.TextFont, default_font: ?*graphics.TextFont, fixed_font: ?*graphics.TextFont) callconv(.c) bool {
+    return SetSystemFonts(ib, screen_font, default_font, fixed_font);
+}
+fn lvoOpenSystemFont(ib: *IntuitionBase, which: u32) callconv(.c) ?*graphics.TextFont {
+    return OpenSystemFont(ib, which);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -684,6 +695,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoLayoutMenusA),
     vec(lvoLayoutMenuItemsA),
     vec(lvoSetWindowPointerA),
+    vec(lvoSetSystemFonts),
+    vec(lvoOpenSystemFont),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

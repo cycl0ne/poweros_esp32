@@ -10,7 +10,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
-const advance = _text.advance;
+const softStyles = _text.softStyles;
 
 /// How many characters fit in the room given.
 ///
@@ -40,10 +40,11 @@ const advance = _text.advance;
 /// `GERR_NO_FONT`.
 ///
 /// BEHAVIOR:
-/// Every character of the fonts in this ROM is the same width, so this is
-/// a division today. It takes the direction anyway, and is a call rather
-/// than a sum the caller does, because a font that is not fixed-width will
-/// need to walk the string and callers should not change when one arrives.
+/// The string is walked a character at a time, from its start forward or
+/// from its end back, and a character fits while everything up to it -
+/// ink and paper, as `TextExtent` measures it - is no wider than the
+/// room. Backward, what fits is the tail of the string, and `out` is the
+/// extent of that tail.
 ///
 /// This is what a label does when its box is too small for it: ask how
 /// much fits, draw that, and put an ellipsis after it.
@@ -72,11 +73,6 @@ const advance = _text.advance;
 /// ```
 pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, out: *graphics.TextExtent, constraining: ?*const graphics.TextExtent, direction: i32, width: i32, height: i32) u32 {
     const graphics_lib = gb.iface();
-    // The direction decides which characters fit, not how many, while
-    // every character is the same width. It is taken now so that a font
-    // that is not fixed-width can walk the string without the call
-    // changing under its callers.
-    _ = direction;
     rp.last_error = graphics.GERR_OK;
     out.* = .{};
     const font = rp.font orelse {
@@ -98,14 +94,29 @@ pub fn TextFit(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32
     // Too short for one line of it: nothing fits, not even part of a
     // character, because a character cut off across the middle is not a
     // character that fits.
-    if (room_h >= 0 and font.height > room_h) return 0;
+    if (room_h >= 0 and font.image.height > room_h) return 0;
 
-    const step = advance(font, rp.text_style);
-    var fits: u32 = count;
-    if (room_w >= 0 and step > 0) {
-        const room: u32 = @intCast(@divTrunc(room_w, step));
-        if (room < fits) fits = room;
+    const style = rp.text_style & softStyles(font);
+    const extra = _text.extraAdvance(style);
+    const smear = _text.smearOf(font, style);
+    const lean = _text.leanOf(font, style);
+    const backward = direction < 0;
+    var room = _text.Measure{};
+    var fits: u32 = 0;
+    while (fits < count) {
+        // Backward, the string points at the last character and the walk
+        // goes down from there.
+        const ch = if (backward) (string - fits)[0] else string[fits];
+        const glyph = _text.glyphOf(font, ch);
+        const next = if (backward)
+            _text.growBack(room, glyph, extra, smear, lean)
+        else
+            _text.grow(room, glyph, extra, smear, lean);
+        if (room_w >= 0 and next.max_x - next.min_x > room_w) break;
+        room = next;
+        fits += 1;
     }
-    graphics_lib.TextExtent(@ptrCast(rp), string, fits, out);
+    const first = if (backward and fits != 0) string - (fits - 1) else string;
+    graphics_lib.TextExtent(@ptrCast(rp), first, fits, out);
     return fits;
 }

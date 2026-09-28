@@ -118,15 +118,27 @@ cores.
 - Consoles `CON:`, `RAW:` and `AUX:` with line editing, history, and
   copy and paste by mouse and keyboard.
 - A shell with variables, aliases, redirection, scripts and resident
-  commands, and 28 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
+  commands, and 31 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
   `Info`, `Format`, `Mount`, `Version`, `Date`, `SetDate` and more - with test programs for
   the devices and libraries in `C:test` and the network's tools in
   `C:net`.
 
 **Graphics and windows**
 - rtg.library for the displays and their drivers, graphics.library for
-  drawing (lines, fills, blits, text, the system's own `pospaz.font` at 8
-  and 16 rows), layers.library for overlapping windows.
+  drawing (lines, fills, blits, text in fonts of any size, proportional,
+  in ink, smooth coverage or colour, the system's own `pospaz.font` at 8
+  and 16 rows), layers.library for overlapping windows. `FONTS:` on the
+  disk holds Spleen at 8 to 32 rows, one size smoothed and one with a
+  shadow, converted from BDF on the host by `tools/fontconv`, and the Go
+  faces (sans, bold, italic, mono) as TrueType outlines, which
+  `LIBS:truetype.library` renders at any height asked, with smooth
+  edges. The
+  system's three fonts - screens' title bars and menus, text in windows
+  and gadgets, and the consoles' fixed-width one - are set in
+  `ENVARC:Sys/font.prefs`, which `C:FontPrefs` hands to intuition at
+  boot; pospaz from the ROM stands in for any not set. `C:ListFonts`
+  lists every font by family, size and where it is, and draws them;
+  `C:FixFonts` rebuilds the contents files after fonts are added.
 - intuition.library: screens, windows, menus, requesters, and an object
   system of classes for gadgets and images (buttons, sliders, string
   fields, groups, and layouts that size and place their gadgets to fit
@@ -242,6 +254,19 @@ cores.
   cipher under way is a context the program keeps, so any number run at
   once, the engine taken in turns. `C:test/Crypto` checks every call
   against the standards' test vectors.
+- `LIBS:truetype.library`: a TrueType file rendered into a font of any
+  height - quadratic outlines and composite glyphs, coverage in four
+  bits, no hinting - for diskfont.library to hand out like any other.
+- `LIBS:diskfont.library`: fonts from `FONTS:` at any size. A family
+  with an outline is rendered at the height asked; otherwise the nearest
+  drawn size is loaded, or one twice or half the size scaled - ink,
+  coverage and colour fonts alike - unless only a drawn one will do;
+  `AvailFonts` lists memory and disk fonts, `NewFontContents` makes a
+  family's contents file from its directory. A size can be asked in
+  points, which each board's DPI turns into rows, so 10 points is the
+  same height on either panel. Fonts nobody holds stay
+  loaded until memory runs short. `C:test/DiskFont` lists them and draws
+  any sizes asked for.
 - Board facts - which parts are fitted and how they are wired - are data
   in a board description, and drivers ask for their part at run time.
 
@@ -278,7 +303,13 @@ seen, and runs the core at 240 MHz.
 For `DEVS:networks/wifi.device`, fetch the radio's vendor libraries once
 with `scripts/fetch-wifi.sh` (into `toolchain/espressif-wifi/`, pinned
 and checked, never committed); without them the disk has everything but
-Wi-Fi. An older build still runs, with room for two and no
+Wi-Fi.
+
+For the fonts in `FONTS:`, fetch their sources once with
+`scripts/fetch-fonts.sh` (Spleen, BSD 2-Clause, and the Go fonts, BSD,
+into `toolchain/fonts/`, pinned and checked, never committed); the build
+converts them with `tools/fontconv`. Without them `FONTS:` is empty and the ROM's
+`pospaz.font` is all there is. An older build still runs, with room for two and no
 mouse pointer drawn.
 
 More build steps and options:

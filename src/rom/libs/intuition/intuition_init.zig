@@ -62,8 +62,9 @@ pub const LIBRARY_VERSION = 0;
 /// 16: windowclass, and WA_Position. 17: the check box and radio button
 /// images, and menus made and laid out from a table (CreateMenusA,
 /// FreeMenus, LayoutMenusA, LayoutMenuItemsA). 18: the mouse pointer,
-/// pointerclass and SetWindowPointerA.
-pub const LIBRARY_REVISION = 18;
+/// pointerclass and SetWindowPointerA. 19: the system's fonts
+/// (SetSystemFonts, OpenSystemFont, WA_SysFont).
+pub const LIBRARY_REVISION = 19;
 const BUILD_DATE = "25.09.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -98,6 +99,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     lib.revision = LIBRARY_REVISION;
     ib.sys_base = sys_base;
     ib.font_height = @import("screen/_screen.zig").default_font_height;
+    ib.system_fonts = @splat(null);
+    sys_base.InitSemaphore(&ib.system_font_lock);
 
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null;
     const graphics_lib = sys_base.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse {

@@ -86,6 +86,7 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     w.inner_layer = null;
     w.inner_rp = null;
     ib.layers_base.DeleteLayer(w.layer);
+    if (w.text_font) |font| ib.graphics_base.CloseFont(font);
     disposeParts(ib, w);
     const visitor = w.more_flags & _window.WMF_VISITOR != 0;
     ib.sys_base.FreeMem(w, @sizeOf(Window));

@@ -83,6 +83,13 @@ const WritePixelArray = @import("blit/writepixelarray.zig").WritePixelArray;
 const WriteLUTPixelArray = @import("blit/writelutpixelarray.zig").WriteLUTPixelArray;
 const BeginDraw = @import("draw/begindraw.zig").BeginDraw;
 const EndDraw = @import("draw/enddraw.zig").EndDraw;
+const WeighTAMatch = @import("text/weightamatch.zig").WeighTAMatch;
+const AskFont = @import("text/askfont.zig").AskFont;
+const LockFonts = @import("text/lockfonts.zig").LockFonts;
+const NextFont = @import("text/nextfont.zig").NextFont;
+const UnlockFonts = @import("text/unlockfonts.zig").UnlockFonts;
+const AttemptRemFont = @import("text/attemptremfont.zig").AttemptRemFont;
+const FontRows = @import("text/fontrows.zig").FontRows;
 
 /// graphics.library's interface, as the SDK generates it from
 /// sdk/fd/graphics_lib.fd.
@@ -174,6 +181,15 @@ const contract_files = [_][]const u8{
     @embedFile("region/regionrectangles.zig"),
     @embedFile("blit/scrollraster.zig"),
     @embedFile("rastport/eraserect.zig"),
+    @embedFile("draw/begindraw.zig"),
+    @embedFile("draw/enddraw.zig"),
+    @embedFile("text/weightamatch.zig"),
+    @embedFile("text/askfont.zig"),
+    @embedFile("text/lockfonts.zig"),
+    @embedFile("text/nextfont.zig"),
+    @embedFile("text/unlockfonts.zig"),
+    @embedFile("text/attemptremfont.zig"),
+    @embedFile("text/fontrows.zig"),
 };
 
 fn lvoCreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) callconv(.c) ?*graphics.RastPort {
@@ -254,8 +270,8 @@ fn lvoAreaArc(gb: *GraphicsBase, rp: *graphics.RastPort, cx: i32, cy: i32, radiu
 fn lvoAreaEnd(gb: *GraphicsBase, rp: *graphics.RastPort) callconv(.c) bool {
     return AreaEnd(gb, @ptrCast(@alignCast(rp)));
 }
-fn lvoOpenFont(gb: *GraphicsBase, name: [*:0]const u8, height: u32) callconv(.c) ?*graphics.TextFont {
-    return @ptrCast(OpenFont(gb, name, height));
+fn lvoOpenFont(gb: *GraphicsBase, text_attr: *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont {
+    return OpenFont(gb, text_attr);
 }
 fn lvoCloseFont(gb: *GraphicsBase, font: ?*graphics.TextFont) callconv(.c) void {
     CloseFont(gb, @ptrCast(@alignCast(font)));
@@ -371,6 +387,27 @@ fn lvoBeginDraw(gb: *GraphicsBase, rp: *graphics.RastPort) callconv(.c) void {
 fn lvoEndDraw(gb: *GraphicsBase, rp: *graphics.RastPort) callconv(.c) void {
     return EndDraw(gb, @ptrCast(@alignCast(rp)));
 }
+fn lvoWeighTAMatch(gb: *GraphicsBase, req: *const graphics.TextAttr, target: *const graphics.TextAttr, target_tags: ?[*]const TagItem) callconv(.c) i32 {
+    return WeighTAMatch(gb, req, target, target_tags);
+}
+fn lvoAskFont(gb: *GraphicsBase, rp: *graphics.RastPort, text_attr: *graphics.TextAttr) callconv(.c) void {
+    return AskFont(gb, @ptrCast(@alignCast(rp)), text_attr);
+}
+fn lvoLockFonts(gb: *GraphicsBase) callconv(.c) void {
+    return LockFonts(gb);
+}
+fn lvoNextFont(gb: *GraphicsBase, previous: ?*graphics.TextFont) callconv(.c) ?*graphics.TextFont {
+    return NextFont(gb, previous);
+}
+fn lvoUnlockFonts(gb: *GraphicsBase) callconv(.c) void {
+    return UnlockFonts(gb);
+}
+fn lvoAttemptRemFont(gb: *GraphicsBase, font: *graphics.TextFont) callconv(.c) bool {
+    return AttemptRemFont(gb, font);
+}
+fn lvoFontRows(gb: *GraphicsBase, text_attr: *const graphics.TextAttr) callconv(.c) u32 {
+    return FontRows(gb, text_attr);
+}
 
 /// The jump table, built from the end backwards: vector i sits at
 /// `base - (i + 1) * slot_size`, so Open is LVO -4 and Expunge LVO -12.
@@ -448,6 +485,13 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoWriteLUTPixelArray),
     vec(lvoBeginDraw),
     vec(lvoEndDraw),
+    vec(lvoWeighTAMatch),
+    vec(lvoAskFont),
+    vec(lvoLockFonts),
+    vec(lvoNextFont),
+    vec(lvoUnlockFonts),
+    vec(lvoAttemptRemFont),
+    vec(lvoFontRows),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

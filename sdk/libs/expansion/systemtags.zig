@@ -44,6 +44,10 @@ pub const SYSTAG_ScreenHeight = SYSTAG_Dummy + 8;
 /// 0 runs from here to the end of the flash. A whole 64 KiB page, above
 /// the kernel image; the build sets it (`-Ddisk-offset`).
 pub const SYSTAG_DiskOffset = SYSTAG_Dummy + 9;
+/// How many pixels an inch of the screen holds, across and down alike: a
+/// font asked for in points is this many rows per 72 of them. Absent,
+/// 72, and a point is a pixel.
+pub const SYSTAG_ScreenDPI = SYSTAG_Dummy + 10;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

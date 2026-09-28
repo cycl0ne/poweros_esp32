@@ -412,8 +412,11 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     w.gi_rp = gb.CreateRastPortTagList(&make);
     if (w.gi_rp) |gi_rp| graphics.SetFont(gb, gi_rp, s.font);
 
-    // The program's pens: text on the background, in the screen's font.
-    graphics.SetFont(gb, innerRastPort(w), s.font);
+    // The program's pens: text on the background, in the system font the
+    // window asked for - the default font unless it said.
+    const text_font: u32 = @truncate(ub.GetTagData(wn.WA_SysFont, sc.SYSFONT_DEFAULT, tags));
+    w.text_font = ib.iface().OpenSystemFont(text_font);
+    graphics.SetFont(gb, innerRastPort(w), w.text_font orelse s.font);
     const pens = [_]TagItem{
         .{ .tag = graphics.RPTAG_APen, .data = s.pens[sc.TEXTPEN] },
         .{ .tag = graphics.RPTAG_BPen, .data = s.pens[sc.BACKGROUNDPEN] },

@@ -5,6 +5,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const intuition = sdk.intuition;
+const graphics = sdk.graphics;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
@@ -56,6 +57,10 @@ pub const IntuitionBase = extern struct {
     /// The alert up, if one is; one at a time, under `alert_lock`.
     alert: @import("misc/_misc.zig").AlertState,
     alert_lock: exec.SignalSemaphore,
+    /// The system's fonts by `SYSFONT_*`, each held open here, or null for
+    /// pospaz; set by `SetSystemFonts` and read under `system_font_lock`.
+    system_fonts: [3]?*graphics.TextFont,
+    system_font_lock: exec.SignalSemaphore,
     /// The global edit hook every string gadget's keys go through first
     /// (`SetEditHook`), and intuition's own, which it is until changed.
     edit_hook: *@import("sdk").utility.Hook,

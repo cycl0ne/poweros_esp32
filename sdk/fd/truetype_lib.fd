@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+//! truetype.library's functions: a TrueType file rendered into font
+//! images, one size at a time. Open it with
+//! OpenLibrary("truetype.library", 1).
+##include libs/graphics/graphics as graphics
+##include libs/truetype/truetype as truetype
+##basetype TrueTypeBase
+##name truetype.library
+##bias 4
+##public
+/// The font in `size` bytes at `file`, its tables found and checked; null
+/// if it is not a TrueType font this library reads. The bytes must stay
+/// until CloseOutline.
+?*truetype.Outline OpenOutline([*]const u8 file, u32 size)
+/// The outline rendered `rows` rows tall, codes `first` to `last` and a
+/// default glyph, as a font image; the caller frees it with FreeVec. Null
+/// for a height of 0 or no memory.
+?*graphics.fontimage.FontImage RenderFontImage(*truetype.Outline outline, u32 rows, u32 first, u32 last)
+/// What OpenOutline made, given back. Null does nothing.
+void CloseOutline(?*truetype.Outline outline)
+##end

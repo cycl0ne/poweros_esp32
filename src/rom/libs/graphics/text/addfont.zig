@@ -20,16 +20,19 @@ const TextFont = _text.TextFont;
 /// SINCE: 0.15. LVO -176.
 ///
 /// INPUTS:
-/// - `font` - a font somebody built. Its name and height are what
-///   `OpenFont` will match on.
+/// - `font` - a font somebody built: `node.name` its name, `image` its
+///   glyphs. The name, height and style are what `OpenFont` weighs.
 ///
 /// RESULT:
-/// False if it is already on the list.
+/// False if it is already on the list, or if its image does not hold
+/// together (`fontimage.check`): a table or a glyph's pixels outside the
+/// block, ranges out of order, or no default character.
 ///
 /// BEHAVIOR:
 /// This is the way in for fonts that are not in this ROM. Something that
 /// reads a font out of a file builds a `TextFont` and calls this, and a
 /// later plain `OpenFont` finds it - which is why `OpenFont` walks a list.
+/// The count of who has it open starts at 0.
 /// The library itself never reads files, for the same reason rtg.library
 /// does not read the board file and ramlib exists rather than exec loading
 /// libraries itself: each layer keeps to what it can do on its own.
@@ -41,8 +44,9 @@ const TextFont = _text.TextFont;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The font stays the caller's. The library only holds it on a list, and
-/// `RemFont` takes it off again.
+/// The font, its name and its image stay the caller's. The library only
+/// holds it on a list, and `RemFont` takes it off again; the caller frees
+/// it after that, never before.
 ///
 /// BUGS:
 /// None known.
@@ -56,6 +60,9 @@ const TextFont = _text.TextFont;
 /// ```
 pub fn AddFont(gb: *GraphicsBase, font: *TextFont) bool {
     const sys = gb.sys_base;
+    // Text draws from the image without checking anything again, so a
+    // block that would have it read past its end is refused here, once.
+    if (!graphics.fontimage.check(@ptrCast(font.image), font.image.size)) return false;
     sys.ObtainSemaphore(&gb.font_lock);
     defer sys.ReleaseSemaphore(&gb.font_lock);
     var at = gb.fonts.first();
@@ -63,7 +70,8 @@ pub fn AddFont(gb: *GraphicsBase, font: *TextFont) bool {
         if (node.succ == null) break;
         if (node == &font.node) return false;
     }
-    font.node.name = font.name;
+    font.open_count = 0;
+    font.node.type = .font;
     sys.AddTail(&gb.fonts, &font.node);
     return true;
 }

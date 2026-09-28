@@ -16,7 +16,7 @@ const draw = @import("_draw.zig");
 /// fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -280.
+/// SINCE: 1.0. LVO -276.
 ///
 /// INPUTS:
 /// - `gb` - the library's base.

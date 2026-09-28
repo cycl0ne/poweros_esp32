@@ -25,6 +25,8 @@ test {
     _ = @import("libs/bsdsocket/tests/nd.zig");
     _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
+    _ = @import("libs/diskfont/tests/diskfont.zig");
+    _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/zone.zig");
     _ = @import("c/net/httpget/http.zig");

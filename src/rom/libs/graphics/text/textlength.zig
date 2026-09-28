@@ -10,7 +10,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
-const advance = _text.advance;
+const softStyles = _text.softStyles;
 
 /// How wide some text would be, without drawing it.
 ///
@@ -32,10 +32,11 @@ const advance = _text.advance;
 /// and the error is `GERR_NO_FONT`.
 ///
 /// BEHAVIOR:
-/// Every character of these fonts is the same width, so this is a
-/// multiplication. It is a call rather than a sum the caller does because
-/// a font that is not fixed-width will want it to be, and callers should
-/// not have to change when one arrives.
+/// The characters' advances added up, each as its glyph gives it, so a
+/// proportional font measures as it draws. A character the font has no
+/// glyph for counts as the default character it is drawn as. Ink a kern
+/// or a lean puts outside that is not counted: `TextExtent` says where
+/// the ink goes.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -58,11 +59,10 @@ const advance = _text.advance;
 /// const w = gb.TextLength(rp, label.ptr, label.len);
 /// ```
 pub fn TextLength(_: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) i32 {
-    _ = string;
     rp.last_error = graphics.GERR_OK;
     const font = rp.font orelse {
         rp.last_error = graphics.GERR_NO_FONT;
         return 0;
     };
-    return advance(font, rp.text_style) * @as(i32, @intCast(count));
+    return _text.measure(font, rp.text_style, string, count).width;
 }

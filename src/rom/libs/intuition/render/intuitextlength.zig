@@ -65,7 +65,7 @@ pub fn IntuiTextLength(ib: *IntuitionBase, itext: *const IntuiText) i32 {
     const count: u32 = @intCast(ib.utility_base.Strlen(words));
     if (count == 0) return 0;
 
-    const font = itext.font orelse gb.OpenFont(graphics.POSPAZNAME, ib.font_height) orelse return 0;
+    const font = itext.font orelse ib.iface().OpenSystemFont(sdk.intuition.screens.SYSFONT_DEFAULT) orelse return 0;
     defer if (itext.font == null) gb.CloseFont(font);
 
     // A RastPort needs something to draw into; nothing is drawn, so one

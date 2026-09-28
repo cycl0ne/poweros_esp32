@@ -21,9 +21,9 @@ const TextFont = _text.TextFont;
 ///
 /// INPUTS:
 /// - `font` - the font.
-/// - `out` - where the answer goes: the width and height, the baseline, the
-///   styles it was **drawn** with, and where one character's ink lands
-///   relative to the point.
+/// - `out` - where the answer goes: the nominal width and the height, the
+///   baseline, the styles it was **drawn** with, and where any
+///   character's ink can land relative to the point.
 ///
 /// RESULT:
 /// Nothing; the answer is in `out`.
@@ -54,13 +54,23 @@ const TextFont = _text.TextFont;
 /// gb.FontExtent(font, &about);
 /// ```
 pub fn FontExtent(_: *GraphicsBase, font: *const TextFont, out: *graphics.FontExtent) void {
-    const height: i32 = font.height;
-    const base: i32 = font.baseline;
+    const image = font.image;
+    const height: i32 = image.height;
+    const base: i32 = image.baseline;
+    // The widest reach of any glyph, from a kern back to the far edge of
+    // the widest box; never narrower than a cell.
+    var min_x: i32 = 0;
+    var max_x: i32 = image.x_size;
+    for (graphics.fontimage.glyphsOf(image)) |*glyph| {
+        if (glyph.width == 0) continue;
+        min_x = @min(min_x, glyph.left);
+        max_x = @max(max_x, @as(i32, glyph.left) + glyph.width);
+    }
     out.* = .{
-        .width = font.width,
+        .width = image.x_size,
         .height = height,
         .baseline = base,
-        .style = font.style,
-        .extent = .{ .min_x = 0, .min_y = -base, .max_x = font.width, .max_y = height - base },
+        .style = image.style,
+        .extent = .{ .min_x = min_x, .min_y = -base, .max_x = max_x, .max_y = height - base },
     };
 }

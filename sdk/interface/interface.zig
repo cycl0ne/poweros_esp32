@@ -22,3 +22,5 @@ pub const console = @import("console.zig");
 pub const colorwheel = @import("colorwheel.zig");
 pub const bsdsocket = @import("bsdsocket.zig");
 pub const crypto = @import("crypto.zig");
+pub const diskfont = @import("diskfont.zig");
+pub const truetype = @import("truetype.zig");

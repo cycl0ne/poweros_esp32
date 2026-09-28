@@ -729,8 +729,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer gb.DisposeRegion(slats);
 
     const fonts = Fonts{
-        .title = gb.OpenFont(graphics.POSPAZNAME, 16),
-        .scroller = gb.OpenFont(graphics.POSPAZNAME, 8),
+        .title = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }),
+        .scroller = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }),
     };
     defer gb.CloseFont(fonts.title);
     defer gb.CloseFont(fonts.scroller);

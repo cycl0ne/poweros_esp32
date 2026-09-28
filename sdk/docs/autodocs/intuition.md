@@ -77,6 +77,7 @@ Generated from the source by `./zig build autodoc`.
 - [OnGadget](#ongadget) - Lets a gadget be pressed again, and shows it so.
 - [OnMenu](#onmenu) - Lets a menu, an item or a subitem be picked again.
 - [OpenScreenTagList](#openscreentaglist) - Opens a screen.
+- [OpenSystemFont](#opensystemfont) - One of the system's fonts, opened.
 - [OpenWindowTagList](#openwindowtaglist) - Opens a window.
 - [PointInImage](#pointinimage) - Whether a point is inside an image.
 - [PrintIText](#printitext) - Draws a run of text and the runs linked after it.
@@ -104,6 +105,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetMenuStrip](#setmenustrip) - Gives a window its menus.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
+- [SetSystemFonts](#setsystemfonts) - The fonts screens, windows and consoles use from now on.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
 - [SetWindowTitles](#setwindowtitles) - Changes a window's title and the screen title it shows while active.
 - [ShowTitle](#showtitle) - Puts a screen's title bar in front of its backdrop windows, or behind them.
@@ -4403,6 +4405,64 @@ const tags = [_]TagItem{
 const screen = ib.OpenScreenTagList(&tags) orelse return why;
 ```
 
+## OpenSystemFont
+
+One of the system's fonts, opened.
+
+**SYNOPSIS**
+
+```zig
+fn OpenSystemFont(ib: *IntuitionBase, which: u32) ?*graphics.TextFont
+```
+
+**SINCE**
+
+0.19. LVO -460.
+
+**INPUTS**
+
+- `which` - `SYSFONT_SCREEN`, `SYSFONT_DEFAULT` or `SYSFONT_FIXED`;
+  anything else is `SYSFONT_DEFAULT`.
+
+**RESULT**
+
+The font, open, or null only when not even the ROM's can be opened.
+
+**BEHAVIOR**
+
+The font `SetSystemFonts` last set for `which`, or pospaz from the ROM
+at the height intuition starts with when none was set - or when the one
+set cannot be opened again. What screens, windows and consoles are
+opened with when they name no font; a program laying out text to match
+them asks for the same.
+
+**CONTEXT**
+
+- Waits: yes, while the fonts are being changed.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller holds it open: `CloseFont` it. A later `SetSystemFonts`
+does not take it away.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetSystemFonts`, `SA_SysFont`, `WA_SysFont`
+
+**EXAMPLES**
+
+```zig
+const font = ib.OpenSystemFont(sdk.intuition.screens.SYSFONT_FIXED) orelse return;
+defer gb.CloseFont(font);
+```
+
 ## OpenWindowTagList
 
 Opens a window.
@@ -6099,6 +6159,69 @@ None known.
 ```zig
 const old = ib.SetPubScreenModes(sc.POPPUBSCREEN);
 _ = old;
+```
+
+## SetSystemFonts
+
+The fonts screens, windows and consoles use from now on.
+
+**SYNOPSIS**
+
+```zig
+fn SetSystemFonts(ib: *IntuitionBase, screen_font: ?*graphics.TextFont, default_font: ?*graphics.TextFont, fixed_font: ?*graphics.TextFont) bool
+```
+
+**SINCE**
+
+0.19. LVO -456.
+
+**INPUTS**
+
+- `screen_font` - title bars and menus of screens opened from now on.
+- `default_font` - text in windows and gadgets that name none.
+- `fixed_font` - consoles; must be fixed-width.
+
+Each may be null: pospaz from the ROM again.
+
+**RESULT**
+
+True when set. False when `fixed_font` is proportional, or a font
+could not be opened, and then nothing changes.
+
+**BEHAVIOR**
+
+Intuition opens each font itself and keeps it open until the next
+call, so the caller closes its own opens as soon as this returns.
+Screens and windows already open keep the fonts they were made with:
+their layout was worked out for those. The next screen, window and
+console takes the new ones - and the default public screen when it is
+next opened.
+
+**CONTEXT**
+
+- Waits: yes, while another task reads the fonts.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The fonts stay the caller's to close; intuition holds opens of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenSystemFont`, `diskfont.library/OpenDiskFont`
+
+**EXAMPLES**
+
+```zig
+const font = dfb.OpenDiskFont(&.{ .name = "spleen.font", .y_size = 10, .flags = sdk.graphics.FPF_POINTS });
+_ = ib.SetSystemFonts(font, font, font);
+if (font) |f| gb.CloseFont(f);
 ```
 
 ## SetWindowPointerA

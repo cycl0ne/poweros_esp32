@@ -21,6 +21,16 @@ const homeOf = _screen.homeOf;
 const inUse = _screen.inUse;
 const showFront = _screen.showFront;
 const drawBar = _screen.drawBar;
+const _font = @import("../font/_font.zig");
+
+/// The font a screen given none opens for itself: the Workbench's, for a
+/// screen like it; else the system font asked for.
+fn ownFont(ib: *IntuitionBase, like: ?*Screen, which: u32) ?*graphics.TextFont {
+    if (like) |wb| {
+        if (_font.reopen(ib, wb.font)) |font| return font;
+    }
+    return ib.iface().OpenSystemFont(which);
+}
 const fillGround = _screen.fillGround;
 const findPublic = _screen.findPublic;
 const lock = _screen.lock;
@@ -131,22 +141,18 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
     };
     const s: *Screen = @ptrCast(@alignCast(memory));
 
-    // Like the Workbench screen, when it is open: its pens, and the ROM
-    // font at its font's height. Tags given as well have the last word.
+    // Like the Workbench screen, when it is open: its pens, and its font.
+    // Tags given as well have the last word.
     const like: ?*Screen = if (ub.GetTagData(sc.SA_LikeWorkbench, 0, tags) != 0) findPublic(ib, sc.WBENCHNAME) else null;
-    var font_size = ib.font_height;
-    if (like) |wb| {
-        var height: u32 = 0;
-        const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) }, .{} };
-        gb.GetRPAttrs(wb.rp, &metric);
-        if (height != 0) font_size = height;
-    }
-    // A system font asked for is the ROM's, whatever SA_Font says.
-    const given_font: ?*graphics.TextFont = if (ub.FindTagItem(sc.SA_SysFont, tags) != null or like != null)
+    // A system font asked for is that, whatever SA_Font says; with
+    // neither, the system's screen font.
+    const sys_font = ub.FindTagItem(sc.SA_SysFont, tags);
+    const given_font: ?*graphics.TextFont = if (sys_font != null or like != null)
         null
     else
         @ptrFromInt(ub.GetTagData(sc.SA_Font, 0, tags));
-    const font = given_font orelse gb.OpenFont(graphics.POSPAZNAME, font_size) orelse {
+    const which: u32 = if (sys_font) |item| (if (item.data == sc.SYSFONT_DEFAULT) sc.SYSFONT_DEFAULT else sc.SYSFONT_SCREEN) else sc.SYSFONT_SCREEN;
+    const font = given_font orelse ownFont(ib, like, which) orelse {
         ib.sys_base.FreeMem(memory, @sizeOf(Screen));
         dropPlace(ib, place);
         return fail(code_ptr, sc.OSERR_NOMEM);

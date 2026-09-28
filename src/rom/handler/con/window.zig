@@ -331,6 +331,8 @@ pub fn open(ib: *IntuitionBase, spec: *const Spec, idcmp: u32) ?*wn.Window {
         .{ .tag = wn.WA_MinWidth, .data = min_width },
         .{ .tag = wn.WA_MinHeight, .data = min_height },
         .{ .tag = wn.WA_IDCMP, .data = idcmp },
+        // A console lays its text out in columns: the fixed font.
+        .{ .tag = wn.WA_SysFont, .data = intuition.screens.SYSFONT_FIXED },
         .{ .tag = wn.WA_Title, .data = @intFromPtr(spec.titleText()) },
         .{ .tag = wn.WA_CloseGadget, .data = @intFromBool(spec.close) },
         .{ .tag = wn.WA_SizeGadget, .data = @intFromBool(spec.size) },

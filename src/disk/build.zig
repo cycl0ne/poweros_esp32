@@ -31,14 +31,16 @@ const commands = [_][]const u8{
     "list",       "format",   "protect", "changetaskpri", "wait",
     "info",       "platform", "copy",    "rdb",           "i2c",
     "backlight",  "rtg",      "show",    "setmap",        "mount",
-    "showconfig", "date",     "setdate",
+    "showconfig", "date",     "setdate", "fontprefs",     "fixfonts",
+    "listfonts",
 };
 const tests = [_][]const u8{
-    "hello",      "echoargs", "testlib",  "gfx",     "anim",
-    "intuition",  "console",  "keyboard", "touch",   "input",
-    "lines",      "nyan",     "plasma",   "audio",   "fonts",
-    "screens",    "layout",   "classes",  "gadgets", "listview",
-    "colorwheel", "tapedeck", "pointer",  "crypto",  "bsdsocktest",
+    "hello",       "echoargs",   "testlib",  "gfx",     "anim",
+    "intuition",   "console",    "keyboard", "touch",   "input",
+    "lines",       "nyan",       "plasma",   "audio",   "fonts",
+    "screens",     "layout",     "classes",  "gadgets", "listview",
+    "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
+    "bsdsocktest",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless" };
 
@@ -52,6 +54,8 @@ const modules = [_]Program{
     .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library" },
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
+    .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
+    .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
     .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
     .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },
@@ -114,6 +118,7 @@ pub const files = [_]File{
     // ENVARC: as a fresh disk has it: what each settings file says, and
     // its value to start with.
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
+    .{ .disk = "prefs/env-archive/Sys/font.prefs", .source = "prefs/env-archive/Sys/font.prefs" },
     .{ .disk = "prefs/env-archive/Sys/net/timeserver", .source = "prefs/env-archive/Sys/net/timeserver" },
     .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
     .{ .disk = "prefs/env-archive/Sys/net/nameservers", .source = "prefs/env-archive/Sys/net/nameservers" },

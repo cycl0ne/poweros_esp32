@@ -1,0 +1,350 @@
+# diskfont.library
+
+diskfont.library's functions: fonts from FONTS:, any size of them.
+A font opened here is closed with graphics' CloseFont. Open it with
+OpenLibrary("diskfont.library", 1).
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AvailFonts](#availfonts) - Every font in memory and in FONTS:, described.
+- [DisposeFontContents](#disposefontcontents) - Frees what NewFontContents made.
+- [NewFontContents](#newfontcontents) - A family's contents file, made from its directory.
+- [NewScaledDiskFont](#newscaleddiskfont) - A font of another height, made from one there is.
+- [OpenDiskFont](#opendiskfont) - The nearest font to what is asked for, loaded or scaled as needed.
+
+## AvailFonts
+
+Every font in memory and in FONTS:, described.
+
+**SYNOPSIS**
+
+```zig
+fn AvailFonts(dfb: *DiskfontBase, buffer: *anyopaque, buffer_size: u32, flags: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `buffer` - where the answer goes, four-byte aligned.
+- `buffer_size` - how many bytes it has.
+- `flags` - where to look: `AFF_MEMORY` for the fonts on graphics'
+  list, `AFF_DISK` for every size every contents file in `FONTS:`
+  lists, `AFF_SCALED` to count memory fonts made by scaling as well.
+
+**RESULT**
+
+0 when everything fitted: the buffer holds an `AvailFontsHeader`, its
+`count` `AvailFonts` entries (`diskfont.availEntries`), and the names
+they point at. Otherwise
+how many bytes more it needed; the buffer is then not filled, and a
+caller tries again with that much more.
+
+**BEHAVIOR**
+
+Each entry is the `TextAttr` that opens the font - with `OpenFont` for
+one in memory, `OpenDiskFont` for one on a disk - and where it was:
+`AFF_MEMORY`, `AFF_MEMORY | AFF_SCALED`, `AFF_DISK`, or
+`AFF_DISK | AFF_SCALABLE` with a height of 0 for an outline, which
+comes at any height. A font loaded
+from a disk is listed under both, once for each place. A disk entry
+says what its contents file says; whether the size file itself is
+sound is only known when it is opened. Every directory of a `FONTS:`
+assign of several is looked in.
+
+**CONTEXT**
+
+- Waits: yes: for the disk, and for graphics' font list.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Process, since it reads files.
+
+**OWNERSHIP**
+
+The buffer is the caller's; the names in it point into it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenDiskFont`, `graphics.library/NextFont`
+
+**EXAMPLES**
+
+```zig
+var size: u32 = 1024;
+while (true) {
+    const buffer = sys.AllocVec(size, exec.MEMF_ANY) orelse return;
+    const more = dfb.AvailFonts(buffer, size, diskfont.AFF_MEMORY | diskfont.AFF_DISK);
+    if (more == 0) break use(buffer);
+    sys.FreeVec(buffer);
+    size += more;
+}
+```
+
+## DisposeFontContents
+
+Frees what NewFontContents made.
+
+**SYNOPSIS**
+
+```zig
+fn DisposeFontContents(dfb: *DiskfontBase, contents: ?*fontfile.ContentsHeader) void
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `contents` - what `NewFontContents` answered, or null.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The image goes back to the system; null does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image is gone; nothing may read it after.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NewFontContents`
+
+**EXAMPLES**
+
+```zig
+dfb.DisposeFontContents(made);
+```
+
+## NewFontContents
+
+A family's contents file, made from its directory.
+
+**SYNOPSIS**
+
+```zig
+fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]const u8) ?*fontfile.ContentsHeader
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `lock` - the directory the family is in: `FONTS:`, or wherever its
+  contents file is to go.
+- `name` - the family's name, ending in ".font": "spleen.font". Its
+  sizes are in the directory of that name without ".font".
+
+**RESULT**
+
+The contents file's image, sealed and ready to be written as
+`<name>`; null if the name does not end in ".font" or is too long, the
+directory cannot be read, it holds no font, or there is no memory.
+
+**BEHAVIOR**
+
+Every file in the family's directory that is a whole font - its image
+checks and its sum is sound - becomes an entry: its path from `lock`
+("spleen/16"), height, drawn styles, flags, kind and width, as its own
+header says. A TrueType file becomes the family's outline entry, of
+height 0. Anything else there is passed over. The entries are in
+order of height. At most 64 sizes are listed.
+
+**CONTEXT**
+
+- Waits: yes, for the disk.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Process, since it reads files.
+
+**OWNERSHIP**
+
+The image is the caller's, freed with `DisposeFontContents`. Its size
+is `fontfile.contentsSize(header.count)`. `lock` stays the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DisposeFontContents`, `AvailFonts`
+
+**EXAMPLES**
+
+```zig
+const made = dfb.NewFontContents(fonts_lock, "spleen.font") orelse return;
+defer dfb.DisposeFontContents(made);
+_ = dl.Write(fh, made, @intCast(fontfile.contentsSize(made.count)));
+```
+
+## NewScaledDiskFont
+
+A font of another height, made from one there is.
+
+**SYNOPSIS**
+
+```zig
+fn NewScaledDiskFont(dfb: *DiskfontBase, font: *TextFont, text_attr: *const TextAttr) ?*TextFont
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `font` - the font to scale from: any kind, ink, coverage or colour.
+- `text_attr` - the height wanted (`y_size`); the rest is not used.
+
+**RESULT**
+
+The new font, on no list and open to nobody, or null for a height of
+0 or no memory.
+
+**BEHAVIOR**
+
+Every glyph is scaled by the ratio of the heights, across as much as
+down, so a fixed-width font stays fixed-width and letters keep their
+shape. Each pixel of the new glyph takes the value of the pixel of the
+old one under its middle - nearest, not blended, so ink stays ink,
+coverage keeps its steps and a colour font's pixels stay palette
+entries. The boxes, the advances, the width and the baseline scale
+with them, rounded. Glyphs several characters share are scaled once.
+
+The new font has the old one's name, styles and palette, and is not
+`FPF_DESIGNED`: it was made, not drawn.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller's: one allocation, freed with `FreeVec(font)` - after
+`RemFont` if the caller put it on graphics' list with `AddFont`.
+`font` is only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenDiskFont`, `graphics.library/AddFont`
+
+**EXAMPLES**
+
+```zig
+const big = dfb.NewScaledDiskFont(font, &.{ .name = "", .y_size = 48 }) orelse return;
+defer sys.FreeVec(big);
+```
+
+## OpenDiskFont
+
+The nearest font to what is asked for, loaded or scaled as needed.
+
+**SYNOPSIS**
+
+```zig
+fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `text_attr` - the font's name ("spleen.font", or a path to its
+  contents file), height - in rows, or in points with `FPF_POINTS` -
+  style and flags. A height of 0 is 1.
+
+**RESULT**
+
+The font, open: close it with graphics' `CloseFont`. Null if there is
+no font of the name, or none that will do - `FPF_DESIGNED` asked for
+and no size drawn.
+
+**BEHAVIOR**
+
+**A font in memory that matches perfectly is answered at once.**
+Otherwise the family's contents file is read - `FONTS:<name>`, or the
+name as given when it has a ':' - and:
+
+- **A family with an outline** (a TrueType file) takes a size drawn
+  at exactly the height and style asked when it has one, and otherwise
+  has truetype.library render the outline at that height - at any
+  height, and with `FPF_DESIGNED` too, since it is drawn and not
+  scaled.
+- **Without `FPF_DESIGNED`**, a source is looked for at the height
+  asked, then twice it, then half it (when even), in memory first and
+  then among the family's sizes, the style asked for or one with
+  underline, then bold, then italic let go, since the soft styles can
+  draw those. Failing all of that, the nearest size by `WeighTAMatch`.
+  A source of another height is scaled to the height asked
+  (`NewScaledDiskFont`), and the scaled font kept like a loaded one.
+- **With `FPF_DESIGNED`**, the nearest size drawn, by `WeighTAMatch`,
+  whether in memory or on the disk: never a scaled one.
+
+A size read from the disk must be a whole font file (checked and
+sound); one that is not is passed over for the next best. Fonts are
+loaded one at a time, whoever asks.
+
+**CONTEXT**
+
+- Waits: yes: for the disk, and for another task loading.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Process, since it reads files.
+
+**OWNERSHIP**
+
+The font is the library's; the caller holds it open until
+`CloseFont`. Once nobody holds it, it stays loaded for the next caller
+until memory runs short.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`graphics.library/OpenFont`, `graphics.library/WeighTAMatch`,
+`AvailFonts`, `NewScaledDiskFont`
+
+**EXAMPLES**
+
+```zig
+const want = sdk.graphics.TextAttr{ .name = "spleen.font", .y_size = 16 };
+const font = dfb.OpenDiskFont(&want) orelse return error.NoFont;
+defer gb.CloseFont(font);
+```

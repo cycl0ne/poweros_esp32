@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT
+//! diskfont.library's functions: fonts from FONTS:, any size of them.
+//! A font opened here is closed with graphics' CloseFont. Open it with
+//! OpenLibrary("diskfont.library", 1).
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/dos/dos as dos
+##include libs/diskfont/diskfont as diskfont
+##basetype DiskfontBase
+##name diskfont.library
+##bias 4
+##public
+/// The font nearest to `text_attr`: from memory, loaded from FONTS:, or
+/// scaled from another size unless FPF_DESIGNED is asked. Null if the
+/// font has no size that will do.
+?*graphics.TextFont OpenDiskFont(*const graphics.TextAttr text_attr)
+/// Every font in memory and in FONTS: (flags AFF_*) into `buffer`: an
+/// AvailFontsHeader, the entries, their names. 0, or the bytes more it
+/// needed.
+u32 AvailFonts(*anyopaque buffer, u32 buffer_size, u32 flags)
+/// A family's contents file made from its directory beside `lock`'s
+/// directory; `name` ends in ".font". Null if there is nothing.
+?*diskfont.fontfile.ContentsHeader NewFontContents(?*dos.FileLock lock, [*:0]const u8 name)
+/// Free what NewFontContents made. Null does nothing.
+void DisposeFontContents(?*diskfont.fontfile.ContentsHeader contents)
+/// A new font of `text_attr`'s height from `font`, every glyph scaled.
+/// Nobody else's: FreeVec frees it, after RemFont if it was added.
+?*graphics.TextFont NewScaledDiskFont(*graphics.TextFont font, *const graphics.TextAttr text_attr)
+##end

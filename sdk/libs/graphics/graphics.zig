@@ -27,6 +27,10 @@ const Surface = @import("../rtg/bitmaps.zig").Surface;
 const RtgBitMap = @import("../rtg/bitmaps.zig").RtgBitMap;
 const TagItem = @import("../utility/tagitem.zig").TagItem;
 const GraphicsBase = @import("../../interface/graphics.zig").GraphicsBase;
+const Node = @import("../exec/nodes.zig").Node;
+
+/// A font's glyphs and measures as one block, the form every font takes.
+pub const fontimage = @import("fontimage.zig");
 
 /// The name to open it by.
 pub const GRAPHICSNAME = "graphics.library";
@@ -173,18 +177,62 @@ pub const GERR_NO_FONT: i32 = -5;
 /// The furthest code there is, for a caller checking a range.
 pub const GERR_LAST: i32 = GERR_NO_FONT;
 
-/// A font: the glyphs and what a caller needs to lay them out.
+/// A font: a name on graphics' font list and the image that is its
+/// glyphs.
 ///
-/// Opaque, as a RastPort is. What a caller wants to know about one - how
-/// tall it is and where its baseline sits - is read from the RastPort it
-/// is set on, with `RPTAG_FontHeight` and the rest, so there is one way
-/// into a RastPort and not two.
-pub const TextFont = opaque {};
+/// Whoever builds a font - diskfont loading one, a scaler, an outline
+/// engine - puts one of these in a record of its own, points `image` at
+/// the glyphs, names it through `node.name`, and hands it to `AddFont`.
+/// The record, the name and the image stay the builder's: graphics only
+/// holds the font on its list and counts who has it open, and the
+/// builder frees it all once `RemFont` has taken it off.
+///
+/// What a caller drawing with a font wants to know about it - how tall it
+/// is and where its baseline sits - is read from the RastPort it is set
+/// on, with `RPTAG_FontHeight` and the rest.
+pub const TextFont = extern struct {
+    /// On the font list by this; `name` is the font's name, which
+    /// `OpenFont` matches. `type` is `.font`.
+    node: Node = .{ .type = .font },
+    /// The glyphs and measures: a block `fontimage.check` passes.
+    image: *const fontimage.FontImage,
+    /// How many have it open. graphics counts it under the font list's
+    /// lock; to a builder it is to be read, not written.
+    open_count: u32 = 0,
+    /// Where it came from: `FPF_ROMFONT` or `FPF_DISKFONT`.
+    flags: FontFlags = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
+};
+
+/// A font as asked for: by name, height and style, and what else the
+/// caller cares about. `OpenFont` answers the nearest font of the name,
+/// `AskFont` fills one in from a RastPort's font, and `WeighTAMatch`
+/// says how near two of them are.
+pub const TextAttr = extern struct {
+    /// The font's name, "pospaz.font" and the like.
+    name: [*:0]const u8,
+    /// Rows tall.
+    y_size: u16,
+    /// The styles it should look like (`FSF_`): one the font was drawn
+    /// with is a better match than one the soft styles would add.
+    style: FontStyle = FS_NORMAL,
+    /// `FPF_` flags: `FPF_DESIGNED` refuses a font scaled from another
+    /// size.
+    flags: FontFlags = 0,
+    /// More that describes it, or null.
+    tags: ?[*]const TagItem = null,
+};
+
+/// How well a font that matches in everything matches: what
+/// `WeighTAMatch` answers for a perfect match. 0 is no match at all.
+pub const MAXFONTMATCHWEIGHT: i32 = 32767;
 
 /// What a font is, for a caller that wants to know rather than to draw.
-/// `AddFont` takes one of these; `FontExtent` fills one in.
+/// `FontExtent` fills one in.
 pub const FontExtent = extern struct {
-    /// How far one character moves the point, and how tall the font is.
+    /// The nominal width - how far every character of a fixed-width font
+    /// moves the point, a typical one of a proportional font - and how
+    /// tall the font is.
     width: i32 = 0,
     height: i32 = 0,
     /// How far down the height the baseline sits.
@@ -192,7 +240,8 @@ pub const FontExtent = extern struct {
     /// The styles the font was drawn with, which cannot be applied again.
     style: FontStyle = FS_NORMAL,
     pad: [3]u8 = .{ 0, 0, 0 },
-    /// Where one character's ink lands relative to the point, half-open.
+    /// Where the widest character's ink can land relative to the point,
+    /// half-open.
     extent: Rect = .{},
 };
 
@@ -219,8 +268,7 @@ pub const TEXT_BACKWARD: i32 = -1;
 /// for it. Both are this name and differ by height: 8 and 16.
 pub const POSPAZNAME = "pospaz.font";
 
-/// How letters are drawn, on top of the font's own shape. The old names,
-/// and the same bits.
+/// How letters are drawn, on top of the font's own shape.
 pub const FontStyle = u8;
 /// As the font was drawn.
 pub const FS_NORMAL: FontStyle = 0;
@@ -233,6 +281,21 @@ pub const FSF_UNDERLINED: FontStyle = 4;
 /// Wider than it was drawn. A font drawn this way has it in its style,
 /// and is not widened again.
 pub const FSF_EXTENDED: FontStyle = 8;
+
+/// What a font is, as flags: where it came from in `TextFont.flags`, how
+/// it was made in its image's `flags`, what is asked for in a `TextAttr`.
+pub const FontFlags = u8;
+/// It is in the ROM.
+pub const FPF_ROMFONT: FontFlags = 0x01;
+/// It was loaded from a disk.
+pub const FPF_DISKFONT: FontFlags = 0x02;
+/// Its characters do not all move the point the same distance.
+pub const FPF_PROPORTIONAL: FontFlags = 0x20;
+/// Its size was drawn, not scaled from another.
+pub const FPF_DESIGNED: FontFlags = 0x40;
+/// In a `TextAttr`: `y_size` is in points, a 72nd of an inch, and the
+/// screen's DPI makes it rows (`FontRows`).
+pub const FPF_POINTS: FontFlags = 0x04;
 
 /// A place on a surface. The line and text calls draw from one.
 pub const Point = extern struct {
@@ -329,8 +392,13 @@ pub const RPTAG_FontHeight = RPTAG_Dummy + 17;
 /// `*u32`, get only: how far down the font's height its baseline sits, so
 /// that a caller can line two fonts up.
 pub const RPTAG_FontBaseline = RPTAG_Dummy + 18;
-/// `*u32`, get only: how far `Text` moves along for one character.
+/// `*u32`, get only: how far `Text` moves along for one character - of
+/// a proportional font, its nominal width, which a character may differ
+/// from; `TextLength` measures a string.
 pub const RPTAG_FontWidth = RPTAG_Dummy + 19;
+/// `*u32`, get only: 1 when the font's characters differ in width, so a
+/// caller that lays text out in columns knows it cannot.
+pub const RPTAG_FontProportional = RPTAG_Dummy + 22;
 
 /// The list of places this RastPort draws into (`?*ClipTarget`), or 0 for
 /// none. With a list, the clip region is not consulted: whatever built the
@@ -461,7 +529,7 @@ pub inline fn penRGB(red: u8, green: u8, blue: u8) Pen {
 /// the same time. So opening a font and drawing with it are two steps, and
 /// this is the second one written out:
 ///
-///     const font = gb.OpenFont(graphics.POSPAZNAME, 8) orelse return;
+///     const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return;
 ///     graphics.SetFont(gb, rp, font);
 ///
 /// It is inline and it is here rather than a slot of its own, because a

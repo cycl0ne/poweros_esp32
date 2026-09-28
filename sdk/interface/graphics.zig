@@ -84,6 +84,13 @@ pub const LVO = struct {
     pub const WriteLUTPixelArray = libraries.lvo(66);
     pub const BeginDraw = libraries.lvo(67);
     pub const EndDraw = libraries.lvo(68);
+    pub const WeighTAMatch = libraries.lvo(69);
+    pub const AskFont = libraries.lvo(70);
+    pub const LockFonts = libraries.lvo(71);
+    pub const NextFont = libraries.lvo(72);
+    pub const UnlockFonts = libraries.lvo(73);
+    pub const AttemptRemFont = libraries.lvo(74);
+    pub const FontRows = libraries.lvo(75);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -115,7 +122,7 @@ pub const Fn = struct {
     pub const AreaCircle = *const fn (*GraphicsBase, *graphics.RastPort, i32, i32, i32) callconv(.c) bool;
     pub const AreaArc = *const fn (*GraphicsBase, *graphics.RastPort, i32, i32, i32, i32, i32) callconv(.c) bool;
     pub const AreaEnd = *const fn (*GraphicsBase, *graphics.RastPort) callconv(.c) bool;
-    pub const OpenFont = *const fn (*GraphicsBase, [*:0]const u8, u32) callconv(.c) ?*graphics.TextFont;
+    pub const OpenFont = *const fn (*GraphicsBase, *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont;
     pub const CloseFont = *const fn (*GraphicsBase, ?*graphics.TextFont) callconv(.c) void;
     pub const Text = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32) callconv(.c) void;
     pub const TextLength = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32) callconv(.c) i32;
@@ -154,6 +161,13 @@ pub const Fn = struct {
     pub const WriteLUTPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, [*]const graphics.Pen, i32, i32, *const graphics.Rect) callconv(.c) void;
     pub const BeginDraw = *const fn (*GraphicsBase, *graphics.RastPort) callconv(.c) void;
     pub const EndDraw = *const fn (*GraphicsBase, *graphics.RastPort) callconv(.c) void;
+    pub const WeighTAMatch = *const fn (*GraphicsBase, *const graphics.TextAttr, *const graphics.TextAttr, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const AskFont = *const fn (*GraphicsBase, *graphics.RastPort, *graphics.TextAttr) callconv(.c) void;
+    pub const LockFonts = *const fn (*GraphicsBase) callconv(.c) void;
+    pub const NextFont = *const fn (*GraphicsBase, ?*graphics.TextFont) callconv(.c) ?*graphics.TextFont;
+    pub const UnlockFonts = *const fn (*GraphicsBase) callconv(.c) void;
+    pub const AttemptRemFont = *const fn (*GraphicsBase, *graphics.TextFont) callconv(.c) bool;
+    pub const FontRows = *const fn (*GraphicsBase, *const graphics.TextAttr) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -329,10 +343,11 @@ pub const GraphicsBase = opaque {
         return libraries.call(self, LVO.AreaEnd, Fn.AreaEnd, .{rp});
     }
 
-    /// A font of that name and height, or null if there is none. The fonts in
-    /// this ROM are all POSPAZNAME, at heights 8 and 16.
-    pub fn OpenFont(self: *GraphicsBase, name: [*:0]const u8, height: u32) ?*graphics.TextFont {
-        return libraries.call(self, LVO.OpenFont, Fn.OpenFont, .{ name, height });
+    /// The font of that name nearest to what is asked for, by height, style
+    /// and flags, or null if there is none of the name or none that will do.
+    /// The fonts in this ROM are all POSPAZNAME, at heights 8 and 16.
+    pub fn OpenFont(self: *GraphicsBase, text_attr: *const graphics.TextAttr) ?*graphics.TextFont {
+        return libraries.call(self, LVO.OpenFont, Fn.OpenFont, .{text_attr});
     }
 
     /// Give a font back. Null is allowed. A font in the ROM stays whatever
@@ -597,5 +612,47 @@ pub const GraphicsBase = opaque {
     /// nothing goes until the last.
     pub fn EndDraw(self: *GraphicsBase, rp: *graphics.RastPort) void {
         return libraries.call(self, LVO.EndDraw, Fn.EndDraw, .{rp});
+    }
+
+    /// How well a font described by `target` matches what `req` asks for:
+    /// MAXFONTMATCHWEIGHT when perfectly, less the further off, 0 when it will
+    /// not do. The names are not compared.
+    pub fn WeighTAMatch(self: *GraphicsBase, req: *const graphics.TextAttr, target: *const graphics.TextAttr, target_tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.WeighTAMatch, Fn.WeighTAMatch, .{ req, target, target_tags });
+    }
+
+    /// The RastPort's font as a TextAttr: its name, height, style and flags.
+    /// All zero but the name "" with no font set.
+    pub fn AskFont(self: *GraphicsBase, rp: *graphics.RastPort, text_attr: *graphics.TextAttr) void {
+        return libraries.call(self, LVO.AskFont, Fn.AskFont, .{ rp, text_attr });
+    }
+
+    /// Hold the font list still, shared, for NextFont. No other font call
+    /// until UnlockFonts.
+    pub fn LockFonts(self: *GraphicsBase) void {
+        return libraries.call(self, LVO.LockFonts, Fn.LockFonts, .{});
+    }
+
+    /// The font after `previous` on the list, the first for null, null after
+    /// the last. Only between LockFonts and UnlockFonts.
+    pub fn NextFont(self: *GraphicsBase, previous: ?*graphics.TextFont) ?*graphics.TextFont {
+        return libraries.call(self, LVO.NextFont, Fn.NextFont, .{previous});
+    }
+
+    /// Let the font list go again.
+    pub fn UnlockFonts(self: *GraphicsBase) void {
+        return libraries.call(self, LVO.UnlockFonts, Fn.UnlockFonts, .{});
+    }
+
+    /// RemFont that never waits: false when the font is open or the list is
+    /// busy. What a low-memory handler, under Forbid, calls.
+    pub fn AttemptRemFont(self: *GraphicsBase, font: *graphics.TextFont) bool {
+        return libraries.call(self, LVO.AttemptRemFont, Fn.AttemptRemFont, .{font});
+    }
+
+    /// How many rows `text_attr` asks for: its y_size, or with FPF_POINTS
+    /// that many points at the screen's DPI.
+    pub fn FontRows(self: *GraphicsBase, text_attr: *const graphics.TextAttr) u32 {
+        return libraries.call(self, LVO.FontRows, Fn.FontRows, .{text_attr});
     }
 };

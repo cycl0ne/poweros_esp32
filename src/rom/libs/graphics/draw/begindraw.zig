@@ -15,7 +15,7 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 /// fn BeginDraw(gb: *GraphicsBase, rp: *RastPort) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -276.
+/// SINCE: 1.0. LVO -272.
 ///
 /// INPUTS:
 /// - `gb` - the library's base.
