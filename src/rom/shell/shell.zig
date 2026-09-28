@@ -64,7 +64,9 @@ const SHELL_VERSION_STRING =
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-const MAXCOMMAND = 511;
+/// The longest command line: a command with two whole paths in it, as
+/// much as a console takes in one line.
+const MAXCOMMAND = 2 * dos.path_max;
 const MAXALIAS = 255;
 pub const NAMEMAX = 103;
 
@@ -171,7 +173,7 @@ fn commandLoop(gv: *Global, mode: dos.ShellMode) void {
     addBuiltins(gv);
     if (cli.set_name == null or cli.set_name.?[0] == 0) {
         if (gv.proc.current_dir) |dir| {
-            var name: [256]u8 = undefined;
+            var name: [dos.path_max]u8 = undefined;
             if (dl.NameFromLock(dir, &name, name.len)) _ = dl.SetCurrentDirName(@ptrCast(&name));
         }
     }

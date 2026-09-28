@@ -106,7 +106,9 @@ const FileLock = dos.FileLock;
 const FileHandle = dos.FileHandle;
 const MsgPort = sdk.exec.MsgPort;
 const ActionCode = dos.ActionCode;
-const max_name = 255;
+/// The longest path a handler is sent: a whole path, not one name of it,
+/// so a name of the full length in a drawer several deep still goes.
+const max_path = dos.path_max;
 const FileInfoBlock = dos.FileInfoBlock;
 const ExAllControl = dos.ExAllControl;
 const ExAllData = dos.ExAllData;
@@ -178,7 +180,7 @@ pub const NameArgs = struct {
 pub fn nameAction(db: *DosBase, name: [*:0]const u8, action: ActionCode, extra: NameArgs) isize {
     const dos_lib = db.iface();
     const sys = db.sys_base;
-    if (db.utility_base.Strlen(name) > max_name) return failZero(db, dos.ERROR_LINE_TOO_LONG);
+    if (db.utility_base.Strlen(name) > max_path) return failZero(db, dos.ERROR_LINE_TOO_LONG);
     var dp = dos_lib.GetDeviceProc(name, null) orelse return 0;
     while (true) {
         const port = dp.port orelse {

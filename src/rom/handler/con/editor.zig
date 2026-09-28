@@ -34,12 +34,18 @@
 
 const std = @import("std");
 const exec = @import("sdk").exec;
+const dos = @import("sdk").dos;
 
-/// The longest line (with room for its LF).
-pub const max_line = 256;
-const ready_size = 512;
+/// The longest line (with room for its LF): a command with two whole
+/// paths in it, which is what a Copy or a Rename of two long names is.
+pub const max_line = 2 * dos.path_max;
+/// Lines that are done and waiting to be read. It holds a whole line and
+/// then some, or a line could never be finished.
+const ready_size = max_line + 512;
 /// Text pushed into the input from elsewhere, waiting to be typed in.
-const pushed_size = 512;
+/// A whole line and then some, so that a line's worth can be pushed at
+/// once and what will not fit waits rather than being thrown away.
+const pushed_size = max_line + 512;
 /// The most of a prompt that is put back after other output interrupts it.
 const prompt_max = 128;
 const history_size = 2048;

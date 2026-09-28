@@ -8,8 +8,8 @@ const _lock = @import("_lock.zig");
 const packets = @import("../packet/_packet.zig");
 const asArg = _lock.asArg;
 const fail = _lock.fail;
-/// The longest name a handler is sent.
-const max_name = 255;
+/// The longest path a handler is sent: a whole path, not one name of it.
+const max_path = dos.path_max;
 
 /// Renames or moves an object on its volume.
 ///
@@ -67,7 +67,7 @@ const max_name = 255;
 pub fn Rename(db: *DosBase, from: [*:0]const u8, to: [*:0]const u8) bool {
     const dos_lib = db.iface();
     const sys = db.sys_base;
-    if (db.utility_base.Strlen(from) > max_name or db.utility_base.Strlen(to) > max_name) return fail(db, dos.ERROR_LINE_TOO_LONG);
+    if (db.utility_base.Strlen(from) > max_path or db.utility_base.Strlen(to) > max_path) return fail(db, dos.ERROR_LINE_TOO_LONG);
     const target = dos_lib.GetDeviceProc(to, null) orelse return false;
     defer dos_lib.FreeDeviceProc(target);
     var dp = dos_lib.GetDeviceProc(from, null) orelse return false;

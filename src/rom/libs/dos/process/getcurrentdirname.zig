@@ -52,7 +52,7 @@ const noCli = _process.noCli;
 ///
 /// EXAMPLES:
 /// ```zig
-/// var dir: [256]u8 = undefined;
+/// var dir: [dos.path_max]u8 = undefined;
 /// if (dos_lib.GetCurrentDirName(&dir, dir.len)) _ = dos_lib.PutStr(@ptrCast(&dir));
 /// ```
 pub fn GetCurrentDirName(db: *DosBase, buffer: [*]u8, size: u32) bool {

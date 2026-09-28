@@ -1372,10 +1372,10 @@ test "pushed text: it waits behind a full line, a break ends it, WAIT_CHAR count
 
     // A line with no end to it fills up and the rest waits, rather than
     // being thrown away.
-    var long: [400]u8 = @splat('u');
-    var big = DosPacket.init(.queue, .{ .io = .{ .fh = null, .buffer = &long, .length = 400 } });
+    var long: [editor.max_line + 64]u8 = @splat('u');
+    var big = DosPacket.init(.queue, .{ .io = .{ .fh = null, .buffer = &long, .length = long.len } });
     h.packet(&big);
-    try testing.expectEqual(@as(isize, 400), big.res1);
+    try testing.expectEqual(@as(isize, @intCast(long.len)), big.res1);
     while (h.pushOne()) {}
     try testing.expect(h.ed.pushedIn()); // it waits for room
     h.input(0x18); // ^X clears the line

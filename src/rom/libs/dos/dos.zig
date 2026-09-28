@@ -899,7 +899,12 @@ test "Lock: the name's handler, its directory, the full name, the mode" {
     try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
     try testing.expect(dl.Lock("NOPE:x", dos.SHARED_LOCK) == null);
     try testing.expectEqual(dos.ERROR_DEVICE_NOT_MOUNTED, dl.IoErr());
-    const long = "FS:" ++ "x" ** 253; // 256 characters
+    // A whole path is as long as dos takes, a name of the full length in
+    // a drawer several deep among them; one character more is refused.
+    const deep = "FS:" ++ ("d" ** dos.name_max ++ "/") ** 2 ++ "n" ** dos.name_max;
+    try testing.expect(deep.len < dos.path_max);
+    try testing.expect(dl.Lock(deep, dos.SHARED_LOCK) != null);
+    const long = "FS:" ++ "x" ** (dos.path_max - 2);
     try testing.expect(dl.Lock(long, dos.SHARED_LOCK) == null);
     try testing.expectEqual(dos.ERROR_LINE_TOO_LONG, dl.IoErr());
 

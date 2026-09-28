@@ -360,7 +360,7 @@ pub fn Volume(comptime Media: type) type {
                 .sectors = v.sectors,
                 .created = date,
             };
-            const len = @min(label.len, flashfs.max_name);
+            const len = @min(label.len, flashfs.max_volume_name);
             @memcpy(super.name[0..len], label[0..len]);
             super.checksum = flashfs.checksumOf(&super);
 

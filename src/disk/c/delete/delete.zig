@@ -29,10 +29,10 @@ const arg_all = 1;
 const arg_quiet = 2;
 const arg_force = 3;
 
-/// The longest path it builds: the size of the buffers here.
-const max_path = 256;
-/// How deep ALL goes. Each level keeps a path buffer on the stack, so this
-/// is what holds it in hand.
+/// The longest path it builds, dos's limit: a name of the full length in
+/// a drawer several deep.
+const max_path = dos.path_max;
+/// How deep ALL goes.
 const max_depth = 15;
 
 const MSG_NO_FILES = "No file to delete\n";
@@ -43,7 +43,16 @@ const Anchor = extern struct {
     buf: [max_path]u8 = @splat(0),
 };
 
+/// What one level of the walk through a directory needs. It is allocated
+/// rather than kept on the stack: a whole path and a FileInfoBlock,
+/// `max_depth` times over, is more than a command's stack holds.
+const Level = struct {
+    fib: dos.FileInfoBlock = .{},
+    path: [max_path:0]u8 = @splat(0),
+};
+
 const Run = struct {
+    sys: *ExecBase,
     dl: *DosBase,
     all: bool,
     quiet: bool,
@@ -68,6 +77,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
 
     var run: Run = .{
+        .sys = sys,
         .dl = dl,
         .all = argv[arg_all] != 0,
         .quiet = argv[arg_quiet] != 0,
@@ -149,28 +159,33 @@ fn breakNow(run: *Run) bool {
 /// in any order and one of them has just gone.
 fn emptyDir(run: *Run, name: [*:0]const u8, depth: u32) bool {
     const dl = run.dl;
+    const block = run.sys.AllocVec(@sizeOf(Level), exec.MEMF_CLEAR) orelse {
+        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, name);
+        run.failed = true;
+        return false;
+    };
+    defer run.sys.FreeVec(block);
+    const level: *Level = @ptrCast(@alignCast(block));
     while (true) {
         if (breakNow(run)) return false;
         const lock = dl.Lock(name, dos.SHARED_LOCK) orelse return false;
-        var fib: dos.FileInfoBlock = .{};
-        if (!dl.Examine(lock, &fib)) {
+        if (!dl.Examine(lock, &level.fib)) {
             dl.UnLock(lock);
             return false;
         }
-        if (!dl.ExNext(lock, &fib)) {
+        if (!dl.ExNext(lock, &level.fib)) {
             dl.UnLock(lock);
             return true; // nothing left in it
         }
         dl.UnLock(lock);
 
-        var path: [max_path:0]u8 = @splat(0);
-        if (!join(dl, &path, name, @ptrCast(&fib.file_name))) {
+        if (!join(dl, &level.path, name, @ptrCast(&level.fib.file_name))) {
             _ = dl.PrintFault(dos.ERROR_LINE_TOO_LONG, name);
             run.failed = true;
             return false;
         }
         const was = run.failed;
-        remove(run, @ptrCast(&path), depth + 1);
+        remove(run, @ptrCast(&level.path), depth + 1);
         if (run.failed != was) return false; // it will not go; stop here
     }
 }

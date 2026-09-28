@@ -54,7 +54,7 @@ const FileHandle = dos.FileHandle;
 ///
 /// EXAMPLES:
 /// ```zig
-/// var name: [256]u8 = undefined;
+/// var name: [dos.path_max]u8 = undefined;
 /// if (dos_lib.NameFromFH(fh, &name, name.len)) _ = dos_lib.PutStr(@ptrCast(&name));
 /// ```
 pub fn NameFromFH(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, size: u32) bool {

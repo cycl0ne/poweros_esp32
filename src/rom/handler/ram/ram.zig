@@ -58,8 +58,11 @@ const HANDLER_VERSION_STRING =
 /// The volume's name, and the root's.
 pub const VOLUME_NAME = "Ram Disk";
 const block_size = 1024;
-/// The longest name of a file or directory.
-const max_name = 30;
+/// The longest name of a file or directory: dos's limit. A node carries
+/// its name whole, which costs what the name would cost anywhere else -
+/// the nodes are in whatever memory MEMF_ANY finds, and a file with
+/// anything in it already holds a block of a kilobyte.
+const max_name = dos.name_max;
 /// The longest comment.
 const max_comment = 79;
 
@@ -1029,7 +1032,15 @@ test "RAM: directories: create, locate, locks, parent, delete, names" {
     try testing.expectEqual(dos.DOSTRUE, send(&disk, .same_lock, .{ up, dir, 0, 0 }).res1); // sub, up, the dir itself
     try testing.expectEqual(dos.ERROR_OBJECT_EXISTS, send(&disk, .create_dir, .{ 0, arg("RAM:dir"), 0, 0 }).res2);
     try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, send(&disk, .locate_object, .{ 0, arg("RAM:none/x"), dos.SHARED_LOCK, 0 }).res2);
-    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(&disk, .create_dir, .{ 0, arg("RAM:" ++ "n" ** 31), 0, 0 }).res2);
+    // A name of the full length is made and found again; one character
+    // more is refused.
+    const longest = "n" ** max_name;
+    const long_dir = try lockOf(send(&disk, .create_dir, .{ 0, arg("RAM:" ++ longest), 0, 0 }));
+    _ = send(&disk, .free_lock, .{ long_dir, 0, 0, 0 });
+    const long_again = try lockOf(send(&disk, .locate_object, .{ 0, arg("RAM:" ++ longest), dos.SHARED_LOCK, 0 }));
+    _ = send(&disk, .free_lock, .{ long_again, 0, 0, 0 });
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:" ++ longest), 0, 0 }));
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(&disk, .create_dir, .{ 0, arg("RAM:" ++ "n" ** (max_name + 1)), 0, 0 }).res2);
     try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(&disk, .create_dir, .{ 0, arg("RAM:dir/"), 0, 0 }).res2);
 
     try testing.expectEqual(dos.ERROR_DIRECTORY_NOT_EMPTY, send(&disk, .delete_object, .{ 0, arg("RAM:dir"), 0, 0 }).res2);

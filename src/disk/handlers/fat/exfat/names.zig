@@ -188,9 +188,15 @@ test "a name outside Latin-1 is given a stand-in with its hash" {
 }
 
 test "a name too long for dos is cut, its extension and tag kept" {
-    var long: [200]u16 = undefined;
-    for (long[0..196]) |*unit| unit.* = 'L';
-    @memcpy(long[196..200], utf16(".mkv"));
+    // exFAT holds 255 characters and so does dos, but a name outside
+    // Latin-1 takes more than one byte a character once it is written
+    // out, so the longest names still need cutting.
+    // dos holds as many characters as exFAT does, so a name is only too
+    // long once it needs a stand-in: the tag has to go in somewhere.
+    var long: [_fat.fib_name_max]u16 = undefined;
+    for (long[0 .. long.len - 5]) |*unit| unit.* = 'L';
+    long[long.len - 5] = 0x65E5;
+    @memcpy(long[long.len - 4 ..], utf16(".mkv"));
     var into: [_fat.fib_name_max]u8 = undefined;
     const given = toDos(&long, 0x7E10, &into);
     try testing.expectEqual(_fat.fib_name_max, given.len);

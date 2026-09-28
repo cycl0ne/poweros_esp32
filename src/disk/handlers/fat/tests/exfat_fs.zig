@@ -669,8 +669,9 @@ test "the kernel's names dos cannot hold open through their stand-ins" {
         rig.unlock(held);
         if (names.tagOf(name) != null) stand_ins += 1;
     }
-    // 日本.txt, € Rechnung.pdf, and the 158-character name.
-    try testing.expectEqual(@as(u32, 3), stand_ins);
+    // 日本.txt and € Rechnung.pdf. The 158-character name is not among
+    // them: dos holds it whole.
+    try testing.expectEqual(@as(u32, 2), stand_ins);
 }
 
 test "the kernel's volume takes a new file, and its old ones are untouched" {

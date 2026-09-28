@@ -182,15 +182,18 @@ test "an entry is found again by where it is" {
     try testing.expect(!try rig.dir.at(root, long.index + 1, &found));
 }
 
-test "a long name dos cannot hold is given as the short one" {
+test "a long name is given whole, and found again by it" {
     var rig: Rig = undefined;
     try rig.init(.{});
     defer rig.deinit();
     const root = rig.volume.geo.root_cluster;
     const long_name = "x" ** 120;
     const made = try rig.file(root, long_name);
-    try testing.expectEqualStrings("XXXXXX~1", made.name());
-    // It is still found by its long name.
+    try testing.expectEqualStrings(long_name, made.name());
     var found: Found = .{};
     try testing.expect(try rig.dir.find(root, long_name, &found));
+    // The longest name FAT holds is the longest dos holds.
+    const longest = "y" ** _fat.fib_name_max;
+    const big = try rig.file(root, longest);
+    try testing.expectEqualStrings(longest, big.name());
 }

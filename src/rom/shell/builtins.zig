@@ -225,7 +225,7 @@ pub fn cmdCd(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     defer dl.FreeArgs(rda);
     var rc: i32 = dos.RETURN_OK;
     var rc2: i32 = 0;
-    var data: [256]u8 = undefined;
+    var data: [dos.path_max]u8 = undefined;
     body: {
         if (rdargs.string(argv[0])) |dir| {
             const lock = dl.Lock(dir, dos.SHARED_LOCK) orelse lock: {
@@ -251,7 +251,7 @@ pub fn cmdCd(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
             }
             if (dl.CurrentDir(lock)) |old| dl.UnLock(old);
         }
-        if (!dl.NameFromLock(thisProcess(sys).current_dir, &data, 255)) {
+        if (!dl.NameFromLock(thisProcess(sys).current_dir, &data, data.len)) {
             rc2 = dl.IoErr();
             if (rc2 == dos.ERROR_LINE_TOO_LONG) {
                 rc2 = 0;

@@ -110,7 +110,9 @@ const MSG_CANT_LIST = "\" cannot be listed: not a FileSystem device\n";
 const MSG_INVALID_DS = "<invalid>";
 
 /// The length of every path buffer it keeps.
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 /// What the built-in format needs when there is no
 /// LFORMAT to size the workspace from.
 const min_buffer = 32;

@@ -77,7 +77,9 @@ const MSG_COMMAND_PROMPT = "\nCommand ? ";
 const MSG_INVALID_RESPONSE = "Invalid response - try again\n";
 
 /// The path, name and command buffers.
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 const max_name = 32;
 const command_size = 256;
 /// A directory is indented five spaces per level and a file two more.

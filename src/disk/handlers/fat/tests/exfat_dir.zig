@@ -152,7 +152,7 @@ test "a name dos cannot hold is found by its stand-in" {
     try testing.expect(try rig.find(rig.root, lower[0..given.len], &found));
 }
 
-test "the long name and its stand-in" {
+test "a long name is given whole, and found again by it" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit();
@@ -163,8 +163,10 @@ test "the long name and its stand-in" {
         if (found.name_len < 150) continue;
         try testing.expectEqual(@as(usize, 158), found.name_len);
         const given = names.toDos(found.name(), found.hash, &into);
-        try testing.expectEqual(_fat.fib_name_max, given.len);
+        // dos holds it whole: no cutting and no tag.
+        try testing.expectEqual(@as(usize, 158), given.len);
         try testing.expect(std.mem.endsWith(u8, given, ".txt"));
+        try testing.expect(names.tagOf(given) == null);
         var again: Found = .{};
         try testing.expect(try rig.find(rig.root, given, &again));
         try testing.expectEqual(found.index, again.index);

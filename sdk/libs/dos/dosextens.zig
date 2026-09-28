@@ -391,9 +391,10 @@ pub const PathNode = extern struct {
 
 /// struct Process: a task that dos knows. Its msg_port is where packets
 /// for it arrive and where its own packets come back.
-/// The bytes of a CLI's name buffers, the NUL included: 128 each. A current directory's name is a whole path,
-/// so it gets as much as a name dos takes (255 and the NUL).
-pub const CLI_MAX_SET_NAME: usize = 256;
+/// The bytes of a CLI's name buffers, the NUL included: 128 each. A
+/// current directory's name is a whole path, so it gets a whole path's
+/// room.
+pub const CLI_MAX_SET_NAME: usize = @import("dos.zig").path_max;
 pub const CLI_MAX_COMMAND_NAME: usize = 128;
 pub const CLI_MAX_PROMPT: usize = 128;
 pub const CLI_MAX_COMMAND_FILE: usize = 128;

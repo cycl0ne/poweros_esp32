@@ -57,7 +57,9 @@ const MSG_MOUNTED = " [Mounted]\n";
 const MSG_CONFLICT = "Only one of ADD, SUB, PATH, or DEFER allowed\n";
 
 const max_name = dos.MAX_DEVICE_NAME;
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;

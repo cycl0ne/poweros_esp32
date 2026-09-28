@@ -73,7 +73,9 @@ const MSG_WRITE = "writ";
 const MSG_RECURS = "\nInfinite loop in \"%s\".\n";
 const MSG_DEST_WRONG_DIR = "Destination must be a directory.\n";
 
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 /// How wide one level of the listing is.
 const tab_size = 8;
 /// The most a buffer takes when its size was not asked for.

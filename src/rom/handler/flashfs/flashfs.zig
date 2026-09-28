@@ -251,9 +251,9 @@ fn serve(sb: *ExecBase, dl: *DosBase, st: *State, pkt: *DosPacket) disk.Answer {
 /// `doslist` shows it and locks can point at it.
 fn addVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
     _ = sb;
-    var name: [flashfs.max_name + 1:0]u8 = @splat(0);
+    var name: [flashfs.max_volume_name + 1:0]u8 = @splat(0);
     const label = st.fs.vol.name();
-    const len = @min(label.len, flashfs.max_name);
+    const len = @min(label.len, flashfs.max_volume_name);
     @memcpy(name[0..len], label[0..len]);
     const entry = dl.MakeDosEntry(if (len == 0) DEFAULT_LABEL else &name, dos.DLT_VOLUME) orelse return;
     entry.misc.volume.disk_type = flashfs.ID_FLASHFS_DISK;

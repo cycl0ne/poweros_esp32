@@ -273,8 +273,10 @@ pub fn lastStamp() Stamp {
 
 // --- names -------------------------------------------------------------------
 
-/// The longest name a FileInfoBlock holds, its NUL aside.
-pub const fib_name_max: usize = 107;
+/// The longest name a FileInfoBlock holds, its NUL aside - dos's limit,
+/// which is FAT's own. A long name that fits is given whole, so only a
+/// name with characters dos cannot hold needs a stand-in.
+pub const fib_name_max: usize = dos.name_max;
 
 /// Whether two names are the same name: compared without regard to case,
 /// over Latin-1, as dos compares them, through utility.library so a name

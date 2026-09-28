@@ -42,7 +42,9 @@ const arg_nores = 1;
 const arg_res = 2;
 const arg_all = 3;
 
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;

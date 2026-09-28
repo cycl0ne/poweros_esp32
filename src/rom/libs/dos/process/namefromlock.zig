@@ -64,7 +64,7 @@ const FileLock = dos.FileLock;
 ///
 /// EXAMPLES:
 /// ```zig
-/// var name: [256]u8 = undefined;
+/// var name: [dos.path_max]u8 = undefined;
 /// if (!dos_lib.NameFromLock(lock, &name, name.len)) return dos_lib.IoErr();
 /// ```
 pub fn NameFromLock(db: *DosBase, lock: ?*FileLock, buffer: [*]u8, size: u32) bool {

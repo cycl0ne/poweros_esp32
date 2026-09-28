@@ -44,6 +44,22 @@ pub const DateStamp = extern struct {
     }
 };
 
+/// The longest name of a file or a directory, without the NUL. Every
+/// handler, every command and every buffer that holds one is sized from
+/// here rather than from a number of its own, so that the limit is one
+/// thing and not a dozen.
+///
+/// It is a count of bytes. While names are Latin-1 that is a count of
+/// characters too; once they are UTF-8 a name of 255 bytes holds fewer
+/// than 255 characters.
+pub const name_max: usize = 255;
+
+/// The longest path: every name of it, the separators between them and
+/// the device or volume in front. Long enough for a name of the full
+/// length in a drawer several deep, which is what the deepest paths on a
+/// card look like.
+pub const path_max: usize = 1024;
+
 /// struct FileInfoBlock: what EXAMINE_OBJECT and EXAMINE_NEXT fill in.
 /// The key is pointer-sized, the sizes 64-bit, and there are no reserved
 /// bytes (no binary compatibility to keep).
@@ -52,8 +68,8 @@ pub const FileInfoBlock = extern struct {
     disk_key: usize = 0,
     /// fib_DirEntryType: above 0 a directory, below 0 a file (ST_*).
     dir_entry_type: i32 = 0,
-    /// fib_FileName: NUL-terminated.
-    file_name: [108]u8 = @splat(0),
+    /// fib_FileName: NUL-terminated, `name_max` bytes and the NUL.
+    file_name: [name_max + 1]u8 = @splat(0),
     /// fib_Protection: FIBF_*.
     protection: u32 = 0,
     /// fib_EntryType: ST_*, as dir_entry_type.

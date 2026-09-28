@@ -66,7 +66,9 @@ const reverse_bits: u32 = 0x0f;
 /// level adds.
 const norm_indent = 3;
 const tab_size = 5;
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 
 const Anchor = extern struct {
     ap: dos.AnchorPath = .{},

@@ -29,7 +29,8 @@
 //!
 //! Every number is little-endian, the chip's and the host tool's order.
 
-const DateStamp = @import("dos.zig").DateStamp;
+const dos = @import("dos.zig");
+const DateStamp = dos.DateStamp;
 
 /// ID_FLASHFS_DISK: what Info answers in id_DiskType, and what a
 /// partition's de_DosType holds so the RDB says which file system is on it.
@@ -46,9 +47,21 @@ pub const segment_magic: u32 = 0x4653_4547;
 /// The format this code writes and reads.
 pub const format_version: u32 = 1;
 
-/// The longest name and comment, as RAM: has them.
-pub const max_name = 30;
+/// The longest name of a file or a directory, and the longest comment:
+/// dos's limits. Neither is part of the format - a meta record carries
+/// its name and its comment after the fixed part, each with its length in
+/// front - so a volume written before they grew reads as it always did.
+///
+/// A kernel older than they are reads such a volume too, up to the first
+/// record whose name is longer than it knows; it refuses that record as
+/// one it cannot make sense of.
+pub const max_name = dos.name_max;
 pub const max_comment = 79;
+
+/// The longest volume name. The superblock is a fixed sixty-four bytes
+/// with the name inside it, so this one is part of the format and stays
+/// where it was.
+pub const max_volume_name = 30;
 
 /// The root directory's inode. Inodes are handed out from there up and are
 /// never reused, so a stale lock or FileInfoBlock cannot point at a new
@@ -68,7 +81,7 @@ pub const Super = extern struct {
     created: DateStamp = .{},
     /// The volume's name, NUL-padded (what doslist shows and locks point
     /// at).
-    name: [max_name + 2]u8 = [_]u8{0} ** (max_name + 2),
+    name: [max_volume_name + 2]u8 = [_]u8{0} ** (max_volume_name + 2),
     /// crc32 of every byte before it.
     checksum: u32 = 0,
 

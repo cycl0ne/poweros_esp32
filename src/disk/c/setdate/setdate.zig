@@ -37,7 +37,9 @@ const arg_all = 4;
 const MSG_FAILED = "SetDate failed";
 const MSG_BADDATE = "SetDate failed: Invalid DATE or TIME string!\n";
 
-const max_path = 256;
+/// The longest path, dos's limit: a name of the full length in a
+/// drawer several deep.
+const max_path = dos.path_max;
 
 const Anchor = extern struct {
     ap: dos.AnchorPath = .{},

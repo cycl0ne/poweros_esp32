@@ -47,7 +47,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// var path: [256]u8 = undefined;
+/// var path: [dos.path_max]u8 = undefined;
 /// _ = utility_lib.Strlcpy(&path, path.len, "SYS:c");
 /// if (!dos_lib.AddPart(@ptrCast(&path), "dir", path.len)) return dos_lib.IoErr();
 /// // path is "SYS:c/dir"

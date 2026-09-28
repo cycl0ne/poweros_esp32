@@ -315,7 +315,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var path: [256]u8 = undefined;
+var path: [dos.path_max]u8 = undefined;
 _ = utility_lib.Strlcpy(&path, path.len, "SYS:c");
 if (!dos_lib.AddPart(@ptrCast(&path), "dir", path.len)) return dos_lib.IoErr();
 // path is "SYS:c/dir"
@@ -3345,7 +3345,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var dir: [256]u8 = undefined;
+var dir: [dos.path_max]u8 = undefined;
 if (dos_lib.GetCurrentDirName(&dir, dir.len)) _ = dos_lib.PutStr(@ptrCast(&dir));
 ```
 
@@ -4608,7 +4608,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var name: [256]u8 = undefined;
+var name: [dos.path_max]u8 = undefined;
 if (dos_lib.NameFromFH(fh, &name, name.len)) _ = dos_lib.PutStr(@ptrCast(&name));
 ```
 
@@ -4677,7 +4677,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-var name: [256]u8 = undefined;
+var name: [dos.path_max]u8 = undefined;
 if (!dos_lib.NameFromLock(lock, &name, name.len)) return dos_lib.IoErr();
 ```
 
