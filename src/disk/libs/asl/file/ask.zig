@@ -503,7 +503,13 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
         .{},
     }) else null;
     const made = layout orelse {
-        for ([_]?*Object{ list, drawer, file, pattern, ok, volumes, parent, cancel, buttons }) |part| ib.DisposeObject(part);
+        // A child a group took is that group's to dispose of; one that
+        // never reached a group is disposed of here, and disposing both
+        // would free it twice.
+        if (buttons) |group| ib.DisposeObject(group) else {
+            for ([_]?*Object{ ok, volumes, parent, cancel }) |part| ib.DisposeObject(part);
+        }
+        for ([_]?*Object{ list, drawer, file, pattern }) |part| ib.DisposeObject(part);
         return false;
     };
 

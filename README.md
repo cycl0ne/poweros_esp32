@@ -67,7 +67,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   255 characters and paths of 1024 throughout; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 32 commands in `C:`, test
+  a shell with scripts and resident commands, 34 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing, layers.library for overlapping windows, and
@@ -75,7 +75,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   pointer, and an object system of gadget classes with layouts that fit
   any display. More gadget classes on the disk in `SYS:classes/gadgets/`,
   worked by the pointer or by the letter underlined in each label.
-  `LIBS:asl.library` asks which file.
+  `LIBS:asl.library` asks which file or which font, from a program or
+  from the shell (`C:RequestFile`, `C:RequestChoice`).
 - **Fonts:** of any size, proportional, in ink, smooth or colour; bitmap
   fonts and TrueType outlines in `FONTS:`, sizes in points, and the
   system's fonts set in `ENVARC:Sys/font.prefs`. `SYS:Programs/FontView`

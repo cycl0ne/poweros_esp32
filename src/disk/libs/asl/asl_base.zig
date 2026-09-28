@@ -14,6 +14,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 
 /// The gadget classes a requester makes its gadgets from. They are opened
 /// when the library is, because a requester that cannot be built is no
@@ -24,6 +25,8 @@ pub const class_libraries = [_][*:0]const u8{
     sdk.gadgets.text.TEXT_LIBRARY,
     sdk.gadgets.scroller.SCROLLER_LIBRARY,
     sdk.gadgets.checkbox.CHECKBOX_LIBRARY,
+    sdk.gadgets.cycle.CYCLE_LIBRARY,
+    sdk.gadgets.palette.PALETTE_LIBRARY,
 };
 
 pub const AslBase = extern struct {
@@ -34,6 +37,10 @@ pub const AslBase = extern struct {
     intuition_base: *IntuitionBase,
     graphics_base: *GraphicsBase,
     utility_base: *UtilityBase,
+    /// diskfont.library, which the font requester lists fonts with. It is
+    /// opened at the first font request rather than at the library's
+    /// open: a program that only ever asks for a file never loads it.
+    diskfont_base: ?*DiskfontBase = null,
     /// The class libraries of `class_libraries`, in that order.
     classes: [class_libraries.len]?*exec.Library = @splat(null),
     /// Every requester made and not yet freed, so the expunge can refuse
@@ -44,4 +51,14 @@ pub const AslBase = extern struct {
 /// The base from exec's Library header.
 pub fn aslBase(lib: *exec.Library) *AslBase {
     return @fieldParentPtr("lib", lib);
+}
+
+/// diskfont.library, opened the first time a font requester wants it and
+/// kept until the last opener of this library has gone. Null when it
+/// cannot be opened, which is a font requester that cannot be shown.
+pub fn diskfontOf(ab: *AslBase) ?*DiskfontBase {
+    if (ab.diskfont_base) |df| return df;
+    const lib = ab.sys_base.OpenLibrary(sdk.diskfont.DISKFONTNAME, 0) orelse return null;
+    ab.diskfont_base = @ptrCast(lib);
+    return ab.diskfont_base;
 }

@@ -8,6 +8,7 @@ const TagItem = utility.TagItem;
 const AslBase = @import("../asl_base.zig").AslBase;
 const _request = @import("_request.zig");
 const file = @import("../file/ask.zig");
+const font = @import("../font/ask.zig");
 
 /// A requester put up, and answered or given up.
 ///
@@ -82,6 +83,7 @@ pub fn AslRequest(ab: *AslBase, requester: *anyopaque, tags: ?[*]const TagItem) 
     _request.dropArgs(r);
     return switch (r.kind) {
         asl.ASL_FileRequest => file.ask(ab, r),
+        asl.ASL_FontRequest => font.ask(ab, r),
         else => false,
     };
 }

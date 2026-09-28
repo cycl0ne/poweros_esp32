@@ -2,14 +2,16 @@
 //! Asl: the file requester, asked for a name and told what it answered.
 //! Built against the SDK only.
 //!
-//!   Asl DIR MULTI/S SAVE/S DRAWERS/S PATTERN/K
+//!   Asl DIR MULTI/S SAVE/S DRAWERS/S PATTERN/K FONT/S
 //!
 //! It opens asl.library, makes a file requester starting in `DIR` -
 //! `SYS:` unless another is named - and puts it up. What it was answered
 //! with is printed: the drawer and the name, or with `MULTI` every name
 //! picked. `SAVE` asks for a name to save under, `DRAWERS` for a drawer
 //! rather than a file, and `PATTERN` gives the requester a Pattern field
-//! starting on that pattern.
+//! starting on that pattern. `FONT` puts up the font requester instead,
+//! with the styles, both pens and the drawing mode on it, and prints the
+//! font it was answered with.
 //!
 //! The requester is answered with its buttons, with a second press on a
 //! line, or from the keyboard: the letter underlined in each label works
@@ -29,19 +31,52 @@ pub const COMMAND_NAME = "Asl";
 const VERSION_STRING = "\x00$VER: Asl 1.0 (28.09.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DIR,MULTI/S,SAVE/S,DRAWERS/S,PATTERN/K";
+const template = "DIR,MULTI/S,SAVE/S,DRAWERS/S,PATTERN/K,FONT/S";
 const arg_dir = 0;
 const arg_multi = 1;
 const arg_save = 2;
 const arg_drawers = 3;
 const arg_pattern = 4;
+const arg_font = 5;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOREQUEST = "No requester\n";
 const MSG_GAVEUP = "Nothing picked\n";
 const MSG_ANSWER = "Drawer \"%s\", file \"%s\"\n";
+const MSG_FONT = "Font \"%s\" %lu, style %lu, pens %lu and %lu, mode %lu\n";
 const MSG_ONE = "  %s\n";
 const MSG_COUNT = "%lu names picked:\n";
+
+/// The font requester, with everything it can show turned on.
+fn askFont(sys: *ExecBase, dl: *DosBase, ab: *AslBase) i32 {
+    _ = sys;
+    const handle = ab.AllocAslRequest(asl.ASL_FontRequest, &[_]TagItem{
+        .{ .tag = asl.ASLFO_TitleText, .data = @intFromPtr("Pick a font") },
+        .{ .tag = asl.ASLFO_DoStyle, .data = 1 },
+        .{ .tag = asl.ASLFO_DoFrontPen, .data = 1 },
+        .{ .tag = asl.ASLFO_DoBackPen, .data = 1 },
+        .{ .tag = asl.ASLFO_DoDrawMode, .data = 1 },
+        .{},
+    }) orelse {
+        _ = Printf(dl, MSG_NOREQUEST, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer ab.FreeAslRequest(handle);
+    const req: *asl.FontRequester = @ptrCast(@alignCast(handle));
+    if (!ab.AslRequest(handle, null)) {
+        _ = Printf(dl, MSG_GAVEUP, .{});
+        return dos.RETURN_WARN;
+    }
+    _ = Printf(dl, MSG_FONT, .{
+        req.attr.name,
+        @as(u64, req.attr.y_size),
+        @as(u64, req.attr.style),
+        @as(u64, req.front_pen),
+        @as(u64, req.back_pen),
+        @as(u64, req.draw_mode),
+    });
+    return dos.RETURN_OK;
+}
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -50,7 +85,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -65,6 +100,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(asl_lib);
     const ab: *AslBase = @ptrCast(asl_lib);
+
+    if (argv[arg_font] != 0) return askFont(sys, dl, ab);
 
     const ignore = sdk.utility.TAG_IGNORE;
     const handle = ab.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{

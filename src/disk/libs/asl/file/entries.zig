@@ -79,8 +79,11 @@ fn decimal(value: u64, into: []u8) usize {
 
 /// Where an entry goes: before the first line it sorts ahead of. Drawers
 /// come before files, and within each the names in order without regard
-/// to case.
+/// to case; entries whose `kind` is 0 - a list of something that is
+/// neither - are in order by `size` and then by name, which is what a
+/// list of font sizes wants.
 fn before(ub: *UtilityBase, one: *const Entry, other: *const Entry) bool {
+    if (one.kind == 0 and other.kind == 0 and one.size != other.size) return one.size < other.size;
     if (one.isDir() != other.isDir()) return one.isDir();
     const a = one.name();
     const b = other.name();
@@ -93,7 +96,9 @@ fn before(ub: *UtilityBase, one: *const Entry, other: *const Entry) bool {
     return b[i] != 0;
 }
 
-/// An entry made and put in its place in `list`. False without memory.
+/// An entry made and put in its place in `list`, with what its
+/// right-hand column says worked out from what it is: the word for a
+/// drawer, the size in bytes for a file. False without memory.
 pub fn add(sys: *ExecBase, ub: *UtilityBase, list: *exec.List, name: [*:0]const u8, kind: i32, size: u64) bool {
     var right: [right_max]u8 = @splat(0);
     var right_len: usize = 0;
@@ -104,6 +109,14 @@ pub fn add(sys: *ExecBase, ub: *UtilityBase, list: *exec.List, name: [*:0]const 
     } else {
         right_len = decimal(size, right[0 .. right.len - 1]);
     }
+    return addText(sys, ub, list, name, right[0..right_len], kind, size);
+}
+
+/// An entry whose right-hand column is given rather than worked out:
+/// what a list of something other than a drawer's entries needs. False
+/// without memory.
+pub fn addText(sys: *ExecBase, ub: *UtilityBase, list: *exec.List, name: [*:0]const u8, right: []const u8, kind: i32, size: u64) bool {
+    const right_len = right.len;
     const name_len = textLen(name);
     const bytes = @offsetOf(Entry, "text") + name_len + 1 + right_len + 1;
     const block = sys.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
@@ -112,7 +125,7 @@ pub fn add(sys: *ExecBase, ub: *UtilityBase, list: *exec.List, name: [*:0]const 
     const text: [*]u8 = @ptrCast(&entry.text);
     @memcpy(text[0..name_len], name[0..name_len]);
     text[name_len] = 0;
-    @memcpy(text[name_len + 1 ..][0..right_len], right[0..right_len]);
+    @memcpy(text[name_len + 1 ..][0..right_len], right);
     text[name_len + 1 + right_len] = 0;
     entry.node.name = entry.name();
 

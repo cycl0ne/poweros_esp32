@@ -14,6 +14,7 @@
 //! it below. The close gadget or Ctrl-C ends it.
 
 const sdk = @import("sdk");
+const asl = sdk.asl;
 const dos = sdk.dos;
 const exec = sdk.exec;
 const graphics = sdk.graphics;
@@ -28,6 +29,7 @@ const tx = sdk.gadgets.text;
 const lv = sdk.gadgets.listview;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const AslBase = sdk.interface.asl.AslBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
@@ -49,6 +51,18 @@ const MSG_NOFONTS = "No fonts\n";
 
 const ID_FONTS = 1;
 const ID_SIZES = 2;
+
+/// The Project menu, in this order.
+const ITEM_PICK = 0;
+const ITEM_QUIT = 2;
+
+const project_menu = [_]intuition.menus.NewMenu{
+    .{ .type = intuition.menus.NM_TITLE, .label = "Project" },
+    .{ .type = intuition.menus.NM_ITEM, .label = "Pick a font...", .comm_key = "F" },
+    .{ .type = intuition.menus.NM_ITEM, .label = intuition.menus.NM_BARLABEL },
+    .{ .type = intuition.menus.NM_ITEM, .label = "Quit", .comm_key = "Q" },
+    .{ .type = intuition.menus.NM_END },
+};
 
 /// The line drawn in the chosen font.
 const sample = "The quick brown fox jumps over the lazy dog - 0123456789 - \xc4\xd6\xdc\xe4\xf6\xfc\xdf";
@@ -266,6 +280,76 @@ fn choose(gb: *GraphicsBase, ib: *IntuitionBase, dfb: *DiskfontBase, state: *Sta
     state.font = font;
 }
 
+/// The font requester put up on this window, and what it answers shown
+/// in the lists. asl.library is opened for the asking and closed again:
+/// a program that never picks one never loads it.
+fn pickWithRequester(sys: *ExecBase, gb: *GraphicsBase, ib: *IntuitionBase, ub: *UtilityBase, dfb: *DiskfontBase, state: *State, window: *intuition.Window, parts: Parts) void {
+    const asl_lib = sys.OpenLibrary(asl.ASLNAME, 0) orelse return;
+    defer sys.CloseLibrary(asl_lib);
+    const ab: *AslBase = @ptrCast(asl_lib);
+    // asl lists a family by its bare name; this program keeps the
+    // `.font` on, so it comes off on the way in.
+    var family: [32]u8 = @splat(0);
+    if (state.chosen) |chosen| {
+        copyName(&family, @ptrCast(&chosen.name));
+        var len: usize = 0;
+        while (family[len] != 0) len += 1;
+        if (len > 5 and family[len - 5] == '.') family[len - 5] = 0;
+    }
+    const handle = ab.AllocAslRequest(asl.ASL_FontRequest, &[_]TagItem{
+        .{ .tag = asl.ASLFO_TitleText, .data = @intFromPtr("Pick a font") },
+        .{ .tag = asl.ASLFO_Window, .data = @intFromPtr(window) },
+        .{ .tag = asl.ASLFO_SleepWindow, .data = 1 },
+        .{ .tag = asl.ASLFO_DoStyle, .data = 1 },
+        .{ .tag = asl.ASLFO_InitialName, .data = @intFromPtr(&family) },
+        .{},
+    }) orelse return;
+    defer ab.FreeAslRequest(handle);
+    const req: *asl.FontRequester = @ptrCast(@alignCast(handle));
+    if (!ab.AslRequest(handle, null)) return;
+
+    // The name comes back as OpenDiskFont wants it, with `.font` after
+    // it, which is how the list here holds it too.
+    const line = lineOfFamily(ub, state, req.attr.name) orelse return;
+    _ = ib.SetGadgetAttrsTagList(parts.fonts, window, &[_]TagItem{
+        .{ .tag = lv.LISTVIEW_Selected, .data = line },
+        .{ .tag = lv.LISTVIEW_MakeVisible, .data = line },
+        .{},
+    });
+    chooseFamily(sys, gb, ib, dfb, state, window, parts.sizes, parts.preview, parts.about, line);
+    const size_line = lineOfSize(state, req.attr.y_size) orelse return;
+    _ = ib.SetGadgetAttrsTagList(parts.sizes, window, &[_]TagItem{
+        .{ .tag = lv.LISTVIEW_Selected, .data = size_line },
+        .{ .tag = lv.LISTVIEW_MakeVisible, .data = size_line },
+        .{},
+    });
+    choose(gb, ib, dfb, state, window, parts.preview, parts.about, size_line);
+}
+
+/// The family of that name, and the line it is on; null when this
+/// program does not list it.
+fn lineOfFamily(ub: *UtilityBase, state: *State, name: [*:0]const u8) ?u32 {
+    var line: u32 = 0;
+    while (line < state.family_count) : (line += 1) {
+        const its: [*:0]const u8 = @ptrCast(&state.families[line].name);
+        var i: usize = 0;
+        while (its[i] != 0 and name[i] != 0) : (i += 1) {
+            if (ub.ToUpper(its[i]) != ub.ToUpper(name[i])) break;
+        } else if (its[i] == name[i]) return line;
+    }
+    return null;
+}
+
+/// The line a height is on in the family shown, or null when it has no
+/// such height.
+fn lineOfSize(state: *State, rows: u16) ?u32 {
+    const family = state.chosen orelse return null;
+    for (family.sizes[0..family.size_count], 0..) |size, i| {
+        if (size == rows) return @intCast(i);
+    }
+    return null;
+}
+
 /// A family chosen: its sizes listed, the middle one of them shown.
 fn chooseFamily(sys: *ExecBase, gb: *GraphicsBase, ib: *IntuitionBase, dfb: *DiskfontBase, state: *State, window: *intuition.Window, sizes: *Object, preview: *Object, about: *Object, line: u32) void {
     if (line >= state.family_count) return;
@@ -430,6 +514,27 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = ib.GetAttr(wc.WINDOWA_Window, object, &window_ptr);
     const window: *intuition.Window = @ptrFromInt(window_ptr);
 
+    // The Project menu, which is how a font is picked with the
+    // requester rather than found in the lists. A program without one is
+    // no worse off than it was, so a menu that will not go on is left
+    // out rather than given up over.
+    const menu = blk: {
+        const made = ib.CreateMenusA(&project_menu, null) orelse break :blk null;
+        var screen_at: usize = 0;
+        const ask_screen = [_]TagItem{ .{ .tag = wn.WA_Screen, .data = @intFromPtr(&screen_at) }, .{} };
+        ib.GetWindowAttrs(window, &ask_screen);
+        const on: *intuition.Screen = @ptrFromInt(screen_at);
+        if (!ib.LayoutMenusA(made, on, null) or !ib.SetMenuStrip(window, made)) {
+            ib.FreeMenus(made);
+            break :blk null;
+        }
+        break :blk made;
+    };
+    defer if (menu) |made| {
+        ib.ClearMenuStrip(window);
+        ib.FreeMenus(made);
+    };
+
     // The first family shown to begin with.
     _ = ib.SetGadgetAttrsTagList(parts.fonts, window, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 0 }, .{} });
     chooseFamily(sys, gb, ib, dfb, state, window, parts.sizes, parts.preview, parts.about, 0);
@@ -448,6 +553,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     ID_FONTS => chooseFamily(sys, gb, ib, dfb, state, window, parts.sizes, parts.preview, parts.about, code),
                     ID_SIZES => choose(gb, ib, dfb, state, window, parts.preview, parts.about, code),
                     else => {},
+                },
+                wc.WMHI_MENUPICK => {
+                    const number: u32 = @truncate(word & wc.WMHI_MENUMASK);
+                    if (number == intuition.menus.MENUNULL) continue;
+                    switch (intuition.menus.ITEMNUM(number)) {
+                        ITEM_QUIT => return dos.RETURN_OK,
+                        ITEM_PICK => pickWithRequester(sys, gb, ib, ub, dfb, state, window, parts),
+                        else => {},
+                    }
                 },
                 else => {},
             }

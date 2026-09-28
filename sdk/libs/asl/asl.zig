@@ -216,6 +216,20 @@ pub const ASLFO_FixedWidthOnly = ASL_TB + 48;
 pub const ASLFO_MinHeight = ASL_TB + 16;
 pub const ASLFO_MaxHeight = ASL_TB + 17;
 pub const ASLFO_FilterFunc = ASL_TB + 49;
+/// The colours the pen the text is drawn in is picked from: a
+/// `[*]const graphics.Pen`, with `ASLFO_MaxFrontPen` saying how many.
+/// Without it the requester offers a spread of its own.
+///
+/// The screen's own pens are not what is offered, as they were on a
+/// machine whose screens had a palette: on a true-colour display they
+/// are a few greys, a blue and a black, which is no choice at all.
+pub const ASLFO_FrontPens = ASL_TB + 64;
+/// The same for the pen the ground is drawn in.
+pub const ASLFO_BackPens = ASL_TB + 65;
+/// How many colours `ASLFO_FrontPens` holds.
+pub const ASLFO_MaxFrontPen = ASL_TB + 66;
+/// How many `ASLFO_BackPens` holds.
+pub const ASLFO_MaxBackPen = ASL_TB + 67;
 
 /// `ASLFO_Flags`.
 pub const FOF_DOFRONTPEN: u32 = 1 << 0;

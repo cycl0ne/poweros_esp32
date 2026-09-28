@@ -83,6 +83,19 @@ pub const Requester = extern struct {
     file: [dos.name_max + 1]u8 = @splat(0),
     drawer: [dos.path_max + 1]u8 = @splat(0),
     pattern: [dos.name_max + 1]u8 = @splat(0),
+    /// A font requester's own: the family it starts on, how tall, and
+    /// the limits on what it lists. The family is a buffer of the
+    /// requester's, as the file requester's fields are.
+    family: [dos.name_max + 1]u8 = @splat(0),
+    size: u32 = 0,
+    min_height: u32 = 0,
+    max_height: u32 = 0,
+    /// The colours the two pens are picked from, with how many each
+    /// holds; null for the spread the requester offers of its own.
+    front_pens: ?[*]const graphics.Pen = null,
+    front_pen_count: u32 = 0,
+    back_pens: ?[*]const graphics.Pen = null,
+    back_pen_count: u32 = 0,
     /// A multi-select answer: the block holding the `WBArg`s and the
     /// names after them, and the one lock on the drawer they all name.
     /// Every pair carries that same lock, since every name picked is in
@@ -192,19 +205,61 @@ fn takeFileTag(r: *Requester, item: *const TagItem) void {
     }
 }
 
+/// The tags only a font requester answers to. Their numbers are the
+/// file requester's own tags' numbers, so the kind decides.
+fn takeFontTag(r: *Requester, item: *const TagItem) void {
+    const v = item.data;
+    switch (item.tag) {
+        asl.ASLFO_Flags => r.flags1 = @truncate(v),
+        asl.ASLFO_DoFrontPen => setFlag(&r.flags1, asl.FOF_DOFRONTPEN, v != 0),
+        asl.ASLFO_DoBackPen => setFlag(&r.flags1, asl.FOF_DOBACKPEN, v != 0),
+        asl.ASLFO_DoStyle => setFlag(&r.flags1, asl.FOF_DOSTYLE, v != 0),
+        asl.ASLFO_DoDrawMode => setFlag(&r.flags1, asl.FOF_DODRAWMODE, v != 0),
+        asl.ASLFO_FixedWidthOnly => setFlag(&r.flags1, asl.FOF_FIXEDWIDTHONLY, v != 0),
+        asl.ASLFO_MinHeight => r.min_height = @truncate(v),
+        asl.ASLFO_MaxHeight => r.max_height = @truncate(v),
+        asl.ASLFO_InitialName => copyInto(&r.family, @ptrFromInt(v)),
+        asl.ASLFO_InitialSize => r.size = @truncate(v),
+        asl.ASLFO_InitialStyle => r.public.font.attr.style = @truncate(v),
+        asl.ASLFO_InitialFlags => r.public.font.attr.flags = @truncate(v),
+        asl.ASLFO_InitialFrontPen => r.public.font.front_pen = @truncate(v),
+        asl.ASLFO_InitialBackPen => r.public.font.back_pen = @truncate(v),
+        asl.ASLFO_InitialDrawMode => r.public.font.draw_mode = @truncate(v),
+        asl.ASLFO_FrontPens => r.front_pens = @ptrFromInt(v),
+        asl.ASLFO_BackPens => r.back_pens = @ptrFromInt(v),
+        asl.ASLFO_MaxFrontPen => r.front_pen_count = @truncate(v),
+        asl.ASLFO_MaxBackPen => r.back_pen_count = @truncate(v),
+        else => {},
+    }
+}
+
 /// What the tags say, read by both `AllocAslRequest` and `AslRequest`.
 pub fn takeTags(r: *Requester, tags: ?[*]const TagItem) void {
     const ub = r.base.utility_base;
     var state = tags;
     while (ub.NextTagItem(&state)) |item| {
         if (takeCommonTag(r, item)) continue;
-        // The font and the screen mode requesters read their own in
-        // their items (`todo/asl` 6 and 7).
-        if (r.kind == asl.ASL_FileRequest) takeFileTag(r, item);
+        switch (r.kind) {
+            asl.ASL_FileRequest => takeFileTag(r, item),
+            asl.ASL_FontRequest => takeFontTag(r, item),
+            // The screen mode requester reads its own in its item
+            // (`todo/asl` 7).
+            else => {},
+        }
     }
-    if (r.kind == asl.ASL_FileRequest) {
-        r.public.file.file = @ptrCast(&r.file);
-        r.public.file.drawer = @ptrCast(&r.drawer);
-        r.public.file.pattern = @ptrCast(&r.pattern);
+    switch (r.kind) {
+        asl.ASL_FileRequest => {
+            r.public.file.file = @ptrCast(&r.file);
+            r.public.file.drawer = @ptrCast(&r.drawer);
+            r.public.file.pattern = @ptrCast(&r.pattern);
+        },
+        asl.ASL_FontRequest => {
+            // The name is the requester's buffer, as the file
+            // requester's fields are: what the program reads holds until
+            // the next request on it.
+            r.public.font.attr.name = @ptrCast(&r.family);
+            r.public.font.attr.y_size = @truncate(r.size);
+        },
+        else => {},
     }
 }

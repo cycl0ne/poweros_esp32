@@ -103,6 +103,10 @@ fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (lib.open_cnt != 0) lib.open_cnt -= 1;
     if (lib.open_cnt != 0) return null;
     closeAll(ab, _base.class_libraries.len);
+    if (ab.diskfont_base) |df| {
+        sys.CloseLibrary(@ptrCast(@alignCast(df)));
+        ab.diskfont_base = null;
+    }
     sys.CloseLibrary(@ptrCast(@alignCast(ab.utility_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(ab.graphics_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(ab.intuition_base)));
