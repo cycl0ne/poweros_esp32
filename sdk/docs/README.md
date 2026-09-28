@@ -44,6 +44,8 @@ described by the text of its `.fd` file.
 work together, the data they share, and the files they read, written by
 hand.
 
+- [Writing programs](guides/programs.md) - a window drawn into, and a
+  window of gadgets laid out by a layout and a window object.
 - [Fonts](guides/fonts.md) - the font image, drawing text, choosing a
   font, sizes in points, font files and `FONTS:`, diskfont.library,
   outline fonts, the system's fonts, and the tools.

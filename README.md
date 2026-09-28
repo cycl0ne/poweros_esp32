@@ -2,11 +2,11 @@
 
 PowerOS is an operating system for Espressif's ESP32 microcontrollers,
 written in Zig. It boots straight from the chip's ROM loader - no ESP-IDF,
-no second-stage bootloader - and brings up a complete little system:
-a multitasking kernel with libraries and devices behind jump tables,
-message passing, a DOS with processes, file systems and a shell, and a
-windowed desktop with screens, windows, menus, gadgets and requesters on
-the board's display.
+no second-stage bootloader - and brings up a complete little system: a
+multitasking kernel with libraries and devices behind jump tables, message
+passing, a DOS with processes, file systems and a shell, a TCP/IP stack,
+and a windowed desktop with screens, windows, menus, gadgets and
+requesters on the board's display.
 
 Programs are loaded from the flash disk or an SD card at run time, and are
 built against a separate SDK package - so writing one needs nothing of the
@@ -17,259 +17,69 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 [![PowerOS drawing with graphics.library](docs/screenshots/anim.png)](docs/screenshots/README.md)
 
-[![The shell](docs/screenshots/shell.png)](docs/screenshots/README.md#the-shell)
-
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
-More in [the screenshots](docs/screenshots/README.md): a game in a window
-of its own, fonts, menus, a requester and gadgets.
+More in [the screenshots](docs/screenshots/README.md): the shell, a game in
+a window of its own, fonts, menus, a requester and gadgets.
 
 ## What PowerOS is - and what it is not
 
-**It is** a desktop-style operating system small enough to read. The
-whole system - kernel, DOS, file systems, graphics, windows - is well
-under a megabyte of code, written in Zig, and runs on a microcontroller
-that costs a few euros. It is built from small modules that
-talk through message ports and jump tables: a library or a device can be
-replaced, added from disk or patched at run time, and a program is a file
-that is loaded, run and unloaded.
-
-**It is** made for the ESP32 family. It drives the chip itself, register by
-register - clock, MMU, PSRAM, interrupt matrix, DMA, display controller -
-so everything between the power-on and the desktop is in this tree.
-
-**It is** a young project. 0.1 is the first release: the system works end
-to end, but the API may still change before 1.0, and not every part has
-run on every board.
-
-**It is not** a Linux, a POSIX system or an RTOS in the usual sense.
-Programs use the system's own API - libraries opened by name, tag lists,
-messages - and there is no `libc`, no `fork`, no file descriptors.
-
-**It is not** an AmigaOS clone. It takes the ideas of AmigaOS - exec's
-libraries, devices and message ports, dos with its handlers and packets,
-screens and windows, classes of gadgets - and builds them anew for this
-machine and this language, keeping the model and leaving the old
-machine's baggage behind.
-
-**It is not** an emulator. It runs no Amiga software, and no software
-written for any other machine: programs are native code for the chip,
-built with Zig against the SDK.
-
-**It is not** a protected system. All tasks share one address space, and
-a program that writes where it should not can bring the system down. It is
-a machine for one person at a time, not a server.
-
-**It does not (yet)** have a Wi-Fi link that joins a network (the radio
-starts and scans; the key handshake is to come), Bluetooth, USB host
-support, or a second CPU core: it runs on one of the chip's two
-cores.
-
-### How it differs from AmigaOS
-
-- **No 68000, no custom chips.** Graphics are retargetable from the start
-  (rtg.library): true colour on whatever panel the board has, drawn through
-  the chip's DMA and display controller - no bitplanes, copper or blitter.
-- **No BCPL legacy.** No BPTRs, no BSTRs, no 16-bit data: pointers are
-  pointers, strings are C strings, sizes are 32 or 64 bits wide.
-- **Packets are messages.** A dos packet is an exec message with typed
-  arguments, not a message pointing at a packet pointing back.
-- **Own load files.** Programs are ELF files turned into the system's own
-  `.seg` format by `elf2seg`, with only the relocations an address needs.
-- **Tag lists where there were accessors.** A RastPort is opaque and set
-  with `SetRPAttrs`; new libraries take tags rather than growing a call
-  for every field.
-- **New jobs get a new API.** Where this machine needs something the old
-  one did not - expansion.library describing a board, platform.resource
-  describing the chip - the calls are designed for that job, even where a
-  name is reused, instead of keeping inherited slots.
-- **Boards are data.** What is fitted and how it is wired is a tag list in
-  the ROM; a driver asks for its part at run time instead of assuming a
-  machine.
-- **Today's terminal.** The console speaks VT100 with the parts of xterm
-  programs expect, 256 colours included.
-- **Today's storage.** A log-structured file system for the on-board
-  flash, and FAT32 for SD cards, instead of floppy-era formats.
-- **Zig, with its safety checks.** The system is built in ReleaseSafe:
-  overflows, bad casts and out-of-range indices are caught instead of
-  corrupting memory, and the SDK is a Zig package.
+- **It is** a desktop-style operating system small enough to read: kernel,
+  DOS, file systems, network, graphics and windows in well under a
+  megabyte of code, on a microcontroller that costs a few euros. It is
+  built from small modules that talk through message ports and jump
+  tables; a library or a device can be replaced, loaded from disk or
+  patched at run time.
+- **It is** made for the ESP32 family. It drives the chip itself, register
+  by register, so everything between power-on and the desktop is in this
+  tree.
+- **It is** young. 0.1 works end to end, but the API may change before
+  1.0, and not every part has run on every board.
+- **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
+  programs use the system's own API - libraries opened by name, tag lists,
+  messages - with no `libc` and no `fork`.
+- **It is not** an AmigaOS clone or emulator. It takes AmigaOS's ideas -
+  exec's libraries, devices and message ports, dos with handlers and
+  packets, screens, windows and gadget classes - and builds them anew for
+  this machine: no BCPL pointers or strings, 32- and 64-bit data,
+  retargetable true-colour graphics, boards described as data. It runs no
+  Amiga software.
+- **It is not** a protected system. All tasks share one address space; it
+  is a machine for one person at a time.
+- **It does not (yet)** have Bluetooth, USB host support, or use the
+  chip's second core.
 
 ## What is in it
 
-**Kernel (exec)**
-- Preemptive multitasking with priorities, signals, message ports,
-  semaphores and software interrupts.
-- Libraries and devices with jump tables, opened by name, loaded from disk
-  on demand and expunged when memory runs short. A name may carry a path
-  (`gadgets/hello.gadget`); `LIBS:` is `SYS:libs` and `SYS:classes`, where
-  classes live in libraries of their own.
-- Internal SRAM and 8 MiB of octal PSRAM, managed as memory with
-  attributes (`MEMF_INTERNAL`, `MEMF_EXTERNAL`, `MEMF_DMA`).
-- The CPU at 240 MHz, code executing from flash through the cache and MMU,
-  interrupts routed through the chip's interrupt matrix.
-
-**DOS**
-- Processes, packets, handlers started on first use, assigns and paths,
-  pattern matching, `ReadArgs` templates, and load files (`.seg`) read by
-  `LoadSeg`.
-- File systems: a log-structured flash file system that survives power
-  cuts and levels wear (`DH0:`), FAT32 on SD cards with long names (`SD0:`),
-  `RAM:`, `PIPE:` and `NIL:`.
-- Consoles `CON:`, `RAW:` and `AUX:` with line editing, history, and
-  copy and paste by mouse and keyboard.
-- A shell with variables, aliases, redirection, scripts and resident
-  commands, and 31 commands in `C:` - `Dir`, `List`, `Copy`, `Assign`,
-  `Info`, `Format`, `Mount`, `Version`, `Date`, `SetDate` and more - with test programs for
-  the devices and libraries in `C:test` and the network's tools in
-  `C:net`.
-
-**Graphics and windows**
-- rtg.library for the displays and their drivers, graphics.library for
-  drawing (lines, fills, blits, text in fonts of any size, proportional,
-  in ink, smooth coverage or colour, the system's own `pospaz.font` at 8
-  and 16 rows), layers.library for overlapping windows. `FONTS:` on the
-  disk holds Spleen at 8 to 32 rows, one size smoothed and one with a
-  shadow, converted from BDF on the host by `tools/fontconv`, and the Go
-  faces (sans, bold, italic, mono) as TrueType outlines, which
-  `LIBS:truetype.library` renders at any height asked, with smooth
-  edges. The
-  system's three fonts - screens' title bars and menus, text in windows
-  and gadgets, and the consoles' fixed-width one - are set in
-  `ENVARC:Sys/font.prefs`, which `C:FontPrefs` hands to intuition at
-  boot; pospaz from the ROM stands in for any not set. `C:ListFonts`
-  lists every font by family, size and where it is, and draws them;
-  `C:FixFonts` rebuilds the contents files after fonts are added. `SYS:Programs/FontView` is the same in a window: the families and
-  their sizes in two lists, and the one chosen drawn under them.
-- intuition.library: screens, windows, menus, requesters, and an object
-  system of classes for gadgets and images (buttons, sliders, string
-  fields, groups, and layouts that size and place their gadgets to fit
-  the window, whichever display it is on), and window objects that open
-  a window round a layout and hand over its messages. Several screens
-  share a display, each in a buffer of its own, brought forward by
-  showing that buffer; a screen can be double buffered, its frames
-  flipped at the display's frame start. Public screens can be listed,
-  chosen as the default and signal their owner when the last visitor
-  leaves; gadgets can live in a window's border. Menus are made from a
-  table and laid out for the screen, in columns when a panel is taller
-  than the screen. A mouse pointer, shown once a mouse is used, follows
-  the active window: its own picture (a pointer object), the busy
-  pointer, or the default arrow, laid over the picture by the display
-  board on its way to the glass.
-- Gadget classes on the disk, each a library of its own in
-  `SYS:classes/gadgets/`: check boxes, cycle buttons, radio buttons,
-  lines to type text or a number in, lines of text to show, sliders that
-  show their level, scroll bars with arrows, scrolling lists of an exec
-  list's nodes, colour palettes, and a colour wheel with its own
-  colour-conversion calls and a gradient slider for its brightness, and
-  tape deck and animation controls, built with the SDK's class library
-  skeleton
-  (`sdk.gadgets`).
-
-**Devices**
-- Timer, serial, USB serial, flash, SD card, I2C, touch, keyboard, mouse,
-  input, console and four-channel audio; watchdog, DMA, GPIO and platform
-  resources.
-- Network devices with one request set for every kind of link (SANA-II:
-  reads by packet type, orphan reads, events, multicast groups,
-  statistics, the opener's own buffers filled through its copy calls).
-  `DEVS:networks/openeth.device` drives QEMU's Ethernet, with the
-  emulator's network behind it; `C:net/Net` asks the link who has an
-  address. `DEVS:networks/wifi.device` is the chip's radio as a station,
-  on Espressif's closed radio libraries and an OS adapter onto exec: it
-  starts the radio, scans, and joins a network (the SANA-II wireless
-  requests), WPA2-Personal included - the key handshake is written here,
-  on crypto.library. `C:net/Wireless` lists the networks in range and
-  joins or leaves one; an interface file's `Network` line has one joined at
-  boot, its passphrase kept in `ENVARC:Sys/net/networks/`.
-- `LIBS:bsdsocket.library`, the TCP/IP stack, written here: sockets with
-  a base per opener (its own descriptors, error number and signals),
-  IPv4 with fragments put back together, TCP (connections that close on
-  their own after the program has gone, retransmission with measured
-  timeouts, congestion control, delayed acknowledgements, segments put
-  back in order, keepalive, urgent data (`MSG_OOB`, the mark and
-  `SIOCATMARK`), RFC 5961's checks against forged resets,
-  keyed initial sequence numbers from the chip's random number
-  generator),
-  UDP, ICMP (echoes answered,
-  errors told to the socket they concern, raw sockets for a ping), ARP,
-  and IPv6 beside IPv4: extension headers and fragments, ICMPv6 with its
-  rate limit and path MTU, Neighbor Discovery with duplicate address
-  detection, MLDv2, router advertisements with SLAAC (stable RFC 7217
-  addresses or EUI-64), RDNSS and redirects, an IPv6 route table, and
-  `AF_INET6` sockets that take IPv4 too through mapped addresses
-  (`IPV6_V6ONLY`, `If_NameToIndex` for a link-local peer's scope), in
-  IPv6 multicast groups (`IPV6_JOIN_GROUP`, MLDv2 with MLDv1 routers),
-  fragments going out, DNSSL,
-  the loopback interface, and interfaces on network devices
-  (`AddInterfaceTagList`) served by a stack task that sleeps until a
-  frame or a deadline comes. `WaitSelect` waits for sockets and the
-  program's own signals at once; socket events tell of readiness on a
-  signal of the program's choosing; a socket can be handed to another
-  task. `C:net/Udp` sends a datagram and waits for its echo, or pings;
-  `C:net/Tcp` fetches a page over HTTP or echoes a connection - either
-  family, over the network in QEMU. `C:test/BsdSockTest` runs 142 tests of the socket
-  API over the loopback, and over the network with a host helper, and
-  names the calls the library lacks.
-- The network comes up at boot, in the background (`S:Network-Startup`),
-  from `DEVS:NetInterfaces/`, a file per
-  interface in the mountlist's keyword format (`Device`, `Configure =
-  DHCP` or a fixed `Address` with `Gateway` and `NameServer`, `IPv6 =
-  AUTO|FIXED|OFF` with `InterfaceID`, `Address6`, `Prefix6`, `Gateway6`,
-  ...), its address from DHCP - a 169.254.x.y one while no server
-  answers - and its IPv6 addresses from the routers, stable from boot to
-  boot through the secret in `ENVARC:Sys/net/ipv6-secret`; names are
-  looked up in `ENVARC:Sys/net/hosts`, a cache, and DNS, A and AAAA
-  (`GetHostByName`, `GetAddrInfo` in RFC 6724's order, `C:net/Resolve`)
-  and the other way (`GetHostByAddr`, `GetNameInfo`, both families); `C:net/AddNetInterface` and
-  `RemNetInterface` bring one up and down by hand, and a program can do
-  the same through the library's interface calls. `C:net/NetStatus`
-  shows the interfaces with their IPv6 addresses and lifetimes, the
-  routes of both families, sockets, the ARP and neighbor caches and
-  counters (`GetNetworkStatistics`); `C:net/Offline` and `Online` take an
-  interface's device off its link and put it back, and a link that goes
-  or comes by itself is followed. `C:net/Ping` sends echo requests and
-  times the answers, over IPv6 for an IPv6 address or with `-6`; `C:net/TimeSync` sets the date from a time server
-  (SNTP; DHCP's, `ENVARC:Sys/net/timeserver`'s or pool.ntp.org), in the
-  local time a POSIX TZ rule in `ENVARC:Sys/timezone` gives, and runs
-  at boot once the network is up; a fresh disk brings
-  `ENVARC:Sys/timezone` (Central European time), `Sys/net/timeserver`,
-  `Sys/net/hosts` and `Sys/net/nameservers`, each saying in its comments
-  what it holds and how to change it;
-  `C:net/HTTPGet` fetches a file over HTTP/1.1 (chunked bodies,
-  redirects, `http://[v6]/` hosts, each address tried in turn), plain
-  http until there is TLS; `C:net/PacketCapture`
-  writes what an interface sends and takes to a pcap file, through a
-  capture socket (`PF_PACKET`) a program can open too.
-- A shell over the network: `C:net/ShellServer` listens on port 23, IPv6 and IPv4, and
-  gives each Telnet connection a shell of its own, on a console with
-  line editing, history and Ctrl-C - con-handler on `DEVS:telnet.device`,
-  which turns a connection into a stream of bytes. A password, if
-  `ENVARC:Sys/net/shellserver` holds one. `Run >NIL: C:net/ShellServer`
-  in `S:User-Startup` makes a board reachable without a cable; in QEMU,
-  `zig build qemu-display` and `telnet localhost 2323`.
-- `LIBS:crypto.library`, on the chip's own engines: random bytes from its
-  generator, which the kernel keeps fed with the SAR ADCs' noise from
-  boot; SHA-1 and SHA-2 hashes and HMAC; AES-128 and AES-256 in ECB, CBC,
-  CTR and GCM; and modular exponentiation up to 4096 bits for RSA and
-  Diffie-Hellman, in the RSA engine's constant-time mode. A hash or a
-  cipher under way is a context the program keeps, so any number run at
-  once, the engine taken in turns. `C:test/Crypto` checks every call
-  against the standards' test vectors.
-- `LIBS:truetype.library`: a TrueType file rendered into a font of any
-  height - quadratic outlines and composite glyphs, coverage in four
-  bits, no hinting - for diskfont.library to hand out like any other.
-- `LIBS:diskfont.library`: fonts from `FONTS:` at any size. A family
-  with an outline is rendered at the height asked; otherwise the nearest
-  drawn size is loaded, or one twice or half the size scaled - ink,
-  coverage and colour fonts alike - unless only a drawn one will do;
-  `AvailFonts` lists memory and disk fonts, `NewFontContents` makes a
-  family's contents file from its directory. A size can be asked in
-  points, which each board's DPI turns into rows, so 10 points is the
-  same height on either panel. Fonts nobody holds stay
-  loaded until memory runs short. `C:test/DiskFont` lists them and draws
-  any sizes asked for.
-- Board facts - which parts are fitted and how they are wired - are data
-  in a board description, and drivers ask for their part at run time.
+- **Kernel (exec):** preemptive multitasking, signals, message ports,
+  semaphores; libraries and devices opened by name, loaded from disk on
+  demand and expunged when memory runs short; internal SRAM and 8 MiB of
+  PSRAM as memory with attributes.
+- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
+  log-structured flash file system (`DH0:`), FAT32 on SD cards (`SD0:`),
+  `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
+  a shell with scripts and resident commands, 31 commands in `C:`, test
+  programs in `C:test` and network tools in `C:net`.
+- **Graphics and windows:** rtg.library for the displays, graphics.library
+  for drawing, layers.library for overlapping windows, and
+  intuition.library - screens, windows, menus, requesters, a mouse
+  pointer, and an object system of gadget classes with layouts that fit
+  any display. More gadget classes on the disk in `SYS:classes/gadgets/`.
+- **Fonts:** of any size, proportional, in ink, smooth or colour; bitmap
+  fonts and TrueType outlines in `FONTS:`, sizes in points, and the
+  system's fonts set in `ENVARC:Sys/font.prefs`. `SYS:Programs/FontView`
+  shows them all. See the [fonts guide](sdk/docs/guides/fonts.md).
+- **Network:** a TCP/IP stack written here (`LIBS:bsdsocket.library`:
+  TCP, UDP, IPv4 and IPv6, DHCP, DNS), network devices for QEMU's Ethernet
+  and the chip's Wi-Fi (WPA2), brought up at boot from
+  `DEVS:NetInterfaces/`, and a shell over Telnet (`C:net/ShellServer`).
+  See the [network guide](sdk/docs/guides/network.md).
+- **Devices:** timer, serial, USB serial, flash, SD card, I2C, touch,
+  keyboard, mouse, input, console, four-channel audio; watchdog, DMA, GPIO
+  and platform resources; `LIBS:crypto.library` on the chip's SHA, AES and
+  RSA engines.
+- **Boards are data:** which parts are fitted and how they are wired is a
+  description in the ROM; drivers ask for their part at run time.
 
 ## Boards
 
@@ -295,23 +105,17 @@ Espressif Zig toolchain (`0.16.0-xtensa`) into `toolchain/` on first use.
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
 
-For the display in QEMU, build the patched QEMU once with
-`scripts/build-qemu.sh` (into `toolchain/qemu/`): it adds the 1024×600
-display with keyboard and mouse and room in it for four pictures, keeps
-the host's cursor hidden over the window so only PowerOS's own pointer is
-seen, and runs the core at 240 MHz.
+Fetched once into `toolchain/`, pinned and checked, never committed:
 
-For `DEVS:networks/wifi.device`, fetch the radio's vendor libraries once
-with `scripts/fetch-wifi.sh` (into `toolchain/espressif-wifi/`, pinned
-and checked, never committed); without them the disk has everything but
-Wi-Fi.
+| Script | For |
+|---|---|
+| `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard and mouse, at 240 MHz (an older QEMU runs too, without the mouse pointer) |
+| `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/wifi.device` |
+| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 
-For the fonts in `FONTS:`, fetch their sources once with
-`scripts/fetch-fonts.sh` (Spleen, BSD 2-Clause, and the Go fonts, BSD,
-into `toolchain/fonts/`, pinned and checked, never committed); the build
-converts them with `tools/fontconv`. Without them `FONTS:` is empty and the ROM's
-`pospaz.font` is all there is. An older build still runs, with room for two and no
-mouse pointer drawn.
+Without them the disk has everything but that part. On a board the serial
+console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
+comes up with a shell window.
 
 More build steps and options:
 
@@ -324,20 +128,17 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
-| `-Dnet=none` | the `qemu*` steps without a network; any other value is a QEMU `-nic` backend, e.g. `tap,ifname=tap0,script=no,downscript=no` (default: QEMU's user network, NAT to the host's) |
-| `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, in a file Wireshark reads |
-| `-Dtelnet=2323` | forward that host port to the machine's port 23, where `C:net/ShellServer` listens; `qemu-display` forwards 2323 unless told otherwise, `0` forwards none |
-
-On a board the serial console is the chip's USB port
-(e.g. `tio /dev/ttyACM0`); the display comes up with a shell window.
+| `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
+| `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
+| `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
 
 ## Writing a program
 
 The SDK (`sdk/`) is a Zig package of its own. A program depends on it and
 builds with `addProgram`, which knows the chip, the linker script and how
 to make the load file. Every library, device and resource call is
-described in [`sdk/docs/autodocs/`](sdk/docs/README.md), one file per
-module.
+described in [`sdk/docs/autodocs/`](sdk/docs/README.md), and the
+[guides](sdk/docs/README.md#guides) say how they work together.
 
 ```zig
 // build.zig
@@ -373,171 +174,11 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 }
 ```
 
-### Hello, world - in a window
-
-The same with intuition.library and graphics.library: a window on the
-default screen, the words drawn into its RastPort, and its messages
-waited for until the close gadget is used or Ctrl-C comes:
-
-```zig
-// window.zig
-const sdk = @import("sdk");
-const dos = sdk.dos;
-const exec = sdk.exec;
-const graphics = sdk.graphics;
-const intuition = sdk.intuition;
-const wn = intuition.windows;
-const TagItem = sdk.utility.TagItem;
-const ExecBase = sdk.interface.exec.ExecBase;
-const GraphicsBase = sdk.interface.graphics.GraphicsBase;
-const IntuitionBase = sdk.interface.intuition.IntuitionBase;
-
-export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
-    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(int_lib);
-    const ib: *IntuitionBase = @ptrCast(int_lib);
-    const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(gfx_lib);
-    const gb: *GraphicsBase = @ptrCast(gfx_lib);
-
-    // A window on the default screen, with a close gadget that tells us so.
-    const w = ib.OpenWindowTagList(&[_]TagItem{
-        .{ .tag = wn.WA_Title, .data = @intFromPtr("Hello") },
-        .{ .tag = wn.WA_InnerWidth, .data = 240 },
-        .{ .tag = wn.WA_InnerHeight, .data = 60 },
-        .{ .tag = wn.WA_CloseGadget, .data = 1 },
-        .{ .tag = wn.WA_DragBar, .data = 1 },
-        .{ .tag = wn.WA_DepthGadget, .data = 1 },
-        .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
-        .{},
-    }) orelse return dos.RETURN_FAIL;
-    defer ib.CloseWindow(w);
-
-    // The window's RastPort, and where the inside starts.
-    var rp_addr: usize = 0;
-    var left: usize = 0;
-    var top: usize = 0;
-    ib.GetWindowAttrs(w, &[_]TagItem{
-        .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp_addr) },
-        .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
-        .{ .tag = wn.WA_BorderTop, .data = @intFromPtr(&top) },
-        .{},
-    });
-    const rp: *graphics.RastPort = @ptrFromInt(rp_addr);
-
-    // The words, in the screen's text pen.
-    const text = "Hello, world!";
-    gb.Move(rp, @intCast(left + 20), @intCast(top + 35));
-    gb.Text(rp, text, text.len);
-
-    // Wait until the close gadget is used, or Ctrl-C comes.
-    while (true) {
-        const got = ib.WaitIMsg(w, exec.SIGBREAKF_CTRL_C);
-        if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
-        while (ib.GetIMsg(w)) |im| {
-            const class = im.class;
-            ib.ReplyIMsg(im);
-            if (class == wn.IDCMP_CLOSEWINDOW) return dos.RETURN_OK;
-        }
-    }
-}
-```
-
-### Buttons in a window
-
-A window of gadgets is described rather than built: a layout
-(`layoutgclass`) sizes and places the buttons, and a window object
-(`windowclass`) opens a window around it - as big as the layout looks
-right at, in the middle of the screen, no smaller than the layout fits
-in - and hands over each message as one word, already replied:
-
-```zig
-// buttons.zig
-const sdk = @import("sdk");
-const dos = sdk.dos;
-const intuition = sdk.intuition;
-const wn = intuition.windows;
-const gc = intuition.gadgetclass;
-const lg = intuition.layoutgclass;
-const wc = intuition.windowclass;
-const classusr = intuition.classusr;
-const TagItem = sdk.utility.TagItem;
-const ExecBase = sdk.interface.exec.ExecBase;
-const DosBase = sdk.interface.dos.DosBase;
-const IntuitionBase = sdk.interface.intuition.IntuitionBase;
-
-fn button(ib: *IntuitionBase, text: [*:0]const u8, id: usize) ?*intuition.Object {
-    return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
-        .{ .tag = gc.GA_Text, .data = @intFromPtr(text) },
-        .{ .tag = gc.GA_ID, .data = id },
-        .{ .tag = gc.GA_RelVerify, .data = 1 },
-        .{},
-    });
-}
-
-export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
-    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(dos_lib);
-    const dl: *DosBase = @ptrCast(dos_lib);
-    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
-    defer sys.CloseLibrary(int_lib);
-    const ib: *IntuitionBase = @ptrCast(int_lib);
-
-    // Two buttons in a row, sized and placed by the layout; the window
-    // around them sized, placed and taken down by the window object.
-    const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
-        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
-        .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button(ib, "Hello", 1)) },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button(ib, "Goodbye", 2)) },
-        .{},
-    }) orelse return dos.RETURN_FAIL;
-    const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-        .{ .tag = wn.WA_Title, .data = @intFromPtr("Buttons") },
-        .{ .tag = wn.WA_CloseGadget, .data = 1 },
-        .{ .tag = wn.WA_DragBar, .data = 1 },
-        .{ .tag = wn.WA_SizeGadget, .data = 1 },
-        .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(row) },
-        .{},
-    }) orelse return dos.RETURN_FAIL;
-    defer ib.DisposeObject(object); // the window, the layout, the buttons
-
-    var open = wc.WmOpen{};
-    const window: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
-    if (@intFromPtr(window) == 0) return dos.RETURN_FAIL;
-
-    // Each message as one word: what happened, and which gadget.
-    var handle = wc.WmHandleInput{};
-    while (true) {
-        _ = ib.WaitIMsg(window, 0);
-        while (true) {
-            const word = ib.SendMessage(object, @ptrCast(&handle));
-            if (word == wc.WMHI_LASTMSG) break;
-            switch (word & wc.WMHI_CLASSMASK) {
-                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
-                wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
-                    1 => _ = dos.stdio.Printf(dl, "Hello!\n", .{}),
-                    else => return dos.RETURN_OK,
-                },
-                else => {},
-            }
-        }
-    }
-}
-```
-
-Each gets its own `addProgram` in `build.zig`, as `hello` above, and
-`zig build` makes `zig-out/bin/hello.seg`, `window.seg` and
-`buttons.seg`. Put them on the disk with
-`-Dextra=c/hello=path/to/hello.seg` (or drop them into the tree's
-`disk/c/`), and run them from the shell: `hello`, or `run window` so the
-shell stays free while the window is open.
-
-The programs in `src/disk/c/` are all built this way and are the best
-examples: each opens its libraries, reads its arguments with a `ReadArgs`
-template and carries a `$VER:` string.
+`zig build` makes `zig-out/bin/hello.seg`; put it on the disk with
+`-Dextra=c/hello=path/to/hello.seg` and run `hello` from the shell. A
+window drawn into and a window of buttons are in
+[the programs guide](sdk/docs/guides/programs.md); the programs in
+`src/disk/c/` are all built this way.
 
 ## Repository layout
 
@@ -549,7 +190,7 @@ src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
 tools/         build helpers: mkfs, ressize, checks
-scripts/       the QEMU build and a serial terminal
+scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts), a serial terminal
 ```
 
 ## License
