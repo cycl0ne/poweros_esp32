@@ -22,6 +22,8 @@ pub const rtc_cntl = @import("rtc_cntl.zig");
 /// The general DMA engine's channels, for dma.resource and the drivers
 /// that drive a channel directly.
 pub const gdma = @import("gdma.zig");
+/// The second SPI controller (SPI2) as a bus master.
+pub const gpspi = @import("gpspi.zig");
 pub const wdt = @import("wdt.zig");
 /// The core's cycle counter.
 pub const cpu = @import("cpu.zig");

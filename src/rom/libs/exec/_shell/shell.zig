@@ -169,7 +169,7 @@ const commands = .{
     @import("cmds/clis.zig"),
     @import("cmds/newshell.zig"),
     @import("cmds/disk.zig"),
-    @import("cmds/sd.zig"),
+    @import("cmds/sdcard.zig"),
     @import("cmds/format.zig"),
     @import("cmds/rdb.zig"),
     @import("cmds/screen.zig"),
@@ -245,8 +245,8 @@ pub const Shell = struct {
     disk_port: ?*MsgPort = null,
     disk_req: IOStdReq = .{},
     /// sdcard.device's unit 0, the same way.
-    sd_port: ?*MsgPort = null,
-    sd_req: IOStdReq = .{},
+    sdcard_port: ?*MsgPort = null,
+    sdcard_req: IOStdReq = .{},
 
     /// The software interrupt `trigger`'s server defers its work to, and
     /// `cause` causes; how often it has run.

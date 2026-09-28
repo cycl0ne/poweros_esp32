@@ -32,7 +32,7 @@ const err = rtg.errors;
 const tags = rtg.tags;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
-const gpspi = @import("gpspi.zig");
+const gpspi = sdk.hardware.gpspi;
 const gpio = @import("sdk").hardware.gpio;
 const st = sdk.expansion.systemtags;
 const BoardPin = sdk.expansion.BoardPin;

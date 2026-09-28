@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: MIT
 //! The ESP32-S3's second SPI controller (SPI2, "FSPI") as a master on a
 //! bus that is mostly written to: a display controller's.
 //!
@@ -13,7 +13,7 @@
 //! one thing worth knowing between calls - whether a transaction is still
 //! running - is the controller's own USR bit.
 
-const hardware = @import("sdk").hardware;
+const hardware = @import("hardware.zig");
 const reg = hardware.mmio.reg;
 const system = hardware.system;
 const signals = hardware.signals;
