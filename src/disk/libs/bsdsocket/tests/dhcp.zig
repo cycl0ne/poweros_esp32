@@ -47,7 +47,7 @@ fn capture(stack: *StackBase, _: *Interface, frame: *Frame, _: *const [6]u8, pac
 }
 
 /// What a DHCP message the client sent says.
-const Message = struct { kind: u8, xid: u32, ciaddr: u32, destination: u32, requested: u32, server_id: u32 };
+const Message = struct { kind: u8, xid: u32, ciaddr: u32, destination: u32, requested: u32, server_id: u32, hostname: [64]u8 = @splat(0) };
 
 fn dhcpAt(index: usize) ?Message {
     const packet = sent[index].bytes[0..sent[index].length];
@@ -65,6 +65,7 @@ fn dhcpAt(index: usize) ?Message {
             53 => found.kind = message[at + 2],
             50 => found.requested = _ip.get32(message, at + 2),
             54 => found.server_id = _ip.get32(message, at + 2),
+            12 => @memcpy(found.hostname[0..length], message[at + 2 ..][0..length]),
             else => {},
         }
         at += 2 + length;
@@ -200,6 +201,8 @@ const Rig = struct {
         _dhcp.start(rig.stack, rig.interface);
         const first = lastDhcp().?;
         try testing.expectEqual(@as(u8, 1), first.kind);
+        // The machine's name goes with the discover and the request.
+        try testing.expectEqualStrings(std.mem.sliceTo(&rig.stack.hostname, 0), std.mem.sliceTo(&first.hostname, 0));
         try testing.expectEqual(bsd.INADDR_BROADCAST, first.destination);
         rig.answer(2, first.xid, offered, lease_s);
         const request = lastDhcp().?;

@@ -1096,11 +1096,13 @@ fn GetHostName(base: *SocketBase, name: [*]u8, length: u32) i32
 
 **BEHAVIOR**
 
-"poweros" until SetHostName says otherwise.
+The name in `ENVARC:Sys/net/hostname`, read the first time an
+interface is added or the name is asked for, or "poweros" without one;
+SetHostName's once it has been called.
 
 **CONTEXT**
 
-- Waits: only for the stack's lock.
+- Waits: for the stack's lock, and the first time for the file.
 - Interrupts: no.
 - Forbid: not held.
 - Process: a Task will do.
@@ -2798,15 +2800,19 @@ fn SetHostName(base: *SocketBase, name: [*:0]const u8) i32
 
 **INPUTS**
 
-- `name` - 1 to 63 characters.
+- `name` - 1 to 63 letters, digits and hyphens, not beginning or
+  ending with a hyphen.
 
 **RESULT**
 
-0, or -1 with Errno() `EINVAL` for an empty name or one too long.
+0, or -1 with Errno() `EINVAL` for a name that is not such a name.
 
 **BEHAVIOR**
 
-It holds for the whole stack, every opener, until set again.
+It holds for the whole stack, every opener, until set again, and a
+DHCP request after it carries it. Set before any interface is added,
+it takes the place of `ENVARC:Sys/net/hostname`; C:net/HostName SAVE
+writes that file, for the name to hold from the next boot.
 
 **CONTEXT**
 

@@ -599,6 +599,10 @@ pub const HOSTS_FILE = "ENVARC:Sys/net/hosts";
 pub const NAMESERVERS_FILE = "ENVARC:Sys/net/nameservers";
 /// The time server TimeSync asks when neither it nor DHCP names one.
 pub const TIMESERVER_FILE = "ENVARC:Sys/net/timeserver";
+/// The machine's name: the first line that is not a comment. Read by the
+/// stack the first time an interface is added or the name is asked for,
+/// unless SetHostName came first; sent to DHCP servers.
+pub const HOSTNAME_FILE = "ENVARC:Sys/net/hostname";
 
 /// How long an interface's name may be.
 pub const IFNAMSIZ = 16;

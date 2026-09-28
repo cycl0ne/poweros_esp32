@@ -9,6 +9,67 @@ const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const hosts = @import("hosts.zig");
 const Address = @import("../ip6/address.zig").Address;
+const dos = sdk.dos;
+const _lock = @import("../lock/_lock.zig");
+const SocketBase = _base.SocketBase;
+const DosBase = sdk.interface.dos.DosBase;
+
+/// Whether `name` may be the machine's name: 1 to 63 letters, digits and
+/// hyphens, not beginning or ending with a hyphen - a host name as a DNS
+/// label and a DHCP server take it.
+pub fn validHostName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 63) return false;
+    if (name[0] == '-' or name[name.len - 1] == '-') return false;
+    for (name) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '-';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+/// The name in a host name file's text: its first line that is neither
+/// blank nor a comment ('#'), trimmed; null when there is none, or it is
+/// not a valid name.
+pub fn hostNameIn(text: []const u8) ?[]const u8 {
+    var start: usize = 0;
+    while (start < text.len) {
+        var end = start;
+        while (end < text.len and text[end] != '\n' and text[end] != '\r') end += 1;
+        var line = text[start..end];
+        while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
+        while (line.len > 0 and (line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
+        if (line.len != 0 and line[0] != '#') return if (validHostName(line)) line else null;
+        start = end + 1;
+    }
+    return null;
+}
+
+/// The machine's name from `HOSTNAME_FILE`, once: the first time an
+/// interface is added or the name asked for, on the caller's task, which
+/// has dos.library to read it with. A name SetHostName gave first stays.
+pub fn loadHostName(sb: *SocketBase) void {
+    const stack = sb.stack;
+    if (@atomicLoad(u32, &stack.hostname_set, .monotonic) != 0) return;
+    const sys = sb.sys_base;
+    // Room for a comment above the name as long as the file's own.
+    var text: [1024]u8 = undefined;
+    const got: usize = read: {
+        const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse break :read 0;
+        defer sys.CloseLibrary(lib);
+        const dl: *DosBase = @ptrCast(lib);
+        const file = dl.Open(bsd.HOSTNAME_FILE, dos.MODE_OLDFILE) orelse break :read 0;
+        defer _ = dl.Close(file);
+        const length = dl.Read(file, &text, text.len);
+        break :read if (length > 0) @intCast(length) else 0;
+    };
+    const held = _lock.take(stack);
+    defer _lock.give(stack, held);
+    if (stack.hostname_set != 0) return;
+    stack.hostname_set = 1;
+    const name = hostNameIn(text[0..got]) orelse return;
+    @memcpy(stack.hostname[0..name.len], name);
+    @memset(stack.hostname[name.len..], 0);
+}
 
 /// Names the cache keeps, and for how long at the least and the most.
 pub const cache_max = 32;

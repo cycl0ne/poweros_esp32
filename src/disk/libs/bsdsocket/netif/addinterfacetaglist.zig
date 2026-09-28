@@ -104,6 +104,8 @@ const Address = @import("../ip6/address.zig").Address;
 /// ```
 pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) i32 {
     const stack = sb.stack;
+    // The machine's name, for the DHCP request this may start.
+    @import("../names/_names.zig").loadHostName(sb);
     const sys = sb.sys_base;
     const ub = stack.utility.?;
     const device_name: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(bsd.IFA_Device, 0, tags));

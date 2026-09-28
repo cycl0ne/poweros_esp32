@@ -56,6 +56,8 @@ const fixed_bytes = 236;
 const options_at = fixed_bytes + 4;
 /// A BOOTP message is 300 bytes at least; the rest is padding.
 const message_min = 300;
+/// Room for the options with a host name of 63 characters.
+const message_max = 360;
 
 // Message types (option 53).
 const discover: u8 = 1;
@@ -71,6 +73,7 @@ const option_pad: u8 = 0;
 const option_netmask: u8 = 1;
 const option_router: u8 = 3;
 const option_dns: u8 = 6;
+const option_hostname: u8 = 12;
 const option_domain: u8 = 15;
 const option_ntp: u8 = 42;
 const option_requested: u8 = 50;
@@ -223,7 +226,7 @@ pub fn stop(stack: *StackBase, interface: *Interface) void {
 fn send(stack: *StackBase, client: *Client, kind: u8) void {
     const interface = interfaceOf(stack, client);
     const frame = stack.frames.take(stack.sys_base) orelse return;
-    const message = frame.room()[frame.start..][0..message_min];
+    const message = frame.room()[frame.start..][0..message_max];
     @memset(message, 0);
     message[0] = op_request;
     message[1] = 1; // Ethernet
@@ -260,9 +263,13 @@ fn send(stack: *StackBase, client: *Client, kind: u8) void {
     }
     if (kind == discover or kind == request) {
         put(message, &at, option_parameters, &.{ option_netmask, option_router, option_dns, option_domain, option_lease, option_ntp });
+        // The machine's name, which a server may show and register.
+        var length: usize = 0;
+        while (length < stack.hostname.len and stack.hostname[length] != 0) length += 1;
+        if (length != 0) put(message, &at, option_hostname, stack.hostname[0..length]);
     }
     message[at] = option_end;
-    frame.length = message_min;
+    frame.length = @intCast(@max(at + 1, message_min));
 
     // UDP from 68 to 67.
     const unicast = kind == release or (kind == request and client.state == .renewing);

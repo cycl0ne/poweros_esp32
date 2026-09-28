@@ -1,0 +1,5 @@
+# ENVARC:Sys/net/hostname - the machine's name on the network, which
+# DHCP servers are told and may show and register: 1 to 63 letters,
+# digits and hyphens. The first line that is not a comment is read.
+# C:net/HostName NAME SAVE writes this file.
+poweros

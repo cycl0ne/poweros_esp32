@@ -160,6 +160,11 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     }
     exe.entry = .{ .symbol_name = "_program_entry" };
     exe.link_emit_relocs = true;
+    // A section per function, so each function's literal pool lies just
+    // before its code (program.ld): an l32r reaches 256 KiB back, and a
+    // program larger than that with one pool for all its code fails to
+    // link.
+    exe.link_function_sections = true;
 
     const convert = b.addRunArtifact(dep.artifact("elf2seg"));
     convert.addArtifactArg(exe);

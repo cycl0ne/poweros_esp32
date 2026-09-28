@@ -105,6 +105,9 @@ pub const StackBase = extern struct {
     /// own name.
     domain: [64]u8 = @splat(0),
     hostname: [64]u8 = "poweros".* ++ @as([57]u8, @splat(0)),
+    /// The name file has been read, or SetHostName has set the name: the
+    /// file is not read again.
+    hostname_set: u32 = 0,
     names: _names.Cache = .{},
     /// The ring sizes of a new TCP connection.
     tcp_send_space: u32 = 8 * 1024,

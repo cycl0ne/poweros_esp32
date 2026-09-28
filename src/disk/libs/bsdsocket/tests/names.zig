@@ -201,3 +201,20 @@ test "the cache keeps an answer for its time, within its bounds" {
     try utility_library.tearDown(kub);
     kexec.deinit();
 }
+
+test "the host name file: the first line that is a name, and what is not one" {
+    const text =
+        \\# ENVARC:Sys/net/hostname
+        \\
+        \\   rover-7b  
+        \\other
+    ;
+    try testing.expectEqualStrings("rover-7b", _names.hostNameIn(text).?);
+    try testing.expect(_names.hostNameIn("# only a comment\n") == null);
+    try testing.expect(_names.hostNameIn("") == null);
+    try testing.expect(_names.hostNameIn("bad_name\n") == null);
+    try testing.expect(_names.hostNameIn("-rover\n") == null);
+    try testing.expect(_names.validHostName("a"));
+    try testing.expect(!_names.validHostName("x" ** 64));
+    try testing.expect(!_names.validHostName("rover.home"));
+}

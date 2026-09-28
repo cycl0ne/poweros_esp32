@@ -126,7 +126,12 @@ goes the other way. A name is looked for in order:
    `ENVARC:Sys/net/nameservers`.
 
 `GetHostByName`, `GetHostByAddr`, `Inet_Addr` and `Inet_NtoA` remain for
-IPv4-only code. `GetHostName` and `SetHostName` hold the machine's name.
+IPv4-only code. `GetHostName` and `SetHostName` hold the machine's name:
+the one in `ENVARC:Sys/net/hostname`, read the first time an interface is
+added or the name is asked for, unless `SetHostName` came first. Every
+DHCP request carries it (option 12), so a router can show the machine by
+name. `C:net/HostName` shows it, sets it, and with `SAVE` writes the
+file.
 
 ## Interfaces
 
@@ -157,6 +162,7 @@ keeps with the device grows with the link's speed unless the file says.
 | File | Holds |
 |---|---|
 | `DEVS:NetInterfaces/<NAME>` | one interface: `AddNetInterface NAME` brings it up as `<name>` in lower case |
+| `ENVARC:Sys/net/hostname` | the machine's name, sent to DHCP servers; "poweros" without it |
 | `ENVARC:Sys/net/hosts` | names known without asking: an address, then its names |
 | `ENVARC:Sys/net/nameservers` | name servers to ask when the network names none |
 | `ENVARC:Sys/net/timeserver` | where `C:net/TimeSync` asks the time, when DHCP names no server |
@@ -343,6 +349,7 @@ connection to port 23.
 | `C:net/NetStatus` | interfaces, routes, sockets, the ARP and neighbour tables, the counts |
 | `C:net/Wireless` | scans, joins, leaves a Wi-Fi network |
 | `C:net/Ping`, `Resolve` | echo requests; the addresses of a name |
+| `C:net/HostName` | the machine's name, shown or set; `SAVE` keeps it |
 | `C:net/TimeSync` | the clock from a time server |
 | `C:net/HTTPGet` | a file over HTTP |
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand |

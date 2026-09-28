@@ -6,6 +6,7 @@ const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
 const _socket = @import("../socket/_socket.zig");
+const _names = @import("_names.zig");
 const _lock = @import("../lock/_lock.zig");
 
 /// The machine's name, into the caller's buffer.
@@ -25,10 +26,12 @@ const _lock = @import("../lock/_lock.zig");
 /// 0, or -1 with Errno() `EINVAL` when it does not fit.
 ///
 /// BEHAVIOR:
-/// "poweros" until SetHostName says otherwise.
+/// The name in `ENVARC:Sys/net/hostname`, read the first time an
+/// interface is added or the name is asked for, or "poweros" without one;
+/// SetHostName's once it has been called.
 ///
 /// CONTEXT:
-/// - Waits: only for the stack's lock.
+/// - Waits: for the stack's lock, and the first time for the file.
 /// - Interrupts: no.
 /// - Forbid: not held.
 /// - Process: a Task will do.
@@ -51,6 +54,7 @@ const _lock = @import("../lock/_lock.zig");
 /// _ = sb.GetHostName(&name, name.len);
 /// ```
 pub fn GetHostName(sb: *SocketBase, name: [*]u8, length: u32) i32 {
+    _names.loadHostName(sb);
     const held = _lock.take(sb.stack);
     defer _lock.give(sb.stack, held);
     const own = &sb.stack.hostname;
