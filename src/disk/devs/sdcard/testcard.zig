@@ -56,6 +56,8 @@ pub const TestCard = struct {
     high_capacity: bool = false,
     /// The last command was APP_CMD.
     app: bool = false,
+    /// What SET_WR_BLK_ERASE_COUNT last said.
+    erase_count: u32 = 0,
     /// SD_SEND_OP_COND's still to be answered "idle" before it is ready.
     powering: u32 = 0,
     /// A command coming in.
@@ -95,6 +97,11 @@ pub const TestCard = struct {
 
     pub fn exchange(sim: *TestCard, bytes: []u8) void {
         for (bytes) |*b| b.* = sim.clock(b.*);
+    }
+
+    pub fn receive(sim: *TestCard, into: []u8) void {
+        @memset(into, 0xFF);
+        sim.exchange(into);
     }
 
     pub fn setClock(sim: *TestCard, hz: u32) u32 {
@@ -210,6 +217,10 @@ pub const TestCard = struct {
                     sim.idle = false;
                     sim.high_capacity = !sim.old and argument & sdspi.ocr_high_capacity != 0;
                 }
+                return sim.answer(&.{sim.r1()});
+            },
+            sdspi.SET_WR_BLK_ERASE_COUNT => {
+                sim.erase_count = argument;
                 return sim.answer(&.{sim.r1()});
             },
             else => return sim.answer(&.{sim.r1() | sdspi.r1_illegal_command}),

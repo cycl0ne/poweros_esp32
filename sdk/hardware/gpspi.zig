@@ -276,10 +276,12 @@ pub fn Controller(comptime host: Host) type {
             reg(dma_conf).* = conf;
         }
 
-        /// What a read left in the controller's own buffer.
+        /// What a read left in the controller's own buffer. Each word is
+        /// read once: a read of the buffer is a trip across the bus.
         pub fn unload(into: []u8) void {
+            var word: u32 = 0;
             for (into, 0..) |*byte, i| {
-                const word = reg(data_buf + (i / 4) * 4).*;
+                if (i % 4 == 0) word = reg(data_buf + i).*;
                 byte.* = @truncate(word >> @intCast((i % 4) * 8));
             }
         }
@@ -318,6 +320,25 @@ pub fn Controller(comptime host: Host) type {
             var spins: u32 = 0;
             while (busy() and spins < 10_000_000) spins += 1;
             unload(bytes);
+        }
+
+        /// `into` (1 to `buffer_bytes`) filled from MISO while MOSI stays at
+        /// its idle level, high: to a memory card, 0xFF for every byte,
+        /// which is what it is sent while it is listened to. Nothing has
+        /// to be put in the buffer first. Returns when the last bit is in.
+        pub fn receive(into: []u8) void {
+            reg(user).* = user_miso;
+            reg(ctrl).* = ctrl_idle_high;
+            reg(ms_dlen).* = @as(u32, @intCast(into.len)) * 8 - 1;
+            reg(dma_int_clr).* = int_trans_done;
+            var conf = reg(dma_conf).*;
+            conf &= ~(dma_tx_ena | dma_rx_ena);
+            reg(dma_conf).* = conf | buf_afifo_rst;
+            reg(dma_conf).* = conf;
+            run();
+            var spins: u32 = 0;
+            while (busy() and spins < 10_000_000) spins += 1;
+            unload(into);
         }
 
         /// The configuration handed over to the controller's own clock, as

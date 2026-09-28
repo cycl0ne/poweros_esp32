@@ -32,6 +32,7 @@
 //!
 //!     select(on: bool) bool        the chip select; false if it failed
 //!     exchange(bytes: []u8) void   out, and what came back in their place
+//!     receive(into: []u8) void     in, with 0xFF going out for each byte
 //!     setClock(hz: u32) u32        the clock it now runs at
 //!     delay(us: u32) void          time passing, for a card to get ready
 //!
@@ -46,6 +47,9 @@ const card = @import("card.zig");
 /// The commands only SPI mode has.
 pub const READ_OCR: u32 = 58;
 pub const CRC_ON_OFF: u32 = 59;
+/// After APP_CMD: how many blocks the next WRITE_MULTIPLE_BLOCK will
+/// write, so the card can erase them ahead of the data.
+pub const SET_WR_BLK_ERASE_COUNT: u32 = 23;
 
 /// The first byte of every command: a zero, a one, then its number.
 const command_start: u8 = 0x40;
@@ -104,10 +108,19 @@ const answer_bytes: u32 = 8;
 pub const identify_us: u32 = 3_000_000;
 const read_us: u32 = 500_000;
 const write_us: u32 = 1_000_000;
-/// While waiting, this many bytes are asked for before the bus is let
-/// rest for `rest_us`; a fast card answers inside the first round and
-/// costs no delay at all.
-const polls_per_rest: u32 = 64;
+/// While a card is busy or has yet to send a block, it is asked this many
+/// chunks' worth without a pause - about 10 ms at the fast clock - before
+/// the bus is let rest for `rest_us` between chunks. A rest is a sleep on
+/// the timer, and a sleep costs a tick of the scheduler, 10 ms, whatever
+/// it asks for: spinning for less than that is never slower, and a card
+/// busy for a millisecond or two, as they are after most blocks, costs
+/// only that.
+const spin_chunks: u32 = 768;
+/// How many bytes at a time a card that is programming is listened to.
+const busy_chunk: usize = 16;
+/// How many bytes at a time a block's start token is listened for in.
+/// Less than a block, so a chunk never holds the whole of one.
+const token_chunk: usize = 16;
 const rest_us: u32 = 1_000;
 
 // --- the checks --------------------------------------------------------------
@@ -129,17 +142,29 @@ pub fn crc7Byte(bytes: []const u8) u8 {
 }
 
 /// The sixteen-bit check that follows a block (x^16 + x^12 + x^5 + 1,
-/// starting from zero).
+/// starting from zero), a byte at a time from a table. Worked out a bit at
+/// a time it cost a third of a millisecond a block - more than the block
+/// takes on the wire.
 pub fn crc16(bytes: []const u8) u16 {
     var crc: u16 = 0;
-    for (bytes) |byte| {
-        crc ^= @as(u16, byte) << 8;
+    for (bytes) |byte| crc = (crc << 8) ^ crc16_table[@as(u8, @truncate(crc >> 8)) ^ byte];
+    return crc;
+}
+
+/// What each value of the check's top byte contributes, worked out once
+/// when the file is compiled.
+const crc16_table: [256]u16 = blk: {
+    @setEvalBranchQuota(10_000);
+    var table: [256]u16 = undefined;
+    for (&table, 0..) |*entry, index| {
+        var crc: u16 = @as(u16, index) << 8;
         for (0..8) |_| {
             crc = if (crc & 0x8000 != 0) (crc << 1) ^ 0x1021 else crc << 1;
         }
+        entry.* = crc;
     }
-    return crc;
-}
+    break :blk table;
+};
 
 /// A register a card sends as a block - its description or identity,
 /// sixteen bytes, highest first - as the four words `card.bits` reads, the
@@ -195,8 +220,7 @@ pub fn Protocol(comptime Bus: type) type {
 
         /// `into` filled from the card, 0xFF sent for every byte of it.
         fn receive(bus: *Bus, into: []u8) void {
-            @memset(into, 0xFF);
-            bus.exchange(into);
+            bus.receive(into);
         }
 
         /// `bytes` sent, whatever comes back dropped. They go through a
@@ -213,29 +237,24 @@ pub fn Protocol(comptime Bus: type) type {
             }
         }
 
-        /// The first byte that is not `skip`, within `us`. Null if every
-        /// byte was.
-        fn awaitNot(bus: *Bus, skip: u8, us: u32) ?u8 {
-            var waited: u32 = 0;
-            while (true) {
-                for (0..polls_per_rest) |_| {
-                    const got = byte(bus);
-                    if (got != skip) return got;
-                }
-                if (waited >= us) return null;
-                bus.delay(rest_us);
-                waited += rest_us;
-            }
-        }
-
         /// Until the card lets go of MISO: a card that is programming
         /// holds it low. False if it never did.
+        ///
+        /// It is listened to `busy_chunk` bytes at a time. A card that has
+        /// let go keeps the line high, so the last byte of a chunk says
+        /// whether it has. It is asked without a pause for `spin_chunks`
+        /// chunks before it is slept on: sleeping from the first
+        /// millisecond made every block written cost a tick, and writes a
+        /// quarter of their speed.
         fn awaitIdle(bus: *Bus, us: u32) bool {
+            var chunk: [busy_chunk]u8 = undefined;
             var waited: u32 = 0;
+            var polls: u32 = 0;
             while (true) {
-                for (0..polls_per_rest) |_| {
-                    if (byte(bus) == 0xFF) return true;
-                }
+                receive(bus, &chunk);
+                if (chunk[chunk.len - 1] == 0xFF) return true;
+                polls += 1;
+                if (polls < spin_chunks) continue;
                 if (waited >= us) return false;
                 bus.delay(rest_us);
                 waited += rest_us;
@@ -281,10 +300,29 @@ pub fn Protocol(comptime Bus: type) type {
 
         /// A block the card sends after a command: its start token within
         /// the allowance, `into.len` bytes, and its check.
+        ///
+        /// The card takes hundreds of microseconds to start, and asking a
+        /// byte at a time for that long costs a transaction each. So it is
+        /// listened for `token_chunk` bytes at a time, and whatever of the
+        /// block came in the same chunk after the token is kept.
         fn receiveBlock(bus: *Bus, into: []u8) Outcome {
-            const token = awaitNot(bus, 0xFF, read_us) orelse return .no_answer;
+            var chunk: [token_chunk]u8 = undefined;
+            var waited: u32 = 0;
+            var polls: u32 = 0;
+            const found = find: while (true) {
+                receive(bus, &chunk);
+                for (chunk, 0..) |got, at| if (got != 0xFF) break :find at;
+                polls += 1;
+                if (polls < spin_chunks) continue;
+                if (waited >= read_us) return .no_answer;
+                bus.delay(rest_us);
+                waited += rest_us;
+            };
+            const token = chunk[found];
             if (token != token_single) return if (isErrorToken(token)) .refused else .no_answer;
-            receive(bus, into);
+            const early = chunk[found + 1 ..];
+            @memcpy(into[0..early.len], early);
+            receive(bus, into[early.len..]);
             var check: [2]u8 = undefined;
             receive(bus, &check);
             const said = (@as(u16, check[0]) << 8) | check[1];
@@ -439,6 +477,10 @@ pub fn Protocol(comptime Bus: type) type {
             if (count == 0) return .ok;
             const block_size: usize = @intCast(card.block_bytes);
             const many = count > 1;
+            // The card is told the run's length first. It is a hint - a
+            // card that ignores it writes the run all the same - so what
+            // it answers does not matter, only that it answered.
+            if (many) _ = appCommand(bus, SET_WR_BLK_ERASE_COUNT, count) orelse return .no_answer;
             const index = if (many) card.WRITE_MULTIPLE_BLOCK else card.WRITE_BLOCK;
             const r1 = command(bus, index, of.blockArg(block)) orelse return .no_answer;
             if (r1 != 0) return .refused;
@@ -521,6 +563,8 @@ test "blocks written one at a time and in a run read back the same" {
     try testing.expectEqual(Outcome.ok, Spi.write(&sim, &found, 20, 4, out[512..].ptr));
     try testing.expectEqualSlices(u8, out[0..512], sim.image[10 * 512 ..][0..512]);
     try testing.expectEqualSlices(u8, out[512..], sim.image[20 * 512 ..][0 .. 4 * 512]);
+    // The run was announced, so the card could erase ahead of it.
+    try testing.expectEqual(@as(u32, 4), sim.erase_count);
 
     var back: [5 * 512]u8 = @splat(0);
     try testing.expectEqual(Outcome.ok, Spi.read(&sim, &found, 10, 1, &back));

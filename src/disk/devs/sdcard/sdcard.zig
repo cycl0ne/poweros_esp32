@@ -501,7 +501,8 @@ fn writeProtected(sb: *SdCardBase) bool {
 // --- the SPI slot ---------------------------------------------------------
 
 /// The bus `sdspi.zig` speaks to the card over: SPI3's full-duplex
-/// exchange, a round of its 64-byte buffer at a time, the slot's chip
+/// exchange and its receive with MOSI held high, a round of its 64-byte
+/// buffer at a time, the slot's chip
 /// select wherever the board put it, and the task's timer.
 const SpiBus = struct {
     sb: *SdCardBase,
@@ -528,6 +529,16 @@ const SpiBus = struct {
         while (at < bytes.len) {
             const piece = @min(bytes.len - at, spi.buffer_bytes);
             spi.exchange(bytes[at..][0..piece]);
+            at += piece;
+        }
+    }
+
+    pub fn receive(bus: *SpiBus, into: []u8) void {
+        _ = bus;
+        var at: usize = 0;
+        while (at < into.len) {
+            const piece = @min(into.len - at, spi.buffer_bytes);
+            spi.receive(into[at..][0..piece]);
             at += piece;
         }
     }
