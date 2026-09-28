@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: MIT
+//! iffparse.library's functions: reading and writing IFF - chunks inside
+//! chunks, each named by four characters. Open it with
+//! OpenLibrary("iffparse.library", 1).
+//!
+//! The table is this library's own: it is not on any other system's, so
+//! it starts at the first slot after the standard four and holds only
+//! what is here.
+##include libs/utility/utility as utility
+##include libs/iffparse/iffparse as iffparse
+##basetype IFFParseBase
+##name iffparse.library
+##bias 4
+##public
+/// A handle for one IFF file, with nothing in it yet. Give it a stream
+/// (`InitIFFasDOS`, `InitIFFasClip`, `InitIFF`) before opening it. Null
+/// for no memory.
+?*iffparse.IFFHandle AllocIFF()
+/// A handle given back. It must be closed first (`CloseIFF`), and the
+/// stream behind it is the caller's to close. Null does nothing.
+void FreeIFF(?*iffparse.IFFHandle iff)
+/// Where the bytes come from: `hook` is called with the handle and an
+/// IFFStreamCmd, and `flags` says what the stream can do (IFFF_FSEEK,
+/// IFFF_RSEEK).
+void InitIFF(*iffparse.IFFHandle iff, u32 flags, *utility.Hook hook)
+/// The stream is a dos file handle in `iff.stream`, which seeks both
+/// ways.
+void InitIFFasDOS(*iffparse.IFFHandle iff)
+/// The stream is a ClipboardHandle in `iff.stream`, from OpenClipboard.
+void InitIFFasClip(*iffparse.IFFHandle iff)
+/// The file opened for reading (IFFF_READ) or writing (IFFF_WRITE): the
+/// stream is told to begin and the walk starts at the top. 0, or an
+/// IFFERR_.
+i32 OpenIFF(*iffparse.IFFHandle iff, i32 rw_mode)
+/// The file done with: every chunk still open is popped, a write is
+/// finished off, and the stream is told so. The stream itself is the
+/// caller's to close.
+void CloseIFF(*iffparse.IFFHandle iff)
+/// The walk carried on: to the next chunk asked for with StopChunk and
+/// its like (IFFPARSE_SCAN), one chunk with the handlers run
+/// (IFFPARSE_STEP), or one chunk with none run (IFFPARSE_RAWSTEP). 0
+/// when it stopped where it was asked to, or an IFFERR_ - IFFERR_EOF at
+/// the end of the file.
+i32 ParseIFF(*iffparse.IFFHandle iff, i32 control)
+/// Bytes of the chunk the walk is in, never past its end. How many were
+/// read, or an IFFERR_.
+i32 ReadChunkBytes(*iffparse.IFFHandle iff, *anyopaque buf, i32 bytes)
+/// The same in records of `record_size` bytes, so that a part record is
+/// not read. How many whole records were read, or an IFFERR_.
+i32 ReadChunkRecords(*iffparse.IFFHandle iff, *anyopaque buf, i32 record_size, i32 records)
+/// Bytes into the chunk being written. How many were written, or an
+/// IFFERR_.
+i32 WriteChunkBytes(*iffparse.IFFHandle iff, *const anyopaque buf, i32 bytes)
+/// The same in records. How many whole records were written, or an
+/// IFFERR_.
+i32 WriteChunkRecords(*iffparse.IFFHandle iff, *const anyopaque buf, i32 record_size, i32 records)
+/// A chunk started, for writing: `id` its four characters, `form_type` the
+/// kind of a generic chunk (FORM, LIST, CAT) and ignored otherwise, and
+/// `size` how many bytes it will hold or IFFSIZE_UNKNOWN to have it
+/// written back at PopChunk. 0, or an IFFERR_.
+i32 PushChunk(*iffparse.IFFHandle iff, u32 form_type, u32 id, i32 size)
+/// The chunk ended: its size written back if it was unknown, the pad
+/// byte written if it needs one, and the walk back in its parent. 0, or
+/// an IFFERR_.
+i32 PopChunk(*iffparse.IFFHandle iff)
+/// `hook` called whenever the walk enters a `form_type`.`id` chunk, stored at
+/// `position` (IFFSLI_). The hook is called with the handle and an
+/// IFFCMD_ENTRY command; IFF_RETURN2CLIENT from it stops the walk. 0, or
+/// an IFFERR_.
+i32 EntryHandler(*iffparse.IFFHandle iff, u32 form_type, u32 id, i32 position, *utility.Hook hook, ?*anyopaque object)
+/// The same for leaving a chunk (IFFCMD_EXIT).
+i32 ExitHandler(*iffparse.IFFHandle iff, u32 form_type, u32 id, i32 position, *utility.Hook hook, ?*anyopaque object)
+/// The contents of every `form_type`.`id` chunk kept as it is walked past, to
+/// be read back with FindProp. 0, or an IFFERR_.
+i32 PropChunk(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// PropChunk for each of `pairs` type-and-id pairs.
+i32 PropChunks(*iffparse.IFFHandle iff, [*]const u32 list, i32 pairs)
+/// The walk stops when it reaches a `form_type`.`id` chunk, with that chunk
+/// the current one and nothing of it read. 0, or an IFFERR_.
+i32 StopChunk(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// StopChunk for each of `pairs` type-and-id pairs.
+i32 StopChunks(*iffparse.IFFHandle iff, [*]const u32 list, i32 pairs)
+/// Every `form_type`.`id` chunk kept, newest first, to be read back with
+/// FindCollection. 0, or an IFFERR_.
+i32 CollectionChunk(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// CollectionChunk for each of `pairs` type-and-id pairs.
+i32 CollectionChunks(*iffparse.IFFHandle iff, [*]const u32 list, i32 pairs)
+/// The walk stops when it reaches the end of a `form_type`.`id` chunk, with
+/// that chunk still the current one. 0, or an IFFERR_.
+i32 StopOnExit(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// The stored contents of a `form_type`.`id` property chunk, or null if none
+/// was stored where the walk now is.
+?*iffparse.StoredProperty FindProp(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// The newest of the kept `form_type`.`id` chunks, each linked to the one
+/// before it; null if none were kept.
+?*iffparse.CollectionItem FindCollection(*iffparse.IFFHandle iff, u32 form_type, u32 id)
+/// The FORM or LIST the walk is inside, which is where properties are
+/// stored; null if there is none.
+?*iffparse.ContextNode FindPropContext(*iffparse.IFFHandle iff)
+/// The chunk the walk is in, or null before it has entered one.
+?*iffparse.ContextNode CurrentChunk(*iffparse.IFFHandle iff)
+/// The chunk `context` is in, or null if it is the outermost.
+?*iffparse.ContextNode ParentChunk(*iffparse.ContextNode context)
+/// A local item of `data_size` bytes for a `form_type`.`id` chunk, named by
+/// `ident`. Store it with StoreLocalItem or free it with FreeLocalItem;
+/// null for no memory.
+?*iffparse.LocalContextItem AllocLocalItem(u32 form_type, u32 id, u32 ident, i32 data_size)
+/// A local item freed. It must not be stored. Null does nothing.
+void FreeLocalItem(?*iffparse.LocalContextItem item)
+/// The `data_size` bytes of a local item; null for a null item.
+?*anyopaque LocalItemData(?*iffparse.LocalContextItem item)
+/// The hook called instead of freeing the item when its chunk is left.
+/// It is called with the item and an IFFCMD_PURGELCI command, and frees
+/// the item itself.
+void SetLocalItemPurge(*iffparse.LocalContextItem item, *utility.Hook hook)
+/// The nearest stored `form_type`.`id`.`ident` item, looking from the chunk
+/// the walk is in outwards; null if there is none.
+?*iffparse.LocalContextItem FindLocalItem(*iffparse.IFFHandle iff, u32 form_type, u32 id, u32 ident)
+/// An item stored at `position`: IFFSLI_ROOT with the handle,
+/// IFFSLI_TOP with the chunk the walk is in, IFFSLI_PROP with the FORM
+/// or LIST it is inside. 0, or an IFFERR_.
+i32 StoreLocalItem(*iffparse.IFFHandle iff, *iffparse.LocalContextItem item, i32 position)
+/// An item stored with a chunk named outright. Any item already there
+/// with the same type, id and ident goes.
+void StoreItemInContext(*iffparse.IFFHandle iff, *iffparse.LocalContextItem item, *iffparse.ContextNode context)
+/// clipboard.device opened on `unit` (PRIMARY_CLIP), ready to be a
+/// handle's stream. Null if it could not be opened.
+?*iffparse.ClipboardHandle OpenClipboard(u32 unit)
+/// A clipboard handle given back. Null does nothing.
+void CloseClipboard(?*iffparse.ClipboardHandle clip)
+/// Whether an id is four characters an IFF chunk may be named by:
+/// printable, and no leading space except for ID_NULL.
+bool GoodID(u32 id)
+/// Whether an id is four characters a generic chunk's type may be:
+/// GoodID, and upper case, digits or spaces only.
+bool GoodType(u32 form_type)
+/// An id written into `buf` as five bytes: its four characters and a
+/// NUL. `buf` again.
+[*:0]u8 IDtoStr(u32 id, *[5]u8 buf)
+##end

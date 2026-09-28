@@ -15,3 +15,4 @@ pub const audio = @import("audio.zig");
 pub const network = @import("network.zig");
 pub const wireless = @import("wireless.zig");
 pub const telnet = @import("telnet.zig");
+pub const clipboard = @import("clipboard.zig");

@@ -40,7 +40,7 @@ const tests = [_][]const u8{
     "lines",       "nyan",       "plasma",   "audio",   "fonts",
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
-    "bsdsocktest", "asl",        "settings",
+    "bsdsocktest", "asl",        "settings", "iff",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -63,6 +63,7 @@ const modules = [_]Program{
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
     .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
+    .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library" },
     .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
     .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },
