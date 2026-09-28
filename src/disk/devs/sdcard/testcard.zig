@@ -12,9 +12,9 @@
 //! It is either generation of card: a new one that answers SEND_IF_COND
 //! and counts in blocks, or an old one (`old`) that calls SEND_IF_COND
 //! illegal and counts in bytes. A test can take it out (`absent`), damage
-//! the next block it sends (`damage_next_block`) and have it refuse every
-//! write (`refuse_writes`); it records what the host told it (`crc_on`,
-//! `block_length`, `selected`).
+//! blocks it sends (`damage_blocks` of them, after `damage_blocks_from`
+//! good ones) and have it refuse every write (`refuse_writes`); it records
+//! what the host told it (`crc_on`, `block_length`, `selected`).
 
 const std = @import("std");
 const card = @import("card.zig");
@@ -39,7 +39,14 @@ pub const TestCard = struct {
 
     // What a test sets.
     absent: bool = false,
-    damage_next_block: bool = false,
+    /// How many of the blocks it sends from here on arrive damaged, after
+    /// how many that arrive whole.
+    damage_blocks: u32 = 0,
+    damage_blocks_from: u32 = 0,
+    /// The same for blocks written to it: how many arrive damaged - the
+    /// card turns them away for their check - after how many whole.
+    garble_writes: u32 = 0,
+    garble_writes_from: u32 = 0,
     refuse_writes: bool = false,
 
     // What the host told it.
@@ -97,6 +104,10 @@ pub const TestCard = struct {
 
     pub fn exchange(sim: *TestCard, bytes: []u8) void {
         for (bytes) |*b| b.* = sim.clock(b.*);
+    }
+
+    pub fn send(sim: *TestCard, bytes: []const u8) void {
+        for (bytes) |b| _ = sim.clock(b);
     }
 
     pub fn receive(sim: *TestCard, into: []u8) void {
@@ -191,7 +202,10 @@ pub const TestCard = struct {
                 .blocks = sim.blocks,
                 .old = sim.old,
                 .absent = sim.absent,
-                .damage_next_block = sim.damage_next_block,
+                .damage_blocks = sim.damage_blocks,
+                .damage_blocks_from = sim.damage_blocks_from,
+                .garble_writes = sim.garble_writes,
+                .garble_writes_from = sim.garble_writes_from,
                 .refuse_writes = sim.refuse_writes,
                 .selected = sim.selected,
                 .clock_hz = sim.clock_hz,
@@ -288,8 +302,10 @@ pub const TestCard = struct {
         sim.say(&.{ 0xFF, sdspi.token_single });
         const start = sim.out_head + sim.out_len;
         sim.say(data);
-        if (sim.damage_next_block) {
-            sim.damage_next_block = false;
+        if (sim.damage_blocks_from > 0) {
+            sim.damage_blocks_from -= 1;
+        } else if (sim.damage_blocks > 0) {
+            sim.damage_blocks -= 1;
             sim.out[start] ^= 0x01;
         }
         sim.say(&.{ @truncate(check >> 8), @truncate(check) });
@@ -341,7 +357,13 @@ pub const TestCard = struct {
 
         sim.incoming_len = 0;
         const data = sim.incoming[1..513];
-        const check = (@as(u16, sim.incoming[513]) << 8) | sim.incoming[514];
+        var check = (@as(u16, sim.incoming[513]) << 8) | sim.incoming[514];
+        if (sim.garble_writes_from > 0) {
+            sim.garble_writes_from -= 1;
+        } else if (sim.garble_writes > 0) {
+            sim.garble_writes -= 1;
+            check ^= 1;
+        }
         const response: u8 = if (sim.refuse_writes)
             sdspi.data_write_error
         else if (sim.crc_on and check != sdspi.crc16(data))

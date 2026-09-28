@@ -22,6 +22,7 @@ const td = sdk.devices.trackdisk;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
+const dma = sdk.resources.dma;
 const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
 
@@ -60,6 +61,25 @@ pub const Work = extern struct {
     chain: [descriptors]sdmmc.Descriptor = @splat(.{}),
     /// Every transfer's bytes on their way through.
     buffer: [chunk_bytes]u8 align(64) = @splat(0),
+};
+
+/// The bytes one DMA transaction moves on SPI: a block, which is the most
+/// the card protocol ever asks for at once.
+pub const spi_dma_bytes: u32 = 512;
+
+/// On SPI, what the DMA and the controller's interrupt reach: internal
+/// memory, aligned for the cache, and never moved once the init has it.
+/// A block received comes through `buffer` in one transaction; the
+/// interrupt says when the transaction is over.
+pub const SpiWork = extern struct {
+    /// The interrupt server, whose data points back at the base.
+    int: exec.Interrupt = .{},
+    /// Set by the server when a transaction the task is waiting on ends.
+    done: u32 = 0,
+    /// The receiving descriptor.
+    in_link: dma.DMADescriptor = .{},
+    /// Every block's bytes on their way through.
+    buffer: [spi_dma_bytes + 64]u8 align(64) = @splat(0),
 };
 
 /// The device's base. One unit, whose port is the task's work queue.
@@ -105,6 +125,12 @@ pub const SdCardBase = extern struct {
     slot: Slot = .{},
     /// The expander, when the slot's chip select is one of its pins.
     expander: ?*ExpanderBase = null,
+    /// On SPI: the block the DMA and the interrupt reach, as AllocMem gave
+    /// it and aligned for use; dma.resource and the channel it gave.
+    spi_work: ?*SpiWork = null,
+    spi_work_memory: ?*anyopaque = null,
+    dma_base: ?*dma.DmaBase = null,
+    dma_channel: u32 = 0,
     /// What the device was loaded from, for its expunge to hand back.
     seg_list: ?*anyopaque = null,
 };

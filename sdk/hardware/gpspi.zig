@@ -341,6 +341,43 @@ pub fn Controller(comptime host: Host) type {
             unload(into);
         }
 
+        /// The next transaction's data phase goes by DMA, `bytes` of it
+        /// into memory from MISO while MOSI stays idle high, through the
+        /// channel connected to this controller. The channel is started
+        /// after this and before `begin`.
+        pub fn receiveByDma(bytes: u32) void {
+            reg(user).* = user_miso;
+            reg(ctrl).* = ctrl_idle_high;
+            reg(ms_dlen).* = bytes * 8 - 1;
+            reg(dma_int_clr).* = int_trans_done | int_infifo_full_err;
+            var conf = reg(dma_conf).*;
+            conf = (conf & ~dma_tx_ena) | dma_rx_ena;
+            reg(dma_conf).* = conf | rx_afifo_rst;
+            reg(dma_conf).* = conf;
+        }
+
+        /// Start the transaction `receiveByDma` set up. It
+        /// runs on its own; `busy` or the end-of-transaction interrupt
+        /// says when it is over.
+        pub fn begin() void {
+            run();
+        }
+
+        /// Whether the controller raises its interrupt when a transaction
+        /// ends. The interrupt is a level: `takeDone` clears it.
+        pub fn doneInterrupt(on: bool) void {
+            const ena = reg(dma_int_ena).*;
+            reg(dma_int_ena).* = if (on) ena | int_trans_done else ena & ~int_trans_done;
+        }
+
+        /// Whether a transaction has ended since the last call, the mark
+        /// cleared if so. For the interrupt server.
+        pub fn takeDone() bool {
+            if (reg(dma_int_raw).* & int_trans_done == 0) return false;
+            reg(dma_int_clr).* = int_trans_done;
+            return true;
+        }
+
         /// The configuration handed over to the controller's own clock, as
         /// the controller asks before every transaction, then the
         /// transaction started.

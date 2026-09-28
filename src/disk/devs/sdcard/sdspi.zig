@@ -33,6 +33,7 @@
 //!     select(on: bool) bool        the chip select; false if it failed
 //!     exchange(bytes: []u8) void   out, and what came back in their place
 //!     receive(into: []u8) void     in, with 0xFF going out for each byte
+//!     send(bytes: []const u8) void out, whatever comes back dropped
 //!     setClock(hz: u32) u32        the clock it now runs at
 //!     delay(us: u32) void          time passing, for a card to get ready
 //!
@@ -116,6 +117,11 @@ const write_us: u32 = 1_000_000;
 /// busy for a millisecond or two, as they are after most blocks, costs
 /// only that.
 const spin_chunks: u32 = 768;
+/// How many times a read is tried again from a block whose check failed,
+/// and a write from a block the card turned away for its check.
+const read_retries: u32 = 2;
+const write_retries: u32 = 2;
+
 /// How many bytes at a time a card that is programming is listened to.
 const busy_chunk: usize = 16;
 /// How many bytes at a time a block's start token is listened for in.
@@ -223,18 +229,9 @@ pub fn Protocol(comptime Bus: type) type {
             bus.receive(into);
         }
 
-        /// `bytes` sent, whatever comes back dropped. They go through a
-        /// scratch copy, since an exchange puts what came back in their
-        /// place.
+        /// `bytes` sent, whatever comes back dropped.
         fn send(bus: *Bus, bytes: []const u8) void {
-            var scratch: [64]u8 = undefined;
-            var at: usize = 0;
-            while (at < bytes.len) {
-                const piece = @min(bytes.len - at, scratch.len);
-                @memcpy(scratch[0..piece], bytes[at..][0..piece]);
-                bus.exchange(scratch[0..piece]);
-                at += piece;
-            }
+            bus.send(bytes);
         }
 
         /// Until the card lets go of MISO: a card that is programming
@@ -374,6 +371,18 @@ pub fn Protocol(comptime Bus: type) type {
             bus.exchange(&wake);
             if (!bus.select(true)) return false;
 
+            // A card the chip was reset on - it keeps its power - may be
+            // part way through a run of writes, taking every byte as data
+            // and deaf to commands. A block's worth of 0xFF finishes any
+            // block it is taking in (it turns that one away for its
+            // check), the stop token ends the run, and whatever it then
+            // programs is waited out. A card that was idle ignores all of
+            // it.
+            var flush: [64]u8 = @splat(0xFF);
+            for (0..(512 + 3 + 63) / 64) |_| bus.exchange(&flush);
+            send(bus, &[_]u8{ token_stop, 0xFF });
+            _ = awaitIdle(bus, write_us);
+
             // Into SPI mode. A card that was part way through something
             // may need to be told twice.
             var awake = false;
@@ -449,16 +458,39 @@ pub fn Protocol(comptime Bus: type) type {
 
         /// `count` blocks from `block` into `into`: one command for one
         /// block, a run and STOP_TRANSMISSION for more.
+        ///
+        /// A block whose check fails is read again, from that block on, up
+        /// to `read_retries` times: the card is still there and what it
+        /// holds is still good, so one bad pass over the wire is not a
+        /// failed read. Only a block that fails every time is.
         pub fn read(bus: *Bus, of: *const card.Card, block: u64, count: u32, into: [*]u8) Outcome {
-            if (count == 0) return .ok;
+            const block_size: usize = @intCast(card.block_bytes);
+            var done: u32 = 0;
+            var retries: u32 = 0;
+            while (done < count) {
+                const run = readRun(bus, of, block + done, count - done, into + done * block_size);
+                done += run.blocks;
+                if (run.outcome == .ok) continue;
+                if (run.outcome != .bad_checksum or retries == read_retries) return run.outcome;
+                retries += 1;
+            }
+            return .ok;
+        }
+
+        /// What a run of reads came to, and how many of its blocks arrived
+        /// whole before it ended.
+        const Run = struct { outcome: Outcome, blocks: u32 };
+
+        fn readRun(bus: *Bus, of: *const card.Card, block: u64, count: u32, into: [*]u8) Run {
             const block_size: usize = @intCast(card.block_bytes);
             const many = count > 1;
             const index = if (many) card.READ_MULTIPLE_BLOCK else card.READ_SINGLE_BLOCK;
-            const r1 = command(bus, index, of.blockArg(block)) orelse return .no_answer;
-            if (r1 != 0) return .refused;
+            const r1 = command(bus, index, of.blockArg(block)) orelse return .{ .outcome = .no_answer, .blocks = 0 };
+            if (r1 != 0) return .{ .outcome = .refused, .blocks = 0 };
             var outcome: Outcome = .ok;
-            for (0..count) |which| {
-                outcome = receiveBlock(bus, into[which * block_size ..][0..block_size]);
+            var whole: u32 = 0;
+            while (whole < count) : (whole += 1) {
+                outcome = receiveBlock(bus, into[whole * block_size ..][0..block_size]);
                 if (outcome != .ok) break;
             }
             if (many) {
@@ -468,33 +500,52 @@ pub fn Protocol(comptime Bus: type) type {
                 if (!awaitIdle(bus, write_us) and outcome == .ok) outcome = .no_answer;
                 if (stop == null and outcome == .ok) outcome = .no_answer;
             }
-            return outcome;
+            return .{ .outcome = outcome, .blocks = whole };
         }
 
         /// `count` blocks from `from` to the card at `block`: one command
         /// for one block, a run ended by the stop token for more.
+        ///
+        /// A block the card turned away because its check did not hold is
+        /// sent again, from that block on, up to `write_retries` times: the
+        /// card wrote every block it accepted before it and none after, so
+        /// sending on from there loses and doubles nothing.
         pub fn write(bus: *Bus, of: *const card.Card, block: u64, count: u32, from: [*]const u8) Outcome {
-            if (count == 0) return .ok;
+            const block_size: usize = @intCast(card.block_bytes);
+            var done: u32 = 0;
+            var retries: u32 = 0;
+            while (done < count) {
+                const run = writeRun(bus, of, block + done, count - done, from + done * block_size);
+                done += run.blocks;
+                if (run.outcome == .ok) continue;
+                if (run.outcome != .bad_checksum or retries == write_retries) return run.outcome;
+                retries += 1;
+            }
+            return .ok;
+        }
+
+        fn writeRun(bus: *Bus, of: *const card.Card, block: u64, count: u32, from: [*]const u8) Run {
             const block_size: usize = @intCast(card.block_bytes);
             const many = count > 1;
             // The card is told the run's length first. It is a hint - a
             // card that ignores it writes the run all the same - so what
             // it answers does not matter, only that it answered.
-            if (many) _ = appCommand(bus, SET_WR_BLK_ERASE_COUNT, count) orelse return .no_answer;
+            if (many) _ = appCommand(bus, SET_WR_BLK_ERASE_COUNT, count) orelse return .{ .outcome = .no_answer, .blocks = 0 };
             const index = if (many) card.WRITE_MULTIPLE_BLOCK else card.WRITE_BLOCK;
-            const r1 = command(bus, index, of.blockArg(block)) orelse return .no_answer;
-            if (r1 != 0) return .refused;
+            const r1 = command(bus, index, of.blockArg(block)) orelse return .{ .outcome = .no_answer, .blocks = 0 };
+            if (r1 != 0) return .{ .outcome = .refused, .blocks = 0 };
             const token = if (many) token_multiple else token_single;
             var outcome: Outcome = .ok;
-            for (0..count) |which| {
-                outcome = sendBlock(bus, token, from[which * block_size ..][0..block_size]);
+            var accepted: u32 = 0;
+            while (accepted < count) : (accepted += 1) {
+                outcome = sendBlock(bus, token, from[accepted * block_size ..][0..block_size]);
                 if (outcome != .ok) break;
             }
             if (many) {
                 send(bus, &[_]u8{ token_stop, 0xFF });
                 if (!awaitIdle(bus, write_us) and outcome == .ok) outcome = .no_answer;
             }
-            return outcome;
+            return .{ .outcome = outcome, .blocks = accepted };
         }
     };
 }
@@ -542,6 +593,23 @@ test "a card too old for SEND_IF_COND counts in bytes and is told the block leng
     try testing.expectEqual(@as(u32, 512), sim.block_length);
 }
 
+test "a card left part way through a run of writes is woken all the same" {
+    var sim = try TestCard.init(testing.allocator, .{ .blocks = 2048 });
+    defer sim.deinit();
+    var found: card.Card = .{};
+    try testing.expect(Spi.identify(&sim, &found));
+    // A run of writes begun, a block half sent - and then the chip reset.
+    var out: [512]u8 = @splat(0x77);
+    try testing.expectEqual(@as(?u8, 0), Spi.command(&sim, card.WRITE_MULTIPLE_BLOCK, 100));
+    sim.send(&.{ 0xFF, token_multiple });
+    sim.send(out[0..200]);
+    try testing.expect(Spi.identify(&sim, &found));
+    // It is listening again, and the half block went nowhere.
+    try testing.expectEqual(@as(u8, 0), sim.image[100 * 512]);
+    try testing.expectEqual(Outcome.ok, Spi.write(&sim, &found, 100, 1, &out));
+    try testing.expectEqualSlices(u8, &out, sim.image[100 * 512 ..][0..512]);
+}
+
 test "an empty slot is no card, and says so at once" {
     var sim = try TestCard.init(testing.allocator, .{ .blocks = 2048 });
     defer sim.deinit();
@@ -584,15 +652,49 @@ test "a card that counts in bytes is given byte offsets" {
     try testing.expectEqualSlices(u8, &out, sim.image[7 * 512 ..][0..512]);
 }
 
-test "a block that arrives damaged is a bad checksum, and the card is still there" {
+test "a block that arrives damaged once is read again, from where the run broke" {
     var sim = try TestCard.init(testing.allocator, .{ .blocks = 2048 });
     defer sim.deinit();
     var found: card.Card = .{};
     try testing.expect(Spi.identify(&sim, &found));
-    sim.damage_next_block = true;
+    for (sim.image[0 .. 8 * 512], 0..) |*b, i| b.* = @truncate(i *% 13);
+    var back: [8 * 512]u8 = undefined;
+    // The third block of a run of eight comes in damaged.
+    sim.damage_blocks_from = 2;
+    sim.damage_blocks = 1;
+    try testing.expectEqual(Outcome.ok, Spi.read(&sim, &found, 0, 8, &back));
+    try testing.expectEqualSlices(u8, sim.image[0 .. 8 * 512], &back);
+}
+
+test "a block that arrives damaged every time is a bad checksum, and the card is still there" {
+    var sim = try TestCard.init(testing.allocator, .{ .blocks = 2048 });
+    defer sim.deinit();
+    var found: card.Card = .{};
+    try testing.expect(Spi.identify(&sim, &found));
+    sim.damage_blocks = 1000;
     var back: [512]u8 = undefined;
-    try testing.expectEqual(Outcome.bad_checksum, Spi.read(&sim, &found, 3, 1, &back));
+    const outcome = Spi.read(&sim, &found, 3, 1, &back);
+    try testing.expectEqual(Outcome.bad_checksum, outcome);
+    sim.damage_blocks = 0;
     try testing.expectEqual(Outcome.ok, Spi.read(&sim, &found, 3, 1, &back));
+}
+
+test "a block the card turns away for its check is sent again, from where the run broke" {
+    var sim = try TestCard.init(testing.allocator, .{ .blocks = 2048 });
+    defer sim.deinit();
+    var found: card.Card = .{};
+    try testing.expect(Spi.identify(&sim, &found));
+    var out: [8 * 512]u8 = undefined;
+    for (&out, 0..) |*b, i| b.* = @truncate(i *% 11 +% 5);
+    // The third block of a run of eight arrives damaged, once.
+    sim.garble_writes_from = 2;
+    sim.garble_writes = 1;
+    try testing.expectEqual(Outcome.ok, Spi.write(&sim, &found, 40, 8, &out));
+    try testing.expectEqualSlices(u8, &out, sim.image[40 * 512 ..][0 .. 8 * 512]);
+    // Damaged every time, it is a bad checksum.
+    sim.garble_writes = 1000;
+    try testing.expectEqual(Outcome.bad_checksum, Spi.write(&sim, &found, 40, 1, &out));
+    sim.garble_writes = 0;
 }
 
 test "a write the card refuses is refused, not a lost card" {

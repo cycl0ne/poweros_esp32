@@ -38,9 +38,10 @@
 //! **What the DMA can reach.** The SD/MMC host's DMA reaches internal
 //! memory only, and a caller's buffer is usually external, so every
 //! transfer passes through the buffer in `_sdcard.zig`'s work block. A
-//! transfer longer than that buffer is done in rounds of it. On SPI the
-//! bytes go through the controller's own 64-byte buffer, which the CPU
-//! fills and empties, so there is no work block and no interrupt.
+//! transfer longer than that buffer is done in rounds of it. On SPI a
+//! block received goes by DMA through a buffer of one block in a smaller
+//! work block; everything sent, and everything shorter, goes through the
+//! controller's own 64-byte buffer, which the CPU fills and empties.
 //!
 //! **A card can be taken out.** Nothing here is told when that happens -
 //! the slot has no switch - so it is found out the next time the card is
@@ -454,7 +455,10 @@ fn ready(sb: *SdCardBase) bool {
     if (sb.present != 0) return true;
     if (sb.slot.spi != 0) {
         var bus = SpiBus{ .sb = sb };
-        if (!Spi.identify(&bus, &sb.card)) return false;
+        // A card the chip was reset on - part way through a run of
+        // blocks, say - has been seen to miss the first wake-up and take
+        // the second. An empty slot fails both at once.
+        if (!Spi.identify(&bus, &sb.card) and !Spi.identify(&bus, &sb.card)) return false;
     } else {
         if (!sdmmc.cardPresent()) return false;
         // The reset puts the controller's interrupt gates back where they
@@ -500,10 +504,16 @@ fn writeProtected(sb: *SdCardBase) bool {
 
 // --- the SPI slot ---------------------------------------------------------
 
-/// The bus `sdspi.zig` speaks to the card over: SPI3's full-duplex
-/// exchange and its receive with MOSI held high, a round of its 64-byte
-/// buffer at a time, the slot's chip
+/// The bus `sdspi.zig` speaks to the card over: SPI3, the slot's chip
 /// select wherever the board put it, and the task's timer.
+///
+/// What fits the controller's own 64-byte buffer - a command, an answer,
+/// a token, a chunk listened to while the card is busy - goes through it,
+/// the CPU filling and emptying it, and so does everything sent. A block
+/// received goes by DMA, through the work block's buffer in internal
+/// memory, in one transaction, and the task sleeps on the controller's
+/// interrupt until it is over: the CPU is another task's for the fifth of
+/// a millisecond a block takes.
 const SpiBus = struct {
     sb: *SdCardBase,
 
@@ -533,12 +543,31 @@ const SpiBus = struct {
         }
     }
 
+    /// A block by DMA, anything shorter through the controller's buffer.
+    /// The DMA only receives whole words: given a length that is not one,
+    /// it reports the frame done and writes nothing. So the odd bytes at
+    /// the front - there are some whenever part of a block came in with
+    /// its start token - go through the controller's buffer first.
     pub fn receive(bus: *SpiBus, into: []u8) void {
+        if (into.len <= spi.buffer_bytes) return spi.receive(into);
+        const odd = into.len % 4;
+        if (odd != 0) spi.receive(into[0..odd]);
+        receiveByDma(bus.sb, into[odd..]);
+    }
+
+    /// Always through the controller's buffer, which the CPU fills before
+    /// the transaction starts. A send by DMA ran dry when the panel's
+    /// channels held the bus, and the card then took a block with holes
+    /// in it; a buffer filled first cannot run dry. Writing waits on the
+    /// card's programming far longer than on this.
+    pub fn send(bus: *SpiBus, bytes: []const u8) void {
         _ = bus;
+        var scratch: [64]u8 = undefined;
         var at: usize = 0;
-        while (at < into.len) {
-            const piece = @min(into.len - at, spi.buffer_bytes);
-            spi.receive(into[at..][0..piece]);
+        while (at < bytes.len) {
+            const piece = @min(bytes.len - at, scratch.len);
+            @memcpy(scratch[0..piece], bytes[at..][0..piece]);
+            spi.exchange(scratch[0..piece]);
             at += piece;
         }
     }
@@ -557,6 +586,96 @@ const SpiBus = struct {
 };
 
 const Spi = sdspi.Protocol(SpiBus);
+
+/// How long a DMA channel is given to fetch its descriptor
+/// before the controller starts: 5 us at the CPU's 240 MHz.
+const descriptor_fetch_cycles: u32 = 5 * 240;
+
+/// SPI3's interrupt: a transaction the task is waiting on has ended. The
+/// source is a level, so the mark is cleared here; what it said is left
+/// in the work block for the task.
+fn spiIntServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const sb: *SdCardBase = @ptrCast(@alignCast(is_data.?));
+    const work = sb.spi_work orelse return 0;
+    if (!spi.takeDone()) return 0;
+    work.done = 1;
+    sb.sys_base.Signal(&sb.task, sb.int_mask);
+    return 1;
+}
+
+/// The DMA transaction set up and its channel started, run, and waited
+/// out on the interrupt. The mark is cleared before the flag, so an
+/// interrupt left over from an earlier transaction cannot pass for this
+/// one; the interrupt is on only while it runs. A transaction that never
+/// ends - a controller that has stopped - is given up after a deadline.
+///
+/// **The channel has to be ready before the controller starts,** or the
+/// bytes are dropped or never there: `descriptor_fetch_cycles` pass
+/// between the two.
+///
+/// **The controller finishing is not the data being in memory.** Its
+/// interrupt comes when the last bit is on the wire; the DMA may still be
+/// emptying its FIFO into the buffer then. So a receive also waits for the
+/// channel to say the whole frame is written (IN_SUC_EOF) - without it the
+/// last bytes of a block were those of the one before, which only showed
+/// on blocks that were not all alike.
+fn runDma(sb: *SdCardBase, side: u32, link: *sdk.resources.dma.DMADescriptor) void {
+    const sys = sb.sys_base;
+    const work = sb.spi_work.?;
+    const db = sb.dma_base.?;
+    const dma_resource = sdk.resources.dma;
+    _ = spi.takeDone();
+    work.done = 0;
+    db.ClearDMAInts(sb.dma_channel, side, 0xFFFF_FFFF);
+    _ = db.StartDMA(sb.dma_channel, side, link);
+    // A channel needs time after it is started to fetch its descriptor.
+    // Bytes the controller sends it before then are dropped, and the frame
+    // ends with nothing in it. With the panel's copy channel busy on the
+    // bus, 1 us was too little for 7 receives in a thousand; 5 us has been
+    // enough for every one measured.
+    {
+        const cpu = sdk.hardware.cpu;
+        const since = cpu.ccount();
+        while (cpu.ccount() -% since < descriptor_fetch_cycles) {}
+    }
+    spi.doneInterrupt(true);
+    spi.begin();
+    armDeadline(sb, _sdcard.command_timeout_us);
+    const done: *volatile u32 = &work.done;
+    while (done.* == 0) {
+        const got = sys.Wait(sb.int_mask | portMask(sb));
+        if (got & portMask(sb) != 0 and sys.CheckIO(&sb.timer_io.node) != null) break;
+    }
+    dropDeadline(sb);
+    spi.doneInterrupt(false);
+    // Stopped whatever came of it, so a transaction abandoned by the
+    // deadline cannot write into the buffer under the next one.
+    var spins: u32 = 0;
+    while (spi.busy() and spins < 1_000_000) spins += 1;
+    if (side == dma_resource.DMA_IN) {
+        spins = 0;
+        while (db.DMARawIntStatus(sb.dma_channel, side) & dma_resource.DMAINTF_IN_SUC_EOF == 0 and spins < 1_000_000) spins += 1;
+    }
+    db.StopDMA(sb.dma_channel, side);
+}
+
+/// `into` from the card by DMA, a block of the work buffer at a time. Its
+/// length is whole words (`SpiBus.receive` sees to it).
+fn receiveByDma(sb: *SdCardBase, into: []u8) void {
+    const work = sb.spi_work.?;
+    const db = sb.dma_base.?;
+    var at: usize = 0;
+    while (at < into.len) {
+        const piece: u32 = @intCast(@min(into.len - at, _sdcard.spi_dma_bytes));
+        work.in_link = sdk.resources.dma.DMADescriptor.init(&work.buffer, work.buffer.len, 0, sdk.resources.dma.DMADF_OWNER);
+        db.ResetDMA(sb.dma_channel, sdk.resources.dma.DMA_IN);
+        spi.receiveByDma(piece);
+        runDma(sb, sdk.resources.dma.DMA_IN, &work.in_link);
+        @memcpy(into[at..][0..piece], work.buffer[0..piece]);
+        at += piece;
+    }
+}
 
 /// A run of blocks over SPI, straight between the caller's buffer and the
 /// controller's. A card that stopped answering, or whose data did not
@@ -612,6 +731,55 @@ fn setUpSpi(sb: *SdCardBase) bool {
     pads.inputEnable(miso, true);
     pads.pullUp(miso, true);
     pads.connectIn(spi.signal_q, miso);
+
+    // A DMA channel, the first one free, connected to SPI3.
+    const dma_resource = sdk.resources.dma;
+    const db: *dma_resource.DmaBase = @ptrCast(@alignCast(sys.OpenResource(dma_resource.DMANAME) orelse {
+        say(sb, "no dma.resource");
+        return false;
+    }));
+    var channel: u32 = 0;
+    while (channel < dma_resource.DMA_CHANNELS) : (channel += 1) {
+        if (db.AllocDMAChannel(channel, DEVICE_NAME) == null) break;
+    } else {
+        say(sb, "no DMA channel free");
+        return false;
+    }
+    if (!db.ConnectDMAChannel(channel, dma_resource.DMAPERI_SPI3, 0)) {
+        db.FreeDMAChannel(channel);
+        say(sb, "the DMA channel would not connect to SPI3");
+        return false;
+    }
+    // Just under the top, level with the panel's own copy channel on a
+    // board with an RGB panel: that copy moves its picture out of PSRAM
+    // all the time, and a channel below it waits so long for the bus that
+    // its FIFO overflows and blocks come in with holes. Level with it the
+    // two take turns, and the card needs a small share of them. The top
+    // is left to the panel, which cannot wait at all.
+    const priority = dma_resource.DMA_MAXPRI - 1;
+    _ = db.SetDMAPriority(channel, dma_resource.DMA_IN, priority);
+    _ = db.SetDMAPriority(channel, dma_resource.DMA_OUT, priority);
+    sb.dma_base = db;
+    sb.dma_channel = channel;
+
+    // The block the DMA and the interrupt reach: internal, on a cache
+    // line of its own.
+    const cache_line = 64;
+    const memory = sys.AllocMem(@sizeOf(_sdcard.SpiWork) + cache_line, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
+        say(sb, "no internal memory for the card's buffer");
+        return false;
+    };
+    sb.spi_work_memory = memory;
+    const aligned = (@intFromPtr(memory) + cache_line - 1) & ~@as(usize, cache_line - 1);
+    const work: *_sdcard.SpiWork = @ptrFromInt(aligned);
+    work.* = .{};
+    work.int = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
+        .data = sb,
+        .code = &spiIntServer,
+    };
+    sb.spi_work = work;
+    sys.AddIntServer(intbits.INTB_SPI3, &work.int);
     return true;
 }
 
@@ -994,8 +1162,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // The base itself is wherever MakeLibrary put it, which on this board
     // is external memory - out of the DMA's reach, and out of an
     // interrupt's. So everything either of them touches is here instead,
-    // internal and on a cache line of its own. Only the SD/MMC host has
-    // either; on SPI the CPU moves every byte.
+    // internal and on a cache line of its own. On SPI the task makes its
+    // own, smaller one when it sets the controller up.
     const line = 64;
     if (sb.slot.spi == 0) {
         const memory = sys_base.AllocMem(@sizeOf(Work) + line, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
