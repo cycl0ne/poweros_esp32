@@ -26,7 +26,8 @@
 //! device whether its card has changed. If it has, whatever it held of the
 //! old one is dropped unwritten, the locks on it stop being any good, and
 //! the new card is mounted - so the volume node is taken off the device
-//! list and a new one put there, with the new card's name. A handler
+//! list and a new one put there, with the new card's name, as soon as the
+//! list can be had without waiting (`renewVolume`). A handler
 //! started with no card, or with a card it cannot read, stays and answers
 //! ERROR_NO_DISK or ERROR_NOT_A_DOS_DISK until there is one.
 //!
@@ -208,6 +209,10 @@ const Bodies = struct {
         };
     }
 
+    fn locksOn(bodies: *Bodies, node: *dos.DosList) u32 {
+        return bodies.fat32.locksOn(node) + bodies.exfat.locksOn(node);
+    }
+
     fn setVolumeNode(bodies: *Bodies, node: ?*dos.DosList) void {
         bodies.fat32.volume_node = if (bodies.active() == .fat32) node else null;
         bodies.exfat.volume_node = if (bodies.active() == .exfat) node else null;
@@ -222,6 +227,13 @@ const State = struct {
     io: exec.IOStdReq,
     /// The volume node, while a volume is mounted.
     volume: ?*dos.DosList = null,
+    /// The volume node is behind the card: renew it when the device list
+    /// can be had.
+    renew: bool = false,
+    /// Volume nodes taken off the list that locks still point at, kept
+    /// until the last of those is freed: a program holding such a lock may
+    /// still read its fl_Volume.
+    retired: [8]?*dos.DosList = @splat(null),
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -250,16 +262,16 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     // A card that is not there or not readable is not an error: the
     // handler stays for the one that will be.
     st.bodies.mount();
-    if (st.bodies.active() != null) addVolume(dl, st, &me.msg_port);
+    st.renew = true;
+    renewVolume(dl, st, &me.msg_port);
     if (node) |device_node| device_node.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
     while (dl.WaitPkt()) |pkt| {
-        if (st.bodies.checkMedium()) {
-            removeVolume(dl, st);
-            if (st.bodies.active() != null) addVolume(dl, st, &me.msg_port);
-        }
+        if (st.bodies.checkMedium()) st.renew = true;
+        if (st.renew) renewVolume(dl, st, &me.msg_port);
         const reply = serve(st, pkt);
+        sweepRetired(dl, st);
         dl.ReplyPkt(pkt, reply.res1, reply.res2);
     }
 }
@@ -328,6 +340,21 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
     }
 }
 
+/// The volume node made to match the card the bodies now have: the old
+/// one taken off the device list and a new one put on - but only if the
+/// list can be had at once. A program holding it may be waiting on this
+/// very handler for an answer - Info holds it while it asks every device
+/// - so waiting for it would never end; the node is renewed at a later
+/// packet instead.
+fn renewVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
+    const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
+    _ = dl.AttemptLockDosList(flags) orelse return;
+    defer dl.UnLockDosList(flags);
+    removeVolume(dl, st);
+    if (st.bodies.active() != null) addVolume(dl, st, port);
+    st.renew = false;
+}
+
 /// The volume on the device list under the card's name, so locks can
 /// point at it.
 fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
@@ -345,11 +372,31 @@ fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
     st.bodies.setVolumeNode(entry);
 }
 
+/// The volume node taken off the device list, and freed unless a lock
+/// still points at it - then it is kept, retired, until none does. With
+/// no room left to keep it, it is left allocated: memory lost is better
+/// than memory freed under a lock.
 fn removeVolume(dl: *DosBase, st: *State) void {
     const entry = st.volume orelse return;
     st.volume = null;
     st.bodies.setVolumeNode(null);
-    if (dl.RemDosEntry(entry)) dl.FreeDosEntry(entry);
+    if (!dl.RemDosEntry(entry)) return;
+    if (st.bodies.locksOn(entry) == 0) return dl.FreeDosEntry(entry);
+    for (&st.retired) |*slot| if (slot.* == null) {
+        slot.* = entry;
+        return;
+    };
+}
+
+/// Retired volume nodes no lock points at any more, freed. They are off
+/// the device list already, so this needs no lock of it.
+fn sweepRetired(dl: *DosBase, st: *State) void {
+    for (&st.retired) |*slot| {
+        const entry = slot.* orelse continue;
+        if (st.bodies.locksOn(entry) != 0) continue;
+        dl.FreeDosEntry(entry);
+        slot.* = null;
+    }
 }
 
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file

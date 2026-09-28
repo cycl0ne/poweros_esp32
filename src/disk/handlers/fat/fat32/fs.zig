@@ -224,6 +224,9 @@ pub fn FileSystem(comptime Media: type) type {
             fs.unmount();
             fs.change_num = fs.media.changeNum();
             if (!fs.media.present()) return error.MediumFailed;
+            // Asking is what makes a device that has not looked yet
+            // identify its card, and count it: the count is the one after.
+            fs.change_num = fs.media.changeNum();
             const block_bytes = fs.media.blockSize();
             const buffer = fs.media.alloc(block_bytes) orelse return error.NoMemory;
             fs.sector = buffer;
@@ -415,6 +418,18 @@ pub fn FileSystem(comptime Media: type) type {
                 }
             }
             fs.free(key);
+        }
+
+        /// How many of this body's locks and open files point at `node` as
+        /// their volume: the handler keeps a volume node it has taken off
+        /// the device list until none does.
+        pub fn locksOn(fs: *Fs, node: *dos.DosList) u32 {
+            var count: u32 = 0;
+            var it = fs.locks;
+            while (it) |other| : (it = other.nextLock()) {
+                if (other.lock.volume == node) count += 1;
+            }
+            return count;
         }
 
         /// Whether a lock - a FileLock's address, or a file handle's key -
@@ -1202,7 +1217,19 @@ pub fn FileSystem(comptime Media: type) type {
                     return .{ .res1 = @intCast(old), .res2 = 0 };
                 },
                 .end => {
-                    fs.close(pkt.args.file) catch |err| return no(err);
+                    fs.close(pkt.args.file) catch |err| {
+                        // A file on a card that has gone is still closed:
+                        // its lock is ours to free, whatever it is good for.
+                        if (err == error.InvalidLock) if (pkt.args.file.fh) |fh| if (fh.key) |held| {
+                            const stale: *FatLock = @ptrCast(@alignCast(held));
+                            if (fs.owns(stale)) {
+                                fs.freeLock(stale);
+                                fh.key = null;
+                                return yes();
+                            }
+                        };
+                        return no(err);
+                    };
                     return yes();
                 },
                 .examine_object, .examine_next => {
