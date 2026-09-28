@@ -51,6 +51,8 @@ const image_dirs = [_][]const u8{
     // interfaces C:net/AddNetInterface brings up.
     "devs/networks",
     "devs/NetInterfaces",
+    // SYS:Programs - programs with windows, off the command path.
+    "programs",
     // FONTS: - a contents file and a directory of sizes per family;
     // empty without scripts/fetch-fonts.sh.
     "fonts",

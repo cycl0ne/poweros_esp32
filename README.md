@@ -138,7 +138,8 @@ cores.
   `ENVARC:Sys/font.prefs`, which `C:FontPrefs` hands to intuition at
   boot; pospaz from the ROM stands in for any not set. `C:ListFonts`
   lists every font by family, size and where it is, and draws them;
-  `C:FixFonts` rebuilds the contents files after fonts are added.
+  `C:FixFonts` rebuilds the contents files after fonts are added. `SYS:Programs/FontView` is the same in a window: the families and
+  their sizes in two lists, and the one chosen drawn under them.
 - intuition.library: screens, windows, menus, requesters, and an object
   system of classes for gadgets and images (buttons, sliders, string
   fields, groups, and layouts that size and place their gadgets to fit

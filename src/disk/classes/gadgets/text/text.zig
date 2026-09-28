@@ -11,7 +11,8 @@
 //! again at once.
 //!
 //! Given `TEXT_CopyText`, it keeps a copy of each text it is given, in
-//! memory of its own, freed with the gadget.
+//! memory of its own, freed with the gadget. Given `TEXT_Font`, it draws
+//! in that font and not the window's.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -67,6 +68,8 @@ const Data = extern struct {
     overrun: i32 = 0,
     /// The number as text.
     written: [40]u8 = @splat(0),
+    /// The font it draws in, the caller's; null for the RastPort's own.
+    font: ?*graphics.TextFont = null,
 };
 
 fn textLen(text: [*:0]const u8) usize {
@@ -156,6 +159,10 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                 own.has_back = 1;
                 changed = true;
             },
+            tx.TEXT_Font => {
+                own.font = @ptrFromInt(item.data);
+                changed = true;
+            },
             else => {},
         }
     }
@@ -197,6 +204,17 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const back = if (own.has_back != 0) own.back else pens[sc.BACKGROUNDPEN];
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
+    // Its own font, and the RastPort's back after.
+    var was_font: usize = 0;
+    if (own.font) |font| {
+        const ask_font = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&was_font) }, .{} };
+        gb.GetRPAttrs(rp, &ask_font);
+        graphics.SetFont(gb, rp, font);
+    }
+    defer if (own.font != null) {
+        const put_font = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = was_font }, .{} };
+        gb.SetRPAttrs(rp, &put_font);
+    };
 
     const area = inside(base, own, b, info.draw_info);
     // The ground, and whatever the last text left past the box.
@@ -240,6 +258,12 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
     const measure = support.Measure.of(ib, g, gi);
     defer measure.done(ib);
     var box = gc.Box{ .width = if (shown(base, own)) |text| measure.width(ib, text) else 0, .height = measure.lineHeight(base.graphics_base) };
+    // In a font of its own: a line of that font, and its nominal width a
+    // character.
+    if (own.font) |font| {
+        box.height = font.image.height;
+        if (shown(base, own)) |text| box.width = @intCast(textLen(text) * font.image.x_size);
+    }
     const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
     box.width += room.width;
     box.height += room.height;

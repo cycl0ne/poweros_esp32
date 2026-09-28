@@ -44,6 +44,12 @@ const tests = [_][]const u8{
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless" };
 
+/// Programs with windows, in SYS:Programs: started by their full name or
+/// from a shell there, not on the command path.
+const window_programs = [_]Program{
+    .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
+};
+
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
 /// after LoadSeg and hands it to InitResident, dos finds a handler's when
@@ -76,7 +82,7 @@ const modules = [_]Program{
 };
 
 pub const programs: []const Program = blk: {
-    var list: [commands.len + tests.len + net_tools.len + modules.len]Program = undefined;
+    var list: [commands.len + tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
         list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
@@ -88,6 +94,10 @@ pub const programs: []const Program = blk: {
     }
     for (net_tools) |name| {
         list[n] = .{ .disk = "c/net/" ++ name, .source = "c/net/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        n += 1;
+    }
+    for (window_programs) |program| {
+        list[n] = program;
         n += 1;
     }
     for (modules) |module| {

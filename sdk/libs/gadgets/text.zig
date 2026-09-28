@@ -45,6 +45,10 @@ pub const TEXT_Clipped = TEXT_Dummy + 0x07;
 /// The screen's text pen and background pen unless given.
 pub const TEXT_FrontPen = TEXT_Dummy + 0x08;
 pub const TEXT_BackPen = TEXT_Dummy + 0x09;
+/// The font the text is drawn in (`*graphics.TextFont`), which the caller
+/// keeps open for as long as the gadget has it; null for the window's.
+/// Made and set; the gadget is as tall as a line of it.
+pub const TEXT_Font = TEXT_Dummy + 0x0A;
 
 pub const TEXT_JUSTIFY_LEFT: u32 = 0;
 pub const TEXT_JUSTIFY_RIGHT: u32 = 1;
