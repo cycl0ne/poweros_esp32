@@ -3257,6 +3257,49 @@ fn put(out: []u8, value: anytype) usize {
     return bytes.len;
 }
 
+test "ErrorReport: nothing to ask on, nothing to ask about, and a process that will not be asked" {
+    const db = try setUp();
+    defer tearDown(db) catch {};
+    const dos_lib = base(db);
+    var tp = TestProcess{};
+    tp.enter();
+    defer tp.leave();
+
+    // No screen and no console here, so every question that can be asked
+    // answers "gave up" rather than waiting for somebody.
+    try testing.expect(dos_lib.ErrorReport(dos.ERROR_DEVICE_NOT_MOUNTED, dos.REPORT_INSERT, @intFromPtr("Work"), null));
+    try testing.expect(dos_lib.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, 0, null));
+
+    // A code with no question is not asked about at all.
+    try testing.expect(dos_lib.ErrorReport(dos.ERROR_OBJECT_NOT_FOUND, dos.REPORT_INSERT, @intFromPtr("Work"), null));
+
+    // A process that says it is not to be asked is not asked, whatever
+    // there is to ask on.
+    tp.proc.window_ptr = @ptrFromInt(~@as(usize, 0));
+    try testing.expect(dos_lib.ErrorReport(dos.ERROR_DISK_WRITE_PROTECTED, dos.REPORT_INSERT, @intFromPtr("Work"), null));
+    tp.proc.window_ptr = null;
+
+    // The words each code is asked about, and the volume's name in them.
+    const _error = @import("error/_error.zig");
+    try testing.expect(_error.questionFor(dos.ERROR_OBJECT_NOT_FOUND) == null);
+    try testing.expectEqualStrings("Please insert volume %s in any drive", _error.questionFor(dos.ERROR_DEVICE_NOT_MOUNTED).?.text);
+    try testing.expect(!_error.questionFor(dos.ERROR_NO_DISK).?.names_volume);
+
+    // A volume node names itself, and a lock names the volume it is on.
+    var node = dos.DosList{ .name = "Work", .type = .volume };
+    var lock = dos.FileLock{ .volume = &node };
+    try testing.expectEqualStrings("Work", std.mem.span(_error.volumeName(db, dos.REPORT_VOLUME, @intFromPtr(&node)).?));
+    try testing.expectEqualStrings("Work", std.mem.span(_error.volumeName(db, dos.REPORT_LOCK, @intFromPtr(&lock)).?));
+    try testing.expectEqualStrings("Work", std.mem.span(_error.volumeName(db, dos.REPORT_INSERT, @intFromPtr("Work")).?));
+    try testing.expect(_error.volumeName(db, dos.REPORT_TASK, 0) == null);
+
+    // Both new codes have words of their own, as every code dos answers
+    // with should.
+    var text: [64]u8 = undefined;
+    try testing.expect(dos_lib.Fault(dos.ABORT_DISK_ERROR, null, @ptrCast(&text), text.len) > 0);
+    try testing.expect(dos_lib.Fault(dos.ABORT_BUSY, null, @ptrCast(&text), text.len) > 0);
+}
+
 test "LoadSeg, UnLoadSeg: segments relocated, the entry, a file that isn't one" {
     const db = try setUp();
     defer kexec.deinit();

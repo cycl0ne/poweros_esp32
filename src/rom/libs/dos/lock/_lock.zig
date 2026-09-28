@@ -184,8 +184,14 @@ pub fn nameAction(db: *DosBase, name: [*:0]const u8, action: ActionCode, extra: 
     var dp = dos_lib.GetDeviceProc(name, null) orelse return 0;
     while (true) {
         const port = dp.port orelse {
+            // A volume with no handler behind it is one whose medium has
+            // gone: ask for it back by name, and look again if the user
+            // says to. A process told not to be asked, or a user who
+            // gives up, gets the error as before.
             dos_lib.FreeDeviceProc(dp);
-            return failZero(db, dos.ERROR_DEVICE_NOT_MOUNTED);
+            if (askForVolume(db, name)) return failZero(db, dos.ERROR_DEVICE_NOT_MOUNTED);
+            dp = dos_lib.GetDeviceProc(name, null) orelse return 0;
+            continue;
         };
         const args: [5]isize = if (extra.fh) |fh| blk: {
             fh.task = port;
@@ -211,6 +217,20 @@ pub fn nameAction(db: *DosBase, name: [*:0]const u8, action: ActionCode, extra: 
         if (next != dp) dos_lib.FreeDeviceProc(dp);
         dp = next;
     }
+}
+
+/// The volume a path names asked for by name - "Please insert volume X"
+/// - and true when the user gave up or nothing could ask.
+///
+/// The name is the path's own device or volume part, which is what the
+/// user would have to put back; a relative path names no volume and
+/// there is nothing to ask for.
+fn askForVolume(db: *DosBase, name: [*:0]const u8) bool {
+    var parsed = dos.ParsedPath{};
+    const dos_lib = db.iface();
+    if (!dos_lib.ParsePath(name, &parsed)) return true;
+    if (parsed.path_type != .absolute or parsed.volume[0] == 0) return true;
+    return dos_lib.ErrorReport(dos.ERROR_DEVICE_NOT_MOUNTED, dos.REPORT_INSERT, @intFromPtr(&parsed.volume), null);
 }
 
 /// The calling process's file system, the handler for a null lock; null

@@ -158,6 +158,7 @@ const SystemTagList = @import("program/systemtaglist.zig").SystemTagList;
 const Execute = @import("program/execute.zig").Execute;
 const LoadSeg = @import("program/loadseg.zig").LoadSeg;
 const UnLoadSeg = @import("program/unloadseg.zig").UnLoadSeg;
+const ErrorReport = @import("error/errorreport.zig").ErrorReport;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -723,6 +724,9 @@ fn lvoLoadSeg(db: *DosBase, name: [*:0]const u8) callconv(.c) ?*dos.SegList {
 fn lvoUnLoadSeg(db: *DosBase, seg_list: ?*dos.SegList) callconv(.c) void {
     UnLoadSeg(db, seg_list);
 }
+fn lvoErrorReport(db: *DosBase, code: i32, report_type: u32, arg: usize, device: ?*exec.MsgPort) callconv(.c) bool {
+    return ErrorReport(db, code, report_type, arg, device);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -864,6 +868,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoExecute),
     vec(lvoLoadSeg),
     vec(lvoUnLoadSeg),
+    vec(lvoErrorReport),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -871,7 +876,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 137), vectors.len);
+    try testing.expectEqual(@as(usize, 138), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

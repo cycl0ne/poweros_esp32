@@ -64,10 +64,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   the serial console since the boot (`C:Log`), and a Guru that names the
   failed check and the file and offset it is in.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; names of
-  255 characters and paths of 1024 throughout; a
+  255 characters and paths of 1024 throughout; `ErrorReport` asking
+  "Please insert volume ..." on the screen, or on the console where there
+  is none; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 34 commands in `C:`, test
+  a shell with scripts and resident commands, 35 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing, layers.library for overlapping windows, and

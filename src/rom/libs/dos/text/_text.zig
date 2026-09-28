@@ -698,6 +698,8 @@ const texts = [_]Text{
     .{ .code = 241, .text = "record lock collision" },
     .{ .code = 242, .text = "record lock timeout" },
     .{ .code = 243, .text = "record unlock error" },
+    .{ .code = 288, .text = "the caller was not to be asked" },
+    .{ .code = 296, .text = "read or write error on the volume" },
     .{ .code = 303, .text = "buffer overflow" },
     .{ .code = 304, .text = "***Break" },
     .{ .code = 305, .text = "file not executable" },

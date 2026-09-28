@@ -151,6 +151,7 @@ pub const LVO = struct {
     pub const Execute = libraries.lvo(134);
     pub const LoadSeg = libraries.lvo(135);
     pub const UnLoadSeg = libraries.lvo(136);
+    pub const ErrorReport = libraries.lvo(137);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -289,6 +290,7 @@ pub const Fn = struct {
     pub const Execute = *const fn (*DosBase, [*:0]const u8, ?*dos.FileHandle, ?*dos.FileHandle) callconv(.c) bool;
     pub const LoadSeg = *const fn (*DosBase, [*:0]const u8) callconv(.c) ?*dos.SegList;
     pub const UnLoadSeg = *const fn (*DosBase, ?*dos.SegList) callconv(.c) void;
+    pub const ErrorReport = *const fn (*DosBase, i32, u32, usize, ?*exec.MsgPort) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1113,5 +1115,14 @@ pub const DosBase = opaque {
     /// Free what LoadSeg made. Null is allowed.
     pub fn UnLoadSeg(self: *DosBase, seg_list: ?*dos.SegList) void {
         return libraries.call(self, LVO.UnLoadSeg, Fn.UnLoadSeg, .{seg_list});
+    }
+
+    /// Put the question an error deserves - "Please insert volume X", "Volume
+    /// X is write protected" - and answer true when the user gave up, false
+    /// to try again. `report_type` says what `arg` is (REPORT_*); `device` is
+    /// the handler's port, or null. A code it has no question for is not
+    /// asked about and answers true.
+    pub fn ErrorReport(self: *DosBase, code: i32, report_type: u32, arg: usize, device: ?*exec.MsgPort) bool {
+        return libraries.call(self, LVO.ErrorReport, Fn.ErrorReport, .{ code, report_type, arg, device });
     }
 };

@@ -454,4 +454,12 @@ bool Execute([*:0]const u8 command, ?*dos.FileHandle input, ?*dos.FileHandle out
 ?*dos.SegList LoadSeg([*:0]const u8 name)
 /// Free what LoadSeg made. Null is allowed.
 void UnLoadSeg(?*dos.SegList seg_list)
+
+// Asking the user about an error
+/// Put the question an error deserves - "Please insert volume X", "Volume
+/// X is write protected" - and answer true when the user gave up, false
+/// to try again. `report_type` says what `arg` is (REPORT_*); `device` is
+/// the handler's port, or null. A code it has no question for is not
+/// asked about and answers true.
+bool ErrorReport(i32 code, u32 report_type, usize arg, ?*exec.MsgPort device)
 ##end

@@ -32,7 +32,7 @@ const commands = [_][]const u8{
     "info",       "platform", "copy",        "rdb",           "i2c",
     "backlight",  "rtg",      "showinfo",    "setmap",        "mount",
     "showconfig", "date",     "setdate",     "fontprefs",     "fixfonts",
-    "listfonts",  "log",      "requestfile", "requestchoice",
+    "listfonts",  "log",      "requestfile", "requestchoice", "diskchange",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",  "gfx",     "anim",

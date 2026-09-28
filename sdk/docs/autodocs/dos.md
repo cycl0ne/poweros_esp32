@@ -37,6 +37,7 @@ Generated from the source by `./zig build autodoc`.
 - [DupLock](#duplock) - Makes another shared lock on the object a lock is on.
 - [DupLockFromFH](#duplockfromfh) - Gives a shared lock on an open file.
 - [ErrorOutput](#erroroutput) - Returns the running process's error stream (pr_CES).
+- [ErrorReport](#errorreport) - Asks the user about an error, and answers whether to give up.
 - [ExAll](#exall) - Reads entries of a directory into a buffer, as many as fit.
 - [ExAllEnd](#exallend) - Stops an ExAll listing before its end.
 - [ExNext](#exnext) - Fills in a FileInfoBlock with the next entry of a directory.
@@ -1755,6 +1756,83 @@ None known.
 
 ```zig
 const errors = dos_lib.ErrorOutput() orelse dos_lib.Output();
+```
+
+## ErrorReport
+
+Asks the user about an error, and answers whether to give up.
+
+**SYNOPSIS**
+
+```zig
+fn ErrorReport(db: *DosBase, code: i32, report_type: u32, arg: usize, device: ?*MsgPort) bool
+```
+
+**SINCE**
+
+1.1. LVO -552.
+
+**INPUTS**
+
+- `db` - dos.library's base.
+- `code` - the error: `ERROR_DEVICE_NOT_MOUNTED` (which is the
+  "please insert" question), `ERROR_DISK_WRITE_PROTECTED`,
+  `ERROR_DISK_FULL`, `ERROR_DISK_NOT_VALIDATED`,
+  `ERROR_NOT_A_DOS_DISK`, `ERROR_NO_DISK`, `ABORT_DISK_ERROR`.
+- `report_type` - what `arg` is: `REPORT_INSERT` a volume's name,
+  `REPORT_VOLUME` a DosList, `REPORT_LOCK` a FileLock,
+  `REPORT_STREAM` a FileHandle, `REPORT_TASK` a task.
+- `arg` - as `report_type` says, 0 for none.
+- `device` - the handler's port, or null. Not read yet; it is here so
+  that a question can one day say which drive it is about.
+
+**RESULT**
+
+True when the user gave up, or when nothing could ask - a code with
+no question, a process told not to be asked, no screen and no
+console. False to try again.
+
+**BEHAVIOR**
+
+The question goes up as a requester with Retry and Cancel on the
+screen, and as a line of text on the process's own console when there
+is no screen - a Shell on the serial line or over telnet has none, and
+an error it can do nothing about is worse than one it can answer.
+`Y`, `R` or Return retries there; anything else gives up.
+
+A process whose `pr_WindowPtr` is -1 is never asked anything and this
+answers true at once, which is how a program says it will handle its
+own errors.
+
+**CONTEXT**
+
+- Waits: for the answer, which is as long as the user takes; and for
+  intuition.library to open the first time a question goes on screen.
+- Interrupts: no.
+- Forbid: not held and not to be held.
+- Process: a Process, not a bare Task: it reads `pr_WindowPtr` and
+  the process's console.
+
+**OWNERSHIP**
+
+Nothing is kept. What `arg` points at is only read, and only while
+the question is being built.
+
+**NOTES**
+
+The caller retries what it was doing when this answers false; nothing
+is retried here.
+
+**SEE ALSO**
+
+`Fault`, `PrintFault`, `IoErr`
+
+**EXAMPLES**
+
+```zig
+while (dos_lib.ErrorReport(dos.ERROR_DEVICE_NOT_MOUNTED, dos.REPORT_INSERT, @intFromPtr("Work"), null) == false) {
+    if (tryAgain()) break;
+}
 ```
 
 ## ExAll

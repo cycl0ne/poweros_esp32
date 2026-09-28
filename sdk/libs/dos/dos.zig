@@ -211,6 +211,25 @@ pub const ERROR_ACTION_NOT_KNOWN: i32 = 209;
 pub const ERROR_INVALID_COMPONENT_NAME: i32 = 210;
 pub const ERROR_INVALID_LOCK: i32 = 211;
 pub const ERROR_OBJECT_WRONG_TYPE: i32 = 212;
+/// `ErrorReport`'s `report_type`: what `arg` is and how the volume it
+/// is about is found.
+///
+/// A stream is a FileHandle, a lock a FileLock, a volume a DosList of a
+/// mounted volume; `REPORT_INSERT` asks for a volume by name, which is
+/// the "please insert" question and takes the name itself.
+pub const REPORT_STREAM: u32 = 0;
+pub const REPORT_TASK: u32 = 1;
+pub const REPORT_LOCK: u32 = 2;
+pub const REPORT_VOLUME: u32 = 3;
+pub const REPORT_INSERT: u32 = 4;
+
+/// `ErrorReport`'s code for a read or write a device could not do, which
+/// no `Fault` text covers: "Volume X has a read/write error".
+pub const ABORT_DISK_ERROR: i32 = 296;
+/// The caller gave up rather than being asked: `ErrorReport` answers
+/// this when nothing can ask.
+pub const ABORT_BUSY: i32 = 288;
+
 pub const ERROR_DISK_NOT_VALIDATED: i32 = 213;
 pub const ERROR_DISK_WRITE_PROTECTED: i32 = 214;
 pub const ERROR_RENAME_ACROSS_DEVICES: i32 = 215;

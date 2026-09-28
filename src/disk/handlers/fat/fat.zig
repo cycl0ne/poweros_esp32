@@ -25,11 +25,18 @@
 //! **A card comes and goes.** Before each packet the handler asks the
 //! device whether its card has changed. If it has, whatever it held of the
 //! old one is dropped unwritten, the locks on it stop being any good, and
-//! the new card is mounted - so the volume node is taken off the device
-//! list and a new one put there, with the new card's name, as soon as the
-//! list can be had without waiting (`renewVolume`). A handler
-//! started with no card, or with a card it cannot read, stays and answers
-//! ERROR_NO_DISK or ERROR_NOT_A_DOS_DISK until there is one.
+//! the new card is mounted - so the volume node is put where the new
+//! card's name says, as soon as the list can be had without waiting
+//! (`renewVolume`). A handler started with no card, or with a card it
+//! cannot read, stays and answers ERROR_NO_DISK or ERROR_NOT_A_DOS_DISK
+//! until there is one.
+//!
+//! A volume that goes while locks are held on it keeps its node on the
+//! device list with no handler behind it, which is what dos calls not
+//! mounted: the locks still point at something dos can name, so it can
+//! ask for that card back by name, and the card coming back takes the
+//! node up again and makes those locks work. The node is taken off the
+//! list and freed once no lock points at it.
 //!
 //! **A device it cannot open** - no slot, no controller - is another
 //! matter: there will never be a card. The start then gives back what it
@@ -253,10 +260,14 @@ const State = struct {
     /// The volume node is behind the card: renew it when the device list
     /// can be had.
     renew: bool = false,
-    /// Volume nodes taken off the list that locks still point at, kept
-    /// until the last of those is freed: a program holding such a lock may
-    /// still read its fl_Volume.
-    retired: [8]?*dos.DosList = @splat(null),
+    /// Volume nodes whose card has gone that locks still point at: left
+    /// on the device list with no handler behind them, which is what dos
+    /// calls not mounted. They stay there so that a lock still points at
+    /// something dos can name - that is what lets it ask for the card
+    /// back - and so that the card coming back can take its node up
+    /// again and make those locks work. One is freed once no lock points
+    /// at it.
+    gone: [8]?*dos.DosList = @splat(null),
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -293,8 +304,23 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     while (dl.WaitPkt()) |pkt| {
         if (st.bodies.checkMedium()) st.renew = true;
         if (st.renew) renewVolume(dl, st, &me.msg_port);
-        const reply = serve(st, pkt);
-        sweepRetired(dl, st);
+        var reply = serve(st, pkt);
+        // A mounted volume that suddenly cannot be read is a read or
+        // write error, not a card that is missing or unformatted: the
+        // user is asked, and the packet served again if they say to.
+        // Nothing is asked when there is no volume to name - an empty
+        // slot and a card this handler cannot read both answer the same
+        // way, and neither is worth a question.
+        while (reply.res2 == dos.ERROR_NOT_A_DOS_DISK and st.volume != null) {
+            const volume = st.volume.?;
+            if (dl.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, @intFromPtr(volume), null)) break;
+            if (st.bodies.checkMedium()) {
+                st.renew = true;
+                break;
+            }
+            reply = serve(st, pkt);
+        }
+        sweepIfFree(dl, st);
         dl.ReplyPkt(pkt, reply.res1, reply.res2);
     }
 }
@@ -373,16 +399,32 @@ fn renewVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
     const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
     _ = dl.AttemptLockDosList(flags) orelse return;
     defer dl.UnLockDosList(flags);
-    removeVolume(dl, st);
+    partVolume(dl, st);
     if (st.bodies.active() != null) addVolume(dl, st, port);
+    sweepGone(dl, st);
     st.renew = false;
 }
 
 /// The volume on the device list under the card's name, so locks can
 /// point at it.
+///
+/// A card with the name of a volume that went while locks were held on
+/// it takes that volume's node up again rather than getting one of its
+/// own: the locks point at that node, and this is what makes them work
+/// again. The name is what says it is the same volume - a card with no
+/// label is named by its serial, so two blank cards are still two names.
 fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
     var name: [24:0]u8 = @splat(0);
     const label = st.bodies.volumeName();
+    for (&st.gone) |*slot| {
+        const entry = slot.* orelse continue;
+        if (!_fat.same(st.ub, std.mem.span(entry.name), label)) continue;
+        entry.task = port;
+        slot.* = null;
+        st.volume = entry;
+        st.bodies.setVolumeNode(entry);
+        return;
+    }
     @memcpy(name[0..label.len], label);
     const entry = dl.MakeDosEntry(&name, dos.DLT_VOLUME) orelse return;
     entry.misc.volume.disk_type = dos.ID_MSDOS_DISK;
@@ -395,28 +437,49 @@ fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
     st.bodies.setVolumeNode(entry);
 }
 
-/// The volume node taken off the device list, and freed unless a lock
-/// still points at it - then it is kept, retired, until none does. With
-/// no room left to keep it, it is left allocated: memory lost is better
-/// than memory freed under a lock.
-fn removeVolume(dl: *DosBase, st: *State) void {
+/// The card behind the volume has gone. With no lock on it the node
+/// goes off the device list and is freed; with locks on it the node
+/// stays on the list with no handler behind it - not mounted - so that
+/// the locks still point at something dos can name and the card coming
+/// back can take it up again. With no room left to remember it, it comes
+/// off the list and is left allocated: memory lost is better than memory
+/// freed under a lock.
+fn partVolume(dl: *DosBase, st: *State) void {
     const entry = st.volume orelse return;
     st.volume = null;
     st.bodies.setVolumeNode(null);
-    if (!dl.RemDosEntry(entry)) return;
-    if (st.bodies.locksOn(entry) == 0) return dl.FreeDosEntry(entry);
-    for (&st.retired) |*slot| if (slot.* == null) {
+    if (st.bodies.locksOn(entry) == 0) {
+        if (dl.RemDosEntry(entry)) dl.FreeDosEntry(entry);
+        return;
+    }
+    entry.task = null;
+    for (&st.gone) |*slot| if (slot.* == null) {
         slot.* = entry;
         return;
     };
+    _ = dl.RemDosEntry(entry);
 }
 
-/// Retired volume nodes no lock points at any more, freed. They are off
-/// the device list already, so this needs no lock of it.
-fn sweepRetired(dl: *DosBase, st: *State) void {
-    for (&st.retired) |*slot| {
+/// The sweep, if the device list can be had at once. It never waits for
+/// it: a program holding the list may be waiting on this handler for an
+/// answer, and a node left a packet longer costs nothing.
+fn sweepIfFree(dl: *DosBase, st: *State) void {
+    for (st.gone) |slot| {
+        if (slot != null) break;
+    } else return;
+    const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
+    _ = dl.AttemptLockDosList(flags) orelse return;
+    defer dl.UnLockDosList(flags);
+    sweepGone(dl, st);
+}
+
+/// Volume nodes no lock points at any more, taken off the device list
+/// and freed. The caller holds the list.
+fn sweepGone(dl: *DosBase, st: *State) void {
+    for (&st.gone) |*slot| {
         const entry = slot.* orelse continue;
         if (st.bodies.locksOn(entry) != 0) continue;
+        if (!dl.RemDosEntry(entry)) continue;
         dl.FreeDosEntry(entry);
         slot.* = null;
     }
