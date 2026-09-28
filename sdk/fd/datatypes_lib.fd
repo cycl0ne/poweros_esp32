@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT
+//! datatypes.library's functions: a file opened by what is in it. Open
+//! it with OpenLibrary("datatypes.library", 1).
+//!
+//! The table is this library's own: it is not on any other system's, so
+//! it starts at the first slot after the standard four and holds only
+//! what is here.
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/intuition/intuition as intuition
+##include libs/intuition/classusr as classusr
+##include libs/intuition/gadgetclass as gadgetclass
+##include libs/datatypes/datatypes as datatypes
+##basetype DataTypesBase
+##name datatypes.library
+##bias 4
+##public
+/// What kind of file `handle` is: a lock on a file (DTST_FILE), a
+/// ClipboardHandle (DTST_CLIPBOARD) or bytes in memory (DTST_RAM).
+/// `attrs` may hold DTA_GroupID to refuse anything of another group.
+/// Null when nothing recognises it, and IoErr is then
+/// DTERROR_UNKNOWN_DATATYPE.
+?*datatypes.DataType ObtainDataTypeA(u32 source_type, ?*anyopaque handle, ?[*]const utility.TagItem attrs)
+/// A data type let go of. The list it is on is the system's and the
+/// descriptor is never freed here; this only lets go of the hold that
+/// keeps the list still. Null does nothing.
+void ReleaseDataType(?*datatypes.DataType dt)
+/// An object for what `name` holds - a file name unless DTA_SourceType
+/// says otherwise - made of the class its kind names. Null when the
+/// kind is not known, the class cannot be loaded or the contents cannot
+/// be read; IoErr says which.
+?*classusr.Object NewDTObjectA(?[*:0]const u8 name, ?[*]const utility.TagItem attrs)
+/// An object given back, with the class library it belongs to. It must
+/// have been taken out of its window first. Null does nothing.
+void DisposeDTObject(?*classusr.Object object)
+/// Attributes set on an object, which draws itself again if it is in a
+/// window. Nonzero when something changed.
+u32 SetDTAttrsA(?*classusr.Object object, ?*intuition.Window window, ?*intuition.Requester requester, ?[*]const utility.TagItem attrs)
+/// Attributes read from an object into the pointers the tags carry. How
+/// many were answered.
+u32 GetDTAttrsA(?*classusr.Object object, ?[*]const utility.TagItem attrs)
+/// An object put into a window at `position` in its gadget list, laid
+/// out and drawn. 0, or an error.
+i32 AddDTObject(?*intuition.Window window, ?*intuition.Requester requester, ?*classusr.Object object, i32 position)
+/// An object taken out of its window again, told so first
+/// (DTM_REMOVEDTOBJECT). 0, or an error.
+i32 RemoveDTObject(?*intuition.Window window, ?*classusr.Object object)
+/// An object drawn again, `attrs` changing it first.
+void RefreshDTObjectA(?*classusr.Object object, ?*intuition.Window window, ?*intuition.Requester requester, ?[*]const utility.TagItem attrs)
+/// The object laid out on a process of its own, so that whoever asked
+/// carries on. Nonzero when the process took it.
+u32 DoAsyncLayout(*classusr.Object object, *gadgetclass.GpLayout layout)
+/// A method sent to an object, with the window and requester it is in.
+/// What the object answered.
+u32 DoDTMethodA(*classusr.Object object, ?*intuition.Window window, ?*intuition.Requester requester, *classusr.Msg msg)
+/// The methods an object answers: an array ending in ~0, or null.
+?[*]const u32 GetDTMethods(*classusr.Object object)
+/// What an object can be told to do, with a name for each: an array
+/// ending in a null label, or null.
+?[*]const datatypes.datatypesclass.DTMethod GetDTTriggerMethods(*classusr.Object object)
+/// The object made ready to be drawn into a RastPort that is not its
+/// window's. What it answers is given back to ReleaseDTDrawInfo.
+?*anyopaque ObtainDTDrawInfoA(*classusr.Object object, ?[*]const utility.TagItem attrs)
+/// An object drawn into `rast_port` at `left`, `top`, `width` by
+/// `height`, from `top_horiz` and `top_vert` of its own. True when it
+/// drew.
+bool DrawDTObjectA(*graphics.RastPort rast_port, *classusr.Object object, i32 left, i32 top, i32 width, i32 height, i32 top_horiz, i32 top_vert, ?[*]const utility.TagItem attrs)
+/// What ObtainDTDrawInfoA answered, given back.
+void ReleaseDTDrawInfo(*classusr.Object object, ?*anyopaque handle)
+/// The text of one of the library's messages (a DTERROR_ number, or a
+/// group's number for its name).
+[*:0]const u8 GetDTString(u32 id)
+##end

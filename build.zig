@@ -51,6 +51,9 @@ const image_dirs = [_][]const u8{
     // interfaces C:net/AddNetInterface brings up.
     "devs/networks",
     "devs/NetInterfaces",
+    // DEVS:DataTypes - one text descriptor per kind of file, which
+    // C:AddDataTypes reads into datatypes.library's list.
+    "devs/datatypes",
     // SYS:Programs - programs with windows, off the command path.
     "programs",
     // FONTS: - a contents file and a directory of sizes per family;

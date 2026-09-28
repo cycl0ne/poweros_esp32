@@ -26,13 +26,14 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",       "dir",      "delete",      "makedir",       "rename",
-    "avail",      "assign",   "version",     "addbuffers",    "which",
-    "list",       "format",   "protect",     "changetaskpri", "wait",
-    "info",       "platform", "copy",        "rdb",           "i2c",
-    "backlight",  "rtg",      "showinfo",    "setmap",        "mount",
-    "showconfig", "date",     "setdate",     "fontprefs",     "fixfonts",
-    "listfonts",  "log",      "requestfile", "requestchoice", "diskchange",
+    "type",         "dir",       "delete",   "makedir",       "rename",
+    "avail",        "assign",    "version",  "addbuffers",    "which",
+    "list",         "format",    "protect",  "changetaskpri", "wait",
+    "info",         "platform",  "copy",     "rdb",           "i2c",
+    "backlight",    "rtg",       "showinfo", "setmap",        "mount",
+    "showconfig",   "date",      "setdate",  "fontprefs",     "fixfonts",
+    "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
+    "diskchange",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",  "gfx",     "anim",
@@ -40,7 +41,7 @@ const tests = [_][]const u8{
     "lines",       "nyan",       "plasma",   "audio",   "fonts",
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
-    "bsdsocktest", "asl",        "settings", "iff",
+    "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -64,6 +65,7 @@ const modules = [_]Program{
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
     .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
     .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library" },
+    .{ .disk = "libs/datatypes.library", .source = "libs/datatypes/datatypes.zig", .name = "datatypes.library" },
     .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
     .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },
@@ -131,6 +133,14 @@ pub const files = [_]File{
     .{ .disk = "s/shell-startup", .source = "s/shell-startup" },
     .{ .disk = "s/network-startup", .source = "s/network-startup" },
     .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
+    .{ .disk = "devs/datatypes/Directory", .source = "devs/datatypes/Directory" },
+    .{ .disk = "devs/datatypes/ILBM", .source = "devs/datatypes/ILBM" },
+    .{ .disk = "devs/datatypes/BMP", .source = "devs/datatypes/BMP" },
+    .{ .disk = "devs/datatypes/FTXT", .source = "devs/datatypes/FTXT" },
+    .{ .disk = "devs/datatypes/8SVX", .source = "devs/datatypes/8SVX" },
+    .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
+    .{ .disk = "devs/datatypes/ASCII", .source = "devs/datatypes/ASCII" },
+    .{ .disk = "devs/datatypes/Binary", .source = "devs/datatypes/Binary" },
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
     .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/WLAN0" },
     // ENVARC: as a fresh disk has it: what each settings file says, and

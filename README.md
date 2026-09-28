@@ -75,6 +75,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   piece of text or a sound is kept in when one program hands it to
   another, and `DEVS:clipboard.device` is where it is handed over: a
   unit is a clip, kept as a file in `CLIPS:`.
+  `LIBS:datatypes.library` opens a file by what is in it: the kinds the
+  system knows are text descriptors in `DEVS:DataTypes`, and a program
+  gets an object it can put in a window without knowing the format. See
+  the [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing, layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse

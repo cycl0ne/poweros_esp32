@@ -32,6 +32,11 @@ Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T
 Assign >NIL: CLIPS: RAM:Clipboards
 
+; The kinds of file the system knows, from DEVS:DataTypes into the list
+; datatypes.library works from. Without it nothing opens a file by what
+; is in it.
+C:AddDataTypes >NIL: QUIET
+
 ; The system's fonts, as ENV:Sys/font.prefs names them: every screen,
 ; window and console opened from here on uses them.
 C:FontPrefs >NIL:
