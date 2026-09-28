@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! sd.device: the card in the board's slot as a block device. Unit 0 is
+//! sdcard.device: the card in the board's slot as a block device. Unit 0 is
 //! the whole card. Its API is the block device API
 //! (sdk/devices/trackdisk.zig), as flash.device's is.
 //!
@@ -27,7 +27,7 @@
 //!
 //! **What the DMA can reach.** The controller's DMA reaches internal
 //! memory only, and a caller's buffer is usually external, so every
-//! transfer passes through the buffer in `_sd.zig`'s work block. A
+//! transfer passes through the buffer in `_sdcard.zig`'s work block. A
 //! transfer longer than that buffer is done in rounds of it.
 //!
 //! **A card can be taken out.** Nothing here is told when that happens -
@@ -50,11 +50,11 @@ const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
 const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
-const _sd = @import("_sd.zig");
-const SdBase = _sd.SdBase;
-const Work = _sd.Work;
+const _sdcard = @import("_sdcard.zig");
+const SdCardBase = _sdcard.SdCardBase;
+const Work = _sdcard.Work;
 
-pub const DEVICE_NAME = _sd.DEVICE_NAME;
+pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
 const DEVICE_REVISION = 0;
 const BUILD_DATE = "23.9.2026";
@@ -79,7 +79,7 @@ const task_pri = 5;
 /// would raise it again at once - and what they said is left for the task.
 fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
-    const sb: *SdBase = @ptrCast(@alignCast(is_data.?));
+    const sb: *SdCardBase = @ptrCast(@alignCast(is_data.?));
     const work = sb.work orelse return 0;
     const said = sdmmc.takeStatus();
     const dma_said = sdmmc.takeDmaStatus();
@@ -92,7 +92,7 @@ fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
 
 /// What the controller has said since the last transfer began, taken
 /// without the interrupt changing it underneath.
-fn saidSoFar(sb: *SdBase) struct { status: u32, dma: u32 } {
+fn saidSoFar(sb: *SdCardBase) struct { status: u32, dma: u32 } {
     const sys = sb.sys_base;
     const work = sb.work.?;
     sys.Disable();
@@ -103,7 +103,7 @@ fn saidSoFar(sb: *SdBase) struct { status: u32, dma: u32 } {
 /// A clean slate before a command. The controller's own bits and what
 /// the server has collected are dropped together: an interrupt between
 /// the two would leave the next command reading the last one's answer.
-fn forgetStatus(sb: *SdBase) void {
+fn forgetStatus(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     const work = sb.work.?;
     sys.Disable();
@@ -116,18 +116,18 @@ fn forgetStatus(sb: *SdBase) void {
 
 // --- waiting --------------------------------------------------------------
 
-fn portMask(sb: *SdBase) u32 {
+fn portMask(sb: *SdCardBase) u32 {
     return sb.port.?.sigMask();
 }
 
 /// `us` microseconds on the timer, as a deadline to wait against.
-fn armDeadline(sb: *SdBase, us: u32) void {
+fn armDeadline(sb: *SdCardBase, us: u32) void {
     sb.timer_io.node.command = timer.TR_ADDREQUEST;
     sb.timer_io.time = timer.TimeVal.fromMicros(us);
     sb.sys_base.SendIO(&sb.timer_io.node);
 }
 
-fn dropDeadline(sb: *SdBase) void {
+fn dropDeadline(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     _ = sys.AbortIO(&sb.timer_io.node);
     _ = sys.WaitIO(&sb.timer_io.node);
@@ -136,13 +136,13 @@ fn dropDeadline(sb: *SdBase) void {
 /// Until every bit of `want` has been said, or something went wrong, or
 /// the deadline passed. A deadline that passes is reported as a card that
 /// did not answer, because that is what it means: nothing came back.
-fn waitFor(sb: *SdBase, want: u32, us: u32) card.Fault {
+fn waitFor(sb: *SdCardBase, want: u32, us: u32) card.Fault {
     const sys = sb.sys_base;
     armDeadline(sb, us);
     defer dropDeadline(sb);
     while (true) {
         const said = saidSoFar(sb);
-        const fault = _sd.faultOf(said.status, said.dma);
+        const fault = _sdcard.faultOf(said.status, said.dma);
         if (fault.any()) return fault;
         if (said.status & want == want) return .{};
         const got = sys.Wait(sb.int_mask | portMask(sb));
@@ -153,7 +153,7 @@ fn waitFor(sb: *SdBase, want: u32, us: u32) card.Fault {
 }
 
 /// `us` microseconds, waited out.
-fn delay(sb: *SdBase, us: u32) void {
+fn delay(sb: *SdCardBase, us: u32) void {
     sb.timer_io.node.command = timer.TR_ADDREQUEST;
     sb.timer_io.time = timer.TimeVal.fromMicros(us);
     _ = sb.sys_base.DoIO(&sb.timer_io.node);
@@ -184,7 +184,7 @@ const Blocks = struct {
 
 /// One command to the card, and its answer.
 fn command(
-    sb: *SdBase,
+    sb: *SdCardBase,
     index: u32,
     argument: u32,
     response: sdmmc.Response,
@@ -205,7 +205,7 @@ fn command(
         want |= sdmmc.int_data_over;
         if (stop) want |= sdmmc.int_auto_command_done;
     }
-    var answer = Answer{ .fault = waitFor(sb, want, _sd.command_timeout_us) };
+    var answer = Answer{ .fault = waitFor(sb, want, _sdcard.command_timeout_us) };
     if (!answer.ok()) {
         // Whatever the controller was in the middle of is abandoned, so
         // the next command starts from a known state.
@@ -226,7 +226,7 @@ fn command(
 /// line down while it programs, and the controller reports that; the
 /// count is a last resort, so that a card which never lets go cannot hang
 /// the machine.
-fn waitIdle(sb: *SdBase) void {
+fn waitIdle(sb: *SdCardBase) void {
     _ = sb;
     var spins: u32 = 0;
     while (sdmmc.busy() and spins < 2_000_000) spins += 1;
@@ -234,7 +234,7 @@ fn waitIdle(sb: *SdBase) void {
 
 /// A command the card only listens to after APP_CMD.
 fn appCommand(
-    sb: *SdBase,
+    sb: *SdCardBase,
     index: u32,
     argument: u32,
     response: sdmmc.Response,
@@ -248,7 +248,7 @@ fn appCommand(
 
 // --- the card -------------------------------------------------------------
 
-fn say(sb: *SdBase, what: [*:0]const u8) void {
+fn say(sb: *SdCardBase, what: [*:0]const u8) void {
     sdk.exec.kprintf(sb.sys_base, "%s: %s\n", .{ DEVICE_NAME, what });
 }
 
@@ -260,7 +260,7 @@ fn say(sb: *SdBase, what: [*:0]const u8) void {
 /// takes, told to power up until it says it is ready, then asked who it
 /// is and given an address to answer to. Only once it is selected will it
 /// say anything about itself that matters here.
-fn identify(sb: *SdBase) bool {
+fn identify(sb: *SdCardBase) bool {
     sb.card = .{};
     sdmmc.setWide(false);
     sdmmc.setClock(sdmmc.identify_hz);
@@ -280,7 +280,7 @@ fn identify(sb: *SdBase) bool {
     // busy when the allowance runs out is not a card this can use.
     var ocr: u32 = 0;
     var waited: u32 = 0;
-    while (waited < _sd.identify_timeout_us) : (waited += 10_000) {
+    while (waited < _sdcard.identify_timeout_us) : (waited += 10_000) {
         const arg = if (modern) card.op_cond_arg else card.op_cond_arg & ~@as(u32, 1 << 30);
         const answer = appCommand(sb, card.SD_SEND_OP_COND, arg, .short_unchecked, null);
         if (!answer.ok()) return false;
@@ -344,7 +344,7 @@ fn identify(sb: *SdBase) bool {
 ///
 /// The controller is told the register's own length is a whole block, or
 /// it would wait for the rest of a 512-byte one that is never coming.
-fn readRegister(sb: *SdBase, index: u32, bytes: u32) ?[]const u8 {
+fn readRegister(sb: *SdCardBase, index: u32, bytes: u32) ?[]const u8 {
     const work = sb.work.?;
     @memset(work.buffer[0..bytes], 0);
     work.chain[0].set(
@@ -367,7 +367,7 @@ fn readRegister(sb: *SdBase, index: u32, bytes: u32) ?[]const u8 {
 
 /// The work buffer's descriptors, laid over `bytes` of it and handed to
 /// the controller.
-fn layChain(sb: *SdBase, bytes: u32) *sdmmc.Descriptor {
+fn layChain(sb: *SdCardBase, bytes: u32) *sdmmc.Descriptor {
     const work = sb.work.?;
     var left = bytes;
     var at: u32 = 0;
@@ -388,11 +388,11 @@ fn layChain(sb: *SdBase, bytes: u32) *sdmmc.Descriptor {
 /// A run of blocks, one round of the work buffer at a time. `out` is the
 /// caller's buffer; for a write the bytes are copied in first, for a read
 /// they are copied out after.
-fn transfer(sb: *SdBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
+fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
     const work = sb.work.?;
     var done: u32 = 0;
     while (done < count) {
-        const piece = @min(count - done, _sd.chunk_blocks);
+        const piece = @min(count - done, _sdcard.chunk_blocks);
         const piece_bytes = piece * @as(u32, @intCast(card.block_bytes));
         const at = done * @as(u32, @intCast(card.block_bytes));
         if (way == .to_card) @memcpy(work.buffer[0..piece_bytes], bytes[at..][0..piece_bytes]);
@@ -423,7 +423,7 @@ fn transfer(sb: *SdBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*
 /// The card stopped answering. Whatever it was is gone; the next command
 /// looks for one afresh, and the change count tells a handler its locks
 /// are worthless.
-fn lost(sb: *SdBase) void {
+fn lost(sb: *SdCardBase) void {
     if (sb.present == 0) return;
     sb.present = 0;
     sb.change_num +%= 1;
@@ -432,7 +432,7 @@ fn lost(sb: *SdBase) void {
 
 /// A card in the slot, identified if it has not been already. False if
 /// the slot is empty or the card cannot be used.
-fn ready(sb: *SdBase) bool {
+fn ready(sb: *SdCardBase) bool {
     if (sb.present != 0) return true;
     if (!sdmmc.cardPresent()) return false;
     // The reset puts the controller's interrupt gates back where they
@@ -446,7 +446,7 @@ fn ready(sb: *SdBase) bool {
     return true;
 }
 
-fn report(sb: *SdBase) void {
+fn report(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     var name: [6]u8 = @splat(0);
     @memcpy(name[0..5], &sb.card.cid.name);
@@ -465,7 +465,7 @@ fn report(sb: *SdBase) void {
 /// before the first message is taken, so a request that arrived while the
 /// device was starting is not missed.
 fn sdTask(sys: *ExecBase) callconv(.c) void {
-    const sb: *SdBase = @fieldParentPtr("task", sys.FindTask(null).?);
+    const sb: *SdCardBase = @fieldParentPtr("task", sys.FindTask(null).?);
     const queue_port = &sb.unit.msg_port;
     const signal = sys.AllocSignal(-1);
     if (signal < 0) return started(sb);
@@ -481,9 +481,9 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
         // have to be answered.
         while (true) {
             while (sys.GetMsg(queue_port)) |msg| {
-                const io = _sd.requestOf(msg);
+                const io = _sdcard.requestOf(msg);
                 if (io.command == td.TD_CHANGESTATE) {
-                    _sd.stdReq(io).actual = 1;
+                    _sdcard.stdReq(io).actual = 1;
                 } else {
                     io.err = td.TDERR_NoCard;
                 }
@@ -501,7 +501,7 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
 
     while (true) {
         while (sys.GetMsg(queue_port)) |msg| {
-            const io = _sd.requestOf(msg);
+            const io = _sdcard.requestOf(msg);
             slowIO(sb, io);
             sys.ReplyIO(io);
         }
@@ -510,7 +510,7 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
 }
 
 /// The init is waiting to hear that the task is ready for requests.
-fn started(sb: *SdBase) void {
+fn started(sb: *SdCardBase) void {
     sb.started = 1;
     if (sb.starter) |starter| {
         const bit: u5 = @intCast(sb.start_signal);
@@ -521,7 +521,7 @@ fn started(sb: *SdBase) void {
 
 /// The task's own port and timer, the controller and its interrupt. False
 /// if there is no controller here.
-fn setUp(sb: *SdBase) bool {
+fn setUp(sb: *SdCardBase) bool {
     const sys = sb.sys_base;
 
     const int_signal = sys.AllocSignal(-1);
@@ -539,8 +539,8 @@ fn setUp(sb: *SdBase) bool {
         .clock = slot.clock,
         .command = slot.command,
         .data = slot.data,
-        .detect = if (slot.detect == _sd.no_pin) null else slot.detect,
-        .write_protect = if (slot.write_protect == _sd.no_pin) null else slot.write_protect,
+        .detect = if (slot.detect == _sdcard.no_pin) null else slot.detect,
+        .write_protect = if (slot.write_protect == _sdcard.no_pin) null else slot.write_protect,
     })) {
         say(sb, "no SD host controller on this machine");
         return false;
@@ -554,8 +554,8 @@ fn setUp(sb: *SdBase) bool {
 }
 
 /// The commands that talk to the card. On the task, so they may wait.
-fn slowIO(sb: *SdBase, io: *exec.IORequest) void {
-    const req = _sd.stdReq(io);
+fn slowIO(sb: *SdCardBase, io: *exec.IORequest) void {
+    const req = _sdcard.stdReq(io);
     if (!ready(sb)) {
         // An empty slot is an answer to this one, not a fault.
         if (io.command == td.TD_CHANGESTATE) {
@@ -568,7 +568,7 @@ fn slowIO(sb: *SdBase, io: *exec.IORequest) void {
     const block_bytes = card.block_bytes;
     switch (io.command) {
         exec.CMD_READ => {
-            if (!_sd.inside(sb, req.offset, req.length)) {
+            if (!_sdcard.inside(sb, req.offset, req.length)) {
                 io.err = exec.IOERR_BADADDRESS;
             } else if (req.length == 0) {
                 req.actual = 0;
@@ -584,7 +584,7 @@ fn slowIO(sb: *SdBase, io: *exec.IORequest) void {
             }
         },
         exec.CMD_WRITE => {
-            if (!_sd.inside(sb, req.offset, req.length)) {
+            if (!_sdcard.inside(sb, req.offset, req.length)) {
                 io.err = exec.IOERR_BADADDRESS;
             } else if (sb.card.readOnly() or sdmmc.writeProtected()) {
                 io.err = td.TDERR_WriteProt;
@@ -603,7 +603,7 @@ fn slowIO(sb: *SdBase, io: *exec.IORequest) void {
         },
         td.TD_GETGEOMETRY => {
             if (req.data) |data| {
-                _sd.geometry(sb, @ptrCast(@alignCast(data)));
+                _sdcard.geometry(sb, @ptrCast(@alignCast(data)));
             } else {
                 io.err = exec.IOERR_BADADDRESS;
             }
@@ -626,7 +626,7 @@ fn canWait(io: *exec.IORequest) bool {
 }
 
 /// Onto the task's queue; it will be replied, so not quick I/O.
-fn queue(sb: *SdBase, io: *exec.IORequest) void {
+fn queue(sb: *SdCardBase, io: *exec.IORequest) void {
     if (!canWait(io)) return sb.sys_base.ReplyIO(io);
     io.flags &= ~exec.IOF_QUICK;
     sb.sys_base.PutMsg(&sb.unit.msg_port, &io.message);
@@ -634,8 +634,8 @@ fn queue(sb: *SdBase, io: *exec.IORequest) void {
 
 fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     _ = dev;
-    const sb = _sd.baseOf(io);
-    const req = _sd.stdReq(io);
+    const sb = _sdcard.baseOf(io);
+    const req = _sdcard.stdReq(io);
     io.err = 0;
     req.actual = 0;
     switch (io.command) {
@@ -665,14 +665,14 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 /// A request the task hasn't started yet is taken off its queue and
 /// replied; one it is busy with can't be stopped.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
-    const sb = _sd.sdBase(dev);
+    const sb = _sdcard.sdCardBase(dev);
     const sys = sb.sys_base;
     sys.Disable();
     defer sys.Enable();
     var it = sb.unit.msg_port.msg_list.iterator();
     while (it.next()) |n| {
         const msg: *exec.Message = @fieldParentPtr("node", n);
-        if (_sd.requestOf(msg) != io) continue;
+        if (_sdcard.requestOf(msg) != io) continue;
         sys.Remove(n);
         io.err = exec.IOERR_ABORTED;
         sys.ReplyIO(io);
@@ -683,7 +683,7 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
 
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
     _ = flags;
-    const sb = _sd.sdBase(dev);
+    const sb = _sdcard.sdCardBase(dev);
     if (unit_number != 0) return td.TDERR_BadUnitNum;
     // The slot opens whether or not a card is in it: a handler that sits
     // on it has to be there before the card is, and finds out by asking.
@@ -696,7 +696,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
 }
 
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
-    const sb = _sd.baseOf(io);
+    const sb = _sdcard.baseOf(io);
     _ = abortIO(dev, io);
     sb.unit.open_cnt -= 1;
     dev.open_cnt -= 1;
@@ -712,13 +712,13 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
 
 /// Every pad the slot has, in `into`: its clock, command and data lines,
 /// and its card-detect and write-protect where it has them.
-fn slotPads(slot: _sd.Slot, into: *[8]u8) []const u8 {
+fn slotPads(slot: _sdcard.Slot, into: *[8]u8) []const u8 {
     into[0] = slot.clock;
     into[1] = slot.command;
     for (slot.data, 0..) |data_pad, line| into[2 + line] = data_pad;
     var count: usize = 6;
     for ([_]u8{ slot.detect, slot.write_protect }) |sense_pad| {
-        if (sense_pad == _sd.no_pin) continue;
+        if (sense_pad == _sdcard.no_pin) continue;
         into[count] = sense_pad;
         count += 1;
     }
@@ -728,7 +728,7 @@ fn slotPads(slot: _sd.Slot, into: *[8]u8) []const u8 {
 /// Which pads are the slot's: expansion.library's card-slot part, whose
 /// tags say where each line is. A board without a slot - or with one this
 /// driver cannot run - leaves `has_slot` clear, and there is no device.
-fn findSlot(sb: *SdBase) void {
+fn findSlot(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
     defer sys.CloseLibrary(utility_lib);
@@ -742,13 +742,13 @@ fn findSlot(sb: *SdBase) void {
     // Every line the host drives is a pad of the chip; a slot wired some
     // other way - its chip select on an expander, say - is not one this
     // driver can run.
-    var slot: _sd.Slot = .{};
+    var slot: _sdcard.Slot = .{};
     slot.clock = pad(ub, st.PART_PinClock, tags) orelse return;
     slot.command = pad(ub, st.PART_PinCommand, tags) orelse return;
     const data_tags = [4]sdk.utility.Tag{ st.PART_PinData0, st.PART_PinData1, st.PART_PinData2, st.PART_PinData3 };
     for (data_tags, 0..) |tag, line| slot.data[line] = pad(ub, tag, tags) orelse return;
-    slot.detect = pad(ub, st.PART_PinDetect, tags) orelse _sd.no_pin;
-    slot.write_protect = pad(ub, st.PART_PinWriteProtect, tags) orelse _sd.no_pin;
+    slot.detect = pad(ub, st.PART_PinDetect, tags) orelse _sdcard.no_pin;
+    slot.write_protect = pad(ub, st.PART_PinWriteProtect, tags) orelse _sdcard.no_pin;
     sb.slot = slot;
     sb.has_slot = 1;
 }
@@ -773,7 +773,7 @@ fn pad(ub: *sdk.interface.utility.UtilityBase, tag: sdk.utility.Tag, tags: ?[*]c
 /// answer.
 fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Device {
     dev.revision = DEVICE_REVISION;
-    const sb = _sd.sdBase(dev);
+    const sb = _sdcard.sdCardBase(dev);
     sb.sys_base = sys_base;
     sb.seg_list = seg_list;
     // No slot, or no controller behind it: there is no device to make.
@@ -862,7 +862,7 @@ const vectors = [_]*const anyopaque{
 };
 
 const init_table = exec.InitTable{
-    .data_size = @sizeOf(SdBase),
+    .data_size = @sizeOf(SdCardBase),
     .vectors = &vectors,
     .vector_count = vectors.len,
     .init = &init,

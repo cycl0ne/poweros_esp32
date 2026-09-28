@@ -43,7 +43,7 @@ AUX1:
 /* The card in the slot, on a board that has one. Both halves are on
  * this disk rather than in the ROM: the handler is HANDLERS:fat-handler,
  * which dos loads the first time the device is used, and it opens
- * sd.device, which ramlib loads from DEVS:. fat-handler finds the volume
+ * sdcard.device, which ramlib loads from DEVS:. fat-handler finds the volume
  * on the card itself - the partition table in its first block and the
  * boot sector behind it - so the entry names only the device, and the
  * volume takes the card's own name. Activate starts the handler at once,
@@ -54,7 +54,7 @@ AUX1:
  */
 SD0:
 	Handler   = HANDLERS:fat-handler
-	Device    = sd.device
+	Device    = sdcard.device
 	Unit      = 0
 	DosType   = 0x4D534400
 	StackSize = 16384

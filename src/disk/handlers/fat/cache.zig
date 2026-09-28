@@ -5,7 +5,7 @@
 //!
 //! `BlockCache(Media)` is generic over the medium, so the whole of it is
 //! tested on the host against `testmedia.zig` and the handler passes a
-//! medium made out of sd.device. The medium must offer
+//! medium made out of sdcard.device. The medium must offer
 //!
 //!     blockSize() u32          blocks() u64
 //!     read(lba: u64, count: u32, into: []u8) bool

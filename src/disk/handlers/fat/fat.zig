@@ -2,7 +2,7 @@
 //! fat-handler: FAT32 on a card, as a handler on the disk -
 //! `HANDLERS:fat-handler`, which dos loads the first time the device is
 //! used and keeps in the device node from then on. The mountlist gives it
-//! a whole device - sd.device's unit 0 - and it finds the volume on it
+//! a whole device - sdcard.device's unit 0 - and it finds the volume on it
 //! itself: the card's first block is the volume's boot sector, or a
 //! partition table with the volume in one of its partitions, which is how
 //! cards are sold.

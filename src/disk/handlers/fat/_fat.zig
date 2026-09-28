@@ -13,7 +13,7 @@
 //!
 //! **The medium** is duck-typed, as the other handler's is, so both file
 //! systems are tested on the host against `testmedia.zig` and given
-//! sd.device on the machine. It must offer
+//! sdcard.device on the machine. It must offer
 //!
 //!     blockSize() u32          blocks() u64
 //!     read(lba: u64, count: u32, into: []u8) bool

@@ -244,7 +244,7 @@ pub const Shell = struct {
     /// nothing.
     disk_port: ?*MsgPort = null,
     disk_req: IOStdReq = .{},
-    /// sd.device's unit 0, the same way.
+    /// sdcard.device's unit 0, the same way.
     sd_port: ?*MsgPort = null,
     sd_req: IOStdReq = .{},
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! sd [read <block> [blocks] | write <block> <text>]: the card in the
-//! slot, through sd.device's unit 0 - whether one is in, how big it is and
+//! slot, through sdcard.device's unit 0 - whether one is in, how big it is and
 //! how often it has been changed, or blocks of it read or written. The
 //! card's maker and name are printed by the device itself when it
 //! identifies one.
@@ -17,7 +17,7 @@ const block_size = 512;
 pub const name = "sd";
 pub const usage = "sd [read <block> [blocks] | write <block> <text>]";
 pub const help =
-    \\  sd                   sd.device unit 0: whether a card is in, how big,
+    \\  sd                   sdcard.device unit 0: whether a card is in, how big,
     \\                       and how often it has been changed
     \\  sd read <block> [blocks]     blocks read; the first one dumped
     \\  sd write <block> <text>      one block written, the rest of it zeroed
@@ -26,7 +26,7 @@ pub const help =
 
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const sys = shell.base.iface();
-    const io = try _shell.openBlockDevice(shell, &shell.sd_port, &shell.sd_req, trackdisk.SDNAME);
+    const io = try _shell.openBlockDevice(shell, &shell.sd_port, &shell.sd_req, trackdisk.SDCARDNAME);
     const word = args.next() orelse {
         _ = _shell.blockIO(shell, io, trackdisk.TD_CHANGESTATE, 0, 0, null);
         const in = io.actual == 0;

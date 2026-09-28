@@ -73,11 +73,11 @@ test "a free pad is taken, refused to the next, and given back" {
     try testing.expectEqual(@as(?[*:0]const u8, null), AllocGPIO(gb, 9, "i2c.device"));
     try testing.expectEqualStrings("i2c.device", std.mem.span(GPIOOwner(gb, 9).?));
     // Taken: the second asker is told whose it is, and nothing changes.
-    try testing.expectEqualStrings("i2c.device", std.mem.span(AllocGPIO(gb, 9, "sd.device").?));
+    try testing.expectEqualStrings("i2c.device", std.mem.span(AllocGPIO(gb, 9, "sdcard.device").?));
     try testing.expectEqualStrings("i2c.device", std.mem.span(GPIOOwner(gb, 9).?));
     FreeGPIO(gb, 9);
     try testing.expectEqual(@as(?[*:0]const u8, null), GPIOOwner(gb, 9));
-    try testing.expectEqual(@as(?[*:0]const u8, null), AllocGPIO(gb, 9, "sd.device"));
+    try testing.expectEqual(@as(?[*:0]const u8, null), AllocGPIO(gb, 9, "sdcard.device"));
     FreeGPIO(gb, 9);
     try tearDown(gb);
 }
@@ -89,7 +89,7 @@ test "the system's own pads are taken from the start" {
     try testing.expectEqualStrings("flash", std.mem.span(GPIOOwner(gb, 30).?));
     try testing.expectEqualStrings("usb", std.mem.span(GPIOOwner(gb, 19).?));
     try testing.expectEqualStrings("uart0", std.mem.span(GPIOOwner(gb, 43).?));
-    try testing.expectEqualStrings("flash", std.mem.span(AllocGPIO(gb, 27, "sd.device").?));
+    try testing.expectEqualStrings("flash", std.mem.span(AllocGPIO(gb, 27, "sdcard.device").?));
     // No board to say there is PSRAM: its pads stay free.
     try testing.expectEqual(@as(?[*:0]const u8, null), GPIOOwner(gb, 33));
     try tearDown(gb);

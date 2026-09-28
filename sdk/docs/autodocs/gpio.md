@@ -72,8 +72,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (gb.AllocGPIO(pad, "sd.device")) |holder| {
-    sdk.exec.kprintf(sys, "sd.device: GPIO%d is %s's\n", .{ pad, holder });
+if (gb.AllocGPIO(pad, "sdcard.device")) |holder| {
+    sdk.exec.kprintf(sys, "sdcard.device: GPIO%d is %s's\n", .{ pad, holder });
     return false;
 }
 ```

@@ -282,7 +282,7 @@ test "a path is where its kind lives and the name" {
     // A directory in the name stays in the path; a device goes where
     // devices are; a name with a colon is loaded as it stands.
     try testing.expectEqualStrings("LIBS:gadgets/x.gadget", std.mem.span(loadName(&buffer, "gadgets/x.gadget", ramlib.KIND_LIBRARY).?));
-    try testing.expectEqualStrings("DEVS:sd.device", std.mem.span(loadName(&buffer, "sd.device", ramlib.KIND_DEVICE).?));
+    try testing.expectEqualStrings("DEVS:sdcard.device", std.mem.span(loadName(&buffer, "sdcard.device", ramlib.KIND_DEVICE).?));
     const given: [*:0]const u8 = "SYS:classes/gadgets/x.gadget";
     try testing.expectEqual(given, loadName(&buffer, given, ramlib.KIND_LIBRARY).?);
 

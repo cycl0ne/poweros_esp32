@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The ROM tags the ES3C35P's image carries beyond the ones every image
 //! has: the drivers for the parts this board has. What is not needed to
-//! boot is not here - sd.device and fat-handler are on the disk - and a
+//! boot is not here - sdcard.device and fat-handler are on the disk - and a
 //! part the board lacks has no driver in the image.
 
 comptime {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! The SD/MMC host controller, for sd.device: commands to a card on a
+//! The SD/MMC host controller, for sdcard.device: commands to a card on a
 //! four-bit bus, and blocks moved by the controller's own DMA.
 //!
 //! A command is one word - the command's number and what to expect back -

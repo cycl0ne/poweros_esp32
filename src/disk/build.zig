@@ -6,7 +6,7 @@
 //! built against the SDK package alone.
 //!
 //! What it builds is listed here (`programs`, `files`), and each is handed
-//! out under its place on the disk - `c/list`, `devs/sd.device`,
+//! out under its place on the disk - `c/list`, `devs/sdcard.device`,
 //! `s/startup-sequence` - as a named lazy path, so the system's build can
 //! put them on its disk image without knowing how they are made. Built on
 //! its own, the load files land in `zig-out/bin`.
@@ -75,7 +75,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/colorwheel.gadget", .source = "classes/gadgets/colorwheel/colorwheel.zig", .name = "colorwheel.gadget" },
     .{ .disk = "classes/gadgets/gradientslider.gadget", .source = "classes/gadgets/gradientslider/gradientslider.zig", .name = "gradientslider.gadget" },
     .{ .disk = "classes/gadgets/tapedeck.gadget", .source = "classes/gadgets/tapedeck/tapedeck.zig", .name = "tapedeck.gadget" },
-    .{ .disk = "devs/sd.device", .source = "devs/sd/sd.zig", .name = "sd.device" },
+    .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "handlers/fat-handler", .source = "handlers/fat/fat.zig", .name = "fat-handler" },

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! sd.device's own state: the base, the block of internal memory the
+//! sdcard.device's own state: the base, the block of internal memory the
 //! controller's DMA and its interrupt reach, and the small conversions
 //! between what the controller says and what a caller is told.
 //!
@@ -24,7 +24,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
 
-pub const DEVICE_NAME = "sd.device";
+pub const DEVICE_NAME = "sdcard.device";
 
 /// The blocks one transfer moves at a time. A file system asks in
 /// clusters, and a card of 4 to 32 GB is formatted with 32 KiB ones, so
@@ -62,7 +62,7 @@ pub const Work = extern struct {
 };
 
 /// The device's base. One unit, whose port is the task's work queue.
-pub const SdBase = extern struct {
+pub const SdCardBase = extern struct {
     dev: exec.Device,
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
@@ -117,12 +117,12 @@ pub const Slot = extern struct {
     write_protect: u8 = 0xFF,
 };
 
-pub fn sdBase(dev: *exec.Device) *SdBase {
+pub fn sdCardBase(dev: *exec.Device) *SdCardBase {
     return @fieldParentPtr("dev", dev);
 }
 
 /// The base of the request's unit.
-pub fn baseOf(io: *exec.IORequest) *SdBase {
+pub fn baseOf(io: *exec.IORequest) *SdCardBase {
     const unit = io.unit.?;
     return @fieldParentPtr("unit", unit);
 }
@@ -154,13 +154,13 @@ pub fn faultOf(status: u32, dma_status: u32) card.Fault {
 // --- the unit -------------------------------------------------------------
 
 /// Whether a range of bytes is on the card, and whole blocks.
-pub fn inside(sb: *SdBase, offset: u64, len: u64) bool {
+pub fn inside(sb: *SdCardBase, offset: u64, len: u64) bool {
     const block_bytes = card.block_bytes;
     if (offset % block_bytes != 0 or len % block_bytes != 0) return false;
     return sb.card.holds(offset / block_bytes, len / block_bytes);
 }
 
-pub fn geometry(sb: *SdBase, into: *td.DriveGeometry) void {
+pub fn geometry(sb: *SdCardBase, into: *td.DriveGeometry) void {
     const blocks = sb.card.csd.blocks;
     into.* = .{
         .sector_size = @intCast(card.block_bytes),
