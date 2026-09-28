@@ -9,6 +9,8 @@ const graphics = @import("../graphics/graphics.zig");
 const intuition = @import("../intuition/intuition.zig");
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
+const ic = intuition.imageclass;
+const sc = intuition.screens;
 const IntuitionBase = @import("../../interface/intuition.zig").IntuitionBase;
 const GraphicsBase = @import("../../interface/graphics.zig").GraphicsBase;
 const Object = classusr.Object;
@@ -234,6 +236,102 @@ pub fn drawFrame(ib: *IntuitionBase, frame: *Object, rp: *graphics.RastPort, box
         .dimensions = .{ .width = box.width, .height = box.height },
     };
     _ = ib.SendMessage(frame, @ptrCast(&draw));
+}
+
+// --- arrows -----------------------------------------------------------------
+//
+// The stepping arrows of a scroller and of a number field are the same
+// button: a frame with a triangle in it, pressed while it is held. They
+// are here so that both draw the one arrow.
+
+/// The triangle of an arrow button: where it starts across the way the
+/// arrow points and along it, how wide its base and its tip are, and how
+/// many rows it takes from the tip to the base.
+pub const Triangle = struct {
+    across_at: i32,
+    along_at: i32,
+    tip: i32,
+    base: i32,
+    rows: i32,
+
+    /// The width of row `row`, counted from the tip.
+    pub fn widthAt(t: Triangle, row: i32) i32 {
+        return t.tip + 2 * row;
+    }
+
+    /// Where row `row` starts across the way the arrow points.
+    pub fn startAt(t: Triangle, row: i32) i32 {
+        return t.across_at + @divTrunc(t.base - t.widthAt(row), 2);
+    }
+};
+
+/// The triangle for a button `at` big, pointing along its height when
+/// `vertical`; null when the button is too small for one.
+///
+/// Every row is the same width either side of the middle, and the pixels
+/// left over at the two edges of the button are the same number, which is
+/// what makes the arrow look placed in the button rather than pushed to
+/// one side. Keeping it so needs the triangle and the room it sits in to
+/// have the same parity, since a triangle centred in a room of the other
+/// parity has one pixel more at one edge than at the other. So the tip is
+/// one pixel wide in an odd room and two in an even one and the rows grow
+/// by two, which makes every row the room's parity; and a row more or
+/// fewer does the same along the way the arrow points, without touching
+/// the width.
+pub fn triangleIn(at: gc.Box, vertical: bool) ?Triangle {
+    const across_room = if (vertical) at.width else at.height;
+    const along_room = if (vertical) at.height else at.width;
+    if (across_room < 5 or along_room < 4) return null;
+    const tip: i32 = 2 - @mod(across_room, 2);
+    // About half the button's smaller side.
+    const wanted = @max(@divTrunc(@min(at.width, at.height), 2), tip + 2);
+    var steps = @max(@divTrunc(wanted - tip + 1, 2), 1);
+    if (@mod(along_room - steps - 1, 2) != 0) steps += 1;
+    // Two at a time, so that what is taken off keeps the parity.
+    while (steps > 2 and (tip + 2 * steps > across_room - 2 or steps + 1 > along_room - 2)) steps -= 2;
+    if (tip + 2 * steps > across_room - 2 or steps + 1 > along_room - 2) return null;
+    const base = tip + 2 * steps;
+    const rows = steps + 1;
+    return .{
+        .across_at = (if (vertical) at.left else at.top) + @divTrunc(across_room - base, 2),
+        .along_at = (if (vertical) at.top else at.left) + @divTrunc(along_room - rows, 2),
+        .tip = tip,
+        .base = base,
+        .rows = rows,
+    };
+}
+
+/// One arrow button: where it is, which way it points, and whether it is
+/// drawn pressed.
+pub const Arrow = struct {
+    /// The button's box, in the coordinates the RastPort is drawn in.
+    at: gc.Box,
+    /// It points along its height rather than across it.
+    vertical: bool = false,
+    /// It points down or right rather than up or left.
+    forward: bool = false,
+    pressed: bool = false,
+};
+
+/// An arrow drawn: `frame`, a frameiclass button image, round it, and a
+/// triangle pointing the way it steps - drawn a row at a time, a column
+/// at a time for the arrows that point across, rather than as a filled
+/// polygon, whose edges belong to one side and not the other. Without a
+/// frame it is the triangle alone, which is what a mark on a button is.
+pub fn drawArrow(ib: *IntuitionBase, gb: *GraphicsBase, frame: ?*Object, rp: *graphics.RastPort, draw_info: ?*intuition.DrawInfo, arrow: Arrow) void {
+    if (frame) |image| drawFrame(ib, image, rp, arrow.at, if (arrow.pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, draw_info);
+    const dri = draw_info orelse return;
+    setPen(gb, rp, if (arrow.pressed) dri.pens[sc.FILLTEXTPEN] else dri.pens[sc.TEXTPEN]);
+    const triangle = triangleIn(arrow.at, arrow.vertical) orelse return;
+    var row: i32 = 0;
+    while (row < triangle.rows) : (row += 1) {
+        // An arrow that points back has its tip first, one that points
+        // forward has it last.
+        const grown = if (arrow.forward) triangle.rows - 1 - row else row;
+        const width = triangle.widthAt(grown);
+        const start = triangle.startAt(grown);
+        if (arrow.vertical) gb.DrawHLine(rp, start, triangle.along_at + row, width) else gb.DrawVLine(rp, triangle.along_at + row, start, width);
+    }
 }
 
 // --- numbers as text ------------------------------------------------------------

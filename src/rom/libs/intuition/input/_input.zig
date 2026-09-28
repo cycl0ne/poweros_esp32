@@ -402,8 +402,8 @@ fn screenAt(ib: *IntuitionBase) ?*Screen {
 
 /// The window whose visible part is at (x, y) on its screen, or null for
 /// the title bar, the ground or nothing.
-fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
-    const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
+/// The window a layer belongs to, if any.
+fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
     var node = s.windows.head;
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
@@ -414,6 +414,22 @@ fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
         if (w.layer == layer or w.inner_layer == layer or _requester.owns(w, layer)) return w;
     }
     return null;
+}
+
+fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
+    const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
+    return windowOfLayer(s, layer);
+}
+
+/// Whether the point is over a layer no window owns: a panel something
+/// put on the screen over the windows. Only what is driving the display
+/// at that moment makes one - a menu session, which takes every event
+/// while it lasts, or the gadget that has the input, which pops a list up
+/// over its window - so a press there belongs to that, not to whatever
+/// window lies under it.
+fn overPanel(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) bool {
+    const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return false;
+    return windowOfLayer(s, layer) == null;
 }
 
 // --- the work for one event ------------------------------------------------------------
@@ -453,8 +469,10 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         // one over itself - would otherwise keep every event there is
         // after a press in another window, and nothing could take it back.
         if (e.class == ie.IECLASS_NEWPOINTERPOS and e.code == ie.IECODE_LBUTTON) {
-            const here = if (screenAt(ib)) |s| windowAt(ib, s, st.x, st.y) else null;
-            if (here != st.window) {
+            const on_screen = screenAt(ib);
+            const panel = if (on_screen) |s| overPanel(ib, s, st.x, st.y) else false;
+            const here = if (on_screen) |s| windowAt(ib, s, st.x, st.y) else null;
+            if (!panel and here != st.window) {
                 abort(ib);
                 st.window = null;
                 st.mode = .none;

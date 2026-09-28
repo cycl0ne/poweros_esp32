@@ -208,6 +208,38 @@ The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.
 
+### More than buttons
+
+Beyond the classes the ROM holds, `SYS:classes/gadgets/` has one library
+per gadget kind, and a program opens the ones it uses before it makes
+them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
+`scroller`, `listview`, `palette`, `colorwheel`, `gradientslider`,
+`tapedeck`, `fuelgauge` (a bar showing how far along something is),
+`integer` (a number field with a range and stepping arrows), `chooser` (a
+button that pops a list up to pick from), and `clicktab` with `page` (a
+row of tabs over pages of gadgets). Each has its tags in
+`sdk/libs/gadgets/<name>.zig`, named after the class:
+
+```zig
+const ig = sdk.gadgets.integer;
+
+const lib = sys.OpenLibrary(ig.INTEGER_LIBRARY, 0) orelse return;
+defer sys.CloseLibrary(lib); // after the gadget is disposed of
+const port = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &.{
+    .{ .tag = gc.GA_ID, .data = 1 },
+    .{ .tag = ig.INTEGER_Min, .data = 1 },
+    .{ .tag = ig.INTEGER_Max, .data = 65535 },
+    .{ .tag = ig.INTEGER_Number, .data = 23 },
+    .{},
+});
+```
+
+A layout groups what belongs together: `LAYOUTA_Frame` draws a frame
+round it and `LAYOUTA_FrameTitle` puts a title in the frame's top edge,
+both taking their room before the children are placed. `C:test/Settings`
+is a window of all of this - tabs over pages, framed groups, a number
+field, a chooser and a fuel gauge.
+
 
 ## When a check fails
 

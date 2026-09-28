@@ -30,6 +30,13 @@
 //! time, and a layout would hear its own last answer back. Its corner is
 //! set, so that a group moves its members with it.
 //!
+//! **A frame round it.** `LAYOUTA_Frame` puts a frameiclass frame round
+//! the layout and `LAYOUTA_FrameTitle` a title in its top edge, which
+//! breaks the frame's top line. Both take their room off the layout
+//! before anything is placed, so that what a framed layout asks for
+//! (`GM_DOMAIN`) is what its children need with the frame added, and a
+//! window of framed groups is layouts inside layouts and nothing else.
+//!
 //! Each child has a record of its own here, on a list beside the group's
 //! members and in the same order: its label, its weights, the sizes that
 //! stand in for its own, and scratch room for the sizes being worked out.
@@ -43,6 +50,7 @@ const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
 const lg = intuition.layoutgclass;
+const ic = intuition.imageclass;
 const sc = intuition.screens;
 const Class = classes.Class;
 const Object = classes.Object;
@@ -93,7 +101,16 @@ pub const Data = extern struct {
     children: exec.MinList = .{},
     /// The child the `CHILDA_` tags being read are about.
     last: ?*Child = null,
+    /// The frame round the layout, when it has one, and the title in its
+    /// top edge.
+    frame: ?*Object = null,
+    title: ?[*:0]const u8 = null,
 };
+
+/// How far in from the frame's left edge a title starts, and the room
+/// kept either side of it where it breaks the frame's line.
+const title_indent = 8;
+const title_gap = 2;
 
 /// Make layoutgclass, from groupgclass, and put it on the public list.
 pub fn make(ib: *IntuitionBase) ?*Class {
@@ -201,6 +218,26 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
             lg.LAYOUTA_AddChild => if (v != 0) {
                 if (addChild(ib, cl, o, @ptrFromInt(v))) changed = 1;
             },
+            lg.LAYOUTA_Frame, lg.LAYOUTA_FrameType => {
+                if (item.tag == lg.LAYOUTA_Frame and v == 0) {
+                    ib.iface().DisposeObject(p.frame);
+                    p.frame = null;
+                } else {
+                    const kind: usize = if (item.tag == lg.LAYOUTA_FrameType) v else ic.FRAME_RIDGE;
+                    ib.iface().DisposeObject(p.frame);
+                    const made = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = kind }, .{} };
+                    p.frame = ib.iface().NewObjectTagList(ib.frame_class, null, &made);
+                }
+                changed = 1;
+            },
+            lg.LAYOUTA_FrameTitle => {
+                p.title = @ptrFromInt(v);
+                if (p.frame == null and v != 0) {
+                    const made = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_RIDGE }, .{} };
+                    p.frame = ib.iface().NewObjectTagList(ib.frame_class, null, &made);
+                }
+                changed = 1;
+            },
             lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight => {
                 const record = p.last orelse continue;
                 switch (item.tag) {
@@ -228,6 +265,39 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
         }
     }
     return changed;
+}
+
+// --- the frame ---------------------------------------------------------------
+
+/// What the frame takes round the layout: how far in from its edges its
+/// contents sit, and how much it takes in all each way. Nothing without
+/// a frame.
+fn frameRoom(ib: *IntuitionBase, p: *const Data, gi: ?*classusr.GadgetInfo) _gadget.Box {
+    const nothing = _gadget.Box{ .left = 0, .top = 0, .width = 0, .height = 0 };
+    const frame = p.frame orelse return nothing;
+    var contents = ic.Box{ .width = 100, .height = 100 };
+    var box = ic.Box{};
+    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = if (gi) |info| info.draw_info else null };
+    if (ib.iface().SendMessage(frame, @ptrCast(&msg)) == 0) return .{ .left = 2, .top = 2, .width = 4, .height = 4 };
+    // `width` and `height` here are what the frame adds in all.
+    return .{ .left = -box.left, .top = -box.top, .width = box.width - 100, .height = box.height - 100 };
+}
+
+/// What the margin, the frame and the title take off the layout before
+/// its children are placed: where the children start, and how much is
+/// gone each way in all. A title takes a line off the top, since it is
+/// drawn across the frame's top edge.
+const Inset = struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0 };
+
+fn insetOf(ib: *IntuitionBase, p: *const Data, gi: ?*classusr.GadgetInfo, title_height: i32) Inset {
+    const room = frameRoom(ib, p, gi);
+    const head = if (p.title != null) @max(title_height, room.top) else room.top;
+    return .{
+        .left = room.left + p.margin,
+        .top = head + p.margin,
+        .width = room.width + 2 * p.margin,
+        .height = room.height - room.top + head + 2 * p.margin,
+    };
 }
 
 // --- measuring --------------------------------------------------------------
@@ -278,6 +348,12 @@ const Labels = struct {
         var walk = Walk.over(p);
         while (walk.next()) |record| labels.widest = @max(labels.widest, labels.width(ib, record));
         return labels;
+    }
+
+    /// How wide a piece of text is in the layout's font.
+    fn textWidth(labels: *const Labels, ib: *IntuitionBase, text: [*:0]const u8) i32 {
+        const run = intuition.IntuiText{ .font = labels.measure.font, .text = text };
+        return ib.iface().IntuiTextLength(&run);
     }
 
     fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
@@ -351,15 +427,18 @@ fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetI
         }
     }
     const gaps = if (count > 1) (count - 1) * p.spacing else 0;
-    const edges = 2 * p.margin;
+    const inset = insetOf(ib, p, gi, labels.height);
+    // A framed layout is never narrower than its title.
+    const titled = if (p.title) |text| labels.textWidth(ib, text) + 2 * (title_indent + title_gap) else 0;
     inline for (.{ &need.min, &need.nominal, &need.max }) |size| {
         if (horiz) {
-            size.width = saturate(size.width + gaps + edges);
-            size.height = saturate(size.height + edges);
+            size.width = saturate(size.width + gaps + inset.width);
+            size.height = saturate(size.height + inset.height);
         } else {
-            size.width = saturate(size.width + edges);
-            size.height = saturate(size.height + gaps + edges);
+            size.width = saturate(size.width + inset.width);
+            size.height = saturate(size.height + gaps + inset.height);
         }
+        size.width = saturate(@max(size.width, titled));
     }
     return need;
 }
@@ -478,10 +557,11 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
     const horiz = p.orientation == lg.LORIENT_HORIZ;
     const column = labelColumn(&labels, p);
 
-    const left = b.left + p.margin;
-    const top = b.top + p.margin;
-    const inner_w = b.width - 2 * p.margin;
-    const inner_h = b.height - 2 * p.margin;
+    const inset = insetOf(ib, p, gi, labels.height);
+    const left = b.left + inset.left;
+    const top = b.top + inset.top;
+    const inner_w = b.width - inset.width;
+    const inner_h = b.height - inset.height;
 
     // Along: what each needs, and what is left over once every child has
     // its least and every gap and label its room.
@@ -558,7 +638,33 @@ fn limitWindow(ib: *IntuitionBase, cl: *Class, o: *Object, gi: *classusr.GadgetI
     );
 }
 
-/// The labels, each in the text pen beside its child.
+/// The frame round the layout, and the title across its top edge: the
+/// frame starts half a line down, so that the title sits on its top line,
+/// and the line is cleared either side of the title where it crosses.
+fn renderFrame(ib: *IntuitionBase, p: *Data, o: *Object, info: *classusr.GadgetInfo, rp: *graphics.RastPort, labels: *const Labels, baseline: i32) void {
+    const frame = p.frame orelse return;
+    const gb = ib.graphics_base;
+    const g = gadgetclass.gadgetOf(ib, o);
+    const b = _gadget.boxIn(g, info.domain_width, info.domain_height);
+    const head = if (p.title != null) @divTrunc(labels.height, 2) else 0;
+    var draw = ic.ImpDraw{
+        .method_id = ic.IM_DRAWFRAME,
+        .rast_port = rp,
+        .offset = .{ .x = b.left, .y = b.top + head },
+        .state = ic.IDS_NORMAL,
+        .draw_info = info.draw_info,
+        .dimensions = .{ .width = b.width, .height = b.height - head },
+    };
+    _ = ib.iface().SendMessage(frame, @ptrCast(&draw));
+    const text = p.title orelse return;
+    const width = d.labelWidth(gb, rp, text);
+    d.box(gb, rp, b.left + title_indent - title_gap, b.top, width + 2 * title_gap, labels.height, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    d.pen(gb, rp, info.draw_info.pens[sc.TEXTPEN]);
+    d.labelText(gb, rp, b.left + title_indent, b.top + baseline, text);
+}
+
+/// The frame with its title, and the labels, each in the text pen beside
+/// its child.
 fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, rp: *graphics.RastPort) void {
     const info = gi orelse return;
     const p = own(cl, o);
@@ -576,6 +682,10 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
         .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
         .{},
     };
+    gb.SetRPAttrs(rp, &pens);
+    const labels = Labels.of(ib, o, p, gi);
+    defer labels.done(ib);
+    renderFrame(ib, p, o, info, rp, &labels, @intCast(baseline));
     gb.SetRPAttrs(rp, &pens);
     var walk = Walk.over(p);
     while (walk.next()) |record| {
@@ -620,6 +730,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 var walk = Walk.over(p);
                 dropRecord(ib, p, walk.next() orelse break);
             }
+            it.DisposeObject(p.frame);
+            p.frame = null;
             // The members go with the group.
             return it.SendSuperMessage(cl, o, msg);
         },

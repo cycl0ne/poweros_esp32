@@ -3907,6 +3907,78 @@ test "layoutgclass: one tree laid out in the room of each board" {
     try tearDown(ib);
 }
 
+test "layoutgclass: a frame with a title takes its room before the children are placed" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // The same tree twice, once in a titled frame.
+    var children: [3]*classusr.Object = undefined;
+    var layouts: [3]*classusr.Object = undefined;
+    const titles = [_]?[*:0]const u8{ null, "Backups", "A title longer than the layout is wide" };
+    for (&children, &layouts, titles) |*child, *layout, title| {
+        child.* = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+            .{ .tag = gc.STRINGA_MaxChars, .data = 40 },
+            .{},
+        }).?;
+        layout.* = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Left, .data = 0 },
+            .{ .tag = gc.GA_Top, .data = 0 },
+            .{ .tag = gc.GA_Width, .data = 200 },
+            .{ .tag = gc.GA_Height, .data = 60 },
+            .{ .tag = lg.LAYOUTA_Margin, .data = 4 },
+            .{ .tag = if (title != null) lg.LAYOUTA_FrameTitle else utility.TAG_IGNORE, .data = @intFromPtr(title) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(child.*) },
+            .{},
+        }).?;
+    }
+
+    // Framed, it asks for more room both ways, and a title wider than the
+    // layout widens it.
+    var sizes: [3]gc.GpDomain = undefined;
+    for (&sizes, layouts) |*size, layout| {
+        size.* = .{ .which = gc.GDOMAIN_MINIMUM };
+        try testing.expectEqual(@as(usize, 1), it.SendMessage(layout, @ptrCast(size)));
+    }
+    try testing.expect(sizes[1].domain.width > sizes[0].domain.width);
+    try testing.expect(sizes[1].domain.height >= sizes[0].domain.height + 8);
+    try testing.expect(sizes[2].domain.width > sizes[1].domain.width);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    for (layouts) |layout| _ = it.SendMessage(layout, @ptrCast(&lay));
+
+    // The child of the framed layout sits in from every side by the
+    // frame, and a line further down for the title.
+    const plain = boxOf(ib, children[0]);
+    const framed = boxOf(ib, children[1]);
+    try testing.expect(framed.left > plain.left);
+    try testing.expect(framed.top >= plain.top + 8);
+    try testing.expect(framed.left + framed.width < plain.left + plain.width);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    for (layouts) |layout| it.DisposeObject(layout); // and the child in it
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "layoutgclass: in a window, its smallest size, and a button that reports by its own ID" {
     const ib = try setUp();
     defer kexec.deinit();

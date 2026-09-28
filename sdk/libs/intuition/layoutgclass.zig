@@ -14,6 +14,11 @@
 //! maximum; one with weight 0 keeps its nominal size, centred in a row and
 //! against the left of a column.
 //!
+//! A layout can be drawn in a frame with a title in its top edge
+//! (`LAYOUTA_Frame`, `LAYOUTA_FrameTitle`): the frame and the title take
+//! their room off the layout before the children are placed, so a window
+//! of framed groups is written as layouts inside layouts.
+//!
 //! A child may have a label: text beside it on the left, in the window's
 //! text pen and font. The labels of a column share one column of their
 //! own, right-aligned, so the children after them line up.
@@ -74,6 +79,15 @@ pub const LAYOUTA_Margin = LAYOUTA_Dummy + 0x0004;
 /// then on. The `CHILDA_` tags that follow it, up to the next one, are
 /// about it.
 pub const LAYOUTA_AddChild = LAYOUTA_Dummy + 0x0005;
+/// Bool: a frame round the layout, with the children inside it. A ridge
+/// unless `LAYOUTA_FrameType` says otherwise. This is what groups the
+/// settings of a window into boxes.
+pub const LAYOUTA_Frame = LAYOUTA_Dummy + 0x0006;
+/// An `imageclass.FRAME_` kind for the frame, in place of the ridge.
+pub const LAYOUTA_FrameType = LAYOUTA_Dummy + 0x0007;
+/// Text in the frame's top edge, which breaks the frame's top line: a C
+/// string, not copied. It gives the layout a frame if it has none.
+pub const LAYOUTA_FrameTitle = LAYOUTA_Dummy + 0x0008;
 
 pub const LORIENT_HORIZ: u32 = 1;
 pub const LORIENT_VERT: u32 = 2;

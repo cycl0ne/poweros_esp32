@@ -37,6 +37,16 @@ const colorwheel = @import("../colorwheel/colorwheel.zig");
 const gradientslider = @import("../gradientslider/gradientslider.zig");
 const gs = sdk.gadgets.gradientslider;
 const tapedeck = @import("../tapedeck/tapedeck.zig");
+const fuelgauge = @import("../fuelgauge/fuelgauge.zig");
+const integer = @import("../integer/integer.zig");
+const chooser = @import("../chooser/chooser.zig");
+const pageclass = @import("../page/page.zig");
+const pgc = sdk.gadgets.page;
+const clicktab = @import("../clicktab/clicktab.zig");
+const ct = sdk.gadgets.clicktab;
+const ch = sdk.gadgets.chooser;
+const ig = sdk.gadgets.integer;
+const fg = sdk.gadgets.fuelgauge;
 const td = sdk.gadgets.tapedeck;
 const cw = sdk.gadgets.colorwheel;
 const pa = sdk.gadgets.palette;
@@ -948,7 +958,7 @@ test "scroller.gadget: an arrow's triangle sits in the middle of its button" {
         while (height <= 40) : (height += 1) {
             for ([_]bool{ true, false }) |vertical| {
                 const at = gc.Box{ .left = 7, .top = 3, .width = width, .height = height };
-                const triangle = scroller.triangleIn(at, vertical) orelse continue;
+                const triangle = sdk.gadgets.support.triangleIn(at, vertical) orelse continue;
                 const across_room = if (vertical) at.width else at.height;
                 const along_room = if (vertical) at.height else at.width;
                 const across_left = if (vertical) at.left else at.top;
@@ -1570,5 +1580,329 @@ test "tapedeck.gadget: a tape deck's modes and pause, an animation control's but
     try testing.expectEqual(@as(i32, @intCast(td.TDECK_FRAME_CODE | frame)), termination);
 
     ib.DisposeObject(anim);
+    try rig.down();
+}
+
+test "fuelgauge.gadget: the level held in its range, the part filled, never pressed" {
+    var heard = Heard{ .tag = fg.GAUGE_Level, .ib = undefined };
+    var rig = try Rig.up(&fuelgauge.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    const gauge = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
+        .{ .tag = fg.GAUGE_Max, .data = 200 },
+        .{ .tag = fg.GAUGE_Level, .data = 50 },
+        .{ .tag = fg.GAUGE_Format, .data = @intFromPtr("%ld%%") },
+        .{ .tag = fg.GAUGE_Percent, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 50), attr(ib, gauge, fg.GAUGE_Level));
+    try testing.expectEqual(@as(usize, 25), attr(ib, gauge, fg.GAUGE_Percent));
+
+    // Past the end is held at the end.
+    _ = ib.SetAttrsTagList(gauge, &[_]TagItem{ .{ .tag = fg.GAUGE_Level, .data = 500 }, .{} });
+    try testing.expectEqual(@as(usize, 200), attr(ib, gauge, fg.GAUGE_Level));
+    try testing.expectEqual(@as(usize, 100), attr(ib, gauge, fg.GAUGE_Percent));
+
+    // A range that does not start at nothing counts from where it starts.
+    _ = ib.SetAttrsTagList(gauge, &[_]TagItem{
+        .{ .tag = fg.GAUGE_Min, .data = 100 },
+        .{ .tag = fg.GAUGE_Level, .data = 150 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 50), attr(ib, gauge, fg.GAUGE_Percent));
+
+    // As wide as it looks right, a line of the font and its frame thick.
+    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    try testing.expect(ib.SendMessage(gauge, @ptrCast(&nominal)) != 0);
+    try testing.expect(nominal.domain.width >= 100);
+    try testing.expect(nominal.domain.height > 0);
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    try testing.expect(ib.SendMessage(gauge, @ptrCast(&least)) != 0);
+    try testing.expect(least.domain.width < nominal.domain.width);
+
+    // Never pressed: the press goes through it to the window.
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 2, .y = 2 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(gauge, @ptrCast(&hit)));
+    ib.DisposeObject(gauge);
+
+    // The ends the wrong way round are put right when it is made.
+    const upside = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
+        .{ .tag = fg.GAUGE_Min, .data = 10 },
+        .{ .tag = fg.GAUGE_Max, .data = 0 },
+        .{ .tag = fg.GAUGE_Level, .data = 5 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), attr(ib, upside, fg.GAUGE_Min));
+    try testing.expectEqual(@as(usize, 10), attr(ib, upside, fg.GAUGE_Max));
+    try testing.expectEqual(@as(usize, 50), attr(ib, upside, fg.GAUGE_Percent));
+    ib.DisposeObject(upside);
+    try rig.down();
+}
+
+test "integer.gadget: the arrows step the number, and a number typed is brought into range" {
+    var heard = Heard{ .tag = ig.INTEGER_Number, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    // The field's library first, which the number field's opens.
+    const string_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &string.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &integer.Library.resident_tag, null).?));
+    const listener_class = ib.MakeClass(null, classusr.ROOTCLASS, null, 0).?;
+    listener_class.dispatcher.entry = &listen;
+    listener_class.user_data = @intFromPtr(&heard);
+    const listener = ib.NewObjectTagList(listener_class, null, null).?;
+
+    const field = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = ig.INTEGER_Min, .data = 10 },
+        .{ .tag = ig.INTEGER_Max, .data = 20 },
+        .{ .tag = ig.INTEGER_Number, .data = 15 },
+        .{ .tag = ig.INTEGER_Step, .data = 2 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 15), attr(ib, field, ig.INTEGER_Number));
+
+    // The arrows are at the right end, up over down. A press on the up
+    // arrow steps by INTEGER_Step and holds the gadget; letting it go
+    // reports the number.
+    const g = gc.gadget(field);
+    const width = g.width;
+    const height = g.height;
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, width - 2, 1, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(field, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 17), attr(ib, field, ig.INTEGER_Number));
+    var up = input(gc.GM_HANDLEINPUT, &release, width - 2, 1, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(field, @ptrCast(&up)));
+    try testing.expectEqual(@as(i32, 17), termination);
+    try testing.expectEqual(@as(?usize, 17), heard.value);
+    try testing.expectEqual(@as(?usize, 9), heard.id);
+
+    // The down arrow, at the bottom of the same column, takes it away and
+    // stops at the smallest.
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        var again = input(gc.GM_GOACTIVE, &press, width - 2, height - 2, &termination);
+        try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(field, @ptrCast(&again)));
+        var let_go = input(gc.GM_HANDLEINPUT, &release, width - 2, height - 2, &termination);
+        _ = ib.SendMessage(field, @ptrCast(&let_go));
+    }
+    try testing.expectEqual(@as(usize, 10), attr(ib, field, ig.INTEGER_Number));
+
+    // A number typed: taken as it is typed, and brought into the range
+    // when the field is done with it.
+    var typed = classusr.OpUpdate{
+        .method_id = classusr.OM_UPDATE,
+        .attr_list = &[_]TagItem{ .{ .tag = gc.STRINGA_LongVal, .data = 99 }, .{} },
+        .flags = classusr.OPUF_INTERIM,
+    };
+    _ = ib.SendMessage(field, @ptrCast(&typed));
+    try testing.expectEqual(@as(usize, 99), attr(ib, field, ig.INTEGER_Number));
+    typed.flags = 0;
+    _ = ib.SendMessage(field, @ptrCast(&typed));
+    try testing.expectEqual(@as(usize, 20), attr(ib, field, ig.INTEGER_Number));
+    try testing.expectEqual(@as(?usize, 20), heard.value);
+
+    // A press on the field itself is the field's: it goes active and is
+    // not an arrow step.
+    const before = attr(ib, field, ig.INTEGER_Number);
+    var in_field = input(gc.GM_GOACTIVE, &press, 2, 1, &termination);
+    _ = ib.SendMessage(field, @ptrCast(&in_field));
+    try testing.expectEqual(before, attr(ib, field, ig.INTEGER_Number));
+    var gone = gc.GpGoInactive{ .gadget_info = null, .abort = 0 };
+    _ = ib.SendMessage(field, @ptrCast(&gone));
+
+    // Made without arrows, it is as wide as the field alone.
+    const plain = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        .{ .tag = ig.INTEGER_Arrows, .data = 0 },
+        .{},
+    }).?;
+    try testing.expect(gc.gadget(plain).width < width);
+    ib.DisposeObject(plain);
+
+    ib.DisposeObject(field);
+    ib.DisposeObject(listener);
+    try testing.expect(ib.FreeClass(listener_class));
+    const sys = kexec.SysBase.iface();
+    // The number field first: it has the field's library open.
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(ig.INTEGER_CLASS) == null);
+    _ = sys.RemLibrary(string_lib);
+    try testing.expect(ib.FindClass(st.STRING_CLASS) == null);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "chooser.gadget: the labels it picks from, and the key that steps them" {
+    var heard = Heard{ .tag = ch.CHOOSER_Active, .ib = undefined };
+    var rig = try Rig.up(&chooser.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    const keymaps = [_:null]?[*:0]const u8{ "deutsch", "usa", "usa2", "france" };
+    const which = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 4 },
+        .{ .tag = gc.GA_Key, .data = 'k' },
+        .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&keymaps) },
+        .{ .tag = ch.CHOOSER_Active, .data = 2 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 4), attr(ib, which, ch.CHOOSER_NumLabels));
+    try testing.expectEqual(@as(usize, 2), attr(ib, which, ch.CHOOSER_Active));
+
+    // The key steps on, and back with a Shift key held, round at either
+    // end - the panel wants a pointer, and a key has none.
+    var termination: i32 = -1;
+    var step_on = keyed('k', 0, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(which, @ptrCast(&step_on)));
+    try testing.expectEqual(@as(usize, 3), attr(ib, which, ch.CHOOSER_Active));
+    try testing.expectEqual(@as(i32, 3), termination);
+    try testing.expectEqual(@as(?usize, 3), heard.value);
+    try testing.expectEqual(@as(?usize, 4), heard.id);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(which, @ptrCast(&step_on)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, which, ch.CHOOSER_Active));
+    var back = keyed('k', ie.IEQUALIFIER_LSHIFT, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(which, @ptrCast(&back)));
+    try testing.expectEqual(@as(usize, 3), attr(ib, which, ch.CHOOSER_Active));
+
+    // A shorter list holds the one shown inside it.
+    const two = [_:null]?[*:0]const u8{ "on", "off" };
+    _ = ib.SetAttrsTagList(which, &[_]TagItem{ .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&two) }, .{} });
+    try testing.expectEqual(@as(usize, 2), attr(ib, which, ch.CHOOSER_NumLabels));
+    try testing.expectEqual(@as(usize, 1), attr(ib, which, ch.CHOOSER_Active));
+
+    // Wide enough for its widest label and the mark beside it, and a
+    // line of the font tall whatever its width.
+    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    try testing.expect(ib.SendMessage(which, @ptrCast(&nominal)) != 0);
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    try testing.expect(ib.SendMessage(which, @ptrCast(&least)) != 0);
+    try testing.expect(least.domain.width > 0);
+    try testing.expect(nominal.domain.width >= least.domain.width);
+    try testing.expectEqual(nominal.domain.height, least.domain.height);
+
+    // It is pressed, and without a window to open the panel on it takes
+    // nothing and lets the press go.
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 2, .y = 2 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(which, @ptrCast(&hit)));
+    var down = input(gc.GM_GOACTIVE, &press, 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(which, @ptrCast(&down)));
+
+    ib.DisposeObject(which);
+    try rig.down();
+}
+
+test "page.gadget: the page that is shown answers for the gadget" {
+    var heard = Heard{ .tag = pgc.PAGE_Current, .ib = undefined };
+    var rig = try Rig.up(&pageclass.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // Two pages, each a button with a key of its own.
+    const first = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("One") },
+        .{ .tag = gc.GA_ID, .data = 1 },
+        .{ .tag = gc.GA_Key, .data = 'a' },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+    const second = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("A much longer page") },
+        .{ .tag = gc.GA_ID, .data = 2 },
+        .{ .tag = gc.GA_Key, .data = 'b' },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+    const pages = [_:null]?*Object{ first, second };
+    const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
+        .{ .tag = pgc.PAGE_Pages, .data = @intFromPtr(&pages) },
+        .{ .tag = pgc.PAGE_Current, .data = 0 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 2), attr(ib, book, pgc.PAGE_NumPages));
+    try testing.expectEqual(@as(usize, 0), attr(ib, book, pgc.PAGE_Current));
+
+    // As big as the largest page needs, so the page turns without the
+    // window changing size.
+    var want = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    try testing.expect(ib.SendMessage(book, @ptrCast(&want)) != 0);
+    var wide = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(second, @ptrCast(&wide));
+    try testing.expectEqual(wide.domain.width, want.domain.width);
+
+    // The key of the page that is shown works; the other page's does not.
+    var termination: i32 = -1;
+    var key_a = keyed('a', 0, &termination);
+    var key_b = keyed('b', 0, &termination);
+    try testing.expect(ib.SendMessage(book, @ptrCast(&key_a)) != gc.GMKR_NOTHING);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(book, @ptrCast(&key_b)));
+    _ = ib.SetAttrsTagList(book, &[_]TagItem{ .{ .tag = pgc.PAGE_Current, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 1), attr(ib, book, pgc.PAGE_Current));
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(book, @ptrCast(&key_a)));
+    try testing.expect(ib.SendMessage(book, @ptrCast(&key_b)) != gc.GMKR_NOTHING);
+
+    // Past the last page is the last page.
+    _ = ib.SetAttrsTagList(book, &[_]TagItem{ .{ .tag = pgc.PAGE_Current, .data = 9 }, .{} });
+    try testing.expectEqual(@as(usize, 1), attr(ib, book, pgc.PAGE_Current));
+
+    // The pages go with it.
+    ib.DisposeObject(book);
+    try rig.down();
+}
+
+test "clicktab.gadget: a press takes the tab it is let go over, and the key steps them" {
+    var heard = Heard{ .tag = ct.CLICKTAB_Current, .ib = undefined };
+    var rig = try Rig.up(&clicktab.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // With no font to measure in, every tab is as wide as its two
+    // margins, which is what makes the places below known.
+    const names = [_:null]?[*:0]const u8{ "General", "Network", "About" };
+    const tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = gc.GA_Key, .data = 't' },
+        .{ .tag = ct.CLICKTAB_Labels, .data = @intFromPtr(&names) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 3), attr(ib, tabs, ct.CLICKTAB_NumLabels));
+    const width = gc.gadget(tabs).width;
+    const tab = @divTrunc(width, 3);
+
+    // A press on the middle tab, let go over it, puts it in front.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, tab + 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(tabs, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
+    var up = input(gc.GM_HANDLEINPUT, &release, tab + 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tabs, @ptrCast(&up)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 7), heard.id);
+
+    // Let go somewhere else, nothing changes.
+    var again = input(gc.GM_GOACTIVE, &press, 2 * tab + 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(tabs, @ptrCast(&again)));
+    var away = input(gc.GM_HANDLEINPUT, &release, 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(tabs, @ptrCast(&away)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
+
+    // The key takes the next tab, and the one before with Shift held.
+    var step_on = keyed('t', 0, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_on)));
+    try testing.expectEqual(@as(usize, 2), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_on)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
+    var step_back = keyed('t', ie.IEQUALIFIER_LSHIFT, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_back)));
+    try testing.expectEqual(@as(usize, 2), attr(ib, tabs, ct.CLICKTAB_Current));
+
+    // A point past the last tab is not the gadget's.
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = width + 4, .y = 2 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(tabs, @ptrCast(&hit)));
+
+    ib.DisposeObject(tabs);
     try rig.down();
 }

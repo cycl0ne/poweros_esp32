@@ -75,8 +75,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   for drawing, layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
-  any display. More gadget classes on the disk in `SYS:classes/gadgets/`,
-  worked by the pointer or by the letter underlined in each label.
+  any display - a layout in a frame with a title in its edge groups the
+  settings of a window. More gadget classes on the disk in
+  `SYS:classes/gadgets/`, worked by the pointer or by the letter
+  underlined in each label: among them a row of tabs over pages of
+  gadgets, a number field with stepping arrows, a button that pops a list
+  up to pick from, and a bar that shows how far along something is.
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,
