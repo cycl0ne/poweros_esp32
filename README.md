@@ -73,7 +73,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   for drawing, layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
-  any display. More gadget classes on the disk in `SYS:classes/gadgets/`.
+  any display. More gadget classes on the disk in `SYS:classes/gadgets/`,
+  worked by the pointer or by the letter underlined in each label.
+  `LIBS:asl.library` asks which file.
 - **Fonts:** of any size, proportional, in ink, smooth or colour; bitmap
   fonts and TrueType outlines in `FONTS:`, sizes in points, and the
   system's fonts set in `ENVARC:Sys/font.prefs`. `SYS:Programs/FontView`

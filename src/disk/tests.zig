@@ -28,6 +28,7 @@ test {
     _ = @import("libs/crypto/tests/crypto.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
+    _ = @import("libs/asl/tests/asl.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/httpget/http.zig");

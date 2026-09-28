@@ -24,3 +24,4 @@ pub const bsdsocket = @import("bsdsocket.zig");
 pub const crypto = @import("crypto.zig");
 pub const diskfont = @import("diskfont.zig");
 pub const truetype = @import("truetype.zig");
+pub const asl = @import("asl.zig");

@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+//! asl.library's functions: the requesters a program asks a question
+//! with. Open it with OpenLibrary("asl.library", 1).
+//!
+//! The table is this library's own: it is not on any other system's, so
+//! it starts at the first slot after the standard four and holds only
+//! what is here.
+##include libs/utility/utility as utility
+##include libs/asl/asl as asl
+##basetype AslBase
+##name asl.library
+##bias 4
+##public
+/// A requester of `kind` - ASL_FileRequest, ASL_FontRequest,
+/// ASL_ScreenModeRequest - set up from `tags`. Null for a kind it does
+/// not know or for no memory.
+?*anyopaque AllocAslRequest(u32 kind, ?[*]const utility.TagItem tags)
+/// A requester given back, with everything it answered. Null does
+/// nothing.
+void FreeAslRequest(?*anyopaque requester)
+/// The requester put up, `tags` changing it for this once; true when it
+/// was answered, false when it was given up or could not be shown. The
+/// answer is in the request structure until the next call on it.
+bool AslRequest(*anyopaque requester, ?[*]const utility.TagItem tags)
+##end

@@ -27,7 +27,7 @@ pub const target_query: std.Target.Query = .{
 };
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "dos", "rtg", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "dos", "rtg", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
