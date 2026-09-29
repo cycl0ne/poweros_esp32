@@ -144,6 +144,13 @@ A format's class reads its file and hands the text and the runs over
 with `TDTM_SETTEXT`; both blocks come from `AllocVec` and are the
 object's from then on.
 
+`markdown.datatype` is that and nothing more: it reads the document,
+drops the marks and says how each stretch is drawn - a heading in a
+larger font where the family has one and in bold where it has not,
+emphasis in italic, a listing in the fixed font, a list item under its
+mark and indented, a link underlined with the name it leads to kept for
+the program to follow.
+
 ## Showing one
 
 `SYS:Programs/MultiView` is a window round any object:

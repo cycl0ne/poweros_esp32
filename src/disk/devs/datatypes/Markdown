@@ -1,0 +1,1 @@
+NAME=Markdown BASE=markdown GROUP=text ID=MD PATTERN=#?.(md|markdown) TYPE=ASCII PRI=10

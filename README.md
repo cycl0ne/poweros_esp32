@@ -87,7 +87,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   baseline JPEG, its colour planes taken smoothly. Every piece of text is
   a `text.datatype` object - runs of it in their own fonts, styles and
   pens, wrapped to the window, marked with the pointer and copied to the
-  clipboard - and `ascii.datatype` reads a plain file or an IFF `FTXT`.
+  clipboard - and `ascii.datatype` reads a plain file or an IFF `FTXT`,
+  `markdown.datatype` a Markdown document with its headings, emphasis,
+  listings, lists and links.
   A small file of each
   format is in
   `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them
