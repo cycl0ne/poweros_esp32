@@ -263,18 +263,24 @@ pub const zoom_width = 24;
 /// The sizing gadget's box on a screen whose font is `font_height`
 /// rows.
 ///
-/// It was 18 by 10 against a title bar of 11 - a gadget one row shorter
-/// than the bar beside it and nearly twice as wide as it is tall. Those
-/// numbers were right for the one font the machine had. Here the bar
-/// follows the screen's font (`font_height + 3`), so the gadget follows
-/// it too and that shape is kept whatever the font: at eight rows it
-/// comes out 18 by 10 again, to the pixel.
+/// 3.1 drew it twice, because the shape of a pixel was not the same on
+/// every screen: 18 by 10 where a pixel was half as wide as it was
+/// tall, and **13 by 11** where it was square. The second is the one
+/// that applies here - these panels have square pixels - and it is a
+/// gadget as tall as the title bar with a width about a fifth more
+/// than that, which is also the shape of the depth gadget beside it
+/// (18 by 11 on the same screens).
+///
+/// Both numbers were drawn for the one font that machine had. Here the
+/// bar follows the screen's font, so the gadget follows it too and the
+/// shape holds at any size: at eight rows it comes out 13 by 11 again,
+/// to the pixel.
 pub fn sizeHeight(font_height: u32) i32 {
-    return @as(i32, @intCast(font_height)) + 2;
+    return @as(i32, @intCast(font_height)) + 3;
 }
 
 pub fn sizeWidth(font_height: u32) i32 {
-    return @divTrunc(sizeHeight(font_height) * 9, 5);
+    return @divTrunc(sizeHeight(font_height) * 13, 11);
 }
 
 /// The same for a window, from the font its screen was opened with.

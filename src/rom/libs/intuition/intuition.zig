@@ -1858,12 +1858,14 @@ test "windows: which border holds the size gadget, and who paints the empty part
         .{},
     }).?;
     // The sizing gadget follows the screen's font, as the title bar
-    // does; the test screen's is the ROM's eight-row one, which is what
-    // 18 by 10 was drawn for.
+    // does. The test screen's is the ROM's eight-row one, and these
+    // pixels are square, so the box is the 13 by 11 that was drawn for
+    // square pixels - not the 18 by 10 drawn for pixels half as wide as
+    // they are tall.
     const size_width: usize = @intCast(_window.sizeWidth(8));
     const size_height: usize = @intCast(_window.sizeHeight(8));
-    try testing.expectEqual(@as(usize, 18), size_width);
-    try testing.expectEqual(@as(usize, 10), size_height);
+    try testing.expectEqual(@as(usize, 13), size_width);
+    try testing.expectEqual(@as(usize, 11), size_height);
     try testing.expectEqual(size_width, windowAttr(ib, right, wn.WA_BorderRight));
     try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < size_height);
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, right, wn.WA_Screen));
