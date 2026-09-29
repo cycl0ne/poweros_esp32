@@ -58,6 +58,9 @@ const image_dirs = [_][]const u8{
     "devs/datatypes",
     // SYS:Programs - programs with windows, off the command path.
     "programs",
+    // SYS:Tests - files to try the system on, a directory per subject.
+    "tests",
+    "tests/datatypes",
     // FONTS: - a contents file and a directory of sizes per family;
     // empty without scripts/fetch-fonts.sh.
     "fonts",

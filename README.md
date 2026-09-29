@@ -81,7 +81,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   classes that read the formats are in `SYS:classes/datatypes/`: every
   still picture is a `picture.datatype` object, kept as pens and drawn,
   scrolled, scaled and written out by that class whatever file it came
-  out of. See the [datatypes guide](sdk/docs/guides/datatypes.md).
+  out of, and `png.datatype` reads PNG - every colour kind, every depth,
+  interlaced or not. A small file of each format is in
+  `SYS:Tests/datatypes/`. See the
+  [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
   is, laid over what is there by its own coverage, or at another size - layers.library for overlapping windows, and

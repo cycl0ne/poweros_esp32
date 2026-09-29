@@ -1,0 +1,1 @@
+NAME=PNG BASE=png GROUP=pict ID=PNG MASK=\x89PNG\x0d\x0a\x1a\x0a PATTERN=#?.png PRI=5

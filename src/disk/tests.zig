@@ -57,6 +57,8 @@ test {
     _ = @import("handlers/fat/tests/fs.zig");
     _ = @import("handlers/fat/tests/exfat_dir.zig");
     _ = @import("handlers/fat/tests/exfat_fs.zig");
+    _ = @import("classes/datatypes/png/inflate.zig");
+    _ = @import("classes/datatypes/png/decode.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/gadgets/colorwheel/_colour.zig");
 }

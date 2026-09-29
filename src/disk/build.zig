@@ -85,6 +85,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/page.gadget", .source = "classes/gadgets/page/page.zig", .name = "page.gadget" },
     .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
+    .{ .disk = "classes/datatypes/png.datatype", .source = "classes/datatypes/png/png.zig", .name = "png.datatype" },
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
@@ -137,6 +138,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Directory", .source = "devs/datatypes/Directory" },
     .{ .disk = "devs/datatypes/ILBM", .source = "devs/datatypes/ILBM" },
     .{ .disk = "devs/datatypes/BMP", .source = "devs/datatypes/BMP" },
+    .{ .disk = "devs/datatypes/PNG", .source = "devs/datatypes/PNG" },
     .{ .disk = "devs/datatypes/FTXT", .source = "devs/datatypes/FTXT" },
     .{ .disk = "devs/datatypes/8SVX", .source = "devs/datatypes/8SVX" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
@@ -152,6 +154,14 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
     .{ .disk = "prefs/env-archive/Sys/net/hostname", .source = "prefs/env-archive/Sys/net/hostname" },
     .{ .disk = "prefs/env-archive/Sys/net/nameservers", .source = "prefs/env-archive/Sys/net/nameservers" },
+    // SYS:Tests/datatypes - a small file of every format the datatype
+    // classes read, so that each can be opened on the machine itself.
+    .{ .disk = "tests/datatypes/Colours.png", .source = "tests/datatypes/Colours.png" },
+    .{ .disk = "tests/datatypes/Disc.png", .source = "tests/datatypes/Disc.png" },
+    .{ .disk = "tests/datatypes/Palette.png", .source = "tests/datatypes/Palette.png" },
+    .{ .disk = "tests/datatypes/Grey.png", .source = "tests/datatypes/Grey.png" },
+    .{ .disk = "tests/datatypes/Mono.png", .source = "tests/datatypes/Mono.png" },
+    .{ .disk = "tests/datatypes/Interlaced.png", .source = "tests/datatypes/Interlaced.png" },
 };
 
 pub fn build(b: *std.Build) void {
