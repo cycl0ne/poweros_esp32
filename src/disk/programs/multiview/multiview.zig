@@ -1,0 +1,346 @@
+// SPDX-License-Identifier: MIT
+//! MultiView: a window round any data type object. Built against the SDK
+//! only.
+//!
+//!   MultiView [FILE] [CLIP/K/N] [SCALE/S] [PUBSCREEN/K]
+//!
+//! It opens the named file through datatypes.library, which decides from
+//! the file's own contents what class reads it, and puts the object that
+//! comes back in a window with a scroll bar on the right and one below.
+//! Without a name it asks for one with a file requester. `CLIP` takes
+//! the contents of a clipboard unit instead of a file, `SCALE` shows a
+//! picture at the size of the window rather than its own, and
+//! `PUBSCREEN` names a screen other than the default.
+//!
+//! **MultiView knows no formats.** Everything it shows it shows by
+//! opening the object and adding it to a window; a new kind of file is a
+//! new class and a new descriptor, and this program does not change.
+//!
+//! The bars are the object's `ICA_TARGET`, and an `ICA_MAP` turns
+//! `SCROLLER_Top` into `DTA_TopVert` and `DTA_TopHoriz`, so dragging one
+//! moves the view without the program hearing anything. What the program
+//! does is read back how much there is and how much of it is seen -
+//! after the window opens and after every resize - and tell the bars.
+
+const sdk = @import("sdk");
+const exec = sdk.exec;
+const dos = sdk.dos;
+const utility = sdk.utility;
+const intuition = sdk.intuition;
+const wn = intuition.windows;
+const gc = intuition.gadgetclass;
+const lg = intuition.layoutgclass;
+const wc = intuition.windowclass;
+const icc = intuition.icclass;
+const classusr = intuition.classusr;
+const pg = intuition.propgclass;
+const sr = sdk.gadgets.scroller;
+const asl = sdk.asl;
+const datatypes = sdk.datatypes;
+const dtc = datatypes.datatypesclass;
+const pic = datatypes.pictureclass;
+const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
+const AslBase = sdk.interface.asl.AslBase;
+const Object = intuition.Object;
+const TagItem = utility.TagItem;
+const Printf = dos.stdio.Printf;
+
+pub const COMMAND_NAME = "MultiView";
+const VERSION_STRING = "\x00$VER: MultiView 1.0 (29.09.2026)\r\n";
+export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+
+const template = "FILE,CLIP/K/N,SCALE/S,PUBSCREEN/K";
+const arg_file = 0;
+const arg_clip = 1;
+const arg_scale = 2;
+const arg_pubscreen = 3;
+
+const MSG_NOLIBRARY = "No %s\n";
+const MSG_NOSCREEN = "No screen - no display\n";
+const MSG_NOMEMORY = "No memory for the window\n";
+const MSG_NOWINDOW = "No window\n";
+const MSG_NOOBJECT = "%s: cannot be shown (%ld)\n";
+
+/// How long each arrow button on a bar is, and how wide a bar is.
+const arrow_length = 14;
+
+const ID_VERT = 1;
+const ID_HORIZ = 2;
+
+/// What the bars tell the object as they move.
+const vert_map = [_]TagItem{
+    .{ .tag = sr.SCROLLER_Top, .data = dtc.DTA_TopVert },
+    .{},
+};
+const horiz_map = [_]TagItem{
+    .{ .tag = sr.SCROLLER_Top, .data = dtc.DTA_TopHoriz },
+    .{},
+};
+
+/// The window's parts, once they are built.
+const Shown = struct {
+    layout: *Object,
+    vert: *Object,
+    horiz: *Object,
+};
+
+/// The object, the two bars round it and the layout that holds them.
+fn build(ib: *IntuitionBase, object: *Object) ?Shown {
+    const vert = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_VERT },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = sr.SCROLLER_Arrows, .data = arrow_length },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(object) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
+        .{},
+    });
+    const horiz = if (vert != null) ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_HORIZ },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
+        .{ .tag = sr.SCROLLER_Arrows, .data = arrow_length },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(object) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&horiz_map) },
+        .{},
+    }) else null;
+
+    // The object and the bar beside it, then the bar below both.
+    const across = if (horiz != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(object) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(vert) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{},
+    }) else null;
+    const whole = if (across != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(across) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(horiz) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{},
+    }) else null;
+    const layout = whole orelse {
+        // The object is the caller's whatever happens here; a bar that
+        // never reached a layout is this program's.
+        if (across == null) {
+            ib.DisposeObject(vert);
+            ib.DisposeObject(horiz);
+        } else {
+            ib.DisposeObject(across);
+        }
+        return null;
+    };
+    return .{ .layout = layout, .vert = vert.?, .horiz = horiz.? };
+}
+
+/// One of the object's numbers.
+fn ask(ib: *IntuitionBase, object: *Object, attr: utility.Tag) i32 {
+    var storage: usize = 0;
+    if (ib.GetAttr(attr, object, &storage) == 0) return 0;
+    return @truncate(@as(isize, @bitCast(storage)));
+}
+
+/// The bars told how much there is and how much of it is seen, which is
+/// what the object worked out when it was laid out.
+fn followObject(ib: *IntuitionBase, shown: Shown, object: *Object, window: *intuition.Window) void {
+    const pairs = [_]struct { bar: *Object, total: utility.Tag, visible: utility.Tag, top: utility.Tag }{
+        .{ .bar = shown.vert, .total = dtc.DTA_TotalVert, .visible = dtc.DTA_VisibleVert, .top = dtc.DTA_TopVert },
+        .{ .bar = shown.horiz, .total = dtc.DTA_TotalHoriz, .visible = dtc.DTA_VisibleHoriz, .top = dtc.DTA_TopHoriz },
+    };
+    for (pairs) |pair| {
+        _ = ib.SetGadgetAttrsTagList(pair.bar, window, &[_]TagItem{
+            .{ .tag = sr.SCROLLER_Total, .data = @bitCast(@as(isize, ask(ib, object, pair.total))) },
+            .{ .tag = sr.SCROLLER_Visible, .data = @bitCast(@as(isize, ask(ib, object, pair.visible))) },
+            .{ .tag = sr.SCROLLER_Top, .data = @bitCast(@as(isize, ask(ib, object, pair.top))) },
+            .{},
+        });
+    }
+}
+
+/// The file to show: what the argument said, or what a requester was
+/// asked for. The name is written into `into`.
+fn fileWanted(al: *AslBase, given: ?[*:0]const u8, into: *[264]u8) ?[*:0]const u8 {
+    if (given) |name| return name;
+    const request = al.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
+        .{ .tag = asl.ASLFR_TitleText, .data = @intFromPtr("Show which file?") },
+        .{ .tag = asl.ASLFR_InitialDrawer, .data = @intFromPtr("SYS:") },
+        .{},
+    }) orelse return null;
+    defer al.FreeAslRequest(request);
+    if (!al.AslRequest(request, null)) return null;
+    const file: *asl.FileRequester = @ptrCast(@alignCast(request));
+    const drawer = file.drawer orelse return null;
+    const name = file.file orelse return null;
+    var at: usize = 0;
+    while (drawer[at] != 0 and at + 2 < into.len) : (at += 1) into[at] = drawer[at];
+    if (at != 0 and into[at - 1] != ':' and into[at - 1] != '/') {
+        into[at] = '/';
+        at += 1;
+    }
+    var i: usize = 0;
+    while (name[i] != 0 and at + 1 < into.len) : (i += 1) {
+        into[at] = name[i];
+        at += 1;
+    }
+    into[at] = 0;
+    return @ptrCast(into);
+}
+
+export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+    _ = args;
+    _ = len;
+    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(dos_lib);
+    const dl: *DosBase = @ptrCast(dos_lib);
+
+    var argv: [4]usize = @splat(0);
+    const rda = dl.ReadArgs(template, &argv, null) orelse {
+        _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    };
+    defer dl.FreeArgs(rda);
+
+    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(int_lib);
+    const ib: *IntuitionBase = @ptrCast(int_lib);
+
+    const dt_lib = sys.OpenLibrary(datatypes.DATATYPESNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{datatypes.DATATYPESNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(dt_lib);
+    const dt: *DataTypesBase = @ptrCast(dt_lib);
+
+    const asl_lib = sys.OpenLibrary(asl.ASLNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{asl.ASLNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(asl_lib);
+    const al: *AslBase = @ptrCast(asl_lib);
+
+    const scroller_lib = sys.OpenLibrary(sr.SCROLLER_LIBRARY, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{sr.SCROLLER_LIBRARY});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(scroller_lib);
+
+    const screen_name: ?[*:0]const u8 = @ptrFromInt(argv[arg_pubscreen]);
+    const screen = ib.LockPubScreen(screen_name) orelse {
+        _ = Printf(dl, MSG_NOSCREEN, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer ib.UnlockPubScreen(null, screen);
+
+    // The clipboard, or a file - named, or asked for.
+    var unit_name: [8]u8 = @splat(0);
+    var chosen: [264]u8 = @splat(0);
+    var source: u32 = dtc.DTST_FILE;
+    var name: ?[*:0]const u8 = null;
+    if (argv[arg_clip] != 0) {
+        const unit: *const i32 = @ptrFromInt(argv[arg_clip]);
+        source = dtc.DTST_CLIPBOARD;
+        name = writeNumber(&unit_name, @max(unit.*, 0));
+    } else {
+        name = fileWanted(al, @ptrFromInt(argv[arg_file]), &chosen) orelse return dos.RETURN_WARN;
+    }
+    const shown_name = name.?;
+
+    // The window is titled with the file's own name, not the path it
+    // was reached by: a drawer name that fills the title bar tells a
+    // person nothing they did not just type.
+    const object = dt.NewDTObjectA(@ptrCast(shown_name), &[_]TagItem{
+        .{ .tag = dtc.DTA_SourceType, .data = source },
+        .{ .tag = dtc.DTA_Title, .data = @intFromPtr(dl.FilePart(shown_name)) },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = if (argv[arg_scale] != 0) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
+        .{},
+    }) orelse {
+        _ = Printf(dl, MSG_NOOBJECT, .{ shown_name, @as(i64, dl.IoErr()) });
+        return dos.RETURN_FAIL;
+    };
+    const made = build(ib, object) orelse {
+        dt.DisposeDTObject(object);
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+
+    var title_storage: usize = 0;
+    _ = ib.GetAttr(dtc.DTA_Title, object, &title_storage);
+    const title: [*:0]const u8 = if (title_storage != 0) @ptrFromInt(title_storage) else shown_name;
+
+    const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
+        .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made.layout) },
+        .{},
+    }) orelse {
+        ib.DisposeObject(made.layout);
+        dt.DisposeDTObject(object);
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+    // The window, the layout and the bars, and the object last: it is
+    // the layout's child but never the layout's to free.
+    defer {
+        ib.DisposeObject(window_object);
+        dt.DisposeDTObject(object);
+    }
+
+    var open = wc.WmOpen{};
+    if (ib.SendMessage(window_object, @ptrCast(&open)) == 0) {
+        _ = Printf(dl, MSG_NOWINDOW, .{});
+        return dos.RETURN_FAIL;
+    }
+    var window_ptr: usize = 0;
+    _ = ib.GetAttr(wc.WINDOWA_Window, window_object, &window_ptr);
+    const window: *intuition.Window = @ptrFromInt(window_ptr);
+    followObject(ib, made, object, window);
+
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    while (true) {
+        const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
+        if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
+        while (true) {
+            const word = ib.SendMessage(window_object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) break;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
+                // A resize changes how much of the object is seen, and
+                // the object works that out for itself when it is laid
+                // out again; the bars are told what it found.
+                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP => followObject(ib, made, object, window),
+                wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return dos.RETURN_OK,
+                else => {},
+            }
+        }
+    }
+}
+
+/// The number as a string, for the clipboard unit a name stands for.
+fn writeNumber(into: *[8]u8, value: i32) [*:0]const u8 {
+    var digits: [8]u8 = undefined;
+    var count: usize = 0;
+    var left: u32 = @intCast(value);
+    while (true) {
+        digits[count] = '0' + @as(u8, @truncate(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    for (0..count) |i| into[i] = digits[count - 1 - i];
+    into[count] = 0;
+    return @ptrCast(into);
+}

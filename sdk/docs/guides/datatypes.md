@@ -116,6 +116,25 @@ or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
 room it is given rather than its own, and `PDTM_SCALE` makes it another
 size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
 
+## Showing one
+
+`SYS:Programs/MultiView` is a window round any object:
+
+```
+MultiView SYS:Tests/datatypes/Colours.png
+MultiView                       asks with a file requester
+MultiView CLIP 0                what is on the clipboard
+MultiView <file> SCALE          a picture at the size of the window
+```
+
+It knows no formats. It opens the file through the library, puts the
+object in a layout with a scroll bar on the right and one below, and
+tells the bars how much there is and how much is seen after the window
+opens and after every resize. The bars are the object's `ICA_TARGET`,
+with an `ICA_MAP` turning `SCROLLER_Top` into `DTA_TopVert` and
+`DTA_TopHoriz`, so dragging one scrolls the object without the program
+hearing anything.
+
 ## Writing a class
 
 A format is a class library in `SYS:classes/datatypes/`, a subclass of

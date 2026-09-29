@@ -83,7 +83,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   scrolled, scaled and written out by that class whatever file it came
   out of, and `png.datatype` reads PNG - every colour kind, every depth,
   interlaced or not. A small file of each format is in
-  `SYS:Tests/datatypes/`. See the
+  `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them
+  in a window with scroll bars, knowing no formats itself. See the
   [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
