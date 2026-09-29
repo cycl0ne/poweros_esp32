@@ -48,33 +48,46 @@ pub fn superAsk(ib: *IntuitionBase, cl: *Class, o: *Object, attr: utility.Tag) u
     return storage;
 }
 
+/// What `readWhole` found.
+pub const Read = union(enum) {
+    /// The file, the caller's to `FreeVec`.
+    got: []u8,
+    /// There was no file, or it is empty, or it could not be read.
+    no_file,
+    /// There is one, and it is larger than the machine can hold. It is
+    /// worth telling apart: a file that will not fit is not a file that
+    /// will not open, and a person reading the one message would go
+    /// looking for the wrong thing.
+    too_large,
+};
+
 /// The whole of the file a lock names, read into memory of its own.
 ///
 /// The lock is the object's and is left as it was: a copy of it is what
 /// the file handle takes over, and closing the handle gives that copy
-/// back. Null when there is no file, no memory, or the file is empty.
-/// What comes back is the caller's to `FreeVec`.
-pub fn readWhole(sys: *ExecBase, dl: *DosBase, lock: ?*dos.FileLock) ?[]u8 {
-    const copy = dl.DupLock(lock orelse return null) orelse return null;
+/// back.
+pub fn readWhole(sys: *ExecBase, dl: *DosBase, lock: ?*dos.FileLock) Read {
+    const copy = dl.DupLock(lock orelse return .no_file) orelse return .no_file;
     const file = dl.OpenFromLock(copy) orelse {
         dl.UnLock(copy);
-        return null;
+        return .no_file;
     };
     defer _ = dl.Close(file);
 
     // A seek answers where the file was, not where it now is, so the
     // size is what the seek back to the beginning hands over.
-    if (dl.Seek(file, 0, dos.OFFSET_END) < 0) return null;
+    if (dl.Seek(file, 0, dos.OFFSET_END) < 0) return .no_file;
     const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
-    if (size <= 0) return null;
+    if (size <= 0) return .no_file;
     const length: usize = @intCast(size);
-    const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return null;
+    if (!roomFor(sys, length)) return .too_large;
+    const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return .too_large;
     const bytes: [*]u8 = @ptrCast(memory);
     if (dl.Read(file, bytes, @intCast(length)) != @as(isize, @intCast(length))) {
         sys.FreeVec(memory);
-        return null;
+        return .no_file;
     }
-    return bytes[0..length];
+    return .{ .got = bytes[0..length] };
 }
 
 /// Whether a block of `bytes` could be had, with a little room to

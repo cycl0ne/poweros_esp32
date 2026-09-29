@@ -120,10 +120,18 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             defer base.sys_base.CloseLibrary(dos_lib);
 
             const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const bytes = subclass.readWhole(base.sys_base, dl, lock) orelse {
-                _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
-                ib.DisposeObject(obj);
-                return 0;
+            const bytes = switch (subclass.readWhole(base.sys_base, dl, lock)) {
+                .got => |read| read,
+                .too_large => {
+                    _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);
+                    ib.DisposeObject(obj);
+                    return 0;
+                },
+                .no_file => {
+                    _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
+                    ib.DisposeObject(obj);
+                    return 0;
+                },
             };
             const failure = takeText(base, cl, obj, bytes);
             base.sys_base.FreeVec(bytes.ptr);

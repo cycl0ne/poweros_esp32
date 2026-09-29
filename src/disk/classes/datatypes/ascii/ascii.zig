@@ -213,14 +213,25 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
 
             const source = subclass.superAsk(ib, cl, obj, dtc.DTA_SourceType);
             const handle: ?*anyopaque = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const bytes = if (source == dtc.DTST_CLIPBOARD)
-                readClip(base, @ptrCast(base.opened[1] orelse return 0), handle)
+            const found: subclass.Read = if (source == dtc.DTST_CLIPBOARD)
+                (if (readClip(base, @ptrCast(base.opened[1] orelse return 0), handle)) |clip|
+                    .{ .got = clip }
+                else
+                    .no_file)
             else
                 subclass.readWhole(base.sys_base, dl, @ptrCast(@alignCast(handle)));
-            const read = bytes orelse {
-                _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
-                ib.DisposeObject(obj);
-                return 0;
+            const read = switch (found) {
+                .got => |bytes| bytes,
+                .too_large => {
+                    _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);
+                    ib.DisposeObject(obj);
+                    return 0;
+                },
+                .no_file => {
+                    _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
+                    ib.DisposeObject(obj);
+                    return 0;
+                },
             };
             const failure = takeText(base, cl, obj, read);
             base.sys_base.FreeVec(read.ptr);

@@ -267,8 +267,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
 /// The object's own file read and given to the superclass. What went
 /// wrong, or 0.
 fn readLocked(base: *Base, cl: *Class, o: *Object, dl: *sdk.interface.dos.DosBase, lock: ?*dos.FileLock) i32 {
-    const bytes = subclass.readWhole(base.sys_base, dl, lock) orelse
-        return datatypes.DTERROR_COULDNT_OPEN;
+    const bytes = switch (subclass.readWhole(base.sys_base, dl, lock)) {
+        .got => |read| read,
+        .too_large => return datatypes.DTERROR_TOO_LARGE,
+        .no_file => return datatypes.DTERROR_COULDNT_OPEN,
+    };
     defer base.sys_base.FreeVec(bytes.ptr);
     return readFile(base, cl, o, bytes);
 }
