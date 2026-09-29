@@ -84,7 +84,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   out of, and `png.datatype` reads PNG - every colour kind, every depth,
   interlaced or not - `gif.datatype` GIF, with the see-through colour and
   the picture placed on the screen the file names, and `jpeg.datatype`
-  baseline JPEG, its colour planes taken smoothly. A small file of each
+  baseline JPEG, its colour planes taken smoothly. Every piece of text is
+  a `text.datatype` object - runs of it in their own fonts, styles and
+  pens, wrapped to the window, marked with the pointer and copied to the
+  clipboard - and `ascii.datatype` reads a plain file or an IFF `FTXT`.
+  A small file of each
   format is in
   `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them
   in a window with scroll bars, knowing no formats itself. See the

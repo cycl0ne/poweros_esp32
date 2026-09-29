@@ -116,6 +116,34 @@ or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
 room it is given rather than its own, and `PDTM_SCALE` makes it another
 size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
 
+## Text
+
+Every piece of text is a `text.datatype` object, whatever file it came
+out of. What it holds is the text and the runs it is made of: a run is a
+stretch drawn one way - a font, a style, a pen, and where it leads when
+it is pressed - so plain text is one run a line and a marked-up document
+is several. The class breaks the runs into lines that fit the window,
+draws them, scrolls them, lets a stretch be marked with the pointer and
+puts what is marked on the clipboard as a `FORM FTXT`.
+
+```zig
+var start: usize = 0;
+var end: usize = 0;
+_ = dt.GetDTAttrsA(object, &.{
+    .{ .tag = tdc.TDTA_MarkStart, .data = @intFromPtr(&start) },
+    .{ .tag = tdc.TDTA_MarkEnd, .data = @intFromPtr(&end) },
+    .{},
+});
+```
+
+`TDTA_WordWrap` turns wrapping off, `TDTA_Link` is the name the pointer
+was last let go on, for a program that follows links, and `DTM_COPY`
+puts what is marked on the clipboard.
+
+A format's class reads its file and hands the text and the runs over
+with `TDTM_SETTEXT`; both blocks come from `AllocVec` and are the
+object's from then on.
+
 ## Showing one
 
 `SYS:Programs/MultiView` is a window round any object:

@@ -63,6 +63,20 @@ fn layoutProcess(sys: *ExecBase) callconv(.c) void {
         own.special.flags &= ~dtc.DTSIF_NEWSIZE;
         sys.ReleaseSemaphore(&own.special.lock);
     }
+    // What is on the screen was drawn from the layout this one replaces,
+    // and whoever asked for the layout has long since gone on, so the
+    // object is drawn again here.
+    sdk.gadgets.support.redraw(db.intuition_base, job.object, &job.info);
+
+    // The numbers the object answers are only right once this is done
+    // either. Anything following the object hears `DTA_Sync` and reads
+    // them again; a program whose object follows `ICTARGET_IDCMP` hears
+    // it as an IDCMP message.
+    const told = [_]utility.TagItem{
+        .{ .tag = dtc.DTA_Sync, .data = 1 },
+        .{},
+    };
+    sdk.gadgets.support.notify(db.intuition_base, job.object, &job.info, &told, 0);
     sys.FreeVec(job);
 }
 

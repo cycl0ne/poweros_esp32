@@ -131,3 +131,7 @@ pub const WMHI_DISKREMOVED: usize = 11 << 16;
 /// The settings changed (`SetPrefs`): a window that draws something they
 /// decide reads them again.
 pub const WMHI_NEWPREFS: usize = 12 << 16;
+/// A gadget whose `ICA_TARGET` is `ICTARGET_IDCMP` told the window that
+/// something about it changed. The low bits are what `ICSPECIAL_CODE`
+/// carried, and the attributes themselves are read from the gadget.
+pub const WMHI_IDCMPUPDATE: usize = 13 << 16;

@@ -258,6 +258,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const object = dt.NewDTObjectA(@ptrCast(shown_name), &[_]TagItem{
         .{ .tag = dtc.DTA_SourceType, .data = source },
         .{ .tag = dtc.DTA_Title, .data = @intFromPtr(dl.FilePart(shown_name)) },
+        // The object lays itself out on a process of its own, so the
+        // numbers the bars need are not right until it says so. It says
+        // so as an IDCMP message, which is the only way a program hears
+        // from a gadget it did not ask anything of.
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{ .tag = if (argv[arg_scale] != 0) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
         .{},
@@ -283,6 +288,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made.layout) },
         .{},
     }) orelse {
@@ -321,7 +327,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 // A resize changes how much of the object is seen, and
                 // the object works that out for itself when it is laid
                 // out again; the bars are told what it found.
-                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP => followObject(ib, made, object, window),
+                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP, wc.WMHI_IDCMPUPDATE => followObject(ib, made, object, window),
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return dos.RETURN_OK,
                 else => {},
             }
