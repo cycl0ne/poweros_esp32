@@ -85,6 +85,10 @@ pub const RawIOInit = @import("rawio/rawioinit.zig").RawIOInit;
 const _log = @import("log/_log.zig");
 pub const ReadLog = @import("log/readlog.zig").ReadLog;
 pub const SetLogSignal = @import("log/setlogsignal.zig").SetLogSignal;
+pub const Debug = @import("debug/debug.zig").Debug;
+pub const DebugHardware = @import("debug/_debug.zig").DebugHardware;
+/// The chip's part of the ROM debugger, which the kernel installs.
+pub const debug_hardware = &@import("debug/_debug.zig").debug_hardware;
 pub const tickLog = _log.tickLog;
 /// The log's clock, microseconds since the boot; the kernel sets it.
 pub const log_clock = &_log.clock;

@@ -208,6 +208,37 @@ The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.
 
+### When it stops
+
+`s3>` is a task: it needs the scheduler, a console device and memory, so
+it is gone exactly when it is wanted most. The ROM debugger is the other
+half - it runs with interrupts masked, on no task, through no device,
+and allocates nothing:
+
+```
+dbg> bt
+   0  0x428DF23C (the ROM)
+   1  0x428DCCF1 (the ROM)
+   2  0x428DBDD3 (the ROM)
+   3  0x40378844 (the ROM)
+dbg> r                       the registers and the trap frame
+dbg> d 3fc89a00 64           memory, in words
+dbg> m 3fc89a00 0            one word written
+dbg> g                       go on
+```
+
+There are three ways in: a dead-end Guru offers it for a few seconds and
+halts as it always has if nobody answers; `debug` at the `s3>` prompt
+stops a working machine and `g` sets it going again; and `Debug()` from
+code. It talks on **both** raw ports at once - UART0 and the chip's own
+USB port - and takes a character from whichever has one, because which
+cable is plugged in is not something a stopped machine can ask. A Guru
+is copied to both for the same reason.
+
+An address is named with the code it is in, which for a program loaded
+from disk is its file and the offset into it - the same offset its ELF
+has, so `llvm-addr2line` turns it into a line.
+
 ### More than buttons
 
 Beyond the classes the ROM holds, `SYS:classes/gadgets/` has one library

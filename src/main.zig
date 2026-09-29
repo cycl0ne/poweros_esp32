@@ -84,6 +84,7 @@ export fn kernel_early() linksection(".iram.text") callconv(.c) void {
 export fn kmain() callconv(.c) noreturn {
     exec.interrupt_hardware.* = intmatrix.hardware;
     exec.alert_hook.* = alert.show;
+    exec.debug_hardware.* = &alert.debug_hardware;
     exec.log_clock.* = timer.uptimeUs;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();

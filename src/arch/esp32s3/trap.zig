@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
+const sdk = @import("sdk");
 const exec = @import("../../rom/libs/exec/exec.zig");
 const timer = @import("timer.zig");
 
@@ -177,18 +178,35 @@ fn fatal(f: *const Frame) noreturn {
 }
 
 /// The saved registers of an exception.
+/// The frame on the raw port, which is where a Guru is read from.
 pub fn dumpFrame(f: *const Frame) void {
-    exec.kprintf("  PC       0x%08x  PS  0x%08x  SAR    0x%08x\n", .{ f.pc, f.ps, f.sar });
-    exec.kprintf("  EXCVADDR 0x%08x  LBEG 0x%08x LEND 0x%08x LCOUNT 0x%08x\n", .{ f.excvaddr, f.lbeg, f.lend, f.lcount });
+    dumpFrameTo(f, &kprintfSink, null);
+}
+
+fn kprintfSink(character: u8, _: ?*anyopaque) callconv(.c) void {
+    exec.kprintf("%c", .{character});
+}
+
+/// The frame written a character at a time through `put`, so that
+/// whoever asked decides where it goes: the raw port for a Guru, both
+/// ports for the ROM debugger.
+pub fn dumpFrameTo(f: *const Frame, put: sdk.exec.PutChProc, data: ?*anyopaque) void {
+    line(put, data, "  PC       0x%08x  PS  0x%08x  SAR    0x%08x\n", .{ f.pc, f.ps, f.sar });
+    line(put, data, "  EXCVADDR 0x%08x  LBEG 0x%08x LEND 0x%08x LCOUNT 0x%08x\n", .{ f.excvaddr, f.lbeg, f.lend, f.lcount });
     for (0..4) |row| {
-        exec.kprintf(" ", .{});
+        line(put, data, " ", .{});
         for (0..4) |col| {
             const i = row * 4 + col;
-            exec.kprintf(" A%-2d 0x%08x", .{ i, f.a[i] });
+            line(put, data, " A%-2d 0x%08x", .{ i, f.a[i] });
         }
-        exec.kprintf("\n", .{});
+        line(put, data, "\n", .{});
     }
     // a0 holds the return address with the call size in its top two bits.
     const caller = (f.a[0] & 0x3FFF_FFFF) | (f.pc & 0xC000_0000);
-    exec.kprintf("  caller   0x%08x\n", .{caller});
+    line(put, data, "  caller   0x%08x\n", .{caller});
+}
+
+fn line(put: sdk.exec.PutChProc, data: ?*anyopaque, comptime format: [:0]const u8, args: anytype) void {
+    const stream = sdk.exec.fmtStream(args);
+    _ = exec.format(format, &stream, put, data);
 }

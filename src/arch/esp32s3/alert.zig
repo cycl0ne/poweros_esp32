@@ -6,7 +6,8 @@
 //! code the address is in - the ROM, or a file loaded from disk and the
 //! offset into it, which is the address in that program's ELF - and
 //! prints the alert's text. A CPU exception adds its cause and the trap
-//! frame. Dead-end alerts mask interrupts and halt the core.
+//! frame. A dead-end alert then offers the ROM debugger for a few
+//! seconds and halts the core, as it always has, if nobody answers.
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
@@ -16,6 +17,68 @@ const segment = @import("../../rom/libs/dos/program/_program.zig");
 const layout = @import("layout.zig");
 const sdk = @import("sdk");
 const trap = @import("trap.zig");
+const rawio = @import("../../rom/libs/exec/rawio/_rawio.zig");
+const debug = @import("../../rom/libs/exec/debug/_debug.zig");
+
+/// The chip's part of the ROM debugger: everything in it that needs an
+/// instruction or knows this chip's map. exec may not reach in here, so
+/// it is handed over instead, as the alert hook is.
+pub const debug_hardware: debug.DebugHardware = .{
+    .stop = stopHere,
+    .go = goOn,
+    .halt = cpu.halt,
+    .reboot = rebootHere,
+    .showFrame = showFrameHere,
+    .frameAt = frameAtHere,
+    .whereIs = whereIsHere,
+    .readable = readableHere,
+};
+
+fn stopHere() u32 {
+    return cpu.setIntlevel(15);
+}
+
+fn goOn(saved: u32) void {
+    cpu.restorePs(saved);
+}
+
+fn rebootHere() void {
+    exec.SysBase.iface().ColdReboot();
+}
+
+fn showFrameHere(frame: *const anyopaque, put: sdk.exec.PutChProc, data: ?*anyopaque) void {
+    trap.dumpFrameTo(@ptrCast(@alignCast(frame)), put, data);
+}
+
+/// Where the stopped code was: its pc, its stack pointer, and the return
+/// address in a0 - which carries the window's call size in its top two
+/// bits.
+fn frameAtHere(frame: *const anyopaque, pc: *usize, sp: *usize, ret: *usize) void {
+    const f: *const trap.Frame = @ptrCast(@alignCast(frame));
+    pc.* = f.pc;
+    sp.* = f.a[1];
+    ret.* = f.a[0];
+}
+
+fn whereIsHere(address: usize, offset: *usize) ?[*:0]const u8 {
+    const found = whereIs(address);
+    if (!found.known) return null;
+    offset.* = found.offset;
+    return found.name;
+}
+
+/// Whether an address can be read at all, by the chip's windows rather
+/// than by the kernel's layout: a stack above the heap and a buffer a
+/// driver was given are both readable, and the debugger is asked about
+/// them exactly when the lists that would say so are not to be trusted.
+fn readableHere(address: usize) bool {
+    const map = sdk.hardware.map;
+    if (address >= map.DRAM_START and address < map.DRAM_END) return true;
+    if (address >= map.IRAM_START and address < map.IRAM_END) return true;
+    if (address >= map.PSRAM_START and address < map.PSRAM_END) return true;
+    if (address >= map.FLASH_START and address < map.FLASH_END) return true;
+    return false;
+}
 
 pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, text: ?[*:0]const u8) void {
     const dead_end = alert_num & exec.AT_DeadEnd != 0;
@@ -24,6 +87,11 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
     // exception's pc is exact.
     const where = if (info == null) (return_address & 0x3FFF_FFFF) | 0x4000_0000 else return_address;
     if (dead_end) _ = cpu.setIntlevel(15);
+
+    // An alert is copied to the chip's own USB port as well as the raw
+    // one: both boards' console is that port, and what a Guru says is
+    // the one thing worth reading on a board with a single cable.
+    rawio.mirror = &rawio.usb_jtag_raw_io;
 
     const title: [:0]const u8 = if (dead_end) "Software Failure." else "Recoverable Alert.";
     var buf: [40]u8 = undefined;
@@ -42,26 +110,55 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
         if (i.frame) |frame| trap.dumpFrame(@ptrCast(@alignCast(frame)));
     }
 
-    if (dead_end) {
-        exec.kprintf("*** system halted\n", .{});
-        cpu.halt();
+    if (!dead_end) {
+        rawio.mirror = null;
+        return;
     }
+    // The debugger is offered before the machine is given up, and only
+    // once there is something to look at: an unattended board waits a
+    // few seconds and halts exactly as it always has.
+    if (debug.offer()) {
+        debug.enter(.dead_end, if (info) |i| @ptrCast(@alignCast(i.frame)) else null);
+    }
+    exec.kprintf("*** system halted\n", .{});
+    cpu.halt();
 }
 
-/// Names the code `where` is in: the ROM, a file loaded from disk with the
-/// offset into it, or nothing known. dos's list of loaded files is read as
-/// it stands, without a lock: the machine may have stopped anywhere.
-fn place(where: usize) void {
+/// Where an address is, for whoever wants to print it: the ROM, a file
+/// loaded from disk and the offset into it, or nothing known.
+pub const Where = struct {
+    /// The ROM, or the file's name.
+    name: ?[*:0]const u8 = null,
+    /// How far into that file, 0 for the ROM.
+    offset: usize = 0,
+    /// Whether the address is in code at all.
+    known: bool = false,
+};
+
+/// What code an address is in. dos's list of loaded files is read as it
+/// stands, without a lock: the machine may have stopped anywhere.
+pub fn whereIs(where: usize) Where {
     if ((where >= layout.flashTextStart() and where < layout.flashTextEnd()) or
         (where >= layout.iramStart() and where < layout.iramEnd()))
     {
-        exec.kprintf("*** in the ROM\n", .{});
-        return;
+        return .{ .name = "the ROM", .known = true };
     }
-    if (!exec.initialized) return;
-    const dos_base = findDos() orelse return;
+    if (!exec.initialized) return .{};
+    const dos_base = findDos() orelse return .{};
     if (segment.codeAt(dos_base, where)) |found| {
-        exec.kprintf("*** in %.40s at +0x%x\n", .{ found.name, @as(u32, @truncate(found.offset)) });
+        return .{ .name = found.name, .offset = found.offset, .known = true };
+    }
+    return .{};
+}
+
+/// The line a Guru prints for where it stopped.
+fn place(where: usize) void {
+    const found = whereIs(where);
+    if (!found.known) return;
+    if (found.offset == 0) {
+        exec.kprintf("*** in %s\n", .{found.name.?});
+    } else {
+        exec.kprintf("*** in %.40s at +0x%x\n", .{ found.name.?, @as(u32, @truncate(found.offset)) });
     }
 }
 

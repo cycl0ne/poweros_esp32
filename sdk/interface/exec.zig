@@ -129,6 +129,7 @@ pub const LVO = struct {
     pub const AlertAt = libraries.lvo(115);
     pub const ReadLog = libraries.lvo(116);
     pub const SetLogSignal = libraries.lvo(117);
+    pub const Debug = libraries.lvo(118);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -248,6 +249,7 @@ pub const Fn = struct {
     pub const AlertAt = *const fn (*ExecBase, u32, usize, ?[*:0]const u8) callconv(.c) void;
     pub const ReadLog = *const fn (*ExecBase, *u64, [*]u8, u32) callconv(.c) u32;
     pub const SetLogSignal = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) bool;
+    pub const Debug = *const fn (*ExecBase, u32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -753,5 +755,11 @@ pub const ExecBase = opaque {
     /// follow already.
     pub fn SetLogSignal(self: *ExecBase, task: ?*exec.Task, signal_mask: u32) bool {
         return libraries.call(self, LVO.SetLogSignal, Fn.SetLogSignal, .{ task, signal_mask });
+    }
+
+    /// Stop the machine and give the console to the ROM debugger, on both raw
+    /// ports at once. It comes back when the debugger is told to go on.
+    pub fn Debug(self: *ExecBase, flags: u32) void {
+        return libraries.call(self, LVO.Debug, Fn.Debug, .{flags});
     }
 };

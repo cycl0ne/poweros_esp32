@@ -91,6 +91,16 @@ pub const no_raw_io: RawIOHardware = .{ .init = noInit, .put = noPut, .get = noG
 /// exec's UART0 driver, below.
 pub const chip_raw_io: RawIOHardware = .{ .init = uartInit, .put = uartPut, .get = uartGet };
 
+/// The chip's own USB port, polled: what the ROM debugger talks on
+/// beside UART0, since both boards' console is that port and a machine
+/// that has stopped has no device to reach it through.
+///
+/// It is not what `RawPutChar` writes to. usbserial.device drives the
+/// same registers while the system runs, and two writers on one FIFO
+/// would tear each other's packets; the debugger takes it only with the
+/// machine stopped, when nothing else is running.
+pub const usb_jtag_raw_io: RawIOHardware = .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet };
+
 fn noInit() void {}
 fn noPut(_: u8) void {}
 fn noGet() ?u8 {
@@ -113,9 +123,22 @@ pub fn putChar(character: u8) void {
     if (character == '\n') line_start = true;
 }
 
+/// A second port the raw output is copied to while this is set.
+///
+/// A Guru sets it to the chip's own USB port, so a board with one cable
+/// - which is both of them - reads what happened. It is off the rest of
+/// the time: usbserial.device drives the same registers while the system
+/// runs, and two writers on one FIFO tear each other's packets. By the
+/// time a dead-end alert sets it, nothing else is running.
+pub var mirror: ?*const RawIOHardware = null;
+
 /// A character to the log and the port, with nothing in front.
 fn emit(character: u8) void {
     _log.keep(character);
+    if (mirror) |second| {
+        if (character == '\n') second.put('\r');
+        second.put(character);
+    }
     if (!raw_ready) return;
     if (character == '\n') raw_io_hardware.put('\r');
     raw_io_hardware.put(character);
@@ -350,6 +373,34 @@ fn uartPut(character: u8) void {
 fn uartGet() ?u8 {
     if (reg(uart0 + uart.STATUS).* & uart.STATUS_RXFIFO_CNT == 0) return null;
     return @truncate(reg(uart0 + uart.FIFO).*);
+}
+
+// The chip's own USB port, polled. The boot ROM has already set it up -
+// its own messages come out of it - so there is nothing to start.
+
+const usj = sdk.hardware.usb_serial_jtag;
+
+fn usbJtagInit() void {}
+
+/// One byte into the FIFO, and the packet sent at once: a debugger types
+/// a character at a time and a reply held back for a full packet would
+/// never appear.
+///
+/// A host that is not listening fills the FIFO and never drains it, so
+/// the wait is bounded and the byte is dropped rather than stopping a
+/// machine that is already stopped.
+fn usbJtagPut(character: u8) void {
+    var spins: u32 = 0;
+    while (reg(usj.EP1_CONF).* & usj.EP1_IN_EP_DATA_FREE == 0) : (spins += 1) {
+        if (spins > 200_000) return;
+    }
+    reg(usj.EP1).* = character;
+    reg(usj.EP1_CONF).* = usj.EP1_WR_DONE;
+}
+
+fn usbJtagGet() ?u8 {
+    if (reg(usj.EP1_CONF).* & usj.EP1_OUT_EP_DATA_AVAIL == 0) return null;
+    return @truncate(reg(usj.EP1).*);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

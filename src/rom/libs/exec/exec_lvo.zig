@@ -299,6 +299,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoAlertAt),
     vec(lvoReadLog),
     vec(lvoSetLogSignal),
+    vec(lvoDebug),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -769,6 +770,10 @@ fn lvoReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) callcon
 
 fn lvoSetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) callconv(.c) bool {
     return exec.SetLogSignal(base, task, signal_mask);
+}
+
+fn lvoDebug(base: *ExecBase, flags: u32) callconv(.c) void {
+    exec.Debug(base, flags);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

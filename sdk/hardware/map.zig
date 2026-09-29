@@ -7,6 +7,20 @@
 //! Only addresses. Which driver may use a block is not decided here - a
 //! block belongs to the device, library or resource that drives it.
 
+/// The windows memory is reached through, for code that must know
+/// whether an address can be read at all - the ROM debugger asking
+/// before it follows a pointer out of a broken machine. What is in them
+/// is exec's memory lists' business, not this file's.
+pub const DRAM_START: usize = 0x3FC8_8000;
+pub const DRAM_END: usize = 0x3FD0_0000;
+pub const IRAM_START: usize = 0x4037_0000;
+pub const IRAM_END: usize = 0x403E_0000;
+/// External memory: as data, and the same bytes as instructions.
+pub const PSRAM_START: usize = 0x3C00_0000;
+pub const PSRAM_END: usize = 0x3E00_0000;
+pub const FLASH_START: usize = 0x4200_0000;
+pub const FLASH_END: usize = 0x4400_0000;
+
 pub const UART0: usize = 0x6000_0000;
 pub const SPI1: usize = 0x6000_2000;
 pub const SPI0: usize = 0x6000_3000;

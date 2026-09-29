@@ -175,6 +175,7 @@ const commands = .{
     @import("cmds/screen.zig"),
     @import("cmds/syscall.zig"),
     @import("cmds/fault.zig"),
+    @import("cmds/debug.zig"),
     @import("cmds/panic.zig"),
     @import("cmds/wdt.zig"),
     @import("cmds/cache.zig"),
