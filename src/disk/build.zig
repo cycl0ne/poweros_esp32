@@ -88,6 +88,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/png.datatype", .source = "classes/datatypes/png/png.zig", .name = "png.datatype" },
     .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype" },
+    .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype" },
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
@@ -142,6 +143,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/BMP", .source = "devs/datatypes/BMP" },
     .{ .disk = "devs/datatypes/PNG", .source = "devs/datatypes/PNG" },
     .{ .disk = "devs/datatypes/GIF", .source = "devs/datatypes/GIF" },
+    .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
     .{ .disk = "devs/datatypes/FTXT", .source = "devs/datatypes/FTXT" },
     .{ .disk = "devs/datatypes/8SVX", .source = "devs/datatypes/8SVX" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
@@ -167,6 +169,8 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Interlaced.png", .source = "tests/datatypes/Interlaced.png" },
     .{ .disk = "tests/datatypes/Shapes.gif", .source = "tests/datatypes/Shapes.gif" },
     .{ .disk = "tests/datatypes/Weave.gif", .source = "tests/datatypes/Weave.gif" },
+    .{ .disk = "tests/datatypes/Garden.jpg", .source = "tests/datatypes/Garden.jpg" },
+    .{ .disk = "tests/datatypes/Grey.jpg", .source = "tests/datatypes/Grey.jpg" },
 };
 
 pub fn build(b: *std.Build) void {

@@ -82,9 +82,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   still picture is a `picture.datatype` object, kept as pens and drawn,
   scrolled, scaled and written out by that class whatever file it came
   out of, and `png.datatype` reads PNG - every colour kind, every depth,
-  interlaced or not - and `gif.datatype` GIF, with the see-through
-  colour and the picture placed on the screen the file names. A small
-  file of each format is in
+  interlaced or not - `gif.datatype` GIF, with the see-through colour and
+  the picture placed on the screen the file names, and `jpeg.datatype`
+  baseline JPEG, its colour planes taken smoothly. A small file of each
+  format is in
   `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them
   in a window with scroll bars, knowing no formats itself. See the
   [datatypes guide](sdk/docs/guides/datatypes.md).
