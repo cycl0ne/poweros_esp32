@@ -19,6 +19,7 @@ const sdk = @import("sdk");
 const trap = @import("trap.zig");
 const rawio = @import("../../rom/libs/exec/rawio/_rawio.zig");
 const debug = @import("../../rom/libs/exec/debug/_debug.zig");
+const debugexc = @import("debugexc.zig");
 
 /// The chip's part of the ROM debugger: everything in it that needs an
 /// instruction or knows this chip's map. exec may not reach in here, so
@@ -32,6 +33,15 @@ pub const debug_hardware: debug.DebugHardware = .{
     .frameAt = frameAtHere,
     .whereIs = whereIsHere,
     .readable = readableHere,
+    .setBreakpoint = debugexc.setBreakpoint,
+    .breakpointAt = debugexc.breakpointAt,
+    .setWatchpoint = debugexc.setWatchpoint,
+    .step = debugexc.step,
+    .resumeFrom = debugexc.resumeFrom,
+    .clearAll = debugexc.clearAll,
+    .breakpoints = debugexc.breakpoints,
+    .watchpoints = debugexc.watchpoints,
+    .causeName = debugexc.causeName,
 };
 
 fn stopHere() u32 {
@@ -118,7 +128,7 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
     // once there is something to look at: an unattended board waits a
     // few seconds and halts exactly as it always has.
     if (debug.offer()) {
-        debug.enter(.dead_end, if (info) |i| @ptrCast(@alignCast(i.frame)) else null);
+        debug.enter(.dead_end, if (info) |i| @ptrCast(@alignCast(i.frame)) else null, 0);
     }
     exec.kprintf("*** system halted\n", .{});
     cpu.halt();

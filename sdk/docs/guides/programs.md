@@ -224,8 +224,23 @@ dbg> bt
 dbg> r                       the registers and the trap frame
 dbg> d 3fc89a00 64           memory, in words
 dbg> m 3fc89a00 0            one word written
+dbg> b 428e5de4              a breakpoint; b off [n] takes one away
+dbg> w 3fc9bbf8 8 w          a watchpoint: 8 bytes, on writing
+dbg> s                       one instruction
 dbg> g                       go on
 ```
+
+The breakpoints and watchpoints are the core's own - two of each - so
+nothing is written into the code, which could not be done anyway: it is
+in flash, mapped for reading. `s` steps one instruction with every
+interrupt held off, so what is stepped is the code that was stopped and
+not whichever interrupt happened to be next; the stopped code's own
+interrupt level is left alone, because it may be inside a `Disable`.
+
+Going on from a breakpoint is not just returning - the address is still
+the one the core stops at - so the breakpoint is held off, the one
+instruction stepped, and it is put back. That step is the one visit to
+the debugger that says nothing.
 
 There are three ways in: a dead-end Guru offers it for a few seconds and
 halts as it always has if nobody answers; `debug` at the `s3>` prompt

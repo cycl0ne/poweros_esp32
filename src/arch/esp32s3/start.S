@@ -146,8 +146,8 @@ _Level5Vector:
 
     .org 0x280
 _DebugVector:
-    movi    a0, 'D'
-    j       _fatal_vector
+    wsr     a0, excsave6
+    j       _debug_exception
 
     .org 0x2C0
 _NMIVector:
@@ -216,6 +216,9 @@ _DoubleExceptionVector:
 .Llit_kmain:        .long kmain
 .Llit_tramp:        .long _exception_trampoline
 .Llit_dispatch:     .long xtensa_exception
+.Llit_ps_debug:     .long PS_UM | PS_WOE | PS_INTLEVEL(15)
+.Llit_debug_tramp:  .long _debug_trampoline
+.Llit_debug_dispatch: .long xtensa_debug
 .Llit_uart:         .long 0x60000000
 .Llit_fatal_msg:    .long fatal_msg
 
@@ -269,6 +272,107 @@ _start:
     callx4  a8
 3:  waiti   15
     j       3b
+
+/*
+ * The debug exception: a breakpoint, a watchpoint, a single step or a
+ * BREAK instruction. It arrives at DEBUGLEVEL, so it has EPC6/EPS6 of
+ * its own and returns with RFI 6 - and it must not do what the level-1
+ * path does: no task switch, no scheduler, nothing that needs a working
+ * system, because the machine has been stopped on purpose.
+ *
+ * On entry: a0 is stashed in EXCSAVE6, a1 is the interrupted stack
+ * pointer. The frame is the same `trap.Frame`, with DEBUGCAUSE where
+ * EXCCAUSE would be.
+ */
+    .balign 4
+    .global _debug_exception
+_debug_exception:
+    addi    a0, a1, -FRAME_OFFSET
+    s32i    a2, a0, F_A(2)
+    s32i    a3, a0, F_A(3)
+    s32i    a4, a0, F_A(4)
+    s32i    a5, a0, F_A(5)
+    s32i    a6, a0, F_A(6)
+    s32i    a7, a0, F_A(7)
+    s32i    a8, a0, F_A(8)
+    s32i    a9, a0, F_A(9)
+    s32i    a10, a0, F_A(10)
+    s32i    a11, a0, F_A(11)
+    s32i    a12, a0, F_A(12)
+    s32i    a13, a0, F_A(13)
+    s32i    a14, a0, F_A(14)
+    s32i    a15, a0, F_A(15)
+    s32i    a1, a0, F_A(1)
+    rsr     a2, excsave6
+    s32i    a2, a0, F_A(0)
+    rsr     a2, epc6
+    s32i    a2, a0, F_PC
+    rsr     a2, eps6
+    s32i    a2, a0, F_PS
+    rsr     a2, sar
+    s32i    a2, a0, F_SAR
+    rsr     a2, debugcause
+    s32i    a2, a0, F_EXCCAUSE
+    movi    a2, 0
+    s32i    a2, a0, F_EXCVADDR
+    rsr     a2, lbeg
+    s32i    a2, a0, F_LBEG
+    rsr     a2, lend
+    s32i    a2, a0, F_LEND
+    rsr     a2, lcount
+    s32i    a2, a0, F_LCOUNT
+    movi    a2, 0
+    wsr     a2, lcount              /* no zero-overhead loop inside the handler */
+
+    /* Windowing on, exception mode off, everything else masked: the
+       handler makes ordinary calls, and window spills still work. */
+    mov     a6, a0                  /* trampoline's a2 = frame */
+    l32r    a2, .Llit_ps_debug
+    wsr     a2, ps
+    rsync
+    l32r    a8, .Llit_debug_tramp
+    callx4  a8
+
+    /* a1 and a6 came back untouched. */
+    addi    a4, a1, -FRAME_OFFSET
+    l32i    a5, a4, F_PS
+    wsr     a5, eps6
+    l32i    a5, a4, F_PC
+    wsr     a5, epc6
+    l32i    a5, a4, F_SAR
+    wsr     a5, sar
+    l32i    a5, a4, F_LBEG
+    wsr     a5, lbeg
+    l32i    a5, a4, F_LEND
+    wsr     a5, lend
+    l32i    a5, a4, F_LCOUNT
+    wsr     a5, lcount
+    isync
+    l32i    a0, a4, F_A(0)
+    l32i    a2, a4, F_A(2)
+    l32i    a3, a4, F_A(3)
+    l32i    a5, a4, F_A(5)
+    l32i    a6, a4, F_A(6)
+    l32i    a7, a4, F_A(7)
+    l32i    a8, a4, F_A(8)
+    l32i    a9, a4, F_A(9)
+    l32i    a10, a4, F_A(10)
+    l32i    a11, a4, F_A(11)
+    l32i    a12, a4, F_A(12)
+    l32i    a13, a4, F_A(13)
+    l32i    a14, a4, F_A(14)
+    l32i    a15, a4, F_A(15)
+    l32i    a4, a4, F_A(4)
+    rfi     6
+
+    .balign 4
+    .global _debug_trampoline
+_debug_trampoline:
+    entry   a1, TRAMP_FRAME
+    mov     a10, a2
+    l32r    a8, .Llit_debug_dispatch
+    callx8  a8
+    retw
 
 /*
  * Level-1 exceptions and interrupts (PS.UM = 1).

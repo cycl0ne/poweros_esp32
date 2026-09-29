@@ -57,5 +57,5 @@ const ExecBase = @import("../exec.zig").ExecBase;
 pub fn Debug(base: *ExecBase, flags: u32) void {
     _ = base;
     _ = flags;
-    _debug.enter(.asked, null);
+    _debug.enter(.asked, null, 0);
 }

@@ -58,6 +58,24 @@ pub const DebugHardware = struct {
     whereIs: *const fn (address: usize, offset: *usize) ?[*:0]const u8,
     /// Whether an address can be read without faulting again.
     readable: *const fn (address: usize) bool,
+    /// A breakpoint in one of the core's slots, off when null.
+    setBreakpoint: *const fn (slot: u32, address: ?usize) void,
+    /// Where that slot's breakpoint is, for listing them.
+    breakpointAt: *const fn (slot: u32) ?usize,
+    /// A watchpoint on `size` bytes, on reading, writing or both.
+    setWatchpoint: *const fn (slot: u32, address: ?usize, size: u32, on_read: bool, on_write: bool) void,
+    /// The next instruction only, then back to the debugger.
+    step: *const fn () void,
+    /// Going on from where it stopped, carrying a breakpoint at that
+    /// very address over itself.
+    resumeFrom: *const fn (pc: usize) void,
+    /// Every breakpoint and watchpoint off.
+    clearAll: *const fn () void,
+    /// How many of each the core has.
+    breakpoints: u32,
+    watchpoints: u32,
+    /// What `DEBUGCAUSE` said, in words.
+    causeName: *const fn (cause: u32) [:0]const u8,
 };
 
 /// Set by the kernel. Null until then, and in the host tests.
@@ -71,6 +89,9 @@ pub const Reason = enum {
     recoverable,
     /// A dead-end Guru: there is nothing to go back to, so `g` halts.
     dead_end,
+    /// A breakpoint, a watchpoint or a step: the machine stopped itself
+    /// where it was told to, and `g` sets it going again.
+    stopped,
 };
 
 /// How long a typed line may be.
@@ -86,6 +107,8 @@ const default_dump = 64;
 /// the stack is the thing least to be trusted here.
 var reason: Reason = .asked;
 var frame: ?*const anyopaque = null;
+/// What `DEBUGCAUSE` said, when the machine stopped itself.
+var cause: u32 = 0;
 var line: [line_length]u8 = undefined;
 var going = false;
 
@@ -369,12 +392,94 @@ fn returnTo(value: usize, near: usize) usize {
     return if (address >= 3) address - 3 else address;
 }
 
+/// `b` with nothing: what is set. `b addr`: one more. `b off n`: that
+/// one off.
+fn breakpoint(words: *Words) void {
+    const chip = debug_hardware orelse return;
+    const word = words.next() orelse return listBreakpoints(chip);
+    if (same(word, "off")) {
+        const which = number(words.next() orelse "") orelse {
+            var slot: u32 = 0;
+            while (slot < chip.breakpoints) : (slot += 1) chip.setBreakpoint(slot, null);
+            printf("all off\n", .{});
+            return;
+        };
+        if (which >= chip.breakpoints) return;
+        chip.setBreakpoint(@truncate(which), null);
+        listBreakpoints(chip);
+        return;
+    }
+    const address = number(word) orelse {
+        printf("b [address | off [n]]\n", .{});
+        return;
+    };
+    var slot: u32 = 0;
+    while (slot < chip.breakpoints) : (slot += 1) {
+        if (chip.breakpointAt(slot) != null) continue;
+        chip.setBreakpoint(slot, address);
+        listBreakpoints(chip);
+        return;
+    }
+    printf("the core has %d and both are set\n", .{chip.breakpoints});
+}
+
+fn listBreakpoints(chip: *const DebugHardware) void {
+    var slot: u32 = 0;
+    var any = false;
+    while (slot < chip.breakpoints) : (slot += 1) {
+        const at = chip.breakpointAt(slot) orelse continue;
+        any = true;
+        printf("  %d  0x%08x", .{ slot, @as(u32, @truncate(at)) });
+        named(at);
+        put('\n');
+    }
+    if (!any) printf("  none\n", .{});
+}
+
+/// `w addr [size] [r|w|rw]`, `w off`.
+fn watchpoint(words: *Words) void {
+    const chip = debug_hardware orelse return;
+    const word = words.next() orelse {
+        printf("w <address> [size] [r|w|rw]   w off\n", .{});
+        return;
+    };
+    if (same(word, "off")) {
+        var slot: u32 = 0;
+        while (slot < chip.watchpoints) : (slot += 1) chip.setWatchpoint(slot, null, 0, false, false);
+        printf("all off\n", .{});
+        return;
+    }
+    const address = number(word) orelse {
+        printf("w <address> [size] [r|w|rw]   w off\n", .{});
+        return;
+    };
+    const size = number(words.next() orelse "") orelse 4;
+    const how = words.next() orelse "w";
+    const on_read = how[0] == 'r';
+    const on_write = same(how, "w") or same(how, "rw");
+    // The slots are told apart by nothing, so a second watchpoint takes
+    // the second slot and a third replaces the first.
+    chip.setWatchpoint(watch_next, address, @truncate(size), on_read, on_write);
+    printf("watching 0x%08x, %d bytes, %s\n", .{
+        @as(u32, @truncate(address)),
+        @as(u32, @truncate(size)),
+        @as([*:0]const u8, if (on_read and on_write) "read and write" else if (on_read) "read" else "write"),
+    });
+    watch_next = (watch_next + 1) % chip.watchpoints;
+}
+
+/// Which watchpoint slot the next `w` takes.
+var watch_next: u32 = 0;
+
 fn help() void {
     puts(
         \\  r            the registers and the trap frame
         \\  bt           the call chain
         \\  d addr [len] memory, in words
         \\  m addr value one word written
+        \\  b [addr]     a breakpoint, or what is set; b off [n]
+        \\  w addr [n] [r|w|rw]  a watchpoint; w off
+        \\  s            one instruction
         \\  g            go on
         \\  reset        restart the machine
         \\  q            the same as g
@@ -397,13 +502,14 @@ fn stackLooksSound() bool {
 
 /// The debugger entered. It returns when told to go on; on a dead-end
 /// alert it never returns.
-pub fn enter(why: Reason, trap_frame: ?*const anyopaque) void {
+pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void {
     const chip = debug_hardware orelse {
         printf("\n*** no debugger on this machine\n", .{});
         return;
     };
     reason = why;
     frame = trap_frame;
+    cause = why_stopped;
     going = false;
 
     // Nothing else runs while the debugger has the machine, and the
@@ -417,6 +523,15 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque) void {
     }
 
     printf("\nROM debugger. ? for the commands.\n", .{});
+    if (reason == .stopped) {
+        var pc: usize = 0;
+        var sp: usize = 0;
+        var ret: usize = 0;
+        if (frame) |f| chip.frameAt(f, &pc, &sp, &ret);
+        printf("%s at 0x%08x", .{ chip.causeName(cause), @as(u32, @truncate(pc)) });
+        named(pc);
+        put('\n');
+    }
     if (exec.initialized) {
         const task = exec.SysBase.this_task;
         printf("stopped in task \"%s\"\n", .{task.name()});
@@ -436,10 +551,37 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque) void {
             dump(&words);
         } else if (same(word, "m")) {
             poke(&words);
+        } else if (same(word, "b")) {
+            breakpoint(&words);
+        } else if (same(word, "w")) {
+            watchpoint(&words);
+        } else if (same(word, "s")) {
+            // Stepping needs somewhere to step back from: the machine
+            // stopped itself and is going to be let go again. A dead end
+            // has nothing to return to, and a call came in through the
+            // window rather than through a vector.
+            if (reason != .stopped) {
+                printf("there is nothing to step: %s\n", .{@as([*:0]const u8, if (reason == .dead_end)
+                    "the machine has stopped for good"
+                else
+                    "entered from a call, not from a breakpoint")});
+            } else {
+                chip.step();
+                going = true;
+            }
         } else if (same(word, "g") or same(word, "q")) {
             if (reason == .dead_end) {
                 printf("nothing to go back to: halted\n", .{});
                 chip.halt();
+            }
+            // A breakpoint at the address about to run would stop again
+            // at once, so it is carried over its own instruction.
+            if (frame) |f| {
+                var pc: usize = 0;
+                var sp: usize = 0;
+                var ret: usize = 0;
+                chip.frameAt(f, &pc, &sp, &ret);
+                chip.resumeFrom(pc);
             }
             going = true;
         } else if (same(word, "reset")) {

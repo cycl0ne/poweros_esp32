@@ -173,8 +173,12 @@ pub fn main(init: std.process.Init) !void {
 /// The boot code in .iram.text runs before the code in .flash.text is
 /// mapped, and flash.device's routines (src/rom/devs/flash/spiflash.zig) run
 /// with the caches suspended, so neither may refer to flash code. The
-/// exceptions are what runs after the mapping: kmain and the exception
-/// handler (start.S), and the start of .flash.text itself (flashmap.zig).
+/// exceptions are what runs after the mapping: kmain, the exception
+/// handler and the debug one (start.S), and the start of .flash.text
+/// itself (flashmap.zig). The debug handler is in the same case as the
+/// exception handler - its vector is in IRAM and what it calls is not,
+/// which is sound once the code in flash is mapped and is what a
+/// breakpoint waits for anyway.
 ///
 /// Every call loads its target - a function's entry - from a literal, so a
 /// word in .iram.text that is exactly the address of a symbol in
@@ -188,7 +192,7 @@ fn checkBootCode(elf: []const u8, sections: []const Section, symbols: []const Sy
     const flash = for (sections) |s| {
         if (mem.eql(u8, s.name, ".flash.text")) break s;
     } else return;
-    const allowed = [_][]const u8{ "kmain", "xtensa_exception", "_flash_text_start" };
+    const allowed = [_][]const u8{ "kmain", "xtensa_exception", "xtensa_debug", "_flash_text_start" };
     var off: usize = 0;
     while (off + 4 <= iram.size) : (off += 4) {
         const word = u32At(elf, iram.offset + off);

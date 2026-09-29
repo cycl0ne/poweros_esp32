@@ -19,5 +19,5 @@ pub const help =
 ;
 
 pub fn run(_: *Shell, _: *Args) anyerror!void {
-    _debug.enter(.asked, null);
+    _debug.enter(.asked, null, 0);
 }

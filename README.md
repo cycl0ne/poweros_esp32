@@ -63,8 +63,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   PSRAM as memory with attributes; a system log of everything written to
   the serial console since the boot (`C:Log`), and a Guru that names the
   failed check and the file and offset it is in, and offers a ROM
-  debugger - registers, memory, a backtrace - on both serial ports at
-  once, reachable with whichever cable is plugged in.
+  debugger - registers, memory, a backtrace, breakpoints, watchpoints
+  and single step - on both serial ports at once, reachable with
+  whichever cable is plugged in.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; names of
   255 characters and paths of 1024 throughout; `ErrorReport` asking
   "Please insert volume ..." on the screen, or on the console where there
