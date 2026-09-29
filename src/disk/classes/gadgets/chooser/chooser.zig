@@ -13,12 +13,12 @@
 //! the layer's own coordinates, whose corner is the panel's.
 //!
 //! The panel goes under the button, or over it when there is more room
-//! there, and is cut to the screen: a list too long for the room shows as
-//! many labels as fit and scrolls while the pointer is held past its top
-//! or bottom, a line for each timer event the active gadget is sent. It
-//! then has a bar down its right side as well - how far down the knob
-//! sits and how long it is say where in the list the panel is looking -
-//! and dragging in the bar moves it.
+//! there, and is cut to the screen. A list too long for the room shows
+//! as many labels as fit and has a bar down its right side: how far down
+//! the knob sits and how long it is say where in the list the panel is
+//! looking, and dragging in the bar moves it. That is the only thing
+//! that scrolls it - the pointer resting anywhere moves nothing, so a
+//! hand held still over the list never loses the label it was over.
 //!
 //! **Two ways to pick.** Pressed and dragged, the label the pointer is
 //! over when the button is let go is the one taken. Pressed and let go
@@ -64,9 +64,6 @@ comptime {
 /// No label: nothing under the pointer, and nothing picked.
 const NONE: u32 = 0xFFFF_FFFF;
 
-/// How many timer events the pointer is held past the panel's end before
-/// it scrolls again.
-const scroll_delay = 2;
 /// Room either side of a label, in the button and in the panel.
 const text_margin = 6;
 /// How wide the mark's box is beside the button's text.
@@ -100,8 +97,6 @@ pub const Data = extern struct {
     /// The button has been let go of once, so the panel stays up.
     sticky: u8 = 0,
     pad: [3]u8 = @splat(0),
-    /// Timer events since the pointer last moved the panel a line.
-    ticks: u32 = 0,
 };
 
 fn layersOf(base: *gadgets.Base) *LayersBase {
@@ -496,21 +491,6 @@ fn closePanel(base: *gadgets.Base, own: *Data) void {
     own.hot = NONE;
 }
 
-/// The panel moved a line, if the pointer is held past one of its ends.
-fn scroll(base: *gadgets.Base, own: *Data, info: *classusr.GadgetInfo, y: i32) void {
-    if (own.count <= own.visible) return;
-    const lines_top = own.panel.top + own.inset.top;
-    const lines_end = lines_top + @as(i32, @intCast(own.visible)) * own.line_height;
-    if (y < lines_top) {
-        if (own.first == 0) return;
-        own.first -= 1;
-    } else if (y >= lines_end) {
-        if (own.first + own.visible >= own.count) return;
-        own.first += 1;
-    } else return;
-    paintPanel(base, own, info);
-}
-
 /// The label under the pointer taken note of, and the panel drawn again
 /// when it changed.
 fn hover(base: *gadgets.Base, own: *Data, info: *classusr.GadgetInfo, x: i32, y: i32) void {
@@ -633,7 +613,6 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const info = in.gadget_info orelse return gc.GMR_NOREUSE;
             if (in.event == null or own.count == 0) return gc.GMR_NOREUSE;
             if (!openPanel(base, own, o.?, info)) return gc.GMR_NOREUSE;
-            own.ticks = 0;
             // Pressed: the button is drawn pressed while the panel is up.
             support.redraw(ib, o.?, info);
             return gc.GMR_MEACTIVE;
@@ -649,15 +628,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const at = screenBox(base, o.?, info);
             const x = at.left + in.mouse.x;
             const y = at.top + in.mouse.y;
-            if (e.class == ie.IECLASS_TIMER) {
-                own.ticks += 1;
-                if (own.ticks > scroll_delay) {
-                    own.ticks = 0;
-                    scroll(base, own, info, y);
-                    hover(base, own, info, x, y);
-                }
-                return gc.GMR_MEACTIVE;
-            }
+            // Time passing moves nothing: the bar is the only way the
+            // panel scrolls, so a pointer resting anywhere leaves the
+            // list where it is.
+            if (e.class == ie.IECLASS_TIMER) return gc.GMR_MEACTIVE;
             // The bar is dragged, not picked from.
             if (inBar(own, x, y)) {
                 var drawn = false;

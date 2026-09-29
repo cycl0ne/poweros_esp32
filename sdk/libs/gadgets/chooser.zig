@@ -7,8 +7,8 @@
 //! over the panel moves the pick, letting go takes it; letting go on the
 //! button itself leaves the panel up, so that a press on a line takes it
 //! instead. A press anywhere else closes the panel and takes nothing.
-//! A list longer than the screen has room for scrolls while the pointer
-//! is held past the panel's top or bottom.
+//! A list longer than the panel shows has a bar down its right side, and
+//! dragging in that bar is what scrolls it.
 //!
 //! The panel is a layer over the screen, as a menu's is: what it covers
 //! comes back when it closes, and a program drawing into a window under
@@ -48,8 +48,9 @@ pub const CHOOSER_Labels = CHOOSER_Dummy + 0x01;
 /// `IDCMP_GADGETUP`.
 pub const CHOOSER_Active = CHOOSER_Dummy + 0x02;
 /// How many labels the panel shows at once at the most (all of them
-/// unless given). A longer list scrolls while the pointer is held past
-/// the panel's end. Made and set.
+/// unless given, and never more than the screen has room for). A longer
+/// list gets a bar down the panel's right side to scroll it with. Made
+/// and set.
 pub const CHOOSER_MaxPanelLines = CHOOSER_Dummy + 0x03;
 /// How many labels there are. Read only.
 pub const CHOOSER_NumLabels = CHOOSER_Dummy + 0x04;
