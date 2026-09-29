@@ -80,7 +80,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   gets an object it can put in a window without knowing the format. See
   the [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
-  for drawing, layers.library for overlapping windows, and
+  for drawing - including a picture of one's own pixels put down as it
+  is, laid over what is there by its own coverage, or at another size - layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
   any display - a layout in a frame with a title in its edge groups the

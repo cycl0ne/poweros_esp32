@@ -325,9 +325,13 @@ const Place = struct {
 fn findPlace(ib: *IntuitionBase) error{ NoMonitor, NotAvailable, NoMem }!Place {
     const gb = ib.graphics_base;
     const rb = ib.rtg_base orelse return error.NoMonitor;
+    // No board at all is no display, and nothing else that follows can
+    // tell the difference.
+    if (rb.NextBoard(null) == null) return error.NoMonitor;
     // A RastPort asked for nothing in particular is on the buffer the first
-    // display is showing, which says which display that is.
-    const probe = gb.CreateRastPortTagList(null) orelse return error.NoMonitor;
+    // display is showing, which says which display that is. With a board
+    // there, it failing is want of memory and not want of a display.
+    const probe = gb.CreateRastPortTagList(null) orelse return error.NoMem;
     var shown_at: usize = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(&shown_at) }, .{} };
     gb.GetRPAttrs(probe, &ask);

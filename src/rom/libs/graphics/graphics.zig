@@ -3025,6 +3025,125 @@ test "the font list: added, found, and refused while it is open" {
     try tearDown(gb);
 }
 
+/// A pixel of a `bgra32` surface as the pen it stands for: the bytes lie
+/// B, G, R, A, so read as a little-endian word they are 0xAARRGGBB.
+fn pen32At(surface: *const rtg.Surface, x: u32, y: u32) u32 {
+    const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * 4;
+    return @as(u32, at[0]) | @as(u32, at[1]) << 8 | @as(u32, at[2]) << 16 | @as(u32, at[3]) << 24;
+}
+
+test "BlendPixelArray: laid over what is there, by each pixel's own coverage" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 4]u8 = @splat(0);
+    var surface = rtg.Surface{
+        .pixels = &pixels,
+        .width = 8,
+        .height = 4,
+        .pitch = 32,
+        .size_bytes = pixels.len,
+        .format = .bgra32,
+    };
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const rgba32 = @intFromEnum(rtg.bitmaps.PixelFormat.rgba32);
+
+    // Black to lay over, so the mixing is the coverage itself.
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0, 0, 0) }, .{} });
+    base(gb).RectFill(@ptrCast(rp), &.{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = 4 });
+
+    // Four white pixels: covered fully, not at all, half, and a quarter.
+    const white = [_]u8{
+        0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0x00,
+        0xFF, 0xFF, 0xFF, 0x80,
+        0xFF, 0xFF, 0xFF, 0x40,
+    };
+    base(gb).BlendPixelArray(@ptrCast(rp), &white, 16, rgba32, 0, 0, &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 1 });
+    try testing.expectEqual(graphics.penRGB(0xFF, 0xFF, 0xFF), pen32At(&surface, 0, 0));
+    try testing.expectEqual(graphics.penRGB(0, 0, 0), pen32At(&surface, 1, 0));
+    try testing.expectEqual(graphics.penRGB(0x80, 0x80, 0x80), pen32At(&surface, 2, 0));
+    try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), pen32At(&surface, 3, 0));
+
+    // What it writes is opaque: the surface keeps no coverage of its own,
+    // so blending the same picture again mixes with what came of the
+    // first time rather than with the black.
+    base(gb).BlendPixelArray(@ptrCast(rp), &white, 16, rgba32, 0, 0, &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 1 });
+    try testing.expectEqual(graphics.penRGB(0xC0, 0xC0, 0xC0), pen32At(&surface, 2, 0));
+
+    // A format with no colours is refused, and nothing is written.
+    var err: i32 = 0;
+    const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_LastError, .data = @intFromPtr(&err) }, .{} };
+    base(gb).BlendPixelArray(@ptrCast(rp), &white, 16, @intFromEnum(rtg.bitmaps.PixelFormat.indexed8), 0, 0, &.{ .min_x = 4, .min_y = 0, .max_x = 8, .max_y = 1 });
+    base(gb).GetRPAttrs(@ptrCast(rp), &ask);
+    try testing.expectEqual(graphics.GERR_BAD_FORMAT, err);
+    try testing.expectEqual(graphics.penRGB(0, 0, 0), pen32At(&surface, 4, 0));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+}
+
+test "ScalePixelArray: every pixel the nearest one of the picture, clipped the same either way" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 8 * 4]u8 = @splat(0);
+    var surface = rtg.Surface{
+        .pixels = &pixels,
+        .width = 8,
+        .height = 8,
+        .pitch = 32,
+        .size_bytes = pixels.len,
+        .format = .bgra32,
+    };
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const rgba32 = @intFromEnum(rtg.bitmaps.PixelFormat.rgba32);
+
+    // Two by two: red, green over blue, white.
+    const four = [_]u8{
+        0xFF, 0, 0,    0xFF, 0,    0xFF, 0,    0xFF,
+        0,    0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    };
+    const whole = graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 2, .max_y = 2 };
+
+    // Twice the size: each pixel becomes two by two.
+    base(gb).ScalePixelArray(@ptrCast(rp), &four, 8, rgba32, &whole, &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 4 });
+    try testing.expectEqual(graphics.penRGB(0xFF, 0, 0), pen32At(&surface, 0, 0));
+    try testing.expectEqual(graphics.penRGB(0xFF, 0, 0), pen32At(&surface, 1, 1));
+    try testing.expectEqual(graphics.penRGB(0, 0xFF, 0), pen32At(&surface, 2, 0));
+    try testing.expectEqual(graphics.penRGB(0, 0, 0xFF), pen32At(&surface, 0, 2));
+    try testing.expectEqual(graphics.penRGB(0xFF, 0xFF, 0xFF), pen32At(&surface, 3, 3));
+
+    // Down to one pixel: the first of the four, since each destination
+    // pixel is the nearest of the source and nothing is mixed.
+    @memset(&pixels, 0);
+    base(gb).ScalePixelArray(@ptrCast(rp), &four, 8, rgba32, &whole, &.{ .min_x = 0, .min_y = 0, .max_x = 1, .max_y = 1 });
+    try testing.expectEqual(graphics.penRGB(0xFF, 0, 0), pen32At(&surface, 0, 0));
+
+    // Clipped: the piece that is drawn holds the pixels it would have
+    // held had the whole of it been drawn.
+    @memset(&pixels, 0);
+    const clip = graphics.Rect{ .min_x = 2, .min_y = 0, .max_x = 8, .max_y = 8 };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) }, .{} });
+    base(gb).ScalePixelArray(@ptrCast(rp), &four, 8, rgba32, &whole, &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 4 });
+    // Nothing was written left of the clip: the pixels are as the test
+    // cleared them, which is no colour and no coverage at all.
+    try testing.expectEqual(@as(u32, 0), pen32At(&surface, 1, 0));
+    try testing.expectEqual(graphics.penRGB(0, 0xFF, 0), pen32At(&surface, 2, 0));
+    try testing.expectEqual(graphics.penRGB(0xFF, 0xFF, 0xFF), pen32At(&surface, 3, 3));
+
+    // An empty source or destination writes nothing and is no error.
+    var err: i32 = 0;
+    const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_LastError, .data = @intFromPtr(&err) }, .{} };
+    base(gb).ScalePixelArray(@ptrCast(rp), &four, 8, rgba32, &whole, &.{ .min_x = 4, .min_y = 4, .max_x = 4, .max_y = 8 });
+    base(gb).GetRPAttrs(@ptrCast(rp), &ask);
+    try testing.expectEqual(graphics.GERR_OK, err);
+    try testing.expectEqual(@as(u32, 0), pen32At(&surface, 4, 4));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+}
+
 test "WritePixelArray: a picture put down as it is, converted, clipped and cut; WriteLUTPixelArray through a table" {
     const gb = try setUp();
     defer kexec.deinit();

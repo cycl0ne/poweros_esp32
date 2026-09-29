@@ -31,15 +31,16 @@ pub const LIBRARY_NAME = graphics.GRAPHICSNAME;
 pub const LIBRARY_VERSION = 0;
 
 /// The build within the version. Set into the base by `init`, since exec
-/// copies only the tag's name, version and ID string. 19 is fonts of any
-/// shape, `OpenFont` by a `TextAttr`, `WeighTAMatch` and `AskFont`: the
-/// table grew, and the version stays 0 until there is something to
-/// demand of it.
-pub const LIBRARY_REVISION = 19;
+/// copies only the tag's name, version and ID string. 20 is
+/// `BlendPixelArray` and `ScalePixelArray`: a picture of one's own
+/// pixels laid over what is there by its own coverage, and one put down
+/// at another size. The table grew, and the version stays 0 until there
+/// is something to demand of it.
+pub const LIBRARY_REVISION = 20;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "28.9.2026";
+const BUILD_DATE = "29.9.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

@@ -15,6 +15,7 @@ graphics.library/AskSoftStyle
 graphics.library/AttemptRemFont
 graphics.library/BeginDraw
 graphics.library/BitMapScale
+graphics.library/BlendPixelArray
 graphics.library/BltBitMap
 graphics.library/BltBitMapRastPort
 graphics.library/BltMaskBitMapRastPort
@@ -57,6 +58,7 @@ graphics.library/ReadPixel
 graphics.library/RectFill
 graphics.library/RegionRectangles
 graphics.library/RemFont
+graphics.library/ScalePixelArray
 graphics.library/ScrollRaster
 graphics.library/SetRPAttrs
 graphics.library/SetSoftStyle
@@ -786,6 +788,71 @@ graphics.library/XorRegionRegion
 
    EXAMPLES
 	    gb.BitMapScale(thumb, &.{ .max_x = 32, .max_y = 32 }, rp, &.{ .min_x = 10, .min_y = 10, .max_x = 138, .max_y = 138 });
+graphics.library/BlendPixelArray              graphics.library/BlendPixelArray
+
+   NAME
+	BlendPixelArray -- Puts a rectangle of one's own pixels down over what is already there, mixing each with the pixel under it by its own coverage.
+
+   SYNOPSIS
+	    fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const Rect) void
+
+   SINCE
+	0.20. LVO -308.
+
+   INPUTS
+	- `rp` - the RastPort. Its clip decides where the pixels land.
+	- `pixels` - the picture: rows of `pitch` bytes, each pixel in
+	  `format`.
+	- `pitch` - bytes from one row of it to the next.
+	- `format` - a `rtg.bitmaps.PixelFormat` with colours. One that
+	  carries coverage - `rgba32`, `bgra32`, `argb1555` - is what this
+	  call is for; one that does not covers what is under it outright,
+	  and then this is `WritePixelArray` at greater cost.
+	- `src_x` - where in the picture to start, across.
+	- `src_y` - where in it to start, down.
+	- `area` - where it lands, half-open. Its size is how much is taken.
+
+   RESULT
+	Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with
+	no colours in it - `indexed8`, `gray8`, `mono1` - on either side, and
+	then nothing was written.
+
+   BEHAVIOR
+	Each pixel is mixed with the one under it, channel by channel, by its
+	own coverage: fully covered goes down as it is, not covered at all
+	leaves the surface alone, and between the two the colours are mixed
+	in that proportion. The pens and the draw mode are not used.
+
+	The surface keeps no coverage of its own: what is written is opaque,
+	because it is what the display will show. Blending a picture onto a
+	window twice therefore is not the same as blending it once.
+
+	When the clip cuts the front off, the picture starts that much
+	further in, so a clipped picture is cut rather than slid.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it
+	  wrote on to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The picture stays the caller's.
+
+   NOTES
+	Every pixel is read back from the surface before it is written, so
+	this costs more than `WritePixelArray` and is worth using only for a
+	picture that really has soft or clear places in it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`WritePixelArray`, `ScalePixelArray`, `BltMaskRastPort`
+
+   EXAMPLES
+	    gb.BlendPixelArray(rp, icon.ptr, 32 * 4, @intFromEnum(PixelFormat.rgba32), 0, 0, &.{ .min_x = x, .min_y = y, .max_x = x + 32, .max_y = y + 32 });
 graphics.library/BltBitMap                          graphics.library/BltBitMap
 
    NAME
@@ -2882,6 +2949,73 @@ graphics.library/XorRegionRegion
 
    EXAMPLES
 	    if (gb.RemFont(loaded)) freeFont(loaded);
+graphics.library/ScalePixelArray              graphics.library/ScalePixelArray
+
+   NAME
+	ScalePixelArray -- Puts a rectangle of one's own pixels down at another size.
+
+   SYNOPSIS
+	    fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_area: *const Rect, dest_area: *const Rect) void
+
+   SINCE
+	0.20. LVO -312.
+
+   INPUTS
+	- `rp` - the RastPort. Its clip decides where the pixels land.
+	- `pixels` - the picture: rows of `pitch` bytes, each pixel in
+	  `format`.
+	- `pitch` - bytes from one row of it to the next.
+	- `format` - a `rtg.bitmaps.PixelFormat` with colours.
+	- `src_area` - the part of the picture to take, half-open, measured
+	  in the picture's own pixels.
+	- `dest_area` - where it lands and how big, half-open.
+
+   RESULT
+	Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with
+	no colours in it on either side, and nothing was written; an empty
+	`src_area` or `dest_area` writes nothing and is not an error.
+
+   BEHAVIOR
+	Every pixel of the destination is the nearest pixel of the source: no
+	two are mixed, so a picture made larger has square pixels and one
+	made smaller drops rows and columns whole. That is what a picture
+	wants - a screenshot or a drawing scaled this way stays sharp and
+	stays itself - and it is what makes the work one pass with no memory
+	of its own.
+
+	Coverage is honoured where the format carries it, exactly as
+	`BlendPixelArray` does, so a picture with soft edges scales without
+	losing them.
+
+	The clip cuts the destination, and each piece of it still takes the
+	pixels that belong at that place, so a picture drawn in pieces is the
+	same picture as one drawn in a single call.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. The work is unbounded, and it hands the rows it
+	  wrote on to the display at the end.
+	- Forbid: not needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The picture stays the caller's.
+
+   NOTES
+	`BitMapScale` does the same for a surface that is already in memory
+	as a bitmap; this is for pixels a program holds itself - a decoded
+	picture, a frame that came over the network.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`WritePixelArray`, `BlendPixelArray`, `BitMapScale`
+
+   EXAMPLES
+	    // A 640 by 400 picture into whatever room the gadget has.
+	    gb.ScalePixelArray(rp, picture.ptr, 640 * 3, @intFromEnum(PixelFormat.rgb24),
+	        &.{ .min_x = 0, .min_y = 0, .max_x = 640, .max_y = 400 }, &box);
 graphics.library/ScrollRaster                    graphics.library/ScrollRaster
 
    NAME

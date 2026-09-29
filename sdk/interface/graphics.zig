@@ -91,6 +91,8 @@ pub const LVO = struct {
     pub const UnlockFonts = libraries.lvo(73);
     pub const AttemptRemFont = libraries.lvo(74);
     pub const FontRows = libraries.lvo(75);
+    pub const BlendPixelArray = libraries.lvo(76);
+    pub const ScalePixelArray = libraries.lvo(77);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -168,6 +170,8 @@ pub const Fn = struct {
     pub const UnlockFonts = *const fn (*GraphicsBase) callconv(.c) void;
     pub const AttemptRemFont = *const fn (*GraphicsBase, *graphics.TextFont) callconv(.c) bool;
     pub const FontRows = *const fn (*GraphicsBase, *const graphics.TextAttr) callconv(.c) u32;
+    pub const BlendPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32, i32, i32, *const graphics.Rect) callconv(.c) void;
+    pub const ScalePixelArray = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32, *const graphics.Rect, *const graphics.Rect) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -654,5 +658,21 @@ pub const GraphicsBase = opaque {
     /// that many points at the screen's DPI.
     pub fn FontRows(self: *GraphicsBase, text_attr: *const graphics.TextAttr) u32 {
         return libraries.call(self, LVO.FontRows, Fn.FontRows, .{text_attr});
+    }
+
+    /// A rectangle of pixels of one's own laid over what is there, each
+    /// mixed with the pixel under it by its own coverage. Otherwise as
+    /// WritePixelArray, whose arguments these are - a picture with an alpha
+    /// channel drawn onto a window, a shadow, a shape with soft edges.
+    pub fn BlendPixelArray(self: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const graphics.Rect) void {
+        return libraries.call(self, LVO.BlendPixelArray, Fn.BlendPixelArray, .{ rp, pixels, pitch, format, src_x, src_y, area });
+    }
+
+    /// A rectangle of pixels of one's own put down at another size:
+    /// `src_area` names the part of the picture and `dest_area` where it
+    /// lands and how big. Coverage is honoured where the format carries it,
+    /// as BlendPixelArray does.
+    pub fn ScalePixelArray(self: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) void {
+        return libraries.call(self, LVO.ScalePixelArray, Fn.ScalePixelArray, .{ rp, pixels, pitch, format, src_area, dest_area });
     }
 };

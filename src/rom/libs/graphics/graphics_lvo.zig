@@ -80,6 +80,8 @@ const RegionRectangles = @import("region/regionrectangles.zig").RegionRectangles
 const ScrollRaster = @import("blit/scrollraster.zig").ScrollRaster;
 const EraseRect = @import("rastport/eraserect.zig").EraseRect;
 const WritePixelArray = @import("blit/writepixelarray.zig").WritePixelArray;
+const BlendPixelArray = @import("blit/blendpixelarray.zig").BlendPixelArray;
+const ScalePixelArray = @import("blit/scalepixelarray.zig").ScalePixelArray;
 const WriteLUTPixelArray = @import("blit/writelutpixelarray.zig").WriteLUTPixelArray;
 const BeginDraw = @import("draw/begindraw.zig").BeginDraw;
 const EndDraw = @import("draw/enddraw.zig").EndDraw;
@@ -378,6 +380,12 @@ fn lvoEraseRect(gb: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics
 fn lvoWritePixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WritePixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, format, src_x, src_y, area);
 }
+fn lvoBlendPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
+    BlendPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, format, src_x, src_y, area);
+}
+fn lvoScalePixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) callconv(.c) void {
+    ScalePixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, format, src_area, dest_area);
+}
 fn lvoWriteLUTPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, table: [*]const graphics.Pen, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WriteLUTPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, table, src_x, src_y, area);
 }
@@ -492,6 +500,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoUnlockFonts),
     vec(lvoAttemptRemFont),
     vec(lvoFontRows),
+    // Pixels laid over what is already there
+    vec(lvoBlendPixelArray),
+    vec(lvoScalePixelArray),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

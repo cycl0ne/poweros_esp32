@@ -904,8 +904,12 @@ test "screens: none without a display, one to a display, and closed again" {
     // One opened behind is not shown; the display's memory holds three.
     const three = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Behind, .data = 1 }, .{} }).?;
     try testing.expectEqual(first.bitmap, display.board.showing.?);
+    // The fourth will not fit. Which room ran out first - the display's
+    // for a bitmap, or the system's for the RastPort that goes with it -
+    // is not the point and is not fixed: both come out of the one pool
+    // the tests run on.
     try testing.expect(it.OpenScreenTagList(&with_code) == null);
-    try testing.expectEqual(sc.OSERR_NOTAVAILABLE, why);
+    try testing.expect(why == sc.OSERR_NOTAVAILABLE or why == sc.OSERR_NOMEM);
     // Closing the one in front shows the one behind it.
     it.ScreenToFront(two);
     try testing.expect(it.CloseScreen(two));

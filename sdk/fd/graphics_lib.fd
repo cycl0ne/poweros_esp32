@@ -276,4 +276,15 @@ bool AttemptRemFont(*graphics.TextFont font)
 /// How many rows `text_attr` asks for: its y_size, or with FPF_POINTS
 /// that many points at the screen's DPI.
 u32 FontRows(*const graphics.TextAttr text_attr)
+// Pixels laid over what is already there
+/// A rectangle of pixels of one's own laid over what is there, each
+/// mixed with the pixel under it by its own coverage. Otherwise as
+/// WritePixelArray, whose arguments these are - a picture with an alpha
+/// channel drawn onto a window, a shadow, a shape with soft edges.
+void BlendPixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, u32 format, i32 src_x, i32 src_y, *const graphics.Rect area)
+/// A rectangle of pixels of one's own put down at another size:
+/// `src_area` names the part of the picture and `dest_area` where it
+/// lands and how big. Coverage is honoured where the format carries it,
+/// as BlendPixelArray does.
+void ScalePixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, u32 format, *const graphics.Rect src_area, *const graphics.Rect dest_area)
 ##end

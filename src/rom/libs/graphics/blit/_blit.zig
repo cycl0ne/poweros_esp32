@@ -279,3 +279,31 @@ pub fn blitInto(
     }
     if (any) drawing.handOn(gb, dest, bound.min_y, bound.max_y);
 }
+
+// --- pixels laid over what is already there ---------------------------------
+
+/// A pen laid over the pixel at `to`, by the pen's own coverage: the two
+/// mixed channel by channel, so a half-covered red over white is pink.
+///
+/// It is here because two calls need it - a picture put down at its own
+/// size and one put down scaled - and both must mix exactly alike, or the
+/// same picture drawn the two ways would not match.
+pub fn blendPixel(to: [*]u8, to_bytes: u32, to_format: rtg.bitmaps.PixelFormat, pen: graphics.Pen) void {
+    const alpha = pen >> 24;
+    if (alpha == 0) return;
+    if (alpha == 0xFF) {
+        rows.store(to, to_bytes, rastport.packPen(to_format, pen) orelse 0);
+        return;
+    }
+    const under = rastport.unpackPen(to_format, drawing.getPixel(to, to_bytes));
+    var mixed: graphics.Pen = 0xFF << 24;
+    var shift: u5 = 0;
+    while (shift < 24) : (shift += 8) {
+        const over_part: u32 = (pen >> shift) & 0xFF;
+        const under_part: u32 = (under >> shift) & 0xFF;
+        // Rounded, so that full coverage of a colour lands on that colour
+        // and no coverage leaves what was there untouched.
+        mixed |= ((over_part * alpha + under_part * (255 - alpha) + 127) / 255) << shift;
+    }
+    rows.store(to, to_bytes, rastport.packPen(to_format, mixed) orelse 0);
+}
