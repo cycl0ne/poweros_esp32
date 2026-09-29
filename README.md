@@ -83,6 +83,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   scrolled, scaled and written out by that class whatever file it came
   out of, and `ilbm.datatype` reads IFF `ILBM` - packed rows, the
   half-bright and hold-and-modify displays, and twenty-four planes -
+  `bmp.datatype` Windows bitmaps at every depth, packed or plain,
   `png.datatype` PNG - every colour kind, every depth,
   interlaced or not - `gif.datatype` GIF, with the see-through colour and
   the picture placed on the screen the file names, and `jpeg.datatype`
