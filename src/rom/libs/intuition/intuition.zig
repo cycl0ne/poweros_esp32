@@ -1857,8 +1857,15 @@ test "windows: which border holds the size gadget, and who paints the empty part
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{},
     }).?;
-    try testing.expectEqual(@as(usize, _window.size_width), windowAttr(ib, right, wn.WA_BorderRight));
-    try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < _window.size_height);
+    // The sizing gadget follows the screen's font, as the title bar
+    // does; the test screen's is the ROM's eight-row one, which is what
+    // 18 by 10 was drawn for.
+    const size_width: usize = @intCast(_window.sizeWidth(8));
+    const size_height: usize = @intCast(_window.sizeHeight(8));
+    try testing.expectEqual(@as(usize, 18), size_width);
+    try testing.expectEqual(@as(usize, 10), size_height);
+    try testing.expectEqual(size_width, windowAttr(ib, right, wn.WA_BorderRight));
+    try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < size_height);
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, right, wn.WA_Screen));
     ib.iface().CloseWindow(right);
 
@@ -1872,8 +1879,8 @@ test "windows: which border holds the size gadget, and who paints the empty part
         .{ .tag = wn.WA_SizeBBottom, .data = 1 },
         .{},
     }).?;
-    try testing.expectEqual(@as(usize, _window.size_height), windowAttr(ib, bottom, wn.WA_BorderBottom));
-    try testing.expect(windowAttr(ib, bottom, wn.WA_BorderRight) < _window.size_width);
+    try testing.expectEqual(size_height, windowAttr(ib, bottom, wn.WA_BorderBottom));
+    try testing.expect(windowAttr(ib, bottom, wn.WA_BorderRight) < size_width);
     ib.iface().CloseWindow(bottom);
 
     // A window may paint its own empty parts. The hook is called when the

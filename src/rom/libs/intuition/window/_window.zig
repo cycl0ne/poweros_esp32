@@ -259,8 +259,29 @@ pub const WF_NOTIFYDEPTH: u32 = 0x80000000;
 pub const close_width = 20;
 pub const depth_width = 24;
 pub const zoom_width = 24;
-pub const size_width = 18;
-pub const size_height = 10;
+
+/// The sizing gadget's box on a screen whose font is `font_height`
+/// rows.
+///
+/// It was 18 by 10 against a title bar of 11 - a gadget one row shorter
+/// than the bar beside it and nearly twice as wide as it is tall. Those
+/// numbers were right for the one font the machine had. Here the bar
+/// follows the screen's font (`font_height + 3`), so the gadget follows
+/// it too and that shape is kept whatever the font: at eight rows it
+/// comes out 18 by 10 again, to the pixel.
+pub fn sizeHeight(font_height: u32) i32 {
+    return @as(i32, @intCast(font_height)) + 2;
+}
+
+pub fn sizeWidth(font_height: u32) i32 {
+    return @divTrunc(sizeHeight(font_height) * 9, 5);
+}
+
+/// The same for a window, from the font its screen was opened with.
+pub fn sizeBoxOf(w: *const Window) struct { width: i32, height: i32 } {
+    const rows = w.screen.font.image.height;
+    return .{ .width = sizeWidth(rows), .height = sizeHeight(rows) };
+}
 pub const side_border = 4;
 pub const bottom_border = 2;
 
@@ -430,7 +451,10 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
     if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
     if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depth_width, 0, state, dri);
     if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - depth_width - zoom_width, 0, state, dri);
-    if (w.size_image) |image| it.DrawImageState(rp, image, w.width - size_width, w.height - size_height, state, dri);
+    if (w.size_image) |image| {
+        const box = sizeBoxOf(w);
+        it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
+    }
 }
 
 /// The backfill hook: `area` of the layer in the screen's background pen,
@@ -619,9 +643,9 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
         .close => 0,
         .depth => w.width - depth_width,
         .zoom => w.width - depth_width - zoom_width,
-        .size => w.width - size_width,
+        .size => w.width - sizeBoxOf(w).width,
     };
-    const y: i32 = if (which == .size) w.height - size_height else 0;
+    const y: i32 = if (which == .size) w.height - sizeBoxOf(w).height else 0;
     const active = w.flags & WF_ACTIVE != 0;
     const state: u32 = if (pressed)
         (if (active) ic.IDS_SELECTED else ic.IDS_INACTIVESELECTED)

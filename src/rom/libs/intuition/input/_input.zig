@@ -388,7 +388,10 @@ pub fn partAt(w: *const Window, x: i32, y: i32) Part {
         }
         return if (w.flags & _window.WF_DRAG != 0) .drag else .border;
     }
-    if (w.flags & _window.WF_SIZE != 0 and x >= w.width - _window.size_width and y >= w.height - _window.size_height) return .size;
+    if (w.flags & _window.WF_SIZE != 0) {
+        const box = _window.sizeBoxOf(w);
+        if (x >= w.width - box.width and y >= w.height - box.height) return .size;
+    }
     if (x >= w.border_left and x < w.width - w.border_right and y < w.height - w.border_bottom) return .inside;
     return .border;
 }

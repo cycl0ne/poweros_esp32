@@ -44,8 +44,6 @@ const gadgetImage = _window.gadgetImage;
 const innerRastPort = _window.innerRastPort;
 const lock = _window.lock;
 const side_border = _window.side_border;
-const size_height = _window.size_height;
-const size_width = _window.size_width;
 const targetScreen = _window.targetScreen;
 const unlock = _window.unlock;
 const zoom_width = _window.zoom_width;
@@ -193,9 +191,9 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         const at_bottom = sizing and flags & WF_SIZE_BBOTTOM != 0;
         const at_right = sizing and (flags & WF_SIZE_BRIGHT != 0 or flags & WF_SIZE_BBOTTOM == 0);
         bl = side_border;
-        br = if (at_right) size_width else side_border;
+        br = if (at_right) _window.sizeWidth(font_height) else side_border;
         bt = if (has_bar) @as(i32, @intCast(font_height)) + 3 else bottom_border;
-        bb = if (at_bottom) size_height else bottom_border;
+        bb = if (at_bottom) _window.sizeHeight(font_height) else bottom_border;
     }
 
     // A border is deep enough for the gadgets that live in it, even in a
@@ -442,7 +440,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             if (w.zoom_image == null) ok = false;
         }
         if (flags & WF_SIZE != 0) {
-            w.size_image = gadgetImage(ib, s, ic.SIZEIMAGE, size_width, size_height);
+            const box = _window.sizeBoxOf(w);
+            w.size_image = gadgetImage(ib, s, ic.SIZEIMAGE, box.width, box.height);
             if (w.size_image == null) ok = false;
         }
     }
