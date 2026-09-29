@@ -213,6 +213,11 @@ pub const DTERROR_COULDNT_OPEN_CLIPBOARD: i32 = 2004;
 pub const DTERROR_UNKNOWN_COMPRESSION: i32 = 2006;
 pub const DTERROR_NOT_ENOUGH_DATA: i32 = 2007;
 pub const DTERROR_INVALID_DATA: i32 = 2008;
+/// What is in the file is more than this machine can hold: a picture
+/// kept as pens is four bytes a pixel, and a wallpaper is millions of
+/// them. A class says this before it reads anything, so a file too
+/// large is refused rather than failing somewhere in the middle.
+pub const DTERROR_TOO_LARGE: i32 = 2009;
 
 /// The class's attributes, methods and messages.
 pub const datatypesclass = @import("datatypesclass.zig");

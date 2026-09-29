@@ -78,6 +78,17 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         else => datatypes.DTERROR_INVALID_DATA,
     };
 
+    // What it will take: the picture as pens, and a plane for each of
+    // the parts it is made of beside it.
+    const wanted = subclass.pictureBytes(work.width, work.height);
+    var planes_bytes: usize = 0;
+    for (work.component[0..work.count]) |*component| {
+        planes_bytes += @as(usize, decode.planeStride(work, component)) * decode.planeLines(work, component);
+    }
+    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted + planes_bytes)) {
+        return datatypes.DTERROR_TOO_LARGE;
+    }
+
     // A plane for each of the parts the picture is made of, whole units
     // across and down: the last unit of a row is unpacked whether or
     // not the picture reaches the end of it.

@@ -77,6 +77,34 @@ pub fn readWhole(sys: *ExecBase, dl: *DosBase, lock: ?*dos.FileLock) ?[]u8 {
     return bytes[0..length];
 }
 
+/// Whether a block of `bytes` could be had, with a little room to
+/// spare.
+///
+/// A class asks this as soon as it knows how big the picture is, before
+/// it reads anything: a file larger than the machine can hold is
+/// refused with `DTERROR_TOO_LARGE`, which says what happened, rather
+/// than failing at whichever allocation happened to be the one that
+/// did not fit.
+///
+/// It answers against the largest free block rather than the total,
+/// because what a picture needs is one block.
+pub fn roomFor(sys: *ExecBase, bytes: usize) bool {
+    // A tenth over, so that the row buffers and the object itself are
+    // not what tips it.
+    const wanted = bytes + bytes / 10;
+    if (wanted < bytes) return false; // more than an address can say
+    return sys.AvailMem(exec.MEMF_ANY | exec.MEMF_LARGEST) >= wanted;
+}
+
+/// How many bytes a picture of this size is once it is kept as pens.
+/// `~0` when the size itself is past what an address can say.
+pub fn pictureBytes(width: u32, height: u32) usize {
+    if (width == 0 or height == 0) return 0;
+    const pixels = @as(usize, width) * height;
+    if (pixels / width != height) return ~@as(usize, 0);
+    return pixels * 4;
+}
+
 /// The picture's shape told to picture.datatype, which is what gives the
 /// object its size and the memory to hold the pixels. False when there
 /// was no memory for it.

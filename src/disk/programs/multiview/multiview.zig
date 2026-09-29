@@ -62,7 +62,7 @@ const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No screen - no display\n";
 const MSG_NOMEMORY = "No memory for the window\n";
 const MSG_NOWINDOW = "No window\n";
-const MSG_NOOBJECT = "%s: cannot be shown (%ld)\n";
+const MSG_NOOBJECT = "%s: %s\n";
 
 /// How long each arrow button on a bar is, and how wide a bar is.
 const arrow_length = 14;
@@ -267,9 +267,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = if (argv[arg_scale] != 0) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
         .{},
     }) orelse {
-        _ = Printf(dl, MSG_NOOBJECT, .{ shown_name, @as(i64, dl.IoErr()) });
+        var why: [128]u8 = @splat(0);
+        _ = Printf(dl, MSG_NOOBJECT, .{ shown_name, faultText(dl, &why) });
         return dos.RETURN_FAIL;
     };
+    // From here on the object is the layout's child, and a layout
+    // disposes of what is in it: this program disposes of the object
+    // itself only while it is still in no layout.
     const made = build(ib, object) orelse {
         dt.DisposeDTObject(object);
         _ = Printf(dl, MSG_NOMEMORY, .{});
@@ -292,17 +296,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made.layout) },
         .{},
     }) orelse {
-        ib.DisposeObject(made.layout);
-        dt.DisposeDTObject(object);
+        ib.DisposeObject(made.layout); // and the object in it
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    // The window, the layout and the bars, and the object last: it is
-    // the layout's child but never the layout's to free.
-    defer {
-        ib.DisposeObject(window_object);
-        dt.DisposeDTObject(object);
-    }
+    // The window, and with it the layout, the bars and the object: a
+    // layout disposes of what is in it, and a data type object gives
+    // its kind back when it goes, so this is the whole of it.
+    defer ib.DisposeObject(window_object);
 
     var open = wc.WmOpen{};
     if (ib.SendMessage(window_object, @ptrCast(&open)) == 0) {
@@ -327,12 +328,41 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 // A resize changes how much of the object is seen, and
                 // the object works that out for itself when it is laid
                 // out again; the bars are told what it found.
-                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP, wc.WMHI_IDCMPUPDATE => followObject(ib, made, object, window),
+                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP => followObject(ib, made, object, window),
+                // The object finished laying itself out on a process of
+                // its own: its numbers are right only now, and what is
+                // on the screen was drawn from the layout before it.
+                wc.WMHI_IDCMPUPDATE => {
+                    followObject(ib, made, object, window);
+                    dt.RefreshDTObjectA(object, window, null, null);
+                },
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return dos.RETURN_OK,
                 else => {},
             }
         }
     }
+}
+
+/// What went wrong, in words. The library answers its own numbers for
+/// what it could not do with a file, and dos's for everything else.
+fn faultText(dl: *DosBase, into: *[128]u8) [*:0]const u8 {
+    const said: [*:0]const u8 = switch (dl.IoErr()) {
+        datatypes.DTERROR_UNKNOWN_DATATYPE => "there is no class for this kind of file",
+        datatypes.DTERROR_COULDNT_OPEN => "it could not be opened",
+        datatypes.DTERROR_COULDNT_OPEN_CLIPBOARD => "the clipboard could not be opened",
+        datatypes.DTERROR_UNKNOWN_COMPRESSION => "it is packed in a way this system does not read",
+        // What a class says when it asked for memory and did not get
+        // it, which for a picture usually means it is larger than this
+        // machine can hold.
+        datatypes.DTERROR_TOO_LARGE => "it is larger than this machine can hold",
+        datatypes.DTERROR_NOT_ENOUGH_DATA => "there is not enough memory for it, or it ends too soon",
+        datatypes.DTERROR_INVALID_DATA => "it is not the kind of file it says it is",
+        else => {
+            _ = dl.Fault(dl.IoErr(), null, into, into.len);
+            return @ptrCast(into);
+        },
+    };
+    return said;
 }
 
 /// The number as a string, for the clipboard unit a name stands for.

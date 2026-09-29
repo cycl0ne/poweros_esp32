@@ -10,10 +10,7 @@ const gc = intuition.gadgetclass;
 const datatypes = sdk.datatypes;
 const dtc = datatypes.datatypesclass;
 const _base = @import("../datatypes_base.zig");
-const _class = @import("../class/_class.zig");
 const DataTypesBase = _base.DataTypesBase;
-
-const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 
 /// Gives an object back.
 ///
@@ -58,12 +55,9 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// ```
 pub fn DisposeDTObject(db: *DataTypesBase, object: ?*classusr.Object) void {
     const it = object orelse return;
-    if (_class.dataOf(db, it)) |own| {
-        const kind = own.data_type;
-        own.data_type = null;
-        db.intuition_base.DisposeObject(it);
-        ReleaseDataType(db, kind);
-        return;
-    }
+    // The object gives its own kind back when it goes, so an object
+    // that some other object disposes of - one in a layout, which the
+    // layout takes with it - is let go as completely as one disposed of
+    // here.
     db.intuition_base.DisposeObject(it);
 }

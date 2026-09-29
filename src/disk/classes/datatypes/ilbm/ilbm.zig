@@ -107,6 +107,11 @@ fn readForm(base: *Base, cl: *Class, o: *Object, ip: *IFFParseBase, iff: *iffpar
     if (header.depth == 0 or header.depth > 32) return datatypes.DTERROR_INVALID_DATA;
     if (header.compression > pic.cmpByteRun1) return datatypes.DTERROR_UNKNOWN_COMPRESSION;
 
+    const wanted = subclass.pictureBytes(header.width, header.height);
+    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
+        return datatypes.DTERROR_TOO_LARGE;
+    }
+
     var palette: [max_colors]pic.ColorRegister = @splat(.{});
     var colors: u32 = 0;
     if (ip.FindProp(iff, pic.ID_ILBM, pic.ID_CMAP)) |cmap| {

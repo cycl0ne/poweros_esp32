@@ -62,6 +62,11 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         else => datatypes.DTERROR_INVALID_DATA,
     };
 
+    const wanted = subclass.pictureBytes(info.width, info.height);
+    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
+        return datatypes.DTERROR_TOO_LARGE;
+    }
+
     const header = pic.BitMapHeader{
         .width = @intCast(info.width),
         .height = @intCast(info.height),

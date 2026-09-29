@@ -80,6 +80,14 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const sys = base.sys_base;
     const info = decode.readInfo(file) catch return datatypes.DTERROR_INVALID_DATA;
 
+    // What it will take: the picture as pens, and the unpacked rows
+    // beside it for as long as they are being read. A file larger than
+    // the machine can hold says so here, before anything is read.
+    const wanted = subclass.pictureBytes(info.width, info.height);
+    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted + decode.rawSize(info))) {
+        return datatypes.DTERROR_TOO_LARGE;
+    }
+
     const memory = sys.AllocVec(@sizeOf(Work), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     defer sys.FreeVec(memory);
@@ -106,7 +114,10 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
 
     const joined_memory = sys.AllocVec(idat_length, exec.MEMF_ANY) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
-    defer sys.FreeVec(joined_memory);
+    // Given back as soon as the stream has been unpacked, which is
+    // before the picture is asked for: the two need not be held at once.
+    var joined_held: ?*anyopaque = joined_memory;
+    defer sys.FreeVec(joined_held);
     const joined: [*]u8 = @ptrCast(joined_memory);
     var at: usize = 0;
     walk = decode.Walk.start(file) catch return datatypes.DTERROR_INVALID_DATA;
@@ -126,6 +137,8 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const raw: [*]u8 = @ptrCast(raw_memory);
     const written = inflate.uncompress(&work.stream, joined[0..idat_length], raw[0..raw_size]) catch
         return datatypes.DTERROR_UNKNOWN_COMPRESSION;
+    sys.FreeVec(joined_held);
+    joined_held = null;
     if (written != raw_size) return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
     const row_memory = sys.AllocVec(info.width * 4, exec.MEMF_ANY) orelse

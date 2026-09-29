@@ -265,6 +265,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             closeSource(db, own);
             takeString(db, &own.name, null);
             takeString(db, &own.title, null);
+            // The kind the file was recognised as is the object's, as
+            // its source is: whoever disposes of the object gives it
+            // back, and that is not always the program - an object put
+            // in a layout goes when the layout does.
+            if (own.data_type) |kind| {
+                own.data_type = null;
+                @import("../type/releasedatatype.zig").ReleaseDataType(db, kind);
+            }
             return ib.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {

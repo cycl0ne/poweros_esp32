@@ -76,6 +76,11 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const picture = (decode.readFirst(file, screen) catch
         return datatypes.DTERROR_INVALID_DATA) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
+    const wanted = subclass.pictureBytes(screen.width, screen.height);
+    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
+        return datatypes.DTERROR_TOO_LARGE;
+    }
+
     // The picture is the screen, with the one frame placed on it.
     const header = pic.BitMapHeader{
         .width = @intCast(screen.width),
