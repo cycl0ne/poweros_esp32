@@ -29,12 +29,14 @@ const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gadgets = sdk.gadgets;
 const datatypes = sdk.datatypes;
+const subclass = datatypes.subclass;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
 const inflate = @import("inflate.zig");
 const decode = @import("decode.zig");
 const Class = classes.Class;
 const Object = classes.Object;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const Base = gadgets.Base;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
@@ -65,59 +67,11 @@ const Work = struct {
     palette: decode.Palette = .{},
 };
 
-/// The whole of an open file read into memory of its own.
-fn readWhole(base: *Base, dl: anytype, file: *dos.FileHandle) ?[]u8 {
-    const sys = base.sys_base;
-    // A seek answers where the file was, not where it now is, so the
-    // size is what the seek back to the beginning hands over.
-    if (dl.Seek(file, 0, dos.OFFSET_END) < 0) return null;
-    const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
-    if (size <= 0) return null;
-    const length: usize = @intCast(size);
-    const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return null;
-    const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, @intCast(length)) != @as(isize, @intCast(length))) {
-        sys.FreeVec(memory);
-        return null;
-    }
-    return bytes[0..length];
-}
-
-/// The superclass asked for one of its attributes.
-fn ask(base: *Base, cl: *Class, o: *Object, attr: utility.Tag) usize {
-    var storage: usize = 0;
-    var get = classusr.OpGet{ .method_id = classusr.OM_GET, .attr_id = attr, .storage = &storage };
-    if (base.intuition_base.SendSuperMessage(cl, o, @ptrCast(&get)) == 0) return 0;
-    return storage;
-}
-
-/// Attributes set on the superclass.
-fn tell(base: *Base, cl: *Class, o: *Object, tags: [*]const utility.TagItem) void {
-    var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = tags, .gadget_info = null };
-    _ = base.intuition_base.SendSuperMessage(cl, o, @ptrCast(&set));
-}
-
-/// A row of colour given to the superclass, `count` pixels wide, at
-/// (`left`, `top`).
-fn putRow(base: *Base, cl: *Class, o: *Object, left: u32, top: u32, count: u32, rgba: [*]u8) void {
-    var msg = pic.PdtBlitPixelArray{
-        .method_id = pic.PDTM_WRITEPIXELARRAY,
-        .pixel_data = rgba,
-        .format = pic.PBPAFMT_RGBA,
-        .bytes_per_row = count * 4,
-        .left = left,
-        .top = top,
-        .width = count,
-        .height = 1,
-    };
-    _ = base.intuition_base.SendSuperMessage(cl, o, @ptrCast(&msg));
-}
-
 /// A pass's row written pixel by pixel, for the passes of an interlaced
 /// file whose pixels are not next to one another.
-fn putSpread(base: *Base, cl: *Class, o: *Object, left: u32, top: u32, step: u32, count: u32, rgba: [*]u8) void {
+fn putSpread(ib: *IntuitionBase, cl: *Class, o: *Object, left: u32, top: u32, step: u32, count: u32, rgba: [*]u8) void {
     var x: u32 = 0;
-    while (x < count) : (x += 1) putRow(base, cl, o, left + x * step, top, 1, rgba + x * 4);
+    while (x < count) : (x += 1) subclass.putRow(ib, cl, o, left + x * step, top, 1, rgba + x * 4);
 }
 
 /// The file read and its pixels given to the superclass. What went
@@ -189,7 +143,7 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
 
     // The picture's size, which is what gives the superclass its room.
     const alpha = info.hasAlpha(work.palette.transparent != null or trns.len != 0);
-    var header = pic.BitMapHeader{
+    const header = pic.BitMapHeader{
         .width = @intCast(info.width),
         .height = @intCast(info.height),
         .depth = @intCast(@min(info.channels() * info.depth, 32)),
@@ -199,13 +153,9 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         .page_width = @intCast(info.width),
         .page_height = @intCast(info.height),
     };
-    const tags = [_]utility.TagItem{
-        .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) },
-        .{ .tag = pic.PDTA_SourceMode, .data = if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_RGB },
-        .{},
-    };
-    tell(base, cl, o, &tags);
-    if (ask(base, cl, o, pic.PDTA_Pixels) == 0) return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    if (!subclass.setPicture(base.intuition_base, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_RGB)) {
+        return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    }
 
     unpackRows(base, cl, o, info, work, raw[0..raw_size], colour, empty[0..first_row]);
     return 0;
@@ -261,9 +211,9 @@ fn walkPass(base: *Base, cl: *Class, o: *Object, info: decode.Info, work: *Work,
         decode.expand(info, &work.palette, row, width, colour[0 .. width * 4]);
         const top = start_y + y * step_y;
         if (step_x == 1) {
-            putRow(base, cl, o, start_x, top, width, colour);
+            subclass.putRow(base.intuition_base, cl, o, start_x, top, width, colour);
         } else {
-            putSpread(base, cl, o, start_x, top, step_x, width, colour);
+            putSpread(base.intuition_base, cl, o, start_x, top, step_x, width, colour);
         }
         above = row;
     }
@@ -288,8 +238,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const dos_base: *sdk.interface.dos.DosBase = @ptrCast(dl);
             defer base.sys_base.CloseLibrary(dl);
 
-            const lock: ?*dos.FileLock = @ptrFromInt(ask(base, cl, obj, dtc.DTA_Handle));
-            const failure = readOpened(base, cl, obj, dos_base, lock);
+            const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
+            const failure = readLocked(base, cl, obj, dos_base, lock);
             if (failure != 0) {
                 _ = dos_base.SetIoErr(failure);
                 ib.DisposeObject(obj);
@@ -301,22 +251,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
     }
 }
 
-/// The object's own lock opened for reading and the file read from it.
-/// The lock stays the object's: a copy of it is what the file handle
-/// takes over.
-fn readOpened(base: *Base, cl: *Class, o: *Object, dl: *sdk.interface.dos.DosBase, lock: ?*dos.FileLock) i32 {
-    const sys = base.sys_base;
-    const copy = dl.DupLock(lock orelse return datatypes.DTERROR_COULDNT_OPEN) orelse
+/// The object's own file read and given to the superclass. What went
+/// wrong, or 0.
+fn readLocked(base: *Base, cl: *Class, o: *Object, dl: *sdk.interface.dos.DosBase, lock: ?*dos.FileLock) i32 {
+    const bytes = subclass.readWhole(base.sys_base, dl, lock) orelse
         return datatypes.DTERROR_COULDNT_OPEN;
-    const file = dl.OpenFromLock(copy) orelse {
-        dl.UnLock(copy);
-        return datatypes.DTERROR_COULDNT_OPEN;
-    };
-    const bytes = readWhole(base, dl, file) orelse {
-        _ = dl.Close(file);
-        return datatypes.DTERROR_NOT_ENOUGH_DATA;
-    };
-    _ = dl.Close(file);
-    defer sys.FreeVec(bytes.ptr);
+    defer base.sys_base.FreeVec(bytes.ptr);
     return readFile(base, cl, o, bytes);
 }

@@ -218,3 +218,5 @@ pub const DTERROR_INVALID_DATA: i32 = 2008;
 pub const datatypesclass = @import("datatypesclass.zig");
 /// picture.datatype's, which every still picture is one of.
 pub const pictureclass = @import("pictureclass.zig");
+/// What every format's class does that is not format work.
+pub const subclass = @import("subclass.zig");
