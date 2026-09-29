@@ -81,7 +81,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   classes that read the formats are in `SYS:classes/datatypes/`: every
   still picture is a `picture.datatype` object, kept as pens and drawn,
   scrolled, scaled and written out by that class whatever file it came
-  out of, and `png.datatype` reads PNG - every colour kind, every depth,
+  out of, and `ilbm.datatype` reads IFF `ILBM` - packed rows, the
+  half-bright and hold-and-modify displays, and twenty-four planes -
+  `png.datatype` PNG - every colour kind, every depth,
   interlaced or not - `gif.datatype` GIF, with the see-through colour and
   the picture placed on the screen the file names, and `jpeg.datatype`
   baseline JPEG, its colour planes taken smoothly. Every piece of text is

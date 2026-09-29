@@ -61,6 +61,7 @@ test {
     _ = @import("classes/datatypes/png/decode.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");
+    _ = @import("classes/datatypes/ilbm/planes.zig");
     _ = @import("classes/datatypes/jpeg/idct.zig");
     _ = @import("classes/datatypes/jpeg/decode.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
