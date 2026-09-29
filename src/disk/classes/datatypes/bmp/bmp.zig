@@ -62,22 +62,28 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         else => datatypes.DTERROR_INVALID_DATA,
     };
 
-    const wanted = subclass.pictureBytes(info.width, info.height);
-    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
-        return datatypes.DTERROR_TOO_LARGE;
-    }
+    // Packed rows are unpacked whole before they are read, so for those
+    // the unpacked numbers are the floor; plain rows are read one at a
+    // time and cost nothing beside the picture.
+    const runs = info.compression == decode.BI_RLE8 or info.compression == decode.BI_RLE4;
+    const working: usize = if (runs) @as(usize, info.width) * info.height else 0;
+    const by = subclass.shrinkFor(sys, info.width, info.height, working);
+    if (by == 0) return datatypes.DTERROR_TOO_LARGE;
+    const kept_width = subclass.shrunk(info.width, by);
+    const kept_height = subclass.shrunk(info.height, by);
 
     const header = pic.BitMapHeader{
-        .width = @intCast(info.width),
-        .height = @intCast(info.height),
+        .width = @intCast(kept_width),
+        .height = @intCast(kept_height),
         .depth = @intCast(info.bits),
         .masking = if (info.alpha.bits != 0) pic.mskHasAlpha else pic.mskNone,
         .x_aspect = 1,
         .y_aspect = 1,
-        .page_width = @intCast(info.width),
-        .page_height = @intCast(info.height),
+        .page_width = @intCast(kept_width),
+        .page_height = @intCast(kept_height),
     };
     const alpha = info.alpha.bits != 0;
+    subclass.setSource(ib, cl, o, info.width, info.height, by);
     if (!subclass.setPicture(ib, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_RGB)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
@@ -94,7 +100,7 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     var rows: []const u8 = file[info.pixels_at..];
     var stride = info.rowBytes();
     var plain = info;
-    if (info.compression == decode.BI_RLE8 or info.compression == decode.BI_RLE4) {
+    if (runs) {
         const count = info.width * info.height;
         unpacked_memory = sys.AllocVec(count, exec.MEMF_ANY) orelse
             return datatypes.DTERROR_NOT_ENOUGH_DATA;
@@ -109,14 +115,16 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     }
 
     var y: u32 = 0;
-    while (y < info.height) : (y += 1) {
+    while (y < kept_height) : (y += 1) {
         // The file's first row is the picture's last, unless it says
         // otherwise.
-        const which = if (plain.top_down) y else info.height - 1 - y;
+        const source = y * by;
+        const which = if (plain.top_down) source else info.height - 1 - source;
         const at = @as(usize, which) * stride;
         if (at + stride > rows.len) break;
         decode.expandRow(file, plain, rows[at..][0..stride], colour[0 .. info.width * 4]);
-        subclass.putRow(ib, cl, o, 0, y, info.width, colour);
+        const count = subclass.thinRow(colour, info.width, by);
+        subclass.putRow(ib, cl, o, 0, y, count, colour);
     }
     return 0;
 }

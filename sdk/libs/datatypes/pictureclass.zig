@@ -19,8 +19,13 @@
 //! for saving it again.
 //!
 //! What it costs is four bytes a pixel: a picture of a million pixels is
-//! four megabytes, and one too big for memory fails to open rather than
-//! opening badly.
+//! four megabytes. **A picture larger than the machine can hold is kept
+//! smaller** - half, a quarter or an eighth of each side - rather than
+//! refused, because a picture that can be looked at is worth more than
+//! one that cannot. `PDTA_BitMapHeader` then says the size that is
+//! kept, which is the size everything that draws, scrolls or saves it
+//! works in; `PDTA_SourceWidth` and `PDTA_SourceHeight` say what the
+//! file held, and `PDTA_ShrunkBy` by how much the two differ.
 //!
 //! The scroll units of datatypesclass are pixels here
 //! (`DTA_VertUnit` 1), so a scroller gadget driven from `DTA_TopVert`
@@ -64,6 +69,13 @@ pub const PDTA_BytesPerRow = PDTA_Dummy + 22;
 /// at its own size. False unless given, so that a picture is shown as
 /// it is and scrolled.
 pub const PDTA_Scale = PDTA_Dummy + 23;
+/// What the file said the picture was, before it was shrunk to fit.
+/// The same as the header's size for a picture that was not. Read only.
+pub const PDTA_SourceWidth = PDTA_Dummy + 24;
+pub const PDTA_SourceHeight = PDTA_Dummy + 25;
+/// How much smaller than the file the kept picture is: 1, 2, 4 or 8.
+/// Read only.
+pub const PDTA_ShrunkBy = PDTA_Dummy + 26;
 
 // --- what the pixels look like ----------------------------------------------
 

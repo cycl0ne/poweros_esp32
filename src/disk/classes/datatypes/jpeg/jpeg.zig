@@ -79,15 +79,17 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     };
 
     // What it will take: the picture as pens, and a plane for each of
-    // the parts it is made of beside it.
-    const wanted = subclass.pictureBytes(work.width, work.height);
+    // the parts it is made of beside it. The planes are the size the
+    // file says whatever size the picture is kept at, so they are the
+    // floor under how small it can usefully be.
     var planes_bytes: usize = 0;
     for (work.component[0..work.count]) |*component| {
         planes_bytes += @as(usize, decode.planeStride(work, component)) * decode.planeLines(work, component);
     }
-    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted + planes_bytes)) {
-        return datatypes.DTERROR_TOO_LARGE;
-    }
+    const by = subclass.shrinkFor(sys, work.width, work.height, planes_bytes);
+    if (by == 0) return datatypes.DTERROR_TOO_LARGE;
+    const kept_width = subclass.shrunk(work.width, by);
+    const kept_height = subclass.shrunk(work.height, by);
 
     // A plane for each of the parts the picture is made of, whole units
     // across and down: the last unit of a row is unpacked whether or
@@ -106,15 +108,16 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     decode.readScan(file, work) catch return datatypes.DTERROR_INVALID_DATA;
 
     const header = pic.BitMapHeader{
-        .width = @intCast(work.width),
-        .height = @intCast(work.height),
+        .width = @intCast(kept_width),
+        .height = @intCast(kept_height),
         .depth = @intCast(@min(work.count * 8, 32)),
         .masking = pic.mskNone,
         .x_aspect = 1,
         .y_aspect = 1,
-        .page_width = @intCast(work.width),
-        .page_height = @intCast(work.height),
+        .page_width = @intCast(kept_width),
+        .page_height = @intCast(kept_height),
     };
+    subclass.setSource(ib, cl, o, work.width, work.height, by);
     if (!subclass.setPicture(ib, cl, o, &header, pic.PBPAFMT_RGB)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
@@ -125,9 +128,10 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const colour: [*]u8 = @ptrCast(row_memory);
 
     var y: u32 = 0;
-    while (y < work.height) : (y += 1) {
-        makeRow(work, y, colour);
-        subclass.putRow(ib, cl, o, 0, y, work.width, colour);
+    while (y < kept_height) : (y += 1) {
+        makeRow(work, y * by, colour);
+        const count = subclass.thinRow(colour, work.width, by);
+        subclass.putRow(ib, cl, o, 0, y, count, colour);
     }
     return 0;
 }

@@ -81,12 +81,14 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const info = decode.readInfo(file) catch return datatypes.DTERROR_INVALID_DATA;
 
     // What it will take: the picture as pens, and the unpacked rows
-    // beside it for as long as they are being read. A file larger than
-    // the machine can hold says so here, before anything is read.
-    const wanted = subclass.pictureBytes(info.width, info.height);
-    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted + decode.rawSize(info))) {
-        return datatypes.DTERROR_TOO_LARGE;
-    }
+    // beside it for as long as they are being read. The rows are the
+    // size the file says whatever size the picture is kept at, because
+    // the stream is unpacked whole before it is read, so they are the
+    // floor under how small the picture can usefully be.
+    const by = subclass.shrinkFor(sys, info.width, info.height, decode.rawSize(info));
+    if (by == 0) return datatypes.DTERROR_TOO_LARGE;
+    const kept_width = subclass.shrunk(info.width, by);
+    const kept_height = subclass.shrunk(info.height, by);
 
     const memory = sys.AllocVec(@sizeOf(Work), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
@@ -157,15 +159,16 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     // The picture's size, which is what gives the superclass its room.
     const alpha = info.hasAlpha(work.palette.transparent != null or trns.len != 0);
     const header = pic.BitMapHeader{
-        .width = @intCast(info.width),
-        .height = @intCast(info.height),
+        .width = @intCast(kept_width),
+        .height = @intCast(kept_height),
         .depth = @intCast(@min(info.channels() * info.depth, 32)),
         .masking = if (alpha) pic.mskHasAlpha else pic.mskNone,
         .x_aspect = 1,
         .y_aspect = 1,
-        .page_width = @intCast(info.width),
-        .page_height = @intCast(info.height),
+        .page_width = @intCast(kept_width),
+        .page_height = @intCast(kept_height),
     };
+    subclass.setSource(base.intuition_base, cl, o, info.width, info.height, by);
     if (!subclass.setPicture(base.intuition_base, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_RGB)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }

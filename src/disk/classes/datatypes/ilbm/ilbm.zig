@@ -107,10 +107,10 @@ fn readForm(base: *Base, cl: *Class, o: *Object, ip: *IFFParseBase, iff: *iffpar
     if (header.depth == 0 or header.depth > 32) return datatypes.DTERROR_INVALID_DATA;
     if (header.compression > pic.cmpByteRun1) return datatypes.DTERROR_UNKNOWN_COMPRESSION;
 
-    const wanted = subclass.pictureBytes(header.width, header.height);
-    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
-        return datatypes.DTERROR_TOO_LARGE;
-    }
+    // The rows are read one at a time, so nothing but the picture is
+    // held while it is read.
+    const by = subclass.shrinkFor(sys, header.width, header.height, 0);
+    if (by == 0) return datatypes.DTERROR_TOO_LARGE;
 
     var palette: [max_colors]pic.ColorRegister = @splat(.{});
     var colors: u32 = 0;
@@ -166,7 +166,13 @@ fn readForm(base: *Base, cl: *Class, o: *Object, ip: *IFFParseBase, iff: *iffpar
     const colour: [*]u8 = @ptrCast(colour_memory);
 
     const alpha = depth >= 32 or transparent != null;
-    if (!subclass.setPicture(ib, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_LUT8)) {
+    var kept = header;
+    kept.width = @intCast(subclass.shrunk(width, by));
+    kept.height = @intCast(subclass.shrunk(height, by));
+    kept.page_width = @intCast(kept.width);
+    kept.page_height = @intCast(kept.height);
+    subclass.setSource(ib, cl, o, width, height, by);
+    if (!subclass.setPicture(ib, cl, o, &kept, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_LUT8)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
 
@@ -185,9 +191,13 @@ fn readForm(base: *Base, cl: *Class, o: *Object, ip: *IFFParseBase, iff: *iffpar
             @memcpy(row[0..want], body[at..][0..want]);
             at += want;
         }
+        // Every row is unpacked, because a packed one says how long it
+        // is only by being unpacked; only every `by`-th is kept.
+        if (y % by != 0) continue;
         planes.gather(row[0 .. rows_planes * stride], stride, depth, width, numbers[0..width]);
         planes.toRGBA(numbers[0..width], width, depth, mode, palette[0..colors], transparent, colour[0 .. width * 4]);
-        subclass.putRow(ib, cl, o, 0, y, width, colour);
+        const count = subclass.thinRow(colour, width, by);
+        subclass.putRow(ib, cl, o, 0, y / by, count, colour);
     }
     return 0;
 }

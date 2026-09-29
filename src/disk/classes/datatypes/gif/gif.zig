@@ -76,24 +76,28 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const picture = (decode.readFirst(file, screen) catch
         return datatypes.DTERROR_INVALID_DATA) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
 
-    const wanted = subclass.pictureBytes(screen.width, screen.height);
-    if (wanted == ~@as(usize, 0) or !subclass.roomFor(sys, wanted)) {
-        return datatypes.DTERROR_TOO_LARGE;
-    }
+    // The pixels are unpacked whole before they are read, one number
+    // each, so they are the floor under how small the picture can be.
+    const working: usize = @as(usize, screen.width) * screen.height;
+    const by = subclass.shrinkFor(sys, screen.width, screen.height, working);
+    if (by == 0) return datatypes.DTERROR_TOO_LARGE;
+    const kept_width = subclass.shrunk(screen.width, by);
+    const kept_height = subclass.shrunk(screen.height, by);
 
     // The picture is the screen, with the one frame placed on it.
     const header = pic.BitMapHeader{
-        .width = @intCast(screen.width),
-        .height = @intCast(screen.height),
+        .width = @intCast(kept_width),
+        .height = @intCast(kept_height),
         .depth = 8,
         .masking = if (picture.transparent != null) pic.mskHasAlpha else pic.mskNone,
         .transparent = if (picture.transparent) |index| index else 0,
         .x_aspect = 1,
         .y_aspect = 1,
-        .page_width = @intCast(screen.width),
-        .page_height = @intCast(screen.height),
+        .page_width = @intCast(kept_width),
+        .page_height = @intCast(kept_height),
     };
     const alpha = picture.transparent != null;
+    subclass.setSource(ib, cl, o, screen.width, screen.height, by);
     if (!subclass.setPicture(ib, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_LUT8)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
@@ -105,7 +109,7 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
 
     // What no picture covers: nothing where the file names a colour
     // that stands for nothing, and the background colour otherwise.
-    fillGround(ib, cl, o, screen, picture, colour);
+    fillGround(ib, cl, o, screen, picture, colour, by);
 
     const compressed_length = decode.blockBytes(file, picture.data_at) catch
         return datatypes.DTERROR_INVALID_DATA;
@@ -139,19 +143,22 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
 
     var n: u32 = 0;
     while (n < rows_read) : (n += 1) {
+        const top = picture.top + decode.rowOf(picture, n);
+        if (top % by != 0 or picture.left % by != 0) continue;
         const row = pixels + n * picture.width;
         var x: u32 = 0;
         while (x < picture.width) : (x += 1) {
             const colours = colourOf(picture.palette, row[x], picture.transparent);
             @memcpy((colour + x * 4)[0..4], &colours);
         }
-        subclass.putRow(ib, cl, o, picture.left, picture.top + decode.rowOf(picture, n), picture.width, colour);
+        const count = subclass.thinRow(colour, picture.width, by);
+        subclass.putRow(ib, cl, o, picture.left / by, top / by, count, colour);
     }
     return 0;
 }
 
 /// The screen filled in before the picture is placed on it.
-fn fillGround(ib: *IntuitionBase, cl: *Class, o: *Object, screen: decode.Screen, picture: decode.Picture, colour: [*]u8) void {
+fn fillGround(ib: *IntuitionBase, cl: *Class, o: *Object, screen: decode.Screen, picture: decode.Picture, colour: [*]u8, by: u32) void {
     // Where the picture covers the whole screen there is nothing to
     // fill, and a file that names a colour standing for nothing is
     // already clear: the picture's memory came zeroed.
@@ -159,10 +166,13 @@ fn fillGround(ib: *IntuitionBase, cl: *Class, o: *Object, screen: decode.Screen,
     if (picture.left == 0 and picture.top == 0 and
         picture.width >= screen.width and picture.height >= screen.height) return;
     const ground = colourOf(screen.palette, screen.background, null);
+    const wide = subclass.shrunk(screen.width, by);
     var x: u32 = 0;
-    while (x < screen.width) : (x += 1) @memcpy((colour + x * 4)[0..4], &ground);
+    while (x < wide) : (x += 1) @memcpy((colour + x * 4)[0..4], &ground);
     var y: u32 = 0;
-    while (y < screen.height) : (y += 1) subclass.putRow(ib, cl, o, 0, y, screen.width, colour);
+    while (y < subclass.shrunk(screen.height, by)) : (y += 1) {
+        subclass.putRow(ib, cl, o, 0, y, wide, colour);
+    }
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {

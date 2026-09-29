@@ -110,7 +110,15 @@ _ = dt.GetDTAttrsA(object, &.{
 const bmh: *pic.BitMapHeader = @ptrFromInt(header);
 ```
 
-and `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
+**A picture larger than the machine can hold is kept smaller** - half, a
+quarter or an eighth of each side - rather than refused, because a
+picture that can be looked at is worth more than one that cannot. The
+header then says the size that is kept, which is what everything that
+draws, scrolls, reads back or saves it works in; `PDTA_SourceWidth` and
+`PDTA_SourceHeight` say what the file held and `PDTA_ShrunkBy` by how
+much the two differ, so a program that must know can ask.
+
+`PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
 or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
 room it is given rather than its own, and `PDTM_SCALE` makes it another

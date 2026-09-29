@@ -118,6 +118,59 @@ pub fn pictureBytes(width: u32, height: u32) usize {
     return pixels * 4;
 }
 
+/// How much a picture of this size must be shrunk to fit: 1, 2, 4 or 8,
+/// and 0 when not even an eighth of each side will fit.
+///
+/// `working` is what the class holds beside the picture while it reads
+/// it - a JPEG's planes, a PNG's unpacked rows - which does not shrink
+/// with the picture and so sets the floor.
+pub fn shrinkFor(sys: *ExecBase, width: u32, height: u32, working: usize) u32 {
+    var by: u32 = 1;
+    while (by <= 8) : (by *= 2) {
+        const bytes = pictureBytes(shrunk(width, by), shrunk(height, by));
+        if (bytes == ~@as(usize, 0)) continue;
+        if (roomFor(sys, bytes + working)) return by;
+    }
+    return 0;
+}
+
+/// A length shrunk by `by`, never to nothing.
+pub fn shrunk(value: u32, by: u32) u32 {
+    return @max(value / by, 1);
+}
+
+/// Every `by`-th pixel of a row of colour, moved down to the front of
+/// it. How many are left.
+///
+/// The nearest pixel is taken rather than the average of the ones
+/// between: a picture shrunk to be looked at is shrunk again by the
+/// drawing when the window is smaller still, and two smoothings of a
+/// photograph cost more than they give.
+pub fn thinRow(rgba: [*]u8, count: u32, by: u32) u32 {
+    if (by <= 1) return count;
+    var out: u32 = 0;
+    var x: u32 = 0;
+    while (x < count) : (x += by) {
+        // The first pixel is already where it belongs, and a copy onto
+        // itself is two names for one block of memory.
+        if (out != x) @memcpy((rgba + out * 4)[0..4], (rgba + x * 4)[0..4]);
+        out += 1;
+    }
+    return out;
+}
+
+/// What the file said the picture was, told to picture.datatype beside
+/// the size that is being kept.
+pub fn setSource(ib: *IntuitionBase, cl: *Class, o: *Object, width: u32, height: u32, by: u32) void {
+    const tags = [_]TagItem{
+        .{ .tag = pictureclass.PDTA_SourceWidth, .data = width },
+        .{ .tag = pictureclass.PDTA_SourceHeight, .data = height },
+        .{ .tag = pictureclass.PDTA_ShrunkBy, .data = by },
+        .{},
+    };
+    superTell(ib, cl, o, &tags);
+}
+
 /// The picture's shape told to picture.datatype, which is what gives the
 /// object its size and the memory to hold the pixels. False when there
 /// was no memory for it.

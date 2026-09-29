@@ -282,7 +282,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var title_storage: usize = 0;
     _ = ib.GetAttr(dtc.DTA_Title, object, &title_storage);
-    const title: [*:0]const u8 = if (title_storage != 0) @ptrFromInt(title_storage) else shown_name;
+    const named: [*:0]const u8 = if (title_storage != 0) @ptrFromInt(title_storage) else shown_name;
+    // A picture too large to hold whole is kept smaller, and the title
+    // says so: a picture silently shown at half its size would have a
+    // person measuring the wrong thing.
+    var titled: [320]u8 = @splat(0);
+    const title = withShrink(ib, object, named, &titled);
 
     const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
@@ -363,6 +368,27 @@ fn faultText(dl: *DosBase, into: *[128]u8) [*:0]const u8 {
         },
     };
     return said;
+}
+
+/// The name, and after it how much the picture was shrunk to fit, when
+/// it was. The name alone for anything else.
+fn withShrink(ib: *IntuitionBase, object: *Object, name: [*:0]const u8, into: *[320]u8) [*:0]const u8 {
+    var by: usize = 1;
+    if (ib.GetAttr(pic.PDTA_ShrunkBy, object, &by) == 0 or by <= 1) return name;
+    var at: usize = 0;
+    while (name[at] != 0 and at + 24 < into.len) : (at += 1) into[at] = name[at];
+    const said = switch (by) {
+        2 => " (half size)",
+        4 => " (quarter size)",
+        8 => " (eighth size)",
+        else => " (smaller)",
+    };
+    for (said) |byte| {
+        into[at] = byte;
+        at += 1;
+    }
+    into[at] = 0;
+    return @ptrCast(into);
 }
 
 /// The number as a string, for the clipboard unit a name stands for.

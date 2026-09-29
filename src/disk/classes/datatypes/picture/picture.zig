@@ -87,6 +87,12 @@ pub const Data = extern struct {
     /// Drawn to fill the room it is given rather than at its own size.
     scale: u8 = 0,
     pad: [3]u8 = @splat(0),
+    /// What the file said the picture was, and how much smaller than
+    /// that it is kept. The same as the header's size, and 1, for a
+    /// picture that fitted.
+    source_width: u32 = 0,
+    source_height: u32 = 0,
+    shrunk_by: u32 = 1,
 };
 
 /// The surface format a kept picture is: a 0xAARRGGBB word stored to
@@ -209,6 +215,9 @@ fn setAttrs(base: *Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
             pic.PDTA_SourceMode => own.source_mode = @truncate(item.data),
             pic.PDTA_Screen => own.screen = @ptrFromInt(item.data),
             pic.PDTA_Scale => own.scale = @intFromBool(item.data != 0),
+            pic.PDTA_SourceWidth => own.source_width = @truncate(item.data),
+            pic.PDTA_SourceHeight => own.source_height = @truncate(item.data),
+            pic.PDTA_ShrunkBy => own.shrunk_by = @max(@as(u32, @truncate(item.data)), 1),
             pic.PDTA_Grab => {
                 const point: ?*const graphics.Point = @ptrFromInt(item.data);
                 if (point) |it| own.grab = it.*;
@@ -217,6 +226,12 @@ fn setAttrs(base: *Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
         }
     }
     _ = new;
+    // A picture that was not shrunk was read at the size the file said,
+    // so that is what it came from.
+    if (resized and own.source_width == 0) {
+        own.source_width = own.bmh.width;
+        own.source_height = own.bmh.height;
+    }
     if (colors != null or color_count != own.num_colors) {
         takePalette(base, own, colors orelse own.palette, color_count);
     }
@@ -234,6 +249,9 @@ fn getAttr(own: *Data, attr: utility.Tag, storage: *usize) bool {
         pic.PDTA_Grab => @intFromPtr(&own.grab),
         pic.PDTA_Pixels => @intFromPtr(own.pens),
         pic.PDTA_BytesPerRow => own.bytes_per_row,
+        pic.PDTA_SourceWidth => if (own.source_width != 0) own.source_width else own.bmh.width,
+        pic.PDTA_SourceHeight => if (own.source_height != 0) own.source_height else own.bmh.height,
+        pic.PDTA_ShrunkBy => own.shrunk_by,
         else => return false,
     };
     return true;
