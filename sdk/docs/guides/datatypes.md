@@ -92,15 +92,46 @@ knowing it is a sound.
 contents, `DTM_TRIGGER` starts and stops. They go through `DoDTMethodA`,
 which tells the object which window it is in.
 
+## Pictures
+
+Every still picture is a `picture.datatype` object, whatever file it
+came out of. The class keeps the picture as pens - one `graphics.Pen` a
+pixel - and draws, scrolls, scales and writes it out; the format's class
+does nothing but read the file and hand the rows over.
+
+A program reads what it has:
+
+```zig
+var header: usize = 0;
+_ = dt.GetDTAttrsA(object, &.{
+    .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) },
+    .{},
+});
+const bmh: *pic.BitMapHeader = @ptrFromInt(header);
+```
+
+and `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
+shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
+or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
+room it is given rather than its own, and `PDTM_SCALE` makes it another
+size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
+
 ## Writing a class
 
 A format is a class library in `SYS:classes/datatypes/`, a subclass of
-`datatypesclass`, and a descriptor beside it. The class reads the source
+`datatypesclass` or of the superclass of its group - `picture.datatype`
+for anything in `pict` - and a descriptor beside it. The class reads the source
 it is given in `OM_NEW` - `DTA_Handle` is a lock for a file, an open IFF
 handle for the clipboard - fills in the numbers above, and answers
 `DTM_ASYNCLAYOUT` to lay itself out and `GM_RENDER` to draw. The layout
 is asked for on a process of its own, so it may take as long as it
 takes.
+
+A picture class has less to do than that: it sets
+`PDTA_BitMapHeader` on itself, which is what gives the object its size
+and its memory, and then hands each row over with
+`PDTM_WRITEPIXELARRAY`. Drawing, scrolling and scaling are the
+superclass's, so a format class holds no pixels and has no `GM_RENDER`.
 
 A format whose files cannot be told apart by name, mask or form type
 says `RECOGNISE` in its descriptor and exports one function at the first

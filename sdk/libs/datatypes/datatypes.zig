@@ -216,3 +216,5 @@ pub const DTERROR_INVALID_DATA: i32 = 2008;
 
 /// The class's attributes, methods and messages.
 pub const datatypesclass = @import("datatypesclass.zig");
+/// picture.datatype's, which every still picture is one of.
+pub const pictureclass = @import("pictureclass.zig");

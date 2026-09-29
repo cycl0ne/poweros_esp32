@@ -272,6 +272,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             var changed = ib.SendSuperMessage(cl, o, msg);
             if (setAttrs(db, own, set.attr_list, false)) changed = 1;
+            // An update comes from something the object follows - the
+            // scroller beside it, moving as it is dragged - and nothing
+            // else will draw the answer to it. A set comes from the
+            // program, which draws when it is ready.
+            if (changed != 0 and msg.method_id == classusr.OM_UPDATE and set.gadget_info != null) {
+                sdk.gadgets.support.redraw(ib, o.?, set.gadget_info);
+            }
             return changed;
         },
         classusr.OM_GET => {

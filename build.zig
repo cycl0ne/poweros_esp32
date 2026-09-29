@@ -43,9 +43,11 @@ const image_dirs = [_][]const u8{
     "s",
     "libs",
     // The classes, opened through LIBS: (the startup-sequence adds this
-    // directory to it): gadgets/ for the gadget classes.
+    // directory to it): gadgets/ for the gadget classes, datatypes/ for
+    // the classes that read a file's contents.
     "classes",
     "classes/gadgets",
+    "classes/datatypes",
     "devs",
     // The network drivers, opened as networks/<name>.device, and the
     // interfaces C:net/AddNetInterface brings up.

@@ -77,8 +77,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   unit is a clip, kept as a file in `CLIPS:`.
   `LIBS:datatypes.library` opens a file by what is in it: the kinds the
   system knows are text descriptors in `DEVS:DataTypes`, and a program
-  gets an object it can put in a window without knowing the format. See
-  the [datatypes guide](sdk/docs/guides/datatypes.md).
+  gets an object it can put in a window without knowing the format. The
+  classes that read the formats are in `SYS:classes/datatypes/`: every
+  still picture is a `picture.datatype` object, kept as pens and drawn,
+  scrolled, scaled and written out by that class whatever file it came
+  out of. See the [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
   is, laid over what is there by its own coverage, or at another size - layers.library for overlapping windows, and
