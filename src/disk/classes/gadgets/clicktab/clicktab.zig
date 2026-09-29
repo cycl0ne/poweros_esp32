@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: MIT
 //! clicktab.gadget: a row of tabs, one of them the one in front.
 //!
-//! Each tab is a frameiclass button frame with its label in it. The tab
-//! in front is drawn raised and over the whole height of the row; the
-//! rest are drawn pressed and a little lower, so that the row reads as
-//! one card in front of the others.
+//! The row is drawn as a strip of cards rather than a row of buttons. A
+//! line runs along the bottom of the whole row and is broken under the
+//! tab that is in front, so that tab opens into what is below it; the
+//! rest sit a little lower, on the line, in a slightly darker ground
+//! and a slightly dimmer ink. The one in front carries a bar of the
+//! screen's fill colour along its top, which is what the eye finds
+//! first.
+//!
+//! The pens are mixed for the shades (`support.mixPens`): a pen here is
+//! a colour and not an index, so the row shades the screen's own
+//! background and text rather than asking for colours the screen may
+//! not have.
 //!
 //! The tabs are laid out from the left, each as wide as its label needs.
 //! When they do not all fit, the row starts at `CLICKTAB_FirstShown` and
@@ -56,7 +64,13 @@ const ARROW_FORWARD: u32 = 0xFFFF_FFFD;
 /// Room either side of a tab's label.
 const tab_margin = 10;
 /// How far the tabs that are not in front sit below the row's top.
-const tab_lift = 2;
+const tab_lift = 3;
+/// How thick the bar along the top of the tab in front is.
+const accent_height = 3;
+/// Sixteenths of the background left in the ground of a tab that is not
+/// in front, and of the text pen left in its ink.
+const idle_ground_mix = 13;
+const idle_ink_mix = 10;
 /// How few tabs may be shown before the arrows are no use.
 const least_shown = 1;
 
@@ -225,6 +239,52 @@ fn hitAt(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classusr
 
 // --- drawing ----------------------------------------------------------------
 
+/// One tab: its ground, its edges and its label. The tab in front is the
+/// full height of the row and its bottom edge is not drawn, so it opens
+/// into what is below; the rest sit `tab_lift` lower and end on the
+/// row's line.
+fn drawTab(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo, at: gc.Box, which: u32, line: i32, baseline: i32) void {
+    const gb = base.graphics_base;
+    const pens = dri.pens;
+    const front = which == own.current;
+    const held = own.pressed == which and own.over != 0;
+    const edge = support.mixPens(pens[sc.SHADOWPEN], pens[sc.BACKGROUNDPEN], 9);
+    var ground = if (front) pens[sc.BACKGROUNDPEN] else support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], idle_ground_mix);
+    if (held) ground = support.mixPens(ground, pens[sc.SHINEPEN], 12);
+    const ink = if (front) pens[sc.TEXTPEN] else support.mixPens(pens[sc.TEXTPEN], pens[sc.BACKGROUNDPEN], idle_ink_mix);
+
+    support.fill(gb, rp, at, ground);
+    support.setPen(gb, rp, edge);
+    gb.DrawVLine(rp, at.left, at.top, at.height);
+    gb.DrawVLine(rp, at.left + at.width - 1, at.top, at.height);
+    if (front) {
+        // The bar along the top, drawn over the edges rather than under
+        // them: it is what the eye is meant to find first.
+        support.fill(gb, rp, .{ .left = at.left, .top = at.top, .width = at.width, .height = accent_height }, pens[sc.FILLPEN]);
+    } else {
+        gb.DrawHLine(rp, at.left, at.top, at.width);
+    }
+
+    const text = labelAt(own, which) orelse return;
+    var count = support.textLen(text);
+    const room = at.width - 4;
+    if (gb.TextLength(rp, text, count) > room) {
+        var extent: graphics.TextExtent = .{};
+        count = gb.TextFit(rp, text, count, &extent, null, 1, @max(room, 0), 0);
+    }
+    const width = gb.TextLength(rp, text, count);
+    const left = at.left + @divTrunc(at.width - width, 2);
+    const top = at.top + @divTrunc(at.height - line, 2);
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = ink },
+        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+        .{},
+    };
+    gb.SetRPAttrs(rp, &tags);
+    gb.Move(rp, left, top + baseline);
+    gb.Text(rp, text, count);
+}
+
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const info = r.gadget_info orelse return;
     const ib = base.intuition_base;
@@ -238,6 +298,12 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     defer saved.restore(gb, rp);
     support.fill(gb, rp, b, pens[sc.BACKGROUNDPEN]);
 
+    // The line along the bottom of the whole row. Every tab is drawn
+    // over it, and the one in front covers its part of it.
+    const edge = support.mixPens(pens[sc.SHADOWPEN], pens[sc.BACKGROUNDPEN], 9);
+    support.setPen(gb, rp, edge);
+    gb.DrawHLine(rp, b.left, b.top + b.height - 1, b.width);
+
     const arrows = arrowsFor(base, own, g, info, b.width);
     var tabs = Tabs.of(base, own, g, info, b.width - 2 * arrows);
     defer tabs.done(ib);
@@ -249,28 +315,46 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         .{},
     };
     gb.GetRPAttrs(rp, &ask);
+    // The tab in front last, so that it stands over its neighbours'
+    // edges as a card in front of them would.
+    var front_at: ?gc.Box = null;
     while (tabs.next(ib)) |tab| {
         const front = tab.which == own.current;
-        const held = own.pressed == tab.which and own.over != 0;
         const lift: i32 = if (front) 0 else tab_lift;
-        const at = gc.Box{ .left = b.left + tab.left, .top = b.top + lift, .width = tab.width, .height = b.height - lift };
-        if (own.frame) |frame| {
-            support.drawFrame(ib, frame, rp, at, if (front and !held) ic.IDS_NORMAL else ic.IDS_SELECTED, info.draw_info);
+        const at = gc.Box{
+            .left = b.left + tab.left,
+            .top = b.top + lift,
+            .width = tab.width,
+            .height = b.height - lift - (if (front) @as(i32, 0) else 1),
+        };
+        if (front) {
+            front_at = at;
+        } else {
+            drawTab(base, own, rp, info.draw_info, at, tab.which, @intCast(line), @intCast(baseline));
         }
-        const text = labelAt(own, tab.which) orelse continue;
-        const width = gb.TextLength(rp, text, support.textLen(text));
-        const left = at.left + @divTrunc(at.width - width, 2);
-        const top = at.top + @divTrunc(at.height - @as(i32, @intCast(line)), 2);
-        support.drawText(gb, rp, left, top, text, pens[sc.TEXTPEN]);
     }
+    if (front_at) |at| drawTab(base, own, rp, info.draw_info, at, own.current, @intCast(line), @intCast(baseline));
+
     if (arrows != 0) {
         const at = b.left + b.width - 2 * arrows;
+        const ground = support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], idle_ground_mix);
         for ([_]u32{ ARROW_BACK, ARROW_FORWARD }, 0..) |which, i| {
-            support.drawArrow(ib, gb, own.frame, rp, info.draw_info, .{
-                .at = .{ .left = at + @as(i32, @intCast(i)) * arrows, .top = b.top + tab_lift, .width = arrows, .height = b.height - tab_lift },
+            const box = gc.Box{
+                .left = at + @as(i32, @intCast(i)) * arrows,
+                .top = b.top + tab_lift,
+                .width = arrows,
+                .height = b.height - tab_lift - 1,
+            };
+            const held = own.pressed == which and own.over != 0;
+            support.fill(gb, rp, box, if (held) support.mixPens(ground, pens[sc.SHINEPEN], 12) else ground);
+            support.setPen(gb, rp, edge);
+            gb.DrawVLine(rp, box.left, box.top, box.height);
+            gb.DrawHLine(rp, box.left, box.top, box.width);
+            support.setPen(gb, rp, pens[sc.TEXTPEN]);
+            support.drawArrow(ib, gb, null, rp, info.draw_info, .{
+                .at = box,
                 .vertical = false,
                 .forward = which == ARROW_FORWARD,
-                .pressed = own.pressed == which and own.over != 0,
             });
         }
     }

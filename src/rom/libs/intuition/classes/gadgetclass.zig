@@ -201,16 +201,38 @@ pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, fo
 pub const Measure = struct {
     font: ?*graphics.TextFont,
     opened: bool,
+    /// The screen the font was borrowed from, let go of with it.
+    screen: ?*intuition.Screen = null,
+    draw_info: ?*intuition.DrawInfo = null,
 
     pub fn done(m: Measure, ib: *IntuitionBase) void {
         if (m.opened) ib.graphics_base.CloseFont(m.font.?);
+        const screen = m.screen orelse return;
+        ib.iface().FreeScreenDrawInfo(screen, m.draw_info);
+        ib.iface().UnlockPubScreen(null, screen);
     }
 };
 
+/// The font a gadget is measured in: its window's, when it is asked in
+/// one; else the one its `GA_DrawInfo` names; else the default public
+/// screen's, which is where a window made without saying opens.
+///
+/// That last one matters more than it looks. A layout is measured once
+/// before its window exists - that is how the window learns what size to
+/// be - and again inside it. Measured in a font the window will not use,
+/// the two answers differ, and the window is opened to fit a size it
+/// then does not need.
 pub fn measureFont(ib: *IntuitionBase, g: *const Data, gi: ?*classusr.GadgetInfo) Measure {
     if (gi) |info| if (info.draw_info.font) |font| return .{ .font = font, .opened = false };
     if (g.draw_info) |dri| if (dri.font) |font| return .{ .font = font, .opened = false };
-    const font = ib.iface().OpenSystemFont(intuition.screens.SYSFONT_DEFAULT);
+    const it = ib.iface();
+    if (it.LockPubScreen(null)) |screen| {
+        const dri = it.GetScreenDrawInfo(screen);
+        if (dri.font) |font| return .{ .font = font, .opened = false, .screen = screen, .draw_info = dri };
+        it.FreeScreenDrawInfo(screen, dri);
+        it.UnlockPubScreen(null, screen);
+    }
+    const font = it.OpenSystemFont(intuition.screens.SYSFONT_DEFAULT);
     return .{ .font = font, .opened = font != null };
 }
 

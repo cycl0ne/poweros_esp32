@@ -15,7 +15,10 @@
 //! The panel goes under the button, or over it when there is more room
 //! there, and is cut to the screen: a list too long for the room shows as
 //! many labels as fit and scrolls while the pointer is held past its top
-//! or bottom, a line for each timer event the active gadget is sent.
+//! or bottom, a line for each timer event the active gadget is sent. It
+//! then has a bar down its right side as well - how far down the knob
+//! sits and how long it is say where in the list the panel is looking -
+//! and dragging in the bar moves it.
 //!
 //! **Two ways to pick.** Pressed and dragged, the label the pointer is
 //! over when the button is let go is the one taken. Pressed and let go
@@ -68,6 +71,9 @@ const scroll_delay = 2;
 const text_margin = 6;
 /// How wide the mark's box is beside the button's text.
 const mark_width = 12;
+/// How wide the bar down the panel's right side is, when the list is
+/// longer than the panel shows.
+const bar_width = 10;
 
 /// chooser.gadget's part of an object.
 pub const Data = extern struct {
@@ -248,13 +254,42 @@ fn screenBox(base: *gadgets.Base, o: *Object, info: *classusr.GadgetInfo) gc.Box
     };
 }
 
+/// How wide the bar is; 0 when every label is shown.
+fn barOf(own: *const Data) i32 {
+    return if (own.count > own.visible) bar_width else 0;
+}
+
+/// Where the labels are drawn, in the panel's own coordinates.
+fn linesIn(own: *const Data) gc.Box {
+    return .{
+        .left = own.inset.left,
+        .top = own.inset.top,
+        .width = own.panel.width - own.inset.width - barOf(own),
+        .height = @as(i32, @intCast(own.visible)) * own.line_height,
+    };
+}
+
+/// Where the bar is, in the panel's own coordinates; no width when there
+/// is none.
+fn barIn(own: *const Data) gc.Box {
+    const width = barOf(own);
+    const lines = linesIn(own);
+    return .{
+        .left = lines.left + lines.width,
+        .top = lines.top,
+        .width = width,
+        .height = lines.height,
+    };
+}
+
 /// The label a point on the screen is over, `NONE` for none.
 fn lineAt(own: *const Data, x: i32, y: i32) u32 {
+    const at = linesIn(own);
     const lines = gc.Box{
-        .left = own.panel.left + own.inset.left,
-        .top = own.panel.top + own.inset.top,
-        .width = own.panel.width - own.inset.width,
-        .height = own.panel.height - own.inset.height,
+        .left = own.panel.left + at.left,
+        .top = own.panel.top + at.top,
+        .width = at.width,
+        .height = at.height,
     };
     if (!support.inside(x - lines.left, y - lines.top, lines.width, lines.height)) return NONE;
     const row: u32 = @intCast(@divTrunc(y - lines.top, own.line_height));
@@ -276,10 +311,11 @@ fn paintLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri:
     const gb = base.graphics_base;
     const pens = dri.pens;
     const row: i32 = @intCast(which - own.first);
+    const lines = linesIn(own);
     const at = gc.Box{
-        .left = own.inset.left,
-        .top = own.inset.top + row * own.line_height,
-        .width = own.panel.width - own.inset.width,
+        .left = lines.left,
+        .top = lines.top + row * own.line_height,
+        .width = lines.width,
         .height = own.line_height,
     };
     const picked = which == own.hot;
@@ -325,6 +361,57 @@ fn paintPanel(base: *gadgets.Base, own: *const Data, info: *classusr.GadgetInfo)
     while (which < own.first + own.visible and which < own.count) : (which += 1) {
         paintLine(base, own, rp, info.draw_info, which);
     }
+    paintBar(base, own, rp, info.draw_info);
+}
+
+/// The bar down the panel's right side: a sunk track with a knob as long
+/// a part of it as is shown, as far down it as the panel has come.
+fn paintBar(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo) void {
+    const at = barIn(own);
+    if (at.width == 0 or own.count == 0) return;
+    const gb = base.graphics_base;
+    const pens = dri.pens;
+    support.fill(gb, rp, at, support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], 13));
+    // The knob: never shorter than it can be seen and taken hold of.
+    const shown: i64 = @intCast(own.visible);
+    const whole: i64 = @intCast(own.count);
+    var knob: i32 = @intCast(@divTrunc(shown * at.height, whole));
+    knob = @max(knob, @min(@as(i32, 8), at.height));
+    const travel = at.height - knob;
+    const last: i64 = whole - shown;
+    const down: i32 = if (last > 0) @intCast(@divTrunc(@as(i64, own.first) * travel, last)) else 0;
+    const box = gc.Box{ .left = at.left + 1, .top = at.top + down, .width = at.width - 2, .height = knob };
+    support.fill(gb, rp, box, pens[sc.BACKGROUNDPEN]);
+    support.setPen(gb, rp, pens[sc.SHINEPEN]);
+    gb.DrawHLine(rp, box.left, box.top, box.width);
+    gb.DrawVLine(rp, box.left, box.top, box.height);
+    support.setPen(gb, rp, pens[sc.SHADOWPEN]);
+    gb.DrawHLine(rp, box.left, box.top + box.height - 1, box.width);
+    gb.DrawVLine(rp, box.left + box.width - 1, box.top, box.height);
+}
+
+/// The panel moved so that what the pointer points at in the bar is the
+/// middle of what is shown. True when it moved.
+fn dragBar(own: *Data, y: i32) bool {
+    if (own.count <= own.visible) return false;
+    const at = barIn(own);
+    if (at.height <= 0) return false;
+    const in = @max(@min(y - (own.panel.top + at.top), at.height - 1), 0);
+    const whole: i64 = @intCast(own.count);
+    const shown: i64 = @intCast(own.visible);
+    var first: i64 = @divTrunc(@as(i64, in) * whole, at.height) - @divTrunc(shown, 2);
+    first = @max(@min(first, whole - shown), 0);
+    const wanted: u32 = @intCast(first);
+    if (wanted == own.first) return false;
+    own.first = wanted;
+    return true;
+}
+
+/// Whether a point on the screen is in the bar.
+fn inBar(own: *const Data, x: i32, y: i32) bool {
+    const at = barIn(own);
+    if (at.width == 0) return false;
+    return support.inside(x - (own.panel.left + at.left), y - (own.panel.top + at.top), at.width, at.height);
 }
 
 /// The panel opened under the button, or over it when there is more room
@@ -355,7 +442,11 @@ fn openPanel(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.Gadget
     const screen_h: i32 = @intCast(screen_height);
 
     const at = screenBox(base, o, info);
-    const width = @min(@max(at.width, widest + 2 * text_margin + own.inset.width), screen_w);
+    // Whether the bar is needed is not known until it is known how many
+    // labels fit, so the room for it is kept whenever there is a list to
+    // scroll at all.
+    const room_for_bar: i32 = if (own.count > 1) bar_width else 0;
+    const width = @min(@max(at.width, widest + 2 * text_margin + own.inset.width + room_for_bar), screen_w);
     // As many labels as there is room for, under the button or over it,
     // whichever has more.
     const below = screen_h - (at.top + at.height);
@@ -565,6 +656,18 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     scroll(base, own, info, y);
                     hover(base, own, info, x, y);
                 }
+                return gc.GMR_MEACTIVE;
+            }
+            // The bar is dragged, not picked from.
+            if (inBar(own, x, y)) {
+                var drawn = false;
+                if (own.hot != NONE) {
+                    own.hot = NONE;
+                    drawn = true;
+                }
+                if (dragBar(own, y)) drawn = true;
+                if (drawn) paintPanel(base, own, info);
+                if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX and own.sticky == 0) own.sticky = 1;
                 return gc.GMR_MEACTIVE;
             }
             hover(base, own, info, x, y);

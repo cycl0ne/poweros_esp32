@@ -320,13 +320,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
-    _ = ib.SendMessage(shown.layout, @ptrCast(&nominal));
+    // No size of its own: the window opens at the size its layout looks
+    // right at, measured with the screen and font it will really be
+    // drawn in. A size worked out before the window exists is measured
+    // against nothing and comes out too small, and a layout given less
+    // room than it needs draws where the window's border is.
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Settings") },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
-        .{ .tag = wn.WA_InnerWidth, .data = @intCast(nominal.domain.width + 40) },
-        .{ .tag = wn.WA_InnerHeight, .data = @intCast(nominal.domain.height + 8) },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
         .{ .tag = wn.WA_DragBar, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },

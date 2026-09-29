@@ -67,14 +67,23 @@ fn takeMember(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data) void {
     const ib = base.intuition_base;
     const wanted = pageAt(own, own.current);
     if (own.member == wanted) return;
+    // A group grows round a member as it joins, and moves it by its own
+    // corner. A page gadget is the size its pages need and no other, and
+    // its box is the layout's to set, so the box it had is put back.
+    const g = gc.gadget(o);
+    const was_width = g.width;
+    const was_height = g.height;
     if (own.member) |old| {
         var off = classusr.OpMember{ .method_id = classusr.OM_REMMEMBER, .object = old };
         _ = ib.SendSuperMessage(cl, o, @ptrCast(&off));
     }
     own.member = null;
-    const page = wanted orelse return;
-    var on = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = page };
-    if (ib.SendSuperMessage(cl, o, @ptrCast(&on)) != 0) own.member = page;
+    if (wanted) |page| {
+        var on = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = page };
+        if (ib.SendSuperMessage(cl, o, @ptrCast(&on)) != 0) own.member = page;
+    }
+    g.width = was_width;
+    g.height = was_height;
 }
 
 /// The attributes among `tags`: whether the page shown changed.

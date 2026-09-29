@@ -60,6 +60,24 @@ pub fn fill(gb: *GraphicsBase, rp: *graphics.RastPort, box: gc.Box, pen: Pen) vo
     });
 }
 
+/// `weight` sixteenths of `a` and the rest of `b`, channel by channel.
+///
+/// A pen here is a colour and not an index into anything, so a class can
+/// shade one - a tab that is not the one in front, a track under a knob
+/// - without asking the screen for a pen it has not got.
+pub fn mixPens(a: Pen, b: Pen, weight: u32) Pen {
+    const of = @min(weight, 16);
+    var mixed: Pen = 0;
+    var shift: u5 = 0;
+    while (true) : (shift += 8) {
+        const from: u32 = (a >> shift) & 0xFF;
+        const to: u32 = (b >> shift) & 0xFF;
+        mixed |= ((from * of + to * (16 - of)) / 16) << shift;
+        if (shift == 24) break;
+    }
+    return mixed;
+}
+
 pub fn setPen(gb: *GraphicsBase, rp: *graphics.RastPort, pen: Pen) void {
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = pen }, .{} };
     gb.SetRPAttrs(rp, &tags);
