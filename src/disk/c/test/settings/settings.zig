@@ -43,6 +43,8 @@ const pgc = sdk.gadgets.page;
 const ig = sdk.gadgets.integer;
 const ch = sdk.gadgets.chooser;
 const fgg = sdk.gadgets.fuelgauge;
+const gfi = sdk.gadgets.getfile;
+const gfo = sdk.gadgets.getfont;
 const tx = sdk.gadgets.text;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -64,6 +66,7 @@ const MSG_NOMEMORY = "No memory for the gadgets\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_HELLO = "Press the tabs and the gadgets. The close gadget or Ctrl-C end it\n";
 const MSG_GADGET = "Gadget %lu (%s): code %ld\n";
+const MSG_PICKED = "%s: %s\n";
 
 const ID_TABS = 1;
 const ID_PORT = 2;
@@ -71,6 +74,8 @@ const ID_KEYMAP = 3;
 const ID_VOLUME = 4;
 const ID_STEP = 5;
 const ID_RESET = 6;
+const ID_FILE = 7;
+const ID_FONT = 8;
 
 /// How much a press on Step moves the gauge on, in hundredths.
 const step_by = 10;
@@ -83,11 +88,13 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_VOLUME => "Volume",
         ID_STEP => "Step",
         ID_RESET => "Reset",
+        ID_FILE => "File",
+        ID_FONT => "Font",
         else => "?",
     };
 }
 
-const tab_names = [_:null]?[*:0]const u8{ "General", "Copy", "About" };
+const tab_names = [_:null]?[*:0]const u8{ "General", "Copy", "Files", "About" };
 const keymaps = [_:null]?[*:0]const u8{ "deutsch", "usa", "usa2", "france", "italia", "espana", "sverige", "norsk" };
 
 /// What the tabs say and what the page shows, kept in step by the
@@ -109,6 +116,8 @@ const Shown = struct {
     layout: *Object,
     tabs: *Object,
     gauge: *Object,
+    file: *Object,
+    font: *Object,
 };
 
 /// A layout in a frame with `title` in its top edge, holding `tags` -
@@ -172,7 +181,26 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         .{ .tag = tx.TEXT_Clipped, .data = 1 },
         .{},
     });
-    const parts = [_]?*Object{ port, keymap, volume, gauge, step, reset, about };
+    // The two fields that open a requester: one for a file, one for a
+    // font. Their target is the window, so the program hears what was
+    // picked as an IDCMP message without asking.
+    const file = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_FILE },
+        .{ .tag = gfi.GETFILE_TitleText, .data = @intFromPtr("Which file?") },
+        .{ .tag = gfi.GETFILE_Drawer, .data = @intFromPtr("SYS:") },
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+        .{},
+    });
+    const font = ib.NewObjectTagList(null, gfo.GETFONT_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_FONT },
+        .{ .tag = gfo.GETFONT_TitleText, .data = @intFromPtr("Which font?") },
+        .{ .tag = gfo.GETFONT_Name, .data = @intFromPtr("pospaz.font") },
+        .{ .tag = gfo.GETFONT_Size, .data = 8 },
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+        .{},
+    });
+
+    const parts = [_]?*Object{ port, keymap, volume, gauge, step, reset, about, file, font };
     for (parts) |part| if (part == null) {
         for (parts) |made| ib.DisposeObject(made);
         return null;
@@ -215,13 +243,23 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
     }) else null;
 
+    const files_page = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(file) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(font) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{},
+    });
+
     const about_page = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(about) },
         .{},
     });
 
-    const made_pages = [_]?*Object{ general, copy, about_page };
+    const made_pages = [_]?*Object{ general, copy, files_page, about_page };
     for (made_pages) |made| if (made == null) {
         // What is not in a layout yet is this program's to free.
         if (general == null) {
@@ -229,7 +267,7 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
             ib.DisposeObject(sound);
         }
         if (copy == null) ib.DisposeObject(buttons);
-        for ([_]?*Object{ general, copy, about_page }) |built| ib.DisposeObject(built);
+        for ([_]?*Object{ general, copy, files_page, about_page }) |built| ib.DisposeObject(built);
         return null;
     };
 
@@ -237,7 +275,8 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
     // the tabs' names are.
     pages[0] = general;
     pages[1] = copy;
-    pages[2] = about_page;
+    pages[2] = files_page;
+    pages[3] = about_page;
     const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
         .{ .tag = pgc.PAGE_Pages, .data = @intFromPtr(&pages) },
         .{ .tag = pgc.PAGE_Current, .data = first_tab },
@@ -266,7 +305,7 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         if (book == null) for (made_pages) |built| ib.DisposeObject(built);
         return null;
     };
-    return .{ .layout = whole, .tabs = tabs.?, .gauge = gauge.? };
+    return .{ .layout = whole, .tabs = tabs.?, .gauge = gauge.?, .file = file.?, .font = font.? };
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -298,8 +337,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The class libraries, open for as long as their objects are there:
     // the window object is disposed of before they are closed.
     const wanted = [_][*:0]const u8{
-        ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,  ig.INTEGER_LIBRARY,
-        ch.CHOOSER_LIBRARY,  fgg.GAUGE_LIBRARY, tx.TEXT_LIBRARY,
+        ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,    ig.INTEGER_LIBRARY,
+        ch.CHOOSER_LIBRARY,  fgg.GAUGE_LIBRARY,   tx.TEXT_LIBRARY,
+        gfi.GETFILE_LIBRARY, gfo.GETFONT_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
@@ -333,6 +373,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(shown.layout) },
         .{},
     }) orelse {
@@ -375,6 +416,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             .{ .tag = fgg.GAUGE_Level, .data = @bitCast(@as(isize, level)) },
                             .{},
                         });
+                    }
+                },
+                // A field that opened a requester tells its window what
+                // was picked, rather than being asked afterwards.
+                wc.WMHI_IDCMPUPDATE => {
+                    var storage: usize = 0;
+                    if (ib.GetAttr(gfi.GETFILE_FullFile, shown.file, &storage) != 0 and storage != 0) {
+                        _ = Printf(dl, MSG_PICKED, .{ nameOf(ID_FILE), @as([*:0]const u8, @ptrFromInt(storage)) });
+                    }
+                    if (ib.GetAttr(gfo.GETFONT_Name, shown.font, &storage) != 0 and storage != 0) {
+                        _ = Printf(dl, MSG_PICKED, .{ nameOf(ID_FONT), @as([*:0]const u8, @ptrFromInt(storage)) });
                     }
                 },
                 else => {},

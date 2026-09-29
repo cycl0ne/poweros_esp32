@@ -52,3 +52,7 @@ pub const integer = @import("integer.zig");
 pub const chooser = @import("chooser.zig");
 pub const clicktab = @import("clicktab.zig");
 pub const page = @import("page.zig");
+/// What getfile.gadget and getfont.gadget both are.
+pub const getclass = @import("getclass.zig");
+pub const getfile = @import("getfile.zig");
+pub const getfont = @import("getfont.zig");

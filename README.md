@@ -108,7 +108,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of
   gadgets, a number field with stepping arrows, a button that pops a list
-  up to pick from, and a bar that shows how far along something is.
+  up to pick from, a bar that shows how far along something is, and a
+  field with a button that opens the file or font requester.
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,

@@ -217,8 +217,9 @@ them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `tapedeck`, `fuelgauge` (a bar showing how far along something is),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), and `clicktab` with `page` (a
-row of tabs over pages of gadgets). Each has its tags in
-`sdk/libs/gadgets/<name>.zig`, named after the class:
+row of tabs over pages of gadgets), and `getfile` with `getfont` (a
+field with a button beside it that opens asl.library's requester). Each
+has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig
 const ig = sdk.gadgets.integer;
@@ -230,6 +231,23 @@ const port = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &.{
     .{ .tag = ig.INTEGER_Min, .data = 1 },
     .{ .tag = ig.INTEGER_Max, .data = 65535 },
     .{ .tag = ig.INTEGER_Number, .data = 23 },
+    .{},
+});
+```
+
+A `getfile` or `getfont` gadget opens its requester on a process of its
+own, because the press that asks for it arrives on the input handler,
+which may neither draw nor wait. What was picked is written into the
+field and told to the gadget's `ICA_TARGET`, so a gadget whose target is
+`ICTARGET_IDCMP` tells its window and the program hears
+`WMHI_IDCMPUPDATE`:
+
+```zig
+const file = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &.{
+    .{ .tag = gc.GA_ID, .data = 7 },
+    .{ .tag = gfi.GETFILE_TitleText, .data = @intFromPtr("Which file?") },
+    .{ .tag = gfi.GETFILE_Drawer, .data = @intFromPtr("SYS:") },
+    .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
     .{},
 });
 ```
