@@ -171,12 +171,31 @@ MultiView <file> SCALE          a picture at the size of the window
 ```
 
 It knows no formats. It opens the file through the library, puts the
-object in a layout with a scroll bar on the right and one below, and
-tells the bars how much there is and how much is seen after the window
-opens and after every resize. The bars are the object's `ICA_TARGET`,
-with an `ICA_MAP` turning `SCROLLER_Top` into `DTA_TopVert` and
-`DTA_TopHoriz`, so dragging one scrolls the object without the program
-hearing anything.
+object in a layout that fills the window, and puts a scroll bar in the
+window's right border and one in its bottom border (`GA_RightBorder`,
+`GA_BottomBorder`), each placed from the edge it sits at so that a
+resize keeps it there, and each reaching to the sizing gadget in the
+corner - which is why the window is opened with `WA_SizeBRight` and
+`WA_SizeBBottom`. The bars are made once the window is open, because
+how deep a border came out is known only then.
+
+The object and the bars are joined through a **model**, not by the
+program. Each bar's `ICA_TARGET` is the model, with an `ICA_MAP`
+turning `SCROLLER_Top` into `DTA_TopVert` or `DTA_TopHoriz`; the model
+holds an `ICCLASS` connection to each bar, mapping `DTA_TotalVert` and
+its like back to `SCROLLER_Total`, and one to the object carrying the
+two tops. So a bar dragged scrolls the object, and a layout that
+finishes sizes the bars, all of it inside the objects and in one task.
+
+That is what `DTM_ASYNCLAYOUT` reports when it is done: the totals, how
+much of each is visible, where each view starts, and `DTA_Sync`. The
+model passes it to the bars and then to the program as one
+`IDCMP_IDCMPUPDATE`. The program answers that by drawing the object
+again, and answers a resize by doing nothing at all - the object was
+told to lay itself out by intuition, and the bars followed it. A
+program that drew once per message instead would fall a message further
+behind with every step of a drag, since a redraw costs about what a
+step does.
 
 ## Writing a class
 

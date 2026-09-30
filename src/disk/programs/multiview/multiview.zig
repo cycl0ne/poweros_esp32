@@ -64,13 +64,25 @@ const MSG_NOMEMORY = "No memory for the window\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_NOOBJECT = "%s: %s\n";
 
-/// How long each arrow button on a bar is, and how wide a bar is.
-const arrow_length = 14;
-
 const ID_VERT = 1;
 const ID_HORIZ = 2;
 
-/// What the bars tell the object as they move.
+// --- what is connected to what ------------------------------------------------
+//
+// The object and the two bars are joined through a model, and not by
+// this program. A bar moving tells the model where its view now starts;
+// the model tells the object, which scrolls. The object finishing a
+// layout tells the model how much there is and how much of it is seen;
+// the model tells the bars, which take their size and place from it.
+// Each connection carries only the attributes it names, so the vertical
+// bar never hears the horizontal one's numbers.
+//
+// None of that passes through this program, which is the point: it goes
+// on inside the objects, in one task, without a message. What the
+// program is told is that a layout has finished, which is the one thing
+// only it can answer - by drawing the object again.
+
+/// What a bar tells the model as it moves.
 const vert_map = [_]TagItem{
     .{ .tag = sr.SCROLLER_Top, .data = dtc.DTA_TopVert },
     .{},
@@ -80,61 +92,146 @@ const horiz_map = [_]TagItem{
     .{},
 };
 
-/// The window's parts, once they are built.
-const Shown = struct {
-    layout: *Object,
-    vert: *Object,
-    horiz: *Object,
+/// What the model tells the object: where a view starts, and nothing
+/// else - the totals are the object's own to work out.
+const to_object_map = [_]TagItem{
+    .{ .tag = dtc.DTA_TopVert, .data = dtc.DTA_TopVert },
+    .{ .tag = dtc.DTA_TopHoriz, .data = dtc.DTA_TopHoriz },
+    .{},
 };
 
-/// The object, the two bars round it and the layout that holds them.
-fn build(ib: *IntuitionBase, object: *Object) ?Shown {
-    const vert = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_VERT },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
-        .{ .tag = sr.SCROLLER_Arrows, .data = arrow_length },
-        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(object) },
-        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
+/// The object in a layout, which fills the part of the window inside
+/// the border.
+///
+/// The bars are not in it: they live in the border itself, and are made
+/// once the window is open and how deep its borders came out is known.
+fn build(ib: *IntuitionBase, object: *Object) ?*Object {
+    return ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(object) },
         .{},
     });
-    const horiz = if (vert != null) ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_HORIZ },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
-        .{ .tag = sr.SCROLLER_Arrows, .data = arrow_length },
-        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(object) },
-        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&horiz_map) },
-        .{},
-    }) else null;
+}
 
-    // The object and the bar beside it, then the bar below both.
-    const across = if (horiz != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
-        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
-        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(object) },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(vert) },
-        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+/// The two bars and the model that joins them to the object.
+const Bars = struct {
+    vert: *Object,
+    horiz: *Object,
+    /// Disposing of it disposes of the connections in it.
+    model: *Object,
+};
+
+/// One of the window's numbers.
+fn windowAttr(ib: *IntuitionBase, window: *intuition.Window, attr: utility.Tag) i32 {
+    var value: usize = 0;
+    const wanted = [_]TagItem{ .{ .tag = attr, .data = @intFromPtr(&value) }, .{} };
+    ib.GetWindowAttrs(window, &wanted);
+    return @truncate(@as(isize, @bitCast(value)));
+}
+
+/// A bar down the right border and one along the bottom one.
+///
+/// Each fills its border but for the frame's outer line, and reaches
+/// from the far edge of the window to the sizing gadget in the corner,
+/// which is why the window is opened with the sizing gadget in both
+/// borders. Each is placed from the edge it sits at, so that it stays
+/// there and keeps that length as the window is resized, and its arrow
+/// buttons are as long as the bar is wide, which makes them square.
+fn bars(ib: *IntuitionBase, window: *intuition.Window, object: *Object) ?Bars {
+    // The model is made first, because the bars are connected to it as
+    // they are made. Its own target is this program, so that what the
+    // object says about a finished layout arrives as an IDCMP message.
+    const model = ib.NewObjectTagList(null, classusr.MODELCLASS, &[_]TagItem{
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{},
-    }) else null;
-    const whole = if (across != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
-        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
-        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(across) },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(horiz) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+    }) orelse return null;
+
+    const left: isize = windowAttr(ib, window, wn.WA_BorderLeft);
+    const top: isize = windowAttr(ib, window, wn.WA_BorderTop);
+    const right: isize = windowAttr(ib, window, wn.WA_BorderRight);
+    const bottom: isize = windowAttr(ib, window, wn.WA_BorderBottom);
+    // The whole depth of the border, out to its last column: what sits
+    // there is the bar's to draw, and the bar puts a gap of its own at
+    // each side so that the border still shows round it.
+    const across = right;
+    const deep = bottom;
+    // How far an arrow reaches along its bar. It is not the bar's own
+    // thickness: the two arrows of a bar that runs across are drawn
+    // longer than the two of one that runs down, by half again, and
+    // both are drawn to the height of the bar along the bottom - which
+    // is the title bar's height, and so the one thing both bars can be
+    // measured in.
+    const arrow_down = deep;
+    const arrow_along = @divTrunc(deep * 16, 11);
+
+    const vert = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_VERT },
+        .{ .tag = gc.GA_RightBorder, .data = 1 },
+        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(across - 1)) },
+        .{ .tag = gc.GA_Top, .data = @bitCast(top) },
+        .{ .tag = gc.GA_Width, .data = @bitCast(across) },
+        .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom)) },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(arrow_down) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(model) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
         .{},
-    }) else null;
-    const layout = whole orelse {
-        // The object is the caller's whatever happens here; a bar that
-        // never reached a layout is this program's.
-        if (across == null) {
-            ib.DisposeObject(vert);
-            ib.DisposeObject(horiz);
-        } else {
-            ib.DisposeObject(across);
-        }
+    }) orelse {
+        ib.DisposeObject(model);
         return null;
     };
-    return .{ .layout = layout, .vert = vert.?, .horiz = horiz.? };
+    const horiz = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_HORIZ },
+        .{ .tag = gc.GA_BottomBorder, .data = 1 },
+        .{ .tag = gc.GA_Left, .data = @bitCast(left) },
+        .{ .tag = gc.GA_RelBottom, .data = @bitCast(-(deep - 1)) },
+        .{ .tag = gc.GA_RelWidth, .data = @bitCast(-(left + right)) },
+        .{ .tag = gc.GA_Height, .data = @bitCast(deep) },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
+        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(arrow_along) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(model) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&horiz_map) },
+        .{},
+    }) orelse {
+        ib.DisposeObject(model);
+        ib.DisposeObject(vert);
+        return null;
+    };
+    // The one connection out of the model: to the object, carrying
+    // where a view starts. A bar dragged moves the object through it,
+    // in the task that is handling the press, without this program
+    // hearing anything.
+    //
+    // The other direction is not wired this way. What the object works
+    // out when it is laid out is worked out on a process of its own,
+    // and that process must draw nothing: the window it was told about
+    // may not be there any more by the time it finishes. A bar set from
+    // there would draw itself, through that window, and take its layer
+    // to do it. So the object tells this program instead, and this
+    // program - which owns the window and knows it is still open - puts
+    // the numbers into the bars.
+    const ic = ib.NewObjectTagList(null, classusr.ICCLASS, &[_]TagItem{
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(object) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&to_object_map) },
+        .{},
+    }) orelse {
+        ib.DisposeObject(model);
+        ib.DisposeObject(vert);
+        ib.DisposeObject(horiz);
+        return null;
+    };
+    var joining = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = ic };
+    _ = ib.SendMessage(model, @ptrCast(&joining));
+
+    _ = ib.AddGList(window, vert, -1, 1);
+    _ = ib.AddGList(window, horiz, -1, 1);
+    // A bar shorter than its own two arrow buttons has nothing left to
+    // drag, so the window is not allowed to be made that small: each bar
+    // keeps at least its arrows and as much again, and the interior at
+    // least one row and column of the picture.
+    _ = ib.WindowLimits(window, left + right + 4 * bottom, top + bottom + 4 * right, -1, -1);
+    // A gadget in the border is drawn whenever the border is.
+    ib.RefreshWindowFrame(window);
+    return .{ .vert = vert, .horiz = horiz, .model = model };
 }
 
 /// One of the object's numbers.
@@ -146,7 +243,7 @@ fn ask(ib: *IntuitionBase, object: *Object, attr: utility.Tag) i32 {
 
 /// The bars told how much there is and how much of it is seen, which is
 /// what the object worked out when it was laid out.
-fn followObject(ib: *IntuitionBase, shown: Shown, object: *Object, window: *intuition.Window) void {
+fn followObject(ib: *IntuitionBase, shown: Bars, object: *Object, window: *intuition.Window) void {
     const pairs = [_]struct { bar: *Object, total: utility.Tag, visible: utility.Tag, top: utility.Tag }{
         .{ .bar = shown.vert, .total = dtc.DTA_TotalVert, .visible = dtc.DTA_VisibleVert, .top = dtc.DTA_TopVert },
         .{ .bar = shown.horiz, .total = dtc.DTA_TotalHoriz, .visible = dtc.DTA_VisibleHoriz, .top = dtc.DTA_TopHoriz },
@@ -274,7 +371,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // From here on the object is the layout's child, and a layout
     // disposes of what is in it: this program disposes of the object
     // itself only while it is still in no layout.
-    const made = build(ib, object) orelse {
+    const layout = build(ib, object) orelse {
         dt.DisposeDTObject(object);
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
@@ -296,12 +393,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DragBar, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        // The sizing gadget in both borders, so that the two bars each
+        // have a border deep enough to sit in and stop short of it.
+        .{ .tag = wn.WA_SizeBRight, .data = 1 },
+        .{ .tag = wn.WA_SizeBBottom, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
         .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE },
-        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made.layout) },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
         .{},
     }) orelse {
-        ib.DisposeObject(made.layout); // and the object in it
+        ib.DisposeObject(layout); // and the object in it
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
@@ -318,6 +419,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var window_ptr: usize = 0;
     _ = ib.GetAttr(wc.WINDOWA_Window, window_object, &window_ptr);
     const window: *intuition.Window = @ptrFromInt(window_ptr);
+    const made = bars(ib, window, object) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+    // The bars are this program's, not the window object's, and they are
+    // in a window: it is closed first, which takes them out of it, and
+    // the window object is left with nothing but itself to give back.
+    defer {
+        var shut = wc.WmClose{};
+        _ = ib.SendMessage(window_object, @ptrCast(&shut));
+        ib.DisposeObject(made.model); // and the connections in it
+        ib.DisposeObject(made.vert);
+        ib.DisposeObject(made.horiz);
+    }
+    // What the object already knows, put into the bars once. From here
+    // on the model keeps them level with it.
     followObject(ib, made, object, window);
 
     var code: u32 = 0;
@@ -325,25 +442,33 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     while (true) {
         const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
+        // Everything waiting is taken first and answered once.
+        //
+        // A resize on its own is nothing to this program: the object
+        // lays itself out again because intuition told it to. What is
+        // this program's is what the object reports when that has
+        // finished - the numbers go into the bars and the object is
+        // drawn again - and doing that once for a batch says as much as
+        // doing it for every message in it, which, since each drawing
+        // takes about as long as a step of a drag does, is what kept
+        // the program behind the pointer instead of level with it.
+        var draw = false;
         while (true) {
             const word = ib.SendMessage(window_object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
             switch (word & wc.WMHI_CLASSMASK) {
                 wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
-                // A resize changes how much of the object is seen, and
-                // the object works that out for itself when it is laid
-                // out again; the bars are told what it found.
-                wc.WMHI_NEWSIZE, wc.WMHI_GADGETUP => followObject(ib, made, object, window),
                 // The object finished laying itself out on a process of
                 // its own: its numbers are right only now, and what is
                 // on the screen was drawn from the layout before it.
-                wc.WMHI_IDCMPUPDATE => {
-                    followObject(ib, made, object, window);
-                    dt.RefreshDTObjectA(object, window, null, null);
-                },
+                wc.WMHI_IDCMPUPDATE => draw = true,
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return dos.RETURN_OK,
                 else => {},
             }
+        }
+        if (draw) {
+            followObject(ib, made, object, window);
+            dt.RefreshDTObjectA(object, window, null, null);
         }
     }
 }
