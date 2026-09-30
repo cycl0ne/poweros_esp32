@@ -291,8 +291,19 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
             if (!super.bringBack(lb, layer, seen)) ok = false;
         } else if (layer.flags & layers.LAYERSMART != 0) {
             // It keeps what is covered and gets it back when it is
-            // uncovered, so it is never owed a redraw.
-            smart.putBack(lb, layer, seen);
+            // uncovered, so it is not normally owed a redraw. What it had
+            // no pixels for is the exception - a keeping dropped for want
+            // of memory, or a layer that has just grown - and that it is
+            // owed, like a simple layer.
+            if (smart.putBack(lb, layer, seen)) |owed| {
+                if (gb.OrRegionRegion(owed, layer.damage)) {
+                    layer.flags |= layers.LAYERREFRESH;
+                    newly = owed;
+                } else {
+                    gb.DisposeRegion(owed);
+                    ok = false;
+                }
+            }
         } else if (info_mod.copyRegion(gb, seen)) |fresh| {
             // Anything it can see now that it could not see before has to
             // be drawn again: nothing kept those pixels.

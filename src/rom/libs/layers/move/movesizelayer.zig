@@ -174,7 +174,10 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
     // taken from the shape it had to the shape it is going to have.
     commitBehind(lb, layer);
     if (smart_layer) {
-        if (keeping) smart.putBack(lb, layer, have);
+        // Nothing is visible at `have`, so nothing is put back and
+        // nothing can be owed: what the layer can see at the new place
+        // comes back in the retile below.
+        if (keeping) if (smart.putBack(lb, layer, have)) |owed| gb.DisposeRegion(owed);
     } else {
         carry(lb, layer, have, dx, dy);
     }
@@ -200,6 +203,10 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
     // caller believing the layer is where it was, drawing the old shape
     // through the new one's clipping.
     if (!tile.retile(lb, info)) layer.last_error = layers.LERR_NO_MEMORY;
+
+    // What a layer behind was left owing, painted now that its clipping
+    // is the new one.
+    paintOwed(lb, layer);
 
     // What a growing layer gained has never held anything. A simple layer
     // is told about it as damage, and the retile has painted it on the way
@@ -339,11 +346,44 @@ fn commitBehind(lb: *LayersBase, layer: *Layer) void {
         other.next_visible = null;
         if (other.flags & layers.LAYERSUPER != 0) {
             _ = super.bringBack(lb, other, seen);
-        } else {
-            smart.putBack(lb, other, seen);
+        } else if (smart.putBack(lb, other, seen)) |owed| {
+            // Uncovered with nothing kept for it, because the keeping
+            // was dropped for want of memory. It is owed a redraw, and
+            // the display is showing the moved layer's pixels there
+            // until it answers - so it is painted as well, once the
+            // retile below has put the new clipping in place.
+            if (gb.OrRegionRegion(owed, other.damage)) {
+                other.flags |= layers.LAYERREFRESH;
+                other.owed = owed;
+            } else gb.DisposeRegion(owed);
         }
         gb.DisposeRegion(other.visible);
         other.visible = seen;
+    }
+}
+
+/// What `commitBehind` left owing, painted. The layer keeps the damage
+/// either way; this only means it is not showing the moved layer's pixels
+/// while it waits to be asked.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer that was moved.
+fn paintOwed(lb: *LayersBase, layer: *Layer) void {
+    const gb = lb.graphics_base;
+    var behind = false;
+    var it = layer.info.layers.iterator();
+    while (it.next()) |node| {
+        const other: *Layer = @fieldParentPtr("node", node);
+        if (other == layer) {
+            behind = true;
+            continue;
+        }
+        if (!behind) continue;
+        const owed = other.owed orelse continue;
+        other.owed = null;
+        backfill.fillRegion(lb, other, owed);
+        gb.DisposeRegion(owed);
     }
 }
 

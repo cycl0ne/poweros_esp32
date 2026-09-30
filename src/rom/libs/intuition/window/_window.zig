@@ -689,9 +689,14 @@ pub fn dropPort(ib: *IntuitionBase, w: *Window) void {
     w.flags &= ~WF_REFRESH_SENT;
 }
 
-/// After anything that may have uncovered part of a simple-refresh window
-/// on this screen: its border back, and the program told or the damage
-/// dropped.
+/// After anything that may have uncovered part of a window on this
+/// screen: its border back, and the program told or the damage dropped.
+///
+/// A window is repaired when it has damage, whatever its refresh. A
+/// smart-refresh window has none as a rule, because layers keeps what is
+/// covered and puts it back - but where it could not keep those pixels
+/// the layer hands out damage instead, and that window needs its border
+/// and its gadgets again exactly as a simple one does.
 pub fn repairScreen(ib: *IntuitionBase, s: *Screen) void {
     const lb = ib.layers_base;
     @import("../screen/_screen.zig").settleGround(ib, s);
@@ -699,7 +704,6 @@ pub fn repairScreen(ib: *IntuitionBase, s: *Screen) void {
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
         const w: *Window = @ptrCast(@alignCast(n));
-        if (w.flags & WF_SIMPLE == 0) continue;
         var damage: usize = 0;
         const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetDamage, .data = @intFromPtr(&damage) }, .{} };
         lb.GetLayerAttrs(w.layer, &ask);

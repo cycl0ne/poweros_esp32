@@ -137,7 +137,7 @@ fn meeting(lb: *LayersBase, area: Rect, within: *graphics.Region) ?*graphics.Reg
 /// - `seen` - what it can see now.
 pub fn regather(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
     if (!keepCovered(lb, layer, seen)) return false;
-    putBack(lb, layer, seen);
+    if (putBack(lb, layer, seen)) |owed| lb.graphics_base.DisposeRegion(owed);
     return true;
 }
 
@@ -178,6 +178,21 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
     defer gb.DisposeRegion(now_hidden);
     if (!gb.OrRectRegion(now_hidden, &own) or !gb.SubRegionRegion(now_visible, now_hidden)) return false;
 
+    // Where the pixels of a covered piece can come from: what the layer
+    // could see until now, and what it was already keeping. A piece
+    // outside both - the new part of a layer that has just grown, or
+    // anything at all once a keeping had to be dropped - has no pixels
+    // anywhere, and keeping a surface for it would keep whatever was in
+    // that memory. It is not kept: `putBack` then reports it as owed and
+    // the layer is asked to draw it.
+    const sources = info_mod.copyRegion(gb, was_visible) orelse return false;
+    defer gb.DisposeRegion(sources);
+    var had = layer.kept;
+    while (had) |k| : (had = k.next) {
+        if (!gb.OrRectRegion(sources, &k.area)) return false;
+    }
+    if (!gb.AndRegionRegion(sources, now_hidden)) return false;
+
     const hidden = takeRects(lb, info, now_hidden) orelse return false;
     defer dropRects(lb, info, hidden);
 
@@ -200,17 +215,24 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
         fresh = node;
 
         // The part of it that is still on the display, because it was
-        // visible until a moment ago.
-        if (meeting(lb, area, was_visible)) |from_screen| {
-            defer gb.DisposeRegion(from_screen);
-            if (takeRects(lb, info, from_screen)) |parts| {
-                defer dropRects(lb, info, parts);
-                var j: u32 = 0;
-                while (j < parts.n) : (j += 1) {
-                    const p = parts.ptr[j];
-                    _ = gb.BltBitMap(info.surface, p.min_x + bx, p.min_y + by, surface, p.min_x - area.min_x, p.min_y - area.min_y, p.width(), p.height());
-                }
-            }
+        // visible until a moment ago. A piece that cannot be filled is
+        // worse than a piece not kept, so running out here fails the
+        // whole keeping rather than leaving a surface holding whatever
+        // was in that memory.
+        const from_screen = meeting(lb, area, was_visible) orelse {
+            dropList(lb, layer, fresh);
+            return false;
+        };
+        defer gb.DisposeRegion(from_screen);
+        const parts = takeRects(lb, info, from_screen) orelse {
+            dropList(lb, layer, fresh);
+            return false;
+        };
+        defer dropRects(lb, info, parts);
+        var j: u32 = 0;
+        while (j < parts.n) : (j += 1) {
+            const p = parts.ptr[j];
+            _ = gb.BltBitMap(info.surface, p.min_x + bx, p.min_y + by, surface, p.min_x - area.min_x, p.min_y - area.min_y, p.width(), p.height());
         }
 
         // And the part that was already covered, which is in a surface
@@ -230,26 +252,39 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
 
 /// The second half: what was covered and is not any more goes back on the
 /// display from the old keeping, which is the whole point - the layer is
-/// never asked to draw it again - and the list `keepCovered` made replaces
-/// it.
+/// usually never asked to draw it again - and the list `keepCovered` made
+/// replaces it.
 ///
 /// INPUTS:
 /// - `lb` - the library.
 /// - `layer` - a smart layer.
 /// - `seen` - what it can see now.
-pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) void {
+///
+/// RESULT:
+/// What the layer can see now, could not see before, and had no kept
+/// pixels for, in the layer's own coordinates; null when there is none.
+/// The caller owns it: that area is the layer's damage, and it is owed a
+/// redraw for it. A keeping that had to be dropped for want of memory
+/// comes out here, which is what keeps another window's pixels off a
+/// display this one is now showing.
+pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphics.Region {
     const gb = lb.graphics_base;
     const info = layer.info;
     const bx = layer.bounds.min_x;
     const by = layer.bounds.min_y;
-    if (!layer.pending_made) return;
+
+    // What it can see now and could not see before. Everything put back
+    // below is taken off this again, and what is left is owed.
+    var owed = newlyVisible(lb, layer, seen);
+
+    if (!layer.pending_made) return dropIfEmpty(gb, owed);
     layer.pending_made = false;
 
     const now_visible = info_mod.copyRegion(gb, seen) orelse {
         dropKept(lb, layer);
         layer.kept = layer.pending;
         layer.pending = null;
-        return;
+        return dropIfEmpty(gb, owed);
     };
     defer gb.DisposeRegion(now_visible);
     gb.OffsetRegion(now_visible, -bx, -by);
@@ -267,12 +302,48 @@ pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) void {
             if (dest) |rp| {
                 gb.BltBitMapRastPort(k.surface, p.min_x - k.area.min_x, p.min_y - k.area.min_y, rp, p.min_x + bx, p.min_y + by, p.width(), p.height());
             }
+            // Those pixels are there: nobody is owed them.
+            if (owed) |region| {
+                if (!gb.ClearRectRegion(region, &p)) {
+                    gb.DisposeRegion(region);
+                    owed = null;
+                }
+            }
         }
     }
 
     dropKept(lb, layer);
     layer.kept = layer.pending;
     layer.pending = null;
+    return dropIfEmpty(gb, owed);
+}
+
+/// What a layer can see now and could not see before, in its own
+/// coordinates. Null without the memory to work it out, which leaves the
+/// caller owing nothing - the same as it owed before this existed.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer.
+/// - `seen` - what it can see now, in the display's coordinates.
+fn newlyVisible(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphics.Region {
+    const gb = lb.graphics_base;
+    const fresh = info_mod.copyRegion(gb, seen) orelse return null;
+    if (!gb.SubRegionRegion(layer.visible, fresh)) {
+        gb.DisposeRegion(fresh);
+        return null;
+    }
+    gb.OffsetRegion(fresh, -layer.bounds.min_x, -layer.bounds.min_y);
+    return fresh;
+}
+
+/// The region, or null and given back when there is nothing in it: a
+/// caller that is owed nothing should not have a region to dispose of.
+fn dropIfEmpty(gb: *GraphicsBase, region: ?*graphics.Region) ?*graphics.Region {
+    const it = region orelse return null;
+    if (!info_mod.isEmpty(gb, it)) return it;
+    gb.DisposeRegion(it);
+    return null;
 }
 
 /// What `keepCovered` put aside, given back without using it.

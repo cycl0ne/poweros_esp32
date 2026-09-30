@@ -111,6 +111,11 @@ pub const Layer = struct {
     next_visible: ?*graphics.Region = null,
     /// The first pass made `pending`, so the second may put back and swap.
     pending_made: bool = false,
+    /// Between a move and the paint that follows it: what the layer can
+    /// see now and had no kept pixels for. It is already this layer's
+    /// damage; this holds it until the clipping is the new one, so that
+    /// the paint goes where the layer's pixels go.
+    owed: ?*graphics.Region = null,
     /// Held while this layer's clipping must not change.
     lock: exec.SignalSemaphore = .{ .link = .{ .type = .signalsem } },
     /// What went wrong in the last call on this layer.
