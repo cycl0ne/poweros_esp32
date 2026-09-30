@@ -115,43 +115,67 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
     };
     defer gb.DisposeRegion(seen);
 
-    if (!keepBehind(lb, layer, Rect.intersect(new, info.bounds))) {
-        layer.last_error = layers.LERR_NO_MEMORY;
-        return false;
-    }
+    // Everything that is going to be needed is got before anything is
+    // changed, and only when it has all been got does any of it happen.
+    // A move half done is worse than a move not done: the layers would
+    // be describing two different displays, and whatever drew next would
+    // draw through the disagreement.
+    //
+    // What can run out is the keeping - one surface the size of a layer,
+    // for this one and for each one behind it that will be covered - and
+    // there is not always a block that big to be had when a window is
+    // holding a large picture. Then the move goes ahead with no keeping
+    // for anybody, and what none of them can see is drawn again instead
+    // of being put back. Pixels that are redrawn cost a redraw; a move
+    // abandoned half way costs the display.
+    const smart_layer = layer.flags & layers.LAYERSMART != 0;
+    var keeping = reserveBehind(lb, layer, Rect.intersect(new, info.bounds));
 
-    // What it has at the new place, once the pixels have been dealt with.
-    // `retile` takes the difference between this and what it can really
-    // see, and that difference is the damage - so getting this right is
-    // the whole of it.
+    // What it will have at the new place, once the pixels have been
+    // dealt with. `retile` takes the difference between this and what it
+    // can really see, and that difference is the damage - so getting
+    // this right is the whole of it.
     var have: *graphics.Region = undefined;
-    if (layer.flags & layers.LAYERSMART != 0) {
-        // Everything into its own keeping, as though it had been covered
-        // completely. The move then has nothing left on the display to
-        // preserve, and what it can see at the new place is copied back
-        // out of the keeping by the retile.
-        const nothing = gb.NewRegion() orelse {
+    if (smart_layer) {
+        // The moving layer puts everything aside, as though it had been
+        // covered all over. The move then has nothing left on the
+        // display to preserve, and what it can see at the new place
+        // comes back out of the keeping in the retile - so what it has
+        // to begin with is nothing.
+        have = gb.NewRegion() orelse {
+            dropReserved(lb, layer);
             layer.last_error = layers.LERR_NO_MEMORY;
             return false;
         };
-        if (!smart.regather(lb, layer, nothing)) {
-            gb.DisposeRegion(nothing);
-            layer.last_error = layers.LERR_NO_MEMORY;
-            return false;
-        }
-        have = nothing;
+        if (keeping and !smart.keepCovered(lb, layer, have)) keeping = false;
     } else {
         // What it can see now, moved, and still visible there.
         have = _layerinfo.copyRegion(gb, layer.visible) orelse {
+            dropReserved(lb, layer);
             layer.last_error = layers.LERR_NO_MEMORY;
             return false;
         };
         gb.OffsetRegion(have, dx, dy);
         if (!gb.AndRegionRegion(seen, have)) {
             gb.DisposeRegion(have);
+            dropReserved(lb, layer);
             layer.last_error = layers.LERR_NO_MEMORY;
             return false;
         }
+    }
+    if (!keeping) {
+        dropReserved(lb, layer);
+        smart.dropPending(lb, layer);
+        keepNothingBehind(lb, layer);
+        smart.dropKept(lb, layer);
+    }
+
+    // From here nothing can fail for want of memory, and the display is
+    // taken from the shape it had to the shape it is going to have.
+    commitBehind(lb, layer);
+    if (smart_layer) {
+        if (keeping) smart.putBack(lb, layer, have);
+    } else {
         carry(lb, layer, have, dx, dy);
     }
 
@@ -168,10 +192,14 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
     gb.DisposeRegion(layer.visible);
     layer.visible = have;
 
-    if (!tile.retile(lb, info)) {
-        layer.last_error = layers.LERR_NO_MEMORY;
-        return false;
-    }
+    // The layer has moved: `bounds` above says so, and every layer has
+    // been told. A retile that could not do all of it has still done
+    // what it could, and there is no going back to where this started -
+    // so what it reports is kept as the error to ask about, and the move
+    // is reported as what it is, done. Saying it failed would leave the
+    // caller believing the layer is where it was, drawing the old shape
+    // through the new one's clipping.
+    if (!tile.retile(lb, info)) layer.last_error = layers.LERR_NO_MEMORY;
 
     // What a growing layer gained has never held anything. A simple layer
     // is told about it as damage, and the retile has painted it on the way
@@ -215,8 +243,9 @@ fn seenAt(lb: *LayersBase, layer: *Layer, where: Rect) ?*graphics.Region {
     return seen;
 }
 
-/// Every layer behind `layer` that keeps what is covered puts away, now,
-/// what `layer` will cover at `where`.
+/// Every layer behind `layer` that keeps what is covered puts aside,
+/// now, what `layer` will cover at `where` - and nothing of theirs has
+/// changed when this returns, either way.
 ///
 /// The display still shows their own pixels there. Once the moved layer's
 /// pixels are carried across - or brought back out of its keeping by the
@@ -228,7 +257,12 @@ fn seenAt(lb: *LayersBase, layer: *Layer, where: Rect) ?*graphics.Region {
 /// - `lb` - the library.
 /// - `layer` - the layer being moved.
 /// - `where` - where it is going, cut to the display.
-fn keepBehind(lb: *LayersBase, layer: *Layer, where: Rect) bool {
+///
+/// RESULT:
+/// False when one of them could not put its pixels aside. Nothing is
+/// put aside by any of them then: `dropReserved` gives back what the
+/// ones before it had made, and the move goes ahead keeping nothing.
+fn reserveBehind(lb: *LayersBase, layer: *Layer, where: Rect) bool {
     const gb = lb.graphics_base;
     var behind = false;
     var it = layer.info.layers.iterator();
@@ -244,15 +278,94 @@ fn keepBehind(lb: *LayersBase, layer: *Layer, where: Rect) bool {
             gb.DisposeRegion(seen);
             return false;
         }
-        const ok = if (other.flags & layers.LAYERSUPER != 0) super.resquare(lb, other, seen) else smart.regather(lb, other, seen);
+        const ok = if (other.flags & layers.LAYERSUPER != 0)
+            super.saveCovered(lb, other, seen)
+        else
+            smart.keepCovered(lb, other, seen);
         if (!ok) {
             gb.DisposeRegion(seen);
             return false;
         }
+        // Held for the second pass, which is the one that changes
+        // anything.
+        other.next_visible = seen;
+    }
+    return true;
+}
+
+/// What `reserveBehind` put aside, given back.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer being moved.
+fn dropReserved(lb: *LayersBase, layer: *Layer) void {
+    const gb = lb.graphics_base;
+    var behind = false;
+    var it = layer.info.layers.iterator();
+    while (it.next()) |node| {
+        const other: *Layer = @fieldParentPtr("node", node);
+        if (other == layer) {
+            behind = true;
+            continue;
+        }
+        if (!behind) continue;
+        if (other.next_visible) |region| {
+            gb.DisposeRegion(region);
+            other.next_visible = null;
+        }
+        smart.dropPending(lb, other);
+    }
+}
+
+/// The second pass: what they put aside is put back, and each of them
+/// takes the shape it will have once the move is done. Nothing here can
+/// fail, because everything it needs was got in the first pass.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer being moved.
+fn commitBehind(lb: *LayersBase, layer: *Layer) void {
+    const gb = lb.graphics_base;
+    var behind = false;
+    var it = layer.info.layers.iterator();
+    while (it.next()) |node| {
+        const other: *Layer = @fieldParentPtr("node", node);
+        if (other == layer) {
+            behind = true;
+            continue;
+        }
+        if (!behind) continue;
+        const seen = other.next_visible orelse continue;
+        other.next_visible = null;
+        if (other.flags & layers.LAYERSUPER != 0) {
+            _ = super.bringBack(lb, other, seen);
+        } else {
+            smart.putBack(lb, other, seen);
+        }
         gb.DisposeRegion(other.visible);
         other.visible = seen;
     }
-    return true;
+}
+
+/// Every layer behind this one told to keep nothing, for a move that is
+/// going ahead without any keeping at all: what none of them can see is
+/// drawn again rather than put back.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer being moved.
+fn keepNothingBehind(lb: *LayersBase, layer: *Layer) void {
+    var behind = false;
+    var it = layer.info.layers.iterator();
+    while (it.next()) |node| {
+        const other: *Layer = @fieldParentPtr("node", node);
+        if (other == layer) {
+            behind = true;
+            continue;
+        }
+        if (!behind) continue;
+        smart.dropKept(lb, other);
+    }
 }
 
 /// Copy the pixels that can travel, across the display.

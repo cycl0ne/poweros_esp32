@@ -275,6 +275,20 @@ pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) void {
     layer.pending = null;
 }
 
+/// What `keepCovered` put aside, given back without using it.
+///
+/// Nothing it made has reached the display or replaced what the layer
+/// already keeps, so this puts the layer back exactly as it was.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer that put it aside.
+pub fn dropPending(lb: *LayersBase, layer: *Layer) void {
+    dropList(lb, layer, layer.pending);
+    layer.pending = null;
+    layer.pending_made = false;
+}
+
 /// A half-built list of kept pieces, for when something ran out part way.
 ///
 /// INPUTS:
