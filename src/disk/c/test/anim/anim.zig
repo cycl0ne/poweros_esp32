@@ -655,8 +655,16 @@ fn makeBall(gb: *GraphicsBase, stage_rp: *RastPort) ?*rtg.Surface {
     return surface;
 }
 
-fn ticksOf(date: dos.DateStamp) u32 {
-    return @intCast((date.days * 1440 + date.minute) * 60 * 50 + date.tick);
+/// How many ticks lie between two stamps, `to` the later one.
+///
+/// The parts are subtracted before they are scaled: the ticks from the
+/// start of the epoch to a date of this decade are far past what 32 bits
+/// hold, while the run being measured is seconds long. A clock that went
+/// backwards in between gives 0.
+fn ticksBetween(from: dos.DateStamp, to: dos.DateStamp) u32 {
+    const minutes = (to.days - from.days) * 1440 + (to.minute - from.minute);
+    const ticks = minutes * 60 * 50 + (to.tick - from.tick);
+    return if (ticks < 0) 0 else @intCast(ticks);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -791,7 +799,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var ended: dos.DateStamp = .{};
     _ = dl.DateStamp(&ended);
-    const ticks = ticksOf(ended) -% ticksOf(started);
+    const ticks = ticksBetween(started, ended);
     _ = Printf(dl, MSG_DONE, .{ drawn, ticks / 50, (ticks % 50) * 2 });
     if (ticks != 0) {
         const tenths = drawn * 500 / ticks;
