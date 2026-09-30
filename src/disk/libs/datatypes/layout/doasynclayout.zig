@@ -3,7 +3,10 @@
 //!
 //! The job block outlives the caller and is the process's to free. The
 //! GadgetInfo is copied into it, because the one intuition hands to
-//! `GM_LAYOUT` is only good for the length of that call.
+//! `GM_LAYOUT` is only good for the length of that call. A size that
+//! changes again while the process works is copied over that one, under
+//! the object's lock, so that the pass that follows measures against the
+//! size the window has now.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -43,9 +46,15 @@ fn layoutProcess(sys: *ExecBase) callconv(.c) void {
         return;
     };
     while (true) {
+        // A copy of its own to work from: `job.info` is where a resize
+        // that arrives meanwhile puts the new size, and it may be
+        // written while this pass is running.
+        sys.ObtainSemaphore(&own.special.lock);
+        var info = job.info;
+        sys.ReleaseSemaphore(&own.special.lock);
         var lay = gc.GpLayout{
             .method_id = dtc.DTM_ASYNCLAYOUT,
-            .gadget_info = &job.info,
+            .gadget_info = &info,
             .initial = job.initial,
         };
         sys.ObtainSemaphore(&own.special.lock);
@@ -57,6 +66,7 @@ fn layoutProcess(sys: *ExecBase) callconv(.c) void {
         if (own.special.flags & dtc.DTSIF_NEWSIZE == 0) {
             own.special.flags &= ~dtc.DTSIF_LAYOUTPROC;
             own.layout_proc = null;
+            own.layout_job = null;
             sys.ReleaseSemaphore(&own.special.lock);
             break;
         }
@@ -78,7 +88,10 @@ fn layoutProcess(sys: *ExecBase) callconv(.c) void {
         .{ .tag = dtc.DTA_Sync, .data = 1 },
         .{},
     };
-    sdk.gadgets.support.notify(db.intuition_base, job.object, &job.info, &told, 0);
+    sys.ObtainSemaphore(&own.special.lock);
+    var last = job.info;
+    sys.ReleaseSemaphore(&own.special.lock);
+    sdk.gadgets.support.notify(db.intuition_base, job.object, &last, &told, 0);
     sys.FreeVec(job);
 }
 
@@ -140,6 +153,16 @@ pub fn DoAsyncLayout(db: *DataTypesBase, object: *classusr.Object, layout: *gc.G
     sys.ObtainSemaphore(&own.special.lock);
     if (own.special.flags & dtc.DTSIF_LAYOUTPROC != 0) {
         own.special.flags |= dtc.DTSIF_NEWSIZE;
+        // The room to lay out against is this one, not the one the
+        // process started with: a window resized again while it works
+        // has a size it does not know about, and laying out against the
+        // old one leaves the object drawing over its window's border -
+        // or, where the old one was smaller than the border, drawing
+        // nothing at all.
+        if (own.layout_job) |block| {
+            const running: *Job = @ptrCast(@alignCast(block));
+            running.info = info.*;
+        }
         sys.ReleaseSemaphore(&own.special.lock);
         return 1;
     }
@@ -157,10 +180,16 @@ pub fn DoAsyncLayout(db: *DataTypesBase, object: *classusr.Object, layout: *gc.G
             .{ .tag = dos.NP_UserData, .data = @intFromPtr(job) },
             .{},
         };
+        sys.ObtainSemaphore(&own.special.lock);
+        own.layout_job = block;
+        sys.ReleaseSemaphore(&own.special.lock);
         if (db.dos_base.CreateNewProc(&tags)) |process| {
             own.layout_proc = @ptrCast(process);
             return 1;
         }
+        sys.ObtainSemaphore(&own.special.lock);
+        own.layout_job = null;
+        sys.ReleaseSemaphore(&own.special.lock);
         sys.FreeVec(block);
     }
 

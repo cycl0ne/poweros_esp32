@@ -83,6 +83,12 @@ pub const Data = extern struct {
     pad: [3]u8 = @splat(0),
     /// The process laying the object out, while one is running.
     layout_proc: ?*anyopaque = null,
+    /// What that process is working from, while it is running: the room
+    /// it lays the object out against. A size that changes while it
+    /// works is written here, under `special.lock`, so that the next
+    /// pass measures against the size the window has now and not the one
+    /// it had when the work started.
+    layout_job: ?*anyopaque = null,
 };
 
 /// A string copied into memory of its own, and the old copy given back.
@@ -127,12 +133,20 @@ fn setAttrs(db: *DataTypesBase, own: *Data, tags: ?[*]const TagItem, new: bool) 
     while (ub.NextTagItem(&state)) |item| {
         const value: i32 = @truncate(@as(isize, @bitCast(item.data)));
         switch (item.tag) {
-            dtc.DTA_TopVert => {
+            // Where the view starts. Only a move counts as a change: an
+            // object that reported one for being set to the place it is
+            // already at would answer whoever set it with news of their
+            // own value, and a bar beside it that follows what it
+            // reports would set it again - the two of them telling each
+            // other the same number for ever. The place it came from is
+            // kept for whoever draws the difference, so that is only
+            // written when there is a difference.
+            dtc.DTA_TopVert => if (value != own.special.top_vert) {
                 own.special.old_top_vert = own.special.top_vert;
                 own.special.top_vert = value;
                 changed = true;
             },
-            dtc.DTA_TopHoriz => {
+            dtc.DTA_TopHoriz => if (value != own.special.top_horiz) {
                 own.special.old_top_horiz = own.special.top_horiz;
                 own.special.top_horiz = value;
                 changed = true;

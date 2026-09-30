@@ -287,8 +287,15 @@ pub fn paint(base: *Base, own: *Data, rp: *graphics.RastPort, box: gc.Box, left:
 
     // At its own size: the part starting at (left, top), and the ground
     // wherever the picture runs out.
-    const from_x = @max(left, 0);
-    const from_y = @max(top, 0);
+    //
+    // The corner to start at is kept inside the picture. It is asked for
+    // from outside - a bar beside the picture moves it, and the numbers
+    // that bar works from are only as fresh as the last time the object
+    // was laid out - so a corner past the end is a thing that happens,
+    // and a picture that answered it by drawing nothing at all would
+    // look like a window that had lost its contents.
+    const from_x = @min(@max(left, 0), @max(width - box.width, 0));
+    const from_y = @min(@max(top, 0), @max(height - box.height, 0));
     const shown_width = @max(@min(width - from_x, box.width), 0);
     const shown_height = @max(@min(height - from_y, box.height), 0);
     if (shown_width > 0 and shown_height > 0) {
