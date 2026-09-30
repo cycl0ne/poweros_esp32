@@ -27,6 +27,7 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
+const _window = @import("../window/_window.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const d = @import("draw.zig");
 
@@ -213,13 +214,33 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     if (p.flags & pg.PROPBORDERLESS == 0) {
         d.bevel(gb, rp, b.left, b.top, b.width, b.height, pens[sc.SHADOWPEN], pens[sc.SHINEPEN], 1, .none);
     }
-    d.box(gb, rp, k.space_left, k.space_top, k.space_width, k.space_height, pens[sc.BACKGROUNDPEN]);
+    d.box(gb, rp, k.space_left, k.space_top, k.space_width, k.space_height, behind(ib, o, p, gi_, pens));
 
     // The knob.
     d.box(gb, rp, k.left, k.top, k.width, k.height, pens[sc.FILLPEN]);
     if (p.flags & pg.PROPNEWLOOK != 0 and k.width > 2 and k.height > 2) {
         d.bevel(gb, rp, k.left, k.top, k.width, k.height, pens[sc.SHINEPEN], pens[sc.SHADOWPEN], 1, .none);
     }
+}
+
+/// What shows beside the knob.
+///
+/// A bar with a border of its own has a channel to put the knob in, and
+/// that channel is the plain ground. A borderless one has no channel: it
+/// is there to sit in something else's border, and what shows beside the
+/// knob is that border. So it is put back in the colour the border was
+/// painted in, which is the window's fill while the window is the active
+/// one and the plain ground while it is not - the same rule the border
+/// itself is painted by, since the answer has to match it exactly or the
+/// bar would show as a stripe of the wrong colour.
+fn behind(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo, pens: [*]const graphics.Pen) graphics.Pen {
+    if (p.flags & pg.PROPBORDERLESS == 0) return pens[sc.BACKGROUNDPEN];
+    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return pens[sc.BACKGROUNDPEN];
+    // The window is the one being drawn into, not the one the gadget
+    // says it belongs to: a bar that is a part of some larger gadget is
+    // not on the window's own list and has no window of its own.
+    const w: *_window.Window = @ptrCast(@alignCast(gi.window));
+    return if (w.flags & _window.WF_ACTIVE != 0) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
 }
 
 /// Drawn again, if it is in a window.
