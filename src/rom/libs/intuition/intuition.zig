@@ -1818,7 +1818,7 @@ test "windows: the zoom gadget flips to a box and back" {
     try testing.expect(win.zoom_image != null);
 
     // Pressed and let go over it: the window is the box it was given.
-    const at_x = 64 - _window.zoom_width + 4;
+    const at_x = 64 - _window.zoomWidth(8) + 4;
     pointerEvent(ib, ie.IECODE_LBUTTON, at_x, 3);
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, at_x, 3);
     try testing.expectEqual(@as(usize, 2), windowAttr(ib, w, wn.WA_Left));
@@ -1827,7 +1827,7 @@ test "windows: the zoom gadget flips to a box and back" {
 
     // Again, and it is back where it was. The gadget moved with the window,
     // so the second press is at the new right-hand end.
-    const back_x = 2 + 30 - _window.zoom_width + 4;
+    const back_x = 2 + 30 - _window.zoomWidth(8) + 4;
     pointerEvent(ib, ie.IECODE_LBUTTON, back_x, 3);
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, back_x, 3);
     try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Left));
@@ -1858,14 +1858,16 @@ test "windows: which border holds the size gadget, and who paints the empty part
         .{},
     }).?;
     // The sizing gadget follows the screen's font, as the title bar
-    // does. The test screen's is the ROM's eight-row one, and these
-    // pixels are square, so the box is the 13 by 11 that was drawn for
-    // square pixels - not the 18 by 10 drawn for pixels half as wide as
-    // they are tall.
+    // does, and keeps the shape its drawing is made for. The test
+    // screen's font is the ROM's eight-row one, which puts the bar at
+    // eleven rows, and there the gadgets come out at the sizes the
+    // drawings were laid out in.
     const size_width: usize = @intCast(_window.sizeWidth(8));
-    const size_height: usize = @intCast(_window.sizeHeight(8));
+    const size_height: usize = @intCast(_window.barHeight(8));
     try testing.expectEqual(@as(usize, 13), size_width);
     try testing.expectEqual(@as(usize, 11), size_height);
+    try testing.expectEqual(@as(i32, 15), _window.closeWidth(8));
+    try testing.expectEqual(@as(i32, 18), _window.depthWidth(8));
     try testing.expectEqual(size_width, windowAttr(ib, right, wn.WA_BorderRight));
     try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < size_height);
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, right, wn.WA_Screen));
@@ -2214,8 +2216,8 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     }).?;
     const listen = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_RAWKEY | wn.IDCMP_INTUITICKS | wn.IDCMP_CLOSEWINDOW |
         wn.IDCMP_CHANGEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW;
-    // Close 4..23, drag bar 24..35, depth 36..59; the size gadget in the
-    // bottom right ten rows.
+    // Close 4..18, drag bar 19..23, zoom 24..41, depth 42..59; the size
+    // gadget in the bottom right corner.
     const w = ib.iface().OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Left, .data = 4 },
         .{ .tag = wn.WA_Top, .data = 12 },
@@ -2275,9 +2277,9 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
 
     // The drag bar: held, moved by two and one, let go.
-    pointerEvent(ib, ie.IECODE_LBUTTON, 30, 14);
-    pointerEvent(ib, ie.IECODE_NOBUTTON, 32, 15);
-    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 32, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON, 21, 14);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 23, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 23, 15);
     try testing.expectEqual(@as(usize, 6), windowAttr(ib, w, wn.WA_Left));
     try testing.expectEqual(@as(usize, 13), windowAttr(ib, w, wn.WA_Top));
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
@@ -6975,7 +6977,7 @@ test "IDCMP_SIZEVERIFY: sizing waits for the reply, is given up by letting go or
     try testing.expectEqual(wn.IDCMP_NEWSIZE, got[0].class);
 
     // The zoom gadget: asked when let go over it, zipped once answered.
-    const zoom_x = 4 + wnd.width - _window.zoom_width / 2;
+    const zoom_x = 4 + wnd.width - @divTrunc(_window.zoomWidth(8), 2);
     click(ib, zoom_x, 14);
     const zooming = nextMessage(ib, w).?;
     try testing.expectEqual(wn.IDCMP_SIZEVERIFY, zooming.class);

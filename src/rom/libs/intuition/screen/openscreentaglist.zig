@@ -232,7 +232,7 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         // memory for it, the bar has none.
         if (s.bar != null) {
             const h = s.bar_height - 1;
-            s.depth_width = @divTrunc(23 * h + 5, 11);
+            s.depth_width = @divTrunc(17 * h + 5, 11);
             const image_tags = [_]TagItem{
                 .{ .tag = ic.SYSIA_Which, .data = ic.SDEPTHIMAGE },
                 .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&s.draw_info) },

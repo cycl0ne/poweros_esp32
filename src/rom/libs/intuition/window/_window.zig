@@ -255,38 +255,56 @@ pub const WF_REFRESH_SENT: u32 = 0x40000000;
 /// keeps this in a second word of its own; one word is enough here.
 pub const WF_NOTIFYDEPTH: u32 = 0x80000000;
 
-/// The gadgets' widths; their height is the title bar's.
-pub const close_width = 20;
-pub const depth_width = 24;
-pub const zoom_width = 24;
-
-/// The sizing gadget's box on a screen whose font is `font_height`
-/// rows.
-///
-/// 3.1 drew it twice, because the shape of a pixel was not the same on
-/// every screen: 18 by 10 where a pixel was half as wide as it was
-/// tall, and **13 by 11** where it was square. The second is the one
-/// that applies here - these panels have square pixels - and it is a
-/// gadget as tall as the title bar with a width about a fifth more
-/// than that, which is also the shape of the depth gadget beside it
-/// (18 by 11 on the same screens).
-///
-/// Both numbers were drawn for the one font that machine had. Here the
-/// bar follows the screen's font, so the gadget follows it too and the
-/// shape holds at any size: at eight rows it comes out 13 by 11 again,
-/// to the pixel.
-pub fn sizeHeight(font_height: u32) i32 {
+/// The title bar's height on a screen whose font is `font_height` rows:
+/// the font with a row of ground above it and two below. It is the
+/// height of every gadget in the bar as well, and of the sizing gadget
+/// in the corner, which is what makes the corner square with the bar.
+pub fn barHeight(font_height: u32) i32 {
     return @as(i32, @intCast(font_height)) + 3;
 }
 
+/// The widths of the gadgets drawn in the bar and in the corner, each
+/// given as a proportion of that height.
+///
+/// A pixel on these panels is square, so the shape a gadget is drawn in
+/// is the shape of its two numbers, and these are the shapes the
+/// drawings are made for: the sizing gadget a fifth wider than it is
+/// tall, the close gadget half again as wide, the depth gadget - and
+/// the zoom gadget beside it - wider still, since it shows one window
+/// over another. Taking them from the bar's height rather than fixing
+/// them in pixels keeps the shapes whatever font the screen is opened
+/// with.
 pub fn sizeWidth(font_height: u32) i32 {
-    return @divTrunc(sizeHeight(font_height) * 13, 11);
+    return @divTrunc(barHeight(font_height) * 13, 11);
+}
+
+pub fn closeWidth(font_height: u32) i32 {
+    return @divTrunc(barHeight(font_height) * 15, 11);
+}
+
+pub fn depthWidth(font_height: u32) i32 {
+    return @divTrunc(barHeight(font_height) * 18, 11);
+}
+
+/// The zoom gadget is the depth gadget's size, and sits beside it.
+pub fn zoomWidth(font_height: u32) i32 {
+    return depthWidth(font_height);
 }
 
 /// The same for a window, from the font its screen was opened with.
 pub fn sizeBoxOf(w: *const Window) struct { width: i32, height: i32 } {
     const rows = w.screen.font.image.height;
-    return .{ .width = sizeWidth(rows), .height = sizeHeight(rows) };
+    return .{ .width = sizeWidth(rows), .height = barHeight(rows) };
+}
+
+/// The close gadget's width for a window, the same way.
+pub fn closeWidthOf(w: *const Window) i32 {
+    return closeWidth(w.screen.font.image.height);
+}
+
+/// The depth gadget's, and the zoom gadget's.
+pub fn depthWidthOf(w: *const Window) i32 {
+    return depthWidth(w.screen.font.image.height);
 }
 pub const side_border = 4;
 pub const bottom_border = 2;
@@ -449,14 +467,14 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
         };
         gb.GetRPAttrs(rp, &metric);
         d.pen(gb, rp, if (active) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
-        const x: i32 = if (w.close_image != null) close_width + 4 else 4;
+        const x: i32 = if (w.close_image != null) closeWidthOf(w) + 4 else 4;
         const y = @divTrunc(w.border_top - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
         gb.Move(rp, x, y);
         gb.Text(rp, title, textLen(title));
     }
     if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
-    if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depth_width, 0, state, dri);
-    if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - depth_width - zoom_width, 0, state, dri);
+    if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depthWidthOf(w), 0, state, dri);
+    if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - 2 * depthWidthOf(w), 0, state, dri);
     if (w.size_image) |image| {
         const box = sizeBoxOf(w);
         it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
@@ -647,8 +665,8 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
     } orelse return;
     const x: i32 = switch (which) {
         .close => 0,
-        .depth => w.width - depth_width,
-        .zoom => w.width - depth_width - zoom_width,
+        .depth => w.width - depthWidthOf(w),
+        .zoom => w.width - 2 * depthWidthOf(w),
         .size => w.width - sizeBoxOf(w).width,
     };
     const y: i32 = if (which == .size) w.height - sizeBoxOf(w).height else 0;

@@ -214,7 +214,7 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
     const title: ?[*:0]const u8 = easy_struct.title orelse if (window) |w| w.title else "System Request";
     var frame_width = @max(buttons_width, framed.width + 2 * text_margin);
     frame_width = @max(frame_width, @min(
-        _window.depth_width + titleWidth(ib, screen, title),
+        _window.depthWidth(screen.font.image.height) + titleWidth(ib, screen, title),
         screen.width - 2 * _window.side_border - 2 * margin,
     ));
     const inner_width = frame_width + 2 * margin;

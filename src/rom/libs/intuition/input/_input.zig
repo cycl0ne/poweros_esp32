@@ -380,11 +380,12 @@ pub fn partAt(w: *const Window, x: i32, y: i32) Part {
     if (x < 0 or y < 0 or x >= w.width or y >= w.height) return .none;
     if (w.flags & _window.WF_BORDERLESS != 0) return .inside;
     if (y < w.border_top) {
-        if (w.flags & _window.WF_CLOSE != 0 and x < _window.close_width) return .close;
-        if (w.flags & _window.WF_DEPTH != 0 and x >= w.width - _window.depth_width) return .depth;
+        const bar_gadget = _window.depthWidthOf(w);
+        if (w.flags & _window.WF_CLOSE != 0 and x < _window.closeWidthOf(w)) return .close;
+        if (w.flags & _window.WF_DEPTH != 0 and x >= w.width - bar_gadget) return .depth;
         if (w.flags & _window.WF_HASZOOM != 0) {
-            const right = w.width - @as(i32, if (w.flags & _window.WF_DEPTH != 0) _window.depth_width else 0);
-            if (x >= right - _window.zoom_width and x < right) return .zoom;
+            const right = w.width - @as(i32, if (w.flags & _window.WF_DEPTH != 0) bar_gadget else 0);
+            if (x >= right - bar_gadget and x < right) return .zoom;
         }
         return if (w.flags & _window.WF_DRAG != 0) .drag else .border;
     }

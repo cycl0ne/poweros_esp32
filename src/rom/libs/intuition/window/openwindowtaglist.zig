@@ -35,8 +35,8 @@ const Window = _window.Window;
 const activate = _window.activate;
 const backfill = _window.backfill;
 const bottom_border = _window.bottom_border;
-const close_width = _window.close_width;
-const depth_width = _window.depth_width;
+const closeWidth = _window.closeWidth;
+const depthWidth = _window.depthWidth;
 const disposeParts = _window.disposeParts;
 const drawBorder = _window.drawBorder;
 const flagIf = _window.flagIf;
@@ -46,7 +46,7 @@ const lock = _window.lock;
 const side_border = _window.side_border;
 const targetScreen = _window.targetScreen;
 const unlock = _window.unlock;
-const zoom_width = _window.zoom_width;
+const zoomWidth = _window.zoomWidth;
 
 /// Opens a window.
 ///
@@ -182,18 +182,20 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     var bt: i32 = 0;
     var br: i32 = 0;
     var bb: i32 = 0;
+    // The screen's font, which the title bar's height comes from and
+    // with it the size of every gadget drawn in a border.
+    var font_height: u32 = 0;
+    const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&font_height) }, .{} };
+    gb.GetRPAttrs(s.rp, &metric);
     if (flags & WF_BORDERLESS == 0) {
-        var font_height: u32 = 0;
-        const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&font_height) }, .{} };
-        gb.GetRPAttrs(s.rp, &metric);
         const has_bar = title != null or flags & (WF_CLOSE | WF_DEPTH | WF_DRAG | WF_HASZOOM) != 0;
         const sizing = flags & WF_SIZE != 0;
         const at_bottom = sizing and flags & WF_SIZE_BBOTTOM != 0;
         const at_right = sizing and (flags & WF_SIZE_BRIGHT != 0 or flags & WF_SIZE_BBOTTOM == 0);
         bl = side_border;
         br = if (at_right) _window.sizeWidth(font_height) else side_border;
-        bt = if (has_bar) @as(i32, @intCast(font_height)) + 3 else bottom_border;
-        bb = if (at_bottom) _window.sizeHeight(font_height) else bottom_border;
+        bt = if (has_bar) _window.barHeight(font_height) else bottom_border;
+        bb = if (at_bottom) _window.barHeight(font_height) else bottom_border;
     }
 
     // A border is deep enough for the gadgets that live in it, even in a
@@ -255,9 +257,9 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     // the one to go without when the title bar is too narrow to hold it
     // beside the close and depth gadgets and leave a bar to drag by.
     if (flags & WF_HASZOOM != 0) {
-        var taken: i32 = zoom_width;
-        if (flags & WF_CLOSE != 0) taken += close_width;
-        if (flags & WF_DEPTH != 0) taken += depth_width;
+        var taken: i32 = zoomWidth(font_height);
+        if (flags & WF_CLOSE != 0) taken += closeWidth(font_height);
+        if (flags & WF_DEPTH != 0) taken += depthWidth(font_height);
         if (taken > width) flags &= ~WF_HASZOOM;
     }
 
@@ -428,15 +430,15 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         w.frame = it.NewObjectTagList(ib.frame_class, null, &edges);
         if (w.frame == null) ok = false;
         if (flags & WF_CLOSE != 0) {
-            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, close_width, bt);
+            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, closeWidth(font_height), bt);
             if (w.close_image == null) ok = false;
         }
         if (flags & WF_DEPTH != 0) {
-            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depth_width, bt);
+            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depthWidth(font_height), bt);
             if (w.depth_image == null) ok = false;
         }
         if (flags & WF_HASZOOM != 0) {
-            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, zoom_width, bt);
+            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, zoomWidth(font_height), bt);
             if (w.zoom_image == null) ok = false;
         }
         if (flags & WF_SIZE != 0) {
