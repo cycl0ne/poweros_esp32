@@ -17,7 +17,7 @@ pub const help =
 
 pub fn run(shell: *Shell, _: *Args) anyerror!void {
     const sys = shell.base.iface();
-    shell.print("task        name           type     pri  state   wait      recvd     except       count exc\n", .{});
+    shell.print("task        name           type     pri  state   wait      recvd     except    userdata  excdata\n", .{});
     sys.Forbid(); // no task comes or goes while we look
     defer sys.Permit();
     printTask(shell, shell.base.this_task);
@@ -28,10 +28,15 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     shell.print("dispatches %d, idle loops %d\n", .{ shell.base.disp_count, shell.base.idle_count });
 }
 
+/// A pointer as a number to print, and 0 for none.
+fn addressOf(p: ?*anyopaque) u32 {
+    return @truncate(@intFromPtr(p orelse return 0));
+}
+
 fn printTask(shell: *Shell, task: *const sdk.exec.Task) void {
-    shell.print("0x%08x  %-14s %-7s %4d  %-7s %08x  %08x  %08x  %8d %3d\n", .{
-        @intFromPtr(task),                               task.name(),                                     _shell.enumName(sdk.exec.NodeType, task.node.type), task.node.pri,
-        _shell.enumName(sdk.exec.TaskState, task.state), task.sig_wait,                                   task.sig_recvd,                                     task.sig_except,
-        if (task.user_data) |p| @intFromPtr(p) else 0,   if (task.except_data) |p| @intFromPtr(p) else 0,
+    shell.print("0x%08x  %-14s %-7s %4d  %-7s %08x  %08x  %08x  %08x  %08x\n", .{
+        @intFromPtr(task),                               task.name(),                 _shell.enumName(sdk.exec.NodeType, task.node.type), task.node.pri,
+        _shell.enumName(sdk.exec.TaskState, task.state), task.sig_wait,               task.sig_recvd,                                     task.sig_except,
+        addressOf(task.user_data),                       addressOf(task.except_data),
     });
 }
