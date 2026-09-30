@@ -2,6 +2,7 @@
 //! ChangeWindowBox: moves and sizes a window at once.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const intuition = sdk.intuition;
 const wn = intuition.windows;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
@@ -79,8 +80,32 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     const dh = new_h - window.height;
     if (dx == 0 and dy == 0 and dw == 0 and dh == 0) return;
 
-    if (dw != 0 or dh != 0) _gadget.clearRelative(ib, window);
-    if (!ib.layers_base.MoveSizeLayer(window.layer, dx, dy, dw, dh)) return;
+    // What is about to move is cleared where it is now, before the layer
+    // is told, because afterwards its old place is no longer the window's
+    // to draw in.
+    const cleared = dw != 0 or dh != 0;
+    if (cleared) _gadget.clearRelative(ib, window);
+    if (!ib.layers_base.MoveSizeLayer(window.layer, dx, dy, dw, dh)) {
+        // The layer would not move, so the window is the size it was -
+        // but its gadgets have just been cleared off it. They are put
+        // back: a window that cannot be resized is a window that stays
+        // as it was, not an empty one that no later drawing repairs,
+        // since nothing else will draw it again until its program has
+        // some reason to.
+        if (cleared) {
+            drawBorder(ib, window);
+            _gadget.renderAll(ib, window);
+        }
+        var why: usize = 0;
+        const asked = [_]sdk.utility.TagItem{ .{ .tag = sdk.layers.LATAG_GetLastError, .data = @intFromPtr(&why) }, .{} };
+        ib.layers_base.GetLayerAttrs(window.layer, &asked);
+        exec.kprintf(ib.sys_base, "window: MoveSizeLayer refused move %d,%d size %d,%d: error %d, %ld bytes free\n", .{
+            dx,                                             dy,
+            dw,                                             dh,
+            @as(i32, @truncate(@as(isize, @bitCast(why)))), @as(u64, ib.sys_base.AvailMem(sdk.exec.MEMF_ANY)),
+        });
+        return;
+    }
     // The interior goes with it. Its border widths do not change, so it
     // moves by the same amount and grows by the same amount.
     if (window.inner_layer) |inner| _ = ib.layers_base.MoveSizeLayer(inner, dx, dy, dw, dh);
