@@ -75,6 +75,10 @@ pub const Data = extern struct {
     sized: u8 = 0,
     /// Timer events since the arrow was pressed.
     ticks: u32 = 0,
+    /// An interim report has come in since the last final one: the bar is
+    /// being worked, so the final report that ends it is worth passing on
+    /// even when the top it carries is the one already held.
+    working: u8 = 0,
     /// The bar: a propgclass gadget of this one's own.
     inner: ?*Object = null,
     /// The arrows' button frame.
@@ -180,10 +184,47 @@ fn partsOf(own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) Parts 
 }
 
 /// The bar put where it belongs; its place in the gadget's box.
+/// Whether the bar lives in a window's border, where what is behind it
+/// is the border itself.
+fn inBorder(o: *Object) bool {
+    return gc.gadget(o).activation & gc.GACT_BORDER != 0;
+}
+
 fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) gc.Box {
     const b = gc.boxFor(gc.gadget(o), gi);
     const at = partsOf(own, o, gi).bar;
-    support.place(base.intuition_base, own.inner.?, .{ .left = b.left + at.left, .top = b.top + at.top, .width = at.width, .height = at.height });
+    // In a border there is no channel drawn round the bar: the border is
+    // the channel, and what shows beside the knob is the border's own
+    // colour.
+    const border = inBorder(o);
+    const look = [_]TagItem{
+        .{ .tag = pg.PGA_Borderless, .data = @intFromBool(border) },
+        // Said to the bar as well, so that it knows what is behind it
+        // and puts that back rather than the plain ground.
+        .{ .tag = if (own.vertical != 0) gc.GA_RightBorder else gc.GA_BottomBorder, .data = @intFromBool(border) },
+        .{},
+    };
+    _ = base.intuition_base.SetAttrsTagList(own.inner.?, &look);
+    // In a border the bar is kept narrower than the border it sits in,
+    // and the arrows are not: the border's own colour then runs down
+    // both sides of it, which is what a knob of that same colour is
+    // told apart by. A fifth of the thickness either side is what the
+    // shapes are drawn for.
+    var box = gc.Box{ .left = b.left + at.left, .top = b.top + at.top, .width = at.width, .height = at.height };
+    if (border) {
+        const thick = if (own.vertical != 0) box.width else box.height;
+        const inset = @max(@divTrunc(thick, 5), 1);
+        if (thick > 2 * inset + 2) {
+            if (own.vertical != 0) {
+                box.left += inset;
+                box.width -= 2 * inset;
+            } else {
+                box.top += inset;
+                box.height -= 2 * inset;
+            }
+        }
+    }
+    support.place(base.intuition_base, own.inner.?, box);
     return at;
 }
 
@@ -191,8 +232,10 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
 
 /// One arrow: its frame, pressed while it is held with the pointer on
 /// it, and a triangle pointing the way it steps.
-fn drawArrow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, at: gc.Box, which: u8) void {
-    support.drawArrow(base.intuition_base, base.graphics_base, own.frame.?, rp, info.draw_info, .{
+fn drawArrow(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo, at: gc.Box, which: u8) void {
+    // In a border the arrow is its shape alone, on the border's colour.
+    // Anywhere else it is a button, and has a face to press.
+    support.drawArrow(base.intuition_base, base.graphics_base, if (inBorder(o)) null else own.frame.?, rp, info.draw_info, .{
         .at = at,
         .vertical = own.vertical != 0,
         .forward = which == FORWARD,
@@ -206,7 +249,7 @@ fn drawArrows(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.R
     const parts = partsOf(own, o, info);
     for ([_]u8{ BACK, FORWARD }) |which| {
         const part = if (which == BACK) parts.back else parts.forward;
-        drawArrow(base, own, rp, info, .{ .left = b.left + part.left, .top = b.top + part.top, .width = part.width, .height = part.height }, which);
+        drawArrow(base, own, o, rp, info, .{ .left = b.left + part.left, .top = b.top + part.top, .width = part.width, .height = part.height }, which);
     }
 }
 
@@ -324,7 +367,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 const top: u32 = @min(@as(u32, @truncate(item.data)), lastTop(own));
                 const moved = top != own.top;
                 own.top = top;
-                if (moved or update.flags & classusr.OPUF_INTERIM == 0) tell(base, own, o.?, update.gadget_info, update.flags);
+                // A move is always worth reporting. A report that carries
+                // no move is worth it only at the end of a drag, to give
+                // the final place once the interim ones have stopped -
+                // never for a top set from outside, which would answer
+                // whoever set it with news of their own value and leave
+                // the two of them telling each other about it for ever.
+                const ending = update.flags & classusr.OPUF_INTERIM == 0;
+                if (!ending) own.working = 1;
+                const worth_telling = moved or own.working != 0;
+                if (ending) own.working = 0;
+                if (worth_telling) tell(base, own, o.?, update.gadget_info, update.flags);
                 return 0;
             };
             var changed = ib.SendSuperMessage(cl, o, msg);
