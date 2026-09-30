@@ -24,6 +24,7 @@
 //! desktop repainted in pieces is why that matters.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const graphics = sdk.graphics;
 const rtg = sdk.rtg;
 const Rect = graphics.Rect;
@@ -210,6 +211,16 @@ pub fn blitInto(
         dest.last_error = graphics.GERR_BAD_FORMAT;
         return;
     }
+    // A surface with no pixels has nothing to copy from. Nothing here
+    // makes one, so being handed one means something further back went
+    // wrong; the blit says so and draws nothing, rather than faulting and
+    // taking down whichever task was drawing - which, for the one that
+    // reads input, is every window on the display at once.
+    if (src.pixels == null) {
+        dest.last_error = graphics.GERR_BAD_SIZE;
+        exec.kprintf(gb.sys_base, "blit: source surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(src)))});
+        return;
+    }
     const asked = Rect{ .min_x = src_x, .min_y = src_y, .max_x = src_x + width, .max_y = src_y + height };
     const from = Rect.intersect(asked, .{
         .min_x = 0,
@@ -232,6 +243,13 @@ pub fn blitInto(
     const inverse = dest.draw_mode & graphics.DRMD_INVERSVID != 0;
 
     while (it.next()) |r| {
+        // The same for a piece with nowhere to put pixels: it is passed
+        // over, and the pieces that do have somewhere are still drawn.
+        if (r.surface.pixels == null) {
+            dest.last_error = graphics.GERR_BAD_SIZE;
+            exec.kprintf(gb.sys_base, "blit: clip piece surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(r.surface)))});
+            continue;
+        }
         // A surface moved over itself has to be walked away from where it
         // is going, or it would read pixels it has already written - the
         // reason a memmove exists. Which surface this is depends on the
