@@ -104,7 +104,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   [datatypes guide](sdk/docs/guides/datatypes.md).
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
-  is, laid over what is there by its own coverage, or at another size - layers.library for overlapping windows, and
+  is, laid over what is there by its own coverage, or at another size;
+  rectangles with rounded corners, pies and rings, a surface laid down
+  through a coverage that can be softened into a shadow, and a string
+  drawn to fit a width with dots where it was cut - layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
   any display - a layout in a frame with a title in its edge groups the

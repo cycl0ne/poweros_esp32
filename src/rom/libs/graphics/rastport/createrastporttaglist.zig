@@ -49,8 +49,9 @@ const surfaceFor = _rastport.surfaceFor;
 /// - nothing was named and there is no display, or the board named is
 ///   showing nothing;
 /// - the surface's format is one no pen can be packed for (`indexed8`,
-///   `gray8`, `mono1`). It is refused here rather than handed back to fail
-///   at every drawing call.
+///   `mono1`). It is refused here rather than handed back to fail at every
+///   drawing call. A `gray8` surface is a coverage and is taken: a pen is
+///   written as its brightness, so white is all of it and black none.
 ///
 /// BEHAVIOR:
 /// The pens are packed into the surface's format once, here, and kept

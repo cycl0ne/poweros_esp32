@@ -161,9 +161,14 @@ pub fn report(gb: *GraphicsBase, tag_list: ?[*]const TagItem, tag: sdk.utility.T
 /// RESULT:
 /// The bytes to write, in the low bits of the word, or null for a format
 /// this library has no mapping for. A pen is a colour, and `indexed8`
-/// wants a palette to search and `gray8` and `mono1` a rule for turning a
-/// colour into one; none of the three has been decided, so they are
-/// refused rather than guessed at.
+/// wants a palette to search and `mono1` a threshold; neither has been
+/// decided, so both are refused rather than guessed at.
+///
+/// `gray8` is not a colour at all but a coverage - how much of something
+/// lands, which is what `BltCoverBitMapRastPort` reads and
+/// `BlurCoverage` softens. A pen's brightness is taken as that coverage,
+/// so a RastPort can be made on one and every drawing call becomes a way
+/// to build a shape to blur: white is all of it, black is none.
 ///
 /// CONTEXT:
 /// Any. It is arithmetic on its arguments.
@@ -181,7 +186,11 @@ pub fn packPen(format: PixelFormat, pen: Pen) ?u32 {
         .rgb565 => (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3),
         .argb1555 => @as(u32, @intFromBool(a >= 0x80)) << 15 |
             (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3),
-        .indexed8, .gray8, .mono1 => null,
+        // A coverage plane: how much, not what colour. A pen's brightness
+        // is its coverage, which makes every drawing call a way to build
+        // one - white is all of it and black is none.
+        .gray8 => (r * 77 + g * 151 + b * 28) >> 8,
+        .indexed8, .mono1 => null,
         _ => null,
     };
 }
@@ -224,6 +233,10 @@ pub fn unpackPen(format: PixelFormat, value: u32) Pen {
             break :blk a << 24 | (r << 3 | r >> 2) << 16 |
                 (g << 3 | g >> 2) << 8 | (b << 3 | b >> 2);
         },
+        // A coverage read back as the grey it stands for, so that a pixel
+        // read out and written back is unchanged and a coverage plane
+        // blitted as a picture is the shape in grey.
+        .gray8 => 0xFF00_0000 | (value & 0xFF) << 16 | (value & 0xFF) << 8 | (value & 0xFF),
         // No RastPort can exist on one of these: CreateRastPortTagList
         // refuses a format it cannot pack a pen for, so nothing can read
         // a pixel out of one either.

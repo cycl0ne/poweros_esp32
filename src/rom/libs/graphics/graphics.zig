@@ -118,12 +118,18 @@ pub fn freeOwnedForTests(gb: *GraphicsBase) void {
 
 /// A surface over memory of the test's own, which no board is behind.
 fn memorySurface(pixels: []u8, format: rtg.bitmaps.PixelFormat) rtg.Surface {
-    const bytes = rtg.bitmaps.formatBits(format) / 8;
+    return sizedSurface(pixels, format, 8, 4);
+}
+
+/// The same for a test that needs room: a shape with corners does not fit
+/// in eight pixels by four.
+fn sizedSurface(pixels: []u8, format: rtg.bitmaps.PixelFormat, width: u32, height: u32) rtg.Surface {
+    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
     return .{
         .pixels = pixels.ptr,
-        .width = 8,
-        .height = 4,
-        .pitch = 8 * @max(bytes, 1),
+        .width = width,
+        .height = height,
+        .pitch = width * bytes,
         .size_bytes = pixels.len,
         .format = format,
     };
@@ -259,10 +265,17 @@ test "a pen is a colour, packed once into the surface's format" {
     try testing.expectEqual(@as(?u32, 0x07E0), rastport.packPen(.rgb565, graphics.penRGB(0, 0xFF, 0)));
     try testing.expectEqual(@as(?u32, 0x001F), rastport.packPen(.rgb565, graphics.penRGB(0, 0, 0xFF)));
 
-    // Three formats have no mapping until something decides one.
+    // Two formats have no mapping until something decides one.
     try testing.expect(rastport.packPen(.indexed8, red) == null);
-    try testing.expect(rastport.packPen(.gray8, red) == null);
     try testing.expect(rastport.packPen(.mono1, red) == null);
+
+    // A coverage plane takes the pen's brightness, so drawing in white
+    // builds a shape that covers fully and black one that covers not at
+    // all - which is what BlurCoverage softens and
+    // BltCoverBitMapRastPort reads.
+    try testing.expectEqual(@as(?u32, 255), rastport.packPen(.gray8, graphics.penRGB(255, 255, 255)));
+    try testing.expectEqual(@as(?u32, 0), rastport.packPen(.gray8, graphics.penRGB(0, 0, 0)));
+    try testing.expectEqual(@as(graphics.Pen, 0xFF80_8080), rastport.unpackPen(.gray8, 0x80));
 }
 
 test "a RastPort on plain memory: no board behind it, and it comes back" {
@@ -413,6 +426,231 @@ fn onMemory(gb: *GraphicsBase, surface: *rtg.Surface, extra: ?[*]const TagItem) 
 fn pixelAt(surface: *const rtg.Surface, x: u32, y: u32) u16 {
     const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * 2;
     return @as(u16, at[0]) | @as(u16, at[1]) << 8;
+}
+
+test "FillRoundRect: the corners are taken off and the middle is whole" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 16, 16);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const rp = try onMemory(gb, &surface, &red);
+
+    base(gb).FillRoundRect(@ptrCast(rp), &.{ .max_x = 16, .max_y = 16 }, 4);
+
+    // The corner pixel is outside the shape and the one on the diagonal
+    // inside it; the middle of every edge is filled.
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 0, 0));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 15, 0));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 0, 15));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 8, 0));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 0, 8));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 8, 8));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 15, 8));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "FillRoundRect: radius 0 is the rectangle, and a huge radius is a disc" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 16, 16);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const rp = try onMemory(gb, &surface, &red);
+
+    base(gb).FillRoundRect(@ptrCast(rp), &.{ .max_x = 8, .max_y = 8 }, 0);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 0, 0));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 7, 7));
+
+    // Taken down to half the shorter side: the corners go, the middle
+    // stays, and nothing is written outside the rectangle.
+    base(gb).FillRoundRect(@ptrCast(rp), &.{ .min_y = 8, .max_x = 8, .max_y = 16 }, 999);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 0, 8));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 4, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 8, 12));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "DrawRoundRect: an outline round a fill of the same shape leaves no gap" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 16, 16);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const rp = try onMemory(gb, &surface, &red);
+    const box = graphics.Rect{ .max_x = 16, .max_y = 16 };
+
+    base(gb).FillRoundRect(@ptrCast(rp), &box, 5);
+    // Every pixel the outline writes is one the fill had already written,
+    // so the two agree on where the shape's edge is.
+    var before: [16 * 16 * 2]u8 = undefined;
+    @memcpy(&before, &pixels);
+    base(gb).DrawRoundRect(@ptrCast(rp), &box, 5);
+    try testing.expectEqualSlices(u8, &before, &pixels);
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "FillArc: a whole turn is a disc, a sweep is a wedge, and none is nothing" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [32 * 32 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 32, 32);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const rp = try onMemory(gb, &surface, &red);
+
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 16, .cy = 16, .radius = 10 });
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 16, 16));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 16, 7));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 16, 4));
+
+    // A ring: the middle is left alone.
+    @memset(&pixels, 0);
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 16, .cy = 16, .radius = 10, .inner = 6 });
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 16, 16));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 16, 8));
+
+    // A quarter, from 0 degrees to 90: to the right and up the screen.
+    @memset(&pixels, 0);
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 16, .cy = 16, .radius = 10, .from = 0, .to = 90 });
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 20, 12));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 12, 20));
+
+    // No sweep at all.
+    @memset(&pixels, 0);
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 16, .cy = 16, .radius = 10, .from = 45, .to = 45 });
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 16, 16));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "BltCoverBitMapRastPort: none of it, half of it, all of it" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .rgb565);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{.{}});
+
+    // A source of solid white, the destination black.
+    var src_pixels: [8 * 4 * 2]u8 = @splat(0xFF);
+    var src = memorySurface(&src_pixels, .rgb565);
+    const whole = graphics.Rect{ .max_x = 8, .max_y = 4 };
+
+    base(gb).BltCoverBitMapRastPort(&src, &whole, @ptrCast(rp), 0, 0, &.{ .alpha = 0 });
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 1, 1));
+
+    base(gb).BltCoverBitMapRastPort(&src, &whole, @ptrCast(rp), 0, 0, &.{ .alpha = 255 });
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 1, 1));
+
+    // Half of white over black is grey, and grey in rgb565 is neither 0
+    // nor 0xFFFF.
+    @memset(&pixels, 0);
+    base(gb).BltCoverBitMapRastPort(&src, &whole, @ptrCast(rp), 0, 0, &.{ .alpha = 128 });
+    const half = pixelAt(&surface, 1, 1);
+    try testing.expect(half != 0 and half != 0xFFFF);
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "BltCoverBitMapRastPort: a coverage plane travels with the shape" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .rgb565);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{.{}});
+    var src_pixels: [8 * 4 * 2]u8 = @splat(0xFF);
+    var src = memorySurface(&src_pixels, .rgb565);
+
+    // A plane that covers the left half of the rectangle and not the
+    // right, read at the source rectangle's own corner.
+    var plane: [8 * 4]u8 = @splat(0);
+    for (0..4) |y| for (0..4) |x| {
+        plane[y * 8 + x] = 255;
+    };
+
+    base(gb).BltCoverBitMapRastPort(&src, &.{ .max_x = 8, .max_y = 4 }, @ptrCast(rp), 0, 0, &.{
+        .bits = &plane,
+        .pitch = 8,
+    });
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 1, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 6, 1));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "a coverage plane takes drawing and pictures, and reads back as grey" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    // A RastPort on a gray8 surface: what used to be refused.
+    var plane: [8 * 4]u8 = @splat(0);
+    var cover = memorySurface(&plane, .gray8);
+    const white = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) }, .{} };
+    const on_cover = try onMemory(gb, &cover, &white);
+    base(gb).RectFill(@ptrCast(on_cover), &.{ .max_x = 4, .max_y = 4 });
+    try testing.expectEqual(@as(u8, 255), plane[0]);
+    try testing.expectEqual(@as(u8, 0), plane[5]);
+
+    // The plane put on a display surface as a picture comes out as the
+    // grey it stands for.
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .rgb565);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{.{}});
+    base(gb).WritePixelArray(@ptrCast(rp), &plane, 8, @intFromEnum(rtg.bitmaps.PixelFormat.gray8), 0, 0, &.{ .max_x = 8, .max_y = 4 });
+    try testing.expectEqual(graphics.GERR_OK, @as(i32, @intCast(rp.last_error)));
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 1, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 5, 1));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    base(gb).FreeRastPort(@ptrCast(on_cover));
+    try tearDown(gb);
+}
+
+test "BlurCoverage: a hard edge becomes a slope, and only gray8 is touched" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    // Three passes of radius 3 reach nine pixels, so a pixel keeps full
+    // coverage only where everything within nine of it was covered: the
+    // surface has to be wider than the blur to show that at all.
+    var pixels: [48 * 32]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .gray8, 48, 32);
+    for (0..32) |y| for (0..24) |x| {
+        pixels[y * 48 + x] = 255;
+    };
+    base(gb).BlurCoverage(&surface, &.{ .max_x = 48, .max_y = 32 }, 3);
+
+    const middle = 16 * 48;
+    try testing.expectEqual(@as(u8, 255), pixels[middle + 12]);
+    try testing.expectEqual(@as(u8, 0), pixels[middle + 46]);
+    // The edge is now a slope rather than a step.
+    try testing.expect(pixels[middle + 22] > pixels[middle + 26]);
+    try testing.expect(pixels[middle + 26] > 0);
+    // What the area's own edge cuts off fades too, because outside it
+    // reads as nothing.
+    try testing.expect(pixels[12] < 255);
+
+    // Another format is left exactly as it was.
+    var other: [8 * 4 * 2]u8 = @splat(0x5A);
+    var rgb = memorySurface(&other, .rgb565);
+    base(gb).BlurCoverage(&rgb, &.{ .max_x = 8, .max_y = 4 }, 2);
+    for (other) |byte| try testing.expectEqual(@as(u8, 0x5A), byte);
+
+    try tearDown(gb);
 }
 
 test "RectFill: half-open, so max is one past the last pixel" {

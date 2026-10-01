@@ -36,8 +36,9 @@ const rastport = @import("../rastport/_rastport.zig");
 ///
 /// RESULT:
 /// Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with no
-/// colours in it - `indexed8`, `gray8`, `mono1` - on either side, and then
-/// nothing was written.
+/// colours in it - `indexed8`, `mono1` - on either side, and then nothing
+/// was written. `gray8` is taken on either side as a coverage: read, it is
+/// the grey it stands for; written, a colour becomes its brightness.
 ///
 /// BEHAVIOR:
 /// Each pixel goes down as it is: the pens, the draw mode and any alpha in

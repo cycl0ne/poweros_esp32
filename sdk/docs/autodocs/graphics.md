@@ -29,11 +29,13 @@ Generated from the source by `./zig build autodoc`.
 - [BlendPixelArray](#blendpixelarray) - Puts a rectangle of one's own pixels down over what is already there, mixing each with the pixel under it by its own coverage.
 - [BltBitMap](#bltbitmap) - Moves a rectangle of pixels from one surface to another.
 - [BltBitMapRastPort](#bltbitmaprastport) - Moves a rectangle of pixels into a RastPort.
+- [BltCoverBitMapRastPort](#bltcoverbitmaprastport) - A rectangle of a surface laid over what is there, each pixel mixed with the one under it by how much of it the cover says lands.
 - [BltMaskBitMapRastPort](#bltmaskbitmaprastport) - The same, leaving alone the pixels the mask does not cover.
 - [BltMaskRastPort](#bltmaskrastport) - Moves a rectangle, leaving alone the pixels the mask does not cover.
 - [BltPattern](#bltpattern) - Fills a rectangle with a tile, repeated.
 - [BltRastPort](#bltrastport) - Moves a rectangle from one RastPort to another.
 - [BltTemplate](#blttemplate) - Stencils a shape onto the surface in the pens.
+- [BlurCoverage](#blurcoverage) - Blurs a coverage surface in place.
 - [ClearRectRegion](#clearrectregion) - Takes a rectangle out of a region.
 - [ClearRegion](#clearregion) - Empties a region, keeping the region itself.
 - [CloseFont](#closefont) - Gives a font back.
@@ -46,9 +48,12 @@ Generated from the source by `./zig build autodoc`.
 - [DrawHLine](#drawhline) - A run of pixels rightward.
 - [DrawPoly](#drawpoly) - A line through each of a list of points.
 - [DrawRect](#drawrect) - The outline of a rectangle.
+- [DrawRoundRect](#drawroundrect) - The outline of a rectangle whose corners are rounded.
 - [DrawVLine](#drawvline) - A run of pixels downward. `DrawHLine` turned on its side.
 - [EndDraw](#enddraw) - The rows gathered since `BeginDraw` handed to the display, in one.
 - [EraseRect](#eraserect) - Paints part of a RastPort the way its empty parts are meant to look.
+- [FillArc](#fillarc) - Fills a wedge of a circle with the RastPort's pen: a pie, or a ring where the arc gives an inner radius.
+- [FillRoundRect](#fillroundrect) - Fills a rectangle whose corners are rounded, with the RastPort's pen.
 - [FontExtent](#fontextent) - What a font is.
 - [FontRows](#fontrows) - How many rows a TextAttr asks for.
 - [FreeBitMap](#freebitmap) - Gives a bitmap back.
@@ -77,6 +82,7 @@ Generated from the source by `./zig build autodoc`.
 - [Text](#text) - Draws text at the current point.
 - [TextExtent](#textextent) - How much room some text would take.
 - [TextFit](#textfit) - How many characters fit in the room given.
+- [TextFitted](#textfitted) - Draws as much of a string as fits in a width, and dots where it had to stop.
 - [TextLength](#textlength) - How wide some text would be, without drawing it.
 - [UnlockFonts](#unlockfonts) - Lets the font list go again.
 - [WeighTAMatch](#weightamatch) - How well a font matches what is asked for.
@@ -1043,8 +1049,10 @@ fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch:
 **RESULT**
 
 Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with
-no colours in it - `indexed8`, `gray8`, `mono1` - on either side, and
-then nothing was written.
+no colours in it - `indexed8`, `mono1` - on either side, and then
+nothing was written. `gray8` is taken on either side as a coverage:
+read, it is the grey it stands for; written, a colour becomes its
+brightness.
 
 **BEHAVIOR**
 
@@ -1221,6 +1229,100 @@ None known.
 
 ```zig
 gb.BltBitMapRastPort(picture, 0, 0, rp, 20, 20, 64, 48);
+```
+
+## BltCoverBitMapRastPort
+
+A rectangle of a surface laid over what is there, each pixel mixed with the one under it by how much of it the cover says lands.
+
+**SYNOPSIS**
+
+```zig
+fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface,
+    src_area: *const Rect, dest: *RastPort, dest_x: i32, dest_y: i32,
+    cover: *const Cover) void
+```
+
+**SINCE**
+
+0.7. LVO -418.
+
+**INPUTS**
+
+- `src` - the surface the pixels come from.
+- `src_area` - the rectangle of it to take, half-open, cut to the
+  surface.
+- `dest` - the RastPort they go to. Its clip decides what lands.
+- `dest_x` - where the rectangle's left edge goes.
+- `dest_y` - where its top edge goes.
+- `cover` - how much of it lands: `alpha` for the whole blit, `bits`
+  for a byte a pixel, or both, which multiply.
+
+**RESULT**
+
+Nothing. `RPTAG_LastError` says why nothing was drawn: `GERR_BAD_SIZE`
+for a surface with no pixels.
+
+**BEHAVIOR**
+
+What `BltMaskBitMapRastPort` does with one bit a pixel, done with 256
+steps. Every pixel is read from the source, taken apart into its
+colour, given the coverage as its alpha, and mixed with the pixel
+under it - the same mixing a picture with an alpha channel gets from
+`BlendPixelArray`, so a shape drawn the two ways matches.
+
+The coverage of a pixel is the source's own alpha, times `bits` where
+there are bits, times `alpha`. A source in a format that carries no
+alpha counts as covering fully, so `rgb565` through a `bits` plane is
+the ordinary case: a shape with soft edges.
+
+`bits` is read at the source rectangle's own corner, so the coverage
+travels with the shape rather than with where it lands.
+
+The source may be in another format than the destination, because
+every pixel goes through a colour on the way. It is slower than
+`BltBitMapRastPort`, which moves whole rows of one format, and that is
+the call to use when nothing has to be mixed.
+
+Coverage 0 writes nothing at all - not the pixel it would have
+written, and not a read of what is under it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The `bits` plane belongs to the caller and is
+only read.
+
+**NOTES**
+
+- A shadow is `BlurCoverage` on a `gray8` surface and then this call
+  with that surface as `bits` and a one-colour source.
+- A window dimmed behind a requester is this call with `alpha` alone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BltMaskBitMapRastPort`, `BltBitMapRastPort`, `BlendPixelArray`,
+`BlurCoverage`
+
+**EXAMPLES**
+
+```zig
+// A picture faded half in.
+gb.BltCoverBitMapRastPort(picture, &whole, rp, 20, 20, &.{ .alpha = 128 });
+
+// A shape with soft edges: its coverage is a gray8 plane.
+gb.BltCoverBitMapRastPort(shape, &whole, rp, 20, 20,
+    &.{ .bits = soft.pixels.?, .pitch = soft.pitch });
 ```
 
 ## BltMaskBitMapRastPort
@@ -1568,6 +1670,91 @@ None known.
 gb.BltTemplate(rp, &arrow_bits, 2, 0, 0, &.{ .min_x = x, .min_y = y, .max_x = x + 16, .max_y = y + 16 });
 ```
 
+## BlurCoverage
+
+Blurs a coverage surface in place.
+
+**SYNOPSIS**
+
+```zig
+fn BlurCoverage(gb: *GraphicsBase, cover: *rtg.Surface,
+    area: *const Rect, radius: u32) void
+```
+
+**SINCE**
+
+0.7. LVO -424.
+
+**INPUTS**
+
+- `cover` - a `gray8` surface: a byte a pixel, 0 for none of it and
+  255 for all of it. It is read and written.
+- `area` - the part of it to blur, half-open and cut to the surface.
+- `radius` - how far the blur reaches, at most 64. 0 does nothing.
+
+**RESULT**
+
+Nothing. A surface in any other format is left alone.
+
+**BEHAVIOR**
+
+A box blur: every pixel becomes the average of the ones within
+`radius` of it, done across and then down, three times over. Three
+passes of a box are close enough to a Gaussian that the difference
+cannot be seen in a shadow, and each pass keeps a running sum - a
+value added as it comes into the window and taken off as it leaves -
+so the work is the same whatever the radius.
+
+Outside `area` reads as nothing, so a shape blurred near the edge of
+its surface fades out there rather than repeating itself.
+
+The surface is a coverage and not a picture: it is what
+`BltCoverBitMapRastPort` takes as `bits`. Nothing is handed to a
+display, because a coverage is not something a display shows.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. A large area is a great deal of work.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the window of original values is on the stack,
+which is what bounds the radius.
+
+**NOTES**
+
+A shadow is drawn once and kept. Blurring one every time a window
+redraws is the one thing in this library that is too slow to do per
+frame on this machine.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BltCoverBitMapRastPort`, `AllocBitMapTagList`
+
+**EXAMPLES**
+
+```zig
+// A soft shadow: a filled shape on a gray8 surface, blurred, then
+// laid down in the shadow's colour.
+const tags = [_]TagItem{
+    .{ .tag = graphics.BMTAG_Width, .data = 120 },
+    .{ .tag = graphics.BMTAG_Height, .data = 60 },
+    .{ .tag = graphics.BMTAG_Format, .data = @intFromEnum(rtg.PixelFormat.gray8) },
+    .{},
+};
+const soft = gb.AllocBitMapTagList(&tags) orelse return;
+defer gb.FreeBitMap(soft);
+// ... fill the shape into `soft` at full coverage ...
+gb.BlurCoverage(soft, &.{ .max_x = 120, .max_y = 60 }, 6);
+```
+
 ## ClearRectRegion
 
 Takes a rectangle out of a region.
@@ -1773,8 +1960,9 @@ drawing calls:
 - nothing was named and there is no display, or the board named is
   showing nothing;
 - the surface's format is one no pen can be packed for (`indexed8`,
-  `gray8`, `mono1`). It is refused here rather than handed back to fail
-  at every drawing call.
+  `mono1`). It is refused here rather than handed back to fail at every
+  drawing call. A `gray8` surface is a coverage and is taken: a pen is
+  written as its brightness, so white is all of it and black none.
 
 **BEHAVIOR**
 
@@ -2344,6 +2532,82 @@ None known.
 gb.DrawRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 110, .max_y = 60 });
 ```
 
+## DrawRoundRect
+
+The outline of a rectangle whose corners are rounded.
+
+**SYNOPSIS**
+
+```zig
+fn DrawRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect,
+    radius: u32) void
+```
+
+**SINCE**
+
+0.7. LVO -406.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its pen, its line pattern, its draw mode and
+  its clip decide the result.
+- `area` - the rectangle the outline sits in, half-open: the line is
+  drawn on the rows `min_y` and `max_y - 1` and the columns `min_x`
+  and `max_x - 1`.
+- `radius` - how far the corners are rounded. 0 is `DrawRect`.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Four straight edges, shortened by the radius at each end, and a
+quarter circle in each corner. The corners come off the same table of
+insets `FillRoundRect` fills from, so an outline drawn round a fill of
+the same radius and rectangle meets it exactly with no gap and no
+doubled line.
+
+A `radius` larger than half the shorter side is taken down to it, and
+to 256 in any case.
+
+The line pattern runs along the straight edges and round the corners
+as one walk, so a dashed outline keeps its rhythm through a corner.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated; the corner's table is on the stack.
+
+**NOTES**
+
+A radius of 1 rounds by a single pixel at each corner, which is what a
+frame that should not look sharp usually wants.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FillRoundRect`, `DrawRect`, `RPTAG_LinePattern`
+
+**EXAMPLES**
+
+```zig
+// A field, drawn round a fill of the same shape.
+const box = graphics.Rect{ .min_x = 8, .min_y = 8, .max_x = 160, .max_y = 34 };
+gb.FillRoundRect(rp, &box, 6);
+gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{} });
+gb.DrawRoundRect(rp, &box, 6);
+```
+
 ## DrawVLine
 
 A run of pixels downward. `DrawHLine` turned on its side.
@@ -2532,6 +2796,169 @@ None known.
 
 ```zig
 gb.EraseRect(rp, &.{ .min_x = 0, .min_y = 0, .max_x = 200, .max_y = 100 });
+```
+
+## FillArc
+
+Fills a wedge of a circle with the RastPort's pen: a pie, or a ring where the arc gives an inner radius.
+
+**SYNOPSIS**
+
+```zig
+fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void
+```
+
+**SINCE**
+
+0.7. LVO -412.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its pen, its draw mode and its clip decide the
+  result.
+- `arc` - the centre, the outer radius, the inner radius for a ring,
+  and the sweep in whole degrees. 0 degrees is to the right and the
+  numbers increase the way they do on paper, up the screen.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Each row of the circle is walked, and the pixels of it that are within
+the outer radius, outside the inner one and inside the sweep are
+filled. Whether a pixel is in the sweep is two multiplications and a
+comparison - the same test `DrawArc` uses - so an arc costs no
+trigonometry per pixel.
+
+The common shapes come out of the same walk: `inner` 0 and a sweep of
+360 is a filled disc, `inner` 0 with a shorter sweep is a pie, and an
+`inner` less than `radius` is a ring or a part of one. A sweep of no
+degrees draws nothing, which is what a gauge at zero asks for.
+
+A row is filled as runs rather than pixel by pixel wherever it can
+be: a full circle's row is one run, a ring's is two, and only the rows
+the sweep's edges cross are walked a pixel at a time.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+- The edge is hard, as every shape here is.
+- `radius` 0 or less draws nothing. An `inner` at or past `radius`
+  also draws nothing: a ring with no width.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DrawArc`, `DrawCircle`, `FillRoundRect`
+
+**EXAMPLES**
+
+```zig
+// A gauge three quarters of the way round, as a ring 10 pixels wide.
+gb.FillArc(rp, &.{ .cx = 100, .cy = 100, .radius = 40, .inner = 30,
+    .from = 270, .to = 180 });
+
+// A filled disc.
+gb.FillArc(rp, &.{ .cx = 20, .cy = 20, .radius = 8 });
+```
+
+## FillRoundRect
+
+Fills a rectangle whose corners are rounded, with the RastPort's pen.
+
+**SYNOPSIS**
+
+```zig
+fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect,
+    radius: u32) void
+```
+
+**SINCE**
+
+0.7. LVO -400.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its pen, its draw mode and its clip decide the
+  result, exactly as for `RectFill`.
+- `area` - what to fill, half-open: the row `max_y` and the column
+  `max_x` are not written. It may lie partly or wholly outside the
+  surface.
+- `radius` - how far the corners are rounded. 0 fills the rectangle
+  itself.
+
+**RESULT**
+
+Nothing. A rectangle outside the clip draws nothing, which is an
+answer and not an error.
+
+**BEHAVIOR**
+
+The middle of the shape is filled row by row, each row as wide as the
+corners leave it: the full width between the corners, and less at the
+top and bottom where a corner cuts in. Every row goes through the same
+span fill the area calls use, so the clip, the pen's alpha and the
+draw mode all behave as they do everywhere else.
+
+A `radius` larger than half the shorter side is taken down to it. A
+square filled that way is a disc and a long box is a stadium, which is
+what asking for a radius that large means. A radius is also taken down
+to 256, which on either of this machine's displays is already a corner
+half the height of the screen.
+
+The rows that were written are handed on to the display before it
+returns, so drawing is immediate.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. The work is unbounded and it hands rows on to
+  rtg.library at the end.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the corner's shape is worked out into a table on
+the stack. The surface is written and nothing else is touched.
+
+**NOTES**
+
+- The corners are hard-edged, as every shape here is. What makes them
+  smooth is coverage on a shape's edge, which is a change inside the
+  span fill rather than in this call.
+- The fill and `DrawRoundRect`'s outline are worked out from one
+  table, so an outline drawn round a fill of the same radius meets it
+  exactly.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DrawRoundRect`, `RectFill`, `FillArc`
+
+**EXAMPLES**
+
+```zig
+// The body of a button.
+gb.FillRoundRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 130, .max_y = 42 }, 8);
 ```
 
 ## FontExtent
@@ -4371,6 +4798,78 @@ const fits = gb.TextFit(rp, label.ptr, label.len, &room, null, graphics.TEXT_FOR
 gb.Text(rp, label.ptr, fits);
 ```
 
+## TextFitted
+
+Draws as much of a string as fits in a width, and dots where it had to stop.
+
+**SYNOPSIS**
+
+```zig
+fn TextFitted(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8,
+    count: u32, width: i32) u32
+```
+
+**SINCE**
+
+0.7. LVO -430.
+
+**INPUTS**
+
+- `rp` - the RastPort. It draws from the current point, in its font,
+  its pens and its draw mode, and leaves the point after what it drew.
+- `string` - the characters.
+- `count` - how many of them.
+- `width` - how much room there is, in pixels.
+
+**RESULT**
+
+How many characters of `string` were drawn - not counting the dots.
+`count` means all of it fitted and nothing was added.
+
+**BEHAVIOR**
+
+All of it fits: all of it is drawn, and nothing is added. It does not:
+as many characters as fit in what is left when the dots are taken off
+the width, and then the dots. Room for the dots but for no characters:
+only the dots. Not even room for those: nothing at all, and 0.
+
+What fits is worked out by `TextFit`, so the answer is the one every
+other measuring call would give for the same string, font and style.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+- A label, a list cell and a button all want this: a name too long for
+  its box should say that it was cut, not run into its neighbour or
+  stop mid-letter with no sign.
+- `width` 0 or less draws nothing.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`TextFit`, `TextLength`, `Text`
+
+**EXAMPLES**
+
+```zig
+// A file's name in a column 120 pixels wide.
+gb.Move(rp, cell.min_x, baseline);
+_ = gb.TextFitted(rp, name, len, 120);
+```
+
 ## TextLength
 
 How wide some text would be, without drawing it.
@@ -4594,7 +5093,7 @@ fn WriteLUTPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pit
 **RESULT**
 
 Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a surface with no
-colours in it - `indexed8`, `gray8`, `mono1` - and `GERR_NO_MEMORY`
+colours in it - `indexed8`, `mono1` - and `GERR_NO_MEMORY`
 when there was no kilobyte for the packed table; then nothing was
 written.
 
@@ -4726,8 +5225,9 @@ fn WritePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch:
 **RESULT**
 
 Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a format with no
-colours in it - `indexed8`, `gray8`, `mono1` - on either side, and then
-nothing was written.
+colours in it - `indexed8`, `mono1` - on either side, and then nothing
+was written. `gray8` is taken on either side as a coverage: read, it is
+the grey it stands for; written, a colour becomes its brightness.
 
 **BEHAVIOR**
 

@@ -82,6 +82,12 @@ const EraseRect = @import("rastport/eraserect.zig").EraseRect;
 const WritePixelArray = @import("blit/writepixelarray.zig").WritePixelArray;
 const BlendPixelArray = @import("blit/blendpixelarray.zig").BlendPixelArray;
 const ScalePixelArray = @import("blit/scalepixelarray.zig").ScalePixelArray;
+const FillRoundRect = @import("draw/fillroundrect.zig").FillRoundRect;
+const DrawRoundRect = @import("draw/drawroundrect.zig").DrawRoundRect;
+const FillArc = @import("draw/fillarc.zig").FillArc;
+const BltCoverBitMapRastPort = @import("blit/bltcoverbitmaprastport.zig").BltCoverBitMapRastPort;
+const BlurCoverage = @import("bitmap/blurcoverage.zig").BlurCoverage;
+const TextFitted = @import("text/textfitted.zig").TextFitted;
 const WriteLUTPixelArray = @import("blit/writelutpixelarray.zig").WriteLUTPixelArray;
 const BeginDraw = @import("draw/begindraw.zig").BeginDraw;
 const EndDraw = @import("draw/enddraw.zig").EndDraw;
@@ -386,6 +392,24 @@ fn lvoBlendPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]cons
 fn lvoScalePixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) callconv(.c) void {
     ScalePixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, format, src_area, dest_area);
 }
+fn lvoFillRoundRect(gb: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32) callconv(.c) void {
+    FillRoundRect(gb, @ptrCast(@alignCast(rp)), area, radius);
+}
+fn lvoDrawRoundRect(gb: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32) callconv(.c) void {
+    DrawRoundRect(gb, @ptrCast(@alignCast(rp)), area, radius);
+}
+fn lvoFillArc(gb: *GraphicsBase, rp: *graphics.RastPort, arc: *const graphics.Arc) callconv(.c) void {
+    FillArc(gb, @ptrCast(@alignCast(rp)), arc);
+}
+fn lvoBltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const graphics.Rect, dest: *graphics.RastPort, dest_x: i32, dest_y: i32, cover: *const graphics.Cover) callconv(.c) void {
+    BltCoverBitMapRastPort(gb, src, src_area, @ptrCast(@alignCast(dest)), dest_x, dest_y, cover);
+}
+fn lvoBlurCoverage(gb: *GraphicsBase, cover: *rtg.Surface, area: *const graphics.Rect, radius: u32) callconv(.c) void {
+    BlurCoverage(gb, cover, area, radius);
+}
+fn lvoTextFitted(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, width: i32) callconv(.c) u32 {
+    return TextFitted(gb, @ptrCast(@alignCast(rp)), string, count, width);
+}
 fn lvoWriteLUTPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, table: [*]const graphics.Pen, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WriteLUTPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, table, src_x, src_y, area);
 }
@@ -503,6 +527,14 @@ pub const vectors = [_]*const anyopaque{
     // Pixels laid over what is already there
     vec(lvoBlendPixelArray),
     vec(lvoScalePixelArray),
+    // Shapes a widget is made of
+    vec(lvoFillRoundRect),
+    vec(lvoDrawRoundRect),
+    vec(lvoFillArc),
+    // Pixels laid over what is already there, by a coverage
+    vec(lvoBltCoverBitMapRastPort),
+    vec(lvoBlurCoverage),
+    vec(lvoTextFitted),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

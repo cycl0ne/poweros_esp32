@@ -93,6 +93,12 @@ pub const LVO = struct {
     pub const FontRows = libraries.lvo(75);
     pub const BlendPixelArray = libraries.lvo(76);
     pub const ScalePixelArray = libraries.lvo(77);
+    pub const FillRoundRect = libraries.lvo(78);
+    pub const DrawRoundRect = libraries.lvo(79);
+    pub const FillArc = libraries.lvo(80);
+    pub const BltCoverBitMapRastPort = libraries.lvo(81);
+    pub const BlurCoverage = libraries.lvo(82);
+    pub const TextFitted = libraries.lvo(83);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -172,6 +178,12 @@ pub const Fn = struct {
     pub const FontRows = *const fn (*GraphicsBase, *const graphics.TextAttr) callconv(.c) u32;
     pub const BlendPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32, i32, i32, *const graphics.Rect) callconv(.c) void;
     pub const ScalePixelArray = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32, *const graphics.Rect, *const graphics.Rect) callconv(.c) void;
+    pub const FillRoundRect = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Rect, u32) callconv(.c) void;
+    pub const DrawRoundRect = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Rect, u32) callconv(.c) void;
+    pub const FillArc = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Arc) callconv(.c) void;
+    pub const BltCoverBitMapRastPort = *const fn (*GraphicsBase, *const rtg.Surface, *const graphics.Rect, *graphics.RastPort, i32, i32, *const graphics.Cover) callconv(.c) void;
+    pub const BlurCoverage = *const fn (*GraphicsBase, *rtg.Surface, *const graphics.Rect, u32) callconv(.c) void;
+    pub const TextFitted = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, i32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -674,5 +686,52 @@ pub const GraphicsBase = opaque {
     /// as BlendPixelArray does.
     pub fn ScalePixelArray(self: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) void {
         return libraries.call(self, LVO.ScalePixelArray, Fn.ScalePixelArray, .{ rp, pixels, pitch, format, src_area, dest_area });
+    }
+
+    /// Fill a rectangle whose corners are rounded, with the RastPort's pen.
+    /// `radius` 0 is RectFill, and a radius larger than half the shorter side
+    /// is taken down to it, which makes a stadium of a long box and a disc of
+    /// a square one. Otherwise as RectFill: the clip, the pen's alpha and the
+    /// draw mode decide the result, and the rows written are handed on.
+    pub fn FillRoundRect(self: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32) void {
+        return libraries.call(self, LVO.FillRoundRect, Fn.FillRoundRect, .{ rp, area, radius });
+    }
+
+    /// The outline of a rectangle whose corners are rounded, in the
+    /// RastPort's pen and its line pattern. `radius` 0 is DrawRect.
+    pub fn DrawRoundRect(self: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32) void {
+        return libraries.call(self, LVO.DrawRoundRect, Fn.DrawRoundRect, .{ rp, area, radius });
+    }
+
+    /// Fill a wedge of a circle with the RastPort's pen: a pie, or a ring
+    /// where the arc gives an inner radius. The sweep runs the way the
+    /// degrees increase; an empty one draws nothing.
+    pub fn FillArc(self: *GraphicsBase, rp: *graphics.RastPort, arc: *const graphics.Arc) void {
+        return libraries.call(self, LVO.FillArc, Fn.FillArc, .{ rp, arc });
+    }
+
+    /// A rectangle of a surface laid over what is there, each pixel mixed
+    /// with the one under it by how much of it the cover says lands - one
+    /// value for the whole blit, a byte a pixel, or both multiplied. What
+    /// BltMaskBitMapRastPort does with one bit a pixel, done with 256 steps.
+    /// The source may be in another format than the destination.
+    pub fn BltCoverBitMapRastPort(self: *GraphicsBase, src: *const rtg.Surface, src_area: *const graphics.Rect, dest: *graphics.RastPort, dest_x: i32, dest_y: i32, cover: *const graphics.Cover) void {
+        return libraries.call(self, LVO.BltCoverBitMapRastPort, Fn.BltCoverBitMapRastPort, .{ src, src_area, dest, dest_x, dest_y, cover });
+    }
+
+    /// Blur a coverage surface in place: a box blur of `radius`, three
+    /// passes, which is close enough to Gaussian and costs the same whatever
+    /// the radius. The surface has to be gray8; `area` is the part to blur,
+    /// and the blur reads outside it as nothing.
+    pub fn BlurCoverage(self: *GraphicsBase, cover: *rtg.Surface, area: *const graphics.Rect, radius: u32) void {
+        return libraries.call(self, LVO.BlurCoverage, Fn.BlurCoverage, .{ cover, area, radius });
+    }
+
+    /// Draw as much of a string as fits in `width` and three dots where it
+    /// had to stop, and answer how many characters of the string were drawn.
+    /// All of it fits: all of it is drawn and nothing is added. Room for the
+    /// dots alone: only they are drawn. Not even those: nothing is.
+    pub fn TextFitted(self: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, width: i32) u32 {
+        return libraries.call(self, LVO.TextFitted, Fn.TextFitted, .{ rp, string, count, width });
     }
 };

@@ -287,4 +287,35 @@ void BlendPixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, u32 f
 /// lands and how big. Coverage is honoured where the format carries it,
 /// as BlendPixelArray does.
 void ScalePixelArray(*graphics.RastPort rp, [*]const u8 pixels, u32 pitch, u32 format, *const graphics.Rect src_area, *const graphics.Rect dest_area)
+// Shapes a widget is made of
+/// Fill a rectangle whose corners are rounded, with the RastPort's pen.
+/// `radius` 0 is RectFill, and a radius larger than half the shorter side
+/// is taken down to it, which makes a stadium of a long box and a disc of
+/// a square one. Otherwise as RectFill: the clip, the pen's alpha and the
+/// draw mode decide the result, and the rows written are handed on.
+void FillRoundRect(*graphics.RastPort rp, *const graphics.Rect area, u32 radius)
+/// The outline of a rectangle whose corners are rounded, in the
+/// RastPort's pen and its line pattern. `radius` 0 is DrawRect.
+void DrawRoundRect(*graphics.RastPort rp, *const graphics.Rect area, u32 radius)
+/// Fill a wedge of a circle with the RastPort's pen: a pie, or a ring
+/// where the arc gives an inner radius. The sweep runs the way the
+/// degrees increase; an empty one draws nothing.
+void FillArc(*graphics.RastPort rp, *const graphics.Arc arc)
+// Pixels laid over what is already there, by a coverage
+/// A rectangle of a surface laid over what is there, each pixel mixed
+/// with the one under it by how much of it the cover says lands - one
+/// value for the whole blit, a byte a pixel, or both multiplied. What
+/// BltMaskBitMapRastPort does with one bit a pixel, done with 256 steps.
+/// The source may be in another format than the destination.
+void BltCoverBitMapRastPort(*const rtg.Surface src, *const graphics.Rect src_area, *graphics.RastPort dest, i32 dest_x, i32 dest_y, *const graphics.Cover cover)
+/// Blur a coverage surface in place: a box blur of `radius`, three
+/// passes, which is close enough to Gaussian and costs the same whatever
+/// the radius. The surface has to be gray8; `area` is the part to blur,
+/// and the blur reads outside it as nothing.
+void BlurCoverage(*rtg.Surface cover, *const graphics.Rect area, u32 radius)
+/// Draw as much of a string as fits in `width` and three dots where it
+/// had to stop, and answer how many characters of the string were drawn.
+/// All of it fits: all of it is drawn and nothing is added. Room for the
+/// dots alone: only they are drawn. Not even those: nothing is.
+u32 TextFitted(*graphics.RastPort rp, [*]const u8 string, u32 count, i32 width)
 ##end

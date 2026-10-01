@@ -37,7 +37,7 @@ const rastport = @import("../rastport/_rastport.zig");
 ///
 /// RESULT:
 /// Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a surface with no
-/// colours in it - `indexed8`, `gray8`, `mono1` - and `GERR_NO_MEMORY`
+/// colours in it - `indexed8`, `mono1` - and `GERR_NO_MEMORY`
 /// when there was no kilobyte for the packed table; then nothing was
 /// written.
 ///

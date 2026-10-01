@@ -303,6 +303,53 @@ pub const Point = extern struct {
     y: i32 = 0,
 };
 
+/// A wedge of a circle: a pie when `inner` is 0 and a ring when it is not.
+///
+/// The angles are whole degrees, 0 to the right and counting the way they
+/// increase on paper - up the screen, since a row's number grows
+/// downwards. The sweep runs from `from` to `to` the same way, so a gauge
+/// that fills clockwise counts down.
+///
+/// A whole disc is `from` 0 and `to` 360. `from` equal to `to` is no
+/// sweep at all and draws nothing, which is what a gauge showing zero
+/// asks for.
+pub const Arc = extern struct {
+    /// The centre's column.
+    cx: i32 = 0,
+    /// The centre's row.
+    cy: i32 = 0,
+    /// How far the outer edge is from the centre.
+    radius: i32 = 0,
+    /// How far the inner edge is, for a ring; 0 fills to the centre.
+    inner: i32 = 0,
+    /// Where the sweep starts, in degrees.
+    from: i32 = 0,
+    /// Where it ends.
+    to: i32 = 360,
+};
+
+/// How much of a blit lands: all of it, some of it everywhere, or a
+/// different amount at every pixel.
+///
+/// `alpha` covers the whole blit at once - a picture faded in, a gadget
+/// ghosted, what is behind a requester dimmed. `bits` is a byte a pixel,
+/// 0 for none of it and 255 for all of it, and it is what a shape with
+/// soft edges or a shadow is made of. Given both, they multiply: a soft
+/// shape fading in.
+///
+/// `bits` is read at the source rectangle's own corner, so the coverage
+/// travels with the shape and not with where it lands - the same rule a
+/// mask follows.
+pub const Cover = extern struct {
+    /// A byte a pixel, or null for `alpha` everywhere.
+    bits: ?[*]const u8 = null,
+    /// Bytes from one row of `bits` to the next. Ignored without `bits`.
+    pitch: u32 = 0,
+    /// How much of it lands where `bits` says all of it does. 255 is the
+    /// whole of it.
+    alpha: u8 = 255,
+};
+
 /// An area of any shape, held as rectangles that do not overlap.
 ///
 /// It is opaque, as a RastPort is: how the rectangles are kept is the
