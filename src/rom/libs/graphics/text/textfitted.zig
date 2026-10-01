@@ -20,7 +20,7 @@ const dots = "...";
 ///     count: u32, width: i32) u32
 /// ```
 ///
-/// SINCE: 0.7. LVO -430.
+/// SINCE: 0.21. LVO -336.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. It draws from the current point, in its font,

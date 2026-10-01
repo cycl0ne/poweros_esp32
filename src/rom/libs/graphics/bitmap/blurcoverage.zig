@@ -20,7 +20,7 @@ pub const radius_max: u32 = 64;
 ///     area: *const Rect, radius: u32) void
 /// ```
 ///
-/// SINCE: 0.7. LVO -424.
+/// SINCE: 0.21. LVO -332.
 ///
 /// INPUTS:
 /// - `cover` - a `gray8` surface: a byte a pixel, 0 for none of it and
