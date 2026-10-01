@@ -80,14 +80,21 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
     defer reset(rp);
     if (rp.area_shapes == 0 or rp.area_count < 3) return true;
 
-    // How far down the shapes reach, so only those rows are walked.
+    // How far down the shapes reach, so only those rows are walked - and
+    // how far across, which with that is the box a fill style is laid
+    // across.
     var top = points[0].y;
     var bottom = points[0].y;
+    var left = points[0].x;
+    var right = points[0].x;
     var i: u32 = 1;
     while (i < rp.area_count) : (i += 1) {
         top = @min(top, points[i].y);
         bottom = @max(bottom, points[i].y);
+        left = @min(left, points[i].x);
+        right = @max(right, points[i].x);
     }
+    rp.fill_box = .{ .min_x = left, .min_y = top, .max_x = right + 1, .max_y = bottom + 1 };
     top = @max(top, rp.clip.min_y);
     bottom = @min(bottom, rp.clip.max_y - 1);
 
@@ -131,7 +138,7 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
 
         var pair: u32 = 0;
         while (pair + 1 < found) : (pair += 2) {
-            drawing.fillSpan(rp, xs[pair], xs[pair + 1] + 1, y, &bound, &any);
+            drawing.fillShapeSpan(rp, xs[pair], xs[pair + 1] + 1, y, &bound, &any);
         }
     }
     if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);

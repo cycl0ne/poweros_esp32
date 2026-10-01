@@ -102,6 +102,9 @@ pub fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) voi
             graphics.RPTAG_ClipRegion => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.clip_region),
             graphics.RPTAG_ClipTargets => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.clip_list),
             graphics.RPTAG_BackFill => @as(*usize, @ptrFromInt(item.data)).* = rp.backfill,
+            graphics.RPTAG_FillStyle => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.fill),
+            graphics.RPTAG_LineWidth => @as(*u32, @ptrFromInt(item.data)).* = rp.line_width,
+            graphics.RPTAG_Smooth => @as(*u32, @ptrFromInt(item.data)).* = @intFromBool(rp.smooth),
             graphics.RPTAG_LastError => @as(*i32, @ptrFromInt(item.data)).* = rp.last_error,
             else => {},
         }

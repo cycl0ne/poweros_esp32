@@ -106,13 +106,17 @@ pub fn RectFill(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
     // It cannot fail. It says so anyway, so that what is read belongs to
     // the call just made rather than to one five calls ago.
     rp.last_error = graphics.GERR_OK;
+    rp.fill_box = area.*;
+    const from_style = _draw.styled(rp);
     var it = visible(rp, area.*);
     var top: i32 = 0;
     var end: i32 = 0;
     var any = false;
 
     while (it.next()) |r| {
-        if (!fillByEngine(gb, rp, r)) fillSoftware(rp, r);
+        if (from_style) {
+            _draw.fillStyled(rp, r);
+        } else if (!fillByEngine(gb, rp, r)) fillSoftware(rp, r);
         if (!any) {
             top = r.rect.min_y;
             end = r.rect.max_y;

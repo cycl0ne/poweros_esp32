@@ -1879,7 +1879,8 @@ one it falls back to.
 
 What is drawn, in order:
 
-- **The inside** in the background colour - inside the border, or, for
+- **The inside** in the background - a colour, or a fill style laid
+  across the inside as a gradient or a tile - inside the border, or, for
   a part with a radius, the whole rounded shape with the border drawn
   over it. Not with `DPF_EDGES_ONLY`.
 - **The border**, by its kind: a flat one in the border colour; a raised
@@ -1889,6 +1890,8 @@ What is drawn, in order:
   bevels, one inside the other, turned opposite ways.
 
 An opacity below 255 lays every colour over what is there by that much.
+A part with a radius is drawn with smooth edges (`RPTAG_Smooth`), the
+RastPort's own setting given back afterwards.
 
 The RastPort's pens, draw mode and font are put back as they were.
 
@@ -1914,8 +1917,8 @@ Nothing is allocated, and the styles are only read.
 
 - A bevel with a radius is drawn as a flat border in the shadow colour:
   there is no rounded two-colour edge yet.
-- A rounded border thicker than a pixel is drawn as nested outlines,
-  the thicker of its two thicknesses deep.
+- A rounded border is as thick all round as the thicker of its two
+  thicknesses.
 
 **SEE ALSO**
 
@@ -3045,7 +3048,10 @@ fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
 
 A colour as 0xAARRGGBB, whichever of its two tags `attr` is - a pen
 index in the style is looked up in the screen's pens, so the answer can
-go straight into `RPTAG_APen`. Any other property as its number:
+go straight into `RPTAG_APen`. `STYLE_BackgroundFill` answers a
+`*const graphics.FillStyle`, the style's own copy, or 0 when the
+background is a colour; asked for the background colour of one that is
+a fill style, the colour of its first stop. Any other property as its number:
 `STYLE_BorderWidth` answers `STYLE_BorderX` and `STYLE_Padding`
 `STYLE_PaddingX`. 0 for a tag that is not a property.
 

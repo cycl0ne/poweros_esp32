@@ -5,8 +5,9 @@
 //!   Styles
 //!
 //! It opens a public screen named `Styles` with a style of its own - flat
-//! one-pixel borders, rounded corners, more room inside, a blue that a
-//! pressed button turns - and makes it the default public screen. Every
+//! one-pixel borders, rounded corners, a face shaded from light to a little
+//! darker, more room inside, a blue that a pressed button turns - and makes
+//! it the default public screen. Every
 //! program that opens its window on the default public screen then opens
 //! it there, drawn in that style, with nothing in the program changed:
 //! `C:test/Gadgets` and `C:test/Layout` are the ones to run.
@@ -40,47 +41,19 @@ const MSG_WAITING = "Waiting for the windows on Styles to close\n";
 
 const SCREEN_NAME = "Styles";
 
+/// A button's face: light at the top, a little darker at the bottom.
+const face = sdk.graphics.FillStyle{
+    .stops = .{
+        .{ .at = 0, .pen = 0xFFFA_FBFC },
+        .{ .at = sdk.graphics.FILL_ONE, .pen = 0xFFD8_DCE2 },
+        .{},
+        .{},
+    },
+};
+
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
 }
-
-/// The style: what differs from the system's default. Everything it does
-/// not say - the bevels of the scroll bars, the title bar - stays as the
-/// default draws it.
-const flat = [_]TagItem{
-    // A gadget's body: one flat line, round corners, room inside.
-    pair(style.STYLE_Part, style.PART_MAIN),
-    pair(style.STYLE_Border, style.BORDER_FLAT),
-    pair(style.STYLE_BorderRGB, 0xFF40_4850),
-    pair(style.STYLE_BorderWidth, 1),
-    pair(style.STYLE_Radius, 6),
-    pair(style.STYLE_BackgroundRGB, 0xFFE8_EAED),
-    pair(style.STYLE_PaddingX, 6),
-    pair(style.STYLE_PaddingY, 3),
-    // Pressed and checked: filled with the blue, the line the same.
-    pair(style.STYLE_State, style.STATE_PRESSED),
-    pair(style.STYLE_Border, style.BORDER_FLAT),
-    pair(style.STYLE_BackgroundRGB, 0xFF3A_6EA5),
-    pair(style.STYLE_TextRGB, 0xFFFF_FFFF),
-    pair(style.STYLE_State, style.STATE_CHECKED),
-    pair(style.STYLE_Border, style.BORDER_FLAT),
-    pair(style.STYLE_BackgroundRGB, 0xFF3A_6EA5),
-    pair(style.STYLE_TextRGB, 0xFFFF_FFFF),
-    // The plain frame round a field: less rounded than a button.
-    pair(style.STYLE_Part, ic.PART_FRAME_PLAIN),
-    pair(style.STYLE_Radius, 3),
-    pair(style.STYLE_PaddingX, 3),
-    pair(style.STYLE_PaddingY, 2),
-    // A framed group: a lighter line, rounder corners.
-    pair(style.STYLE_Part, style.PART_GROUP),
-    pair(style.STYLE_Border, style.BORDER_FLAT),
-    pair(style.STYLE_BorderRGB, 0xFF88_90A0),
-    pair(style.STYLE_BorderWidth, 1),
-    pair(style.STYLE_Radius, 8),
-    pair(style.STYLE_PaddingX, 6),
-    pair(style.STYLE_PaddingY, 4),
-    .{},
-};
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -102,6 +75,44 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(int_lib);
     const ib: *IntuitionBase = @ptrCast(int_lib);
+
+    // The style: what differs from the system's default. Everything it does
+    // not say - the bevels of the scroll bars, the title bar - stays as the
+    // default draws it.
+    const flat = [_]TagItem{
+        // A gadget's body: one flat line, round corners, room inside.
+        pair(style.STYLE_Part, style.PART_MAIN),
+        pair(style.STYLE_Border, style.BORDER_FLAT),
+        pair(style.STYLE_BorderRGB, 0xFF40_4850),
+        pair(style.STYLE_BorderWidth, 1),
+        pair(style.STYLE_Radius, 6),
+        pair(style.STYLE_BackgroundFill, @intFromPtr(&face)),
+        pair(style.STYLE_PaddingX, 6),
+        pair(style.STYLE_PaddingY, 3),
+        // Pressed and checked: filled with the blue, the line the same.
+        pair(style.STYLE_State, style.STATE_PRESSED),
+        pair(style.STYLE_Border, style.BORDER_FLAT),
+        pair(style.STYLE_BackgroundRGB, 0xFF3A_6EA5),
+        pair(style.STYLE_TextRGB, 0xFFFF_FFFF),
+        pair(style.STYLE_State, style.STATE_CHECKED),
+        pair(style.STYLE_Border, style.BORDER_FLAT),
+        pair(style.STYLE_BackgroundRGB, 0xFF3A_6EA5),
+        pair(style.STYLE_TextRGB, 0xFFFF_FFFF),
+        // The plain frame round a field: less rounded than a button.
+        pair(style.STYLE_Part, ic.PART_FRAME_PLAIN),
+        pair(style.STYLE_Radius, 3),
+        pair(style.STYLE_PaddingX, 3),
+        pair(style.STYLE_PaddingY, 2),
+        // A framed group: a lighter line, rounder corners.
+        pair(style.STYLE_Part, style.PART_GROUP),
+        pair(style.STYLE_Border, style.BORDER_FLAT),
+        pair(style.STYLE_BorderRGB, 0xFF88_90A0),
+        pair(style.STYLE_BorderWidth, 1),
+        pair(style.STYLE_Radius, 8),
+        pair(style.STYLE_PaddingX, 6),
+        pair(style.STYLE_PaddingY, 4),
+        .{},
+    };
 
     const screen = ib.OpenScreenTagList(&[_]TagItem{
         pair(sc.SA_PubName, @intFromPtr(SCREEN_NAME)),

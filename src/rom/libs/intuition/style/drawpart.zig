@@ -49,7 +49,8 @@ const d = @import("../classes/draw.zig");
 ///
 /// What is drawn, in order:
 ///
-/// - **The inside** in the background colour - inside the border, or, for
+/// - **The inside** in the background - a colour, or a fill style laid
+///   across the inside as a gradient or a tile - inside the border, or, for
 ///   a part with a radius, the whole rounded shape with the border drawn
 ///   over it. Not with `DPF_EDGES_ONLY`.
 /// - **The border**, by its kind: a flat one in the border colour; a raised
@@ -59,6 +60,8 @@ const d = @import("../classes/draw.zig");
 ///   bevels, one inside the other, turned opposite ways.
 ///
 /// An opacity below 255 lays every colour over what is there by that much.
+/// A part with a radius is drawn with smooth edges (`RPTAG_Smooth`), the
+/// RastPort's own setting given back afterwards.
 ///
 /// The RastPort's pens, draw mode and font are put back as they were.
 ///
@@ -80,8 +83,8 @@ const d = @import("../classes/draw.zig");
 /// BUGS:
 /// - A bevel with a radius is drawn as a flat border in the shadow colour:
 ///   there is no rounded two-colour edge yet.
-/// - A rounded border thicker than a pixel is drawn as nested outlines,
-///   the thicker of its two thicknesses deep.
+/// - A rounded border is as thick all round as the thicker of its two
+///   thicknesses.
 ///
 /// SEE ALSO:
 /// `GetStyleAttr`, `SA_Style`, `GA_Style`, `DrawImageState`
@@ -143,23 +146,45 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
     const w = box.width();
     const h = box.height();
 
+    // A background given as a fill style is laid on for the fill alone, with
+    // the part's opacity on every stop of it, and taken off again before the
+    // border: a flat border is a fill too, and must stay its own colour.
+    var gradient: graphics.FillStyle = undefined;
+    const fill_style: ?*const graphics.FillStyle = if (look.background_fill) |given| faded: {
+        gradient = given.*;
+        if (opacity < 255) {
+            for (&gradient.stops) |*stop| {
+                stop.pen = (stop.pen & 0x00FF_FFFF) | ((stop.pen >> 24) * opacity / 255) << 24;
+            }
+        }
+        break :faded &gradient;
+    } else null;
+
     if (radius > 0) {
+        // A round part is drawn with smooth edges: its corners are curves,
+        // and a curve without them is a stair.
+        gb.SetRPAttrs(target, &[_]sdk.utility.TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
         if (fill) {
             d.pen(gb, target, background);
+            if (fill_style) |f| d.fillWith(gb, target, f);
             gb.FillRoundRect(target, box, @intCast(radius));
+            if (fill_style != null) d.fillWith(gb, target, null);
         }
         if (kind == style.BORDER_NONE) return;
+        // One outline the border's thickness wide, which grows inward and
+        // leaves no gap on the corners.
         d.pen(gb, target, if (kind == style.BORDER_FLAT) line else shadow);
-        var step: i32 = 0;
-        while (step < @max(tx, ty)) : (step += 1) {
-            const ring = inset(box.*, step, step);
-            if (ring.isEmpty()) break;
-            gb.DrawRoundRect(target, &ring, @intCast(@max(radius - step, 0)));
-        }
+        const width: usize = @intCast(@max(@max(tx, ty), 1));
+        gb.SetRPAttrs(target, &[_]sdk.utility.TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = width }, .{} });
+        gb.DrawRoundRect(target, box, @intCast(radius));
         return;
     }
 
-    if (fill) d.box(gb, target, x + tx, y + ty, w - 2 * tx, h - 2 * ty, background);
+    if (fill) {
+        if (fill_style) |f| d.fillWith(gb, target, f);
+        d.box(gb, target, x + tx, y + ty, w - 2 * tx, h - 2 * ty, background);
+        if (fill_style != null) d.fillWith(gb, target, null);
+    }
     switch (kind) {
         style.BORDER_FLAT => {
             d.box(gb, target, x, y, w, ty, line);

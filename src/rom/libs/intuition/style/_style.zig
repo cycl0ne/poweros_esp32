@@ -59,51 +59,67 @@ const Entry = extern struct {
     set: u32 = 0,
     /// A bit per `Prop` whose value is 0xAARRGGBB rather than a pen index.
     rgb: u32 = 0,
+    /// A bit per `Prop` whose value is a fill style: an index into the
+    /// kept style's copies of them.
+    fill: u32 = 0,
     values: [prop_count]u32 = @splat(0),
 };
 
-/// A kept style: its entries, in the one block `keep` allocated. What
-/// `sdk.intuition.Style` stands for.
+/// A kept style: its entries and its copies of the fill styles they name,
+/// in the one block `keep` allocated. What `sdk.intuition.Style` stands
+/// for.
 const Kept = extern struct {
     count: u32,
+    /// Where the fill styles start, from the start of the block.
+    fills_at: u32,
     entries: [0]Entry,
 
     fn all(kept: *const Kept) []const Entry {
         const first: [*]const Entry = @ptrCast(&kept.entries);
         return first[0..kept.count];
     }
+
+    fn fillAt(kept: *const Kept, index: u32) *const graphics.FillStyle {
+        const base: [*]const u8 = @ptrCast(kept);
+        const first: [*]const graphics.FillStyle = @ptrCast(@alignCast(base + kept.fills_at));
+        return &first[index];
+    }
 };
 
-/// Which properties a tag sets, and whether its value is a colour of its
-/// own. Null for a tag that is not a property.
-fn propsOf(tag: utility.Tag) ?struct { props: u32, rgb: bool } {
+/// How a property's value is given.
+const Given = enum { number, rgb, fill };
+
+/// Which properties a tag sets, and how its value is given. Null for a tag
+/// that is not a property.
+fn propsOf(tag: utility.Tag) ?struct { props: u32, given: Given } {
     const bit = struct {
         fn of(p: Prop) u32 {
             return @as(u32, 1) << @intFromEnum(p);
         }
     }.of;
     return switch (tag) {
-        style.STYLE_Background => .{ .props = bit(.background), .rgb = false },
-        style.STYLE_BackgroundRGB => .{ .props = bit(.background), .rgb = true },
-        style.STYLE_Border => .{ .props = bit(.border), .rgb = false },
-        style.STYLE_BorderPen => .{ .props = bit(.border_colour), .rgb = false },
-        style.STYLE_BorderRGB => .{ .props = bit(.border_colour), .rgb = true },
-        style.STYLE_ShinePen => .{ .props = bit(.shine), .rgb = false },
-        style.STYLE_ShineRGB => .{ .props = bit(.shine), .rgb = true },
-        style.STYLE_ShadowPen => .{ .props = bit(.shadow), .rgb = false },
-        style.STYLE_ShadowRGB => .{ .props = bit(.shadow), .rgb = true },
-        style.STYLE_BorderWidth => .{ .props = bit(.border_x) | bit(.border_y), .rgb = false },
-        style.STYLE_BorderX => .{ .props = bit(.border_x), .rgb = false },
-        style.STYLE_BorderY => .{ .props = bit(.border_y), .rgb = false },
-        style.STYLE_Joins => .{ .props = bit(.joins), .rgb = false },
-        style.STYLE_Radius => .{ .props = bit(.radius), .rgb = false },
-        style.STYLE_TextPen => .{ .props = bit(.text), .rgb = false },
-        style.STYLE_TextRGB => .{ .props = bit(.text), .rgb = true },
-        style.STYLE_Padding => .{ .props = bit(.padding_x) | bit(.padding_y), .rgb = false },
-        style.STYLE_PaddingX => .{ .props = bit(.padding_x), .rgb = false },
-        style.STYLE_PaddingY => .{ .props = bit(.padding_y), .rgb = false },
-        style.STYLE_Opacity => .{ .props = bit(.opacity), .rgb = false },
-        style.STYLE_Transition => .{ .props = bit(.transition), .rgb = false },
+        style.STYLE_Background => .{ .props = bit(.background), .given = .number },
+        style.STYLE_BackgroundRGB => .{ .props = bit(.background), .given = .rgb },
+        style.STYLE_BackgroundFill => .{ .props = bit(.background), .given = .fill },
+        style.STYLE_Border => .{ .props = bit(.border), .given = .number },
+        style.STYLE_BorderPen => .{ .props = bit(.border_colour), .given = .number },
+        style.STYLE_BorderRGB => .{ .props = bit(.border_colour), .given = .rgb },
+        style.STYLE_ShinePen => .{ .props = bit(.shine), .given = .number },
+        style.STYLE_ShineRGB => .{ .props = bit(.shine), .given = .rgb },
+        style.STYLE_ShadowPen => .{ .props = bit(.shadow), .given = .number },
+        style.STYLE_ShadowRGB => .{ .props = bit(.shadow), .given = .rgb },
+        style.STYLE_BorderWidth => .{ .props = bit(.border_x) | bit(.border_y), .given = .number },
+        style.STYLE_BorderX => .{ .props = bit(.border_x), .given = .number },
+        style.STYLE_BorderY => .{ .props = bit(.border_y), .given = .number },
+        style.STYLE_Joins => .{ .props = bit(.joins), .given = .number },
+        style.STYLE_Radius => .{ .props = bit(.radius), .given = .number },
+        style.STYLE_TextPen => .{ .props = bit(.text), .given = .number },
+        style.STYLE_TextRGB => .{ .props = bit(.text), .given = .rgb },
+        style.STYLE_Padding => .{ .props = bit(.padding_x) | bit(.padding_y), .given = .number },
+        style.STYLE_PaddingX => .{ .props = bit(.padding_x), .given = .number },
+        style.STYLE_PaddingY => .{ .props = bit(.padding_y), .given = .number },
+        style.STYLE_Opacity => .{ .props = bit(.opacity), .given = .number },
+        style.STYLE_Transition => .{ .props = bit(.transition), .given = .number },
         else => null,
     };
 }
@@ -117,18 +133,35 @@ fn propsOf(tag: utility.Tag) ?struct { props: u32, rgb: bool } {
 /// - `tags` - the list.
 pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
     const ub = ib.utility_base;
-    // As many entries as the list could need: one before any marker, and
-    // one more for each `STYLE_Part` or `STYLE_State`.
-    var bound: u32 = 1;
+    // As many entries as the list could need: one wherever a property comes
+    // first after a marker, or first of all - a marker followed straight by
+    // another starts nothing. A part and state named twice is counted
+    // twice, which costs an entry and is rare. And as many fill styles as
+    // the list names, copied into the same block.
+    var bound: u32 = 0;
+    var fill_bound: u32 = 0;
+    var starts = true;
     var walk: ?[*]const TagItem = tags;
     while (ub.NextTagItem(&walk)) |item| {
-        if (item.tag == style.STYLE_Part or item.tag == style.STYLE_State) bound += 1;
+        if (item.tag == style.STYLE_Part or item.tag == style.STYLE_State) {
+            starts = true;
+        } else if (propsOf(item.tag) != null) {
+            if (starts) bound += 1;
+            starts = false;
+        }
+        if (item.tag == style.STYLE_BackgroundFill and item.data != 0) fill_bound += 1;
     }
+    if (bound == 0) return null;
 
-    const bytes = @sizeOf(Kept) + bound * @sizeOf(Entry);
+    const align_fill = @alignOf(graphics.FillStyle);
+    const fills_at = (@sizeOf(Kept) + bound * @sizeOf(Entry) + align_fill - 1) / align_fill * align_fill;
+    const bytes = fills_at + fill_bound * @sizeOf(graphics.FillStyle);
     const memory = ib.sys_base.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const kept: *Kept = @ptrCast(@alignCast(memory));
+    kept.fills_at = @intCast(fills_at);
     const room: [*]Entry = @ptrCast(&kept.entries);
+    const fill_room: [*]graphics.FillStyle = @ptrCast(@alignCast(@as([*]u8, @ptrCast(memory)) + fills_at));
+    var fill_count: u32 = 0;
 
     var part: u32 = style.PART_MAIN;
     var states: u32 = style.STATE_NORMAL;
@@ -147,6 +180,8 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
             },
             else => {
                 const what = propsOf(item.tag) orelse continue;
+                // A fill style that is not there is no value at all.
+                if (what.given == .fill and item.data == 0) continue;
                 const entry = current orelse found: {
                     // The same part and state named a second time - further
                     // down, or through TAG_MORE - adds to the entry already
@@ -161,12 +196,18 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
                 current = entry;
                 // First one wins: a property already given is left alone.
                 const fresh = what.props & ~entry.set;
-                var bits = fresh;
-                while (bits != 0) : (bits &= bits - 1) {
-                    entry.values[@ctz(bits)] = @truncate(item.data);
+                if (fresh == 0) continue;
+                var value: u32 = @truncate(item.data);
+                if (what.given == .fill) {
+                    fill_room[fill_count] = @as(*const graphics.FillStyle, @ptrFromInt(item.data)).*;
+                    value = fill_count;
+                    fill_count += 1;
                 }
+                var bits = fresh;
+                while (bits != 0) : (bits &= bits - 1) entry.values[@ctz(bits)] = value;
                 entry.set |= fresh;
-                if (what.rgb) entry.rgb |= fresh;
+                if (what.given == .rgb) entry.rgb |= fresh;
+                if (what.given == .fill) entry.fill |= fresh;
             },
         }
     }
@@ -191,6 +232,8 @@ pub const Look = struct {
         break :blk v;
     },
     rgb: u32 = 0,
+    /// The background, when it was given as a fill style.
+    background_fill: ?*const graphics.FillStyle = null,
 
     pub fn get(l: *const Look, p: Prop) u32 {
         return l.values[@intFromEnum(p)];
@@ -256,6 +299,10 @@ pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const 
                 var bits = take;
                 while (bits != 0) : (bits &= bits - 1) result.values[@ctz(bits)] = e.values[@ctz(bits)];
                 result.rgb = (result.rgb & ~take) | (e.rgb & take);
+                const background: u32 = @as(u32, 1) << @intFromEnum(Prop.background);
+                if (take & background != 0) {
+                    result.background_fill = if (e.fill & background != 0) kept.fillAt(e.values[@intFromEnum(Prop.background)]) else null;
+                }
                 have |= take;
                 if (have == all_props) return result;
             }

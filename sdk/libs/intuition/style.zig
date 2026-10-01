@@ -118,6 +118,11 @@ pub const STYLE_State = STYLE_Dummy + 0x02;
 pub const STYLE_Background = STYLE_Dummy + 0x10;
 /// What fills the inside: 0xAARRGGBB.
 pub const STYLE_BackgroundRGB = STYLE_Dummy + 0x11;
+/// What fills the inside: a `*const graphics.FillStyle` - a gradient or a
+/// tile, laid across the part's own box. Copied when the style is read, so
+/// the caller's may go. One property with the two above: whichever of the
+/// three is found first is the background.
+pub const STYLE_BackgroundFill = STYLE_Dummy + 0x12;
 
 /// What kind of border: `BORDER_`.
 pub const STYLE_Border = STYLE_Dummy + 0x20;

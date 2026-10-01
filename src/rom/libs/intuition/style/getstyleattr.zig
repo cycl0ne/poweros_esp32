@@ -30,7 +30,10 @@ const d = @import("../classes/draw.zig");
 /// RESULT:
 /// A colour as 0xAARRGGBB, whichever of its two tags `attr` is - a pen
 /// index in the style is looked up in the screen's pens, so the answer can
-/// go straight into `RPTAG_APen`. Any other property as its number:
+/// go straight into `RPTAG_APen`. `STYLE_BackgroundFill` answers a
+/// `*const graphics.FillStyle`, the style's own copy, or 0 when the
+/// background is a colour; asked for the background colour of one that is
+/// a fill style, the colour of its first stop. Any other property as its number:
 /// `STYLE_BorderWidth` answers `STYLE_BorderX` and `STYLE_Padding`
 /// `STYLE_PaddingX`. 0 for a tag that is not a property.
 ///
@@ -73,7 +76,8 @@ pub fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const sc.DrawInfo, own: ?*c
     const pens = d.pensOf(draw_info);
     const num_pens: u32 = if (draw_info) |dri| dri.num_pens else sc.NUMDRIPENS;
     return switch (attr) {
-        style.STYLE_Background, style.STYLE_BackgroundRGB => look.colour(.background, pens, num_pens),
+        style.STYLE_Background, style.STYLE_BackgroundRGB => if (look.background_fill) |f| f.stops[0].pen else look.colour(.background, pens, num_pens),
+        style.STYLE_BackgroundFill => @intFromPtr(look.background_fill),
         style.STYLE_BorderPen, style.STYLE_BorderRGB => look.colour(.border_colour, pens, num_pens),
         style.STYLE_ShinePen, style.STYLE_ShineRGB => look.colour(.shine, pens, num_pens),
         style.STYLE_ShadowPen, style.STYLE_ShadowRGB => look.colour(.shadow, pens, num_pens),

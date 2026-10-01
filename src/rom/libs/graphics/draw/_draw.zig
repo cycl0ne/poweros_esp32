@@ -362,14 +362,14 @@ pub fn plotOver(p: Piece, x: i32, y: i32, pen: Pen) void {
 /// pattern and the mode meet in one place. A bit that is clear draws
 /// nothing at all under `DRMD_JAM1`, which is what makes a dotted line
 /// dotted rather than two-coloured.
-const Ink = enum { foreground, background, nothing };
+pub const Ink = enum { foreground, background, nothing };
 
 /// Whether the line pattern says to draw here, and which pen if so.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its pattern and draw mode decide.
 /// - `step` - how far along the pattern the pixel is.
-fn inkAt(rp: *RastPort, step: u32) Ink {
+pub fn inkAt(rp: *RastPort, step: u32) Ink {
     const bit = rp.line_pattern >> @intCast(15 - step % 16) & 1;
     const set = if (rp.draw_mode & graphics.DRMD_INVERSVID != 0) bit == 0 else bit != 0;
     if (set) return .foreground;
@@ -879,3 +879,146 @@ pub fn takeSpan(bm: *RtgBitMap) ?Span {
 /// what this buys is that the pieces of one small thing - something
 /// rubbed out and drawn a few rows off - still go together.
 const merge_gap: u32 = 8;
+
+// --- a shape filled from a fill style ---------------------------------------
+
+const _round = @import("_round.zig");
+
+/// Whether a shape on this RastPort is filled from its fill style rather
+/// than its pen.
+pub fn styled(rp: *const RastPort) bool {
+    const fill = rp.fill orelse return false;
+    return fill.kind >= graphics.FILL_LINEAR and fill.kind <= graphics.FILL_TILE;
+}
+
+/// A point of the fill style, from the shape's own box to the RastPort.
+fn boxPoint(box: Rect, x: i32, y: i32) [2]i64 {
+    return .{
+        @as(i64, box.min_x) + @divTrunc(@as(i64, x) * box.width(), graphics.FILL_ONE),
+        @as(i64, box.min_y) + @divTrunc(@as(i64, y) * box.height(), graphics.FILL_ONE),
+    };
+}
+
+/// The colour at `t` along a fill style's stops, 0 to FILL_ONE. Between
+/// two stops every channel, alpha too, is mixed in proportion; past either
+/// end the end colour carries on.
+fn alongStops(fill: *const graphics.FillStyle, t: i64) Pen {
+    const count: usize = @max(@min(fill.count, fill.stops.len), 1);
+    const stops = fill.stops[0..count];
+    if (t <= stops[0].at) return stops[0].pen;
+    var i: usize = 1;
+    while (i < count) : (i += 1) {
+        const a = stops[i - 1];
+        const b = stops[i];
+        if (t > b.at) continue;
+        const between: i64 = b.at - a.at;
+        if (between <= 0) return b.pen;
+        const part: i64 = t - a.at;
+        var mixed: Pen = 0;
+        var shift: u5 = 0;
+        while (true) : (shift += 8) {
+            const from: i64 = (a.pen >> shift) & 0xFF;
+            const to: i64 = (b.pen >> shift) & 0xFF;
+            const value: u32 = @intCast(from + @divTrunc((to - from) * part, between));
+            mixed |= value << shift;
+            if (shift == 24) break;
+        }
+        return mixed;
+    }
+    return stops[count - 1].pen;
+}
+
+/// A 4x4 ordered dither: added to a colour before it is packed into 16
+/// bits, so the bits that packing drops are dropped at a different
+/// threshold in each pixel of the four by four, and a gradient comes out
+/// smooth instead of in bands.
+const bayer = [16]u8{ 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+
+fn dithered(pen: Pen, x: i32, y: i32, format: PixelFormat) Pen {
+    const step: u32 = bayer[@as(usize, @intCast(y & 3)) * 4 + @as(usize, @intCast(x & 3))];
+    // How much each channel loses: 3 bits of a five-bit one, 2 of six.
+    const red_green_blue: [3]u32 = switch (format) {
+        .rgb565 => .{ step >> 1, step >> 2, step >> 1 },
+        .argb1555 => .{ step >> 1, step >> 1, step >> 1 },
+        else => return pen,
+    };
+    var out: Pen = pen & 0xFF00_0000;
+    for (red_green_blue, 0..) |add, i| {
+        const shift: u5 = @intCast(16 - 8 * i);
+        // Bound to a u32 first: @min answers the narrowest type that holds
+        // its result, and a byte cannot be shifted to the red channel.
+        const channel: u32 = @min((pen >> shift & 0xFF) + add, 0xFF);
+        out |= channel << shift;
+    }
+    return out;
+}
+
+/// The colour a fill style gives a pixel of the shape being filled.
+///
+/// INPUTS:
+/// - `rp` - the RastPort: its fill style, and the box the shape sits in.
+/// - `x` - the pixel's column, in the RastPort's coordinates.
+/// - `y` - its row.
+/// - `format` - the surface it goes on, for dithering.
+pub fn fillColour(rp: *const RastPort, x: i32, y: i32, format: PixelFormat) Pen {
+    const fill = rp.fill orelse return rp.fg_pen;
+    if (fill.kind == graphics.FILL_TILE) {
+        const tile = fill.tile orelse return rp.fg_pen;
+        if (tile.width == 0 or tile.height == 0) return rp.fg_pen;
+        const pixels = tile.pixels orelse return rp.fg_pen;
+        const bytes = pixelBytes(tile.format);
+        const tx: usize = @intCast(@mod(x, @as(i32, @intCast(tile.width))));
+        const ty: usize = @intCast(@mod(y, @as(i32, @intCast(tile.height))));
+        return rastport.unpackPen(tile.format, getPixel(pixels + ty * tile.pitch + tx * bytes, bytes));
+    }
+
+    const from = boxPoint(rp.fill_box, fill.from_x, fill.from_y);
+    const to = boxPoint(rp.fill_box, fill.to_x, fill.to_y);
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const px = x - from[0];
+    const py = y - from[1];
+    const t: i64 = if (fill.kind == graphics.FILL_RADIAL) radial: {
+        const reach = _round.isqrt(@intCast(@min(dx * dx + dy * dy, 0xFFFF_FFFF)));
+        if (reach == 0) break :radial graphics.FILL_ONE;
+        const far = _round.isqrt(@intCast(@min(px * px + py * py, 0xFFFF_FFFF)));
+        break :radial @divTrunc(@as(i64, far) * graphics.FILL_ONE, reach);
+    } else linear: {
+        const length = dx * dx + dy * dy;
+        if (length == 0) break :linear 0;
+        break :linear @divTrunc((px * dx + py * dy) * graphics.FILL_ONE, length);
+    };
+    const pen = alongStops(fill, t);
+    if (fill.flags & graphics.FILLF_NODITHER != 0) return pen;
+    return dithered(pen, x, y, format);
+}
+
+/// One pixel of a shape, from the fill style when there is one, from the
+/// pen otherwise.
+pub fn plotShape(rp: *RastPort, p: Piece, x: i32, y: i32) void {
+    if (!styled(rp)) return plot(rp, p, x, y);
+    plotOver(p, x, y, fillColour(rp, x, y, p.surface.format));
+}
+
+/// `fillSpan` for a shape: from the fill style when the RastPort has one,
+/// exactly `fillSpan` when it does not. Text and lines keep `fillSpan`, so
+/// a fill style never reaches them.
+pub fn fillShapeSpan(rp: *RastPort, x0: i32, x1: i32, y: i32, bound: *Rect, any: *bool) void {
+    if (!styled(rp)) return fillSpan(rp, x0, x1, y, bound, any);
+    if (x1 <= x0) return;
+    var it = visible(rp, .{ .min_x = x0, .min_y = y, .max_x = x1, .max_y = y + 1 });
+    while (it.next()) |r| {
+        var x: i32 = r.rect.min_x;
+        while (x < r.rect.max_x) : (x += 1) plotOver(r, x, y, fillColour(rp, x, y, r.surface.format));
+        grow(bound, y, any);
+    }
+}
+
+/// A piece of a rectangle, from the fill style.
+pub fn fillStyled(rp: *RastPort, p: Piece) void {
+    var y: i32 = p.rect.min_y;
+    while (y < p.rect.max_y) : (y += 1) {
+        var x: i32 = p.rect.min_x;
+        while (x < p.rect.max_x) : (x += 1) plotOver(p, x, y, fillColour(rp, x, y, p.surface.format));
+    }
+}

@@ -66,8 +66,9 @@ pub const LIBRARY_VERSION = 0;
 /// (SetSystemFonts, OpenSystemFont, WA_SysFont). 20: styles - the look of
 /// the parts of a gadget given as a tag list (SA_Style, GA_Style),
 /// DrawPart and GetStyleAttr, DrawInfo version 3, and frameiclass drawn
-/// from the style.
-pub const LIBRARY_REVISION = 20;
+/// from the style. 21: a style's background as a fill style - a gradient
+/// or a tile (STYLE_BackgroundFill).
+pub const LIBRARY_REVISION = 21;
 const BUILD_DATE = "01.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

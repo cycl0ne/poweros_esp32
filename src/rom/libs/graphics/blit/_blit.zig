@@ -325,3 +325,59 @@ pub fn blendPixel(to: [*]u8, to_bytes: u32, to_format: rtg.bitmaps.PixelFormat, 
     }
     rows.store(to, to_bytes, rastport.packPen(to_format, mixed) orelse 0);
 }
+
+// --- sampling between pixels ------------------------------------------------
+
+/// The colour a picture has at a place between its pixels: the four
+/// pixels round it mixed by how near each is, every channel and the alpha
+/// alike. What a scale into a smooth RastPort takes for each pixel instead
+/// of the nearest one, so a picture made larger is soft rather than
+/// blocky and one made smaller keeps its thin lines.
+///
+/// INPUTS:
+/// - `pixels` - the picture's first byte.
+/// - `pitch` - bytes from one of its rows to the next.
+/// - `format` - its pixel format.
+/// - `area` - the part of it being taken: nothing outside it is read, its
+///   edge pixels standing in for whatever is past them.
+/// - `fx` - where across, in 256ths of a pixel, from the picture's left.
+/// - `fy` - where down, the same.
+pub fn sampleBetween(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat, area: Rect, fx: i64, fy: i64) graphics.Pen {
+    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const x0: i32 = @intCast(@max(@min(@divFloor(fx, 256), area.max_x - 1), area.min_x));
+    const y0: i32 = @intCast(@max(@min(@divFloor(fy, 256), area.max_y - 1), area.min_y));
+    const x1 = @min(x0 + 1, area.max_x - 1);
+    const y1 = @min(y0 + 1, area.max_y - 1);
+    const wx: u32 = @intCast(@max(@min(fx - @as(i64, x0) * 256, 255), 0));
+    const wy: u32 = @intCast(@max(@min(fy - @as(i64, y0) * 256, 255), 0));
+    const at = struct {
+        fn pen(p: [*]const u8, pp: u32, f: rtg.bitmaps.PixelFormat, b: u32, x: i32, y: i32) graphics.Pen {
+            const where = p + @as(usize, @intCast(y)) * pp + @as(usize, @intCast(x)) * b;
+            return rastport.unpackPen(f, drawing.getPixel(where, b));
+        }
+    }.pen;
+    const corners = [4]graphics.Pen{
+        at(pixels, pitch, format, bytes, x0, y0),
+        at(pixels, pitch, format, bytes, x1, y0),
+        at(pixels, pitch, format, bytes, x0, y1),
+        at(pixels, pitch, format, bytes, x1, y1),
+    };
+    const weights = [4]u32{ (256 - wx) * (256 - wy), wx * (256 - wy), (256 - wx) * wy, wx * wy };
+    var mixed: graphics.Pen = 0;
+    var shift: u5 = 0;
+    while (true) : (shift += 8) {
+        var sum: u32 = 0;
+        for (corners, weights) |c, w| sum += ((c >> shift) & 0xFF) * w;
+        mixed |= ((sum + 32768) >> 16) << shift;
+        if (shift == 24) break;
+    }
+    return mixed;
+}
+
+/// Where the middle of a destination pixel falls in the source, in 256ths
+/// of a source pixel: the two lined up by their edges, so a picture
+/// scaled to a size and back lands where it started.
+pub fn sourceOf(dest: i32, dest_start: i32, dest_size: i32, src_start: i32, src_size: i32) i64 {
+    const offset: i64 = @as(i64, dest - dest_start) * 2 + 1;
+    return @as(i64, src_start) * 256 + @divFloor(offset * src_size * 256, 2 * @as(i64, dest_size)) - 128;
+}

@@ -6,7 +6,8 @@ const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
-const fillSpan = _draw.fillSpan;
+const _smooth = @import("_smooth.zig");
+const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
 const Rect = graphics.Rect;
 const RastPort = _draw.RastPort;
@@ -85,6 +86,12 @@ pub fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius
     if (area.isEmpty()) return;
 
     const r = @min(_round.fits(area.*, radius), _round.radius_max);
+    rp.fill_box = area.*;
+    if (rp.smooth and r > 0) {
+        const S = _smooth.Cut(_smooth.RoundBox, _smooth.RoundBox);
+        _smooth.fill(gb, rp, S{ .outer = .{ .box = area.*, .radius = r } }, area.min_y, area.max_y - 1, true);
+        return;
+    }
     var bound = Rect{};
     var any = false;
 

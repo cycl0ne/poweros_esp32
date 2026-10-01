@@ -136,6 +136,17 @@ pub const RastPort = extern struct {
     /// whoever draws with it - so two tasks drawing at once cannot
     /// overwrite one another's answer, with no lock and no per-task table.
     last_error: i32,
+    /// `RPTAG_FillStyle`: a copy of the caller's, in memory of its own made
+    /// when one is first set, or null for the pen. Most RastPorts never
+    /// have one, and pay for a pointer rather than a whole fill style.
+    fill: ?*graphics.FillStyle = null,
+    /// `RPTAG_LineWidth`, at least 1.
+    line_width: u32 = 1,
+    /// `RPTAG_Smooth`.
+    smooth: bool = false,
+    /// The box the shape being filled sits in, which a gradient is laid
+    /// across: set by each fill call before it fills.
+    fill_box: graphics.Rect = .{},
 };
 
 /// Write what went wrong where the caller asked for it, for the calls that
@@ -242,6 +253,29 @@ pub fn unpackPen(format: PixelFormat, value: u32) Pen {
         // a pixel out of one either.
         else => 0xFF00_0000,
     };
+}
+
+/// Give a RastPort a copy of a fill style, or with null take its fill
+/// style away. False, with the RastPort as it was, when there was no memory
+/// for the copy.
+///
+/// INPUTS:
+/// - `gb` - the library, for exec.
+/// - `rp` - the RastPort.
+/// - `given` - the fill style to copy, or null.
+pub fn setFill(gb: *@import("../graphics.zig").GraphicsBase, rp: *RastPort, given: ?*const graphics.FillStyle) bool {
+    const fill = given orelse {
+        if (rp.fill) |held| gb.sys_base.FreeVec(held);
+        rp.fill = null;
+        return true;
+    };
+    const room = rp.fill orelse made: {
+        const mem = gb.sys_base.AllocVec(@sizeOf(graphics.FillStyle), exec.MEMF_ANY) orelse return false;
+        break :made @as(*graphics.FillStyle, @ptrCast(@alignCast(mem)));
+    };
+    room.* = fill.*;
+    rp.fill = room;
+    return true;
 }
 
 /// The View: the board this library draws on when nobody names a buffer.

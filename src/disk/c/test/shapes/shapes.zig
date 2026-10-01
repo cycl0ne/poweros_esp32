@@ -2,7 +2,7 @@
 //! Shapes: what graphics.library's rounded rectangles, arcs, coverage
 //! blits and fitted text look like. Built against the SDK only.
 //!
-//!   Shapes NOWINDOW/S
+//!   Shapes NOWINDOW/S,SMOOTH/S
 //!
 //! It opens a window on the default public screen and draws one panel for
 //! each call, with a heading over it:
@@ -12,11 +12,18 @@
 //!   outline drawn round a fill of the same shape to show they meet.
 //! - `FillArc`: a disc, a quarter, a ring, and a gauge part of the way
 //!   round.
+//! - `RPTAG_FillStyle`: the same fills taking a gradient - down, across,
+//!   from a centre - and a tile instead of the pen.
 //! - `BltCoverBitMapRastPort`: a picture laid down at four coverages, and
 //!   once through a plane so its edges are soft.
 //! - `BlurCoverage`: a shape drawn into a coverage surface, softened, and
 //!   laid down as a shadow under the shape itself.
 //! - `TextFitted`: one long name drawn in boxes too narrow for it.
+//!
+//! SMOOTH draws all of it with `RPTAG_Smooth`: curves, rings, wedges,
+//! round corners and slanted lines with smooth edges, and the pictures
+//! scaled by sampling between their pixels. Run it with and without to
+//! compare.
 //!
 //! The window stays until the close gadget or Ctrl-C. NOWINDOW draws
 //! nothing and only says what it would have drawn.
@@ -39,22 +46,23 @@ const Rect = graphics.Rect;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Shapes";
-const VERSION_STRING = "\x00$VER: Shapes 1.0 (30.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Shapes 1.2 (1.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "NOWINDOW/S";
+const template = "NOWINDOW/S,SMOOTH/S";
 const arg_nowindow = 0;
+const arg_smooth = 1;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
 const MSG_NOWINDOW = "No window - the screen would not open one that size\n";
 const MSG_NOSURFACE = "No memory for the %s surface\n";
 const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
-const MSG_PANELS = "%d panels: round rectangles, arcs, coverage blits, a blurred shadow, fitted text\n";
+const MSG_PANELS = "%d panels: round rectangles, arcs, fill styles, coverage blits, a blurred shadow, fitted text\n";
 
 /// How large the window wants to be inside, and the room round things.
 const inner_w: i32 = 620;
-const inner_h: i32 = 470;
+const inner_h: i32 = 540;
 const margin: i32 = 14;
 
 /// The picture the coverage blits lay down, and the coverage plane that
@@ -106,9 +114,12 @@ fn roundRectangles(p: *Panel) void {
     const height: i32 = 44;
     const width: i32 = 84;
     const radii = [_]u32{ 0, 4, 10, 22, 99 };
+    // Each outline wider than the last: it grows inward, so every box
+    // keeps its size.
+    const outline_widths = [_]usize{ 1, 1, 2, 3, 4 };
 
     var x: i32 = p.x0;
-    for (radii) |radius| {
+    for (radii, outline_widths) |radius, outline| {
         const box = Rect{ .min_x = x, .min_y = p.y, .max_x = x + width, .max_y = p.y + height };
         pen(gb, rp, graphics.penRGB(0x36, 0x6C, 0xA8));
         gb.FillRoundRect(rp, &box, radius);
@@ -116,7 +127,9 @@ fn roundRectangles(p: *Panel) void {
         // disagree by a pixel it shows at once, so this is the check as
         // well as the picture.
         pen(gb, rp, graphics.penRGB(0x10, 0x28, 0x40));
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = outline }, .{} });
         gb.DrawRoundRect(rp, &box, radius);
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = 1 }, .{} });
         x += width + 12;
     }
     p.done(height);
@@ -154,6 +167,54 @@ fn arcs(p: *Panel) void {
     pen(gb, rp, graphics.penRGB(0x80, 0x30, 0xA0));
     gb.FillArc(rp, &.{ .cx = cx, .cy = cy, .radius = r, .inner = r - 14, .from = 250, .to = 90 });
 
+    p.done(height);
+}
+
+/// Shapes filled from a fill style instead of the pen.
+fn fills(p: *Panel) void {
+    const gb = p.gb;
+    const rp = p.rp;
+    const height: i32 = 50;
+    const width: i32 = 96;
+    const blue_to_white = [4]graphics.GradientStop{
+        .{ .at = 0, .pen = graphics.penRGB(0x1C, 0x3F, 0x8A) },
+        .{ .at = graphics.FILL_ONE, .pen = graphics.penRGB(0xE8, 0xF0, 0xFF) },
+        .{},
+        .{},
+    };
+    var tile_pixels = [16]u16{
+        0xFFE0, 0xFFE0, 0x0000, 0x0000,
+        0xFFE0, 0xFFE0, 0x0000, 0x0000,
+        0x0000, 0x0000, 0xFFE0, 0xFFE0,
+        0x0000, 0x0000, 0xFFE0, 0xFFE0,
+    };
+    const tile = rtg.Surface{ .pixels = @ptrCast(&tile_pixels), .width = 4, .height = 4, .pitch = 8, .size_bytes = 32, .format = .rgb565 };
+    const styles = [_]graphics.FillStyle{
+        // Down the box.
+        .{ .stops = blue_to_white },
+        // Across it.
+        .{ .to_x = graphics.FILL_ONE, .to_y = 0, .stops = blue_to_white },
+        // From the middle out to a corner.
+        .{ .kind = graphics.FILL_RADIAL, .from_x = graphics.FILL_ONE / 2, .from_y = graphics.FILL_ONE / 2, .to_x = graphics.FILL_ONE, .to_y = graphics.FILL_ONE, .stops = .{
+            .{ .at = 0, .pen = graphics.penRGB(0xFF, 0xE0, 0x60) },
+            .{ .at = graphics.FILL_ONE, .pen = graphics.penRGB(0xC0, 0x30, 0x20) },
+            .{},
+            .{},
+        } },
+        // A picture repeated.
+        .{ .kind = graphics.FILL_TILE, .tile = &tile },
+    };
+    var x: i32 = p.x0;
+    for (&styles) |*style| {
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(style) }, .{} });
+        gb.RectFill(rp, &.{ .min_x = x, .min_y = p.y, .max_x = x + width, .max_y = p.y + height });
+        x += width + 12;
+    }
+    // The same gradient in a round shape: the fill style is laid across
+    // the shape's own box, whatever the shape.
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&styles[0]) }, .{} });
+    gb.FillRoundRect(rp, &.{ .min_x = x, .min_y = p.y, .max_x = x + width, .max_y = p.y + height }, 14);
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = 0 }, .{} });
     p.done(height);
 }
 
@@ -320,7 +381,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [1]usize = @splat(0);
+    var argv: [2]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -328,7 +389,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
 
     if (argv[arg_nowindow] != 0) {
-        _ = Printf(dl, MSG_PANELS, .{@as(u32, 5)});
+        _ = Printf(dl, MSG_PANELS, .{@as(u32, 6)});
         return dos.RETURN_OK;
     }
 
@@ -375,6 +436,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer ib.CloseWindow(w);
 
     const rp: *RastPort = @ptrFromInt(wattr(ib, w, wn.WA_RastPort));
+    if (argv[arg_smooth] != 0) gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
     const left: i32 = @intCast(wattr(ib, w, wn.WA_BorderLeft));
     const top: i32 = @intCast(wattr(ib, w, wn.WA_BorderTop));
 
@@ -424,10 +486,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var panel = Panel{ .rp = rp, .gb = gb, .x0 = left + margin, .y = top + 4 };
     const heading_ink = graphics.penRGB(0x18, 0x18, 0x18);
 
-    panel.heading(heading_ink, "FillRoundRect, DrawRoundRect", 28);
+    panel.heading(heading_ink, "FillRoundRect, DrawRoundRect, RPTAG_LineWidth 1 to 4", 52);
     roundRectangles(&panel);
     panel.heading(heading_ink, "FillArc: disc, quarter, ring, gauge", 35);
     arcs(&panel);
+    panel.heading(heading_ink, "RPTAG_FillStyle: down, across, radial, tile, round", 50);
+    fills(&panel);
     panel.heading(heading_ink, "BltCoverBitMapRastPort: 255, 176, 96, 40, and a plane", 53);
     coverBlits(&panel, picture, soft);
     panel.heading(heading_ink, "BlurCoverage: a shape's own coverage, softened", 46);

@@ -105,6 +105,19 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
             const sy = from.min_y + @divTrunc((y - dest_area.min_y) * src_h, dest_h);
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * bytes;
+            if (dest.smooth) {
+                // Between the pixels, for a RastPort that wants it smooth:
+                // every pixel worked out, none copied from the row above.
+                const fy = _blit.sourceOf(y, dest_area.min_y, dest_h, from.min_y, src_h);
+                var x: i32 = r.rect.min_x;
+                while (x < r.rect.max_x) : (x += 1) {
+                    const fx = _blit.sourceOf(x, dest_area.min_x, dest_w, from.min_x, src_w);
+                    const pen = _blit.sampleBetween(src.pixels.?, src.pitch, src.format, from, fx, fy);
+                    rows.store(to + @as(usize, @intCast(x - r.rect.min_x)) * bytes, bytes, rastport.packPen(src.format, pen) orelse 0);
+                }
+                drawing.grow(&bound, y, &any);
+                continue;
+            }
             if (previous != null and previous_sy == sy) {
                 // The row above took the same source row: it is this row
                 // already, and it is the one just written, so it is still

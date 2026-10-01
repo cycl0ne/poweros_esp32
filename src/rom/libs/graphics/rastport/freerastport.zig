@@ -63,5 +63,6 @@ pub fn FreeRastPort(gb: *GraphicsBase, rp: ?*RastPort) void {
     // Whatever InitArea took goes with it, so a caller that collected a
     // shape and never ended it still leaves nothing behind.
     areas.freeArea(gb, port);
+    _ = _rastport.setFill(gb, port, null);
     gb.sys_base.FreeVec(port);
 }

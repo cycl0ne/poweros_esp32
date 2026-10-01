@@ -5331,6 +5331,127 @@ test "styles: DrawPart measures without drawing, and a gadget and a screen keep 
     try tearDown(ib);
 }
 
+test "styles: a background given as a fill style is copied, answered, and painted under its own border" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    // Black at the top to white at the bottom, a flat red line round it.
+    var down = graphics.FillStyle{ .flags = graphics.FILLF_NODITHER };
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_Padding, .data = 0 },
+        .{ .tag = style.STYLE_BackgroundFill, .data = @intFromPtr(&down) },
+        .{},
+    }).?;
+    // Changed after it was read: the style's copy is what counts.
+    down.stops[0].pen = 0xFF00_FF00;
+    const kept: *const graphics.FillStyle = @ptrFromInt(it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_BackgroundFill));
+    try testing.expectEqual(@as(graphics.Pen, 0xFF00_0000), kept.stops[0].pen);
+    try testing.expectEqual(@as(usize, 0xFF00_0000), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Background));
+
+    const w = 8;
+    const h = 10;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = h }, null);
+
+    // The border in its own colour, the inside dark at the top and light
+    // at the bottom.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[0]);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[(h - 1) * w + 3]);
+    const top = pixels[1 * w + 3] & 0xFF;
+    const bottom = pixels[(h - 2) * w + 3] & 0xFF;
+    try testing.expect(top < 0x40 and bottom > 0xC0);
+    // And the RastPort is left without the fill style, as it came.
+    var fill: usize = 1;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
+    try testing.expectEqual(@as(usize, 0), fill);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a frame on a RastPort with a wide line is the frame on a plain one, and the width comes back" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 17;
+    const h = 11;
+    var wide: [w * h]u32 = @splat(0);
+    var plain: [w * h]u32 = @splat(0);
+    var wide_surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&wide), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .rgba32 };
+    var plain_surface = wide_surface;
+    plain_surface.pixels = @ptrCast(&plain);
+    const wide_rp = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&wide_surface) },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 5 },
+        .{},
+    }).?;
+    const plain_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&plain_surface) }, .{} }).?;
+
+    const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_RIDGE }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = wide_rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    draw.rast_port = plain_rp;
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    try testing.expectEqualSlices(u32, &plain, &wide);
+
+    var width: u32 = 0;
+    gb.GetRPAttrs(wide_rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&width) }, .{} });
+    try testing.expectEqual(@as(u32, 5), width);
+
+    it.DisposeObject(o);
+    gb.FreeRastPort(wide_rp);
+    gb.FreeRastPort(plain_rp);
+    try tearDown(ib);
+}
+
+test "styles: a round part is drawn smooth, and the RastPort's own setting comes back" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_NONE },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_FFFF },
+        .{ .tag = style.STYLE_Radius, .data = 6 },
+        .{},
+    }).?;
+    const w = 16;
+    var pixels: [w * w]u32 = @splat(0xFF00_0000);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = w, .pitch = w * 4, .size_bytes = w * w * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = w }, null);
+
+    // A corner pixel neither black nor white: the curve is smooth.
+    var between = false;
+    for (0..6) |i| {
+        const g = pixels[i * w + 1] & 0xFF;
+        if (g != 0 and g != 0xFF) between = true;
+    }
+    try testing.expect(between);
+    var smooth: u32 = 7;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = @intFromPtr(&smooth) }, .{} });
+    try testing.expectEqual(@as(u32, 0), smooth);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
 test "frameiclass: a thick frame's edges meet on the diagonal" {
     const ib = try setUp();
     defer kexec.deinit();
