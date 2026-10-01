@@ -111,7 +111,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
   any display - a layout in a frame with a title in its edge groups the
-  settings of a window. More gadget classes on the disk in
+  settings of a window. Frames are drawn from a style: the look of each
+  part of a gadget in each state, given as a tag list that a screen
+  carries for all its windows and a single gadget may override, so a
+  screen can look different with no program changed (`C:test/Styles`).
+  More gadget classes on the disk in
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of
   gadgets, a number field with stepping arrows, a button that pops a list

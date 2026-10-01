@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("_screen.zig");
+const _style = @import("../style/_style.zig");
 const Screen = _screen.Screen;
 const lock = _screen.lock;
 const setPen = _screen.setPen;
@@ -67,6 +68,7 @@ pub fn CloseScreen(ib: *IntuitionBase, screen: ?*Screen) bool {
     if (ib.default_pub == s) ib.default_pub = null;
     ib.iface().DisposeObject(s.draw_info.check_mark);
     ib.iface().DisposeObject(s.draw_info.amiga_key);
+    _style.drop(ib, @constCast(s.draw_info.style));
     ib.iface().DisposeObject(s.depth_image);
 
     // Its bar goes with the LayerInfo. The display shows its next screen,

@@ -15,6 +15,7 @@
 const utility = @import("../utility/utility.zig");
 const graphics = @import("../graphics/graphics.zig");
 const classusr = @import("classusr.zig");
+const style = @import("style.zig");
 const MethodID = classusr.MethodID;
 
 // --- attributes ---------------------------------------------------------------
@@ -97,6 +98,13 @@ pub const FRAME_RIDGE: u32 = 2;
 /// A ridge with a further frame inside it, for a box something is dropped
 /// into.
 pub const FRAME_ICONDROPBOX: u32 = 3;
+
+/// The part of a style each frame kind is drawn as. `FRAME_BUTTON` is
+/// `style.PART_MAIN` and `FRAME_RIDGE` `style.PART_GROUP`; the plain frame
+/// and the drop box are frameiclass's own parts, which a style may name
+/// exactly and which otherwise look like the part they fall back to.
+pub const PART_FRAME_PLAIN: u32 = style.classPart(style.PART_MAIN, 1);
+pub const PART_FRAME_DROPBOX: u32 = style.classPart(style.PART_GROUP, 1);
 
 // --- sysiclass: the system's own images ---------------------------------------
 

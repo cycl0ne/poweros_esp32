@@ -63,9 +63,12 @@ pub const LIBRARY_VERSION = 0;
 /// images, and menus made and laid out from a table (CreateMenusA,
 /// FreeMenus, LayoutMenusA, LayoutMenuItemsA). 18: the mouse pointer,
 /// pointerclass and SetWindowPointerA. 19: the system's fonts
-/// (SetSystemFonts, OpenSystemFont, WA_SysFont).
-pub const LIBRARY_REVISION = 19;
-const BUILD_DATE = "25.09.2026";
+/// (SetSystemFonts, OpenSystemFont, WA_SysFont). 20: styles - the look of
+/// the parts of a gadget given as a tag list (SA_Style, GA_Style),
+/// DrawPart and GetStyleAttr, DrawInfo version 3, and frameiclass drawn
+/// from the style.
+pub const LIBRARY_REVISION = 20;
+const BUILD_DATE = "01.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -116,6 +119,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.utility_base = @ptrCast(utility_lib);
     ib.graphics_base = @ptrCast(graphics_lib);
     ib.layers_base = @ptrCast(layers_lib);
+    // The look every part has where nothing else says. Without the memory
+    // for it a part is drawn from the fixed values `_style.Look` starts
+    // from, which is plain but no failure.
+    ib.default_style = @import("style/_style.zig").keep(ib, &@import("style/_style.zig").default_tags);
 
     // No screen is opened here: a machine with no display boots, and the
     // default screen opens the first time something asks for it.

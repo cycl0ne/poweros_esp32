@@ -46,11 +46,14 @@ pub fn restore(gb: *GraphicsBase, rp: *graphics.RastPort, s: Saved) void {
     gb.SetRPAttrs(rp, &put);
 }
 
-/// Draw from now on in one opaque pen, plainly.
+/// Draw from now on in one pen, plainly: written as it is when it is
+/// opaque, laid over what is there by its alpha when it is not - which is
+/// how a style's opacity reaches every line and fill drawn here.
 pub fn pen(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen) void {
+    const mode: u32 = if (graphics.penIsOpaque(value)) graphics.DRMD_JAM1 else graphics.DRMD_JAM1 | graphics.DRMD_BLEND;
     const put = [_]TagItem{
         .{ .tag = graphics.RPTAG_APen, .data = value },
-        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+        .{ .tag = graphics.RPTAG_DrMd, .data = mode },
         .{},
     };
     gb.SetRPAttrs(rp, &put);
@@ -181,8 +184,14 @@ pub const Joins = enum {
 /// further from the corner the other colour owns - which is what makes the
 /// join a diagonal rather than a step.
 pub fn bevel(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, w: i32, h: i32, light: Pen, dark: Pen, thick: i32, joins: Joins) void {
-    if (w <= 1 or h <= 1 or thick < 1) return;
-    const flat: i32 = 1;
+    bevelXY(gb, rp, x, y, w, h, light, dark, thick, 1, joins);
+}
+
+/// `bevel` with the top and bottom edges `flat` rows thick instead of one:
+/// what a style's border is drawn with, where the two thicknesses are each
+/// the style's to say.
+pub fn bevelXY(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, w: i32, h: i32, light: Pen, dark: Pen, thick: i32, flat: i32, joins: Joins) void {
+    if (w <= 1 or h <= 1 or thick < 1 or flat < 1) return;
     const right = x + w - 1;
     const bottom = y + h - 1;
     // How far each edge keeps clear of the corner the other colour owns. An

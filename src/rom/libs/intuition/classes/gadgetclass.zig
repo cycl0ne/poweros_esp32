@@ -30,6 +30,7 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
+const _style = @import("../style/_style.zig");
 const d = @import("draw.zig");
 
 /// gadgetclass's part of an object: the gadget.
@@ -83,6 +84,9 @@ pub const Data = extern struct {
     /// The requester of that window it is in, while that is up; null for
     /// one of the window's own.
     requester: ?*intuition.Requester = null,
+    /// `GA_Style`, as kept: read once when it is set, given back when it is
+    /// set again or the gadget goes.
+    style: ?*intuition.Style = null,
 };
 
 // The flags are the SDK's: `gc.Gadget` is the public view of `Data`.
@@ -343,6 +347,11 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
                 g.key = gc.labelKey(g.text);
                 changed = 1;
             },
+            gc.GA_Style => {
+                _style.drop(ib, g.style);
+                g.style = _style.keep(ib, @ptrFromInt(v));
+                changed = 1;
+            },
             gc.GA_IntuiText => {
                 g.itext = @ptrFromInt(v);
                 g.text = null;
@@ -420,6 +429,7 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Disabled => out.* = @intFromBool(g.flags & GFLG_DISABLED != 0),
         gc.GA_Text => out.* = @intFromPtr(g.text),
         gc.GA_Key => out.* = g.key,
+        gc.GA_Style => out.* = @intFromPtr(g.style),
         gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
         gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
         gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
@@ -509,6 +519,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_GET => {
             if (get(classes.instData(Data, cl, o orelse return 0), @ptrCast(@alignCast(msg)))) return 1;
+            return it.SendSuperMessage(cl, o, msg);
+        },
+        classusr.OM_DISPOSE => {
+            _style.drop(ib, classes.instData(Data, cl, o orelse return 0).style);
             return it.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_NOTIFY => {

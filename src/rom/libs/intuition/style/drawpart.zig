@@ -1,0 +1,197 @@
+// SPDX-License-Identifier: MPL-2.0
+//! DrawPart: draws a part of a gadget in a state, from its style.
+
+const sdk = @import("sdk");
+const graphics = sdk.graphics;
+const style = sdk.intuition.style;
+const sc = sdk.intuition.screens;
+const Pen = graphics.Pen;
+const Rect = graphics.Rect;
+const IntuitionBase = @import("../intuition.zig").IntuitionBase;
+const _style = @import("_style.zig");
+const d = @import("../classes/draw.zig");
+
+/// Draws a part of a gadget in a state, from its style.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort,
+///     draw_info: ?*const DrawInfo, own: ?*const Style, part: u32,
+///     state: u32, flags: u32, box: *const Rect, content: ?*Rect) void
+/// ```
+///
+/// SINCE: 0.20. LVO -476.
+///
+/// INPUTS:
+/// - `rp` - where to draw, or null to draw nothing and only answer
+///   `content`.
+/// - `draw_info` - the screen's, for its pens and its style; null for the
+///   default pens and the system's default style alone.
+/// - `own` - a gadget's own style (`GA_Style`, read back), or null.
+/// - `part` - a `style.PART_` number, or a class's own (`style.classPart`).
+/// - `state` - `style.STATE_` bits.
+/// - `flags` - `style.DPF_INVERT` to turn the border the other way,
+///   `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
+/// - `box` - where the part goes, half-open.
+/// - `content` - where to write the room left inside the border and the
+///   padding, or null.
+///
+/// RESULT:
+/// Nothing. `content`, when given, is `box` less the border and the
+/// padding on each side; a box too small for them gives an empty one at
+/// its middle rather than a negative one.
+///
+/// BEHAVIOR:
+/// Every property is found on its own, by the order the styles header
+/// describes: the most particular state first, then the gadget's own style
+/// before the screen's before the default, then the exact part before the
+/// one it falls back to.
+///
+/// What is drawn, in order:
+///
+/// - **The inside** in the background colour - inside the border, or, for
+///   a part with a radius, the whole rounded shape with the border drawn
+///   over it. Not with `DPF_EDGES_ONLY`.
+/// - **The border**, by its kind: a flat one in the border colour; a raised
+///   or recessed bevel in the shine and shadow colours, `STYLE_BorderX`
+///   thick at the sides and `STYLE_BorderY` at the top and bottom, its
+///   corners meeting as `STYLE_Joins` says; a ridge or a groove as two
+///   bevels, one inside the other, turned opposite ways.
+///
+/// An opacity below 255 lays every colour over what is there by that much.
+///
+/// The RastPort's pens, draw mode and font are put back as they were.
+///
+/// CONTEXT:
+/// - Waits: no.
+/// - Interrupts: no.
+/// - Forbid: not held and not wanted.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// Nothing is allocated, and the styles are only read.
+///
+/// NOTES:
+/// - With nothing set anywhere - a screen given no style - every part looks
+///   as frames always have: the default style is written to be that look.
+/// - A class measures a part with `rp` null: the content box of a part in
+///   a given box is what a frame around contents needs to add.
+///
+/// BUGS:
+/// - A bevel with a radius is drawn as a flat border in the shadow colour:
+///   there is no rounded two-colour edge yet.
+/// - A rounded border thicker than a pixel is drawn as nested outlines,
+///   the thicker of its two thicknesses deep.
+///
+/// SEE ALSO:
+/// `GetStyleAttr`, `SA_Style`, `GA_Style`, `DrawImageState`
+///
+/// EXAMPLES:
+/// ```zig
+/// // A button's body, and the room for its label inside it.
+/// var inside: graphics.Rect = undefined;
+/// ib.DrawPart(rp, draw_info, own, style.PART_MAIN,
+///     if (pressed) style.STATE_PRESSED else style.STATE_NORMAL, 0,
+///     &box, &inside);
+/// ```
+pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const sc.DrawInfo, own: ?*const style.Style, part: u32, state: u32, flags: u32, box: *const Rect, content: ?*Rect) void {
+    const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
+    const look = _style.look(ib, own, screen, part, state);
+
+    var kind = look.get(.border);
+    if (flags & style.DPF_INVERT != 0) kind = switch (kind) {
+        style.BORDER_RAISED => style.BORDER_RECESSED,
+        style.BORDER_RECESSED => style.BORDER_RAISED,
+        style.BORDER_RIDGE => style.BORDER_GROOVE,
+        style.BORDER_GROOVE => style.BORDER_RIDGE,
+        else => kind,
+    };
+    const doubled = kind == style.BORDER_RIDGE or kind == style.BORDER_GROOVE;
+    const bx: i32 = @intCast(look.get(.border_x));
+    const by: i32 = @intCast(look.get(.border_y));
+    const tx: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) 2 * bx else bx;
+    const ty: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) 2 * by else by;
+
+    if (content) |inside| inside.* = inset(box.*, tx + @as(i32, @intCast(look.get(.padding_x))), ty + @as(i32, @intCast(look.get(.padding_y))));
+    const target = rp orelse return;
+    if (box.isEmpty()) return;
+
+    const gb = ib.graphics_base;
+    const saved = d.save(gb, target);
+    defer d.restore(gb, target, saved);
+
+    const pens = d.pensOf(draw_info);
+    const num_pens: u32 = if (draw_info) |dri| dri.num_pens else sc.NUMDRIPENS;
+    const opacity = look.get(.opacity);
+    const colour = struct {
+        fn of(l: *const _style.Look, p: _style.Prop, all: [*]const Pen, n: u32, alpha: u32) Pen {
+            const value = l.colour(p, all, n);
+            if (alpha >= 255) return value;
+            return (value & 0x00FF_FFFF) | ((value >> 24) * alpha / 255) << 24;
+        }
+    }.of;
+    const background = colour(&look, .background, pens, num_pens, opacity);
+    const shine = colour(&look, .shine, pens, num_pens, opacity);
+    const shadow = colour(&look, .shadow, pens, num_pens, opacity);
+    const line = colour(&look, .border_colour, pens, num_pens, opacity);
+    const radius: i32 = @intCast(look.get(.radius));
+    const joins: d.Joins = if (look.get(.joins) == style.JOINS_ANGLED) .angled else .none;
+    const fill = flags & style.DPF_EDGES_ONLY == 0;
+
+    const x = box.min_x;
+    const y = box.min_y;
+    const w = box.width();
+    const h = box.height();
+
+    if (radius > 0) {
+        if (fill) {
+            d.pen(gb, target, background);
+            gb.FillRoundRect(target, box, @intCast(radius));
+        }
+        if (kind == style.BORDER_NONE) return;
+        d.pen(gb, target, if (kind == style.BORDER_FLAT) line else shadow);
+        var step: i32 = 0;
+        while (step < @max(tx, ty)) : (step += 1) {
+            const ring = inset(box.*, step, step);
+            if (ring.isEmpty()) break;
+            gb.DrawRoundRect(target, &ring, @intCast(@max(radius - step, 0)));
+        }
+        return;
+    }
+
+    if (fill) d.box(gb, target, x + tx, y + ty, w - 2 * tx, h - 2 * ty, background);
+    switch (kind) {
+        style.BORDER_FLAT => {
+            d.box(gb, target, x, y, w, ty, line);
+            d.box(gb, target, x, y + h - ty, w, ty, line);
+            d.box(gb, target, x, y + ty, tx, h - 2 * ty, line);
+            d.box(gb, target, x + w - tx, y + ty, tx, h - 2 * ty, line);
+        },
+        style.BORDER_RAISED => d.bevelXY(gb, target, x, y, w, h, shine, shadow, bx, by, joins),
+        style.BORDER_RECESSED => d.bevelXY(gb, target, x, y, w, h, shadow, shine, bx, by, joins),
+        style.BORDER_RIDGE, style.BORDER_GROOVE => {
+            const out_light = if (kind == style.BORDER_RIDGE) shine else shadow;
+            const out_dark = if (kind == style.BORDER_RIDGE) shadow else shine;
+            d.bevelXY(gb, target, x, y, w, h, out_light, out_dark, bx, by, joins);
+            d.bevelXY(gb, target, x + bx, y + by, w - 2 * bx, h - 2 * by, out_dark, out_light, bx, by, joins);
+        },
+        else => {},
+    }
+}
+
+/// A rectangle with `dx` taken off each side and `dy` off the top and
+/// bottom; too small for that, an empty one at its middle.
+fn inset(r: Rect, dx: i32, dy: i32) Rect {
+    var out = Rect{ .min_x = r.min_x + dx, .min_y = r.min_y + dy, .max_x = r.max_x - dx, .max_y = r.max_y - dy };
+    if (out.max_x < out.min_x) {
+        const mid = r.min_x + @divTrunc(r.width(), 2);
+        out.min_x = mid;
+        out.max_x = mid;
+    }
+    if (out.max_y < out.min_y) {
+        const mid = r.min_y + @divTrunc(r.height(), 2);
+        out.min_y = mid;
+        out.max_y = mid;
+    }
+    return out;
+}

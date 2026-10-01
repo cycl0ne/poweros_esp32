@@ -137,6 +137,8 @@ const OpenSystemFont = @import("font/opensystemfont.zig").OpenSystemFont;
 const GetPrefs = @import("prefs/getprefs.zig").GetPrefs;
 const GetDefPrefs = @import("prefs/getdefprefs.zig").GetDefPrefs;
 const SetPrefs = @import("prefs/setprefs.zig").SetPrefs;
+const DrawPart = @import("style/drawpart.zig").DrawPart;
+const GetStyleAttr = @import("style/getstyleattr.zig").GetStyleAttr;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -251,6 +253,8 @@ const contract_files = [_][]const u8{
     @embedFile("prefs/getprefs.zig"),
     @embedFile("prefs/getdefprefs.zig"),
     @embedFile("prefs/setprefs.zig"),
+    @embedFile("style/drawpart.zig"),
+    @embedFile("style/getstyleattr.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -595,6 +599,12 @@ fn lvoGetDefPrefs(ib: *IntuitionBase, prefs: *intuition.Preferences, size: u32) 
 fn lvoSetPrefs(ib: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) callconv(.c) *intuition.Preferences {
     return SetPrefs(ib, prefs, size, announce);
 }
+fn lvoDrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, flags: u32, box: *const graphics.Rect, content: ?*graphics.Rect) callconv(.c) void {
+    DrawPart(ib, rp, draw_info, own, part, state, flags, box, content);
+}
+fn lvoGetStyleAttr(ib: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, attr: utility.Tag) callconv(.c) usize {
+    return GetStyleAttr(ib, draw_info, own, part, state, attr);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -715,6 +725,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetPrefs),
     vec(lvoGetDefPrefs),
     vec(lvoSetPrefs),
+    // Styles
+    vec(lvoDrawPart),
+    vec(lvoGetStyleAttr),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

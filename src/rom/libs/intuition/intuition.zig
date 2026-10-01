@@ -227,6 +227,8 @@ pub fn tearDown(ib: *IntuitionBase) !void {
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(ib.utility_base));
 
     @import("misc/_misc.zig").close(ib);
+    // The default style the init read: a ROM module keeps it for good.
+    @import("style/_style.zig").drop(ib, ib.default_style);
     if (ib.rtg_base) |opened| kexec.CloseLibrary(kexec.SysBase, @ptrCast(@alignCast(opened)));
     const kb: *kkeymap.KeymapBase = @ptrCast(@alignCast(ib.keymap_base.?));
     kexec.CloseLibrary(kexec.SysBase, &kb.lib);
@@ -5122,6 +5124,209 @@ test "images: a chain is drawn as one, and a button is as big as what it shows" 
     it.DisposeObject(button);
     it.DisposeObject(first);
     it.DisposeObject(second);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// A frame drawn the way frameiclass drew one before there were styles:
+/// kept here as the measure the default style has to meet pixel for pixel.
+fn frameBeforeStyles(ib: *IntuitionBase, rp: *graphics.RastPort, frame_type: u32, recessed: bool, edges_only: bool, ids: u32, w: i32, h: i32) void {
+    const d = @import("classes/draw.zig");
+    const sc = intuition.screens;
+    const gb = ib.graphics_base;
+    const pens = d.pensOf(null);
+    const selected = ids == ic.IDS_SELECTED or ids == ic.IDS_INACTIVESELECTED;
+    const sunk = recessed != selected;
+    const light = if (sunk) pens[sc.SHADOWPEN] else pens[sc.SHINEPEN];
+    const dark = if (sunk) pens[sc.SHINEPEN] else pens[sc.SHADOWPEN];
+    const stroke: i32 = if (frame_type == ic.FRAME_DEFAULT) 1 else 2;
+    const ridge_inset: i32 = if (frame_type == ic.FRAME_RIDGE) 1 else 0;
+    const joins: d.Joins = if (frame_type == ic.FRAME_DEFAULT) .none else .angled;
+    d.bevel(gb, rp, 0, 0, w, h, light, dark, stroke, joins);
+    var dx = stroke;
+    var dy: i32 = 1;
+    if (ridge_inset > 0) {
+        dx = ridge_inset * stroke;
+        dy = ridge_inset;
+        d.bevel(gb, rp, dx, dy, w - 2 * dx, h - 2 * dy, dark, light, stroke, joins);
+        dx += stroke;
+        dy += 1;
+    }
+    if (!edges_only) {
+        const fill = if (selected) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
+        d.box(gb, rp, dx, dy, w - 2 * dx, h - 2 * dy, fill);
+    }
+}
+
+test "styles: with the default alone, every frame is the frame it was before styles" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 17;
+    const h = 11;
+    var now: [w * h]u32 = undefined;
+    var before: [w * h]u32 = undefined;
+    var now_surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&now), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .rgba32 };
+    var before_surface = now_surface;
+    before_surface.pixels = @ptrCast(&before);
+    const now_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&now_surface) }, .{} }).?;
+    const before_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&before_surface) }, .{} }).?;
+
+    const kinds = [_]u32{ ic.FRAME_DEFAULT, ic.FRAME_BUTTON, ic.FRAME_RIDGE };
+    const states = [_]u32{ ic.IDS_NORMAL, ic.IDS_SELECTED, ic.IDS_DISABLED, ic.IDS_SELECTEDDISABLED, ic.IDS_INACTIVESELECTED, ic.IDS_INACTIVENORMAL };
+    for (kinds) |kind| for ([_]bool{ false, true }) |recessed| for ([_]bool{ false, true }) |edges_only| {
+        const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{
+            .{ .tag = ic.IA_FrameType, .data = kind },
+            .{ .tag = ic.IA_Recessed, .data = @intFromBool(recessed) },
+            .{ .tag = ic.IA_EdgesOnly, .data = @intFromBool(edges_only) },
+            .{},
+        }).?;
+        defer it.DisposeObject(o);
+        for (states) |ids| {
+            // Something that is neither pen, so an edge left bare shows.
+            @memset(&now, 0x5A5A_5A5A);
+            @memset(&before, 0x5A5A_5A5A);
+            var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = now_rp, .state = ids, .dimensions = .{ .width = w, .height = h } };
+            _ = it.SendMessage(o, @ptrCast(&draw));
+            frameBeforeStyles(ib, before_rp, kind, recessed, edges_only, ids, w, h);
+            try testing.expectEqualSlices(u32, &before, &now);
+        }
+    };
+
+    gb.FreeRastPort(now_rp);
+    gb.FreeRastPort(before_rp);
+    try tearDown(ib);
+}
+
+test "styles: first one wins, TAG_MORE included, and a tag not known is passed over" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+
+    const behind = [_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF22_2222 },
+        .{ .tag = style.STYLE_Radius, .data = 7 },
+        .{},
+    };
+    var front = [_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF11_1111 },
+        .{ .tag = style.STYLE_Dummy + 0x7F, .data = 12345 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&behind) },
+    };
+    const own = _style.keep(ib, &front).?;
+    // The list is read once: what it says afterwards changes nothing.
+    @memset(&front, .{});
+
+    const it = ib.iface();
+    try testing.expectEqual(@as(usize, 0xFF11_1111), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Background));
+    try testing.expectEqual(@as(usize, 7), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: the most particular state wins, the exact combination before it, the gadget's own before its screen's" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const _style = @import("style/_style.zig");
+    const d = @import("classes/draw.zig");
+    const it = ib.iface();
+    const pens = d.pensOf(null);
+    const bg = style.STYLE_Background;
+
+    // The default alone: the screen's pens, as frames always were.
+    try testing.expectEqual(@as(usize, pens[sc.BACKGROUNDPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLTEXTPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_TextPen));
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00AA },
+        .{ .tag = style.STYLE_State, .data = style.STATE_DISABLED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00DD },
+        .{ .tag = style.STYLE_State, .data = style.STATE_CHECKED | style.STATE_DISABLED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00CC },
+        .{ .tag = style.STYLE_Part, .data = style.PART_TRACK },
+        .{ .tag = style.STYLE_Radius, .data = 3 },
+        .{ .tag = style.STYLE_Part, .data = style.classPart(style.PART_TRACK, 2) },
+        .{ .tag = style.STYLE_Radius, .data = 9 },
+        .{},
+    }).?;
+
+    // Normal is the gadget's; pressed it says nothing about, and the
+    // default's pressed is more particular than the gadget's normal.
+    try testing.expectEqual(@as(usize, 0xFF00_00AA), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLPEN]), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED, bg));
+    // The combination named exactly; another combination falls to the
+    // single state that wins it, disabled over pressed.
+    try testing.expectEqual(@as(usize, 0xFF00_00CC), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_CHECKED | style.STATE_DISABLED, bg));
+    try testing.expectEqual(@as(usize, 0xFF00_00DD), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED | style.STATE_DISABLED, bg));
+    // A class's own part: its own entry when it has one, its base's when not.
+    try testing.expectEqual(@as(usize, 9), it.GetStyleAttr(null, own, style.classPart(style.PART_TRACK, 2), style.STATE_NORMAL, style.STYLE_Radius));
+    try testing.expectEqual(@as(usize, 3), it.GetStyleAttr(null, own, style.classPart(style.PART_TRACK, 5), style.STATE_NORMAL, style.STYLE_Radius));
+
+    // A screen's style, under the gadget's own.
+    const screen_style = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_BB00 },
+        .{ .tag = style.STYLE_Radius, .data = 4 },
+        .{},
+    }).?;
+    const dri = sc.DrawInfo{ .pens = pens, .style = screen_style };
+    try testing.expectEqual(@as(usize, 0xFF00_00AA), it.GetStyleAttr(&dri, own, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, 0xFF00_BB00), it.GetStyleAttr(&dri, null, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, 4), it.GetStyleAttr(&dri, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+
+    _style.drop(ib, own);
+    _style.drop(ib, screen_style);
+    try tearDown(ib);
+}
+
+test "styles: DrawPart measures without drawing, and a gadget and a screen keep a style of their own" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+
+    // The default button: two pixels of bevel and two of room at each
+    // side, one and one at the top and bottom.
+    var inside: graphics.Rect = undefined;
+    it.DrawPart(null, null, null, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = 100, .max_y = 50 }, &inside);
+    try testing.expectEqual(graphics.Rect{ .min_x = 4, .min_y = 2, .max_x = 96, .max_y = 48 }, inside);
+    // A box smaller than its border: an empty middle, never a negative one.
+    it.DrawPart(null, null, null, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = 4, .max_y = 2 }, &inside);
+    try testing.expect(inside.isEmpty() and inside.width() == 0 and inside.height() == 0);
+
+    // GA_Style, kept and read back; given back when the gadget goes.
+    const g = it.NewObjectTagList(ib.gadget_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 5 }, .{} }) },
+        .{},
+    }).?;
+    var kept: usize = 0;
+    try testing.expectEqual(@as(u32, 1), it.GetAttr(gc.GA_Style, g, &kept));
+    try testing.expectEqual(@as(usize, 5), it.GetStyleAttr(null, @ptrFromInt(kept), style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    it.DisposeObject(g);
+
+    // SA_Style: the screen's DrawInfo carries it, and it goes with the
+    // screen.
+    const display = try Display.up(ib);
+    const s = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 6 }, .{} }) },
+        .{},
+    }).?;
+    const dri = it.GetScreenDrawInfo(s);
+    try testing.expect(dri.style != null);
+    try testing.expectEqual(@as(usize, 6), it.GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    it.FreeScreenDrawInfo(s, dri);
+    try testing.expect(it.CloseScreen(s));
     display.down(ib);
     try tearDown(ib);
 }

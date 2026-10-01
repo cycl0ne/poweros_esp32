@@ -42,7 +42,7 @@ const tests = [_][]const u8{
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
     "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",
+    "shapes",      "styles",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 

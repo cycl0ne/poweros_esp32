@@ -26,6 +26,7 @@ intuition.library/DoubleClick
 intuition.library/DrawBorder
 intuition.library/DrawImage
 intuition.library/DrawImageState
+intuition.library/DrawPart
 intuition.library/EasyRequestArgs
 intuition.library/EndRefresh
 intuition.library/EndRequest
@@ -44,6 +45,7 @@ intuition.library/GetIMsg
 intuition.library/GetPrefs
 intuition.library/GetScreenAttrs
 intuition.library/GetScreenDrawInfo
+intuition.library/GetStyleAttr
 intuition.library/GetWindowAttrs
 intuition.library/HelpControl
 intuition.library/InitRequester
@@ -1431,6 +1433,89 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.DrawImageState(rp, button_face, 0, 0, imageclass.IDS_SELECTED, null);
+intuition.library/DrawPart                          intuition.library/DrawPart
+
+   NAME
+	DrawPart -- Draws a part of a gadget in a state, from its style.
+
+   SYNOPSIS
+	    fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort,
+	        draw_info: ?*const DrawInfo, own: ?*const Style, part: u32,
+	        state: u32, flags: u32, box: *const Rect, content: ?*Rect) void
+
+   SINCE
+	0.20. LVO -476.
+
+   INPUTS
+	- `rp` - where to draw, or null to draw nothing and only answer
+	  `content`.
+	- `draw_info` - the screen's, for its pens and its style; null for the
+	  default pens and the system's default style alone.
+	- `own` - a gadget's own style (`GA_Style`, read back), or null.
+	- `part` - a `style.PART_` number, or a class's own (`style.classPart`).
+	- `state` - `style.STATE_` bits.
+	- `flags` - `style.DPF_INVERT` to turn the border the other way,
+	  `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
+	- `box` - where the part goes, half-open.
+	- `content` - where to write the room left inside the border and the
+	  padding, or null.
+
+   RESULT
+	Nothing. `content`, when given, is `box` less the border and the
+	padding on each side; a box too small for them gives an empty one at
+	its middle rather than a negative one.
+
+   BEHAVIOR
+	Every property is found on its own, by the order the styles header
+	describes: the most particular state first, then the gadget's own style
+	before the screen's before the default, then the exact part before the
+	one it falls back to.
+
+	What is drawn, in order:
+
+	- **The inside** in the background colour - inside the border, or, for
+	  a part with a radius, the whole rounded shape with the border drawn
+	  over it. Not with `DPF_EDGES_ONLY`.
+	- **The border**, by its kind: a flat one in the border colour; a raised
+	  or recessed bevel in the shine and shadow colours, `STYLE_BorderX`
+	  thick at the sides and `STYLE_BorderY` at the top and bottom, its
+	  corners meeting as `STYLE_Joins` says; a ridge or a groove as two
+	  bevels, one inside the other, turned opposite ways.
+
+	An opacity below 255 lays every colour over what is there by that much.
+
+	The RastPort's pens, draw mode and font are put back as they were.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated, and the styles are only read.
+
+   NOTES
+	- With nothing set anywhere - a screen given no style - every part looks
+	  as frames always have: the default style is written to be that look.
+	- A class measures a part with `rp` null: the content box of a part in
+	  a given box is what a frame around contents needs to add.
+
+   BUGS
+	- A bevel with a radius is drawn as a flat border in the shadow colour:
+	  there is no rounded two-colour edge yet.
+	- A rounded border thicker than a pixel is drawn as nested outlines,
+	  the thicker of its two thicknesses deep.
+
+   SEE ALSO
+	`GetStyleAttr`, `SA_Style`, `GA_Style`, `DrawImageState`
+
+   EXAMPLES
+	    // A button's body, and the room for its label inside it.
+	    var inside: graphics.Rect = undefined;
+	    ib.DrawPart(rp, draw_info, own, style.PART_MAIN,
+	        if (pressed) style.STATE_PRESSED else style.STATE_NORMAL, 0,
+	        &box, &inside);
 intuition.library/EasyRequestArgs            intuition.library/EasyRequestArgs
 
    NAME
@@ -2252,6 +2337,64 @@ intuition.library/ZipWindow
 	    const dri = ib.GetScreenDrawInfo(screen);
 	    defer ib.FreeScreenDrawInfo(screen, dri);
 	    const text = dri.pens[TEXTPEN];
+intuition.library/GetStyleAttr                  intuition.library/GetStyleAttr
+
+   NAME
+	GetStyleAttr -- One property of a part in a state, found as `DrawPart` finds it.
+
+   SYNOPSIS
+	    fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
+	        own: ?*const Style, part: u32, state: u32, attr: Tag) usize
+
+   SINCE
+	0.20. LVO -480.
+
+   INPUTS
+	- `draw_info` - the screen's, for its pens and its style; null for the
+	  default pens and the system's default style alone.
+	- `own` - a gadget's own style (`GA_Style`, read back), or null.
+	- `part` - a `style.PART_` number, or a class's own.
+	- `state` - `style.STATE_` bits.
+	- `attr` - a `style.STYLE_` tag.
+
+   RESULT
+	A colour as 0xAARRGGBB, whichever of its two tags `attr` is - a pen
+	index in the style is looked up in the screen's pens, so the answer can
+	go straight into `RPTAG_APen`. Any other property as its number:
+	`STYLE_BorderWidth` answers `STYLE_BorderX` and `STYLE_Padding`
+	`STYLE_PaddingX`. 0 for a tag that is not a property.
+
+   BEHAVIOR
+	The property is found by the same order `DrawPart` uses: the most
+	particular state first, then the gadget's own style before the screen's
+	before the default, then the exact part before the one it falls back
+	to. A colour is answered as it is in the style; the part's opacity is
+	not laid on it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Forbid: not held and not wanted.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	What a class asks when it draws something of its own in the style's
+	colours - its label, a mark - rather than having `DrawPart` draw it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DrawPart`, `SA_Style`, `GA_Style`
+
+   EXAMPLES
+	    // A button's label in the colour its style gives pressed text.
+	    const ink = ib.GetStyleAttr(draw_info, own, style.PART_MAIN,
+	        style.STATE_PRESSED, style.STYLE_TextPen);
+	    gb.SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{} });
 intuition.library/GetWindowAttrs              intuition.library/GetWindowAttrs
 
    NAME

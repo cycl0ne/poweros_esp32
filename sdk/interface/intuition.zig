@@ -133,6 +133,8 @@ pub const LVO = struct {
     pub const GetPrefs = libraries.lvo(115);
     pub const GetDefPrefs = libraries.lvo(116);
     pub const SetPrefs = libraries.lvo(117);
+    pub const DrawPart = libraries.lvo(118);
+    pub const GetStyleAttr = libraries.lvo(119);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -252,6 +254,8 @@ pub const Fn = struct {
     pub const GetPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
     pub const GetDefPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
     pub const SetPrefs = *const fn (*IntuitionBase, *const intuition.Preferences, u32, bool) callconv(.c) *intuition.Preferences;
+    pub const DrawPart = *const fn (*IntuitionBase, ?*graphics.RastPort, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, u32, *const graphics.Rect, ?*graphics.Rect) callconv(.c) void;
+    pub const GetStyleAttr = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, utility.Tag) callconv(.c) usize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -941,5 +945,24 @@ pub const IntuitionBase = opaque {
     /// that listens is told IDCMP_NEWPREFS. Answers what was taken.
     pub fn SetPrefs(self: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) *intuition.Preferences {
         return libraries.call(self, LVO.SetPrefs, Fn.SetPrefs, .{ prefs, size, announce });
+    }
+
+    /// Draw a part of a gadget in a state, from its style, into `box`: the
+    /// background, then the border. `own` is a gadget's own style (GA_Style's
+    /// value read back) or null, and is asked before the screen's in
+    /// `draw_info`, which is asked before the system's default. `flags` are
+    /// DPF_ bits. With `content` the room left inside the border and the
+    /// padding is written there - and with `rp` null that is all it does, which
+    /// is how a class measures a part without drawing it.
+    pub fn DrawPart(self: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, flags: u32, box: *const graphics.Rect, content: ?*graphics.Rect) void {
+        return libraries.call(self, LVO.DrawPart, Fn.DrawPart, .{ rp, draw_info, own, part, state, flags, box, content });
+    }
+
+    /// One property of a part in a state, found as DrawPart finds it: a colour
+    /// as 0xAARRGGBB whichever of its two tags `attr` is, a number as the
+    /// number. What a class asks when it draws something of its own - the pen
+    /// for its text - in the style's colours.
+    pub fn GetStyleAttr(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, attr: utility.Tag) usize {
+        return libraries.call(self, LVO.GetStyleAttr, Fn.GetStyleAttr, .{ draw_info, own, part, state, attr });
     }
 };

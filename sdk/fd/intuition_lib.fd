@@ -353,4 +353,18 @@ bool SetSystemFonts(?*graphics.TextFont screen_font, ?*graphics.TextFont default
 /// is not there keeps the value it had. With `announce`, every window
 /// that listens is told IDCMP_NEWPREFS. Answers what was taken.
 *intuition.Preferences SetPrefs(*const intuition.Preferences prefs, u32 size, bool announce)
+// Styles
+/// Draw a part of a gadget in a state, from its style, into `box`: the
+/// background, then the border. `own` is a gadget's own style (GA_Style's
+/// value read back) or null, and is asked before the screen's in
+/// `draw_info`, which is asked before the system's default. `flags` are
+/// DPF_ bits. With `content` the room left inside the border and the
+/// padding is written there - and with `rp` null that is all it does, which
+/// is how a class measures a part without drawing it.
+void DrawPart(?*graphics.RastPort rp, ?*const intuition.DrawInfo draw_info, ?*const intuition.Style own, u32 part, u32 state, u32 flags, *const graphics.Rect box, ?*graphics.Rect content)
+/// One property of a part in a state, found as DrawPart finds it: a colour
+/// as 0xAARRGGBB whichever of its two tags `attr` is, a number as the
+/// number. What a class asks when it draws something of its own - the pen
+/// for its text - in the style's colours.
+usize GetStyleAttr(?*const intuition.DrawInfo draw_info, ?*const intuition.Style own, u32 part, u32 state, utility.Tag attr)
 ##end

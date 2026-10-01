@@ -39,6 +39,7 @@ const classusr = @import("classusr.zig");
 const ie = @import("../../devices/inputevent.zig");
 const MethodID = classusr.MethodID;
 const screens = @import("screens.zig");
+const style = @import("style.zig");
 const windows = @import("windows.zig");
 const requesters = @import("requesters.zig");
 const text_ = @import("text.zig");
@@ -175,6 +176,11 @@ pub const GA_DrawInfo = GA_Dummy + 0x21;
 /// The number is far enough above the tags of the gadget attributes named
 /// here that any of them can still be added at the number it is known by.
 pub const GA_Key = GA_Dummy + 0x30;
+/// A `[*]const TagItem`: the gadget's own style (`style.zig`), saying only
+/// how it differs from its screen's. Read when it is set and kept; the list
+/// may go away afterwards, and null takes it off again. Read back with
+/// OM_GET it is the style as kept, which is what to hand `DrawPart`.
+pub const GA_Style = GA_Dummy + 0x31;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -227,6 +233,8 @@ pub const Gadget = extern struct {
     /// The window it is in, while it is in one.
     window: ?*windows.Window = null,
     requester: ?*requesters.Requester = null,
+    /// `GA_Style`, as kept.
+    style: ?*style.Style = null,
 };
 
 /// `Gadget.flags`.
