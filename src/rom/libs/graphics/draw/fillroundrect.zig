@@ -19,7 +19,7 @@ const RastPort = _draw.RastPort;
 ///     radius: u32) void
 /// ```
 ///
-/// SINCE: 0.7. LVO -400.
+/// SINCE: 0.21. LVO -316.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its pen, its draw mode and its clip decide the

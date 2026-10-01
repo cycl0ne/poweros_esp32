@@ -198,6 +198,12 @@ const contract_files = [_][]const u8{
     @embedFile("text/unlockfonts.zig"),
     @embedFile("text/attemptremfont.zig"),
     @embedFile("text/fontrows.zig"),
+    @embedFile("draw/fillroundrect.zig"),
+    @embedFile("draw/drawroundrect.zig"),
+    @embedFile("draw/fillarc.zig"),
+    @embedFile("blit/bltcoverbitmaprastport.zig"),
+    @embedFile("bitmap/blurcoverage.zig"),
+    @embedFile("text/textfitted.zig"),
 };
 
 fn lvoCreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) callconv(.c) ?*graphics.RastPort {

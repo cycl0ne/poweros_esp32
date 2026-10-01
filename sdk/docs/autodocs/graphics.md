@@ -1245,7 +1245,7 @@ fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface,
 
 **SINCE**
 
-0.7. LVO -418.
+0.21. LVO -328.
 
 **INPUTS**
 
@@ -1683,7 +1683,7 @@ fn BlurCoverage(gb: *GraphicsBase, cover: *rtg.Surface,
 
 **SINCE**
 
-0.7. LVO -424.
+0.21. LVO -332.
 
 **INPUTS**
 
@@ -2545,7 +2545,7 @@ fn DrawRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect,
 
 **SINCE**
 
-0.7. LVO -406.
+0.21. LVO -320.
 
 **INPUTS**
 
@@ -2810,7 +2810,7 @@ fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void
 
 **SINCE**
 
-0.7. LVO -412.
+0.21. LVO -324.
 
 **INPUTS**
 
@@ -2890,7 +2890,7 @@ fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect,
 
 **SINCE**
 
-0.7. LVO -400.
+0.21. LVO -316.
 
 **INPUTS**
 
@@ -4811,7 +4811,7 @@ fn TextFitted(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8,
 
 **SINCE**
 
-0.7. LVO -430.
+0.21. LVO -336.
 
 **INPUTS**
 

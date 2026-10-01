@@ -24,7 +24,7 @@ const Arc = graphics.Arc;
 /// fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void
 /// ```
 ///
-/// SINCE: 0.7. LVO -412.
+/// SINCE: 0.21. LVO -324.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort. Its pen, its draw mode and its clip decide the

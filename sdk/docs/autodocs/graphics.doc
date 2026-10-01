@@ -975,7 +975,7 @@ graphics.library/XorRegionRegion
 	        cover: *const Cover) void
 
    SINCE
-	0.7. LVO -418.
+	0.21. LVO -328.
 
    INPUTS
 	- `src` - the surface the pixels come from.
@@ -1327,7 +1327,7 @@ graphics.library/XorRegionRegion
 	        area: *const Rect, radius: u32) void
 
    SINCE
-	0.7. LVO -424.
+	0.21. LVO -332.
 
    INPUTS
 	- `cover` - a `gray8` surface: a byte a pixel, 0 for none of it and
@@ -2002,7 +2002,7 @@ graphics.library/XorRegionRegion
 	        radius: u32) void
 
    SINCE
-	0.7. LVO -406.
+	0.21. LVO -320.
 
    INPUTS
 	- `rp` - the RastPort. Its pen, its line pattern, its draw mode and
@@ -2209,7 +2209,7 @@ graphics.library/XorRegionRegion
 	    fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void
 
    SINCE
-	0.7. LVO -412.
+	0.21. LVO -324.
 
    INPUTS
 	- `rp` - the RastPort. Its pen, its draw mode and its clip decide the
@@ -2274,7 +2274,7 @@ graphics.library/XorRegionRegion
 	        radius: u32) void
 
    SINCE
-	0.7. LVO -400.
+	0.21. LVO -316.
 
    INPUTS
 	- `rp` - the RastPort. Its pen, its draw mode and its clip decide the
@@ -3779,7 +3779,7 @@ graphics.library/XorRegionRegion
 	        count: u32, width: i32) u32
 
    SINCE
-	0.7. LVO -430.
+	0.21. LVO -336.
 
    INPUTS
 	- `rp` - the RastPort. It draws from the current point, in its font,

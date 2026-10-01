@@ -25,7 +25,7 @@ const Cover = graphics.Cover;
 ///     cover: *const Cover) void
 /// ```
 ///
-/// SINCE: 0.7. LVO -418.
+/// SINCE: 0.21. LVO -328.
 ///
 /// INPUTS:
 /// - `src` - the surface the pixels come from.
