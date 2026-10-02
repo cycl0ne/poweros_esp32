@@ -42,21 +42,32 @@ const Written = struct {
 };
 
 /// One row of a ring: the outer span less the inner one, or the whole of
-/// the outer span on a row the inner shape does not reach.
-fn ringRow(rp: *RastPort, w: *Written, y: i32, outer_left: i32, outer_right: i32, inner: ?[2]i32) void {
-    const hole = inner orelse return w.span(rp, outer_left, outer_right, y);
-    w.span(rp, outer_left, @min(hole[0], outer_right), y);
-    w.span(rp, @max(hole[1], outer_left), outer_right, y);
+/// the outer span on a row the inner shape does not reach - of one side
+/// of a bevel only, when `side` names one.
+fn ringRow(rp: *RastPort, w: *Written, y: i32, outer_left: i32, outer_right: i32, inner: ?[2]i32, side: ?_smooth.Side) void {
+    const hole = inner orelse return sideSpan(rp, w, outer_left, outer_right, y, side);
+    sideSpan(rp, w, outer_left, @min(hole[0], outer_right), y, side);
+    sideSpan(rp, w, @max(hole[1], outer_left), outer_right, y, side);
+}
+
+/// The part of a run on `side`: its start for the light side, the rest
+/// for the dark.
+fn sideSpan(rp: *RastPort, w: *Written, x0: i32, x1: i32, y: i32, side: ?_smooth.Side) void {
+    const s = side orelse return w.span(rp, x0, x1, y);
+    if (x1 <= x0) return;
+    const turn = s.split(x0, x1, y);
+    if (s.light) w.span(rp, x0, turn, y) else w.span(rp, turn, x1, y);
 }
 
 /// A rectangle's outline `width` thick, inside `area`.
 pub fn rect(gb: *GraphicsBase, rp: *RastPort, area: Rect, width: i32) void {
-    roundRect(gb, rp, area, 0, width);
+    roundRect(gb, rp, area, 0, width, null);
 }
 
 /// A rounded rectangle's outline `width` thick, inside `area`. The inner
-/// edge is the same shape `width` in, its radius `width` smaller.
-pub fn roundRect(gb: *GraphicsBase, rp: *RastPort, area: Rect, radius: u32, width: i32) void {
+/// edge is the same shape `width` in, its radius `width` smaller. With a
+/// `side`, only that side of it as a bevel.
+pub fn roundRect(gb: *GraphicsBase, rp: *RastPort, area: Rect, radius: u32, width: i32, side: ?_smooth.Side) void {
     if (area.isEmpty()) return;
     var w = Written{};
     const r = @min(_round.fits(area, radius), _round.radius_max);
@@ -64,7 +75,7 @@ pub fn roundRect(gb: *GraphicsBase, rp: *RastPort, area: Rect, radius: u32, widt
     const ri = if (inner.isEmpty()) 0 else @min(_round.fits(inner, @intCast(@max(r - width, 0))), _round.radius_max);
     if (rp.smooth and r > 0) {
         const S = _smooth.Cut(_smooth.RoundBox, _smooth.RoundBox);
-        var shape = S{ .outer = .{ .box = area, .radius = r } };
+        var shape = S{ .outer = .{ .box = area, .radius = r }, .side = side };
         if (!inner.isEmpty()) shape.hole = .{ .box = inner, .radius = ri };
         _smooth.fill(gb, rp, shape, area.min_y, area.max_y - 1, false);
         return;
@@ -77,7 +88,7 @@ pub fn roundRect(gb: *GraphicsBase, rp: *RastPort, area: Rect, radius: u32, widt
             const i = _round.rowInset(inner, ri, y);
             break :blk .{ inner.min_x + i, inner.max_x - i };
         };
-        ringRow(rp, &w, y, area.min_x + o, area.max_x - o, hole);
+        ringRow(rp, &w, y, area.min_x + o, area.max_x - o, hole, side);
     }
     w.done(gb, rp);
 }
@@ -110,7 +121,7 @@ pub fn ellipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, ry: 
             const ix = _round.halfAcross(irx, iry, dy);
             break :blk .{ cx - ix, cx + ix + 1 };
         };
-        ringRow(rp, &w, cy + dy, cx - ox, cx + ox + 1, hole);
+        ringRow(rp, &w, cy + dy, cx - ox, cx + ox + 1, hole, null);
     }
     w.done(gb, rp);
 }

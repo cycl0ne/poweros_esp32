@@ -59,7 +59,10 @@ const d = @import("../classes/draw.zig");
 ///   or recessed bevel in the shine and shadow colours, `STYLE_BorderX`
 ///   thick at the sides and `STYLE_BorderY` at the top and bottom, its
 ///   corners meeting as `STYLE_Joins` says; a ridge or a groove as two
-///   bevels, one inside the other, turned opposite ways.
+///   bevels, one inside the other, turned opposite ways, with
+///   `STYLE_BorderGap` thicknesses of the inside between them. A bevel with a
+///   radius is drawn by `DrawRoundBevel`: its two colours meet on the
+///   diagonal through the top-right and bottom-left corners.
 ///
 /// An opacity below 255 lays every colour over what is there by that much.
 /// A part with a radius is drawn with smooth edges (`RPTAG_Smooth`), the
@@ -83,8 +86,6 @@ const d = @import("../classes/draw.zig");
 ///   a given box is what a frame around contents needs to add.
 ///
 /// BUGS:
-/// - A bevel with a radius is drawn as a flat border in the shadow colour:
-///   there is no rounded two-colour edge yet.
 /// - A rounded border is as thick all round as the thicker of its two
 ///   thicknesses.
 ///
@@ -115,8 +116,10 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
     const doubled = kind == style.BORDER_RIDGE or kind == style.BORDER_GROOVE;
     const bx: i32 = @intCast(look.get(.border_x));
     const by: i32 = @intCast(look.get(.border_y));
-    const tx: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) 2 * bx else bx;
-    const ty: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) 2 * by else by;
+    // A ridge or a groove is two bevels, the inner one `gap` thicknesses in.
+    const gap: i32 = if (doubled) @intCast(look.get(.gap)) else 0;
+    const tx: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) (2 + gap) * bx else bx;
+    const ty: i32 = if (kind == style.BORDER_NONE) 0 else if (doubled) (2 + gap) * by else by;
 
     if (content) |inside| inside.* = inset(box.*, tx + @as(i32, @intCast(look.get(.padding_x))), ty + @as(i32, @intCast(look.get(.padding_y))));
     const target = rp orelse return;
@@ -173,17 +176,36 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
         }
         if (kind == style.BORDER_NONE) return;
         // One outline the border's thickness wide, which grows inward and
-        // leaves no gap on the corners.
-        d.pen(gb, target, if (kind == style.BORDER_FLAT) line else shadow);
-        const width: usize = @intCast(@max(@max(tx, ty), 1));
-        gb.SetRPAttrs(target, &[_]sdk.utility.TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = width }, .{} });
-        gb.DrawRoundRect(target, box, @intCast(radius));
+        // leaves no gap on the corners; a bevel in its two colours, a ridge
+        // or a groove as two bevels, the inner one turned the other way.
+        const band: i32 = @max(@max(bx, by), 1);
+        gb.SetRPAttrs(target, &[_]sdk.utility.TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intCast(band) }, .{} });
+        switch (kind) {
+            style.BORDER_FLAT => {
+                d.pen(gb, target, line);
+                gb.DrawRoundRect(target, box, @intCast(radius));
+            },
+            style.BORDER_RAISED => gb.DrawRoundBevel(target, box, @intCast(radius), shine, shadow),
+            style.BORDER_RECESSED => gb.DrawRoundBevel(target, box, @intCast(radius), shadow, shine),
+            style.BORDER_RIDGE, style.BORDER_GROOVE => {
+                const out_light = if (kind == style.BORDER_RIDGE) shine else shadow;
+                const out_dark = if (kind == style.BORDER_RIDGE) shadow else shine;
+                gb.DrawRoundBevel(target, box, @intCast(radius), out_light, out_dark);
+                const inner = inset(box.*, (1 + gap) * band, (1 + gap) * band);
+                gb.DrawRoundBevel(target, &inner, @intCast(@max(radius - (1 + gap) * band, 0)), out_dark, out_light);
+            },
+            else => {},
+        }
         return;
     }
 
     if (fill) {
         if (fill_style) |f| d.fillWith(gb, target, f);
-        d.box(gb, target, x + tx, y + ty, w - 2 * tx, h - 2 * ty, background);
+        // Inside the outer bevel: a ridge's inner bevel is drawn over it, and
+        // the gap between the two is the inside too.
+        const fx = if (doubled) bx else tx;
+        const fy = if (doubled) by else ty;
+        d.box(gb, target, x + fx, y + fy, w - 2 * fx, h - 2 * fy, background);
         if (fill_style != null) d.fillWith(gb, target, null);
     }
     switch (kind) {
@@ -199,7 +221,9 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
             const out_light = if (kind == style.BORDER_RIDGE) shine else shadow;
             const out_dark = if (kind == style.BORDER_RIDGE) shadow else shine;
             d.bevelXY(gb, target, x, y, w, h, out_light, out_dark, bx, by, joins);
-            d.bevelXY(gb, target, x + bx, y + by, w - 2 * bx, h - 2 * by, out_dark, out_light, bx, by, joins);
+            const ix = (1 + gap) * bx;
+            const iy = (1 + gap) * by;
+            d.bevelXY(gb, target, x + ix, y + iy, w - 2 * ix, h - 2 * iy, out_dark, out_light, bx, by, joins);
         },
         else => {},
     }

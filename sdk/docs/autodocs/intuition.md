@@ -1892,7 +1892,10 @@ What is drawn, in order:
   or recessed bevel in the shine and shadow colours, `STYLE_BorderX`
   thick at the sides and `STYLE_BorderY` at the top and bottom, its
   corners meeting as `STYLE_Joins` says; a ridge or a groove as two
-  bevels, one inside the other, turned opposite ways.
+  bevels, one inside the other, turned opposite ways, with
+  `STYLE_BorderGap` thicknesses of the inside between them. A bevel with a
+  radius is drawn by `DrawRoundBevel`: its two colours meet on the
+  diagonal through the top-right and bottom-left corners.
 
 An opacity below 255 lays every colour over what is there by that much.
 A part with a radius is drawn with smooth edges (`RPTAG_Smooth`), the
@@ -1920,8 +1923,6 @@ Nothing is allocated, and the styles are only read.
 
 **BUGS**
 
-- A bevel with a radius is drawn as a flat border in the shadow colour:
-  there is no rounded two-colour edge yet.
 - A rounded border is as thick all round as the thicker of its two
   thicknesses.
 

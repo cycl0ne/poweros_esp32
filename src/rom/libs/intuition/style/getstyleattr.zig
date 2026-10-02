@@ -87,6 +87,7 @@ pub fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const sc.DrawInfo, own: ?*c
         style.STYLE_BorderWidth, style.STYLE_BorderX => look.get(.border_x),
         style.STYLE_BorderY => look.get(.border_y),
         style.STYLE_Joins => look.get(.joins),
+        style.STYLE_BorderGap => look.get(.gap),
         style.STYLE_Radius => look.get(.radius),
         style.STYLE_Padding, style.STYLE_PaddingX => look.get(.padding_x),
         style.STYLE_PaddingY => look.get(.padding_y),

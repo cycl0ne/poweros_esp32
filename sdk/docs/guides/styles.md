@@ -108,6 +108,7 @@ that a style may name exactly.
 | `STYLE_ShinePen` / `RGB`, `STYLE_ShadowPen` / `RGB` | a bevel's light and dark sides |
 | `STYLE_BorderWidth`, `BorderX`, `BorderY` | the border's thickness: both, the sides, the top and bottom |
 | `STYLE_Joins` | `JOINS_NONE` or `JOINS_ANGLED`: how a bevel's corners meet |
+| `STYLE_BorderGap` | how far a ridge's or a groove's inner bevel sits inside the outer one, in border thicknesses (0) |
 | `STYLE_Radius` | how far the corners are rounded; a round part is drawn with smooth edges |
 | `STYLE_TextPen` / `RGB` | the colour of text on it |
 | `STYLE_Padding`, `PaddingX`, `PaddingY` | room between the border and what is inside |
@@ -194,7 +195,8 @@ PART=SELECTION BACKGROUND=FILL TEXT=FILLTEXT
   `BARDETAIL`, `BARBLOCK`, `BARTRIM`), `#RRGGBB` or `#AARRGGBB`; a
   `BACKGROUND` of `#top..#bottom` is shaded from top to bottom.
 - `BORDER`, `JOINS`, and the numbers `BORDERWIDTH`, `BORDERX`,
-  `BORDERY`, `RADIUS`, `PADDING`, `PADDINGX`, `PADDINGY`, `OPACITY`.
+  `BORDERY`, `RADIUS`, `PADDING`, `PADDINGX`, `PADDINGY`, `OPACITY`,
+  `GAP`.
 
 The file on the disk has the system's default written out in comments,
 which makes it its own reference, and a flatter look to try. The

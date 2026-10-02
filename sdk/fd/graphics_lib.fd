@@ -318,4 +318,11 @@ void BlurCoverage(*rtg.Surface cover, *const graphics.Rect area, u32 radius)
 /// All of it fits: all of it is drawn and nothing is added. Room for the
 /// dots alone: only they are drawn. Not even those: nothing is.
 u32 TextFitted(*graphics.RastPort rp, [*]const u8 string, u32 count, i32 width)
+// Shapes a widget is made of, continued
+/// The outline of a rectangle whose corners are rounded, as a bevel:
+/// `light` on the top and the left, `dark` on the bottom and the right,
+/// meeting on the diagonal through the other two corners. As a wide
+/// DrawRoundRect otherwise: RPTAG_LineWidth thick, growing inward, with
+/// smooth edges under RPTAG_Smooth; the RastPort's pen is left as it was.
+void DrawRoundBevel(*graphics.RastPort rp, *const graphics.Rect area, u32 radius, graphics.Pen light, graphics.Pen dark)
 ##end

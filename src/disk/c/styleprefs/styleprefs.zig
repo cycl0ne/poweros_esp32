@@ -29,7 +29,8 @@
 //! - BORDER: NONE, FLAT, RAISED, RECESSED, RIDGE, GROOVE; JOINS: NONE,
 //!   ANGLED.
 //! - BORDERWIDTH (both), BORDERX, BORDERY, RADIUS, PADDING (both),
-//!   PADDINGX, PADDINGY, OPACITY (0-255): numbers.
+//!   PADDINGX, PADDINGY, OPACITY (0-255), GAP (a ridge's two bevels
+//!   apart, in border thicknesses): numbers.
 //!
 //! What a line leaves out, and every part no line names, stays as the
 //! default draws it. A line that cannot be read is reported with its
@@ -52,7 +53,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "StylePrefs";
-const VERSION_STRING = "\x00$VER: StylePrefs 1.0 (2.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: StylePrefs 1.1 (2.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S";
@@ -61,13 +62,13 @@ const arg_reset = 1;
 
 /// One line of the file. The order is the slots' below.
 const line_template = "PART/K/A,STATE/K,BACKGROUND/K,BORDER/K,BORDERCOLOUR/K,SHINE/K,SHADOW/K,TEXT/K," ++
-    "JOINS/K,BORDERWIDTH/K/N,BORDERX/K/N,BORDERY/K/N,RADIUS/K/N,PADDING/K/N,PADDINGX/K/N,PADDINGY/K/N,OPACITY/K/N";
+    "JOINS/K,BORDERWIDTH/K/N,BORDERX/K/N,BORDERY/K/N,RADIUS/K/N,PADDING/K/N,PADDINGX/K/N,PADDINGY/K/N,OPACITY/K/N,GAP/K/N";
 const slot_part = 0;
 const slot_state = 1;
 const slot_background = 2;
 const slot_border = 3;
 const slot_joins = 8;
-const line_slots = 17;
+const line_slots = 18;
 
 /// The colour slots after BACKGROUND, each with its pen tag and its
 /// colour tag.
@@ -88,6 +89,7 @@ const number_slots = [_]struct { slot: usize, tag: utility.Tag }{
     .{ .slot = 14, .tag = style.STYLE_PaddingX },
     .{ .slot = 15, .tag = style.STYLE_PaddingY },
     .{ .slot = 16, .tag = style.STYLE_Opacity },
+    .{ .slot = 17, .tag = style.STYLE_BorderGap },
 };
 
 /// The most a line can give: its part, its state and every property.

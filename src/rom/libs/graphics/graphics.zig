@@ -499,6 +499,62 @@ test "DrawRoundRect: an outline round a fill of the same shape leaves no gap" {
     try tearDown(gb);
 }
 
+test "DrawRoundBevel: light on the top and left, dark on the bottom and right, meeting on the diagonals" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [40 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 40, 16);
+    const blue = graphics.penRGB(0, 0, 255);
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = blue },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 2 },
+        .{},
+    };
+    const rp = try onMemory(gb, &surface, &tags);
+    const light = graphics.penRGB(255, 255, 255);
+    const dark = graphics.penRGB(255, 0, 0);
+    const box = graphics.Rect{ .max_x = 40, .max_y = 16 };
+    base(gb).DrawRoundBevel(@ptrCast(rp), &box, 6, light, dark);
+
+    const white: u16 = 0xFFFF;
+    const red: u16 = 0xF800;
+    // The straight runs: top and left light, bottom and right dark, two
+    // pixels deep, the inside untouched.
+    try testing.expectEqual(white, pixelAt(&surface, 20, 0));
+    try testing.expectEqual(white, pixelAt(&surface, 20, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 20, 2));
+    try testing.expectEqual(white, pixelAt(&surface, 0, 8));
+    try testing.expectEqual(red, pixelAt(&surface, 20, 15));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 8));
+    // The top-right corner: light above its diagonal, dark to the right
+    // of it; the bottom-left the same way round.
+    try testing.expectEqual(white, pixelAt(&surface, 34, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 5));
+    try testing.expectEqual(white, pixelAt(&surface, 0, 10));
+    try testing.expectEqual(red, pixelAt(&surface, 5, 15));
+    // On a box this wide the change is in the corners, not in the middle
+    // of the long edges.
+    try testing.expectEqual(white, pixelAt(&surface, 30, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 10, 15));
+    // The pen as it was.
+    var pen: graphics.Pen = 0;
+    base(gb).GetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&pen) }, .{} });
+    try testing.expectEqual(blue, pen);
+
+    // Smooth: the same two sides, and every pixel one colour or the other
+    // or the ground - the change between them is hard.
+    @memset(&pixels, 0);
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+    base(gb).DrawRoundBevel(@ptrCast(rp), &box, 6, light, dark);
+    try testing.expectEqual(white, pixelAt(&surface, 20, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 20, 15));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 8));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "FillArc: a whole turn is a disc, a sweep is a wedge, and none is nothing" {
     const gb = try setUp();
     defer kexec.deinit();

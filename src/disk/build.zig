@@ -42,7 +42,7 @@ const tests = [_][]const u8{
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
     "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",      "styles",     "motion",
+    "shapes",      "styles",     "motion",   "widgets",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -89,6 +89,13 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget" },
     .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget" },
     .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget" },
+    .{ .disk = "classes/gadgets/meter.gadget", .source = "classes/gadgets/meter/meter.zig", .name = "meter.gadget" },
+    .{ .disk = "classes/gadgets/arc.gadget", .source = "classes/gadgets/arc/arc.zig", .name = "arc.gadget" },
+    .{ .disk = "classes/gadgets/roller.gadget", .source = "classes/gadgets/roller/roller.zig", .name = "roller.gadget" },
+    .{ .disk = "classes/gadgets/calendar.gadget", .source = "classes/gadgets/calendar/calendar.zig", .name = "calendar.gadget" },
+    .{ .disk = "classes/gadgets/canvas.gadget", .source = "classes/gadgets/canvas/canvas.zig", .name = "canvas.gadget" },
+    .{ .disk = "classes/gadgets/qrcode.gadget", .source = "classes/gadgets/qrcode/qrcode.zig", .name = "qrcode.gadget" },
+    .{ .disk = "classes/gadgets/barcode.gadget", .source = "classes/gadgets/barcode/barcode.zig", .name = "barcode.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
     .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype" },

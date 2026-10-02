@@ -262,6 +262,11 @@ them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `scroller`, `listview`, `palette`, `colorwheel`, `gradientslider`,
 `tapedeck`, `fuelgauge` (a bar showing how far along something is),
 `spinner` (a ring of dots going round while something goes on),
+`meter` (a dial with a scale and a needle), `arc` (a ring filled to a
+level, or turned by its knob), `roller` (a wheel of choices turned by
+dragging), `calendar` (a month to pick a day from), `canvas` (a picture
+the program draws into and the gadget shows), `qrcode` and `barcode` (a
+text as a QR code, a Code 128 or an EAN-13),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), and `clicktab` with `page` (a
 row of tabs over pages of gadgets), and `getfile` with `getfont` (a

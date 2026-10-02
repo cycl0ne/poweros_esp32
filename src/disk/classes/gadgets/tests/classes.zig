@@ -40,6 +40,21 @@ const tapedeck = @import("../tapedeck/tapedeck.zig");
 const fuelgauge = @import("../fuelgauge/fuelgauge.zig");
 const spinner = @import("../spinner/spinner.zig");
 const spg = sdk.gadgets.spinner;
+const meter = @import("../meter/meter.zig");
+const mt = sdk.gadgets.meter;
+const arc = @import("../arc/arc.zig");
+const ar = sdk.gadgets.arc;
+const roller = @import("../roller/roller.zig");
+const ro = sdk.gadgets.roller;
+const calendar = @import("../calendar/calendar.zig");
+const ca = sdk.gadgets.calendar;
+const canvas = @import("../canvas/canvas.zig");
+const cv = sdk.gadgets.canvas;
+const qrcode = @import("../qrcode/qrcode.zig");
+const qc = sdk.gadgets.qrcode;
+const barcode = @import("../barcode/barcode.zig");
+const bcg = sdk.gadgets.barcode;
+const angles = sdk.gadgets.angles;
 const integer = @import("../integer/integer.zig");
 const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
@@ -1609,6 +1624,272 @@ test "spinner.gadget: square by default, running unless told, never pressed" {
     var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 2, .y = 2 } };
     try testing.expectEqual(@as(usize, 0), ib.SendMessage(turning, @ptrCast(&hit)));
     ib.DisposeObject(turning);
+    try rig.down();
+}
+
+test "angles: sines in sixteen-thousandths, the angle of a point on the screen" {
+    try testing.expectEqual(@as(i32, 0), angles.sine(0));
+    try testing.expectEqual(angles.one, angles.sine(90));
+    try testing.expectEqual(-angles.one, angles.cosine(180));
+    try testing.expectEqual(-angles.one, angles.sine(-90));
+    try testing.expectEqual(@as(i32, 11585), angles.sine(45));
+    // Up the screen is 90: y runs down.
+    try testing.expectEqual(@as(i32, 0), angles.angleOf(10, 0));
+    try testing.expectEqual(@as(i32, 90), angles.angleOf(0, -10));
+    try testing.expectEqual(@as(i32, 180), angles.angleOf(-10, 0));
+    try testing.expectEqual(@as(i32, 270), angles.angleOf(0, 10));
+    try testing.expectEqual(@as(i32, 45), angles.angleOf(7, -7));
+    try testing.expectEqual(@as(i32, 225), angles.angleOf(-7, 7));
+    try testing.expectEqual(@as(i32, 30), angles.angleOf(866, -500));
+    const top = angles.pointAt(50, 50, 40, 90);
+    try testing.expectEqual(@as(i32, 50), top[0]);
+    try testing.expectEqual(@as(i32, 10), top[1]);
+}
+
+test "meter.gadget: square, its level held to the scale, never pressed" {
+    var heard = Heard{ .tag = mt.METER_Level, .ib = undefined };
+    var rig = try Rig.up(&meter.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const dial = ib.NewObjectTagList(null, mt.METER_CLASS, &[_]TagItem{
+        .{ .tag = mt.METER_Max, .data = 120 },
+        .{ .tag = mt.METER_Level, .data = 40 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 40), attr(ib, dial, mt.METER_Level));
+    try testing.expectEqual(@as(usize, 96), attr(ib, dial, gc.GA_Width));
+    try testing.expectEqual(@as(usize, 96), attr(ib, dial, gc.GA_Height));
+    // Out of a window it is there at once, held to the scale.
+    _ = ib.SetAttrsTagList(dial, &[_]TagItem{ .{ .tag = mt.METER_Level, .data = 500 }, .{} });
+    try testing.expectEqual(@as(usize, 120), attr(ib, dial, mt.METER_Level));
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 40, .y = 40 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(dial, @ptrCast(&hit)));
+    ib.DisposeObject(dial);
+    try rig.down();
+}
+
+test "arc.gadget: an angle on the ring is a level, a press turns it, the target is told" {
+    var heard = Heard{ .tag = ar.ARC_Level, .ib = undefined };
+    var rig = try Rig.up(&arc.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // From the lower left (225) clockwise round to the lower right (-45).
+    const own = arc.Data{};
+    try testing.expectEqual(@as(i32, 0), arc.levelAt(&own, 225));
+    try testing.expectEqual(@as(i32, 50), arc.levelAt(&own, 90));
+    try testing.expectEqual(@as(i32, 100), arc.levelAt(&own, 315));
+    // The gap at the bottom holds it at the nearer end.
+    try testing.expectEqual(@as(i32, 100), arc.levelAt(&own, 280));
+    try testing.expectEqual(@as(i32, 0), arc.levelAt(&own, 260));
+
+    // A ring without a knob is never pressed.
+    const ring = ib.NewObjectTagList(null, ar.ARC_CLASS, &[_]TagItem{.{}}).?;
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 36, .y = 10 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(ring, @ptrCast(&hit)));
+    ib.DisposeObject(ring);
+
+    const knob = ib.NewObjectTagList(null, ar.ARC_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = ar.ARC_Turn, .data = 1 },
+        .{ .tag = ar.ARC_Level, .data = 20 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 72), attr(ib, knob, gc.GA_Width));
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(knob, @ptrCast(&hit)));
+    // Pressed at the top: half way.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 36, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(knob, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, 50), attr(ib, knob, ar.ARC_Level));
+    try testing.expectEqual(@as(?usize, 50), heard.value);
+    // Let go at the right: three quarters of the way round the sweep.
+    var up = input(gc.GM_HANDLEINPUT, &release, 70, 36, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(knob, @ptrCast(&up)));
+    try testing.expectEqual(@as(i32, 83), termination);
+    try testing.expectEqual(@as(?usize, 83), heard.value);
+    try testing.expectEqual(@as(?usize, 9), heard.id);
+    ib.DisposeObject(knob);
+    try rig.down();
+}
+
+test "roller.gadget: rows by position, a tap turns to its row, the key a row at a time" {
+    var heard = Heard{ .tag = ro.ROLLER_Selected, .ib = undefined };
+    var rig = try Rig.up(&roller.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const days = [_:null]?[*:0]const u8{ "Mon", "Tue", "Wed", "Thu", "Fri" };
+
+    var own = roller.Data{ .count = 5, .row_height = 12 };
+    try testing.expectEqual(@as(u32, 0), roller.rowAt(&own, 5));
+    try testing.expectEqual(@as(u32, 1), roller.rowAt(&own, 6));
+    try testing.expectEqual(@as(u32, 4), roller.rowAt(&own, 200));
+    own.wrap = 1;
+    try testing.expectEqual(@as(u32, 0), roller.rowAt(&own, 60));
+    try testing.expectEqual(@as(u32, 4), roller.rowAt(&own, -12));
+
+    const wheel = ib.NewObjectTagList(null, ro.ROLLER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 5 },
+        .{ .tag = gc.GA_Key, .data = 'd' },
+        .{ .tag = ro.ROLLER_Labels, .data = @intFromPtr(&days) },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), attr(ib, wheel, ro.ROLLER_Selected));
+    // Five rows shown: tall enough for them.
+    const height = attr(ib, wheel, gc.GA_Height);
+    try testing.expect(height >= 5 * 8);
+    // A tap a row below the middle chooses that row.
+    var termination: i32 = -1;
+    const middle: i32 = @intCast(height / 2);
+    const row: i32 = @intCast(height / 5);
+    var down = input(gc.GM_GOACTIVE, &press, 10, middle + row, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(wheel, @ptrCast(&down)));
+    var up = input(gc.GM_HANDLEINPUT, &release, 10, middle + row, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(wheel, @ptrCast(&up)));
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    // A drag of two rows up turns two rows on.
+    down = input(gc.GM_GOACTIVE, &press, 10, middle, &termination);
+    _ = ib.SendMessage(wheel, @ptrCast(&down));
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var drag = input(gc.GM_HANDLEINPUT, &moving, 10, middle - 2 * row, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(wheel, @ptrCast(&drag)));
+    up = input(gc.GM_HANDLEINPUT, &release, 10, middle - 2 * row, &termination);
+    _ = ib.SendMessage(wheel, @ptrCast(&up));
+    try testing.expectEqual(@as(usize, 3), attr(ib, wheel, ro.ROLLER_Selected));
+    // The key: down a row, and held at the end without wrapping.
+    var typed = gc.GpKey{ .gadget_info = null, .key = 'd', .qualifier = 0, .termination = &termination };
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(wheel, @ptrCast(&typed)));
+    try testing.expectEqual(@as(usize, 4), attr(ib, wheel, ro.ROLLER_Selected));
+    try testing.expectEqual(gc.GMKR_DONE, ib.SendMessage(wheel, @ptrCast(&typed)));
+    ib.DisposeObject(wheel);
+    try rig.down();
+}
+
+test "calendar.gadget: the month a day is in, the weeks from the first weekday, the key a day on" {
+    var heard = Heard{ .tag = ca.CALENDAR_Day, .ib = undefined };
+    var rig = try Rig.up(&calendar.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const ub = rig.kib.utility_base;
+    // 2 October 2026 is day 17806, a Friday; its month starts on the 1st,
+    // a Thursday, and a week from Monday shows it from 28 September.
+    try testing.expectEqual(@as(u32, 17805), calendar.monthStart(ub, 17806));
+    try testing.expectEqual(@as(u32, 17802), calendar.gridStart(ub, 17805, 1));
+    try testing.expectEqual(@as(u32, 17801), calendar.gridStart(ub, 17805, 0));
+
+    var termination: i32 = -1;
+    const picker = ib.NewObjectTagList(null, ca.CALENDAR_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 6 },
+        .{ .tag = gc.GA_Key, .data = 'c' },
+        .{ .tag = ca.CALENDAR_Today, .data = 17806 },
+        .{ .tag = ca.CALENDAR_Day, .data = 17834 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 17834), attr(ib, picker, ca.CALENDAR_Day));
+    // 30 October, the key once: 31; and again: 1 November.
+    var typed = gc.GpKey{ .gadget_info = null, .key = 'c', .qualifier = 0, .termination = &termination };
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(picker, @ptrCast(&typed)));
+    try testing.expectEqual(@as(?usize, 17835), heard.value);
+    _ = ib.SendMessage(picker, @ptrCast(&typed));
+    try testing.expectEqual(@as(i32, 17836), termination);
+    ib.DisposeObject(picker);
+    try rig.down();
+}
+
+test "canvas.gadget: a picture to draw into, kept with the gadget, presses told by place" {
+    var heard = Heard{ .tag = cv.CANVAS_X, .ib = undefined };
+    var rig = try Rig.up(&canvas.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const plain = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{.{}}).?;
+    try testing.expectEqual(@as(usize, 160), attr(ib, plain, cv.CANVAS_Width));
+    try testing.expectEqual(@as(usize, 120), attr(ib, plain, cv.CANVAS_Height));
+    try testing.expectEqual(@as(usize, 160), attr(ib, plain, gc.GA_Width));
+    ib.DisposeObject(plain);
+
+    const picture = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        .{ .tag = cv.CANVAS_Width, .data = 50 },
+        .{ .tag = cv.CANVAS_Height, .data = 40 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expect(attr(ib, picture, cv.CANVAS_RastPort) != 0);
+    try testing.expect(attr(ib, picture, cv.CANVAS_BitMap) != 0);
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 12, 7, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&down)));
+    try testing.expectEqual(@as(?usize, 12), heard.value);
+    var up = input(gc.GM_HANDLEINPUT, &release, 30, 7, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(picture, @ptrCast(&up)));
+    try testing.expectEqual(@as(?usize, 30), heard.value);
+    ib.DisposeObject(picture);
+    try rig.down();
+}
+
+test "qrcode.gadget: the smallest version that holds the text, its modules as the standard lays them" {
+    var heard = Heard{ .tag = qc.QR_Version, .ib = undefined };
+    var rig = try Rig.up(&qrcode.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    // "Hello" at M is version 1; this is the symbol a reader decodes.
+    const reference = [21]*const [21]u8{
+        "111111100111101111111", "100000100000101000001", "101110101010101011101",
+        "101110101010001011101", "101110101100101011101", "100000101101001000001",
+        "111111101010101111111", "000000001010000000000", "101111100101001111100",
+        "000100001001111001101", "001111100110101101110", "001001011011111001100",
+        "011100111110100100001", "000000001000100101000", "111111100101010010110",
+        "100000101010000111110", "101110101001010010010", "101110101101111101000",
+        "101110101100101100100", "100000100101111011100", "111111101100100010010",
+    };
+    var work: [qrcode.encoder.workSize(1)]u8 = undefined;
+    const symbol = qrcode.encoder.encode("Hello", .medium, 1, &work);
+    try testing.expectEqual(@as(u32, 21), symbol.size);
+    for (reference, 0..) |row, y| {
+        for (row, 0..) |module, x| try testing.expectEqual(module == '1', symbol.dark(@intCast(x), @intCast(y)));
+    }
+    try testing.expectEqual(@as(?u32, 39), qrcode.encoder.versionFor(1200, .high));
+    try testing.expectEqual(@as(?u32, null), qrcode.encoder.versionFor(1300, .high));
+
+    const code = ib.NewObjectTagList(null, qc.QR_CLASS, &[_]TagItem{ .{ .tag = qc.QR_Text, .data = @intFromPtr("Hello") }, .{} }).?;
+    try testing.expectEqual(@as(usize, 1), attr(ib, code, qc.QR_Version));
+    _ = ib.SetAttrsTagList(code, &[_]TagItem{
+        .{ .tag = qc.QR_Level, .data = qc.QR_LEVEL_H },
+        .{ .tag = qc.QR_Text, .data = @intFromPtr("https://github.com/cycl0ne/poweros_esp32") },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 5), attr(ib, code, qc.QR_Version));
+    _ = ib.SetAttrsTagList(code, &[_]TagItem{ .{ .tag = qc.QR_Text, .data = 0 }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, code, qc.QR_Version));
+    ib.DisposeObject(code);
+    try rig.down();
+}
+
+test "barcode.gadget: Code 128 in set B or C, EAN-13 with its check digit" {
+    var heard = Heard{ .tag = bcg.BARCODE_Valid, .ib = undefined };
+    var rig = try Rig.up(&barcode.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    var modules: [barcode.encoder.max_modules]u8 = undefined;
+    // Six digits are three symbols of set C: start, three, check, stop.
+    try testing.expectEqual(@as(?usize, 11 * 5 + 13), barcode.encoder.code128Modules("123456", &modules));
+    try testing.expectEqual(@as(?usize, 11 * 5 + 13), barcode.encoder.code128Modules("ABC", &modules));
+    try testing.expectEqual(@as(?usize, null), barcode.encoder.code128Modules("tab\there", &modules));
+    try testing.expectEqual(@as(u8, 1), barcode.encoder.eanCheck("400638133393"));
+    try testing.expectEqual(@as(u8, 7), barcode.encoder.eanCheck("590123412345"));
+
+    const label = ib.NewObjectTagList(null, bcg.BARCODE_CLASS, &[_]TagItem{
+        .{ .tag = bcg.BARCODE_Type, .data = bcg.BARCODE_EAN13 },
+        .{ .tag = bcg.BARCODE_Text, .data = @intFromPtr("400638133393") },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 1), attr(ib, label, bcg.BARCODE_Valid));
+    _ = ib.SetAttrsTagList(label, &[_]TagItem{ .{ .tag = bcg.BARCODE_Text, .data = @intFromPtr("4006381333932") }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, label, bcg.BARCODE_Valid));
+    _ = ib.SetAttrsTagList(label, &[_]TagItem{
+        .{ .tag = bcg.BARCODE_Type, .data = bcg.BARCODE_CODE128 },
+        .{ .tag = bcg.BARCODE_Text, .data = @intFromPtr("PowerOS") },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 1), attr(ib, label, bcg.BARCODE_Valid));
+    ib.DisposeObject(label);
     try rig.down();
 }
 

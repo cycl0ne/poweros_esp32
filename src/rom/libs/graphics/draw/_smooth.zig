@@ -85,7 +85,45 @@ pub const Oval = struct {
     }
 };
 
-/// A shape less a hole, cut to a sweep: what one call fills.
+/// One side of a box's bevel: the pixels nearer the top or the left edge
+/// than the bottom or the right are the light side, the rest the dark.
+/// The change runs down the diagonal through the top-right and the
+/// bottom-left corner - through the middle of a rounded corner's quarter
+/// circle - however long or short the box is. A pixel is decided at its
+/// middle, so the change is hard; one exactly on the diagonal is light in
+/// the box's left half and dark in its right, so the two diagonals mirror
+/// each other.
+pub const Side = struct {
+    box: Rect,
+    light: bool,
+
+    /// Whether pixel (`x`, `y`) is on this side.
+    pub fn holds(s: Side, x: i32, y: i32) bool {
+        // In half pixels, from the pixel's middle.
+        const mx = 2 * x + 1;
+        const my = 2 * y + 1;
+        const near_start = @min(my - 2 * s.box.min_y, mx - 2 * s.box.min_x);
+        const near_end = @min(2 * s.box.max_y - my, 2 * s.box.max_x - mx);
+        const light = near_start < near_end or (near_start == near_end and mx < s.box.min_x + s.box.max_x);
+        return light == s.light;
+    }
+
+    /// Where a row's run from `x0` to `x1` turns from light to dark: the
+    /// light side of a row is always its start.
+    pub fn split(s: Side, x0: i32, x1: i32, y: i32) i32 {
+        const light = Side{ .box = s.box, .light = true };
+        var low = x0;
+        var high = x1;
+        while (low < high) {
+            const middle = low + @divFloor(high - low, 2);
+            if (light.holds(middle, y)) low = middle + 1 else high = middle;
+        }
+        return low;
+    }
+};
+
+/// A shape less a hole, cut to a sweep and to one side of a bevel: what
+/// one call fills.
 pub fn Cut(comptime Outer: type, comptime Hole: type) type {
     return struct {
         outer: Outer,
@@ -94,12 +132,15 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         sweep: ?[2]i32 = null,
         /// The middle of the sweep, in eighths of a pixel.
         centre: [2]i64 = .{ 0, 0 },
+        /// The side of a bevel it is cut to; null for both.
+        side: ?Side = null,
 
         const Self = @This();
 
         fn inside(s: Self, sx: i64, sy: i64) bool {
             if (!s.outer.inside(sx, sy)) return false;
             if (s.hole) |h| if (h.inside(sx, sy)) return false;
+            if (s.side) |side| if (!side.holds(@intCast(@divFloor(sx, unit)), @intCast(@divFloor(sy, unit)))) return false;
             if (s.sweep) |sweep| {
                 const dx: i32 = @intCast(sx - s.centre[0]);
                 const dy: i32 = @intCast(s.centre[1] - sy);
@@ -108,9 +149,11 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
             return true;
         }
 
-        /// Whether a whole pixel is surely in the sweep: all four of its
-        /// corners are.
-        fn sweepHolds(s: Self, x: i32, y: i32) bool {
+        /// Whether a whole pixel is surely in the sweep and on the side:
+        /// all four of its corners are in the sweep, and its middle is on
+        /// the side.
+        fn cutHolds(s: Self, x: i32, y: i32) bool {
+            if (s.side) |side| if (!side.holds(x, y)) return false;
             const sweep = s.sweep orelse return true;
             const corners = [_][2]i64{ .{ 0, 0 }, .{ unit, 0 }, .{ 0, unit }, .{ unit, unit } };
             for (corners) |c| {
@@ -205,7 +248,7 @@ pub fn fill(gb: *GraphicsBase, rp: *RastPort, shape: anytype, top: i32, bottom: 
         var x = reach[0];
         while (x <= reach[1]) : (x += 1) {
             const at_end = x == reach[1];
-            const sure_in = !at_end and Band.holds(outer.narrow, x) and !Band.holds(hole.wide, x) and shape.sweepHolds(x, y);
+            const sure_in = !at_end and Band.holds(outer.narrow, x) and !Band.holds(hole.wide, x) and shape.cutHolds(x, y);
             if (sure_in) {
                 if (run_from == null) run_from = x;
                 continue;

@@ -5911,6 +5911,79 @@ test "styles: a background given as a fill style is copied, answered, and painte
     try tearDown(ib);
 }
 
+test "styles: a drop box's inner bevel sits a border's thickness inside its outer one" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 30;
+    const h = 14;
+    const ground: u32 = 0xFF12_3456;
+    var pixels: [w * h]u32 = @splat(ground);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_ICONDROPBOX }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    // Along the middle row from the left: the outer bevel (2), the ground
+    // between (2), the inner bevel (2) - the inside is the same pen as the
+    // gap, the background.
+    const row = 7 * w;
+    const shine = pixels[row + 0];
+    try testing.expectEqual(shine, pixels[row + 1]);
+    const gap = pixels[row + 2];
+    try testing.expect(gap != shine);
+    try testing.expectEqual(gap, pixels[row + 3]);
+    const inner = pixels[row + 4];
+    try testing.expect(inner != gap and inner != shine);
+    try testing.expectEqual(gap, pixels[row + 6]);
+    // Down the middle column: one row each.
+    try testing.expectEqual(shine, pixels[0 * w + 15]);
+    try testing.expectEqual(gap, pixels[1 * w + 15]);
+    try testing.expectEqual(inner, pixels[2 * w + 15]);
+
+    it.DisposeObject(o);
+    gb.FreeRastPort(rp);
+    try tearDown(ib);
+}
+
+test "styles: a rounded bevel is drawn in its shine on the top and its shadow on the bottom" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_RAISED },
+        .{ .tag = style.STYLE_BorderWidth, .data = 2 },
+        .{ .tag = style.STYLE_ShineRGB, .data = 0xFFFF_FFFF },
+        .{ .tag = style.STYLE_ShadowRGB, .data = 0xFF00_0000 },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF80_8080 },
+        .{ .tag = style.STYLE_Radius, .data = 5 },
+        .{},
+    }).?;
+    const w = 40;
+    const h = 16;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = h }, null);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), pixels[0 * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFF00_0000), pixels[(h - 1) * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFF80_8080), pixels[8 * w + 20]);
+    // Turned the other way, recessed: the shadow on top.
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, style.DPF_INVERT, &.{ .max_x = w, .max_y = h }, null);
+    try testing.expectEqual(@as(u32, 0xFF00_0000), pixels[0 * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), pixels[(h - 1) * w + 20]);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
 test "styles: a frame is drawn and measured in the style the message hands it" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -405,6 +405,16 @@ const Collect = struct {
     }
 };
 
+/// A RawDoFmt `format` written with the values in `stream` - an extern
+/// struct laid out as the format reads them - into `into`,
+/// NUL-terminated and cut to fit.
+pub fn formatInto(sys: *ExecBase, format: [*:0]const u8, stream: *const anyopaque, into: []u8) [*:0]const u8 {
+    var collect = Collect{ .into = into };
+    _ = sys.RawDoFmt(format, stream, &Collect.put, &collect);
+    into[collect.len] = 0;
+    return @ptrCast(into.ptr);
+}
+
 /// `value` written through a RawDoFmt `format` that takes one number -
 /// `%ld` or `%d` - into `into`, NUL-terminated and cut to fit. The value
 /// is in the data stream as 64 bits, whose low 32 are first: a `%d` reads

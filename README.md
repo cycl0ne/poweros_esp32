@@ -105,7 +105,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
   is, laid over what is there by its own coverage, or at another size;
-  rectangles with rounded corners, pies and rings, outlines of any width
+  rectangles with rounded corners and bevels round them in two colours,
+  pies and rings, outlines of any width
   that grow inward so a shape keeps its size, curves and slanted lines
   with smooth edges and pictures scaled smoothly, any filled shape in a
   gradient (linear or radial, dithered on 16-bit displays) or a tile, a
@@ -145,8 +146,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   underlined in each label: among them a row of tabs over pages of
   gadgets, a number field with stepping arrows, a button that pops a list
   up to pick from, a bar that shows how far along something is, a ring
-  of dots that turns while something goes on, and a field with a button
-  that opens the file or font requester.
+  of dots that turns while something goes on, a field with a button
+  that opens the file or font requester, a dial with a needle, a ring
+  that fills or is turned like a knob, a wheel of choices turned by
+  dragging, a month to pick a day from, a picture a program draws into,
+  and a text as a QR code, a Code 128 or an EAN-13 barcode
+  (`C:test/Widgets`).
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,

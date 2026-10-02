@@ -170,6 +170,10 @@ pub const STYLE_BorderX = STYLE_Dummy + 0x28;
 pub const STYLE_BorderY = STYLE_Dummy + 0x29;
 /// Where a bevel's two colours meet: `JOINS_`.
 pub const STYLE_Joins = STYLE_Dummy + 0x2A;
+/// How far a ridge's or a groove's inner bevel sits inside the outer one,
+/// in border thicknesses (0, the two against each other): the ground shows
+/// between them.
+pub const STYLE_BorderGap = STYLE_Dummy + 0x2B;
 
 /// How far the corners are rounded, in pixels.
 pub const STYLE_Radius = STYLE_Dummy + 0x30;

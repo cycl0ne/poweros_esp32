@@ -37,9 +37,10 @@ pub const LIBRARY_VERSION = 0;
 /// `RPTAG_FillStyle`: a shape filled with a gradient, linear or radial and
 /// dithered on 16-bit surfaces, or with a tile. 23 is `RPTAG_LineWidth`:
 /// outlines wider than a pixel. 24 is `RPTAG_Smooth`: curves with smooth
-/// edges, and pictures scaled by sampling between their pixels. The
+/// edges, and pictures scaled by sampling between their pixels. 25 is
+/// `DrawRoundBevel`: a rounded outline as a bevel in two colours. The
 /// version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 24;
+pub const LIBRARY_REVISION = 25;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

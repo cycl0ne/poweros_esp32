@@ -49,6 +49,7 @@ pub const Prop = enum(u5) {
     border_x,
     border_y,
     joins,
+    gap,
     radius,
     text,
     padding_x,
@@ -120,6 +121,7 @@ fn propsOf(tag: utility.Tag) ?struct { props: u32, given: Given } {
         style.STYLE_BorderX => .{ .props = bit(.border_x), .given = .number },
         style.STYLE_BorderY => .{ .props = bit(.border_y), .given = .number },
         style.STYLE_Joins => .{ .props = bit(.joins), .given = .number },
+        style.STYLE_BorderGap => .{ .props = bit(.gap), .given = .number },
         style.STYLE_Radius => .{ .props = bit(.radius), .given = .number },
         style.STYLE_TextPen => .{ .props = bit(.text), .given = .number },
         style.STYLE_TextRGB => .{ .props = bit(.text), .given = .rgb },
@@ -367,7 +369,7 @@ pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?
 /// The colour properties: mixed channel by channel.
 const colour_props = [_]Prop{ .background, .border_colour, .shine, .shadow, .text };
 /// The number properties: mixed and rounded.
-const number_props = [_]Prop{ .border_x, .border_y, .radius, .padding_x, .padding_y, .opacity };
+const number_props = [_]Prop{ .border_x, .border_y, .gap, .radius, .padding_x, .padding_y, .opacity };
 
 /// One colour channel by channel, `amount` of 255 of the way.
 fn mixColour(from: Pen, to: Pen, amount: u32) Pen {
@@ -559,10 +561,12 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_State, style.STATE_DISABLED),
     pair(style.STYLE_Border, style.BORDER_RIDGE),
     pair(style.STYLE_Background, sc.BACKGROUNDPEN),
-    // frameiclass's drop box: a ridge with room inside it for an icon.
+    // frameiclass's drop box: a broad ridge, its inner bevel a border's
+    // thickness in from the outer one, with room inside it for an icon.
     pair(style.STYLE_Part, ic.PART_FRAME_DROPBOX),
-    pair(style.STYLE_PaddingX, 4),
-    pair(style.STYLE_PaddingY, 2),
+    pair(style.STYLE_BorderGap, 1),
+    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_PaddingY, 1),
     // sysiclass's check box and radio button: checked, the box keeps its
     // raised look and its ground - the tick or the dot says it is on, not
     // the box sinking as a pressed button does.

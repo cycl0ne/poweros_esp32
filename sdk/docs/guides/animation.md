@@ -207,6 +207,11 @@ screen. A class asks before it starts anything:
   gadget. See the [styles guide](styles.md).
 - **fuelgauge.gadget** fills to a new level over a quarter of a second,
   slowing to the end, from wherever it is; the number counts with it.
+- **meter.gadget** swings its needle, **arc.gadget** fills its ring and
+  **roller.gadget** turns its wheel to a value a program sets, over a
+  moment; turned by the pointer they follow it at once. A class of one's
+  own does the same with `sdk.gadgets.moving.Moving`: a shown number,
+  `towards` a new one.
 - **spinner.gadget** is a ring of eight dots, the lit one going round
   with a fading trail behind it, while `SPINNER_Running` is on
   (`SPINNER_Period`, a turn in milliseconds, 1000). Stopped, every dot is

@@ -79,7 +79,7 @@ pub fn DrawRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;
 
-    if (rp.line_width > 1 or (rp.smooth and radius > 0)) return @import("_wide.zig").roundRect(gb, rp, area.*, radius, @intCast(rp.line_width));
+    if (rp.line_width > 1 or (rp.smooth and radius > 0)) return @import("_wide.zig").roundRect(gb, rp, area.*, radius, @intCast(rp.line_width), null);
     const r = @min(_round.fits(area.*, radius), _round.radius_max);
     if (r <= 0) {
         graphics_lib.DrawRect(@ptrCast(rp), area);
