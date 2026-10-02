@@ -207,7 +207,8 @@ fn frameLines(gb: *sdk.interface.graphics.GraphicsBase, rp: *graphics.RastPort, 
 /// not flicker.
 fn draw(base: *gadgets.Base, own: *Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo, whole: bool) void {
     const gb = base.graphics_base;
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const g = gc.gadget(o);
     const b = gc.boxFor(g, info);
     const layout = Layout.of(own, b.width, b.height);

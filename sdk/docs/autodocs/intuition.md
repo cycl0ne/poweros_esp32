@@ -110,11 +110,13 @@ Generated from the source by `./zig build autodoc`.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
 - [SetPrefs](#setprefs) - The settings changed.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
+- [SetStyle](#setstyle) - A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
 - [SetSystemFonts](#setsystemfonts) - The fonts screens, windows and consoles use from now on.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
 - [SetWindowTitles](#setwindowtitles) - Changes a window's title and the screen title it shows while active.
 - [ShowTitle](#showtitle) - Puts a screen's title bar in front of its backdrop windows, or behind them.
 - [SizeWindow](#sizewindow) - Sizes a window.
+- [StylePens](#stylepens) - The screen's pens, with the ones that stand for a gadget's look taken from a part of the style.
 - [SysReqHandler](#sysreqhandler) - Reads what arrived at a requester.
 - [TimedDisplayAlert](#timeddisplayalert) - Shows an alert and waits for an answer, or for the time to run out.
 - [UnlockClassList](#unlockclasslist) - Lets the public class list go.
@@ -3049,8 +3051,8 @@ fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
 A colour as 0xAARRGGBB, whichever of its two tags `attr` is - a pen
 index in the style is looked up in the screen's pens, so the answer can
 go straight into `RPTAG_APen`. `STYLE_BackgroundFill` answers a
-`*const graphics.FillStyle`, the style's own copy, or 0 when the
-background is a colour; asked for the background colour of one that is
+`*const graphics.FillStyle`, the style's own copy - good until that
+style is replaced (`SetStyle`) - or 0 when the background is a colour; asked for the background colour of one that is
 a fill style, the colour of its first stop. Any other property as its number:
 `STYLE_BorderWidth` answers `STYLE_BorderX` and `STYLE_Padding`
 `STYLE_PaddingX`. 0 for a tag that is not a property.
@@ -6517,6 +6519,97 @@ const old = ib.SetPubScreenModes(sc.POPPUBSCREEN);
 _ = old;
 ```
 
+## SetStyle
+
+A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
+
+**SYNOPSIS**
+
+```zig
+fn SetStyle(ib: *IntuitionBase, screen: ?*Screen,
+    tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+0.23. LVO -488.
+
+**INPUTS**
+
+- `screen` - the screen whose own style it is, as `SA_Style` gives one
+  at open; null for the system's style.
+- `tags` - the style, a tag list as `SA_Style` takes; null, or one
+  with no property in it, for none.
+
+**RESULT**
+
+True when the style is in place; false when there was no memory for
+it, and then the one before is kept.
+
+**BEHAVIOR**
+
+The list is read once, as `SA_Style`'s is, and may go once the call
+returns. **The system's style** is asked after a screen's own and
+before the system's default, so it changes the look of every screen
+at once, those already open among them, and of every screen opened
+after; a screen's own style still wins over it. **A screen's own**
+replaces what `SA_Style`, or an earlier call, gave that screen.
+
+Every window on the screens it reaches is then drawn again: its
+gadgets laid out - a border or a padding may have changed what fits -
+its frame and its gadgets drawn, and the screen's bar. Each such window
+that listens for `IDCMP_NEWPREFS` hears it, for what it draws itself.
+
+**CONTEXT**
+
+- Waits: yes - for intuition's lock, and for the layers it draws in.
+- Interrupts: no.
+- Forbid: must not be held. The style is changed under a Forbid of the
+  call's own.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list stays the caller's; intuition keeps its own copy, and frees
+the one it replaces. A screen's style is freed when the screen
+closes.
+
+**NOTES**
+
+- What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
+  into the style it came from, and is good only until that style is
+  replaced.
+- What `C:StylePrefs` calls, with no screen, from
+  `ENV:Sys/style.prefs`.
+
+**BUGS**
+
+- A window keeps the border sizes it opened with: a style whose window
+  border is wider or narrower than the one before shows it only in
+  windows opened after.
+- A gadget drawn smaller than before leaves what was outside it until
+  the window is drawn again for some other reason.
+
+**SEE ALSO**
+
+`SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`
+
+**EXAMPLES**
+
+```zig
+// Every screen's buttons with a blue line round them.
+const blue = [_]TagItem{
+    .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+    .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+    .{ .tag = style.STYLE_BorderRGB, .data = 0xFF3A6EA5 },
+    .{},
+};
+if (!ib.SetStyle(null, &blue)) return dos.RETURN_FAIL;
+
+// And back to the default.
+_ = ib.SetStyle(null, null);
+```
+
 ## SetSystemFonts
 
 The fonts screens, windows and consoles use from now on.
@@ -6850,6 +6943,84 @@ None known.
 
 ```zig
 ib.SizeWindow(window, 20, 20);
+```
+
+## StylePens
+
+The screen's pens, with the ones that stand for a gadget's look taken from a part of the style.
+
+**SYNOPSIS**
+
+```zig
+fn StylePens(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
+    own: ?*const Style, part: u32, pens: [*]graphics.Pen) void
+```
+
+**SINCE**
+
+0.22. LVO -484.
+
+**INPUTS**
+
+- `draw_info` - the screen's, for its pens and its style; null for the
+  default pens and the system's default style alone.
+- `own` - a gadget's own style (`GA_Style`, read back), or null.
+- `part` - a `style.PART_` number, or a class's own.
+- `pens` - room for `NUMDRIPENS` pens, written.
+
+**RESULT**
+
+Nothing; the pens are in `pens`, as 0xAARRGGBB.
+
+**BEHAVIOR**
+
+Every pen is the screen's, except six:
+
+| pen | from the part |
+|---|---|
+| `BACKGROUNDPEN` | its background, at rest |
+| `TEXTPEN` | its text, at rest |
+| `FILLPEN` | its background, pressed |
+| `FILLTEXTPEN` | its text, pressed |
+| `SHINEPEN` | its bevel's light side |
+| `SHADOWPEN` | its bevel's dark side |
+
+Each is found as `DrawPart` finds a property. With the system's default
+style and `style.PART_MAIN`, all six are the screen's own pens again,
+so a class that draws with these instead of the screen's draws exactly
+as it did - and follows whatever style its screen or the gadget has.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`pens` is the caller's; nothing is kept.
+
+**NOTES**
+
+A class that also shows a selection or a level takes `FILLPEN` and
+`FILLTEXTPEN` from `style.PART_SELECTION` or `style.PART_INDICATOR`
+with `GetStyleAttr` afterwards.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetStyleAttr`, `DrawPart`
+
+**EXAMPLES**
+
+```zig
+var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
+ib.StylePens(info.draw_info, gadget.style, style.PART_MAIN, &pens);
+// ... draw as before, with `pens` for `info.draw_info.pens`.
 ```
 
 ## SysReqHandler

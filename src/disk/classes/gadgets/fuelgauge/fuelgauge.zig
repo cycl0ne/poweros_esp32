@@ -216,7 +216,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     const b = gc.boxFor(gc.gadget(o), info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_INDICATOR);
+    const pens: [*]const graphics.Pen = &styled;
     const bar = barOf(base, own, b, info.draw_info);
     const room = if (own.vertical != 0) bar.height else bar.width;
     const filled = filledIn(own, room);

@@ -37,6 +37,13 @@
 //! (`GM_DOMAIN`) is what its children need with the frame added, and a
 //! window of framed groups is layouts inside layouts and nothing else.
 //!
+//! **A grid** (`LORIENT_GRID`) is measured and placed in `layoutgrid.zig`,
+//! and a row or column that wraps (`LAYOUTA_Wrap`) in `layoutwrap.zig`,
+//! with the same children, labels, frame and sharing. A wrapping row's
+//! depth depends on its width, so a column tells each wrapping row in it
+//! the width it is about to give it before it asks its size, and the
+//! other way round.
+//!
 //! Each child has a record of its own here, on a list beside the group's
 //! members and in the same order: its label, its weights, the sizes that
 //! stand in for its own, and scratch room for the sizes being worked out.
@@ -61,17 +68,19 @@ const groupgclass = @import("groupgclass.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const _window = @import("../window/_window.zig");
 const d = @import("draw.zig");
+const layoutgrid = @import("layoutgrid.zig");
+const layoutwrap = @import("layoutwrap.zig");
 
 /// A size.
-const Size = struct { width: i32 = 0, height: i32 = 0 };
+pub const Size = struct { width: i32 = 0, height: i32 = 0 };
 
 /// What something needs: as small as it goes, as it looks right, and as
 /// large as it is any use.
-const Need = struct { min: Size = .{}, nominal: Size = .{}, max: Size = .{} };
+pub const Need = struct { min: Size = .{}, nominal: Size = .{}, max: Size = .{} };
 
 /// One child: the gadget, what the layout was told about it, and where its
 /// label went.
-const Child = extern struct {
+pub const Child = extern struct {
     node: exec.MinNode = .{},
     object: *Object,
     label: ?[*:0]const u8 = null,
@@ -82,6 +91,17 @@ const Child = extern struct {
     min_height: i32 = 0,
     max_width: i32 = 0,
     max_height: i32 = 0,
+    /// `CHILDA_Align`: `CALIGN_` across and down; 0 either way is where a
+    /// child sits without it.
+    alignment: u32 = 0,
+    /// In a grid: the cell it asked for (-1 for the next free one), how
+    /// many it covers, and the cell it was given.
+    column: i32 = -1,
+    row: i32 = -1,
+    column_span: i32 = 1,
+    row_span: i32 = 1,
+    cell_column: i32 = 0,
+    cell_row: i32 = 0,
     /// Worked out by `place`: along the row or column, what the child
     /// needs and the length it is given; and where its label is drawn.
     least: i32 = 0,
@@ -95,6 +115,14 @@ const Child = extern struct {
 /// layoutgclass's part of an object.
 pub const Data = extern struct {
     orientation: u32 = lg.LORIENT_VERT,
+    /// A grid's columns.
+    columns: i32 = 1,
+    /// `LAYOUTA_Wrap`.
+    wrap: u32 = 0,
+    /// The box it was last placed in, or a box the layout it is in is
+    /// about to give it: what a wrapping layout answers for.
+    box_width: i32 = 0,
+    box_height: i32 = 0,
     spacing: i32 = 4,
     margin: i32 = 0,
     /// The children's records, a `Child` each.
@@ -136,14 +164,14 @@ fn isLayout(ib: *IntuitionBase, o: *Object) bool {
 }
 
 /// Each child's record in turn.
-const Walk = struct {
+pub const Walk = struct {
     at: ?*exec.MinNode,
 
-    fn over(p: *Data) Walk {
+    pub fn over(p: *Data) Walk {
         return .{ .at = p.children.head };
     }
 
-    fn next(w: *Walk) ?*Child {
+    pub fn next(w: *Walk) ?*Child {
         const node = w.at orelse return null;
         // The tail sentinel is the node with no successor.
         w.at = node.succ orelse return null;
@@ -151,7 +179,7 @@ const Walk = struct {
     }
 };
 
-fn saturate(n: i32) i32 {
+pub fn saturate(n: i32) i32 {
     return @min(n, gc.GDOMAIN_UNLIMITED);
 }
 
@@ -203,8 +231,16 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
         const v = item.data;
         const n: i32 = @bitCast(@as(u32, @truncate(v)));
         switch (item.tag) {
-            lg.LAYOUTA_Orientation => if (v == lg.LORIENT_HORIZ or v == lg.LORIENT_VERT) {
+            lg.LAYOUTA_Orientation => if (v == lg.LORIENT_HORIZ or v == lg.LORIENT_VERT or v == lg.LORIENT_GRID) {
                 p.orientation = @truncate(v);
+                changed = 1;
+            },
+            lg.LAYOUTA_Wrap => {
+                p.wrap = @intFromBool(v != 0);
+                changed = 1;
+            },
+            lg.LAYOUTA_Columns => {
+                p.columns = @max(n, 1);
                 changed = 1;
             },
             lg.LAYOUTA_Spacing => {
@@ -238,7 +274,7 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
                 }
                 changed = 1;
             },
-            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight => {
+            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight, lg.CHILDA_Align, lg.CHILDA_Column, lg.CHILDA_Row, lg.CHILDA_ColumnSpan, lg.CHILDA_RowSpan => {
                 const record = p.last orelse continue;
                 switch (item.tag) {
                     lg.CHILDA_Label => {
@@ -257,6 +293,11 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
                     lg.CHILDA_MinWidth => record.min_width = @max(n, 0),
                     lg.CHILDA_MinHeight => record.min_height = @max(n, 0),
                     lg.CHILDA_MaxWidth => record.max_width = @max(n, 0),
+                    lg.CHILDA_Align => record.alignment = @truncate(v),
+                    lg.CHILDA_Column => record.column = @max(n, 0),
+                    lg.CHILDA_Row => record.row = @max(n, 0),
+                    lg.CHILDA_ColumnSpan => record.column_span = @max(n, 1),
+                    lg.CHILDA_RowSpan => record.row_span = @max(n, 1),
                     else => record.max_height = @max(n, 0),
                 }
                 changed = 1;
@@ -315,7 +356,7 @@ fn ask(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, which: u32) Si
 /// own: the sizes it was told, and a weight of 0 holding it to its nominal
 /// size that way. Never a nominal size below the minimum nor a maximum
 /// below the nominal.
-fn childNeed(ib: *IntuitionBase, record: *const Child, gi: ?*classusr.GadgetInfo) Need {
+pub fn childNeed(ib: *IntuitionBase, record: *const Child, gi: ?*classusr.GadgetInfo) Need {
     var need = Need{
         .min = ask(ib, record.object, gi, gc.GDOMAIN_MINIMUM),
         .nominal = ask(ib, record.object, gi, gc.GDOMAIN_NOMINAL),
@@ -337,7 +378,7 @@ fn childNeed(ib: *IntuitionBase, record: *const Child, gi: ?*classusr.GadgetInfo
 /// How labels are measured and drawn: the font, how tall a line of it is,
 /// and the width of the widest label - which is the label column of a
 /// column of children.
-const Labels = struct {
+pub const Labels = struct {
     measure: gadgetclass.Measure,
     height: i32,
     widest: i32,
@@ -356,7 +397,7 @@ const Labels = struct {
         return ib.iface().IntuiTextLength(&run);
     }
 
-    fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
+    pub fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
         const text = record.label orelse return 0;
         const run = intuition.IntuiText{ .font = labels.measure.font, .text = text };
         // Measured as it is drawn: without the `_` that marks its key.
@@ -402,8 +443,25 @@ fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetI
 
     var need = Need{};
     var count: i32 = 0;
+    const inset = insetOf(ib, p, gi, labels.height);
+    // A grid's children are measured as cells, and a wrapping layout's in
+    // lines, their gaps with them.
+    const grid = p.orientation == lg.LORIENT_GRID;
+    const whole = grid or p.wrap != 0;
+    if (grid) {
+        need = layoutgrid.need(ib, o, p, gi, &labels);
+    } else {
+        if (horiz and p.box_height > 0) hint(ib, p, &labels, true, p.box_height - inset.height);
+        if (!horiz and p.box_width > 0) hint(ib, p, &labels, false, p.box_width - inset.width);
+        if (p.wrap != 0) {
+            const known = if (horiz) p.box_width else p.box_height;
+            const line = if (known > 0) known - (if (horiz) inset.width else inset.height) else 0;
+            need = layoutwrap.need(ib, p, gi, &labels, line);
+        }
+    }
     var walk = Walk.over(p);
-    while (walk.next()) |record| {
+    while (!whole) {
+        const record = walk.next() orelse break;
         const child = childNeed(ib, record, gi);
         count += 1;
         // A labelled child is at least as tall as its label.
@@ -427,11 +485,13 @@ fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetI
         }
     }
     const gaps = if (count > 1) (count - 1) * p.spacing else 0;
-    const inset = insetOf(ib, p, gi, labels.height);
     // A framed layout is never narrower than its title.
     const titled = if (p.title) |text| labels.textWidth(ib, text) + 2 * (title_indent + title_gap) else 0;
     inline for (.{ &need.min, &need.nominal, &need.max }) |size| {
-        if (horiz) {
+        if (whole) {
+            size.width = saturate(size.width + inset.width);
+            size.height = saturate(size.height + inset.height);
+        } else if (horiz) {
             size.width = saturate(size.width + gaps + inset.width);
             size.height = saturate(size.height + inset.height);
         } else {
@@ -445,27 +505,30 @@ fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetI
 
 // --- placing ----------------------------------------------------------------
 
-/// `spare` shared among the children along the row or column: first each
-/// towards its nominal length, then by weight towards its most.
-fn share(p: *Data, spare_in: i32, horiz: bool) void {
+/// `spare` shared among `items` - a row's or a column's children, or a
+/// grid's columns or rows: first each towards its nominal length, then by
+/// weight towards its most. `items` walks them (`first`, `after`) and
+/// says each one's weight; each has `least`, `nominal`, `most` and
+/// `length`.
+pub fn share(items: anytype, spare_in: i32) void {
     var spare = spare_in;
-    var walk = Walk.over(p);
-    while (walk.next()) |record| record.length = record.least;
+    var x = items.first();
+    while (x) |item| : (x = items.after(item)) item.length = item.least;
     if (spare <= 0) return;
 
     // Towards the nominal lengths: all of the way if there is room, or the
     // same fraction of the way for each.
     var want: i64 = 0;
-    walk = Walk.over(p);
-    while (walk.next()) |record| want += record.nominal - record.least;
+    x = items.first();
+    while (x) |item| : (x = items.after(item)) want += item.nominal - item.least;
     if (want > 0) {
         const all = want <= spare;
         var given: i32 = 0;
-        walk = Walk.over(p);
-        while (walk.next()) |record| {
-            const gap: i64 = record.nominal - record.least;
+        x = items.first();
+        while (x) |item| : (x = items.after(item)) {
+            const gap: i64 = item.nominal - item.least;
             const add: i32 = if (all) @intCast(gap) else @intCast(@divTrunc(gap * spare, want));
-            record.length += add;
+            item.length += add;
             given += add;
         }
         spare -= given;
@@ -477,25 +540,25 @@ fn share(p: *Data, spare_in: i32, horiz: bool) void {
     // the first that can take it, so every round gives something.
     while (spare > 0) {
         var total: i64 = 0;
-        walk = Walk.over(p);
-        while (walk.next()) |record| {
-            if (record.length < record.most) total += weightOf(record, horiz);
+        x = items.first();
+        while (x) |item| : (x = items.after(item)) {
+            if (item.length < item.most) total += items.weight(item);
         }
         if (total == 0) return;
         var given: i32 = 0;
-        walk = Walk.over(p);
-        while (walk.next()) |record| {
-            const weight = weightOf(record, horiz);
-            if (weight == 0 or record.length >= record.most) continue;
-            const add: i32 = @intCast(@min(@divTrunc(@as(i64, spare) * weight, total), record.most - record.length));
-            record.length += add;
+        x = items.first();
+        while (x) |item| : (x = items.after(item)) {
+            const weight = items.weight(item);
+            if (weight == 0 or item.length >= item.most) continue;
+            const add: i32 = @intCast(@min(@divTrunc(@as(i64, spare) * weight, total), item.most - item.length));
+            item.length += add;
             given += add;
         }
         if (given == 0) {
-            walk = Walk.over(p);
-            while (walk.next()) |record| {
-                if (weightOf(record, horiz) == 0 or record.length >= record.most) continue;
-                record.length += 1;
+            x = items.first();
+            while (x) |item| : (x = items.after(item)) {
+                if (items.weight(item) == 0 or item.length >= item.most) continue;
+                item.length += 1;
                 given = 1;
                 break;
             }
@@ -504,6 +567,27 @@ fn share(p: *Data, spare_in: i32, horiz: bool) void {
     }
 }
 
+/// A row's or a column's children, as `share` walks them.
+const Along = struct {
+    p: *Data,
+    horiz: bool,
+
+    fn first(along: Along) ?*Child {
+        var walk = Walk.over(along.p);
+        return walk.next();
+    }
+
+    fn after(_: Along, record: *Child) ?*Child {
+        const succ = record.node.succ orelse return null;
+        if (succ.succ == null) return null;
+        return @ptrCast(succ);
+    }
+
+    fn weight(along: Along, record: *const Child) u32 {
+        return weightOf(record, along.horiz);
+    }
+};
+
 fn weightOf(record: *const Child, horiz: bool) u32 {
     return if (horiz) record.weight_width else record.weight_height;
 }
@@ -511,16 +595,31 @@ fn weightOf(record: *const Child, horiz: bool) u32 {
 /// Across the row or column: its whole room for a child with a weight that
 /// way (no more than its most), its nominal size for one without; never
 /// less than its least.
-fn across(room: i32, need_min: i32, need_nominal: i32, need_max: i32, weight: u32) i32 {
+pub fn across(room: i32, need_min: i32, need_nominal: i32, need_max: i32, weight: u32) i32 {
     const wanted = if (weight != 0) @min(room, need_max) else @min(room, need_nominal);
     return @max(wanted, need_min);
 }
+
+/// How far into `room` something `size` long starts, by one way of a
+/// `CALIGN_` (shifted down to 1 start, 2 centre, 3 end); 0 takes `usual`.
+pub fn alignedAt(way: u32, usual: u32, room: i32, size: i32) i32 {
+    const spare = room - size;
+    return switch (if (way == 0) usual else way) {
+        align_centre => @divTrunc(spare, 2),
+        align_end => spare,
+        else => 0,
+    };
+}
+
+pub const align_start: u32 = 1;
+pub const align_centre: u32 = 2;
+const align_end: u32 = 3;
 
 /// A child put in its box. Sized by writing its box, since set it would
 /// take the size as the one it asks for; moved by setting its corner, so a
 /// group takes its members along. A layout is laid out in turn; any other
 /// gadget is told its room changed, as the window's own gadgets are.
-fn putChild(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, box: _gadget.Box, initial: bool) void {
+pub fn putChild(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, box: _gadget.Box, initial: bool) void {
     const it = ib.iface();
     const g = gadgetclass.gadgetOf(ib, o);
     g.flags &= ~gadgetclass.GFLG_RELATIVE;
@@ -552,6 +651,8 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
     const p = own(cl, o);
     const g = gadgetclass.gadgetOf(ib, o);
     const b = if (gi) |info| _gadget.boxIn(g, info.domain_width, info.domain_height) else _gadget.Box{ .left = g.left, .top = g.top, .width = g.width, .height = g.height };
+    p.box_width = b.width;
+    p.box_height = b.height;
     const labels = Labels.of(ib, o, p, gi);
     defer labels.done(ib);
     const horiz = p.orientation == lg.LORIENT_HORIZ;
@@ -562,6 +663,12 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
     const top = b.top + inset.top;
     const inner_w = b.width - inset.width;
     const inner_h = b.height - inset.height;
+    if (p.orientation == lg.LORIENT_GRID) {
+        layoutgrid.place(ib, o, p, gi, &labels, .{ .left = left, .top = top, .width = inner_w, .height = inner_h }, initial);
+        return;
+    }
+    hint(ib, p, &labels, horiz, if (horiz) inner_h else inner_w);
+    if (p.wrap != 0 and layoutwrap.place(ib, p, gi, &labels, .{ .left = left, .top = top, .width = inner_w, .height = inner_h }, initial)) return;
 
     // Along: what each needs, and what is left over once every child has
     // its least and every gap and label its room.
@@ -586,7 +693,7 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
     }
     if (count == 0) return;
     used += (count - 1) * p.spacing;
-    share(p, (if (horiz) inner_w else inner_h) - used, horiz);
+    share(Along{ .p = p, .horiz = horiz }, (if (horiz) inner_w else inner_h) - used);
 
     var at = if (horiz) left else top;
     walk = Walk.over(p);
@@ -596,7 +703,8 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
         if (horiz) {
             const room = labelRoom(&labels, ib, p, record);
             const h = across(inner_h, need.min.height, need.nominal.height, need.max.height, record.weight_height);
-            box = .{ .left = at + room, .top = top + @divTrunc(inner_h - h, 2), .width = record.length, .height = h };
+            const down = alignedAt((record.alignment >> 4) & 3, align_centre, inner_h, h);
+            box = .{ .left = at + room, .top = top + down, .width = record.length, .height = h };
             record.label_x = at;
             at += room + record.length + p.spacing;
         } else {
@@ -604,7 +712,9 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
             const w = across(inner_w - in, need.min.width, need.nominal.width, need.max.width, record.weight_width);
             // A child shorter than its label's line sits in the middle of it.
             const h = @min(record.length, need.max.height);
-            box = .{ .left = left + in, .top = at + @divTrunc(record.length - h, 2), .width = w, .height = h };
+            const along = alignedAt(record.alignment & 3, align_start, inner_w - in, w);
+            const down = alignedAt((record.alignment >> 4) & 3, align_centre, record.length, h);
+            box = .{ .left = left + in + along, .top = at + down, .width = w, .height = h };
             record.label_x = left + labels.widest - labels.width(ib, record);
             at += record.length + p.spacing;
         }
@@ -613,8 +723,35 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
     }
 }
 
+/// Whether a layout, or any layout inside it, wraps.
+fn wraps(ib: *IntuitionBase, p: *Data) bool {
+    if (p.wrap != 0) return true;
+    var walk = Walk.over(p);
+    while (walk.next()) |record| {
+        if (isLayout(ib, record.object) and wraps(ib, own(ib.layout_class.?, record.object))) return true;
+    }
+    return false;
+}
+
+/// The children that wrap the other way told how long they are about to
+/// be across this layout: `room` across it, less a labelled child's
+/// label column in a column. Asked their size after that, they answer for
+/// it.
+fn hint(ib: *IntuitionBase, p: *Data, labels: *const Labels, horiz: bool, room: i32) void {
+    const column = labelColumn(labels, p);
+    var walk = Walk.over(p);
+    while (walk.next()) |record| {
+        if (!isLayout(ib, record.object)) continue;
+        const child = own(ib.layout_class.?, record.object);
+        if (child.wrap == 0) continue;
+        if (horiz and child.orientation == lg.LORIENT_VERT) child.box_height = room;
+        if (!horiz and child.orientation == lg.LORIENT_HORIZ) child.box_width = room - indent(record, column);
+    }
+}
+
 /// A layout sized by its window makes the window no smaller than it fits
-/// in - once, when the window opens with it or it is added. A window
+/// in - once, when the window opens with it or it is added, and after
+/// every resize when something in it wraps. A window
 /// already smaller than that is held where it is. The layout's word is the
 /// last: a program that wants a larger smallest size sets it afterwards.
 fn limitWindow(ib: *IntuitionBase, cl: *Class, o: *Object, gi: *classusr.GadgetInfo) void {
@@ -658,9 +795,18 @@ fn renderFrame(ib: *IntuitionBase, p: *Data, o: *Object, info: *classusr.GadgetI
     _ = ib.iface().SendMessage(frame, @ptrCast(&draw));
     const text = p.title orelse return;
     const width = d.labelWidth(gb, rp, text);
-    d.box(gb, rp, b.left + title_indent - title_gap, b.top, width + 2 * title_gap, labels.height, info.draw_info.pens[sc.BACKGROUNDPEN]);
-    d.pen(gb, rp, info.draw_info.pens[sc.TEXTPEN]);
+    // On the group's background, in its text colour.
+    const it = ib.iface();
+    const behind: graphics.Pen = @truncate(it.GetStyleAttr(info.draw_info, null, intuition.style.PART_GROUP, intuition.style.STATE_NORMAL, intuition.style.STYLE_Background));
+    d.box(gb, rp, b.left + title_indent - title_gap, b.top, width + 2 * title_gap, labels.height, behind);
+    d.pen(gb, rp, groupText(ib, info));
     d.labelText(gb, rp, b.left + title_indent, b.top + baseline, text);
+}
+
+/// The colour a group's title and its children's labels are written in:
+/// the style's for `PART_GROUP`.
+fn groupText(ib: *IntuitionBase, info: *const classusr.GadgetInfo) graphics.Pen {
+    return @truncate(ib.iface().GetStyleAttr(info.draw_info, null, intuition.style.PART_GROUP, intuition.style.STATE_NORMAL, intuition.style.STYLE_TextPen));
 }
 
 /// The frame with its title, and the labels, each in the text pen beside
@@ -678,7 +824,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) }, .{} };
     gb.GetRPAttrs(rp, &metric);
     const pens = [_]TagItem{
-        .{ .tag = graphics.RPTAG_APen, .data = info.draw_info.pens[sc.TEXTPEN] },
+        .{ .tag = graphics.RPTAG_APen, .data = groupText(ib, info) },
         .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
         .{},
     };
@@ -771,8 +917,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (g.flags & gadgetclass.GFLG_RELWIDTH == 0 and g.width <= 0) g.width = need.nominal.width;
                 if (g.flags & gadgetclass.GFLG_RELHEIGHT == 0 and g.height <= 0) g.height = need.nominal.height;
             }
-            if (lay.initial != 0) limitWindow(ib, cl, o.?, info);
             place(ib, cl, o.?, info, lay.initial != 0);
+            // After placing: a wrapping row knows its width then, and how
+            // deep its lines go is part of what the window must hold - so
+            // a tree that wraps sets the window's smallest size again on
+            // every resize.
+            if (lay.initial != 0 or wraps(ib, own(cl, o.?))) limitWindow(ib, cl, o.?, info);
             return 0;
         },
         gc.GM_RENDER => {

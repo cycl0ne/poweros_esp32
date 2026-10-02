@@ -171,7 +171,7 @@ fn turn(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Gadget
     defer ib.ReleaseGIRPort(rp);
     const saved = support.Saved.of(base.graphics_base, rp);
     defer saved.restore(base.graphics_base, rp);
-    support.fill(base.graphics_base, rp, box, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    support.fill(base.graphics_base, rp, box, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN));
     const page = own.member orelse return;
     var msg = gc.GpRender{ .gadget_info = info, .rast_port = rp, .redraw = gc.GREDRAW_REDRAW };
     _ = ib.SendMessage(page, @ptrCast(&msg));

@@ -25,6 +25,7 @@ const ie = sdk.devices.inputevent;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
+const style = intuition.style;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
 const _window = @import("../window/_window.zig");
@@ -202,25 +203,40 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     // put back on.
     const b = boxOf(ib, o, gi);
     const dri = gi_.draw_info;
-    const pens = dri.pens;
     const saved = d.save(gb, rp);
     defer d.restore(gb, rp, saved);
     // Drawn last, over everything the gadget shows, whichever way it ends.
     const disabled = gadgetclass.gadgetOf(ib, o).flags & gadgetclass.GFLG_DISABLED != 0;
-    defer if (disabled) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
+    defer if (disabled) gadgetclass.ghost(ib, o, gi_, rp, b.left, b.top, b.width, b.height);
+
+    // The look is the style's: the channel is `PART_TRACK`, the knob
+    // `PART_KNOB`, and the gadget's own style is asked first. Dragged, the
+    // knob is pressed, and hovered while the pointer is over the gadget.
+    const it = ib.iface();
+    const g = gadgetclass.gadgetOf(ib, o);
+    const own_style: ?*const intuition.Style = g.style;
+    const st: u32 = (if (g.flags & gadgetclass.GFLG_SELECTED != 0) style.STATE_PRESSED else style.STATE_NORMAL) | intuition.gadgetclass.styleStates(g.flags);
 
     // The container: what the knob has not got.
     const k = knobOf(p, b);
     if (p.flags & pg.PROPBORDERLESS == 0) {
-        d.bevel(gb, rp, b.left, b.top, b.width, b.height, pens[sc.SHADOWPEN], pens[sc.SHINEPEN], 1, .none);
+        const channel = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height };
+        it.DrawPart(rp, dri, own_style, style.PART_TRACK, style.STATE_NORMAL, style.DPF_EDGES_ONLY, &channel, null);
     }
-    d.box(gb, rp, k.space_left, k.space_top, k.space_width, k.space_height, behind(ib, o, p, gi_, pens));
+    const channel_ground = behind(ib, o, p, gi_, own_style);
+    d.box(gb, rp, k.space_left, k.space_top, k.space_width, k.space_height, channel_ground);
 
-    // The knob.
-    d.box(gb, rp, k.left, k.top, k.width, k.height, pens[sc.FILLPEN]);
-    if (p.flags & pg.PROPNEWLOOK != 0 and k.width > 2 and k.height > 2) {
-        d.bevel(gb, rp, k.left, k.top, k.width, k.height, pens[sc.SHINEPEN], pens[sc.SHADOWPEN], 1, .none);
-    }
+    // The knob, on a ground across the whole of its box: the channel's
+    // under a round knob, so that its corners show the channel and not
+    // where the knob was before; the knob's own under a square one, so
+    // that the corners an edge leaves open are the knob's. Then the knob
+    // itself, where there is room for an edge.
+    const knob = graphics.Rect{ .min_x = k.left, .min_y = k.top, .max_x = k.left + k.width, .max_y = k.top + k.height };
+    const edged = p.flags & pg.PROPNEWLOOK != 0 and k.width > 2 and k.height > 2;
+    const round = edged and it.GetStyleAttr(dri, own_style, style.PART_KNOB, st, style.STYLE_Radius) != 0;
+    const ground: graphics.Pen = if (round) channel_ground else @truncate(it.GetStyleAttr(dri, own_style, style.PART_KNOB, st, style.STYLE_Background));
+    d.box(gb, rp, k.left, k.top, k.width, k.height, ground);
+    if (edged) it.DrawPart(rp, dri, own_style, style.PART_KNOB, st, 0, &knob, null);
 }
 
 /// What shows beside the knob.
@@ -232,15 +248,21 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
 /// painted in, which is the window's fill while the window is the active
 /// one and the plain ground while it is not - the same rule the border
 /// itself is painted by, since the answer has to match it exactly or the
-/// bar would show as a stripe of the wrong colour.
-fn behind(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo, pens: [*]const graphics.Pen) graphics.Pen {
-    if (p.flags & pg.PROPBORDERLESS == 0) return pens[sc.BACKGROUNDPEN];
-    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return pens[sc.BACKGROUNDPEN];
+/// bar would show as a stripe of the wrong colour. Both are the style's:
+/// the channel's background, or the title bar's - the inactive one's in a
+/// window that is not active - which is what a border is painted in.
+fn behind(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo, own_style: ?*const intuition.Style) graphics.Pen {
+    const it = ib.iface();
+    const dri = gi.draw_info;
+    const channel: graphics.Pen = @truncate(it.GetStyleAttr(dri, own_style, style.PART_TRACK, style.STATE_NORMAL, style.STYLE_Background));
+    if (p.flags & pg.PROPBORDERLESS == 0) return channel;
+    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return channel;
     // The window is the one being drawn into, not the one the gadget
     // says it belongs to: a bar that is a part of some larger gadget is
     // not on the window's own list and has no window of its own.
     const w: *_window.Window = @ptrCast(@alignCast(gi.window));
-    return if (w.flags & _window.WF_ACTIVE != 0) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
+    const part = if (w.flags & _window.WF_ACTIVE != 0) style.PART_TITLE else intuition.imageclass.PART_TITLE_INACTIVE;
+    return @truncate(it.GetStyleAttr(dri, own_style, part, style.STATE_NORMAL, style.STYLE_Background));
 }
 
 /// Drawn again, if it is in a window.

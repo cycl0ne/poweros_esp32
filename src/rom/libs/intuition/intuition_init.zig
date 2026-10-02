@@ -67,9 +67,13 @@ pub const LIBRARY_VERSION = 0;
 /// the parts of a gadget given as a tag list (SA_Style, GA_Style),
 /// DrawPart and GetStyleAttr, DrawInfo version 3, and frameiclass drawn
 /// from the style. 21: a style's background as a fill style - a gradient
-/// or a tile (STYLE_BackgroundFill).
-pub const LIBRARY_REVISION = 21;
-const BUILD_DATE = "01.10.2026";
+/// or a tile (STYLE_BackgroundFill). 22: everything intuition draws from
+/// the style - sysiclass, scroll bars, fields, window borders, the screen
+/// bar, menus, requesters - and StylePens for the classes on the disk.
+/// 23: hover and focus (GFLG_HOVERED, GFLG_FOCUSED), and SetStyle - a
+/// screen's style or the system's replaced while it is open.
+pub const LIBRARY_REVISION = 23;
+const BUILD_DATE = "02.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -120,10 +124,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.utility_base = @ptrCast(utility_lib);
     ib.graphics_base = @ptrCast(graphics_lib);
     ib.layers_base = @ptrCast(layers_lib);
-    // The look every part has where nothing else says. Without the memory
-    // for it a part is drawn from the fixed values `_style.Look` starts
-    // from, which is plain but no failure.
-    ib.default_style = @import("style/_style.zig").keep(ib, &@import("style/_style.zig").default_tags);
+    // The look every part has where nothing else says: constant data.
+    ib.default_style = @import("style/_style.zig").defaultStyle();
 
     // No screen is opened here: a machine with no display boots, and the
     // default screen opens the first time something asks for it.

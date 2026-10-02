@@ -228,7 +228,7 @@ fn draw(base: *Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, r.rast_port);
     defer saved.restore(gb, r.rast_port);
     const whole = gc.boxFor(gc.gadget(o), info);
-    support.fill(gb, r.rast_port, whole, info.draw_info.pens[intuition.screens.BACKGROUNDPEN]);
+    support.fill(gb, r.rast_port, whole, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, intuition.style.PART_MAIN));
     render.paint(base, own, info, r.rast_port, textBox(o, info), askSuper(base, cl, o, dtc.DTA_TopHoriz), askSuper(base, cl, o, dtc.DTA_TopVert));
 }
 

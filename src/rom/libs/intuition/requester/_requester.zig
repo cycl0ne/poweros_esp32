@@ -126,7 +126,7 @@ pub fn draw(ib: *IntuitionBase, w: *Window, req: *Requester) void {
         const saved = d.save(gb, rp);
         defer d.restore(gb, rp, saved);
         if (req.flags & rq.NOREQBACKFILL == 0) {
-            const fill = if (req.back_fill != 0) req.back_fill else w.screen.pens[sc.BACKGROUNDPEN];
+            const fill = if (req.back_fill != 0) req.back_fill else @as(graphics.Pen, @truncate(ib.iface().GetStyleAttr(&w.screen.draw_info, null, ic.PART_REQUESTER, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_Background)));
             d.box(gb, rp, 0, 0, req.width, req.height, fill);
         }
         if (req.image) |image| ib.iface().DrawImageState(rp, image, 0, 0, ic.IDS_NORMAL, &w.screen.draw_info);

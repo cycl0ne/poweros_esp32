@@ -55,6 +55,7 @@ const pointer = @import("pointer.zig");
 const _requester = @import("../requester/_requester.zig");
 const rq = sdk.intuition.requesters;
 const gadgetclass = @import("../classes/gadgetclass.zig");
+const _style = @import("../style/_style.zig");
 const gc = sdk.intuition.gadgetclass;
 const Object = sdk.intuition.Object;
 
@@ -131,6 +132,12 @@ pub const State = extern struct {
     help_y: i32 = -1,
     help_target: ?*anyopaque = null,
     help_code: usize = 0,
+    /// The gadget the pointer is over with nothing held, and its window:
+    /// the one marked `GFLG_HOVERED`.
+    hovered: ?*Object = null,
+    hover_window: ?*Window = null,
+    /// The gadget that has the input: the one marked `GFLG_FOCUSED`.
+    focused: ?*Object = null,
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -330,6 +337,7 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
     menus.forget(ib, w);
     if (st.mode == .verify and st.window == w) verify.drop(ib);
+    if (st.hover_window == w) unhover(ib);
     if (st.window == w) {
         if (st.mode == .active) abort(ib);
         st.window = null;
@@ -341,6 +349,8 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
 /// told it has lost it. Under the screen semaphore.
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
+    if (st.hovered == o) unhover(ib);
+    if (st.focused == o) focus(ib, null);
     if (st.mode == .active and st.active == o) {
         abort(ib);
         st.window = null;
@@ -367,6 +377,7 @@ fn abort(ib: *IntuitionBase) void {
     // already gone cannot leave a gadget pointer behind that the next
     // press would find.
     st.active = null;
+    focus(ib, null);
     const w = st.window orelse return;
     var gi = _gadget.infoFor(ib, w, o);
     var msg = gc.GpGoInactive{ .gadget_info = &gi, .abort = 1 };
@@ -518,6 +529,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
                 press(ib, e);
             } else if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
                 release(ib);
+                if (stateOf(ib).mode == .none) hover(ib);
             } else if (e.code == ie.IECODE_NOBUTTON) {
                 moved(ib);
             } else {
@@ -590,6 +602,8 @@ fn activateGadget(ib: *IntuitionBase, w: *Window, o: *Object) void {
         .termination = &termination,
         .mouse = .{ .x = 0, .y = 0 },
     };
+    // Marked before it is told, so that it draws itself focused.
+    focus(ib, o);
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) {
         st.mode = .active;
@@ -618,6 +632,7 @@ pub fn activateFor(ib: *IntuitionBase, w: *Window, o: *Object, requester: ?*sdk.
 fn finish(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination: i32) void {
     const st = stateOf(ib);
     st.active = null;
+    focus(ib, null);
     st.mode = .none;
     st.window = null;
     // Who it was, asked before it is told it is done: a group forgets
@@ -655,6 +670,7 @@ fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent)
     if (_gadget.reporter(ib, o, gadgetclass.GACT_IMMEDIATE)) |reported| {
         _ = _window.sendWith(ib, w, wn.IDCMP_GADGETDOWN, 0, reported);
     }
+    focus(ib, _gadget.innermost(ib, o));
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) {
         st.mode = .active;
@@ -823,10 +839,110 @@ fn moved(ib: *IntuitionBase) void {
         // A move with nothing held goes only to a window that asked to hear
         // the pointer over it. Without that a window listening for the class
         // at all would be told about every move anywhere on the screen.
-        else => if (ib.active_window) |w| {
-            if (w.flags & _window.WF_REPORTMOUSE != 0) _window.send(ib, w, wn.IDCMP_MOUSEMOVE, 0);
+        else => {
+            if (st.mode == .none) hover(ib);
+            if (ib.active_window) |w| {
+                if (w.flags & _window.WF_REPORTMOUSE != 0) _window.send(ib, w, wn.IDCMP_MOUSEMOVE, 0);
+            }
         },
     }
+}
+
+// --- hover and focus ----------------------------------------------------------------
+
+/// The gadget under the pointer marked hovered, the one it left unmarked.
+/// Only a mouse's pointer hovers: a finger is pressed or not there, and a
+/// gadget lit where a finger last lifted would stay lit with nobody
+/// pointing at it.
+///
+/// A move that stays inside the box of the gadget already hovered asks
+/// nothing; only leaving it asks the window's gadgets which is under the
+/// pointer now, which keeps the price of a move to a box test.
+fn hover(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    if (@as(*volatile u8, &ib.pointer.mouse).* == 0) return;
+    const s = screenAt(ib) orelse return unhover(ib);
+    if (overPanel(ib, s, st.x, st.y)) return unhover(ib);
+    const w = windowAt(ib, s, st.x, st.y) orelse return unhover(ib);
+    const x = st.x - w.left;
+    const y = st.y - w.top;
+    if (st.hovered) |o| {
+        if (st.hover_window == w and inBox(ib, w, o, x, y)) return;
+    }
+    const found = gadgetUnder(ib, w, x, y) orelse return unhover(ib);
+    if (found == st.hovered) return;
+    unhover(ib);
+    st.hovered = found;
+    st.hover_window = w;
+    marked(ib, w, found, gadgetclass.GFLG_HOVERED, true);
+}
+
+/// Nothing hovered any more.
+fn unhover(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const o = st.hovered orelse return;
+    const w = st.hover_window;
+    st.hovered = null;
+    st.hover_window = null;
+    if (w) |window| {
+        marked(ib, window, o, gadgetclass.GFLG_HOVERED, false);
+    } else {
+        gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_HOVERED;
+    }
+}
+
+/// A flag of a gadget's set or cleared, and the gadget drawn again when a
+/// style it is drawn from has anything to say about hovering: under the
+/// system's default alone it would draw the same pixels again.
+fn marked(ib: *IntuitionBase, w: *Window, o: *Object, flag: u32, on: bool) void {
+    const g = gadgetclass.gadgetOf(ib, o);
+    if (on) g.flags |= flag else g.flags &= ~flag;
+    const gi = _gadget.infoFor(ib, w, o);
+    if (_style.mentions(ib, g.style, gi.draw_info, sdk.intuition.style.STATE_HOVERED)) {
+        _gadget.render(ib, w, o, gc.GREDRAW_UPDATE);
+    }
+}
+
+/// Whether (x, y), in the window's coordinates, is inside a gadget's box.
+fn inBox(ib: *IntuitionBase, w: *Window, o: *Object, x: i32, y: i32) bool {
+    const g = gadgetclass.gadgetOf(ib, o);
+    const gi = _gadget.infoFor(ib, w, o);
+    const b = _gadget.boxIn(g, gi.domain_width, gi.domain_height);
+    const at_x = x - gi.domain_left;
+    const at_y = y - gi.domain_top;
+    return at_x >= b.left and at_y >= b.top and at_x < b.left + b.width and at_y < b.top + b.height;
+}
+
+/// The enabled gadget a press at (x, y) would reach - the member of a
+/// group, not the group - or null. A requester up offers only its own
+/// gadgets, and only over itself; a gadget standing for one of the
+/// window's own border gadgets is not hovered, as they are not.
+fn gadgetUnder(ib: *IntuitionBase, w: *Window, x: i32, y: i32) ?*Object {
+    const st = stateOf(ib);
+    var list = w.gadgets;
+    if (w.first_request) |req| {
+        const layer = ib.layers_base.WhichLayer(w.screen.layer_info, st.x, st.y);
+        if (req.layer == null or layer != req.layer) return null;
+        list = req.gadgets;
+    } else switch (partAt(w, x, y)) {
+        .inside, .border, .drag => {},
+        else => return null,
+    }
+    return switch (_gadget.hitList(ib, w, list, x, y)) {
+        .gadget => |o| if (sysPartOf(ib, o) != null) null else _gadget.innermost(ib, o),
+        else => null,
+    };
+}
+
+/// The gadget that has the input marked focused, the one before unmarked.
+/// Nothing is drawn here: a gadget draws itself as it goes active and as
+/// it goes inactive, and the flag is set before the first and cleared
+/// before the second.
+fn focus(ib: *IntuitionBase, o: ?*Object) void {
+    const st = stateOf(ib);
+    if (st.focused) |old| gadgetclass.gadgetOf(ib, old).flags &= ~gadgetclass.GFLG_FOCUSED;
+    st.focused = o;
+    if (o) |new| gadgetclass.gadgetOf(ib, new).flags |= gadgetclass.GFLG_FOCUSED;
 }
 
 /// The menu and middle buttons: told to the active window, wherever the

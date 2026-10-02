@@ -128,11 +128,15 @@ pub const IntuitionBase = extern struct {
     /// IDCMP_VANILLAKEY through it. Null without it, and then keys are only
     /// ever IDCMP_RAWKEY.
     keymap_base: ?*sdk.interface.keymap.KeymapBase,
-    /// The system's default style, read by the init: what every part looks
-    /// like where neither a gadget's own style nor its screen's says.
-    /// Null only when there was no memory for it, and then every part is
-    /// drawn from `style/_style.zig`'s fixed values.
-    default_style: ?*sdk.intuition.Style,
+    /// The system's default style: what every part looks like where
+    /// neither a gadget's own style nor its screen's says. Read by the
+    /// compiler into the ROM's constant data, so it is never allocated
+    /// and never freed.
+    default_style: ?*const sdk.intuition.Style,
+    /// The system's style (`SetStyle` with no screen): asked after a
+    /// screen's own and before the default, so it changes every screen at
+    /// once. Null until one is given; replaced under Forbid.
+    system_style: ?*sdk.intuition.Style = null,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

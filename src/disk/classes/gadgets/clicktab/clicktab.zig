@@ -245,7 +245,8 @@ fn hitAt(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classusr
 /// row's line.
 fn drawTab(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo, at: gc.Box, which: u32, line: i32, baseline: i32) void {
     const gb = base.graphics_base;
-    const pens = dri.pens;
+    const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const front = which == own.current;
     const held = own.pressed == which and own.over != 0;
     const edge = support.mixPens(pens[sc.SHADOWPEN], pens[sc.BACKGROUNDPEN], 9);
@@ -293,7 +294,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(g, info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     support.fill(gb, rp, b, pens[sc.BACKGROUNDPEN]);

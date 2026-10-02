@@ -127,7 +127,7 @@ pub fn boxAt(grid: Grid, area: gc.Box, x: i32, y: i32) u32 {
 
 /// One box drawn, picked or not, at its place in `area` (window
 /// coordinates).
-fn drawBox(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, grid: Grid, area: gc.Box, pens: [*]const Pen, index: u32) void {
+fn drawBox(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, grid: Grid, area: gc.Box, pens: [*]const Pen, ground: Pen, index: u32) void {
     const gb = base.graphics_base;
     const cell_w = @divTrunc(area.width, @as(i32, @intCast(grid.columns)));
     const cell_h = @divTrunc(area.height, @as(i32, @intCast(grid.rows)));
@@ -138,7 +138,7 @@ fn drawBox(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: 
         .height = cell_h,
     };
     // The cell's ground, then the colour a little in from its edges.
-    support.fill(gb, rp, cell, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    support.fill(gb, rp, cell, ground);
     if (index == own.color) support.drawFrame(base.intuition_base, own.pick_frame.?, rp, cell, ic.IDS_SELECTED, info.draw_info);
     const in: i32 = if (index == own.color) 2 else 1;
     support.fill(gb, rp, .{ .left = cell.left + in + 1, .top = cell.top + in, .width = cell.width - 2 * (in + 1), .height = cell.height - 2 * in }, pens[index]);
@@ -156,10 +156,11 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const pens = have.pens orelse return;
     const inside = room(base, own, .{ .width = b.width, .height = b.height }, info.draw_info);
     const area = gc.Box{ .left = b.left + inside.left, .top = b.top + inside.top, .width = inside.width, .height = inside.height };
-    support.fill(gb, r.rast_port, area, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    const ground = support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, intuition.style.PART_MAIN);
+    support.fill(gb, r.rast_port, area, ground);
     const grid = gridFor(have.count, area.width, area.height) orelse return;
     var index: u32 = 0;
-    while (index < grid.shown) : (index += 1) drawBox(base, own, r.rast_port, info, grid, area, pens, index);
+    while (index < grid.shown) : (index += 1) drawBox(base, own, r.rast_port, info, grid, area, pens, ground, index);
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, r.rast_port, b, info.block_pen);
 }
 
@@ -180,8 +181,9 @@ fn pick(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, 
     defer ib.ReleaseGIRPort(rp);
     const saved = support.Saved.of(base.graphics_base, rp);
     defer saved.restore(base.graphics_base, rp);
-    if (was < grid.shown) drawBox(base, own, rp, info, grid, area, pens, was);
-    if (index < grid.shown) drawBox(base, own, rp, info, grid, area, pens, index);
+    const ground = support.background(ib, info.draw_info, gc.gadget(o).style, intuition.style.PART_MAIN);
+    if (was < grid.shown) drawBox(base, own, rp, info, grid, area, pens, ground, was);
+    if (index < grid.shown) drawBox(base, own, rp, info, grid, area, pens, ground, index);
 }
 
 /// The box under the pointer, in the gadget's box; null with no grid.

@@ -63,7 +63,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const saved = d.save(gb, rp);
     defer d.restore(gb, rp, saved);
     // Drawn last, over everything the gadget shows, whichever way it ends.
-    defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
+    defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) gadgetclass.ghost(ib, o, gi_, rp, b.left, b.top, b.width, b.height);
 
     const drawn = gadgetclass.drawnState(g, state(g, gi));
     defer gadgetclass.drawHighlightBox(ib, g, rp, b.left, b.top, b.width, b.height);
@@ -76,6 +76,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
             .state = drawn,
             .draw_info = dri,
             .dimensions = .{ .width = b.width, .height = b.height },
+            .style_state = gc.styleStates(g.flags),
         };
         _ = it.SendMessage(frame, @ptrCast(&draw));
     }

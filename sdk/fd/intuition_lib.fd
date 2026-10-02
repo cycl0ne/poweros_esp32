@@ -367,4 +367,14 @@ void DrawPart(?*graphics.RastPort rp, ?*const intuition.DrawInfo draw_info, ?*co
 /// number. What a class asks when it draws something of its own - the pen
 /// for its text - in the style's colours.
 usize GetStyleAttr(?*const intuition.DrawInfo draw_info, ?*const intuition.Style own, u32 part, u32 state, utility.Tag attr)
+/// The screen's pens, NUMDRIPENS of them, with the six that stand for a
+/// gadget's look taken from a part of the style: its background and text
+/// at rest, its fill and fill text from the part pressed, its shine and
+/// shadow. What a class that draws with pens asks for instead of the
+/// screen's own, so that a style reaches it without its drawing changing.
+void StylePens(?*const intuition.DrawInfo draw_info, ?*const intuition.Style own, u32 part, [*]graphics.Pen pens)
+/// A screen's style, or with no screen the system's, replaced while it is
+/// open, and every window it reaches drawn again in it. False when there
+/// was no memory for it.
+bool SetStyle(?*intuition.Screen screen, ?[*]const utility.TagItem tags)
 ##end

@@ -135,6 +135,8 @@ pub const LVO = struct {
     pub const SetPrefs = libraries.lvo(117);
     pub const DrawPart = libraries.lvo(118);
     pub const GetStyleAttr = libraries.lvo(119);
+    pub const StylePens = libraries.lvo(120);
+    pub const SetStyle = libraries.lvo(121);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -256,6 +258,8 @@ pub const Fn = struct {
     pub const SetPrefs = *const fn (*IntuitionBase, *const intuition.Preferences, u32, bool) callconv(.c) *intuition.Preferences;
     pub const DrawPart = *const fn (*IntuitionBase, ?*graphics.RastPort, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, u32, *const graphics.Rect, ?*graphics.Rect) callconv(.c) void;
     pub const GetStyleAttr = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, utility.Tag) callconv(.c) usize;
+    pub const StylePens = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, [*]graphics.Pen) callconv(.c) void;
+    pub const SetStyle = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -964,5 +968,21 @@ pub const IntuitionBase = opaque {
     /// for its text - in the style's colours.
     pub fn GetStyleAttr(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, attr: utility.Tag) usize {
         return libraries.call(self, LVO.GetStyleAttr, Fn.GetStyleAttr, .{ draw_info, own, part, state, attr });
+    }
+
+    /// The screen's pens, NUMDRIPENS of them, with the six that stand for a
+    /// gadget's look taken from a part of the style: its background and text
+    /// at rest, its fill and fill text from the part pressed, its shine and
+    /// shadow. What a class that draws with pens asks for instead of the
+    /// screen's own, so that a style reaches it without its drawing changing.
+    pub fn StylePens(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, pens: [*]graphics.Pen) void {
+        return libraries.call(self, LVO.StylePens, Fn.StylePens, .{ draw_info, own, part, pens });
+    }
+
+    /// A screen's style, or with no screen the system's, replaced while it is
+    /// open, and every window it reaches drawn again in it. False when there
+    /// was no memory for it.
+    pub fn SetStyle(self: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.SetStyle, Fn.SetStyle, .{ screen, tags });
     }
 };

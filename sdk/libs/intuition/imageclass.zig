@@ -88,6 +88,11 @@ pub const IA_Recessed = IA_Dummy + 0x15;
 pub const IA_EdgesOnly = IA_Dummy + 0x17;
 /// FRAME_DEFAULT, FRAME_BUTTON or FRAME_RIDGE.
 pub const IA_FrameType = IA_Dummy + 0x1B;
+/// frameiclass: the part of a style the frame is drawn as, in place of
+/// the one its frame type is (`PART_FRAME_PLAIN` and its like). What lets a
+/// window's border be a part of its own while being drawn by the same
+/// class as every other frame.
+pub const IA_StylePart = IA_Dummy + 0x1C;
 /// One pixel of shine above and left, one of shadow below and right.
 pub const FRAME_DEFAULT: u32 = 0;
 /// The same with the sides two pixels thick: a button.
@@ -105,6 +110,30 @@ pub const FRAME_ICONDROPBOX: u32 = 3;
 /// exactly and which otherwise look like the part they fall back to.
 pub const PART_FRAME_PLAIN: u32 = style.classPart(style.PART_MAIN, 1);
 pub const PART_FRAME_DROPBOX: u32 = style.classPart(style.PART_GROUP, 1);
+
+/// The parts sysiclass draws as. A check box's box and a radio button's
+/// ring are bodies of their own (they look like `PART_MAIN` unless a
+/// style names them), the tick and the dot marks of their own (like
+/// `PART_INDICATOR`), and a window's border gadgets are its title bar's,
+/// with a part of their own for a window that is not active.
+pub const PART_CHECK: u32 = style.classPart(style.PART_MAIN, 2);
+pub const PART_RADIO: u32 = style.classPart(style.PART_MAIN, 3);
+pub const PART_CHECKMARK: u32 = style.classPart(style.PART_INDICATOR, 1);
+pub const PART_RADIOMARK: u32 = style.classPart(style.PART_INDICATOR, 2);
+pub const PART_TITLE_INACTIVE: u32 = style.classPart(style.PART_TITLE, 1);
+/// The box a line of text is typed into (strgclass): a body of its own,
+/// focused while it is being edited.
+pub const PART_FIELD: u32 = style.classPart(style.PART_MAIN, 4);
+/// The frame round a window, outside its border and inside it.
+pub const PART_WINDOW_BORDER: u32 = style.classPart(style.PART_TITLE, 2);
+/// A screen's title bar, and the menu bar it turns into: its ground, its
+/// writing, and the line under it in its border colour.
+pub const PART_SCREEN_BAR: u32 = style.classPart(style.PART_TITLE, 3);
+/// A menu's panel: its ground, its edge and its writing.
+pub const PART_MENU: u32 = style.classPart(style.PART_MAIN, 5);
+/// A requester's ground and writing; an easy requester's ground is a
+/// pattern of its shine on its background.
+pub const PART_REQUESTER: u32 = style.classPart(style.PART_GROUP, 2);
 
 // --- sysiclass: the system's own images ---------------------------------------
 
@@ -211,6 +240,10 @@ pub const ImpDraw = extern struct {
     draw_info: ?*DrawInfo = null,
     /// For IM_DRAWFRAME only.
     dimensions: Dimensions = .{},
+    /// The style states `state` cannot say - `STATE_HOVERED`,
+    /// `STATE_FOCUSED` - added to the ones it does by an image drawn from a
+    /// style. `gadgetclass.styleStates` reads them from a gadget's flags.
+    style_state: u32 = 0,
 };
 
 /// IM_FRAMEBOX: how big a frame has to be to sit comfortably around

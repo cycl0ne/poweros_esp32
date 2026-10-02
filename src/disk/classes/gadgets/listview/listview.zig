@@ -296,7 +296,8 @@ fn isDisabled(base: *gadgets.Base, own: *const Data, node: *exec.Node, line: u32
 /// will, else its name; ghosted when disabled.
 fn drawLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, origin: gc.Box, parts: Parts, line: u32, node: ?*exec.Node) void {
     const gb = base.graphics_base;
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(base.intuition_base, info.draw_info, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const row: i32 = @intCast(line - own.top);
     // The whole width inside the frame, margins included, so a selected
     // line's ground reaches the frame.
@@ -370,7 +371,7 @@ fn drawLines(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.Ra
         .top = b.top + parts.lines.top + used,
         .width = parts.lines.width + 2 * text_margin,
         .height = parts.lines.height - used,
-    }, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    }, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN));
 }
 
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {

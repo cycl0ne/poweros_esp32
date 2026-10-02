@@ -260,6 +260,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, r.rast_port);
     defer saved.restore(gb, r.rast_port);
     _ = placeInner(base, own, o, info);
+    support.passMarks(o, own.inner.?);
     _ = base.intuition_base.SendMessage(own.inner.?, @ptrCast(r));
     drawArrows(base, own, o, r.rast_port, info);
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, r.rast_port, gc.boxFor(gc.gadget(o), info), info.block_pen);

@@ -33,7 +33,7 @@ const commands = [_][]const u8{
     "backlight",    "rtg",       "showinfo", "setmap",        "mount",
     "showconfig",   "date",      "setdate",  "fontprefs",     "fixfonts",
     "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",
+    "diskchange",   "styleprefs",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",  "gfx",     "anim",
@@ -164,6 +164,7 @@ pub const files = [_]File{
     // its value to start with.
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
     .{ .disk = "prefs/env-archive/Sys/font.prefs", .source = "prefs/env-archive/Sys/font.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/style.prefs", .source = "prefs/env-archive/Sys/style.prefs" },
     .{ .disk = "prefs/env-archive/Sys/net/timeserver", .source = "prefs/env-archive/Sys/net/timeserver" },
     .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
     .{ .disk = "prefs/env-archive/Sys/net/hostname", .source = "prefs/env-archive/Sys/net/hostname" },

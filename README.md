@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every library, device and resource call |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [network](sdk/docs/guides/network.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [network](sdk/docs/guides/network.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -72,7 +72,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   is none; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 35 commands in `C:`, test
+  a shell with scripts and resident commands, 36 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
   `LIBS:iffparse.library` reads and writes IFF, the shape a picture, a
   piece of text or a sound is kept in when one program hands it to
@@ -115,10 +115,21 @@ Espressif's QEMU. The ESP32-P4 is next.
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
   any display - a layout in a frame with a title in its edge groups the
-  settings of a window. Frames are drawn from a style: the look of each
-  part of a gadget in each state, given as a tag list that a screen
+  settings of a window, a grid lines labelled fields up in columns, a row
+  too narrow for its gadgets wraps them onto the next line, and a child
+  sits at the start, the middle or the end of its room. Everything intuition draws - frames, buttons,
+  fields, scroll bars, check boxes, radio buttons, window borders and title
+  bars, the screen's bar, menus and requesters, and the disk's gadget
+  classes with them, down to a list's chosen line and a gauge's level - is
+  drawn from a style: the look of each
+  part of a gadget in each state - pressed, checked, disabled, under the
+  pointer, holding the keyboard - given as a tag list that a screen
   carries for all its windows and a single gadget may override, so a
   screen can look different with no program changed (`C:test/Styles`).
+  The system's own style comes from `ENV:Sys/style.prefs`, a line per
+  part and state, which `C:StylePrefs` hands over at boot and again
+  whenever it is run: every open window is drawn again in it. See the
+  [styles guide](sdk/docs/guides/styles.md).
   More gadget classes on the disk in
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of

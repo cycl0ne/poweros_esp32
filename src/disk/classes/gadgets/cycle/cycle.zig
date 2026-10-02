@@ -127,7 +127,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(g, gi);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const selected = g.flags & gc.GFLG_SELECTED != 0;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);

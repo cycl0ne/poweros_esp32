@@ -98,8 +98,7 @@ const d = @import("../classes/draw.zig");
 ///     &box, &inside);
 /// ```
 pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const sc.DrawInfo, own: ?*const style.Style, part: u32, state: u32, flags: u32, box: *const Rect, content: ?*Rect) void {
-    const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
-    const look = _style.look(ib, own, screen, part, state);
+    const look = _style.look(ib, own, draw_info, part, state);
 
     var kind = look.get(.border);
     if (flags & style.DPF_INVERT != 0) kind = switch (kind) {
@@ -150,7 +149,7 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
     // the part's opacity on every stop of it, and taken off again before the
     // border: a flat border is a fill too, and must stay its own colour.
     var gradient: graphics.FillStyle = undefined;
-    const fill_style: ?*const graphics.FillStyle = if (look.background_fill) |given| faded: {
+    const fill_style: ?*const graphics.FillStyle = if (look.backgroundFill()) |given| faded: {
         gradient = given.*;
         if (opacity < 255) {
             for (&gradient.stops) |*stop| {

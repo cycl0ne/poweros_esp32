@@ -199,7 +199,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const rp = r.rast_port;
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(gc.gadget(o), info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const front = if (own.has_front != 0) own.front else pens[sc.TEXTPEN];
     const back = if (own.has_back != 0) own.back else pens[sc.BACKGROUNDPEN];
     const saved = support.Saved.of(gb, rp);

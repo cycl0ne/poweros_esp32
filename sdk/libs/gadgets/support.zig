@@ -17,6 +17,42 @@ const Object = classusr.Object;
 const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 
+/// The pens a class draws a gadget in: the screen's, with the six that
+/// stand for a look taken from a part of the style - the gadget's own
+/// style asked first (`StylePens`). With `fill_part`, the fill pen and the
+/// fill text pen come from that part instead, at rest: a list's selected
+/// line (`PART_SELECTION`), a bar's level (`PART_INDICATOR`). Under the
+/// system's default style every pen is the screen's own, so a class that
+/// draws with these draws exactly as it did.
+pub fn pensFor(ib: *IntuitionBase, dri: *const sc.DrawInfo, own: ?*const intuition.Style, part: u32, fill_part: ?u32) [sc.NUMDRIPENS]Pen {
+    const style = intuition.style;
+    var pens: [sc.NUMDRIPENS]Pen = undefined;
+    ib.StylePens(dri, own, part, &pens);
+    if (fill_part) |fp| {
+        pens[sc.FILLPEN] = @truncate(ib.GetStyleAttr(dri, own, fp, style.STATE_NORMAL, style.STYLE_Background));
+        pens[sc.FILLTEXTPEN] = @truncate(ib.GetStyleAttr(dri, own, fp, style.STATE_NORMAL, style.STYLE_TextPen));
+    }
+    return pens;
+}
+
+/// The ground a gadget is drawn on: its part's background at rest, the
+/// gadget's own style asked first. Under the system's default style it is
+/// the screen's background pen.
+pub fn background(ib: *IntuitionBase, dri: *const sc.DrawInfo, own: ?*const intuition.Style, part: u32) Pen {
+    const style = intuition.style;
+    return @truncate(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_Background));
+}
+
+/// What intuition marks on a gadget - the pointer over it, the input in
+/// it (`GFLG_HOVERED`, `GFLG_FOCUSED`) - passed on to a gadget of its own
+/// that draws a part of it, before that one is asked to draw: intuition
+/// marks the gadget it knows, and the one inside is the class's.
+pub fn passMarks(o: *Object, inner: *Object) void {
+    const marks = gc.GFLG_HOVERED | gc.GFLG_FOCUSED;
+    const held = gc.gadget(inner);
+    held.flags = (held.flags & ~marks) | (gc.gadget(o).flags & marks);
+}
+
 /// Drawn again, if it is in a window: a change of state that shows.
 pub fn redraw(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const rp = ib.ObtainGIRPort(gi) orelse return;

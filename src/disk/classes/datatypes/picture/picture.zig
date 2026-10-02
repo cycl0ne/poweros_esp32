@@ -337,7 +337,7 @@ fn render(base: *Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = gadgets.support.Saved.of(gb, r.rast_port);
     defer saved.restore(gb, r.rast_port);
     const box = gc.boxFor(gc.gadget(o), info);
-    paint(base, own, r.rast_port, box, askSuper(base, cl, o, dtc.DTA_TopHoriz), askSuper(base, cl, o, dtc.DTA_TopVert), info.draw_info.pens[sc.BACKGROUNDPEN]);
+    paint(base, own, r.rast_port, box, askSuper(base, cl, o, dtc.DTA_TopHoriz), askSuper(base, cl, o, dtc.DTA_TopVert), gadgets.support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, intuition.style.PART_MAIN));
 }
 
 /// How much of the picture is seen in the box it was given, which is

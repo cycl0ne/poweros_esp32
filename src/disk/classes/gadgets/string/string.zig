@@ -122,6 +122,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const b = gc.boxFor(gc.gadget(o), info);
     support.drawFrame(ib, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info);
     _ = placeInner(base, own, o, info);
+    support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(base.graphics_base, r.rast_port, b, info.block_pen);
 }

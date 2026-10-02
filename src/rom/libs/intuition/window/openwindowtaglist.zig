@@ -426,7 +426,11 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
 
     var ok = true;
     if (flags & WF_BORDERLESS == 0) {
-        const edges = [_]TagItem{ .{ .tag = ic.IA_EdgesOnly, .data = 1 }, .{} };
+        const edges = [_]TagItem{
+            .{ .tag = ic.IA_EdgesOnly, .data = 1 },
+            .{ .tag = ic.IA_StylePart, .data = ic.PART_WINDOW_BORDER },
+            .{},
+        };
         w.frame = it.NewObjectTagList(ib.frame_class, null, &edges);
         if (w.frame == null) ok = false;
         if (flags & WF_CLOSE != 0) {

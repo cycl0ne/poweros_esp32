@@ -4,8 +4,9 @@
 //! An imageclass image whose look is its screen's style: each frame kind is
 //! a part of a style (`ic.PART_FRAME_PLAIN`, `style.PART_MAIN`,
 //! `style.PART_GROUP`, `ic.PART_FRAME_DROPBOX`) and the image's state is
-//! the part's state, so a frame is drawn by `DrawPart` and looks however
-//! the style says that part looks. `IA_Recessed` turns its border the other
+//! the part's state - with the hovered and focused states a gadget adds
+//! (`ImpDraw.style_state`) - so a frame is drawn by `DrawPart` and looks
+//! however the style says that part looks. `IA_Recessed` turns its border the other
 //! way and `IA_EdgesOnly` leaves its inside alone. `IM_DRAWFRAME` draws it
 //! to the dimensions in the message rather than the image's own, which is
 //! what lets one frame object serve every window border and every button,
@@ -38,12 +39,17 @@ const _style = @import("../style/_style.zig");
 
 /// frameiclass's part of an object.
 pub const Data = extern struct {
-    /// FRAMEF_RECESSED, FRAMEF_EDGES_ONLY.
+    /// FRAMEF_RECESSED, FRAMEF_EDGES_ONLY, FRAMEF_PART.
     flags: u32 = 0,
     frame_type: u32 = ic.FRAME_DEFAULT,
+    /// `IA_StylePart`, when FRAMEF_PART says one was given. A flag rather
+    /// than a value meaning none, because an object's data starts cleared
+    /// and 0 is a part.
+    part: u32 = 0,
 };
 const FRAMEF_RECESSED: u32 = 1 << 0;
 const FRAMEF_EDGES_ONLY: u32 = 1 << 1;
+const FRAMEF_PART: u32 = 1 << 2;
 
 const pack_table = [_]u32{
     ic.IA_Dummy,
@@ -63,10 +69,11 @@ pub fn make(ib: *IntuitionBase) ?*Class {
     return cl;
 }
 
-/// The part of a style a frame kind is drawn as. A kind this class does
-/// not know is a plain frame.
-fn partOf(frame_type: u32) u32 {
-    return switch (frame_type) {
+/// The part of a style a frame is drawn as: the one `IA_StylePart` named,
+/// or its kind's. A kind this class does not know is a plain frame.
+fn partOf(fd: *const Data) u32 {
+    if (fd.flags & FRAMEF_PART != 0) return fd.part;
+    return switch (fd.frame_type) {
         ic.FRAME_BUTTON => style.PART_MAIN,
         ic.FRAME_RIDGE => style.PART_GROUP,
         ic.FRAME_ICONDROPBOX => ic.PART_FRAME_DROPBOX,
@@ -84,7 +91,7 @@ fn frameBox(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpFrameBox) us
         // box large enough that nothing is cut short.
         const probe = graphics.Rect{ .max_x = 4096, .max_y = 4096 };
         var inside: graphics.Rect = undefined;
-        ib.iface().DrawPart(null, msg.draw_info, null, partOf(fd.frame_type), style.STATE_NORMAL, 0, &probe, &inside);
+        ib.iface().DrawPart(null, msg.draw_info, null, partOf(fd), style.STATE_NORMAL, 0, &probe, &inside);
         msg.frame.width = msg.contents.width + probe.width() - inside.width();
         msg.frame.height = msg.contents.height + probe.height() - inside.height();
     }
@@ -107,8 +114,15 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     if (fd.flags & FRAMEF_RECESSED != 0) flags |= style.DPF_INVERT;
     if (fd.flags & FRAMEF_EDGES_ONLY != 0) flags |= style.DPF_EDGES_ONLY;
     const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + w, .max_y = y + h };
-    ib.iface().DrawPart(msg.rast_port, msg.draw_info, null, partOf(fd.frame_type), _style.statesOfImage(msg.state), flags, &box, null);
+    ib.iface().DrawPart(msg.rast_port, msg.draw_info, null, partOf(fd), _style.statesOfImage(msg.state) | msg.style_state, flags, &box, null);
     return 1;
+}
+
+/// `IA_StylePart`, when the list has it.
+fn takePart(ib: *IntuitionBase, fd: *Data, tags: ?[*]const TagItem) void {
+    const item = ib.utility_base.FindTagItem(ic.IA_StylePart, tags) orelse return;
+    fd.part = @truncate(item.data);
+    fd.flags |= FRAMEF_PART;
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
@@ -123,13 +137,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const made = it.SendSuperMessage(cl, o, msg);
             if (made == 0) return 0;
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
-            _ = ib.utility_base.PackStructureTags(classes.instData(Data, cl, @ptrFromInt(made)), &pack_table, new.attr_list);
+            const fd = classes.instData(Data, cl, @ptrFromInt(made));
+            _ = ib.utility_base.PackStructureTags(fd, &pack_table, new.attr_list);
+            takePart(ib, fd, new.attr_list);
             return made;
         },
         classusr.OM_SET => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             _ = it.SendSuperMessage(cl, o, msg);
-            _ = ib.utility_base.PackStructureTags(classes.instData(Data, cl, o orelse return 0), &pack_table, set.attr_list);
+            const fd = classes.instData(Data, cl, o orelse return 0);
+            _ = ib.utility_base.PackStructureTags(fd, &pack_table, set.attr_list);
+            takePart(ib, fd, set.attr_list);
             // Any of its attributes may change how it looks.
             return 1;
         },

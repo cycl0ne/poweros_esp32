@@ -155,7 +155,8 @@ fn drawEntry(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
     const rp = msg.rast_port.?;
     const node: *exec.Node = @ptrCast(@alignCast(object.?));
     const entry: *Entry = @fieldParentPtr("node", node);
-    const pens = msg.draw_info.?.pens;
+    const styled = sdk.gadgets.support.pensFor(s.ib, msg.draw_info.?, null, intuition.style.PART_MAIN, intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const selected = msg.state == lv.LVR_SELECTED or msg.state == lv.LVR_SELECTEDDISABLED;
 
     const ground = [_]TagItem{

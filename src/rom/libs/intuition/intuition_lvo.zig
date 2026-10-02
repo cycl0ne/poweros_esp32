@@ -139,6 +139,8 @@ const GetDefPrefs = @import("prefs/getdefprefs.zig").GetDefPrefs;
 const SetPrefs = @import("prefs/setprefs.zig").SetPrefs;
 const DrawPart = @import("style/drawpart.zig").DrawPart;
 const GetStyleAttr = @import("style/getstyleattr.zig").GetStyleAttr;
+const StylePens = @import("style/stylepens.zig").StylePens;
+const SetStyle = @import("style/setstyle.zig").SetStyle;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -255,6 +257,8 @@ const contract_files = [_][]const u8{
     @embedFile("prefs/setprefs.zig"),
     @embedFile("style/drawpart.zig"),
     @embedFile("style/getstyleattr.zig"),
+    @embedFile("style/stylepens.zig"),
+    @embedFile("style/setstyle.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -605,6 +609,12 @@ fn lvoDrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const i
 fn lvoGetStyleAttr(ib: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, attr: utility.Tag) callconv(.c) usize {
     return GetStyleAttr(ib, draw_info, own, part, state, attr);
 }
+fn lvoStylePens(ib: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, pens: [*]graphics.Pen) callconv(.c) void {
+    StylePens(ib, draw_info, own, part, pens);
+}
+fn lvoSetStyle(ib: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) bool {
+    return SetStyle(ib, @ptrCast(@alignCast(screen)), tags);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -728,6 +738,8 @@ pub const vectors = [_]*const anyopaque{
     // Styles
     vec(lvoDrawPart),
     vec(lvoGetStyleAttr),
+    vec(lvoStylePens),
+    vec(lvoSetStyle),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

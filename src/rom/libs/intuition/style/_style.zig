@@ -7,13 +7,21 @@
 //! first value met for a part, a state and a property is the one kept,
 //! `TAG_MORE` included. Drawing never walks a tag list again.
 //!
-//! **Finding a property** (`look`) asks up to three kept styles - a gadget's
-//! own, its screen's, the system's default - in this order:
+//! **Finding a property** (`look`) asks up to four kept styles - a gadget's
+//! own, its screen's, the system's (`SetStyle` with no screen), the
+//! system's default - in this order:
 //!
 //! 1. the most particular state first: the exact combination of states,
 //!    then each single state by `style.state_order`, then normal;
-//! 2. for each state, the gadget's, then the screen's, then the default;
+//! 2. for each state, the gadget's, then the screen's, then the system's,
+//!    then the default;
 //! 3. within each, the exact part, then the part it falls back to.
+//!
+//! **A screen's style and the system's can be replaced while others draw**
+//! (`SetStyle`). So `look` reads them under Forbid, from the DrawInfo
+//! rather than from a pointer its caller took earlier, and copies out all
+//! it found - a fill style too - before it lets go; the old style is freed
+//! after the new one is in place, under the same Forbid.
 //!
 //! Every property is found on its own, so a list that gives a pressed
 //! button a colour and nothing else leaves its border to whatever the
@@ -218,6 +226,16 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
     return @ptrCast(kept);
 }
 
+/// Whether a list names any property at all: a list that does not is no
+/// style, and `keep` answers null for it as it does for no memory.
+pub fn names(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
+    var walk: ?[*]const TagItem = tags;
+    while (ib.utility_base.NextTagItem(&walk)) |item| {
+        if (propsOf(item.tag) != null) return true;
+    }
+    return false;
+}
+
 /// Give back what `keep` made. Null is allowed.
 pub fn drop(ib: *IntuitionBase, kept: ?*style.Style) void {
     if (kept) |k| ib.sys_base.FreeVec(k);
@@ -232,8 +250,16 @@ pub const Look = struct {
         break :blk v;
     },
     rgb: u32 = 0,
-    /// The background, when it was given as a fill style.
-    background_fill: ?*const graphics.FillStyle = null,
+    /// The background, when it was given as a fill style: a copy, and the
+    /// style's own, which stays valid only while that style is in place.
+    has_fill: bool = false,
+    fill: graphics.FillStyle = undefined,
+    fill_source: ?*const graphics.FillStyle = null,
+
+    /// The background's fill style, or null when it is a colour.
+    pub fn backgroundFill(l: *const Look) ?*const graphics.FillStyle {
+        return if (l.has_fill) &l.fill else null;
+    }
 
     pub fn get(l: *const Look, p: Prop) u32 {
         return l.values[@intFromEnum(p)];
@@ -260,12 +286,25 @@ fn entryOf(kept: *const Kept, part: u32, states: u32) ?*const Entry {
 /// this file.
 ///
 /// INPUTS:
-/// - `ib` - the library, for the default style.
+/// - `ib` - the library, for the system's style and the default.
 /// - `own` - a gadget's own style, or null.
-/// - `screen` - its screen's, or null.
+/// - `draw_info` - its screen's, for the screen's style; or null.
 /// - `part` - the part.
 /// - `states` - the states it is in.
-pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const style.Style, part: u32, states: u32) Look {
+pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, part: u32, states: u32) Look {
+    ib.sys_base.Forbid();
+    defer ib.sys_base.Permit();
+    const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
+    var result = lookIn(.{ own, screen, ib.system_style, ib.default_style }, part, states);
+    if (result.fill_source) |source| {
+        result.fill = source.*;
+        result.has_fill = true;
+    }
+    return result;
+}
+
+/// `look`'s search through the styles in the order they are asked.
+fn lookIn(layers: [4]?*const style.Style, part: u32, states: u32) Look {
     var result = Look{};
     var have: u32 = 0;
 
@@ -285,7 +324,6 @@ pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const 
     asks[ask_count] = style.STATE_NORMAL;
     ask_count += 1;
 
-    const layers = [_]?*const style.Style{ own, screen, ib.default_style };
     const base = part & style.PART_BASE_MASK;
     const parts = [_]u32{ part, base };
     const part_count: usize = if (base != part) 2 else 1;
@@ -301,7 +339,7 @@ pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const 
                 result.rgb = (result.rgb & ~take) | (e.rgb & take);
                 const background: u32 = @as(u32, 1) << @intFromEnum(Prop.background);
                 if (take & background != 0) {
-                    result.background_fill = if (e.fill & background != 0) kept.fillAt(e.values[@intFromEnum(Prop.background)]) else null;
+                    result.fill_source = if (e.fill & background != 0) kept.fillAt(e.values[@intFromEnum(Prop.background)]) else null;
                 }
                 have |= take;
                 if (have == all_props) return result;
@@ -309,6 +347,21 @@ pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const 
         }
     }
     return result;
+}
+
+/// Whether any of the styles names `state` for any part: whether a gadget
+/// can look different in it at all. Under the system's default alone no
+/// gadget is drawn again for being hovered, since nothing would change.
+pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, state: u32) bool {
+    ib.sys_base.Forbid();
+    defer ib.sys_base.Permit();
+    const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
+    const layers = [_]?*const style.Style{ own, screen, ib.system_style, ib.default_style };
+    for (layers) |maybe| {
+        const kept: *const Kept = @ptrCast(@alignCast(maybe orelse continue));
+        for (kept.all()) |e| if (e.states & state != 0) return true;
+    }
+    return false;
 }
 
 /// The state bits an image state stands for. `IDS_SELECTED` is pressed:
@@ -324,13 +377,64 @@ pub fn statesOfImage(ids: u32) u32 {
 
 // --- the system's default ---------------------------------------------------
 
+/// The system's default style, read from `default_tags` by the compiler by
+/// the same rules `keep` reads a list by: it is in the ROM's constant data
+/// and takes no memory, however many parts it comes to describe.
+pub fn defaultStyle() *const style.Style {
+    return @ptrCast(&default_kept);
+}
+
+const default_kept = blk: {
+    @setEvalBranchQuota(200_000);
+    var entries: [default_tags.len]Entry = undefined;
+    var count: usize = 0;
+    var part: u32 = style.PART_MAIN;
+    var states: u32 = style.STATE_NORMAL;
+    var current: ?usize = null;
+    for (default_tags) |item| {
+        if (item.tag == utility.TAG_DONE) break;
+        switch (item.tag) {
+            style.STYLE_Part => {
+                part = item.data;
+                states = style.STATE_NORMAL;
+                current = null;
+            },
+            style.STYLE_State => {
+                states = item.data;
+                current = null;
+            },
+            else => {
+                const what = propsOf(item.tag) orelse continue;
+                if (what.given == .fill) @compileError("the default style names no fill style");
+                const index = current orelse found: {
+                    for (entries[0..count], 0..) |e, i| {
+                        if (e.part == part and e.states == states) break :found i;
+                    }
+                    entries[count] = .{ .part = part, .states = states };
+                    count += 1;
+                    break :found count - 1;
+                };
+                current = index;
+                const fresh = what.props & ~entries[index].set;
+                var bits = fresh;
+                while (bits != 0) : (bits &= bits - 1) entries[index].values[@ctz(bits)] = item.data;
+                entries[index].set |= fresh;
+                if (what.given == .rgb) entries[index].rgb |= fresh;
+            },
+        }
+    }
+    // The same shape as a kept block: its count, then its entries.
+    const Block = extern struct { count: u32, fills_at: u32, entries: [count]Entry };
+    break :blk Block{ .count = count, .fills_at = 0, .entries = entries[0..count].* };
+};
+
 fn pair(t: utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
 }
 
 /// A part's normal entry: everything a fixed part must say, so that a
 /// lookup always ends somewhere.
-fn complete(part: u32, border: u32, background: u32, text: u32, bx: u32, by: u32, px: u32, py: u32) [16]TagItem {
+fn complete(part: u32, border: u32, background: u32, text: u32, bx: u32, by: u32, px: u32, py: u32, joins: u32) [16]TagItem {
     return .{
         pair(style.STYLE_Part, part),
         pair(style.STYLE_State, style.STATE_NORMAL),
@@ -340,7 +444,7 @@ fn complete(part: u32, border: u32, background: u32, text: u32, bx: u32, by: u32
         pair(style.STYLE_ShadowPen, sc.SHADOWPEN),
         pair(style.STYLE_BorderX, bx),
         pair(style.STYLE_BorderY, by),
-        pair(style.STYLE_Joins, style.JOINS_ANGLED),
+        pair(style.STYLE_Joins, joins),
         pair(style.STYLE_Radius, 0),
         pair(style.STYLE_Background, background),
         pair(style.STYLE_TextPen, text),
@@ -362,7 +466,7 @@ fn complete(part: u32, border: u32, background: u32, text: u32, bx: u32, by: u32
 /// diagonal. A pressed or checked thing is sunk and filled with the fill
 /// pen; a disabled one keeps its normal look, and the gadget lays its
 /// ghost over it.
-pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 2, 1) ++ [_]TagItem{
+pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 2, 1, style.JOINS_ANGLED) ++ [_]TagItem{
     pair(style.STYLE_State, style.STATE_PRESSED),
     pair(style.STYLE_Border, style.BORDER_RECESSED),
     pair(style.STYLE_Background, sc.FILLPEN),
@@ -380,7 +484,7 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_BorderX, 1),
     pair(style.STYLE_PaddingX, 1),
     pair(style.STYLE_Joins, style.JOINS_NONE),
-} ++ complete(style.PART_GROUP, style.BORDER_RIDGE, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 2, 1) ++ [_]TagItem{
+} ++ complete(style.PART_GROUP, style.BORDER_RIDGE, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 2, 1, style.JOINS_ANGLED) ++ [_]TagItem{
     pair(style.STYLE_State, style.STATE_PRESSED),
     pair(style.STYLE_Border, style.BORDER_GROOVE),
     pair(style.STYLE_Background, sc.FILLPEN),
@@ -394,9 +498,61 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_Part, ic.PART_FRAME_DROPBOX),
     pair(style.STYLE_PaddingX, 4),
     pair(style.STYLE_PaddingY, 2),
-} ++ complete(style.PART_INDICATOR, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0) ++
-    complete(style.PART_KNOB, style.BORDER_RAISED, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 0, 0) ++
-    complete(style.PART_TRACK, style.BORDER_RECESSED, sc.BACKGROUNDPEN, sc.TEXTPEN, 2, 1, 0, 0) ++
-    complete(style.PART_SELECTION, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0) ++
-    complete(style.PART_TITLE, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0) ++
+    // sysiclass's check box and radio button: checked, the box keeps its
+    // raised look and its ground - the tick or the dot says it is on, not
+    // the box sinking as a pressed button does.
+    pair(style.STYLE_Part, ic.PART_CHECK),
+    pair(style.STYLE_State, style.STATE_CHECKED),
+    pair(style.STYLE_Border, style.BORDER_RAISED),
+    pair(style.STYLE_Background, sc.BACKGROUNDPEN),
+    pair(style.STYLE_Part, ic.PART_RADIO),
+    pair(style.STYLE_State, style.STATE_CHECKED),
+    pair(style.STYLE_Border, style.BORDER_RAISED),
+    pair(style.STYLE_Background, sc.BACKGROUNDPEN),
+    // The tick in the text pen; the dot is an indicator's own colour.
+    pair(style.STYLE_Part, ic.PART_CHECKMARK),
+    pair(style.STYLE_Background, sc.TEXTPEN),
+    // strgclass's field: sunk, one pixel, square corners; the fill pen
+    // behind the text while it is being edited.
+    pair(style.STYLE_Part, ic.PART_FIELD),
+    pair(style.STYLE_Border, style.BORDER_RECESSED),
+    pair(style.STYLE_BorderX, 1),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_Joins, style.JOINS_NONE),
+    pair(style.STYLE_Background, sc.BACKGROUNDPEN),
+    pair(style.STYLE_TextPen, sc.TEXTPEN),
+    pair(style.STYLE_State, style.STATE_FOCUSED),
+    pair(style.STYLE_Background, sc.FILLPEN),
+    // A window that is not active: its border and gadgets on the
+    // background, its title in the text pen.
+    pair(style.STYLE_Part, ic.PART_TITLE_INACTIVE),
+    pair(style.STYLE_Background, sc.BACKGROUNDPEN),
+    pair(style.STYLE_TextPen, sc.TEXTPEN),
+    // A screen's bar in the bar pens, the line under it in the trim pen.
+    pair(style.STYLE_Part, ic.PART_SCREEN_BAR),
+    pair(style.STYLE_Background, sc.BARBLOCKPEN),
+    pair(style.STYLE_TextPen, sc.BARDETAILPEN),
+    pair(style.STYLE_BorderPen, sc.BARTRIMPEN),
+    // A menu's panel: the bar's ground, an edge of the bar's writing two
+    // pixels at the sides and one along the top and bottom.
+    pair(style.STYLE_Part, ic.PART_MENU),
+    pair(style.STYLE_Border, style.BORDER_FLAT),
+    pair(style.STYLE_BorderPen, sc.BARDETAILPEN),
+    pair(style.STYLE_BorderX, 2),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_Background, sc.BARBLOCKPEN),
+    pair(style.STYLE_TextPen, sc.BARDETAILPEN),
+    pair(style.STYLE_Radius, 0),
+    // The frame round a window: one pixel, raised, square corners - the
+    // plain frame's look, as a part of the title bar's.
+    pair(style.STYLE_Part, ic.PART_WINDOW_BORDER),
+    pair(style.STYLE_Border, style.BORDER_RAISED),
+    pair(style.STYLE_BorderX, 1),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_Joins, style.JOINS_NONE),
+} ++ complete(style.PART_INDICATOR, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0, style.JOINS_ANGLED) ++
+    complete(style.PART_KNOB, style.BORDER_RAISED, sc.FILLPEN, sc.TEXTPEN, 1, 1, 0, 0, style.JOINS_NONE) ++
+    complete(style.PART_TRACK, style.BORDER_RECESSED, sc.BACKGROUNDPEN, sc.TEXTPEN, 1, 1, 0, 0, style.JOINS_NONE) ++
+    complete(style.PART_SELECTION, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0, style.JOINS_ANGLED) ++
+    complete(style.PART_TITLE, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0, style.JOINS_ANGLED) ++
     [_]TagItem{.{}};

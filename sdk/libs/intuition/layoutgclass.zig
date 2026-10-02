@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! layoutgclass: a gadget that sizes and places the gadgets in it.
 //!
-//! A layout holds its children in a row (`LORIENT_HORIZ`) or a column
-//! (`LORIENT_VERT`, the default) and works out every child's box itself,
+//! A layout holds its children in a row (`LORIENT_HORIZ`), a column
+//! (`LORIENT_VERT`, the default) or a grid (`LORIENT_GRID`), and works
+//! out every child's box itself,
 //! from its own box and what each child says it needs (`GM_DOMAIN`). A
 //! layout is a child like any other, so rows in a column make a grid.
 //!
@@ -12,7 +13,7 @@
 //! `CHILDA_WeightHeight` in a column), no child past its maximum. Across,
 //! a child with a weight fills the layout's height or width up to its
 //! maximum; one with weight 0 keeps its nominal size, centred in a row and
-//! against the left of a column.
+//! against the left of a column unless `CHILDA_Align` puts it elsewhere.
 //!
 //! A layout can be drawn in a frame with a title in its top edge
 //! (`LAYOUTA_Frame`, `LAYOUTA_FrameTitle`): the frame and the title take
@@ -22,6 +23,19 @@
 //! A child may have a label: text beside it on the left, in the window's
 //! text pen and font. The labels of a column share one column of their
 //! own, right-aligned, so the children after them line up.
+//!
+//! **A grid** (`LORIENT_GRID`, `LAYOUTA_Columns`) puts its children in
+//! cells, in reading order unless a child names its cell (`CHILDA_Column`,
+//! `CHILDA_Row`); one may cover several (`CHILDA_ColumnSpan`,
+//! `CHILDA_RowSpan`). Every column is as wide as the widest child in it
+//! needs and every row as tall as its tallest, so cells line up across
+//! the whole grid; the room there is shared between columns and between
+//! rows by the same rule as along a row, a column's weight being the
+//! largest of its children's. A labelled child's label sits in the left of
+//! its cell, and the label part of every cell in a column is as wide as
+//! the widest label in that column - two columns of labelled fields line
+//! up label with label and field with field. The children are kept in
+//! row-by-row order, which is the order Tab goes through them.
 //!
 //! Given to a window as a gadget sized with `GA_RelWidth` and
 //! `GA_RelHeight`, a layout fills its interior and lays everything out
@@ -88,9 +102,20 @@ pub const LAYOUTA_FrameType = LAYOUTA_Dummy + 0x0007;
 /// Text in the frame's top edge, which breaks the frame's top line: a C
 /// string, not copied. It gives the layout a frame if it has none.
 pub const LAYOUTA_FrameTitle = LAYOUTA_Dummy + 0x0008;
+/// How many columns a grid has (1 unless told).
+pub const LAYOUTA_Columns = LAYOUTA_Dummy + 0x0009;
+/// Bool: a row that has less room than its children's minimums need puts
+/// them in rows beneath one another, a column in columns beside, each line
+/// on its own with its children at their nominal size - so its smallest
+/// width is its widest child's. How deep it is then depends on how long
+/// its lines are: it answers `GM_DOMAIN` for the length it was last
+/// given, and is asked again when that changes.
+pub const LAYOUTA_Wrap = LAYOUTA_Dummy + 0x000A;
 
 pub const LORIENT_HORIZ: u32 = 1;
 pub const LORIENT_VERT: u32 = 2;
+/// The children in cells, `LAYOUTA_Columns` across.
+pub const LORIENT_GRID: u32 = 3;
 
 pub const CHILDA_Dummy = LAYOUTA_Dummy + 0x0100;
 /// Text beside the child, on its left: a C string, not copied.
@@ -113,3 +138,25 @@ pub const CHILDA_MinHeight = CHILDA_Dummy + 0x05;
 /// Its largest size, in place of what it says. 0 leaves the child's own.
 pub const CHILDA_MaxWidth = CHILDA_Dummy + 0x06;
 pub const CHILDA_MaxHeight = CHILDA_Dummy + 0x07;
+/// Where it sits in its room when it is smaller than the room: one
+/// `CALIGN_` across and one down, or'd together. Either left out is where
+/// a child sits without it: centred down a row, at the left across a
+/// column, centred down a line taller than it.
+pub const CHILDA_Align = CHILDA_Dummy + 0x08;
+
+/// `CHILDA_Align`, across.
+pub const CALIGN_LEFT: u32 = 1;
+pub const CALIGN_HCENTRE: u32 = 2;
+pub const CALIGN_RIGHT: u32 = 3;
+/// `CHILDA_Align`, down.
+pub const CALIGN_TOP: u32 = 1 << 4;
+pub const CALIGN_VCENTRE: u32 = 2 << 4;
+pub const CALIGN_BOTTOM: u32 = 3 << 4;
+
+/// In a grid, the column and the row of its cell, from 0. Either left out
+/// is the next free cell in reading order after the child before.
+pub const CHILDA_Column = CHILDA_Dummy + 0x09;
+pub const CHILDA_Row = CHILDA_Dummy + 0x0A;
+/// In a grid, how many columns and rows its cell covers (1 unless told).
+pub const CHILDA_ColumnSpan = CHILDA_Dummy + 0x0B;
+pub const CHILDA_RowSpan = CHILDA_Dummy + 0x0C;

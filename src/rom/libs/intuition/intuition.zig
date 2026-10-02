@@ -227,8 +227,6 @@ pub fn tearDown(ib: *IntuitionBase) !void {
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(ib.utility_base));
 
     @import("misc/_misc.zig").close(ib);
-    // The default style the init read: a ROM module keeps it for good.
-    @import("style/_style.zig").drop(ib, ib.default_style);
     if (ib.rtg_base) |opened| kexec.CloseLibrary(kexec.SysBase, @ptrCast(@alignCast(opened)));
     const kb: *kkeymap.KeymapBase = @ptrCast(@alignCast(ib.keymap_base.?));
     kexec.CloseLibrary(kexec.SysBase, &kb.lib);
@@ -2957,6 +2955,93 @@ test "gadgets: Tab hands the keyboard on, and a resize says so" {
     try tearDown(ib);
 }
 
+test "gadgets: the pointer over a gadget hovers it, the one with the input is focused" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two buttons side by side and a line of text under them.
+    const left = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const right = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 30 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(left) },
+        .{},
+    }).?;
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 26 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(right) },
+        .{},
+    }).?;
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(left) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const flagsOf = struct {
+        fn of(base: *IntuitionBase, o: *intuition.Object) u32 {
+            return gadgetclass.gadgetOf(base, o).flags & (gc.GFLG_HOVERED | gc.GFLG_FOCUSED);
+        }
+    }.of;
+
+    // A finger has no hover.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, left));
+
+    // A mouse's pointer does: over one, then the other, then neither.
+    @import("input/pointer.zig").mouseSeen(ib);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 18);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, left));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 12, 19);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, left));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, left));
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, right));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 25, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, right));
+
+    // The line of text pressed has the input, and is focused while it
+    // has it; a press elsewhere takes both away.
+    click(ib, 10, 30);
+    try testing.expect(flagsOf(ib, field) & gc.GFLG_FOCUSED != 0);
+    click(ib, 56, 37);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, field) & gc.GFLG_FOCUSED);
+
+    // Closing the window lets go of the gadget it was hovering.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 18);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, right));
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expectEqual(@as(?*intuition.Object, null), ib.input.hovered);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, right));
+    try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(left);
+    it.DisposeObject(right);
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "IDCMP: moves and repeats are held to a few at a time, news always goes" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -3992,6 +4077,269 @@ test "layoutgclass: a frame with a title takes its room before the children are 
     it.CloseWindow(w);
     try testing.expect(it.CloseScreen(screen));
     for (layouts) |layout| it.DisposeObject(layout); // and the child in it
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a child smaller than its room sits where CHILDA_Align says" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A column of three buttons kept at their own width: as before, in the
+    // middle, at the right.
+    var buttons: [3]*Object = undefined;
+    for (&buttons, 0..) |*button, i| button.* = framedButton(ib, "OK", i);
+    const column = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 200 },
+        .{ .tag = gc.GA_Height, .data = 90 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[0]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[1]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_HCENTRE },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[2]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_RIGHT },
+        .{},
+    }).?;
+    // A row of two kept at their own height: at the top, at the bottom.
+    var low: [2]*Object = undefined;
+    for (&low, 0..) |*button, i| button.* = framedButton(ib, "Go", 10 + i);
+    const row = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 200 },
+        .{ .tag = gc.GA_Height, .data = 90 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(low[0]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_TOP },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(low[1]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_BOTTOM },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(column, @ptrCast(&lay));
+    _ = it.SendMessage(row, @ptrCast(&lay));
+
+    const first = boxOf(ib, buttons[0]);
+    const middle = boxOf(ib, buttons[1]);
+    const last = boxOf(ib, buttons[2]);
+    try testing.expect(first.width < 200);
+    try testing.expectEqual(@as(i32, 0), first.left);
+    try testing.expectEqual(@divTrunc(200 - middle.width, 2), middle.left);
+    try testing.expectEqual(200 - last.width, last.left);
+
+    const top = boxOf(ib, low[0]);
+    const bottom = boxOf(ib, low[1]);
+    try testing.expect(top.height < 90);
+    try testing.expectEqual(@as(i32, 0), top.top);
+    try testing.expectEqual(90 - bottom.height, bottom.top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(column);
+    it.DisposeObject(row);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a grid lines its cells up across rows, spans, and keeps reading order" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two columns of labelled fields, the labels of each column of a
+    // different length; a button across both; and one more field that
+    // names its cell - the second column of the first row - and is added
+    // last.
+    var fields: [4]*Object = undefined;
+    for (&fields) |*field| field.* = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const wide = framedButton(ib, "Across", 1);
+    const named = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const grid = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 120 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_GRID },
+        .{ .tag = lg.LAYOUTA_Columns, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[0]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("A") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[1]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Longer") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[2]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Longest of all") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wide) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[3]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("B") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(named) },
+        .{ .tag = lg.CHILDA_Column, .data = 1 },
+        .{ .tag = lg.CHILDA_Row, .data = 3 },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(grid, @ptrCast(&lay));
+
+    // Reading order: A and Longer in the first row, Longest of all in the
+    // second, Across the third, B the fourth's first cell, the named one
+    // beside it.
+    const a = boxOf(ib, fields[0]);
+    const longer = boxOf(ib, fields[1]);
+    const longest = boxOf(ib, fields[2]);
+    const across = boxOf(ib, wide);
+    const b = boxOf(ib, fields[3]);
+    const beside = boxOf(ib, named);
+    // A column's fields start together, after its widest label.
+    try testing.expectEqual(a.left, longest.left);
+    try testing.expectEqual(a.left, b.left);
+    try testing.expect(a.left > 8 * 10);
+    // A row's cells start together; the second column after the first.
+    try testing.expectEqual(a.top, longer.top);
+    try testing.expect(longer.left > a.left + a.width);
+    try testing.expectEqual(b.top, beside.top);
+    try testing.expect(longest.top > a.top and across.top > longest.top and b.top > across.top);
+    // Across both columns, from the grid's edge to the far side.
+    try testing.expectEqual(@as(i32, 0), across.left);
+    try testing.expectEqual(longer.left + longer.width, across.left + across.width);
+
+    // The children are in reading order now, the named one last of all
+    // as it was added, since its cell is the last.
+    const members = intuition.instData(@import("classes/groupgclass.zig").Data, ib.group_class.?, grid);
+    var state: ?*sdk.exec.MinNode = members.members.head;
+    var seen: [6]*Object = undefined;
+    var n: usize = 0;
+    while (it.NextObject(&state)) |member| : (n += 1) seen[n] = member;
+    try testing.expectEqual(@as(usize, 6), n);
+    try testing.expectEqual(named, seen[5]);
+
+    // At its smallest, two columns and the gap between them.
+    var smallest = gc.GpDomain{ .gadget_info = &gi, .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(grid, @ptrCast(&smallest));
+    try testing.expect(smallest.domain.width < 300);
+    try testing.expect(smallest.domain.width >= a.left + 4);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(grid);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a row that wraps fits in one line when it can, in two when it cannot" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // The same row of five twice: once with room for all, once with
+    // room for about two.
+    var rows: [2]*Object = undefined;
+    var buttons: [2][5]*Object = undefined;
+    const widths = [_]usize{ 400, 100 };
+    for (&rows, &buttons, widths) |*row, *five, width| {
+        for (five, 0..) |*button, i| button.* = framedButton(ib, "Button", i);
+        row.* = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Width, .data = width },
+            .{ .tag = gc.GA_Height, .data = 150 },
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Wrap, .data = 1 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[0]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[1]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[2]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[3]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[4]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{},
+        }).?;
+    }
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 500;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    for (rows) |row| _ = it.SendMessage(row, @ptrCast(&lay));
+
+    // Room for all: one line, as a row that does not wrap.
+    const one = boxOf(ib, buttons[0][0]);
+    for (buttons[0][1..]) |button| try testing.expectEqual(one.top, boxOf(ib, button).top);
+    // Room for a few: the first line starts at the left and the next
+    // below it, at the left again; nothing past the row's width.
+    const first = boxOf(ib, buttons[1][0]);
+    const last = boxOf(ib, buttons[1][4]);
+    try testing.expect(last.top > first.top);
+    for (buttons[1]) |button| {
+        const box = boxOf(ib, button);
+        try testing.expect(box.left + box.width <= 100);
+    }
+    var lines_start: usize = 0;
+    for (buttons[1]) |button| {
+        if (boxOf(ib, button).left == 0) lines_start += 1;
+    }
+    try testing.expect(lines_start >= 2);
+
+    // At its smallest it is its widest child; and as deep as its lines
+    // go at the width it was given.
+    var smallest = gc.GpDomain{ .gadget_info = &gi, .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(rows[1], @ptrCast(&smallest));
+    try testing.expectEqual(first.width, smallest.domain.width);
+    try testing.expect(smallest.domain.height >= last.top + last.height - first.top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    for (rows) |row| it.DisposeObject(row);
     display.down(ib);
     try tearDown(ib);
 }
@@ -5331,6 +5679,63 @@ test "styles: DrawPart measures without drawing, and a gadget and a screen keep 
     try tearDown(ib);
 }
 
+test "styles: SetStyle gives the system a style under a screen's own, and replaces a screen's" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const plain = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const own = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 6 }, .{} }) },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(plain) },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWPREFS },
+        .{},
+    }).?;
+    const plain_dri = it.GetScreenDrawInfo(plain);
+    const own_dri = it.GetScreenDrawInfo(own);
+    const radius = struct {
+        fn of(base: *IntuitionBase, dri: *const sc.DrawInfo) usize {
+            return base.iface().GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius);
+        }
+    }.of;
+
+    // The system's style reaches the screen without one of its own, and
+    // its window hears; the screen with its own keeps it.
+    try testing.expect(it.SetStyle(null, &[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 3 }, .{} }));
+    try testing.expectEqual(@as(usize, 3), radius(ib, plain_dri));
+    try testing.expectEqual(@as(usize, 6), radius(ib, own_dri));
+    var got: [4]intuition.IntuiMessage = undefined;
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_NEWPREFS, got[0].class);
+
+    // A screen's own replaced; then taken away, which leaves the system's.
+    try testing.expect(it.SetStyle(own, &[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 9 }, .{} }));
+    try testing.expectEqual(@as(usize, 9), radius(ib, own_dri));
+    try testing.expect(it.SetStyle(own, null));
+    try testing.expectEqual(@as(usize, 3), radius(ib, own_dri));
+
+    // No style at all: the default again, which has square corners.
+    try testing.expect(it.SetStyle(null, null));
+    try testing.expectEqual(@as(usize, 0), radius(ib, plain_dri));
+
+    it.FreeScreenDrawInfo(plain, plain_dri);
+    it.FreeScreenDrawInfo(own, own_dri);
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(own));
+    try testing.expect(it.CloseScreen(plain));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "styles: a background given as a fill style is copied, answered, and painted under its own border" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -5449,6 +5854,71 @@ test "styles: a round part is drawn smooth, and the RastPort's own setting comes
 
     gb.FreeRastPort(rp);
     _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a check box's tick and box follow the style, and the default is the old look" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const _style = @import("style/_style.zig");
+    const d = @import("classes/draw.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 26;
+    const h = 11;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+
+    // A red tick, and a box with a flat line and round corners.
+    const themed = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = ic.PART_CHECKMARK },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_Part, .data = ic.PART_CHECK },
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_Radius, .data = 4 },
+        .{},
+    }).?;
+    var dri = sc.DrawInfo{ .pens = d.pensOf(null), .style = themed };
+    const box = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.CHECKIMAGE },
+        .{ .tag = ic.IA_Width, .data = w },
+        .{ .tag = ic.IA_Height, .data = h },
+        .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{},
+    }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAW, .rast_port = rp, .state = ic.IDS_SELECTED, .draw_info = &dri };
+    _ = it.SendMessage(box, @ptrCast(&draw));
+
+    var red = false;
+    for (pixels) |px| {
+        if (px == 0xFFFF_0000) red = true;
+    }
+    try testing.expect(red);
+    // The corner is the window's ground, outside the rounded box, where
+    // the old bevel put its shine.
+    try testing.expectEqual(d.pensOf(null)[sc.BACKGROUNDPEN], pixels[0]);
+    it.DisposeObject(box);
+
+    // The default: the corner is the bevel's shine, as it always was.
+    dri.style = null;
+    const plain = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.CHECKIMAGE },
+        .{ .tag = ic.IA_Width, .data = w },
+        .{ .tag = ic.IA_Height, .data = h },
+        .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{},
+    }).?;
+    _ = it.SendMessage(plain, @ptrCast(&draw));
+    try testing.expectEqual(d.pensOf(null)[sc.SHINEPEN], pixels[0]);
+    it.DisposeObject(plain);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, themed);
     try tearDown(ib);
 }
 

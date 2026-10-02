@@ -169,7 +169,7 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
             if (c != '\n' and c != 0) continue;
             request.text[at] = 0;
             request.lines[line] = .{
-                .front_pen = screen.pens[sc.TEXTPEN],
+                .front_pen = requesterColour(ib, screen, sdk.intuition.style.STYLE_TextPen),
                 .draw_mode = graphics.DRMD_JAM1,
                 .top = @as(i32, @intCast(line)) * pitch,
                 .font = screen.font,
@@ -250,8 +250,8 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
         if (it.NewObjectTagList(null, classusr.FILLRECTCLASS, &[_]TagItem{
             .{ .tag = ic.IA_Width, .data = @intCast(inner_width) },
             .{ .tag = ic.IA_Height, .data = @intCast(inner_height) },
-            .{ .tag = ic.IA_FGPen, .data = screen.pens[sc.SHINEPEN] },
-            .{ .tag = ic.IA_BGPen, .data = screen.pens[sc.BACKGROUNDPEN] },
+            .{ .tag = ic.IA_FGPen, .data = requesterColour(ib, screen, sdk.intuition.style.STYLE_ShinePen) },
+            .{ .tag = ic.IA_BGPen, .data = requesterColour(ib, screen, sdk.intuition.style.STYLE_Background) },
             .{ .tag = ic.IA_APattern, .data = @intFromPtr(&ground_tile) },
             .{ .tag = ic.IA_APatSize, .data = 1 },
             .{ .tag = ic.IA_Mode, .data = graphics.DRMD_JAM2 },
@@ -422,4 +422,9 @@ fn failed(ib: *IntuitionBase) ?*Window {
 fn failRequest(ib: *IntuitionBase, request: *Request) ?*Window {
     _request.free(ib, request);
     return failed(ib);
+}
+
+/// One of a requester's colours, from the style's `PART_REQUESTER`.
+fn requesterColour(ib: *IntuitionBase, screen: anytype, attr: sdk.utility.Tag) graphics.Pen {
+    return @truncate(ib.iface().GetStyleAttr(&screen.draw_info, null, ic.PART_REQUESTER, sdk.intuition.style.STATE_NORMAL, attr));
 }

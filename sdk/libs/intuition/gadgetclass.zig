@@ -256,6 +256,21 @@ pub const GFLG_GADGETHELP: u32 = 1 << 8;
 pub const GFLG_BOUNDS: u32 = 1 << 9;
 /// It stands for one of the window's own gadgets (`GA_SysGadget`).
 pub const GFLG_SYSGADGET: u32 = 1 << 10;
+/// The pointer is over it and nothing is held - a mouse's pointer, never a
+/// finger, which has no hover. Set and cleared by intuition alone.
+pub const GFLG_HOVERED: u32 = 1 << 11;
+/// It has the input: the keyboard reaches it. Set and cleared by intuition
+/// alone, while it is the active gadget.
+pub const GFLG_FOCUSED: u32 = 1 << 12;
+
+/// The style states a gadget's flags say that an image state (`IDS_`)
+/// cannot: `STATE_HOVERED` and `STATE_FOCUSED`, for `ImpDraw.style_state`.
+pub fn styleStates(flags: u32) u32 {
+    var states: u32 = 0;
+    if (flags & GFLG_HOVERED != 0) states |= style.STATE_HOVERED;
+    if (flags & GFLG_FOCUSED != 0) states |= style.STATE_FOCUSED;
+    return states;
+}
 
 /// `Gadget.activation`.
 pub const GACT_IMMEDIATE: u32 = 1 << 0;

@@ -33,6 +33,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const intuition = sdk.intuition;
+const style = intuition.style;
 const wn = intuition.windows;
 const gc = intuition.gadgetclass;
 const lg = intuition.layoutgclass;
@@ -140,21 +141,31 @@ fn freeList(sys: *ExecBase, list: *exec.List) void {
 /// How many pixels lie between a line's text and the frame at either side.
 const column_margin = 4;
 
+/// What the hook draws with.
+const Drawing = struct {
+    gb: *sdk.interface.graphics.GraphicsBase,
+    ib: *IntuitionBase,
+};
+
 /// One line in two columns: the name at the left, what the entry is at
 /// the right. The hook fills the line's ground itself, so it answers
-/// `LVCB_OK` and the gadget draws nothing more of it.
+/// `LVCB_OK` and the gadget draws nothing more of it. Its colours are the
+/// screen's style: a chosen line is the selection part, any other the
+/// gadget's own ground and text.
 fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const msg: *const lv.LVDrawMsg = @ptrCast(@alignCast(message.?));
     if (msg.method_id != lv.LV_DRAW) return lv.LVCB_UNKNOWN;
-    const gb: *sdk.interface.graphics.GraphicsBase = @ptrCast(@alignCast(hook.data.?));
+    const drawing: *const Drawing = @ptrCast(@alignCast(hook.data.?));
+    const gb = drawing.gb;
     const rp = msg.rast_port.?;
     const node: *exec.Node = @ptrCast(@alignCast(object.?));
     const entry: *Entry = @fieldParentPtr("node", node);
-    const pens = msg.draw_info.?.pens;
     const selected = msg.state == lv.LVR_SELECTED or msg.state == lv.LVR_SELECTEDDISABLED;
+    const part = if (selected) style.PART_SELECTION else style.PART_MAIN;
+    const dri = msg.draw_info.?;
 
     const ground = [_]TagItem{
-        .{ .tag = sdk.graphics.RPTAG_APen, .data = pens[if (selected) intuition.screens.FILLPEN else intuition.screens.BACKGROUNDPEN] },
+        .{ .tag = sdk.graphics.RPTAG_APen, .data = drawing.ib.GetStyleAttr(dri, null, part, style.STATE_NORMAL, style.STYLE_Background) },
         .{ .tag = sdk.graphics.RPTAG_DrMd, .data = sdk.graphics.DRMD_JAM1 },
         .{},
     };
@@ -172,7 +183,7 @@ fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     const top = msg.bounds.min_y + @divTrunc(msg.bounds.max_y - msg.bounds.min_y - @as(i32, @intCast(height)), 2) + @as(i32, @intCast(baseline));
 
     const ink = [_]TagItem{
-        .{ .tag = sdk.graphics.RPTAG_APen, .data = pens[if (selected) intuition.screens.FILLTEXTPEN else intuition.screens.TEXTPEN] },
+        .{ .tag = sdk.graphics.RPTAG_APen, .data = drawing.ib.GetStyleAttr(dri, null, part, style.STATE_NORMAL, style.STYLE_TextPen) },
         .{},
     };
     gb.SetRPAttrs(rp, &ink);
@@ -290,7 +301,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(gfx_lib);
-    var draw_hook = sdk.utility.Hook{ .entry = &drawEntry, .data = gfx_lib };
+    var drawing = Drawing{ .gb = @ptrCast(@alignCast(gfx_lib)), .ib = ib };
+    var draw_hook = sdk.utility.Hook{ .entry = &drawEntry, .data = &drawing };
 
     // The class libraries, open for as long as their objects are there.
     const wanted = [_][*:0]const u8{ lv.LISTVIEW_LIBRARY, st.STRING_LIBRARY, sr.SCROLLER_LIBRARY };
