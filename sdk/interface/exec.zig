@@ -130,6 +130,8 @@ pub const LVO = struct {
     pub const ReadLog = libraries.lvo(116);
     pub const SetLogSignal = libraries.lvo(117);
     pub const Debug = libraries.lvo(118);
+    pub const AddTaskEndHook = libraries.lvo(119);
+    pub const RemTaskEndHook = libraries.lvo(120);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -250,6 +252,8 @@ pub const Fn = struct {
     pub const ReadLog = *const fn (*ExecBase, *u64, [*]u8, u32) callconv(.c) u32;
     pub const SetLogSignal = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) bool;
     pub const Debug = *const fn (*ExecBase, u32) callconv(.c) void;
+    pub const AddTaskEndHook = *const fn (*ExecBase, ?*exec.Task, *exec.TaskEndHook) callconv(.c) void;
+    pub const RemTaskEndHook = *const fn (*ExecBase, *exec.TaskEndHook) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -761,5 +765,18 @@ pub const ExecBase = opaque {
     /// ports at once. It comes back when the debugger is told to go on.
     pub fn Debug(self: *ExecBase, flags: u32) void {
         return libraries.call(self, LVO.Debug, Fn.Debug, .{flags});
+    }
+
+    /// Have `hook` run when `task` (null: the caller) ends: RemTask runs a
+    /// task's hooks, in the order they were put on, before the task goes. What
+    /// a library holds for a task is let go there.
+    pub fn AddTaskEndHook(self: *ExecBase, task: ?*exec.Task, hook: *exec.TaskEndHook) void {
+        return libraries.call(self, LVO.AddTaskEndHook, Fn.AddTaskEndHook, .{ task, hook });
+    }
+
+    /// Take `hook` off the task it is on, so it does not run; nothing when it
+    /// is on none, or has run.
+    pub fn RemTaskEndHook(self: *ExecBase, hook: *exec.TaskEndHook) void {
+        return libraries.call(self, LVO.RemTaskEndHook, Fn.RemTaskEndHook, .{hook});
     }
 };

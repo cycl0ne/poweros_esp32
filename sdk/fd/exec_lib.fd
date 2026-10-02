@@ -185,4 +185,11 @@ bool SetLogSignal(?*exec.Task task, u32 signal_mask)
 /// Stop the machine and give the console to the ROM debugger, on both raw
 /// ports at once. It comes back when the debugger is told to go on.
 void Debug(u32 flags)
+/// Have `hook` run when `task` (null: the caller) ends: RemTask runs a
+/// task's hooks, in the order they were put on, before the task goes. What
+/// a library holds for a task is let go there.
+void AddTaskEndHook(?*exec.Task task, *exec.TaskEndHook hook)
+/// Take `hook` off the task it is on, so it does not run; nothing when it
+/// is on none, or has run.
+void RemTaskEndHook(*exec.TaskEndHook hook)
 ##end

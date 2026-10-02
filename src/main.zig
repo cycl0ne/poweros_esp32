@@ -51,6 +51,7 @@ comptime {
     _ = @import("rom/libs/graphics/graphics.zig");
     _ = @import("rom/libs/layers/layers.zig");
     _ = @import("rom/libs/intuition/intuition.zig");
+    _ = @import("rom/libs/motion/motion.zig");
     // The system's release, for a program to ask the running system.
     _ = @import("rom/release.zig");
 }

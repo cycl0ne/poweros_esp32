@@ -27,3 +27,4 @@ pub const truetype = @import("truetype.zig");
 pub const asl = @import("asl.zig");
 pub const iffparse = @import("iffparse.zig");
 pub const datatypes = @import("datatypes.zig");
+pub const motion = @import("motion.zig");

@@ -126,6 +126,8 @@ pub const TF_LAUNCH = sdk.exec.TF_LAUNCH;
 pub const TaskHardware = _task.TaskHardware;
 pub const AddTask = @import("task/addtask.zig").AddTask;
 pub const RemTask = @import("task/remtask.zig").RemTask;
+pub const AddTaskEndHook = @import("task/addtaskendhook.zig").AddTaskEndHook;
+pub const RemTaskEndHook = @import("task/remtaskendhook.zig").RemTaskEndHook;
 pub const FindTask = @import("task/findtask.zig").FindTask;
 pub const SetTaskPri = @import("task/settaskpri.zig").SetTaskPri;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
@@ -544,6 +546,8 @@ test {
     _ = @import("task/addtask.zig");
     _ = @import("task/createtask.zig");
     _ = @import("task/remtask.zig");
+    _ = @import("task/addtaskendhook.zig");
+    _ = @import("task/remtaskendhook.zig");
     _ = @import("task/findtask.zig");
     _ = @import("task/settaskpri.zig");
     _ = @import("task/newstackrun.zig");
@@ -1621,6 +1625,60 @@ fn ctx(task: *Task) *anyopaque {
 }
 
 const boot_ctx: *anyopaque = @ptrFromInt(0x1000);
+
+/// An end hook that counts its runs and where it came in the order.
+const Ended = struct {
+    hook: sdk.exec.TaskEndHook = .{ .code = &ran },
+    runs: u32 = 0,
+    at: u32 = 0,
+    task: ?*Task = null,
+    var order: u32 = 0;
+
+    fn ran(_: *sdk.interface.exec.ExecBase, task: *Task, hook: *sdk.exec.TaskEndHook) callconv(.c) void {
+        const ended: *Ended = @fieldParentPtr("hook", hook);
+        ended.runs += 1;
+        order += 1;
+        ended.at = order;
+        ended.task = task;
+        // Off the list before it runs.
+        std.debug.assert(hook.task == null);
+    }
+};
+
+test "tasks: end hooks run when the task ends, in their order, once; one taken off does not" {
+    try setUp();
+    defer deinit();
+    Ended.order = 0;
+    var first: Ended = .{};
+    var second: Ended = .{};
+    var dropped: Ended = .{};
+    var task: Task = .{ .node = .{ .name = "ending", .pri = -1 } };
+    _ = AddTask(SysBase, &task, &idleCode, null);
+    AddTaskEndHook(SysBase, &task, &first.hook);
+    AddTaskEndHook(SysBase, &task, &dropped.hook);
+    AddTaskEndHook(SysBase, &task, &second.hook);
+    try testing.expectEqual(@as(?*Task, &task), first.hook.task);
+    RemTaskEndHook(SysBase, &dropped.hook);
+    try testing.expectEqual(@as(?*Task, null), dropped.hook.task);
+    // Taking off one that is on no list is nothing.
+    RemTaskEndHook(SysBase, &dropped.hook);
+
+    RemTask(SysBase, &task);
+    try testing.expectEqual(@as(u32, 1), first.runs);
+    try testing.expectEqual(@as(u32, 1), second.runs);
+    try testing.expectEqual(@as(u32, 0), dropped.runs);
+    try testing.expectEqual(@as(u32, 1), first.at);
+    try testing.expectEqual(@as(u32, 2), second.at);
+    try testing.expectEqual(@as(?*Task, &task), first.task);
+    try testing.expectEqual(@as(?*Task, null), second.hook.task);
+    // A hook on a task that never had one put on before: the list is made
+    // then; the caller's own task when none is named.
+    var own: Ended = .{};
+    AddTaskEndHook(SysBase, null, &own.hook);
+    try testing.expectEqual(@as(?*Task, SysBase.this_task), own.hook.task);
+    RemTaskEndHook(SysBase, &own.hook);
+    try expectNoLeaks();
+}
 
 test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and RemTask, switch and launch" {
     // A higher priority task preempts at the next exception exit.

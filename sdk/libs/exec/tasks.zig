@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const Node = @import("nodes.zig").Node;
+const MinNode = @import("nodes.zig").MinNode;
+const MinList = @import("lists.zig").MinList;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// tc_State
@@ -86,6 +88,24 @@ pub const TF_LAUNCH: u8 = 1 << TB_LAUNCH;
 pub const TaskSwitchFn = *const fn (task: *Task, sys_base: *ExecBase) callconv(.c) void;
 
 /// struct Task.
+/// What `RemTask` runs for a hook when the task it is on ends: on the task
+/// that called `RemTask` - the ending one itself, when it ends itself -
+/// before the task is taken away, with nothing held. `hook` is already off
+/// the task's list.
+pub const TaskEndFn = *const fn (sys_base: *ExecBase, task: *Task, hook: *TaskEndHook) callconv(.c) void;
+
+/// Something a library holds for a task, to be let go when the task ends
+/// (`AddTaskEndHook`). Lives in the caller's memory.
+pub const TaskEndHook = extern struct {
+    node: MinNode = .{},
+    code: TaskEndFn,
+    /// The caller's, handed back through `hook`.
+    data: ?*anyopaque = null,
+    /// The task it is on, while it is on one; null once it has run or was
+    /// taken off.
+    task: ?*Task = null,
+};
+
 pub const Task = extern struct {
     /// tc_Node: ln_Type NT_TASK, ln_Pri, ln_Name.
     node: Node = .{ .type = .task },
@@ -132,6 +152,10 @@ pub const Task = extern struct {
     /// Memory CreateTask allocated for the task (freed by RemTask).
     mem_block: ?*anyopaque = null,
     mem_size: usize = 0,
+    /// What is to be run when the task ends: a `TaskEndHook` each, put on
+    /// with `AddTaskEndHook` and run by `RemTask`. Made empty the first
+    /// time a hook is put on.
+    end_hooks: MinList = .{},
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");

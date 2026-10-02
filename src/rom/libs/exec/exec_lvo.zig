@@ -107,6 +107,8 @@ const contract_files = [_][]const u8{
     @embedFile("interrupt/settrapcode.zig"),
     @embedFile("task/addtask.zig"),
     @embedFile("task/remtask.zig"),
+    @embedFile("task/addtaskendhook.zig"),
+    @embedFile("task/remtaskendhook.zig"),
     @embedFile("task/findtask.zig"),
     @embedFile("task/settaskpri.zig"),
     @embedFile("task/signal.zig"),
@@ -300,6 +302,8 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoReadLog),
     vec(lvoSetLogSignal),
     vec(lvoDebug),
+    vec(lvoAddTaskEndHook),
+    vec(lvoRemTaskEndHook),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -774,6 +778,12 @@ fn lvoSetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) callconv(.c)
 
 fn lvoDebug(base: *ExecBase, flags: u32) callconv(.c) void {
     exec.Debug(base, flags);
+}
+fn lvoAddTaskEndHook(base: *ExecBase, task: ?*Task, hook: *sdk.exec.TaskEndHook) callconv(.c) void {
+    exec.AddTaskEndHook(base, task, hook);
+}
+fn lvoRemTaskEndHook(base: *ExecBase, hook: *sdk.exec.TaskEndHook) callconv(.c) void {
+    exec.RemTaskEndHook(base, hook);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

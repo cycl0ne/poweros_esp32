@@ -249,6 +249,34 @@ pub fn newTask(base: *ExecBase, name: [:0]const u8, pri: i8, stack_size: usize) 
 /// INPUTS:
 /// - `base` - exec: the jump table `FreeMem` goes through.
 /// - `task` - the task, off every list and not running.
+/// A task's end hooks made an empty list, the first time one is put on: a
+/// TCB laid out by hand has the list zeroed, which is not an empty list.
+/// Under Forbid.
+pub fn endHooks(task: *Task) void {
+    if (task.end_hooks.head == null) task.end_hooks.init();
+}
+
+/// Every end hook of `task` run, in the order they were put on, each taken
+/// off before it runs and nothing held while it does.
+pub fn runEndHooks(base: *ExecBase, task: *Task) void {
+    const sys = base.iface();
+    while (true) {
+        sys.Forbid();
+        if (task.end_hooks.head == null) {
+            sys.Permit();
+            return;
+        }
+        const node = sys.RemHead(@ptrCast(&task.end_hooks)) orelse {
+            sys.Permit();
+            return;
+        };
+        const hook: *sdk.exec.TaskEndHook = @ptrCast(node);
+        hook.task = null;
+        sys.Permit();
+        hook.code(sys, task, hook);
+    }
+}
+
 pub fn freeTaskMemory(base: *ExecBase, task: *Task) void {
     const block = task.mem_block orelse return;
     task.mem_block = null;
