@@ -137,6 +137,9 @@ pub const IntuitionBase = extern struct {
     /// screen's own and before the default, so it changes every screen at
     /// once. Null until one is given; replaced under Forbid.
     system_style: ?*sdk.intuition.Style = null,
+    /// motion.library, opened the first time a style asks for a
+    /// transition; null before, and where there is none.
+    motion_base: ?*sdk.interface.motion.MotionBase = null,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

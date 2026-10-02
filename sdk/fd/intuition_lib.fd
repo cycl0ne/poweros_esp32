@@ -377,4 +377,8 @@ void StylePens(?*const intuition.DrawInfo draw_info, ?*const intuition.Style own
 /// open, and every window it reaches drawn again in it. False when there
 /// was no memory for it.
 bool SetStyle(?*intuition.Screen screen, ?[*]const utility.TagItem tags)
+/// The gadget drawn again by intuition soon, with whatever it holds then:
+/// what a class calls from a task that must not wait for its window - an
+/// animation's step - after changing its value. Never waits.
+void QueueGadgetRefresh(*intuition.Object gadget)
 ##end

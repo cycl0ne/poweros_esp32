@@ -364,6 +364,71 @@ pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?
     return false;
 }
 
+/// The colour properties: mixed channel by channel.
+const colour_props = [_]Prop{ .background, .border_colour, .shine, .shadow, .text };
+/// The number properties: mixed and rounded.
+const number_props = [_]Prop{ .border_x, .border_y, .radius, .padding_x, .padding_y, .opacity };
+
+/// One colour channel by channel, `amount` of 255 of the way.
+fn mixColour(from: Pen, to: Pen, amount: u32) Pen {
+    var mixed: Pen = 0;
+    var shift: u5 = 0;
+    while (true) : (shift += 8) {
+        const a: i32 = @intCast((from >> shift) & 0xFF);
+        const b: i32 = @intCast((to >> shift) & 0xFF);
+        const channel = a + @divFloor((b - a) * @as(i32, @intCast(amount)) + 127, 255);
+        mixed |= @as(Pen, @intCast(channel)) << shift;
+        if (shift == 24) break;
+    }
+    return mixed;
+}
+
+/// A fill style as `look` found it, or one plain colour as a fill.
+fn fillOf(l: *const Look, pens: [*]const Pen, num_pens: u32) graphics.FillStyle {
+    if (l.backgroundFill()) |fill| return fill.*;
+    const colour = l.colour(.background, pens, num_pens);
+    return .{ .stops = .{ .{ .at = 0, .pen = colour }, .{ .at = graphics.FILL_ONE, .pen = colour }, .{}, .{} } };
+}
+
+/// The look `amount` of 255 of the way from `from` to `to`: every colour
+/// mixed channel by channel (and so as a colour, the pens looked up),
+/// every number mixed and rounded, a fill style stop by stop, the kind of
+/// border and joins the nearer state's.
+pub fn mixLooks(from: *const Look, to: *const Look, amount: u32, pens: [*]const Pen, num_pens: u32) Look {
+    var result = if (amount >= 128) to.* else from.*;
+    for (colour_props) |p| {
+        result.values[@intFromEnum(p)] = mixColour(from.colour(p, pens, num_pens), to.colour(p, pens, num_pens), amount);
+        result.rgb |= @as(u32, 1) << @intFromEnum(p);
+    }
+    for (number_props) |p| {
+        const a: i32 = @intCast(from.get(p));
+        const b: i32 = @intCast(to.get(p));
+        result.values[@intFromEnum(p)] = @intCast(a + @divFloor((b - a) * @as(i32, @intCast(amount)) + 127, 255));
+    }
+    if (from.has_fill or to.has_fill) {
+        const a = fillOf(from, pens, num_pens);
+        const b = fillOf(to, pens, num_pens);
+        var mixed = if (amount >= 128) b else a;
+        for (&mixed.stops, a.stops, b.stops) |*stop, sa, sb| {
+            stop.pen = mixColour(sa.pen, sb.pen, amount);
+            stop.at = @intCast(@as(i64, sa.at) + @divFloor((@as(i64, sb.at) - sa.at) * amount + 127, 255));
+        }
+        result.fill = mixed;
+        result.has_fill = true;
+        result.fill_source = null;
+    }
+    return result;
+}
+
+/// What `DrawPart` and `GetStyleAttr` draw by for `state`: its look, or
+/// for a mixed state (`style.STATE_MIXED`) the two states' looks mixed.
+pub fn lookFor(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, part: u32, state: u32, pens: [*]const Pen, num_pens: u32) Look {
+    if (state & style.STATE_MIXED == 0) return look(ib, own, draw_info, part, state);
+    const from = look(ib, own, draw_info, part, style.mixFrom(state));
+    const to = look(ib, own, draw_info, part, style.mixTo(state));
+    return mixLooks(&from, &to, style.mixAmount(state), pens, num_pens);
+}
+
 /// The state bits an image state stands for. `IDS_SELECTED` is pressed:
 /// an image is told it is selected, not why.
 pub fn statesOfImage(ids: u32) u32 {

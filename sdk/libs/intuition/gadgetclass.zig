@@ -181,6 +181,11 @@ pub const GA_Key = GA_Dummy + 0x30;
 /// may go away afterwards, and null takes it off again. Read back with
 /// OM_GET it is the style as kept, which is what to hand `DrawPart`.
 pub const GA_Style = GA_Dummy + 0x31;
+/// Bool: whether the gadget may move - fill, slide, fade - rather than
+/// jump to a new look (true). Turned off for one gadget, it changes at
+/// once; its screen can turn it off for all (`SA_Animate`). A class asks
+/// with `animates`.
+pub const GA_Animate = GA_Dummy + 0x32;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -235,6 +240,9 @@ pub const Gadget = extern struct {
     requester: ?*requesters.Requester = null,
     /// `GA_Style`, as kept.
     style: ?*style.Style = null,
+    /// intuition's own: a transition of its look in progress, made the
+    /// first time its style asks for one.
+    transition: ?*anyopaque = null,
 };
 
 /// `Gadget.flags`.
@@ -262,6 +270,21 @@ pub const GFLG_HOVERED: u32 = 1 << 11;
 /// It has the input: the keyboard reaches it. Set and cleared by intuition
 /// alone, while it is the active gadget.
 pub const GFLG_FOCUSED: u32 = 1 << 12;
+
+/// It does not move: `GA_Animate` false.
+pub const GFLG_STILL: u32 = 1 << 13;
+/// It is waiting to be drawn again by intuition, at a class's asking
+/// (`QueueGadgetRefresh`). Set and cleared by intuition alone.
+pub const GFLG_REFRESH: u32 = 1 << 14;
+
+/// Whether a class should move a gadget rather than change it at once:
+/// neither the gadget (`GA_Animate`) nor its screen (`SA_Animate`) said
+/// no. `draw_info` may be null.
+pub fn animates(g: *const Gadget, draw_info: ?*const screens.DrawInfo) bool {
+    if (g.flags & GFLG_STILL != 0) return false;
+    const dri = draw_info orelse return true;
+    return dri.flags & screens.DRIF_STILL == 0;
+}
 
 /// The style states a gadget's flags say that an image state (`IDS_`)
 /// cannot: `STATE_HOVERED` and `STATE_FOCUSED`, for `ImpDraw.style_state`.

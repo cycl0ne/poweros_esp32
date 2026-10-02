@@ -243,6 +243,8 @@ pub const ImpDraw = extern struct {
     /// The style states `state` cannot say - `STATE_HOVERED`,
     /// `STATE_FOCUSED` - added to the ones it does by an image drawn from a
     /// style. `gadgetclass.styleStates` reads them from a gadget's flags.
+    /// A mixed state (`style.STATE_MIXED`), a look part of the way from
+    /// one state to another, stands for `state` too.
     style_state: u32 = 0,
 };
 

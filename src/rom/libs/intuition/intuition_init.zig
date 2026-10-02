@@ -71,8 +71,9 @@ pub const LIBRARY_VERSION = 0;
 /// the style - sysiclass, scroll bars, fields, window borders, the screen
 /// bar, menus, requesters - and StylePens for the classes on the disk.
 /// 23: hover and focus (GFLG_HOVERED, GFLG_FOCUSED), and SetStyle - a
-/// screen's style or the system's replaced while it is open.
-pub const LIBRARY_REVISION = 23;
+/// screen's style or the system's replaced while it is open. 24:
+/// QueueGadgetRefresh, GA_Animate and SA_Animate, for gadgets that move.
+pub const LIBRARY_REVISION = 24;
 const BUILD_DATE = "02.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

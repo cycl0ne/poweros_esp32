@@ -42,6 +42,7 @@ const style = intuition.style;
 const ic = intuition.imageclass;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
+const _transition = @import("../style/_transition.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const d = @import("draw.zig");
 
@@ -373,7 +374,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     // for its paper and ink are its own, and win.
     const it = ib.iface();
     const own_style: ?*const intuition.Style = gadgetclass.gadgetOf(ib, o).style;
-    const st: u32 = (if (p.active != 0) style.STATE_FOCUSED else style.STATE_NORMAL) | gc.styleStates(gadgetclass.gadgetOf(ib, o).flags);
+    const st = _transition.state(ib, o, gi_.draw_info, ic.PART_FIELD, (if (p.active != 0) style.STATE_FOCUSED else style.STATE_NORMAL) | gc.styleStates(gadgetclass.gadgetOf(ib, o).flags));
     const chosen = if (p.active != 0) p.active_pens orelse p.pens else p.pens;
     const ink: graphics.Pen = if (chosen) |set| set[0] else @truncate(it.GetStyleAttr(gi_.draw_info, own_style, ic.PART_FIELD, st, style.STYLE_TextPen));
     // The character under the cursor is drawn in it, the other way round.

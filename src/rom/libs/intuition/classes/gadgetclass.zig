@@ -31,6 +31,7 @@ const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
 const _style = @import("../style/_style.zig");
+const _transition = @import("../style/_transition.zig");
 const d = @import("draw.zig");
 
 /// gadgetclass's part of an object: the gadget.
@@ -87,6 +88,8 @@ pub const Data = extern struct {
     /// `GA_Style`, as kept: read once when it is set, given back when it is
     /// set again or the gadget goes.
     style: ?*intuition.Style = null,
+    /// A transition of its look in progress (`style/_transition.zig`).
+    transition: ?*anyopaque = null,
 };
 
 // The flags are the SDK's: `gc.Gadget` is the public view of `Data`.
@@ -104,6 +107,8 @@ pub const GFLG_BOUNDS = gc.GFLG_BOUNDS;
 pub const GFLG_SYSGADGET = gc.GFLG_SYSGADGET;
 pub const GFLG_HOVERED = gc.GFLG_HOVERED;
 pub const GFLG_FOCUSED = gc.GFLG_FOCUSED;
+pub const GFLG_STILL = gc.GFLG_STILL;
+pub const GFLG_REFRESH = gc.GFLG_REFRESH;
 pub const GACT_IMMEDIATE = gc.GACT_IMMEDIATE;
 pub const GACT_RELVERIFY = gc.GACT_RELVERIFY;
 pub const GACT_TOGGLESELECT = gc.GACT_TOGGLESELECT;
@@ -275,7 +280,10 @@ pub fn drawLabel(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, lef
     const selected = state == ic.IDS_SELECTED or state == ic.IDS_INACTIVESELECTED;
     // The text colour of a gadget's body, pressed or not, from the style
     // with the gadget's own asked first.
-    const ink: graphics.Pen = @truncate(it.GetStyleAttr(dri, g.style, intuition.style.PART_MAIN, (if (selected) intuition.style.STATE_PRESSED else intuition.style.STATE_NORMAL) | gc.styleStates(g.flags), intuition.style.STYLE_TextPen));
+    // In the state the frame is drawn in, part of the way into the next
+    // while its look changes.
+    const to = (if (selected) intuition.style.STATE_PRESSED else intuition.style.STATE_NORMAL) | gc.styleStates(g.flags);
+    const ink: graphics.Pen = @truncate(it.GetStyleAttr(dri, g.style, intuition.style.PART_MAIN, _transition.shown(@ptrCast(g), to), intuition.style.STYLE_TextPen));
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(rp, &tags);
     d.labelText(gb, rp, x, y + @as(i32, @intCast(baseline)), text);
@@ -375,6 +383,7 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
                 g.key = gc.labelKey(g.text);
                 changed = 1;
             },
+            gc.GA_Animate => setFlag(&g.flags, GFLG_STILL, v == 0),
             gc.GA_Style => {
                 _style.drop(ib, g.style);
                 g.style = _style.keep(ib, @ptrFromInt(v));
@@ -458,6 +467,7 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Text => out.* = @intFromPtr(g.text),
         gc.GA_Key => out.* = g.key,
         gc.GA_Style => out.* = @intFromPtr(g.style),
+        gc.GA_Animate => out.* = @intFromBool(g.flags & GFLG_STILL == 0),
         gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
         gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
         gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
@@ -551,6 +561,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_DISPOSE => {
             _style.drop(ib, classes.instData(Data, cl, o orelse return 0).style);
+            _transition.free(ib, gc.gadget(o.?));
             return it.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_NOTIFY => {

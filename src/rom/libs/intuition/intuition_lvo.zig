@@ -141,6 +141,7 @@ const DrawPart = @import("style/drawpart.zig").DrawPart;
 const GetStyleAttr = @import("style/getstyleattr.zig").GetStyleAttr;
 const StylePens = @import("style/stylepens.zig").StylePens;
 const SetStyle = @import("style/setstyle.zig").SetStyle;
+const QueueGadgetRefresh = @import("gadget/queuegadgetrefresh.zig").QueueGadgetRefresh;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -259,6 +260,7 @@ const contract_files = [_][]const u8{
     @embedFile("style/getstyleattr.zig"),
     @embedFile("style/stylepens.zig"),
     @embedFile("style/setstyle.zig"),
+    @embedFile("gadget/queuegadgetrefresh.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -615,6 +617,9 @@ fn lvoStylePens(ib: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: 
 fn lvoSetStyle(ib: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) bool {
     return SetStyle(ib, @ptrCast(@alignCast(screen)), tags);
 }
+fn lvoQueueGadgetRefresh(ib: *IntuitionBase, gadget: *Object) callconv(.c) void {
+    QueueGadgetRefresh(ib, gadget);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -740,6 +745,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetStyleAttr),
     vec(lvoStylePens),
     vec(lvoSetStyle),
+    vec(lvoQueueGadgetRefresh),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -114,7 +114,9 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     if (fd.flags & FRAMEF_RECESSED != 0) flags |= style.DPF_INVERT;
     if (fd.flags & FRAMEF_EDGES_ONLY != 0) flags |= style.DPF_EDGES_ONLY;
     const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + w, .max_y = y + h };
-    ib.iface().DrawPart(msg.rast_port, msg.draw_info, null, partOf(fd), _style.statesOfImage(msg.state) | msg.style_state, flags, &box, null);
+    // A mixed state is whole: it stands for the image state too.
+    const states = if (msg.style_state & style.STATE_MIXED != 0) msg.style_state else _style.statesOfImage(msg.state) | msg.style_state;
+    ib.iface().DrawPart(msg.rast_port, msg.draw_info, null, partOf(fd), states, flags, &box, null);
     return 1;
 }
 

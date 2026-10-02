@@ -29,7 +29,9 @@ const d = @import("../classes/draw.zig");
 ///   default pens and the system's default style alone.
 /// - `own` - a gadget's own style (`GA_Style`, read back), or null.
 /// - `part` - a `style.PART_` number, or a class's own (`style.classPart`).
-/// - `state` - `style.STATE_` bits.
+/// - `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+///   the look part of the way from one state to another, every colour
+///   mixed channel by channel and every number rounded.
 /// - `flags` - `style.DPF_INVERT` to turn the border the other way,
 ///   `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
 /// - `box` - where the part goes, half-open.
@@ -98,7 +100,9 @@ const d = @import("../classes/draw.zig");
 ///     &box, &inside);
 /// ```
 pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const sc.DrawInfo, own: ?*const style.Style, part: u32, state: u32, flags: u32, box: *const Rect, content: ?*Rect) void {
-    const look = _style.look(ib, own, draw_info, part, state);
+    const pens = d.pensOf(draw_info);
+    const num_pens: u32 = if (draw_info) |dri| dri.num_pens else sc.NUMDRIPENS;
+    const look = _style.lookFor(ib, own, draw_info, part, state, pens, num_pens);
 
     var kind = look.get(.border);
     if (flags & style.DPF_INVERT != 0) kind = switch (kind) {
@@ -122,8 +126,6 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
     const saved = d.save(gb, target);
     defer d.restore(gb, target, saved);
 
-    const pens = d.pensOf(draw_info);
-    const num_pens: u32 = if (draw_info) |dri| dri.num_pens else sc.NUMDRIPENS;
     const opacity = look.get(.opacity);
     const colour = struct {
         fn of(l: *const _style.Look, p: _style.Prop, all: [*]const Pen, n: u32, alpha: u32) Pen {

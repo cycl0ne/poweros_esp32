@@ -15,7 +15,11 @@ const MotionBase = @import("motion_base.zig").MotionBase;
 /// The name it is opened by. The SDK's.
 pub const LIBRARY_NAME = sdk.motion.MOTIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
+/// 1: easing (Ease, EaseBezier). 2: animations (CreateAnimationTagList
+/// and the calls on one), MixColour and MixRect. 3: timers
+/// (CreateTimerTagList and the calls on one). 4: timelines
+/// (CreateTimelineTagList and the calls on one).
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "02.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -35,7 +39,8 @@ fn motionBase(lib: *exec.Library) *MotionBase {
 /// - `sys_base` - SysBase, kept in the base.
 ///
 /// RESULT:
-/// The base. Without timer.device it still starts: the clock then reads
+/// The base, or null without utility.library. Without timer.device it
+/// still starts: the clock then reads
 /// the time the host tests set by hand, and no task is ever made.
 ///
 /// CONTEXT:
@@ -46,7 +51,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const mb = motionBase(lib);
     lib.revision = LIBRARY_REVISION;
     const header = mb.lib;
-    mb.* = .{ .lib = header, .sys_base = sys_base };
+    const utility_base: *sdk.interface.utility.UtilityBase = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null);
+    mb.* = .{ .lib = header, .sys_base = sys_base, .utility_base = utility_base };
     sys_base.InitSemaphore(&mb.lock);
     mb.running.init();
     mb.owners.init();

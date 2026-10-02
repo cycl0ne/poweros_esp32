@@ -138,6 +138,9 @@ pub const State = extern struct {
     hover_window: ?*Window = null,
     /// The gadget that has the input: the one marked `GFLG_FOCUSED`.
     focused: ?*Object = null,
+    /// The signal another task wakes the input task with when gadgets wait
+    /// to be drawn again (`QueueGadgetRefresh`).
+    refresh_mask: u32 = 0,
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -207,6 +210,8 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     const ib: *IntuitionBase = @alignCast(@fieldParentPtr("input", st));
     const signal = sys.AllocSignal(-1);
     if (signal >= 0) st.mask = @as(u32, 1) << @intCast(signal);
+    const refresh_signal = sys.AllocSignal(-1);
+    if (refresh_signal >= 0) st.refresh_mask = @as(u32, 1) << @intCast(refresh_signal);
     if (st.starter) |starter| {
         st.starter = null;
         sys.Signal(starter, @as(u32, 1) << @intCast(st.start_signal));
@@ -224,12 +229,13 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     const head: *volatile u32 = &st.head;
     const tail: *volatile u32 = &st.tail;
     while (true) {
-        const got = sys.Wait(st.mask | verify_mask);
+        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask);
         if (got & verify_mask != 0) {
             _window.lock(ib);
             verify.poll(ib);
             _window.unlock(ib);
         }
+        if (got & st.refresh_mask != 0) refreshQueued(ib);
         while (tail.* != head.*) {
             const e = st.events[tail.* % ring_size];
             tail.* +%= 1;
@@ -349,6 +355,7 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
 /// told it has lost it. Under the screen semaphore.
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
+    gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_REFRESH;
     if (st.hovered == o) unhover(ib);
     if (st.focused == o) focus(ib, null);
     if (st.mode == .active and st.active == o) {
@@ -846,6 +853,59 @@ fn moved(ib: *IntuitionBase) void {
             }
         },
     }
+}
+
+// --- gadgets drawn at another task's asking ----------------------------------------
+
+/// `o` marked to be drawn again, and the input task woken. Never waits.
+pub fn queueRefresh(ib: *IntuitionBase, o: *Object) void {
+    const st = stateOf(ib);
+    const sys = ib.sys_base;
+    sys.Forbid();
+    gadgetclass.gadgetOf(ib, o).flags |= gadgetclass.GFLG_REFRESH;
+    sys.Permit();
+    if (st.started == 1 and st.refresh_mask != 0) sys.Signal(&st.task, st.refresh_mask);
+}
+
+/// What `refreshQueued` carries to each window.
+const Refreshing = struct {
+    ib: *IntuitionBase,
+
+    fn window(r: *Refreshing, w: *Window) void {
+        var next = w.gadgets;
+        while (next) |o| : (next = gadgetclass.gadgetOf(r.ib, o).next) _gadget.visit(r.ib, o, &Owed{ .ib = r.ib, .w = w }, Owed.each);
+        var req = w.first_request;
+        while (req) |each| : (req = each.older) {
+            var gadget = each.gadgets;
+            while (gadget) |o| : (gadget = gadgetclass.gadgetOf(r.ib, o).next) _gadget.visit(r.ib, o, &Owed{ .ib = r.ib, .w = w }, Owed.each);
+        }
+    }
+};
+
+/// One gadget, drawn if it was marked.
+const Owed = struct {
+    ib: *IntuitionBase,
+    w: *Window,
+
+    fn each(owed: *const Owed, o: *Object) void {
+        const g = gadgetclass.gadgetOf(owed.ib, o);
+        const sys = owed.ib.sys_base;
+        sys.Forbid();
+        const waiting = g.flags & gadgetclass.GFLG_REFRESH != 0;
+        g.flags &= ~gadgetclass.GFLG_REFRESH;
+        sys.Permit();
+        if (waiting) _gadget.render(owed.ib, owed.w, o, gc.GREDRAW_UPDATE);
+    }
+};
+
+/// Every gadget of every window that was marked drawn again, its mark
+/// taken off first so that one marked while it is drawn is drawn again.
+/// On the input task; the host tests call it themselves.
+pub fn refreshQueued(ib: *IntuitionBase) void {
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    var refreshing = Refreshing{ .ib = ib };
+    _window.eachWindow(ib, &refreshing, Refreshing.window);
 }
 
 // --- hover and focus ----------------------------------------------------------------

@@ -7,7 +7,8 @@
 //! It opens a public screen named `Styles` with a style of its own - flat
 //! one-pixel borders, rounded corners, a face shaded from light to a little
 //! darker, more room inside, a blue line round what the pointer is over, a
-//! blue that a pressed button turns - and makes
+//! blue that a pressed button turns, every change taking a quarter of a
+//! second - and makes
 //! it the default public screen. DARK opens it dark instead: the screen's
 //! pens dark, and a style that goes with them. Every
 //! program that opens its window on the default public screen then opens
@@ -93,6 +94,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(style.STYLE_BackgroundFill, @intFromPtr(&face)),
         pair(style.STYLE_PaddingX, 6),
         pair(style.STYLE_PaddingY, 3),
+        // Every change of look takes a quarter of a second.
+        pair(style.STYLE_Transition, 250),
         // Under the pointer: the line turns blue.
         pair(style.STYLE_State, style.STATE_HOVERED),
         pair(style.STYLE_BorderRGB, 0xFF3A_6EA5),
@@ -122,6 +125,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(style.STYLE_BorderRGB, 0xFF88_90A0),
         pair(style.STYLE_BorderWidth, 1),
         pair(style.STYLE_BackgroundRGB, 0xFFFF_FFFF),
+        pair(style.STYLE_Transition, 250),
         pair(style.STYLE_State, style.STATE_HOVERED),
         pair(style.STYLE_BorderRGB, 0xFF3A_6EA5),
         pair(style.STYLE_State, style.STATE_FOCUSED),

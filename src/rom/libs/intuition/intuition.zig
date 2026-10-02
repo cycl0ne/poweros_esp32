@@ -2799,7 +2799,7 @@ fn firstChar(ib: *IntuitionBase, o: *Object) usize {
 
 /// A gadget that counts the times it is taken up and put down again - the
 /// two messages a group has to pass on to whichever member holds the input.
-const Told = extern struct { active: u32, inactive: u32, laid_out: u32 };
+const Told = extern struct { active: u32, inactive: u32, laid_out: u32, rendered: u32 };
 
 fn toldDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
@@ -2810,7 +2810,10 @@ fn toldDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) 
     const ie = sdk.devices.inputevent;
     switch (msg.method_id) {
         gc.GM_HITTEST => return gc.GMR_GADGETHIT,
-        gc.GM_RENDER => return 0,
+        gc.GM_RENDER => {
+            intuition.instData(Told, cl, o.?).rendered += 1;
+            return 0;
+        },
         gc.GM_GOACTIVE => {
             intuition.instData(Told, cl, o.?).active += 1;
             return gc.GMR_MEACTIVE;
@@ -2951,6 +2954,83 @@ test "gadgets: Tab hands the keyboard on, and a resize says so" {
     it.DisposeObject(middle);
     it.DisposeObject(second);
     try testing.expect(ib.iface().FreeClass(told_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "gadgets: one queued for drawing is drawn once by intuition, and not once it has left its window" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const told_class = toldClass(ib);
+    const moving = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const still = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 30 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(moving) },
+        .{ .tag = gc.GA_Animate, .data = 0 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(moving) },
+        .{},
+    }).?;
+    const drawn = struct {
+        fn of(cl: *Class, o: *Object) u32 {
+            return intuition.instData(Told, cl, o).rendered;
+        }
+    }.of;
+    const before = drawn(told_class, moving);
+    const still_before = drawn(told_class, still);
+
+    // Asked for three times before intuition gets to it: drawn once.
+    it.QueueGadgetRefresh(moving);
+    it.QueueGadgetRefresh(moving);
+    it.QueueGadgetRefresh(moving);
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+    try testing.expectEqual(still_before, drawn(told_class, still));
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+
+    // Taken out of its window with a drawing owed: never drawn.
+    it.QueueGadgetRefresh(moving);
+    _ = it.RemoveGList(w, moving, 1);
+    try testing.expectEqual(@as(u32, 0), gadgetclass.gadgetOf(ib, moving).flags & gc.GFLG_REFRESH);
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+
+    // GA_Animate, and a screen that says no for every gadget on it.
+    const dri = it.GetScreenDrawInfo(@ptrFromInt(windowAttr(ib, w, wn.WA_Screen)));
+    try testing.expect(gc.animates(gc.gadget(moving), dri));
+    try testing.expect(!gc.animates(gc.gadget(still), dri));
+    it.FreeScreenDrawInfo(@ptrFromInt(windowAttr(ib, w, wn.WA_Screen)), dri);
+    const quiet = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Animate, .data = 0 }, .{} }).?;
+    const quiet_dri = it.GetScreenDrawInfo(quiet);
+    try testing.expect(!gc.animates(gc.gadget(moving), quiet_dri));
+    it.FreeScreenDrawInfo(quiet, quiet_dri);
+    try testing.expect(it.CloseScreen(quiet));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(moving);
+    it.DisposeObject(still);
+    try testing.expect(it.FreeClass(told_class));
     display.down(ib);
     try tearDown(ib);
 }
@@ -5733,6 +5813,53 @@ test "styles: SetStyle gives the system a style under a screen's own, and replac
     try testing.expect(it.CloseScreen(own));
     try testing.expect(it.CloseScreen(plain));
     display.down(ib);
+    try tearDown(ib);
+}
+
+test "styles: a mixed state is the two looks part of the way, colour by channel and number rounded" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const it = ib.iface();
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF000000 },
+        .{ .tag = style.STYLE_Radius, .data = 0 },
+        .{ .tag = style.STYLE_State, .data = style.STATE_PRESSED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFFFF00 },
+        .{ .tag = style.STYLE_Radius, .data = 10 },
+        .{},
+    }).?;
+    const at = struct {
+        fn of(base: *IntuitionBase, kept: *const intuition.Style, amount: u8, attr: utility.Tag) usize {
+            return base.iface().GetStyleAttr(null, kept, style.PART_MAIN, style.mixState(style.STATE_NORMAL, style.STATE_PRESSED, amount), attr);
+        }
+    }.of;
+    try testing.expectEqual(@as(usize, 0xFF000000), at(ib, own, 0, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 0xFFFFFF00), at(ib, own, 255, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 0xFF808000), at(ib, own, 128, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 5), at(ib, own, 128, style.STYLE_Radius));
+    // A pen in one state and a colour in the other: the pen looked up.
+    try testing.expectEqual(it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_BackgroundRGB), at(ib, own, 255, style.STYLE_BackgroundRGB));
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: without motion.library a gadget whose style takes time changes at once" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const button = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Transition, .data = 150 }, .{} }) },
+        .{},
+    }).?;
+    const _transition = @import("style/_transition.zig");
+    try testing.expectEqual(style.STATE_NORMAL, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_NORMAL));
+    try testing.expectEqual(style.STATE_PRESSED, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_PRESSED));
+    try testing.expectEqual(style.STATE_PRESSED, _transition.shown(gc.gadget(button), style.STATE_PRESSED));
+    it.DisposeObject(button);
     try tearDown(ib);
 }
 

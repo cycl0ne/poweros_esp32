@@ -115,6 +115,11 @@ pub const SA_LikeWorkbench = SA_Dummy + 0x0027;
 /// is read once and kept: the list may go away afterwards. What it does not
 /// say is the system's default.
 pub const SA_Style = SA_Dummy + 0x0028;
+/// Bool: whether gadgets on the screen may move (true). False makes every
+/// one change at once, whatever its own `GA_Animate` says: a slow screen,
+/// a test, a person who would rather nothing moved. Kept in the DrawInfo
+/// (`DRIF_STILL`).
+pub const SA_Animate = SA_Dummy + 0x0029;
 /// Read only: the screen's RastPort, over the whole display and under no
 /// layer - what is drawn through it lands beneath every window.
 pub const SA_RastPort = SA_Dummy + 0x0100;
@@ -243,6 +248,9 @@ pub const DRI_VERSION: u32 = 3;
 
 /// What a screen's parts are drawn with: `GetScreenDrawInfo` hands out the
 /// screen's own. Read only.
+/// `DrawInfo.flags`: nothing on the screen moves (`SA_Animate` false).
+pub const DRIF_STILL: u32 = 1 << 0;
+
 pub const DrawInfo = extern struct {
     /// dri_Version: `DRI_VERSION` of the library that made it.
     version: u32 = DRI_VERSION,
@@ -254,7 +262,7 @@ pub const DrawInfo = extern struct {
     font: ?*graphics.TextFont = null,
     /// dri_Depth: bits per pixel of the display.
     depth: u32 = 0,
-    /// dri_Flags: none defined.
+    /// dri_Flags: `DRIF_STILL`.
     flags: u32 = 0,
     reserved: [4]usize = @splat(0),
     /// dri_CheckMark: the sysiclass `MENUCHECK` image a checked menu item

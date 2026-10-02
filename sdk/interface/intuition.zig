@@ -137,6 +137,7 @@ pub const LVO = struct {
     pub const GetStyleAttr = libraries.lvo(119);
     pub const StylePens = libraries.lvo(120);
     pub const SetStyle = libraries.lvo(121);
+    pub const QueueGadgetRefresh = libraries.lvo(122);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -260,6 +261,7 @@ pub const Fn = struct {
     pub const GetStyleAttr = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, utility.Tag) callconv(.c) usize;
     pub const StylePens = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, [*]graphics.Pen) callconv(.c) void;
     pub const SetStyle = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const QueueGadgetRefresh = *const fn (*IntuitionBase, *intuition.Object) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -984,5 +986,12 @@ pub const IntuitionBase = opaque {
     /// was no memory for it.
     pub fn SetStyle(self: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const utility.TagItem) bool {
         return libraries.call(self, LVO.SetStyle, Fn.SetStyle, .{ screen, tags });
+    }
+
+    /// The gadget drawn again by intuition soon, with whatever it holds then:
+    /// what a class calls from a task that must not wait for its window - an
+    /// animation's step - after changing its value. Never waits.
+    pub fn QueueGadgetRefresh(self: *IntuitionBase, gadget: *intuition.Object) void {
+        return libraries.call(self, LVO.QueueGadgetRefresh, Fn.QueueGadgetRefresh, .{gadget});
     }
 };

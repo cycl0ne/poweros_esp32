@@ -86,6 +86,7 @@ Generated from the source by `./zig build autodoc`.
 - [PointInImage](#pointinimage) - Whether a point is inside an image.
 - [PrintIText](#printitext) - Draws a run of text and the runs linked after it.
 - [PubScreenStatus](#pubscreenstatus) - Opens a public screen to visitors, or closes it to them.
+- [QueueGadgetRefresh](#queuegadgetrefresh) - A gadget drawn again by intuition soon, with whatever it holds then.
 - [RefreshGList](#refreshglist) - Draws gadgets of a window.
 - [RefreshWindowFrame](#refreshwindowframe) - Draws a window's border again.
 - [ReleaseGIRPort](#releasegirport) - Gives back a RastPort from `ObtainGIRPort`.
@@ -1859,7 +1860,9 @@ fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort,
   default pens and the system's default style alone.
 - `own` - a gadget's own style (`GA_Style`, read back), or null.
 - `part` - a `style.PART_` number, or a class's own (`style.classPart`).
-- `state` - `style.STATE_` bits.
+- `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+  the look part of the way from one state to another, every colour
+  mixed channel by channel and every number rounded.
 - `flags` - `style.DPF_INVERT` to turn the border the other way,
   `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
 - `box` - where the part goes, half-open.
@@ -3043,7 +3046,9 @@ fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
   default pens and the system's default style alone.
 - `own` - a gadget's own style (`GA_Style`, read back), or null.
 - `part` - a `style.PART_` number, or a class's own.
-- `state` - `style.STATE_` bits.
+- `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+  the look part of the way from one state to another, every colour
+  mixed channel by channel and every number rounded.
 - `attr` - a `style.STYLE_` tag.
 
 **RESULT**
@@ -5031,6 +5036,83 @@ None known.
 const screen = ib.OpenScreenTagList(&tags) orelse return;
 // Set up, now visitors are welcome.
 _ = ib.PubScreenStatus(screen, 0);
+```
+
+## QueueGadgetRefresh
+
+A gadget drawn again by intuition soon, with whatever it holds then.
+
+**SYNOPSIS**
+
+```zig
+fn QueueGadgetRefresh(ib: *IntuitionBase, gadget: *Object) void
+```
+
+**SINCE**
+
+0.24. LVO -492.
+
+**INPUTS**
+
+- `gadget` - any gadget, in a window, a requester or a group, or in
+  none.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The gadget is marked and intuition's input task woken; that task,
+which draws gadgets as they are pressed, draws every marked one again
+(`GM_RENDER`, `GREDRAW_UPDATE`) with what it holds at that moment.
+Asked several times before it gets round to it, it is drawn once, in
+its newest state. A gadget that is in no window by then is not drawn,
+and taken out of its window it is not drawn either.
+
+It never waits: it neither takes intuition's lock nor locks a layer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: may be held; it takes Forbid for a moment itself.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+What a class's animation calls at each step, on motion.library's task:
+the step stores the gadget's new value - with `SetAttrsTagList`, no
+GadgetInfo, so nothing is drawn there - and asks for the drawing here.
+Drawing on the clock's own task would have it wait for a window whose
+task may be waiting for the clock.
+
+**BUGS**
+
+- Without input.device - the host tests - there is no task to draw it,
+  and nothing is drawn.
+
+**SEE ALSO**
+
+`RefreshGList`, `GA_Animate`, motion.library `CreateAnimationTagList`
+
+**EXAMPLES**
+
+```zig
+fn step(hook: *Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const msg: *const motion.AnimationMsg = @ptrCast(@alignCast(message.?));
+    const gauge: *Object = @ptrCast(hook.data.?);
+    _ = ib.SetAttrsTagList(gauge, &[_]TagItem{
+        .{ .tag = FUELGAUGE_Level, .data = @intCast(msg.value) },
+        .{},
+    });
+    ib.QueueGadgetRefresh(gauge);
+    return 0;
+}
 ```
 
 ## RefreshGList

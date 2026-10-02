@@ -197,6 +197,7 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
     // Read now and kept, so the caller's list may go; none, or no memory
     // for it, is the default alone.
     s.draw_info.style = _style.keep(ib, @ptrFromInt(ub.GetTagData(sc.SA_Style, 0, tags)));
+    if (ub.GetTagData(sc.SA_Animate, 1, tags) == 0) s.draw_info.flags |= sc.DRIF_STILL;
     if (pub_name) |name| {
         s.public = true;
         for (0..nameLen(name)) |i| s.pub_name[i] = name[i];

@@ -6,11 +6,14 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// The base: the clock's request, its task, and what is due.
 pub const MotionBase = extern struct {
     lib: exec.Library,
     sys_base: *ExecBase,
+    /// For the tags an animation is made and changed with.
+    utility_base: *UtilityBase,
     /// Guards `running`, and the request's being out or not.
     lock: exec.SignalSemaphore = .{},
     /// Everything that wants to run, a `Clocked` each, in no order.

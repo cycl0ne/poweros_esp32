@@ -24,7 +24,9 @@ const d = @import("../classes/draw.zig");
 ///   default pens and the system's default style alone.
 /// - `own` - a gadget's own style (`GA_Style`, read back), or null.
 /// - `part` - a `style.PART_` number, or a class's own.
-/// - `state` - `style.STATE_` bits.
+/// - `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+///   the look part of the way from one state to another, every colour
+///   mixed channel by channel and every number rounded.
 /// - `attr` - a `style.STYLE_` tag.
 ///
 /// RESULT:
@@ -71,9 +73,9 @@ const d = @import("../classes/draw.zig");
 /// gb.SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{} });
 /// ```
 pub fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const sc.DrawInfo, own: ?*const style.Style, part: u32, state: u32, attr: utility.Tag) usize {
-    const look = _style.look(ib, own, draw_info, part, state);
     const pens = d.pensOf(draw_info);
     const num_pens: u32 = if (draw_info) |dri| dri.num_pens else sc.NUMDRIPENS;
+    const look = _style.lookFor(ib, own, draw_info, part, state, pens, num_pens);
     return switch (attr) {
         style.STYLE_Background, style.STYLE_BackgroundRGB => if (look.backgroundFill()) |f| f.stops[0].pen else look.colour(.background, pens, num_pens),
         style.STYLE_BackgroundFill => @intFromPtr(look.fill_source),

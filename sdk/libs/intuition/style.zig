@@ -102,6 +102,29 @@ pub const STATE_DISABLED: u32 = 1 << 4;
 /// names no entry for the exact combination a gadget is in.
 pub const state_order = [_]u32{ STATE_DISABLED, STATE_PRESSED, STATE_CHECKED, STATE_FOCUSED, STATE_HOVERED };
 
+/// A look part of the way from one state to another: a transition in
+/// progress (`STYLE_Transition`), as the state `DrawPart` and
+/// `GetStyleAttr` take. Made with `mixState`; every property is then the
+/// two states' mixed, colours channel by channel.
+pub const STATE_MIXED: u32 = 1 << 31;
+
+/// The state that is `amount` of the way from `from` to `to`: 0 is `from`,
+/// 255 is `to`. Both are plain `STATE_` bits.
+pub fn mixState(from: u32, to: u32, amount: u8) u32 {
+    return STATE_MIXED | (to & 0xFF) | (from & 0xFF) << 8 | @as(u32, amount) << 16;
+}
+
+/// The parts of a mixed state.
+pub fn mixFrom(state: u32) u32 {
+    return (state >> 8) & 0xFF;
+}
+pub fn mixTo(state: u32) u32 {
+    return state & 0xFF;
+}
+pub fn mixAmount(state: u32) u8 {
+    return @truncate(state >> 16);
+}
+
 // --- the tags ---------------------------------------------------------------
 
 pub const STYLE_Dummy = utility.TAG_USER + 0x3A000;
@@ -166,8 +189,12 @@ pub const STYLE_PaddingY = STYLE_Dummy + 0x52;
 
 /// How much of it lands over what is behind: 255 all of it, 0 none.
 pub const STYLE_Opacity = STYLE_Dummy + 0x60;
-/// How long a change into this state takes, in milliseconds. Read and
-/// kept; nothing animates it yet.
+/// How long a change into this state takes, in milliseconds: the look goes
+/// from the state before to this one over that time instead of at once -
+/// a button that darkens as it is pressed and lightens as it is let go.
+/// 0 (the default) changes at once. Run on motion.library's clock; a
+/// gadget or screen that does not move (`GA_Animate`, `SA_Animate`)
+/// changes at once whatever this says.
 pub const STYLE_Transition = STYLE_Dummy + 0x61;
 
 // --- what some of them take -------------------------------------------------
