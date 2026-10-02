@@ -341,6 +341,32 @@ A panic handler is handed no base, so it finds exec through
 with `AlertAt`. Code that is handed SysBase keeps using what it was
 handed.
 
+### A stack that runs out
+
+A command runs on a stack of its own, `CLI_DEFAULT_STACK` (16 KiB) unless
+the shell's `Stack` command set another size. A window of gadgets uses
+more of it than its size suggests: a layout in a group in a page, and
+every message passing through several calls, each with a frame on a
+register-window stack.
+
+The bottom words of every stack - a task's, and the one a command runs on
+- hold a guard. exec looks at it each time it switches away from the task,
+and once more when the command ends; a stack that ran past its end has
+written over it, and the machine stops at that moment rather than in
+whatever memory the overflow landed on:
+
+```
+*** Software Failure.
+*** Guru Meditation #8100000E.7C063C20
+*** a task's stack ran past its end
+*** Task "Shell Process [1]" at 0x3C06C518
+```
+
+`8100000E` is `AN_StackProbe`. A command that needs more is run after
+`Stack 32000`; a task a program makes is given more with `CreateTask`'s or
+`NP_StackSize`'s size. The bottom 16 bytes of a stack are the guard's, not
+the task's.
+
 ## The system log
 
 Everything written to the serial console - `sdk.exec.kprintf`, which is

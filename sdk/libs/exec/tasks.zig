@@ -80,6 +80,10 @@ pub const TB_SWITCH = 6;
 pub const TB_LAUNCH = 7;
 pub const TF_SWITCH: u8 = 1 << TB_SWITCH;
 pub const TF_LAUNCH: u8 = 1 << TB_LAUNCH;
+/// exec's own: the stack from `sp_lower` has a guard at its bottom
+/// (`AddTask`, `NewStackRun`), which the dispatcher checks.
+pub const TB_GUARDED = 0;
+pub const TF_GUARDED: u8 = 1 << TB_GUARDED;
 
 /// tc_Switch and tc_Launch. They get the task and SysBase (A3 and A6 in the
 /// ROM). exec calls them from its dispatcher, at the exception exit with

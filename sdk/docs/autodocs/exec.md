@@ -847,6 +847,13 @@ The new task is enqueued as ready, and **if its priority is higher than
 the running task's it runs at once** - before this call returns, since
 the `Enable` at the end of it is a point at which a switch is taken.
 
+**The bottom four words of its stack become its guard** (from
+`sp_lower`): a pattern the dispatcher looks at each time it switches
+away from the task. Written over - the stack ran past its end - is a
+dead-end alert, `AN_StackProbe`, in that task, before what the overflow
+wrote over is used by anyone else. Those words are not the task's to
+use.
+
 **CONTEXT**
 
 - Waits: no, but it may switch, so the caller may lose the processor
@@ -4634,6 +4641,12 @@ much stack is left sees the right one.
 
 It is a call, not a task: the same task runs `code`, on different
 memory, and control comes back when it returns.
+
+**The new stack is guarded** as a task's is (`AddTask`): the dispatcher
+checks its bottom words while `code` runs, and this call checks them
+once more before it gives the stack back. A stack `code` ran past the
+end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
+written over below it.
 
 **CONTEXT**
 

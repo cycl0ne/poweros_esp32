@@ -73,6 +73,61 @@ pub const default_quantum = 4;
 pub const default_stack_size = 8192;
 /// The smallest stack a task or `NewStackRun` is given.
 pub const min_stack_size = 1024;
+
+// --- stack guards -----------------------------------------------------------
+//
+// The bottom words of every stack hold a pattern no frame writes on purpose:
+// a stack that grows down past its end writes over them before it writes
+// over anything else's memory. The dispatcher looks at the running task's
+// guard each time it switches away from it, and `NewStackRun` before it
+// gives its stack back, so a stack that ran over stops the machine with a
+// Guru naming the task - not three programs later, in whatever memory the
+// overflow happened to land on.
+
+/// How many words at the bottom of a stack are its guard.
+pub const guard_words = 4;
+const guard_pattern: u32 = 0x5354_4B21; // "STK!"
+
+/// The guard written at the bottom of `task`'s stack, and the task marked
+/// as having one; a task without a stack of its own (`sp_lower` 0) has
+/// none.
+pub fn guardStack(task: *Task) void {
+    if (task.sp_lower == 0) return;
+    const words: [*]volatile u32 = @ptrFromInt(task.sp_lower);
+    for (0..guard_words) |i| words[i] = guard_pattern;
+    task.flags |= sdk.exec.TF_GUARDED;
+}
+
+/// Whether the stack starting at `lower` still has its guard.
+pub fn guardIntact(lower: usize) bool {
+    if (lower == 0) return true;
+    const words: [*]const volatile u32 = @ptrFromInt(lower);
+    for (0..guard_words) |i| {
+        if (words[i] != guard_pattern) return false;
+    }
+    return true;
+}
+
+/// A task's stack checked as the dispatcher switches away from it: its
+/// guard intact and, on the chip, its saved context inside its bounds. A
+/// stack that ran over is a dead end - what it wrote over is no longer
+/// what its owners think it is.
+fn checkStack(task: *const Task, context: *anyopaque) void {
+    if (task.flags & sdk.exec.TF_GUARDED == 0) return;
+    var over = !guardIntact(task.sp_lower);
+    // The host tests hand the dispatcher contexts that are not addresses.
+    if (@import("builtin").cpu.arch == .xtensa) {
+        const at = @intFromPtr(context);
+        if (at < task.sp_lower or at > task.sp_upper) over = true;
+    }
+    if (over) stackOverrun(@intFromPtr(context));
+}
+
+/// The dead end for a stack that ran over; `where` is the stack or the
+/// context the check found it at.
+pub fn stackOverrun(where: usize) void {
+    _interrupt.alertAt(sdk.exec.AT_DeadEnd | sdk.exec.AN_StackProbe, where, "a task's stack ran past its end");
+}
 const idle_stack_size = 4096;
 
 /// What exec needs from the CPU to run tasks.
@@ -446,6 +501,7 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     if (current.state == .removed) {
         freeTaskMemory(base, current); // nothing will run on its stack again
     } else {
+        checkStack(current, context);
         current.sp_reg = context;
         current.td_nest_cnt = base.tdn_nest_cnt;
         current.id_nest_cnt = base.id_nest_cnt;

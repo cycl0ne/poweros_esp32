@@ -1530,7 +1530,8 @@ test "CreateNewProc with NP_Cli: a CLI from the parent's, in the process's block
     try testing.expectEqualStrings("Ram Disk:d", std.mem.span(c.set_name.?));
     try testing.expectEqualStrings("", std.mem.span(c.command_file.?));
     try testing.expectEqual(@as(i32, 20), c.fail_level);
-    try testing.expectEqual(@as(u32, 4096), c.default_stack);
+    // A small process stack still gives its commands the CLI's default.
+    try testing.expectEqual(dos.CLI_DEFAULT_STACK, c.default_stack);
     try testing.expect(c.background);
     runAs(proc);
     kexec.RemTask(kexec.SysBase, &proc.task);

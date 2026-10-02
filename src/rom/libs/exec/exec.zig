@@ -1645,6 +1645,42 @@ const Ended = struct {
     }
 };
 
+/// The alert a stack check raises, caught rather than halting.
+const Probed = struct {
+    var number: u32 = 0;
+    fn caught(alert_num: u32, _: usize, _: ?*const sdk.exec.TrapInfo, _: ?[*:0]const u8) void {
+        number = alert_num;
+    }
+};
+
+test "tasks: a stack's guard is written by AddTask and NewStackRun, and a guard written over is a stack alert" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const task = CreateTask(SysBase, "guarded", -1, &idleCode, 2048).?;
+    try testing.expect(task.flags & sdk.exec.TF_GUARDED != 0);
+    try testing.expect(_task.guardIntact(task.sp_lower));
+
+    // Its guard written over, as a stack that ran past its end does: the
+    // dispatcher, switching away from it, stops the machine.
+    Probed.number = 0;
+    alert_hook.* = Probed.caught;
+    defer alert_hook.* = _interrupt.default_alert;
+    const boot = SysBase.this_task;
+    const boot_context = boot_ctx;
+    _ = SetTaskPri(SysBase, task, 10);
+    _ = exceptionExit(boot_context);
+    try testing.expectEqual(task, SysBase.this_task);
+    @as(*u32, @ptrFromInt(task.sp_lower)).* = 0;
+    _ = SetTaskPri(SysBase, task, -1);
+    _ = exceptionExit(ctx(task));
+    try testing.expectEqual(sdk.exec.AT_DeadEnd | sdk.exec.AN_StackProbe, Probed.number);
+    try testing.expectEqual(boot, SysBase.this_task);
+    RemTask(SysBase, task);
+    try expectNoLeaks();
+}
+
 test "tasks: end hooks run when the task ends, in their order, once; one taken off does not" {
     try setUp();
     defer deinit();

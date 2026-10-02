@@ -402,6 +402,12 @@ pub const CLI_MAX_COMMAND_FILE: usize = 128;
 pub const CLI_INITIAL_FAIL_LEVEL: i32 = 10;
 /// A new CLI's prompt when its parent has none.
 pub const CLI_DEFAULT_PROMPT = "%N.%S> ";
+/// The stack a CLI's commands run on unless `Stack` says otherwise, in
+/// bytes: at least this, whatever the shell process itself was given. A
+/// window of gadgets goes deep - a layout in a group in a page, every
+/// message through several calls of a register-window stack - and 8 KiB
+/// was found too little for one.
+pub const CLI_DEFAULT_STACK: u32 = 16384;
 
 /// struct CommandLineInterface, without BCPL: the names are
 /// NUL-terminated strings in buffers of CLI_MAX_* bytes, allocated with it
@@ -433,7 +439,8 @@ pub const CommandLineInterface = extern struct {
     background: bool = true,
     /// cli_CurrentOutput, cli_StandardOutput
     current_output: ?*FileHandle = null,
-    /// cli_DefaultStack: in bytes.
+    /// cli_DefaultStack: the stack its commands run on, in bytes; at least
+    /// `CLI_DEFAULT_STACK` unless `Stack` set it lower.
     default_stack: u32 = 0,
     standard_output: ?*FileHandle = null,
     /// cli_Module: the loaded command's segment list.

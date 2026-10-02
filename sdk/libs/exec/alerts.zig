@@ -9,6 +9,9 @@ pub const AT_Recovery: u32 = 0x0000_0000;
 pub const ACPU_Base: u32 = AT_DeadEnd;
 /// Released a semaphore that the task does not hold.
 pub const AN_SemCorrupt: u32 = 0x0100_0008;
+/// A task's stack ran past its end: its guard at the bottom was written
+/// over, or its stack pointer is outside it.
+pub const AN_StackProbe: u32 = 0x0100_000E;
 /// A Zig panic in the kernel (exec.kernelPanic), past exec's other codes,
 /// which end at 0x0100000F.
 pub const AN_KernelPanic: u32 = 0x0100_0100;
