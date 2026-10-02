@@ -26,13 +26,13 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",         "dir",       "delete",   "makedir",       "rename",
-    "avail",        "assign",    "version",  "addbuffers",    "which",
-    "list",         "format",    "protect",  "changetaskpri", "wait",
-    "info",         "platform",  "copy",     "rdb",           "i2c",
-    "backlight",    "rtg",       "showinfo", "setmap",        "mount",
-    "showconfig",   "date",      "setdate",  "fontprefs",     "fixfonts",
-    "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
+    "type",         "dir",        "delete",   "makedir",       "rename",
+    "avail",        "assign",     "version",  "addbuffers",    "which",
+    "list",         "format",     "protect",  "changetaskpri", "wait",
+    "info",         "platform",   "copy",     "rdb",           "i2c",
+    "backlight",    "rtg",        "showinfo", "setmap",        "mount",
+    "showconfig",   "date",       "setdate",  "fontprefs",     "fixfonts",
+    "adddatatypes", "listfonts",  "log",      "requestfile",   "requestchoice",
     "diskchange",   "styleprefs",
 };
 const tests = [_][]const u8{
@@ -42,7 +42,7 @@ const tests = [_][]const u8{
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
     "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",      "styles",      "motion",
+    "shapes",      "styles",     "motion",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -88,6 +88,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget" },
     .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget" },
     .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget" },
+    .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
     .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype" },

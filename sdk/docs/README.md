@@ -26,6 +26,7 @@ SDK has a `.fd` file for: one file per module, in two forms.
 | intuition.library | [intuition.doc](autodocs/intuition.doc) | [intuition.md](autodocs/intuition.md) |
 | keymap.library | [keymap.doc](autodocs/keymap.doc) | [keymap.md](autodocs/keymap.md) |
 | layers.library | [layers.doc](autodocs/layers.doc) | [layers.md](autodocs/layers.md) |
+| motion.library | [motion.doc](autodocs/motion.doc) | [motion.md](autodocs/motion.md) |
 | platform.resource | [platform.doc](autodocs/platform.doc) | [platform.md](autodocs/platform.md) |
 | rtg.library | [rtg.doc](autodocs/rtg.doc) | [rtg.md](autodocs/rtg.md) |
 | timer.device | [timer.doc](autodocs/timer.doc) | [timer.md](autodocs/timer.md) |
@@ -52,6 +53,9 @@ hand.
 - [Styles](guides/styles.md) - what a style is, parts, states and
   properties, where a style comes from and how a property is found,
   `style.prefs`, drawing a part in a class, hover and focus.
+- [Animation](guides/animation.md) - the clock, curves, animations,
+  hearing of them by a hook or a signal, timers, timelines, moving a
+  gadget, and what moves on its own.
 - [Network](guides/network.md) - sockets, waiting on them, names,
   interfaces and their files, the network device API, wireless devices,
   writing a network driver, telnet.device, and the commands.

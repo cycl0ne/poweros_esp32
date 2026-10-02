@@ -16,6 +16,14 @@
 //! then at each one, while the pointer stays on the arrow. Let go, the
 //! press ends the way that counts. The top is the code of the window's
 //! `IDCMP_GADGETUP`, and every change is told to the target.
+//!
+//! **A top set from outside glides there.** `SCROLLER_Top` more than one
+//! thing away, set while it is in a window, takes the top at once but
+//! moves the knob there over a little under a fifth of a second on
+//! motion.library's clock: each step moves the bar's knob and asks
+//! intuition to draw the gadget again (`QueueGadgetRefresh`). A drag, the
+//! arrows, a gadget or screen that does not move (`GA_Animate`,
+//! `SA_Animate`) and a system without motion.library move it at once.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -28,6 +36,8 @@ const ic = intuition.imageclass;
 const icc = intuition.icclass;
 const pg = intuition.propgclass;
 const ie = sdk.devices.inputevent;
+const motion = sdk.motion;
+const MotionBase = sdk.interface.motion.MotionBase;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const sr = gadgets.scroller;
@@ -83,7 +93,79 @@ pub const Data = extern struct {
     inner: ?*Object = null,
     /// The arrows' button frame.
     frame: ?*Object = null,
+    /// What glides the knob: motion.library, the animation, and the hook
+    /// its steps call - its data the gadget, its sub-entry the class's
+    /// base.
+    motion_base: ?*MotionBase = null,
+    glide: ?*motion.Animation = null,
+    glide_hook: utility.Hook = .{},
 };
+
+/// How long the knob takes to glide to a top set from outside, in
+/// milliseconds.
+const glide_time = 180;
+
+/// A step of a glide: the knob moved, and intuition asked to draw the
+/// gadget. On motion.library's task: it waits for nothing.
+fn glided(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const msg: *const motion.AnimationMsg = @ptrCast(@alignCast(message.?));
+    const o: *Object = @ptrCast(@alignCast(hook.data.?));
+    const base: *gadgets.Base = @ptrCast(@alignCast(@constCast(hook.sub_entry.?)));
+    const own = classes.instData(Data, base.class, o);
+    const tags = [_]TagItem{ .{ .tag = pg.PGA_Top, .data = @intCast(@max(msg.value, 0)) }, .{} };
+    _ = base.intuition_base.SetAttrsTagList(own.inner.?, &tags);
+    base.intuition_base.QueueGadgetRefresh(o);
+    return 0;
+}
+
+/// The knob taken from `from` to the top over a glide; false when it
+/// cannot glide - out of a window, a thing or less away, it may not move,
+/// no motion.library - and the caller puts it there at once.
+fn glideFrom(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, from: u32) bool {
+    const info = gi orelse return false;
+    const distance = if (own.top > from) own.top - from else from - own.top;
+    if (distance <= 1 or !gc.animates(gc.gadget(o), info.draw_info)) return false;
+    if (own.motion_base == null) {
+        own.motion_base = @ptrCast(base.sys_base.OpenLibrary(motion.MOTIONNAME, 1) orelse return false);
+    }
+    const mb = own.motion_base.?;
+    own.glide_hook = .{ .entry = &glided, .data = o, .sub_entry = base };
+    const tags = [_]TagItem{
+        .{ .tag = motion.ANIM_From, .data = from },
+        .{ .tag = motion.ANIM_To, .data = own.top },
+        .{ .tag = motion.ANIM_Duration, .data = glide_time },
+        .{ .tag = motion.ANIM_Easing, .data = motion.EASE_OUT },
+        .{ .tag = motion.ANIM_Rate, .data = 60 },
+        .{ .tag = motion.ANIM_StepHook, .data = @intFromPtr(&own.glide_hook) },
+        .{},
+    };
+    if (own.glide) |animation| {
+        _ = mb.SetAnimationAttrsTagList(animation, &tags);
+    } else {
+        own.glide = mb.CreateAnimationTagList(&tags);
+    }
+    const animation = own.glide orelse return false;
+    mb.StartAnimation(animation);
+    return true;
+}
+
+/// The bar told the count with the knob still where it was, then the
+/// knob glided to `top`; false when it cannot glide.
+fn glideToTop(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, top: u32) bool {
+    const from = own.top;
+    own.top = top;
+    if (!glideFrom(base, own, o, gi, from)) return false;
+    own.top = from;
+    putCount(base, own, null);
+    own.top = top;
+    return true;
+}
+
+/// A glide stopped where it is: the knob is someone else's to move now.
+fn stopGlide(own: *Data) void {
+    const animation = own.glide orelse return;
+    own.motion_base.?.StopAnimation(animation, motion.STOP_WHERE_IT_IS);
+}
 
 /// The furthest the top goes: the last view that is full.
 fn lastTop(own: *const Data) u32 {
@@ -354,6 +436,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
+            if (own.motion_base) |mb| {
+                // Its step is not running once this returns.
+                mb.DeleteAnimation(own.glide);
+                base.sys_base.CloseLibrary(mb.lib());
+            }
             ib.DisposeObject(own.inner);
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
@@ -364,6 +451,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const ub = base.utility_base;
             // The bar moving: the top followed, and told.
             if (msg.method_id == classusr.OM_UPDATE) if (ub.FindTagItem(pg.PGA_Top, set.attr_list)) |item| {
+                stopGlide(own);
                 const update: *classusr.OpUpdate = @ptrCast(@alignCast(msg));
                 const top: u32 = @min(@as(u32, @truncate(item.data)), lastTop(own));
                 const moved = top != own.top;
@@ -382,9 +470,16 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return 0;
             };
             var changed = ib.SendSuperMessage(cl, o, msg);
+            const was = own.top;
             if (setAttrs(base, own, set.attr_list, false)) {
-                // Drawn by the bar itself when it is in a window.
-                putCount(base, own, set.gadget_info);
+                // A top set from outside, far enough away, glides: the
+                // count goes in with the knob where it was. Otherwise it
+                // is drawn by the bar itself when it is in a window.
+                const new_top = own.top;
+                own.top = was;
+                const glides = new_top != was and glideToTop(base, own, o.?, set.gadget_info, new_top);
+                own.top = new_top;
+                if (!glides) putCount(base, own, set.gadget_info);
                 changed = 1;
             }
             if (ub.FindTagItem(gc.GA_Disabled, set.attr_list)) |item| {

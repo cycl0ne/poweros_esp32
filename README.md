@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every library, device and resource call |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [network](sdk/docs/guides/network.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [animation](sdk/docs/guides/animation.md), [network](sdk/docs/guides/network.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -130,12 +130,23 @@ Espressif's QEMU. The ESP32-P4 is next.
   part and state, which `C:StylePrefs` hands over at boot and again
   whenever it is run: every open window is drawn again in it. See the
   [styles guide](sdk/docs/guides/styles.md).
+  Things move on one clock, motion.library: a value going from one
+  number to another over a time through a curve (easing in, out, past
+  the end and back, bouncing, or a Bezier of one's own), timers that
+  fire every so often without drifting, and timelines that play several
+  as one, forwards, backwards or scrubbed. A change of look fades over
+  the time a style gives it, a gauge fills to its new level, a list and
+  a scroller glide to a new top, a ring of dots turns while something
+  goes on, and so does the busy pointer - each step stored and drawn by
+  intuition, so the clock never waits for a window, and a screen can
+  turn it all off. See the [animation guide](sdk/docs/guides/animation.md).
   More gadget classes on the disk in
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of
   gadgets, a number field with stepping arrows, a button that pops a list
-  up to pick from, a bar that shows how far along something is, and a
-  field with a button that opens the file or font requester.
+  up to pick from, a bar that shows how far along something is, a ring
+  of dots that turns while something goes on, and a field with a button
+  that opens the file or font requester.
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,

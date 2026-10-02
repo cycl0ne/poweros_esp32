@@ -81,6 +81,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
             // Part of the way into its new look while its style says it takes
             // time (`STYLE_Transition`).
             .style_state = _transition.state(ib, o, dri, intuition.style.PART_MAIN, _style.statesOfImage(drawn) | gc.styleStates(g.flags)),
+            .style = g.style,
         };
         _ = it.SendMessage(frame, @ptrCast(&draw));
     }
@@ -137,7 +138,7 @@ pub fn framed(ib: *IntuitionBase, o: *Object, frame: *Object, gi: ?*classusr.Gad
 
     var box = ic.Box{};
     const dri = if (gi) |info| info.draw_info else g.draw_info;
-    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = dri };
+    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = dri, .style = g.style };
     if (it.SendMessage(frame, @ptrCast(&msg)) == 0) return null;
     return box;
 }

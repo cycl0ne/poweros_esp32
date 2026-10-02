@@ -2,10 +2,11 @@
 //! Anim: a moving picture drawn with every primitive graphics.library has.
 //! Built against the SDK only.
 //!
-//!   Anim FRAMES/N,SCALE/K/N,TIMES/S
+//!   Anim FRAMES/N,SCALE/K/N,RATE/K/N,TIMES/S
 //!
 //! It runs until Ctrl-C, or for FRAMES frames, and then says how many it
-//! drew and how fast. SCALE is how many display pixels a stage pixel
+//! drew and how fast. RATE is how many frames a second it aims for, 1 to
+//! 60, 25 by default. SCALE is how many display pixels a stage pixel
 //! becomes, 1 to 4: the stage is the display divided by it, drawn at that
 //! size and stretched back up. 2 by default; 1 draws at the display's own
 //! size and costs about half the frame rate. TIMES adds a table at the
@@ -20,6 +21,15 @@
 //! everything else after it, and the panel streams whatever is there at
 //! that moment. Double buffering is the only way a picture that is cleared
 //! and redrawn sixty times a second looks like one that moves.
+//!
+//! **The pace is motion.library's clock.** A timer fires RATE times a
+//! second; its hook, on the clock's task, only stores how many times it
+//! has fired, and its signal wakes the program for the next frame. A frame
+//! moves the scene on by every firing since the last one, so the picture
+//! goes at the same speed on a machine that cannot draw RATE frames a
+//! second - it draws fewer of them. Between frames the program waits,
+//! which leaves the time to the rest of the system. Without motion.library
+//! it draws as fast as it can, a tick apart.
 //!
 //! What is in it, back to front:
 //!
@@ -65,20 +75,25 @@ const Pen = graphics.Pen;
 const RastPort = graphics.RastPort;
 const timer = sdk.devices.timer;
 const TimerBase = timer.TimerBase;
+const motion = sdk.motion;
+const MotionBase = sdk.interface.motion.MotionBase;
 
 pub const COMMAND_NAME = "Anim";
-const VERSION_STRING = "\x00$VER: Anim 1.0 (18.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Anim 1.1 (2.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FRAMES/N,SCALE/K/N,TIMES/S";
+const template = "FRAMES/N,SCALE/K/N,RATE/K/N,TIMES/S";
 const arg_frames = 0;
 const arg_scale = 1;
-const arg_times = 2;
+const arg_rate = 2;
+const arg_times = 3;
 
 const MSG_NOLIBRARY = "No %s - this machine has no drawing layer\n";
 const MSG_NODISPLAY = "No display - %s\n";
 const MSG_NOSTAGE = "No room for a %dx%d stage - %s\n";
 const MSG_BADSCALE = "SCALE must be 1 to 4\n";
+const MSG_BADRATE = "RATE must be 1 to 60\n";
+const MSG_NOCLOCK = "No %s - drawing as fast as it can\n";
 const MSG_RUNNING = "Anim %dx%d on %dx%d - Ctrl-C to stop\n";
 const MSG_DONE = "%d frames in %d.%02d s\n";
 const MSG_RATE = "%d.%d frames a second\n";
@@ -667,6 +682,75 @@ fn ticksBetween(from: dos.DateStamp, to: dos.DateStamp) u32 {
     return if (ticks < 0) 0 else @intCast(ticks);
 }
 
+/// How many firings a frame catches up at the most.
+const max_catch_up = 4;
+
+/// What paces the frames: motion.library's timer, its signal, and the
+/// count its hook keeps. With no motion.library, a tick of dos's apart.
+const Pace = struct {
+    motion_base: ?*MotionBase = null,
+    timer: ?*motion.Timer = null,
+    signal: i8 = -1,
+    hook: sdk.utility.Hook = .{},
+    /// How many times the timer has fired: written by the hook on the
+    /// clock's task, read by the program.
+    fired: u32 = 0,
+    /// The count by a tick of dos's, without the timer.
+    ticks: u32 = 0,
+
+    /// A firing: the count kept. On motion.library's task.
+    fn firing(hook: *sdk.utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const msg: *const motion.TimerMsg = @ptrCast(@alignCast(message.?));
+        const pace: *Pace = @ptrCast(@alignCast(hook.data.?));
+        @atomicStore(u32, &pace.fired, msg.count, .release);
+        return 0;
+    }
+
+    fn start(pace: *Pace, sys: *ExecBase, dl: *DosBase, rate: u32) void {
+        const lib = sys.OpenLibrary(motion.MOTIONNAME, 1) orelse {
+            _ = Printf(dl, MSG_NOCLOCK, .{motion.MOTIONNAME});
+            return;
+        };
+        pace.motion_base = @ptrCast(lib);
+        pace.signal = sys.AllocSignal(-1);
+        if (pace.signal < 0) return;
+        pace.hook = .{ .entry = &firing, .data = pace };
+        pace.timer = pace.motion_base.?.CreateTimerTagList(&[_]TagItem{
+            .{ .tag = motion.TIMER_Period, .data = @max(1000 / rate, 1) },
+            .{ .tag = motion.TIMER_Repeat, .data = motion.TIMER_FOREVER },
+            .{ .tag = motion.TIMER_Hook, .data = @intFromPtr(&pace.hook) },
+            .{ .tag = motion.TIMER_Signal, .data = @intCast(pace.signal) },
+            .{},
+        });
+        if (pace.timer) |made| pace.motion_base.?.StartTimer(made);
+    }
+
+    /// The timer's count once it has fired since the last frame; null on
+    /// Ctrl-C.
+    fn next(pace: *Pace, sys: *ExecBase, dl: *DosBase) ?u32 {
+        if (pace.timer == null) {
+            // A tick to spare for everything else: the console that reads
+            // the Ctrl-C among them.
+            dl.Delay(1);
+            if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) return null;
+            pace.ticks +%= 1;
+            return pace.ticks;
+        }
+        const mask = @as(u32, 1) << @intCast(pace.signal);
+        const got = sys.Wait(mask | exec.SIGBREAKF_CTRL_C);
+        if (got & exec.SIGBREAKF_CTRL_C != 0) return null;
+        return @atomicLoad(u32, &pace.fired, .acquire);
+    }
+
+    fn stop(pace: *Pace, sys: *ExecBase) void {
+        const mb = pace.motion_base orelse return;
+        // Its hook is not running once the timer is deleted.
+        if (pace.timer) |made| mb.DeleteTimer(made);
+        if (pace.signal >= 0) sys.FreeSignal(pace.signal);
+        sys.CloseLibrary(mb.lib());
+    }
+};
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -674,7 +758,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -685,6 +769,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const scale: i32 = if (argv[arg_scale] != 0) @as(*const i32, @ptrFromInt(argv[arg_scale])).* else 2;
     if (scale < 1 or scale > 4) {
         _ = Printf(dl, MSG_BADSCALE, .{});
+        return dos.RETURN_ERROR;
+    }
+    const rate: i32 = if (argv[arg_rate] != 0) @as(*const i32, @ptrFromInt(argv[arg_rate])).* else 25;
+    if (rate < 1 or rate > 60) {
+        _ = Printf(dl, MSG_BADRATE, .{});
         return dos.RETURN_ERROR;
     }
 
@@ -776,13 +865,27 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var scene: Scene = undefined;
     scene.init(w, h);
 
+    // The pace: a timer on motion.library's clock, RATE times a second.
+    var pace: Pace = .{};
+    pace.start(sys, dl, @intCast(rate));
+    defer pace.stop(sys);
+
     var started: dos.DateStamp = .{};
     _ = dl.DateStamp(&started);
 
     var drawn: u32 = 0;
+    // The scene's own time, in firings of the timer.
+    var shown: u32 = 0;
     while (frames == 0 or drawn < frames) {
-        if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) break;
-        const t: i32 = @intCast(drawn);
+        const now = pace.next(sys, dl) orelse break;
+        // On by every firing since the last frame, but never by so many
+        // that a long stall makes the picture jump.
+        var behind: u32 = @min(now -% shown, max_catch_up);
+        while (behind > 1) : (behind -= 1) {
+            scene.step();
+            shown +%= 1;
+        }
+        const t: i32 = @intCast(shown % 0x4000_0000);
         drawFrame(gb, rp, &scene, slats, ball, fonts, t, &timing);
         if (scale == 1) {
             gb.BltBitMapRastPort(stage, 0, 0, screen, out.min_x, out.min_y, w, h);
@@ -791,10 +894,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         timing.lap(12);
         scene.step();
+        shown = now;
         drawn += 1;
-        // A tick to spare for everything else: the console that reads the
-        // Ctrl-C among them.
-        dl.Delay(1);
     }
 
     var ended: dos.DateStamp = .{};

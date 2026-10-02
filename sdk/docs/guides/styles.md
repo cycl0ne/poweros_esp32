@@ -112,7 +112,7 @@ that a style may name exactly.
 | `STYLE_TextPen` / `RGB` | the colour of text on it |
 | `STYLE_Padding`, `PaddingX`, `PaddingY` | room between the border and what is inside |
 | `STYLE_Opacity` | 255 opaque down to 0: how much lands over what is behind |
-| `STYLE_Transition` | milliseconds a change into the state takes; kept, not yet animated |
+| `STYLE_Transition` | milliseconds a change into the state takes: the part fades from its old look to the new one (see the [animation guide](animation.md)) |
 
 A colour given as a pen is the screen's pen, looked up when the part is
 drawn, so a style in pens follows the screen's colours. A colour given as
@@ -258,7 +258,19 @@ before styles.
 **A frame image** (`frameiclass`) draws through `DrawPart`, its part
 chosen by its frame type or named with `IA_StylePart`. Its state comes from
 the image state (`IDS_`) and, for what an image state cannot say,
-`ImpDraw.style_state`.
+`ImpDraw.style_state`. A gadget that draws a frame round itself hands it
+its own style in `ImpDraw.style` and `ImpFrameBox.style`, so the frame is
+drawn and measured with the gadget's `GA_Style` over the screen's:
+
+```zig
+var draw = ic.ImpDraw{
+    .method_id = ic.IM_DRAWFRAME, .rast_port = rp,
+    .offset = .{ .x = b.left, .y = b.top }, .state = ids, .draw_info = dri,
+    .dimensions = .{ .width = b.width, .height = b.height },
+    .style = gc.gadget(o).style,
+};
+_ = ib.SendMessage(frame, @ptrCast(&draw));
+```
 
 ## Hover and focus
 

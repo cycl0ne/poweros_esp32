@@ -261,6 +261,7 @@ per gadget kind, and a program opens the ones it uses before it makes
 them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `scroller`, `listview`, `palette`, `colorwheel`, `gradientslider`,
 `tapedeck`, `fuelgauge` (a bar showing how far along something is),
+`spinner` (a ring of dots going round while something goes on),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), and `clicktab` with `page` (a
 row of tabs over pages of gadgets), and `getfile` with `getfont` (a

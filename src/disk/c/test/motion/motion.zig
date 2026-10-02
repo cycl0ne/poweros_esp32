@@ -13,11 +13,21 @@
 //! TIMER makes a timer instead, firing every DURATION/5 milliseconds
 //! five times, and prints each firing against the time.
 //!
-//! WINDOW opens a window with a scroll bar whose knob an animation slides
-//! back and forth, over DURATION each way, until the window is closed: the
-//! step runs on motion.library's task, stores the knob's place and asks
-//! intuition to draw it (`QueueGadgetRefresh`), so nothing is drawn on the
-//! clock's task.
+//! WINDOW opens the demo, until the window is closed:
+//!
+//! - **Curves, on a timeline**: a row a curve, each a bar whose knob an
+//!   animation moves from the left to the right over DURATION (CURVE is
+//!   not used), all seven in one timeline so they start together; when it
+//!   ends it is played again reversed, and again forwards. A step runs on
+//!   motion.library's task, stores the knob's place and asks intuition to
+//!   draw it (`QueueGadgetRefresh`), so nothing is drawn on the clock's
+//!   task. RATE is 30 here unless given.
+//! - **A gauge**: `fuelgauge.gadget` given a new level every one and a
+//!   half seconds by a timer; it fills to it on its own.
+//! - **A spinner**: `spinner.gadget`, turning.
+//! - **A fade**: the Spinner button, whose own style takes a quarter of a
+//!   second from each look to the next - a light blue under the pointer,
+//!   the blue pressed. It stops the spinner and starts it again.
 //!
 //! Ctrl-C stops it where it is.
 
@@ -35,7 +45,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Motion";
-const VERSION_STRING = "\x00$VER: Motion 1.0 (2.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Motion 1.1 (2.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DURATION/N,CURVE/N,RATE/N,TIMER/S,WINDOW/S";
@@ -52,6 +62,7 @@ const MSG_STEP = "%5ld ms  %3ld\n";
 const MSG_DONE = "Done after %ld ms: %ld steps heard\n";
 const MSG_STOPPED = "Stopped at %ld\n";
 const MSG_FIRED = "%5ld ms  fired\n";
+const MSG_DEMO = "The close gadget or Ctrl-C end it\n";
 
 /// A DateStamp's tick: a fiftieth of a second.
 const ms_per_tick = 20;
@@ -97,7 +108,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const mask = @as(u32, 1) << @intCast(bit);
 
     if (argv[arg_timer] != 0) return fireTimer(sys, dl, mb, bit, duration / 5);
-    if (argv[arg_window] != 0) return slideKnob(sys, dl, mb, duration, curve, rate);
+    if (argv[arg_window] != 0) return showAll(sys, dl, mb, duration, if (argv[arg_rate] != 0) rate else 30);
 
     const anim = mb.CreateAnimationTagList(&[_]TagItem{
         .{ .tag = motion.ANIM_To, .data = 100 },
@@ -158,7 +169,34 @@ fn fireTimer(sys: *ExecBase, dl: *DosBase, mb: *MotionBase, bit: i8, period: u32
     return dos.RETURN_OK;
 }
 
-/// What the knob's step reaches: intuition, and the scroll bar.
+/// The demo's curves, top to bottom, and the names their rows carry.
+const curves = [_]u32{
+    motion.EASE_LINEAR,    motion.EASE_IN,     motion.EASE_OUT,  motion.EASE_INOUT,
+    motion.EASE_OVERSHOOT, motion.EASE_BOUNCE, motion.EASE_STEP,
+};
+const curve_names = [curves.len][*:0]const u8{ "Linear", "In", "Out", "In-out", "Overshoot", "Bounce", "Step" };
+
+/// The levels the gauge is given in turn, and how long each stays.
+const levels = [_]u32{ 20, 65, 100, 40, 0, 85 };
+const level_time = 1500;
+
+/// The spinner button's gadget ID.
+const ID_SPIN = 1;
+
+/// The spinner button's own style: a quarter of a second from each look
+/// to the next, a light blue under the pointer, the blue pressed.
+const button_style = [_]TagItem{
+    .{ .tag = intuition.style.STYLE_Part, .data = intuition.style.PART_MAIN },
+    .{ .tag = intuition.style.STYLE_Transition, .data = 250 },
+    .{ .tag = intuition.style.STYLE_State, .data = intuition.style.STATE_HOVERED },
+    .{ .tag = intuition.style.STYLE_BackgroundRGB, .data = 0xFFC8_DCF0 },
+    .{ .tag = intuition.style.STYLE_State, .data = intuition.style.STATE_PRESSED },
+    .{ .tag = intuition.style.STYLE_BackgroundRGB, .data = 0xFF3A_6EA5 },
+    .{ .tag = intuition.style.STYLE_TextRGB, .data = 0xFFFF_FFFF },
+    .{},
+};
+
+/// What a curve's step reaches: intuition, and its row's bar.
 const Knob = struct {
     ib: *IntuitionBase,
     bar: *intuition.Object,
@@ -177,76 +215,230 @@ fn knobStep(hook: *sdk.utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callc
     return 0;
 }
 
-/// A window with a scroll bar whose knob slides there and back until the
-/// window is closed.
-fn slideKnob(sys: *ExecBase, dl: *DosBase, mb: *MotionBase, duration: u32, curve: u32, rate: u32) i32 {
-    const wn = intuition.windows;
+/// The demo's window: a row a curve whose knob a timeline moves there and
+/// back, a gauge filling to a new level every so often, a spinner, and a
+/// button that stops and starts it, fading between its looks.
+fn showAll(sys: *ExecBase, dl: *DosBase, mb: *MotionBase, duration: u32, rate: u32) i32 {
     const gc = intuition.gadgetclass;
     const pg = intuition.propgclass;
+    const lg = intuition.layoutgclass;
+    const wn = intuition.windows;
+    const wc = intuition.windowclass;
+    const classusr = intuition.classusr;
+    const fgg = sdk.gadgets.fuelgauge;
+    const spn = sdk.gadgets.spinner;
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(int_lib);
     const ib: *IntuitionBase = @ptrCast(int_lib);
-    const bar = ib.NewObjectTagList(null, intuition.classusr.PROPGCLASS, &[_]TagItem{
-        .{ .tag = gc.GA_Left, .data = 12 },
-        .{ .tag = gc.GA_Top, .data = 30 },
-        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -24)) },
-        .{ .tag = gc.GA_Height, .data = 16 },
+
+    // The class libraries, open until the window object and every gadget
+    // in it are gone.
+    const wanted = [_][*:0]const u8{ fgg.GAUGE_LIBRARY, spn.SPINNER_LIBRARY };
+    var libraries: [wanted.len]?*exec.Library = @splat(null);
+    defer for (libraries) |lib| sys.CloseLibrary(lib);
+    for (wanted, 0..) |name, i| {
+        libraries[i] = sys.OpenLibrary(name, 0) orelse {
+            _ = Printf(dl, MSG_NOLIBRARY, .{name});
+            return dos.RETURN_FAIL;
+        };
+    }
+
+    // The gadgets. A layout disposes of what it holds; what is not in one
+    // yet is this program's to free.
+    var bars: [curves.len]?*intuition.Object = @splat(null);
+    for (&bars) |*bar| bar.* = ib.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
         .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
         .{ .tag = pg.PGA_Total, .data = 100 },
         .{ .tag = pg.PGA_Visible, .data = 10 },
+        .{ .tag = gc.GA_Width, .data = 240 },
+        .{ .tag = gc.GA_Height, .data = 10 },
         .{},
-    }) orelse {
+    });
+    const gauge = ib.NewObjectTagList(null, fgg.GAUGE_CLASS, &[_]TagItem{
+        .{ .tag = fgg.GAUGE_Percent, .data = 1 },
+        .{ .tag = fgg.GAUGE_Format, .data = @intFromPtr("%ld%%") },
+        .{},
+    });
+    const spinner = ib.NewObjectTagList(null, spn.SPINNER_CLASS, &[_]TagItem{.{}});
+    const button = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Spinner") },
+        .{ .tag = gc.GA_ID, .data = ID_SPIN },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&button_style) },
+        .{},
+    });
+    var curve_rows: [2 * curves.len + 5]TagItem = undefined;
+    curve_rows[0] = .{ .tag = lg.LAYOUTA_FrameTitle, .data = @intFromPtr("Curves, on a timeline") };
+    curve_rows[1] = .{ .tag = lg.LAYOUTA_Margin, .data = 6 };
+    curve_rows[2] = .{ .tag = lg.LAYOUTA_Spacing, .data = 3 };
+    for (bars, 0..) |bar, i| {
+        curve_rows[3 + 2 * i] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(bar) };
+        curve_rows[4 + 2 * i] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(curve_names[i]) };
+    }
+    curve_rows[3 + 2 * curves.len] = .{};
+    const made = [_]?*intuition.Object{ gauge, spinner, button } ++ bars;
+    for (made) |part| if (part == null) {
+        for (made) |any| ib.DisposeObject(any);
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    defer ib.DisposeObject(bar);
-    const window = ib.OpenWindowTagList(&[_]TagItem{
+    const curve_group = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &curve_rows);
+    const things = if (curve_group != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_FrameTitle, .data = @intFromPtr("A gauge, a spinner, a fade") },
+        .{ .tag = lg.LAYOUTA_Margin, .data = 6 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gauge) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(spinner) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{},
+    }) else null;
+    const layout = if (things != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Margin, .data = 6 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(curve_group) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(things) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{},
+    }) else null;
+    if (layout == null) {
+        // What no layout holds yet is this program's to free.
+        if (things) |group| ib.DisposeObject(group) else for ([_]?*intuition.Object{ gauge, spinner, button }) |part| ib.DisposeObject(part);
+        if (curve_group) |group| ib.DisposeObject(group) else for (bars) |bar| ib.DisposeObject(bar);
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    }
+    const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Motion") },
-        .{ .tag = wn.WA_Width, .data = 320 },
-        .{ .tag = wn.WA_Height, .data = 70 },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
         .{ .tag = wn.WA_DragBar, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(bar) },
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }) orelse {
+        ib.DisposeObject(layout);
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+    // The window and every gadget in it, after the animations that reach
+    // them and before the libraries their classes are in.
+    defer ib.DisposeObject(object);
+    var open = wc.WmOpen{};
+    if (ib.SendMessage(object, @ptrCast(&open)) == 0) {
+        _ = Printf(dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    }
+    var window_ptr: usize = 0;
+    _ = ib.GetAttr(wc.WINDOWA_Window, object, &window_ptr);
+    const window: *intuition.Window = @ptrFromInt(window_ptr);
+
+    // The signals: the timeline's end and the gauge's timer.
+    const ended_bit = sys.AllocSignal(-1);
+    defer if (ended_bit >= 0) sys.FreeSignal(ended_bit);
+    const level_bit = sys.AllocSignal(-1);
+    defer if (level_bit >= 0) sys.FreeSignal(level_bit);
+    if (ended_bit < 0 or level_bit < 0) {
+        _ = Printf(dl, MSG_NOSIGNAL, .{});
+        return dos.RETURN_FAIL;
+    }
+
+    // A curve a row, all in one timeline, each from the left to the right
+    // over DURATION.
+    var knobs: [curves.len]Knob = undefined;
+    var hooks: [curves.len]sdk.utility.Hook = undefined;
+    var anims: [curves.len]?*motion.Animation = @splat(null);
+    defer for (anims) |anim| mb.DeleteAnimation(anim);
+    const line = mb.CreateTimelineTagList(&[_]TagItem{
+        .{ .tag = motion.TIMELINE_Signal, .data = @intCast(ended_bit) },
         .{},
     }) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    defer ib.CloseWindow(window);
+    // Gone before its animations, which it lets go of.
+    defer mb.DeleteTimeline(line);
+    for (curves, 0..) |curve, i| {
+        knobs[i] = .{ .ib = ib, .bar = bars[i].? };
+        hooks[i] = .{ .entry = &knobStep, .data = &knobs[i] };
+        anims[i] = mb.CreateAnimationTagList(&[_]TagItem{
+            .{ .tag = motion.ANIM_To, .data = 90 },
+            .{ .tag = motion.ANIM_Duration, .data = duration },
+            .{ .tag = motion.ANIM_Easing, .data = curve },
+            .{ .tag = motion.ANIM_Rate, .data = rate },
+            .{ .tag = motion.ANIM_StepHook, .data = @intFromPtr(&hooks[i]) },
+            .{},
+        }) orelse {
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return dos.RETURN_FAIL;
+        };
+        _ = mb.AddTimelineAnimation(line, anims[i].?, 0);
+    }
 
-    var knob = Knob{ .ib = ib, .bar = bar };
-    var hook = sdk.utility.Hook{ .entry = &knobStep, .data = &knob };
-    const anim = mb.CreateAnimationTagList(&[_]TagItem{
-        .{ .tag = motion.ANIM_To, .data = 90 },
-        .{ .tag = motion.ANIM_Duration, .data = duration },
-        .{ .tag = motion.ANIM_Easing, .data = curve },
-        .{ .tag = motion.ANIM_Rate, .data = rate },
-        .{ .tag = motion.ANIM_Repeat, .data = motion.ANIM_FOREVER },
-        .{ .tag = motion.ANIM_PlayBack, .data = 1 },
-        .{ .tag = motion.ANIM_StepHook, .data = @intFromPtr(&hook) },
+    // The gauge's new levels, on a timer.
+    const level_timer = mb.CreateTimerTagList(&[_]TagItem{
+        .{ .tag = motion.TIMER_Period, .data = level_time },
+        .{ .tag = motion.TIMER_Repeat, .data = motion.TIMER_FOREVER },
+        .{ .tag = motion.TIMER_Delay, .data = 300 },
+        .{ .tag = motion.TIMER_Signal, .data = @intCast(level_bit) },
         .{},
     }) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
-    // Gone before the window and the bar its step reaches.
-    defer mb.DeleteAnimation(anim);
-    mb.StartAnimation(anim);
+    defer mb.DeleteTimer(level_timer);
 
+    mb.StartTimeline(line);
+    mb.StartTimer(level_timer);
+    _ = Printf(dl, MSG_DEMO, .{});
+
+    var reversed = false;
+    var next_level: usize = 0;
+    var spinning = true;
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    const ended_mask = @as(u32, 1) << @intCast(ended_bit);
+    const level_mask = @as(u32, 1) << @intCast(level_bit);
     while (true) {
-        const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
+        const got = ib.WaitIMsg(window, ended_mask | level_mask | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
-        var closed = false;
-        while (ib.GetIMsg(window)) |im| {
-            if (im.class == wn.IDCMP_CLOSEWINDOW) closed = true;
-            ib.ReplyIMsg(im);
+        if (got & ended_mask != 0) {
+            // There and back: the same timeline, the other way.
+            reversed = !reversed;
+            _ = mb.SetTimelineAttrsTagList(line, &[_]TagItem{
+                .{ .tag = motion.TIMELINE_Reverse, .data = @intFromBool(reversed) },
+                .{},
+            });
+            mb.StartTimeline(line);
         }
-        if (closed) return dos.RETURN_OK;
+        if (got & level_mask != 0) {
+            _ = ib.SetGadgetAttrsTagList(gauge.?, window, &[_]TagItem{
+                .{ .tag = fgg.GAUGE_Level, .data = levels[next_level] },
+                .{},
+            });
+            next_level = (next_level + 1) % levels.len;
+        }
+        while (true) {
+            const word = ib.SendMessage(object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) break;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
+                wc.WMHI_GADGETUP => if (word & wc.WMHI_GADGETMASK == ID_SPIN) {
+                    spinning = !spinning;
+                    _ = ib.SetGadgetAttrsTagList(spinner.?, window, &[_]TagItem{
+                        .{ .tag = spn.SPINNER_Running, .data = @intFromBool(spinning) },
+                        .{},
+                    });
+                },
+                else => {},
+            }
+        }
     }
 }

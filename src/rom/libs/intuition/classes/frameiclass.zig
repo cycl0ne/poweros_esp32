@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! frameiclass: a frame, drawn to whatever size it is asked for.
 //!
-//! An imageclass image whose look is its screen's style: each frame kind is
+//! An imageclass image whose look is its screen's style - and a gadget's
+//! own over it, when the gadget hands it over (`ImpDraw.style`,
+//! `ImpFrameBox.style`), so a framed button's `GA_Style` is its frame's
+//! too: each frame kind is
 //! a part of a style (`ic.PART_FRAME_PLAIN`, `style.PART_MAIN`,
 //! `style.PART_GROUP`, `ic.PART_FRAME_DROPBOX`) and the image's state is
 //! the part's state - with the hovered and focused states a gadget adds
@@ -91,7 +94,7 @@ fn frameBox(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpFrameBox) us
         // box large enough that nothing is cut short.
         const probe = graphics.Rect{ .max_x = 4096, .max_y = 4096 };
         var inside: graphics.Rect = undefined;
-        ib.iface().DrawPart(null, msg.draw_info, null, partOf(fd), style.STATE_NORMAL, 0, &probe, &inside);
+        ib.iface().DrawPart(null, msg.draw_info, msg.style, partOf(fd), style.STATE_NORMAL, 0, &probe, &inside);
         msg.frame.width = msg.contents.width + probe.width() - inside.width();
         msg.frame.height = msg.contents.height + probe.height() - inside.height();
     }
@@ -116,7 +119,7 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + w, .max_y = y + h };
     // A mixed state is whole: it stands for the image state too.
     const states = if (msg.style_state & style.STATE_MIXED != 0) msg.style_state else _style.statesOfImage(msg.state) | msg.style_state;
-    ib.iface().DrawPart(msg.rast_port, msg.draw_info, null, partOf(fd), states, flags, &box, null);
+    ib.iface().DrawPart(msg.rast_port, msg.draw_info, msg.style, partOf(fd), states, flags, &box, null);
     return 1;
 }
 

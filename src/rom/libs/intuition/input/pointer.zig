@@ -26,6 +26,14 @@
 //! Its own two pictures are an arrow and, for busy, a ring of two arrows
 //! chasing each other, drawn in characters and made at compile time.
 //!
+//! The busy ring turns: an eighth of a turn clockwise on each of
+//! input.device's ticks, from eight pictures of it made at compile time
+//! (`busy_frames`), each handed to the board as the tick comes. A turned
+//! picture's pixel is the drawn one's sixteen points turned back, opaque
+//! where half of them are and their colour on average, so the ring keeps
+//! its outline at every angle. On a screen opened with `SA_Animate` off it
+//! stands still.
+//!
 //! `WA_PointerDelay` puts a change off for three of input.device's ticks,
 //! a tenth of a second each (`tick`), and a change made before then calls
 //! it off: a busy pointer put up for work that ends at once never shows.
@@ -57,7 +65,9 @@ pub const State = extern struct {
     /// which the handler writes.
     shown: u8 = 0,
     mouse: u8 = 0,
-    pad: [2]u8 = .{ 0, 0 },
+    /// Which of `busy_frames` the board has while it is busy.
+    frame: u8 = 0,
+    pad: u8 = 0,
 };
 
 /// How many ticks `WA_PointerDelay` waits.
@@ -115,7 +125,7 @@ const default_picture = picture(&.{
 });
 
 /// Busy: a ring of two arrows chasing each other, its point the middle.
-const busy_picture = picture(&.{
+pub const busy_picture = picture(&.{
     ".....XXXXXXX.....",
     "...XXppppppoXX...",
     "..XXppppppoooXX..",
@@ -134,6 +144,63 @@ const busy_picture = picture(&.{
     "...XXottttttXX...",
     ".....XXXXXXX.....",
 });
+
+/// How many pictures a turn of the busy ring is.
+pub const busy_turn = 8;
+
+/// The busy ring at each eighth of a turn, clockwise; the first is the
+/// drawn one.
+pub const busy_frames = frames: {
+    var made: [busy_turn]@TypeOf(busy_picture) = undefined;
+    for (&made, 0..) |*frame, i| frame.* = turned(&busy_picture, i);
+    break :frames made;
+};
+
+/// `drawn` turned `eighths` eighths of a turn clockwise about its middle:
+/// each pixel sampled at four by four points turned back into `drawn`.
+fn turned(comptime drawn: anytype, comptime eighths: usize) @TypeOf(drawn.*) {
+    @setEvalBranchQuota(200_000);
+    var made = drawn.*;
+    if (eighths == 0) return made;
+    const angle: f64 = @as(f64, @floatFromInt(eighths)) * std_pi / 4.0;
+    const cos = @cos(angle);
+    const sin = @sin(angle);
+    const middle_x: f64 = @as(f64, @floatFromInt(drawn.width)) / 2.0;
+    const middle_y: f64 = @as(f64, @floatFromInt(drawn.height)) / 2.0;
+    for (0..drawn.height) |y| {
+        for (0..drawn.width) |x| {
+            var opaque_points: u32 = 0;
+            var sums = [3]u32{ 0, 0, 0 };
+            for (0..4) |sy| {
+                for (0..4) |sx| {
+                    const dx = @as(f64, @floatFromInt(x)) + (@as(f64, @floatFromInt(sx)) + 0.5) / 4.0 - middle_x;
+                    const dy = @as(f64, @floatFromInt(y)) + (@as(f64, @floatFromInt(sy)) + 0.5) / 4.0 - middle_y;
+                    // Turned back: anticlockwise on the screen, whose y
+                    // runs down.
+                    const from_x = @floor(cos * dx + sin * dy + middle_x);
+                    const from_y = @floor(-sin * dx + cos * dy + middle_y);
+                    if (from_x < 0 or from_y < 0) continue;
+                    const fx: usize = @intFromFloat(from_x);
+                    const fy: usize = @intFromFloat(from_y);
+                    if (fx >= drawn.width or fy >= drawn.height) continue;
+                    const pixel = drawn.pixels[fy * drawn.width + fx];
+                    if (pixel & 0xFF == 0) continue;
+                    opaque_points += 1;
+                    for (&sums, 0..) |*sum, c| sum.* += (pixel >> @intCast(24 - 8 * c)) & 0xFF;
+                }
+            }
+            made.pixels[y * drawn.width + x] = if (opaque_points < 8) 0 else colour: {
+                var pixel: u32 = 0xFF;
+                for (sums, 0..) |sum, c| pixel |= (sum / opaque_points) << @intCast(24 - 8 * c);
+                break :colour pixel;
+            };
+        }
+    }
+    return made;
+}
+
+/// pi, for the compiler's turning.
+const std_pi: f64 = 3.14159265358979323846;
 
 const default_hot = .{ 0, 0 };
 const busy_hot = .{ busy_picture.width / 2, busy_picture.height / 2 };
@@ -214,7 +281,7 @@ fn give(ib: *IntuitionBase, board: *rtg.RtgBoard, kind: Kind, object: ?*Object) 
             return rb.SetBoardPointer(board, &surface, default_hot[0], default_hot[1]) == rtg.errors.RTGERR_OK;
         },
         .busy => {
-            const surface = ownSurface(&busy_picture);
+            const surface = ownSurface(&busy_frames[ib.pointer.frame % busy_turn]);
             return rb.SetBoardPointer(board, &surface, busy_hot[0], busy_hot[1]) == rtg.errors.RTGERR_OK;
         },
         .custom => {
@@ -257,6 +324,19 @@ pub fn tick(ib: *IntuitionBase) void {
             set(base, w, w.deferred_pointer, w.deferred_busy != 0, w.deferred_hidden != 0, false);
         }
     }.visit);
+    turn(ib);
+}
+
+/// The busy ring an eighth of a turn on, if the board has it and its
+/// screen moves. Under the screen semaphore.
+fn turn(ib: *IntuitionBase) void {
+    const st = &ib.pointer;
+    if (st.kind != .busy) return;
+    const screen = frontScreen(ib) orelse return;
+    if (screen.draw_info.flags & sdk.intuition.screens.DRIF_STILL != 0) return;
+    const board = st.board orelse return;
+    st.frame = (st.frame + 1) % busy_turn;
+    _ = give(ib, board, .busy, null);
 }
 
 /// A pointer event on intuition's task: shown, if a mouse has now been

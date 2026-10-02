@@ -246,6 +246,9 @@ pub const ImpDraw = extern struct {
     /// A mixed state (`style.STATE_MIXED`), a look part of the way from
     /// one state to another, stands for `state` too.
     style_state: u32 = 0,
+    /// The style an image drawn from a style is drawn in over its
+    /// screen's: the gadget's own (`GA_Style`), for its frame. May be null.
+    style: ?*const style.Style = null,
 };
 
 /// IM_FRAMEBOX: how big a frame has to be to sit comfortably around
@@ -265,6 +268,10 @@ pub const ImpFrameBox = extern struct {
     /// May be null.
     draw_info: ?*DrawInfo = null,
     flags: u32 = 0,
+    /// The style the frame is measured in over its screen's: the gadget's
+    /// own (`GA_Style`), whose borders and padding it is drawn with. May be
+    /// null.
+    style: ?*const style.Style = null,
 };
 
 /// A box, as `IM_FRAMEBOX` speaks in.

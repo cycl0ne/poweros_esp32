@@ -5911,6 +5911,54 @@ test "styles: a background given as a fill style is copied, answered, and painte
     try tearDown(ib);
 }
 
+test "styles: a frame is drawn and measured in the style the message hands it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    // A gadget's own style: a red face, a flat line, room inside.
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_PaddingX, .data = 10 },
+        .{},
+    }).?;
+    const frame = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_BUTTON }, .{} }).?;
+
+    const w = 12;
+    const h = 8;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(frame, @ptrCast(&draw));
+    try testing.expect(pixels[4 * w + 6] != 0xFFFF_0000);
+    draw.style = own;
+    _ = it.SendMessage(frame, @ptrCast(&draw));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[4 * w + 6]);
+
+    // Measured with its padding: twenty wider than the contents and the
+    // line, where the screen's style alone gives less.
+    const contents = ic.Box{ .width = 30, .height = 10 };
+    var plain = ic.Box{};
+    var ask = ic.ImpFrameBox{ .contents = &contents, .frame = &plain };
+    _ = it.SendMessage(frame, @ptrCast(&ask));
+    var padded = ic.Box{};
+    ask = .{ .contents = &contents, .frame = &padded, .style = own };
+    _ = it.SendMessage(frame, @ptrCast(&ask));
+    try testing.expectEqual(@as(i32, 30 + 20 + 2), padded.width);
+    try testing.expect(plain.width < padded.width);
+
+    it.DisposeObject(frame);
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
 test "styles: a frame on a RastPort with a wide line is the frame on a plain one, and the width comes back" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -7918,6 +7966,35 @@ test "IDCMP_SIZEVERIFY: sizing waits for the reply, is given up by letting go or
     try tearDown(ib);
 }
 
+test "the busy ring: drawn at the first eighth, turned exactly at the quarters, whole between" {
+    const pointer = @import("input/pointer.zig");
+    const drawn = &pointer.busy_picture;
+    const size = drawn.width;
+    try testing.expectEqualSlices(u32, &drawn.pixels, &pointer.busy_frames[0].pixels);
+    var opaque_drawn: u32 = 0;
+    for (drawn.pixels) |pixel| opaque_drawn += @intFromBool(pixel != 0);
+    for (pointer.busy_frames, 0..) |frame, eighth| {
+        var count: u32 = 0;
+        for (0..size) |y| {
+            for (0..size) |x| {
+                const pixel = frame.pixels[y * size + x];
+                count += @intFromBool(pixel != 0);
+                // A quarter turn clockwise puts the drawn (x, y) at
+                // (size-1-y, x).
+                const from: ?u32 = switch (eighth) {
+                    2 => drawn.pixels[(size - 1 - x) * size + y],
+                    4 => drawn.pixels[(size - 1 - y) * size + (size - 1 - x)],
+                    6 => drawn.pixels[x * size + (size - 1 - y)],
+                    else => null,
+                };
+                if (from) |expected| try testing.expectEqual(expected, pixel);
+            }
+        }
+        // Between the quarters it neither loses nor gains much of itself.
+        try testing.expect(count * 10 >= opaque_drawn * 9 and count * 10 <= opaque_drawn * 11);
+    }
+}
+
 test "the pointer: seen once a mouse is, the active window's, busy now or after a while" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -7976,6 +8053,10 @@ test "the pointer: seen once a mouse is, the active window's, busy now or after 
     // The ring's point is its middle, 8 in from its corner.
     try testing.expectEqual(@as(i32, 3), log.pointer_left);
     try testing.expectEqual(@as(i32, 13), log.pointer_top);
+    // It turns an eighth on each tick.
+    const was = ib.pointer.frame;
+    tickEvent(ib);
+    try testing.expectEqual((was + 1) % pointer.busy_turn, ib.pointer.frame);
     it.SetWindowPointerA(w, null);
     try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
 

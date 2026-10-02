@@ -38,6 +38,8 @@ const gradientslider = @import("../gradientslider/gradientslider.zig");
 const gs = sdk.gadgets.gradientslider;
 const tapedeck = @import("../tapedeck/tapedeck.zig");
 const fuelgauge = @import("../fuelgauge/fuelgauge.zig");
+const spinner = @import("../spinner/spinner.zig");
+const spg = sdk.gadgets.spinner;
 const integer = @import("../integer/integer.zig");
 const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
@@ -1580,6 +1582,33 @@ test "tapedeck.gadget: a tape deck's modes and pause, an animation control's but
     try testing.expectEqual(@as(i32, @intCast(td.TDECK_FRAME_CODE | frame)), termination);
 
     ib.DisposeObject(anim);
+    try rig.down();
+}
+
+test "spinner.gadget: square by default, running unless told, never pressed" {
+    var heard = Heard{ .tag = spg.SPINNER_Running, .ib = undefined };
+    var rig = try Rig.up(&spinner.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    const turning = ib.NewObjectTagList(null, spg.SPINNER_CLASS, &[_]TagItem{.{}}).?;
+    try testing.expectEqual(@as(usize, 1), attr(ib, turning, spg.SPINNER_Running));
+    try testing.expectEqual(@as(usize, 1000), attr(ib, turning, spg.SPINNER_Period));
+    try testing.expectEqual(@as(usize, 24), attr(ib, turning, gc.GA_Width));
+    try testing.expectEqual(@as(usize, 24), attr(ib, turning, gc.GA_Height));
+    _ = ib.SetAttrsTagList(turning, &[_]TagItem{
+        .{ .tag = spg.SPINNER_Running, .data = 0 },
+        .{ .tag = spg.SPINNER_Period, .data = 400 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 0), attr(ib, turning, spg.SPINNER_Running));
+    try testing.expectEqual(@as(usize, 400), attr(ib, turning, spg.SPINNER_Period));
+
+    var least = gc.GpDomain{ .which = gc.GDOMAIN_MINIMUM };
+    try testing.expect(ib.SendMessage(turning, @ptrCast(&least)) != 0);
+    try testing.expectEqual(least.domain.width, least.domain.height);
+    var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 2, .y = 2 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(turning, @ptrCast(&hit)));
+    ib.DisposeObject(turning);
     try rig.down();
 }
 

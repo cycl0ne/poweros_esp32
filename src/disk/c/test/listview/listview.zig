@@ -16,6 +16,11 @@
 //! button. Every line chosen and every scroller let go
 //! is printed with its code. OK, the close gadget or Ctrl-C end it.
 //!
+//! The two follow each other: the scroller let go sends the list to the
+//! same share of the way down, and a line chosen sends the scroller to
+//! that line's share - each set by the program, so each glides there
+//! rather than jumping.
+//!
 //! Each line is drawn by a hook of the program's own in two columns: the
 //! name at the left, and at the right the size in bytes or the word
 //! `Drawer`.
@@ -210,7 +215,7 @@ fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     return lv.LVCB_OK;
 }
 
-const Shown = struct { layout: *Object, list: *Object, selected: *Object };
+const Shown = struct { layout: *Object, list: *Object, selected: *Object, scroll: *Object };
 
 fn build(ib: *IntuitionBase, list: *exec.List, hook: *sdk.utility.Hook, multi: bool) ?Shown {
     const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
@@ -269,7 +274,7 @@ fn build(ib: *IntuitionBase, list: *exec.List, hook: *sdk.utility.Hook, multi: b
         for (parts) |part| ib.DisposeObject(part);
         return null;
     };
-    return .{ .layout = made, .list = view.?, .selected = selected.? };
+    return .{ .layout = made, .list = view.?, .selected = selected.?, .scroll = scroll.? };
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -380,7 +385,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_OK => return dos.RETURN_OK,
-                    ID_SCROLL => _ = Printf(dl, MSG_SCROLL, .{@as(u64, code)}),
+                    ID_SCROLL => {
+                        _ = Printf(dl, MSG_SCROLL, .{@as(u64, code)});
+                        // The list to the same share of the way down: it
+                        // glides there.
+                        const top: usize = @intCast(@as(u64, code) * count / 90);
+                        _ = ib.SetGadgetAttrsTagList(shown.list, window, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = top }, .{} });
+                    },
                     ID_LIST => {
                         const line = code & ~lv.LISTVIEW_DOUBLE;
                         const picked = lv.nodeAt(&list, line) orelse continue;
@@ -402,6 +413,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             }
                         }
                         // The list writes the name into the field itself.
+                        // The scroller to the line's share of the way
+                        // down: it glides there.
+                        const share: usize = @intCast(@as(u64, line) * 90 / @max(count, 1));
+                        _ = ib.SetGadgetAttrsTagList(shown.scroll, window, &[_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = share }, .{} });
                     },
                     else => {},
                 },

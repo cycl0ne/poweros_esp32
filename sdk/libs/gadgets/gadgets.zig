@@ -56,3 +56,4 @@ pub const page = @import("page.zig");
 pub const getclass = @import("getclass.zig");
 pub const getfile = @import("getfile.zig");
 pub const getfont = @import("getfont.zig");
+pub const spinner = @import("spinner.zig");
