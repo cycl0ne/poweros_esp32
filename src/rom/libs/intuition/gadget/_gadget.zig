@@ -179,8 +179,74 @@ pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
     const rp = it.ObtainGIRPort(&gi) orelse return;
     defer it.ReleaseGIRPort(rp);
     var msg = gc.GpRender{ .gadget_info = &gi, .rast_port = rp, .redraw = redraw };
+    if (redraw == gc.GREDRAW_UPDATE and renderAside(ib, o, &gi, rp, &msg)) return;
     _ = it.SendMessage(o, @ptrCast(&msg));
 }
+
+/// A gadget drawn again over itself without ever showing half of it: drawn
+/// into a picture kept aside, and its box of that put on the window in one
+/// copy. The picture reaches from the window's corner to the box's far
+/// corner, so the gadget draws at its own coordinates exactly as on the
+/// window; only the box is filled, drawn and copied, and a clip holds the
+/// drawing to it. The box starts in the screen's background pen, which is
+/// what a gadget is drawn over in place. False, and nothing drawn, when the
+/// picture cannot be had or would be larger than `aside_most`: the caller
+/// draws in place.
+fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
+    const gb = ib.graphics_base;
+    const place = boxIn(gadgetOf(ib, o), gi.domain_width, gi.domain_height);
+    if (place.width <= 0 or place.height <= 0 or place.left < 0 or place.top < 0) return false;
+    const right = place.left + place.width;
+    const bottom = place.top + place.height;
+    if (@as(u64, @intCast(right)) * @as(u64, @intCast(bottom)) * 4 > aside_most) return false;
+    const area = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = right, .max_y = bottom };
+    const surface = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(right) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(bottom) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(rp) },
+        .{},
+    }) orelse return false;
+    defer gb.FreeBitMap(surface);
+    const aside = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse return false;
+    defer gb.FreeRastPort(aside);
+
+    gb.SetRPAttrs(aside, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = gi.draw_info.pens[intuition.screens.BACKGROUNDPEN] }, .{} });
+    gb.RectFill(aside, &area);
+
+    // The window's font and pens; the clip holds the drawing to the box.
+    var font: usize = 0;
+    var front: usize = 0;
+    var back: usize = 0;
+    var mode: usize = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
+        .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&front) },
+        .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&back) },
+        .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) },
+        .{},
+    });
+    gb.SetRPAttrs(aside, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&area) },
+        .{ .tag = graphics.RPTAG_Font, .data = font },
+        .{ .tag = graphics.RPTAG_APen, .data = front },
+        .{ .tag = graphics.RPTAG_BPen, .data = back },
+        .{ .tag = graphics.RPTAG_DrMd, .data = mode },
+        // The ground is down already: what EraseRect puts down is left as
+        // it is.
+        .{ .tag = graphics.RPTAG_BackFill, .data = graphics.BACKFILL_NONE },
+        .{},
+    });
+
+    msg.rast_port = aside;
+    _ = ib.iface().SendMessage(o, @ptrCast(msg));
+    gb.BltRastPort(aside, rp, &area, place.left, place.top);
+    return true;
+}
+
+/// The largest picture `renderAside` takes, in bytes at four a pixel: a
+/// gadget far down a large window is drawn in place rather than through a
+/// picture the size of the window.
+const aside_most: u64 = 1 << 20;
 
 /// The `n`th gadget along from `first`, or null past the end.
 fn nth(ib: *IntuitionBase, first: *Object, n: u32) ?*Object {

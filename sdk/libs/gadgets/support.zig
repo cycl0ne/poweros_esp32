@@ -79,11 +79,12 @@ pub fn drawImage(ib: *IntuitionBase, image: *Object, rp: *graphics.RastPort, lef
 }
 
 /// Drawn again, if it is in a window: a change of state that shows.
+/// Intuition draws it, soon and on its own task, aside and then onto the
+/// window in one copy, so the gadget is never seen half drawn; changes that
+/// come before it gets to it are drawn as one.
 pub fn redraw(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) void {
-    const rp = ib.ObtainGIRPort(gi) orelse return;
-    defer ib.ReleaseGIRPort(rp);
-    var msg = gc.GpRender{ .gadget_info = gi, .rast_port = rp, .redraw = gc.GREDRAW_UPDATE };
-    _ = ib.SendMessage(o, @ptrCast(&msg));
+    if (gi == null) return;
+    ib.QueueGadgetRefresh(o);
 }
 
 /// Tell the gadget's target what changed: `tags`, which the gadget's
