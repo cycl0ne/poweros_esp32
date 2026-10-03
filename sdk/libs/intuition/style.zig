@@ -230,3 +230,8 @@ pub const JOINS_ANGLED: u32 = 1;
 pub const DPF_INVERT: u32 = 1 << 0;
 /// Draw the border alone and leave the inside as it is.
 pub const DPF_EDGES_ONLY: u32 = 1 << 1;
+/// A part with a radius clears the corners outside its rounded shape to
+/// the RastPort's background first (`EraseRect`): for a part drawn
+/// straight on a window, where something square may have been drawn
+/// before. Not for one drawn over another part - a knob on its track.
+pub const DPF_CLEAR: u32 = 1 << 2;

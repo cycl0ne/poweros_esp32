@@ -128,7 +128,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     defer saved.restore(gb, rp);
     const at = markIn(own, gc.boxFor(g, gi));
     const state = if (checked(g)) ic.IDS_SELECTED else ic.IDS_NORMAL;
-    base.intuition_base.DrawImageState(rp, image, at.left, at.top, state, info.draw_info);
+    support.drawImage(base.intuition_base, image, rp, at.left, at.top, state, info.draw_info, g.style);
     if (g.flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, at, info.block_pen);
 }
 

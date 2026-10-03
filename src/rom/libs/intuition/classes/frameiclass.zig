@@ -113,7 +113,8 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     const x = im.left + msg.offset.x;
     const y = im.top + msg.offset.y;
 
-    var flags: u32 = 0;
+    // A frame stands on the window: a rounded one clears its corners.
+    var flags: u32 = style.DPF_CLEAR;
     if (fd.flags & FRAMEF_RECESSED != 0) flags |= style.DPF_INVERT;
     if (fd.flags & FRAMEF_EDGES_ONLY != 0) flags |= style.DPF_EDGES_ONLY;
     const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + w, .max_y = y + h };

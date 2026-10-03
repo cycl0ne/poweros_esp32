@@ -1,0 +1,15 @@
+# ENVARC:Sys/intuition.prefs - intuition.library's own settings, which
+# C:IPrefs hands to it at boot. One line:
+#
+# DOUBLECLICK  how far apart two presses may be and still be one
+#              double-click, in milliseconds.
+# SCREENFONT   how tall the font a screen opens with is, in rows,
+#              when it is given none.
+# KEYBOARD     when the keyboard on the screen comes up while a field
+#              is typed into: AUTO (on a board with no keyboard of
+#              its own), ALWAYS or NEVER.
+#
+# One left out keeps the value intuition has. These are the system's
+# own:
+#
+# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO

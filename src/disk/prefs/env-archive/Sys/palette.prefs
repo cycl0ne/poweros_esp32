@@ -1,0 +1,11 @@
+# ENVARC:Sys/palette.prefs - the system's pens: the colours every
+# screen opened without pens of its own draws in, which C:IPrefs hands
+# to intuition at boot. One line, a pen's name and its colour for each:
+#
+# DETAIL BLOCK TEXT SHINE SHADOW FILL FILLTEXT BACKGROUND HIGHLIGHTTEXT
+# BARDETAIL BARBLOCK BARTRIM, each =#RRGGBB.
+#
+# A pen left out keeps the colour it has. With no line, the built-in
+# pens: these.
+#
+# DETAIL=#AAAAAA BLOCK=#000000 TEXT=#000000 SHINE=#FFFFFF SHADOW=#000000 FILL=#6688BB FILLTEXT=#000000 BACKGROUND=#AAAAAA HIGHLIGHTTEXT=#FFFFFF BARDETAIL=#000000 BARBLOCK=#FFFFFF BARTRIM=#000000

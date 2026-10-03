@@ -44,7 +44,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FontPrefs";
-const VERSION_STRING = "\x00$VER: FontPrefs 1.0 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FontPrefs 1.1 (3.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,SCREEN/K,DEFAULT/K,FIXED/K,SHOW/S";
@@ -52,9 +52,9 @@ const arg_from = 0;
 const arg_show = 4;
 /// SCREEN, DEFAULT and FIXED follow, in that order.
 const arg_first_font = 1;
-const file_template = "SCREEN/K,DEFAULT/K,FIXED/K";
+const font_file = sdk.prefs.font;
 
-const default_file = "ENV:Sys/font.prefs";
+const default_file = font_file.ENV_FILE;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_BADSIZE = "%s: a font is written family/size, as spleen.font/16 or spleen.font/10P\n";
@@ -66,65 +66,6 @@ const MSG_SHOWN = "%-8s %s %d rows%s\n";
 const screen_at = 0;
 const default_at = 1;
 const fixed_at = 2;
-
-/// The longest line of the file read.
-const max_line = 256;
-
-/// `family/size[P]` split: the family's name into `name`, and the
-/// TextAttr asking for it. Null for text not in that form.
-fn parse(text: [*:0]const u8, name: *[64:0]u8) ?graphics.TextAttr {
-    var len: usize = 0;
-    while (text[len] != 0) len += 1;
-    var slash: ?usize = null;
-    for (0..len) |i| {
-        if (text[i] == '/') slash = i;
-    }
-    const at = slash orelse return null;
-    if (at == 0 or at >= name.len) return null;
-    for (0..at) |i| name[i] = text[i];
-    name[at] = 0;
-    var size: u32 = 0;
-    var flags: graphics.FontFlags = 0;
-    var i = at + 1;
-    if (i == len) return null;
-    while (i < len) : (i += 1) {
-        const c = text[i];
-        if (c >= '0' and c <= '9') {
-            size = size * 10 + (c - '0');
-            if (size > 999) return null;
-        } else if ((c == 'P' or c == 'p') and i == len - 1) {
-            flags = graphics.FPF_POINTS;
-        } else return null;
-    }
-    if (size == 0) return null;
-    return .{ .name = name, .y_size = @intCast(size), .flags = flags };
-}
-
-/// The file's first line that is not blank or a comment, into `line`
-/// with a newline after it; its length, or null when there is none.
-fn readLine(dl: *DosBase, path: [*:0]const u8, line: *[max_line + 1]u8) ?usize {
-    const fh = dl.Open(path, dos.MODE_OLDFILE) orelse return null;
-    defer _ = dl.Close(fh);
-    var text: [1024]u8 = undefined;
-    const got = dl.Read(fh, &text, text.len);
-    if (got <= 0) return null;
-    const bytes = text[0..@intCast(got)];
-    var start: usize = 0;
-    while (start < bytes.len) {
-        var end = start;
-        while (end < bytes.len and bytes[end] != '\n') end += 1;
-        var first = start;
-        while (first < end and (bytes[first] == ' ' or bytes[first] == '\t')) first += 1;
-        if (first < end and bytes[first] != '#' and bytes[first] != ';' and end - start <= max_line) {
-            const len = end - start;
-            for (0..len) |i| line[i] = bytes[start + i];
-            line[len] = '\n';
-            return len + 1;
-        }
-        start = end + 1;
-    }
-    return null;
-}
 
 /// The three fonts intuition uses now, a line each.
 fn showFonts(sys: *ExecBase, dl: *DosBase) i32 {
@@ -169,22 +110,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The three as given, or from the file.
     var given: [3]?[*:0]const u8 = @splat(null);
     for (0..3) |i| given[i] = rdargs.string(argv[arg_first_font + i]);
-    var file_args: ?*dos.RDArgs = null;
-    var file_argv: [3]usize = @splat(0);
-    var line: [max_line + 1]u8 = undefined;
-    defer if (file_args) |fa| dl.FreeArgs(fa);
+    var line: font_file.Line = .{};
     const show = argv[arg_show] != 0;
     const none_given = given[0] == null and given[1] == null and given[2] == null;
     if (show and none_given) return showFonts(sys, dl);
     if (none_given) {
         const from = rdargs.string(argv[arg_from]) orelse default_file;
-        const length = readLine(dl, from, &line) orelse return dos.RETURN_OK;
-        var source: dos.RDArgs = .{ .source = .{ .buffer = &line, .length = @intCast(length) } };
-        file_args = dl.ReadArgs(file_template, &file_argv, &source) orelse {
-            _ = dl.PrintFault(dl.IoErr(), from);
+        var text: [1024]u8 = undefined;
+        const read = sdk.prefs.load(dl, from, &text) orelse return dos.RETURN_OK;
+        const words = sdk.prefs.firstLine(read) orelse return dos.RETURN_OK;
+        if (font_file.parse(words, &line)) |wrong| {
+            _ = Printf(dl, "%s: %s\n", .{ from, wrong });
             return dos.RETURN_FAIL;
-        };
-        for (0..3) |i| given[i] = rdargs.string(file_argv[i]);
+        }
+        for (0..3) |i| {
+            if (line.get(@enumFromInt(i)) != null) given[i] = @ptrCast(&line.values[i]);
+        }
     }
 
     const df_lib = sys.OpenLibrary(diskfont.DISKFONTNAME, diskfont.DISKFONT_VERSION) orelse {
@@ -206,10 +147,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var fonts: [3]?*graphics.TextFont = @splat(null);
     defer for (fonts) |font| if (font) |f| gb.CloseFont(f);
     var result: i32 = dos.RETURN_OK;
-    var family: [3][64:0]u8 = undefined;
+    var family: [3][font_file.value_len:0]u8 = undefined;
     for (given, 0..) |text_or_null, i| {
         const text = text_or_null orelse continue;
-        const want = parse(text, &family[i]) orelse {
+        var length: usize = 0;
+        while (text[length] != 0) length += 1;
+        const want = font_file.attrOf(text[0..length], &family[i]) orelse {
             _ = Printf(dl, MSG_BADSIZE, .{text});
             result = dos.RETURN_WARN;
             continue;

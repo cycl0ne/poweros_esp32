@@ -33,6 +33,8 @@ const hold = _gadget.hold;
 /// BEHAVIOR:
 /// The layer lock is what lets a gadget draw while the program draws in the
 /// same window.
+/// `EraseRect` through it paints the window's ground, as through the
+/// window's own RastPort: its backfill hook comes with it.
 ///
 /// CONTEXT:
 /// - Waits: for the window's layer.
@@ -89,13 +91,16 @@ pub fn ObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*classusr.GadgetInfo) ?*g
         return null;
     }
 
-    // Where the window's pixels are at this moment, and nothing of the
+    // Where the window's pixels are at this moment and how its ground is
+    // painted - what EraseRect through it puts down - and nothing of the
     // program's own drawing state.
     var targets: usize = 0;
     var clip: graphics.Rect = .{};
+    var ground: usize = 0;
     const from = [_]TagItem{
         .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&targets) },
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) },
+        .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) },
         .{},
     };
     gb.GetRPAttrs(from_rp, &from);
@@ -106,6 +111,7 @@ pub fn ObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*classusr.GadgetInfo) ?*g
         .{ .tag = graphics.RPTAG_APen, .data = w.detail_pen },
         .{ .tag = graphics.RPTAG_BPen, .data = w.block_pen },
         .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
         .{},
     };
     gb.SetRPAttrs(gi_rp, &to);

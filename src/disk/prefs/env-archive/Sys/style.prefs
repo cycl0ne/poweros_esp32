@@ -27,12 +27,14 @@
 # OPACITY  0 to 255.
 # GAP      how far a ridge's or a groove's inner bevel sits inside the
 #          outer one, in border thicknesses; 0 puts them together.
+# TRANSITION milliseconds a change into the state takes, fading from the
+#          look before; 0 changes at once.
 #
 # What a line leaves out, and every part no line names, stays as the
 # system's default draws it. That default is below, written out and
 # commented: it is in the ROM, and a line here only changes it. Every part
 # also has BORDERCOLOUR=SHADOW SHINE=SHINE SHADOW=SHADOW RADIUS=0
-# OPACITY=255 GAP=0 unless it says otherwise.
+# OPACITY=255 GAP=0 TRANSITION=0 unless it says otherwise.
 #
 # PART=MAIN BORDER=RAISED BACKGROUND=BACKGROUND TEXT=TEXT BORDERX=2 BORDERY=1 PADDINGX=2 PADDINGY=1 JOINS=ANGLED
 # PART=MAIN STATE=PRESSED BORDER=RECESSED BACKGROUND=FILL TEXT=FILLTEXT

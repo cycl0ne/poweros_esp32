@@ -196,7 +196,21 @@ PART=SELECTION BACKGROUND=FILL TEXT=FILLTEXT
   `BACKGROUND` of `#top..#bottom` is shaded from top to bottom.
 - `BORDER`, `JOINS`, and the numbers `BORDERWIDTH`, `BORDERX`,
   `BORDERY`, `RADIUS`, `PADDING`, `PADDINGX`, `PADDINGY`, `OPACITY`,
-  `GAP`.
+  `GAP`, `TRANSITION`.
+
+`SYS:Programs/Prefs` edits the file in a window. Its first page offers
+whole looks to pick from: every file in `SYS:Prefs/Presets/Styles` - a
+style file like this one, its first comment saying what the look is -
+listed by its name; another look is a file put there. Its advanced page
+edits one part in one state at a time - a part and a state chosen, their
+properties below; beside each colour a chooser puts in the default, one
+of the screen's pens by its name, or a colour of its own picked on a
+colour wheel. Both draw a few gadgets in the style as it is. It
+writes the file back in the same form, its explanation and the default
+kept: Save to `ENV:` and `ENVARC:`, Use to `ENV:` alone. Either
+then runs `C:StylePrefs`, so every open window takes it. A program of
+its own reads and writes the file through `sdk.prefs.style`, the one
+definition of its form that the command and the editor share.
 
 The file on the disk has the system's default written out in comments,
 which makes it its own reference, and a flatter look to try. The
@@ -206,6 +220,25 @@ style. `StylePrefs RESET` leaves the default alone.
 Every window on a screen whose style changes has its gadgets laid out
 again and drawn, and hears `IDCMP_NEWPREFS` for what it draws itself. A
 window keeps the border sizes it opened with.
+
+## The screens' pens
+
+A style that names a pen - `TEXT`, `FILL`, `SHINE` - draws in whatever
+colour the screen gives that pen, so the pens change every look at once.
+The system's twelve pens are what every screen opened without pens of
+its own (`SA_Pens`, `SA_DetailPen`, `SA_BlockPen`) draws in.
+`SetScreenPens(null, pens)` replaces them - on the screens open too,
+whose ground, bar and windows are drawn again - and
+`SetScreenPens(screen, pens)` gives one screen its own; null pens go
+back to the built-in ones, or for a screen to the system's.
+
+`ENVARC:Sys/palette.prefs` keeps them, one line of a pen's name and its
+colour each - `BACKGROUND=#AAAAAA TEXT=#000000 ...` - with the built-in
+pens written out in a comment. `C:IPrefs` hands the file to intuition at
+boot, after `ENV:Sys/intuition.prefs`; a pen the line leaves out keeps
+the colour it has. `SYS:Programs/Prefs` edits them on its Colours page,
+each typed as `#RRGGBB` or picked on the colour wheel, and writes the
+file only when a colour was changed. Its form is `sdk.prefs.palette`.
 
 ## Drawing a part in a class
 
@@ -314,5 +347,7 @@ it goes active and inactive, which it does anyway.
 | Command | What it does |
 |---------|--------------|
 | `C:StylePrefs` | sets the system's style from `ENV:Sys/style.prefs`, or `FROM` another file; `RESET` back to the default |
+| `SYS:Programs/Prefs` | edits the style, the screens' pens, the fonts and intuition's settings in a window; Save, Use, Cancel |
+| `C:IPrefs` | hands `ENV:Sys/intuition.prefs` and the screens' pens in `ENV:Sys/palette.prefs` to intuition |
 | `C:test/Styles` | a public screen in a style of its own, made the default public screen; `DARK` with dark pens and a style to match |
 | `C:test/Gadgets`, `C:test/Layout`, `C:test/ListView` | windows of gadgets to look at in either |

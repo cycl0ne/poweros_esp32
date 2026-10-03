@@ -138,6 +138,7 @@ pub const LVO = struct {
     pub const StylePens = libraries.lvo(120);
     pub const SetStyle = libraries.lvo(121);
     pub const QueueGadgetRefresh = libraries.lvo(122);
+    pub const SetScreenPens = libraries.lvo(123);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -262,6 +263,7 @@ pub const Fn = struct {
     pub const StylePens = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, [*]graphics.Pen) callconv(.c) void;
     pub const SetStyle = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const QueueGadgetRefresh = *const fn (*IntuitionBase, *intuition.Object) callconv(.c) void;
+    pub const SetScreenPens = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const graphics.Pen) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -993,5 +995,13 @@ pub const IntuitionBase = opaque {
     /// animation's step - after changing its value. Never waits.
     pub fn QueueGadgetRefresh(self: *IntuitionBase, gadget: *intuition.Object) void {
         return libraries.call(self, LVO.QueueGadgetRefresh, Fn.QueueGadgetRefresh, .{gadget});
+    }
+
+    /// A screen's pens, or with no screen the system's - what every screen
+    /// opened without pens of its own takes - replaced while open; null pens
+    /// go back to the system's or the built-in ones. Every screen it reaches
+    /// is painted again, its windows told IDCMP_NEWPREFS.
+    pub fn SetScreenPens(self: *IntuitionBase, screen: ?*intuition.Screen, pens: ?[*]const graphics.Pen) void {
+        return libraries.call(self, LVO.SetScreenPens, Fn.SetScreenPens, .{ screen, pens });
     }
 };

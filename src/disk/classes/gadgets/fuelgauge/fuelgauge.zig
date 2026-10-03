@@ -298,7 +298,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const filled = filledIn(own, room);
     // The frame first: a frameiclass frame fills what it stands round, so
     // a bar drawn before it would be painted over.
-    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info);
+    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
     if (own.vertical != 0) {
         support.fill(gb, rp, .{ .left = bar.left, .top = bar.top, .width = bar.width, .height = bar.height - filled }, pens[sc.BACKGROUNDPEN]);
         support.fill(gb, rp, .{ .left = bar.left, .top = bar.top + bar.height - filled, .width = bar.width, .height = filled }, pens[sc.FILLPEN]);

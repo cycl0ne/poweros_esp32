@@ -183,7 +183,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     const pressed = own.layer != null;
-    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info);
+    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
     const inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
     const inner = gc.Box{
         .left = b.left + inset.left,
@@ -352,7 +352,7 @@ fn paintPanel(base: *gadgets.Base, own: *const Data, info: *classusr.GadgetInfo)
     defer lb.UnlockLayer(layer);
     if (info.draw_info.font) |font| graphics.SetFont(base.graphics_base, rp, font);
     if (own.frame) |frame| {
-        support.drawFrame(base.intuition_base, frame, rp, .{ .width = own.panel.width, .height = own.panel.height }, ic.IDS_NORMAL, info.draw_info);
+        support.drawFrame(base.intuition_base, frame, rp, .{ .width = own.panel.width, .height = own.panel.height }, ic.IDS_NORMAL, info.draw_info, null);
     }
     var which = own.first;
     while (which < own.first + own.visible and which < own.count) : (which += 1) {

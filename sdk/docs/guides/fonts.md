@@ -350,5 +350,6 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:FontPrefs` | sets and shows the system's fonts |
+| `SYS:Programs/Prefs` | picks the system's fonts in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them; draw a size file |

@@ -142,6 +142,7 @@ const GetStyleAttr = @import("style/getstyleattr.zig").GetStyleAttr;
 const StylePens = @import("style/stylepens.zig").StylePens;
 const SetStyle = @import("style/setstyle.zig").SetStyle;
 const QueueGadgetRefresh = @import("gadget/queuegadgetrefresh.zig").QueueGadgetRefresh;
+const SetScreenPens = @import("screen/setscreenpens.zig").SetScreenPens;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -261,6 +262,7 @@ const contract_files = [_][]const u8{
     @embedFile("style/stylepens.zig"),
     @embedFile("style/setstyle.zig"),
     @embedFile("gadget/queuegadgetrefresh.zig"),
+    @embedFile("screen/setscreenpens.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -620,6 +622,9 @@ fn lvoSetStyle(ib: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const u
 fn lvoQueueGadgetRefresh(ib: *IntuitionBase, gadget: *Object) callconv(.c) void {
     QueueGadgetRefresh(ib, gadget);
 }
+fn lvoSetScreenPens(ib: *IntuitionBase, screen: ?*intuition.Screen, pens: ?[*]const graphics.Pen) callconv(.c) void {
+    SetScreenPens(ib, @ptrCast(@alignCast(screen)), pens);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -746,6 +751,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoStylePens),
     vec(lvoSetStyle),
     vec(lvoQueueGadgetRefresh),
+    vec(lvoSetScreenPens),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -226,6 +226,10 @@ pub const Data = extern struct {
     drawn: [3]?*rtg.Surface = .{ null, null, null },
     drawn_width: i32 = 0,
     drawn_height: i32 = 0,
+    /// The style it was drawn in - a gadget's own, and the system's count
+    /// of style changes then: either changed, it is drawn again.
+    drawn_style: ?*const style.Style = null,
+    drawn_serial: u32 = 0,
 };
 
 /// Make sysiclass, from imageclass, and put it on the public list.
@@ -271,7 +275,7 @@ fn line(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen, x: i32, y0: i32, 
 
 /// One state of a design, drawn at `w` by `h` into `rp`, whose room for
 /// filled shapes the caller has made.
-fn render(ib: *IntuitionBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen, from_style: bool, dri: ?*sc.DrawInfo) void {
+fn render(ib: *IntuitionBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen, from_style: bool, dri: ?*sc.DrawInfo, own: ?*const style.Style) void {
     const gb = ib.graphics_base;
     // The ground: a menu panel's own for an image on one; the background
     // pen for one in a box of its own - a screen's depth gadget - for one
@@ -293,7 +297,7 @@ fn render(ib: *IntuitionBase, rp: *graphics.RastPort, design: *const Design, sta
     if (design.edge == .thick_bevel and from_style) {
         const it = ib.iface();
         const box = graphics.Rect{ .max_x = w, .max_y = h };
-        it.DrawPart(rp, dri, null, ic.PART_CHECK, checkState(state), 0, &box, null);
+        it.DrawPart(rp, dri, own, ic.PART_CHECK, checkState(state), 0, &box, null);
     }
 
     const mask: u8 = @as(u8, 1) << @intCast(state);
@@ -378,35 +382,36 @@ fn checkState(state: usize) u32 {
 /// - `state` - NORMAL, SELECTED or INACTIVE.
 /// - `dri` - the screen's DrawInfo, for its pens and its style, or null.
 /// - `table` - where the pens are written.
-fn pensFor(ib: *IntuitionBase, design: *const Design, state: usize, dri: ?*sc.DrawInfo, table: *[sc.NUMDRIPENS]Pen) void {
+/// - `own` - a gadget's own style, asked before the screen's, or null.
+fn pensFor(ib: *IntuitionBase, design: *const Design, state: usize, dri: ?*sc.DrawInfo, table: *[sc.NUMDRIPENS]Pen, own: ?*const style.Style) void {
     const it = ib.iface();
     const base = d.pensOf(dri);
     for (table, 0..) |*slot, i| slot.* = base[i];
     const ask = struct {
-        fn colour(face: anytype, info: ?*sc.DrawInfo, part: u32, st: u32, attr: utility.Tag) Pen {
-            return @truncate(face.GetStyleAttr(info, null, part, st, attr));
+        fn colour(face: anytype, mine: ?*const style.Style, info: ?*sc.DrawInfo, part: u32, st: u32, attr: utility.Tag) Pen {
+            return @truncate(face.GetStyleAttr(info, mine, part, st, attr));
         }
     }.colour;
     switch (design.edge) {
         .left_of_bar, .right_of_bar, .corner, .in_screen_bar => {
             const part = if (state == INACTIVE) ic.PART_TITLE_INACTIVE else style.PART_TITLE;
             const st = if (state == SELECTED) style.STATE_PRESSED else style.STATE_NORMAL;
-            table[sc.SHINEPEN] = ask(it, dri, part, st, style.STYLE_ShinePen);
-            table[sc.SHADOWPEN] = ask(it, dri, part, st, style.STYLE_ShadowPen);
+            table[sc.SHINEPEN] = ask(it, own, dri, part, st, style.STYLE_ShinePen);
+            table[sc.SHADOWPEN] = ask(it, own, dri, part, st, style.STYLE_ShadowPen);
             // The ground of a border gadget: the fill pen in an active
             // border, the background in an inactive one. A screen's depth
             // gadget keeps the screen's background.
             if (design.edge != .in_screen_bar) {
-                const ground = ask(it, dri, part, st, style.STYLE_Background);
+                const ground = ask(it, own, dri, part, st, style.STYLE_Background);
                 if (state == INACTIVE) table[sc.BACKGROUNDPEN] = ground else table[sc.FILLPEN] = ground;
             }
         },
-        .thick_bevel => table[sc.TEXTPEN] = ask(it, dri, ic.PART_CHECKMARK, checkState(state), style.STYLE_Background),
+        .thick_bevel => table[sc.TEXTPEN] = ask(it, own, dri, ic.PART_CHECKMARK, checkState(state), style.STYLE_Background),
         .none => {
             const st = checkState(state);
-            table[sc.SHINEPEN] = ask(it, dri, ic.PART_RADIO, st, style.STYLE_ShinePen);
-            table[sc.SHADOWPEN] = ask(it, dri, ic.PART_RADIO, st, style.STYLE_ShadowPen);
-            table[sc.FILLPEN] = ask(it, dri, ic.PART_RADIOMARK, st, style.STYLE_Background);
+            table[sc.SHINEPEN] = ask(it, own, dri, ic.PART_RADIO, st, style.STYLE_ShinePen);
+            table[sc.SHADOWPEN] = ask(it, own, dri, ic.PART_RADIO, st, style.STYLE_ShadowPen);
+            table[sc.FILLPEN] = ask(it, own, dri, ic.PART_RADIOMARK, st, style.STYLE_Background);
         },
         .in_menu => {},
     }
@@ -422,12 +427,14 @@ fn forget(ib: *IntuitionBase, sd: *Data) void {
 
 /// A state of the image as a bitmap in the destination's format, drawn if
 /// it is not yet or the image's size has changed. Null without memory.
-fn stateImage(ib: *IntuitionBase, sd: *Data, design: *const Design, state: usize, w: i32, h: i32, friend: *graphics.RastPort, dri: ?*sc.DrawInfo) ?*rtg.Surface {
+fn stateImage(ib: *IntuitionBase, sd: *Data, design: *const Design, state: usize, w: i32, h: i32, friend: *graphics.RastPort, dri: ?*sc.DrawInfo, own: ?*const style.Style) ?*rtg.Surface {
     const gb = ib.graphics_base;
-    if (sd.drawn_width != w or sd.drawn_height != h) {
+    if (sd.drawn_width != w or sd.drawn_height != h or sd.drawn_style != own or sd.drawn_serial != ib.style_serial) {
         forget(ib, sd);
         sd.drawn_width = w;
         sd.drawn_height = h;
+        sd.drawn_style = own;
+        sd.drawn_serial = ib.style_serial;
     }
     if (sd.drawn[state]) |s| return s;
 
@@ -451,10 +458,10 @@ fn stateImage(ib: *IntuitionBase, sd: *Data, design: *const Design, state: usize
     }
     var table: [sc.NUMDRIPENS]Pen = undefined;
     const pens: [*]const Pen = sd.pens orelse styled: {
-        pensFor(ib, design, state, dri, &table);
+        pensFor(ib, design, state, dri, &table, own);
         break :styled &table;
     };
-    render(ib, rp, design, state, w, h, pens, sd.pens == null, dri);
+    render(ib, rp, design, state, w, h, pens, sd.pens == null, dri, own);
     _ = gb.InitArea(rp, 0);
     sd.drawn[state] = surface;
     return surface;
@@ -474,7 +481,7 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     };
     // Nowhere to prepare it: say so rather than report a picture that was
     // never put down.
-    const image = stateImage(ib, sd, design, state, im.width, im.height, msg.rast_port, sd.draw_info orelse msg.draw_info) orelse return 0;
+    const image = stateImage(ib, sd, design, state, im.width, im.height, msg.rast_port, sd.draw_info orelse msg.draw_info, msg.style) orelse return 0;
     ib.graphics_base.BltBitMapRastPort(image, 0, 0, msg.rast_port, im.left + msg.offset.x, im.top + msg.offset.y, im.width, im.height);
     return 1;
 }

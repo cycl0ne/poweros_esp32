@@ -381,4 +381,9 @@ bool SetStyle(?*intuition.Screen screen, ?[*]const utility.TagItem tags)
 /// what a class calls from a task that must not wait for its window - an
 /// animation's step - after changing its value. Never waits.
 void QueueGadgetRefresh(*intuition.Object gadget)
+/// A screen's pens, or with no screen the system's - what every screen
+/// opened without pens of its own takes - replaced while open; null pens
+/// go back to the system's or the built-in ones. Every screen it reaches
+/// is painted again, its windows told IDCMP_NEWPREFS.
+void SetScreenPens(?*intuition.Screen screen, ?[*]const graphics.Pen pens)
 ##end

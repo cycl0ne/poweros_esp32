@@ -220,7 +220,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         if (part.width <= 0) continue;
         const box = gc.Box{ .left = b.left + part.left, .top = b.top + part.top, .width = part.width, .height = part.height };
         const down = pressed(own, g, id);
-        support.drawFrame(ib, own.frame.?, rp, box, if (down) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info);
+        support.drawFrame(ib, own.frame.?, rp, box, if (down) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
         support.fill(gb, rp, .{ .left = box.left + 2, .top = box.top + 1, .width = box.width - 4, .height = box.height - 2 }, if (down) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN]);
         const glyph = glyphOf(id) orelse continue;
         support.setPen(gb, rp, if (down) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);

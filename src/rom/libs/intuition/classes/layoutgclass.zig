@@ -356,11 +356,17 @@ fn ask(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, which: u32) Si
 /// own: the sizes it was told, and a weight of 0 holding it to its nominal
 /// size that way. Never a nominal size below the minimum nor a maximum
 /// below the nominal.
+///
+/// A child that is a layout of this very class is measured once for all
+/// three: asked them one by one, each of its own children would be asked
+/// three times as well, and so on down - three to the power of how deep
+/// the layouts nest.
 pub fn childNeed(ib: *IntuitionBase, record: *const Child, gi: ?*classusr.GadgetInfo) Need {
-    var need = Need{
-        .min = ask(ib, record.object, gi, gc.GDOMAIN_MINIMUM),
-        .nominal = ask(ib, record.object, gi, gc.GDOMAIN_NOMINAL),
-        .max = ask(ib, record.object, gi, gc.GDOMAIN_MAXIMUM),
+    const o = record.object;
+    var need = if (classes.objectClass(o) == ib.layout_class) layoutNeed(ib, ib.layout_class.?, o, gi) else Need{
+        .min = ask(ib, o, gi, gc.GDOMAIN_MINIMUM),
+        .nominal = ask(ib, o, gi, gc.GDOMAIN_NOMINAL),
+        .max = ask(ib, o, gi, gc.GDOMAIN_MAXIMUM),
     };
     if (record.min_width != 0) need.min.width = record.min_width;
     if (record.min_height != 0) need.min.height = record.min_height;

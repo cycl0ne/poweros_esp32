@@ -75,8 +75,9 @@ pub const LIBRARY_VERSION = 0;
 /// QueueGadgetRefresh, GA_Animate and SA_Animate, for gadgets that move.
 /// 25: WA_NoActivate, a window pressed beside whatever has the input, and
 /// the on-screen keyboard while a field is typed into
-/// (Preferences.keyboard); STYLE_BorderGap; ImpDraw.style.
-pub const LIBRARY_REVISION = 25;
+/// (Preferences.keyboard); STYLE_BorderGap; ImpDraw.style. 26:
+/// SetScreenPens - a screen's pens, or the system's, changed while open.
+pub const LIBRARY_REVISION = 26;
 const BUILD_DATE = "02.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -175,6 +176,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.double_seconds = @import("prefs/_prefs.zig").default_double_seconds;
     ib.double_micros = @import("prefs/_prefs.zig").default_double_micros;
     ib.keyboard_mode = sdk.intuition.KEYBOARD_AUTO;
+    ib.style_serial = 0;
+    ib.system_pens = @import("screen/_screen.zig").default_pens;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
     if (ib.pointer_class == null) {
         _ = ib.iface().FreeClass(ib.window_class);

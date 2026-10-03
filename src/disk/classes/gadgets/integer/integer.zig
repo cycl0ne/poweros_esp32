@@ -275,6 +275,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 _ = ib.SendSuperMessage(cl, obj, &gone);
                 return 0;
             }
+            // Its own style is the inner one's too.
+            support.passStyle(ib, base.utility_base, new.attr_list, own.inner.?);
             // The arrows are as wide as the field is tall, so that each
             // is about square; a gadget made without them is a field.
             if (ub.GetTagData(ig.INTEGER_Arrows, 1, new.attr_list) != 0) {
@@ -305,6 +307,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            if (own.inner) |inner| support.passStyle(ib, base.utility_base, set.attr_list, inner);
             const ub = base.utility_base;
             // The field saying what was typed: taken while it is being
             // typed, brought into the range when the field is done with,

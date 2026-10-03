@@ -264,7 +264,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const b = gc.boxFor(gc.gadget(o), info);
     const parts = partsOf(base, own, o, info);
     const frame = gc.Box{ .left = b.left + parts.frame.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height };
-    support.drawFrame(ib, own.frame.?, r.rast_port, frame, ic.IDS_NORMAL, info.draw_info);
+    support.drawFrame(ib, own.frame.?, r.rast_port, frame, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
     _ = placeInner(base, own, o, info);
     support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));
@@ -348,6 +348,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 _ = ib.SendSuperMessage(cl, obj, &gone);
                 return 0;
             }
+            // Its own style is the inner one's too.
+            support.passStyle(ib, base.utility_base, new.attr_list, own.inner.?);
             putKnob(base, own, null);
             // Reported when let go; made without a size, as big as it
             // looks right.
@@ -373,6 +375,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            if (own.inner) |inner| support.passStyle(ib, base.utility_base, set.attr_list, inner);
             const ub = base.utility_base;
             // The knob moving: the level it is nearest, shown and told
             // when it changes, and told when the move is over.

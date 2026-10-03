@@ -177,7 +177,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     for (0..own.count) |i| {
         const top = b.top + @as(i32, @intCast(i)) * lines.pitch;
         const state = if (i == own.active) ic.IDS_SELECTED else ic.IDS_NORMAL;
-        ib.DrawImageState(rp, image, b.left, top + @divTrunc(line_height - lines.mark.height, 2), state, info.draw_info);
+        support.drawImage(ib, image, rp, b.left, top + @divTrunc(line_height - lines.mark.height, 2), state, info.draw_info, gc.gadget(o).style);
         const text_top = top + @divTrunc(line_height - lines.text_height, 2);
         support.drawText(gb, rp, b.left + lines.mark.width + text_gap, text_top, own.labels.?[i].?, pens[sc.TEXTPEN]);
     }

@@ -417,6 +417,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 _ = ib.SendSuperMessage(cl, obj, &gone);
                 return 0;
             }
+            // Its own style is the inner one's too.
+            support.passStyle(ib, base.utility_base, new.attr_list, own.inner.?);
             putCount(base, own, null);
             // Reported when a press ends; made without a size, as big as
             // it looks right.
@@ -448,6 +450,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            if (own.inner) |inner| support.passStyle(ib, base.utility_base, set.attr_list, inner);
             const ub = base.utility_base;
             // The bar moving: the top followed, and told.
             if (msg.method_id == classusr.OM_UPDATE) if (ub.FindTagItem(pg.PGA_Top, set.attr_list)) |item| {

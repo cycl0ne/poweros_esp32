@@ -381,6 +381,7 @@ pub fn Library(comptime spec: Spec) type {
                 box,
                 if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL,
                 info.draw_info,
+                gc.gadget(o).style,
             );
             const size = fontSize(base, o, info);
             const wide: i32 = size.width * button_text.len;

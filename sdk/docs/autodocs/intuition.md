@@ -111,6 +111,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
 - [SetPrefs](#setprefs) - The settings changed.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
+- [SetScreenPens](#setscreenpens) - A screen's pens, or the system's, replaced - and every screen it reaches painted again in them.
 - [SetStyle](#setstyle) - A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
 - [SetSystemFonts](#setsystemfonts) - The fonts screens, windows and consoles use from now on.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
@@ -1864,7 +1865,9 @@ fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort,
   the look part of the way from one state to another, every colour
   mixed channel by channel and every number rounded.
 - `flags` - `style.DPF_INVERT` to turn the border the other way,
-  `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
+  `style.DPF_EDGES_ONLY` to draw the border and leave the inside,
+  `style.DPF_CLEAR` to clear a rounded part's corners to the
+  RastPort's background first.
 - `box` - where the part goes, half-open.
 - `content` - where to write the room left inside the border and the
   padding, or null.
@@ -4345,6 +4348,8 @@ GadgetInfo, which a gadget in no window is sent.
 
 The layer lock is what lets a gadget draw while the program draws in the
 same window.
+`EraseRect` through it paints the window's ground, as through the
+window's own RastPort: its backfill hook comes with it.
 
 **CONTEXT**
 
@@ -6602,6 +6607,83 @@ None known.
 ```zig
 const old = ib.SetPubScreenModes(sc.POPPUBSCREEN);
 _ = old;
+```
+
+## SetScreenPens
+
+A screen's pens, or the system's, replaced - and every screen it reaches painted again in them.
+
+**SYNOPSIS**
+
+```zig
+fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen,
+    pens: ?[*]const Pen) void
+```
+
+**SINCE**
+
+0.26. LVO -496.
+
+**INPUTS**
+
+- `screen` - the screen whose own pens they are, as `SA_Pens` gives
+  them at open; null for the system's.
+- `pens` - `NUMDRIPENS` colours, by the `DrawInfo` pens' indexes, read
+  and copied; null for the system's pens (a screen) or the built-in
+  ones (the system).
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+**The system's pens** are what a screen opened without `SA_Pens`,
+`SA_DetailPen` or `SA_BlockPen` takes: every such screen, those already
+open among them, and every one opened after. **A screen's own**
+replaces its pens alone, and then it keeps them whatever the system's
+become; given null, it follows the system's again.
+
+Every screen it reaches is then painted again: its ground, its bar,
+and every window on it - its inside in the new background, its border
+and its gadgets. A console in a window draws its text again; each
+window that listens for `IDCMP_NEWPREFS` hears it, for what its
+program draws itself, which the paint has cleared.
+
+**CONTEXT**
+
+- Waits: yes - for intuition's lock, and for the layers it draws in.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pens stay the caller's; the screen keeps a copy.
+
+**NOTES**
+
+- What `C:IPrefs` calls, with no screen, from `ENV:Sys/palette.prefs`.
+- A style that gives colours of its own (`STYLE_BackgroundRGB` and the
+  rest) keeps them: only what is drawn in pens changes.
+
+**BUGS**
+
+- A program that draws in its window and does not listen for
+  `IDCMP_NEWPREFS` shows the new background where it drew until it
+  draws again.
+
+**SEE ALSO**
+
+`SA_Pens`, `GetScreenDrawInfo`, `SetStyle`
+
+**EXAMPLES**
+
+```zig
+// A darker ground for every screen, the rest as they are.
+var pens: [sc.NUMDRIPENS]Pen = (ib.GetScreenDrawInfo(screen)).pens[0..sc.NUMDRIPENS].*;
+pens[sc.BACKGROUNDPEN] = graphics.penRGB(0x80, 0x84, 0x88);
+ib.SetScreenPens(null, &pens);
 ```
 
 ## SetStyle

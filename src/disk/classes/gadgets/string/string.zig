@@ -120,7 +120,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const ib = base.intuition_base;
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(gc.gadget(o), info);
-    support.drawFrame(ib, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info);
+    support.drawFrame(ib, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
     _ = placeInner(base, own, o, info);
     support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));
@@ -166,6 +166,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 _ = ib.SendSuperMessage(cl, obj, &gone);
                 return 0;
             }
+            // Its own style is the inner one's too.
+            support.passStyle(ib, base.utility_base, new.attr_list, own.inner.?);
             // Reported as the line is; made without a size, as big as a
             // line needs.
             const sized = ub.FindTagItem(gc.GA_Width, new.attr_list) != null or ub.FindTagItem(gc.GA_Height, new.attr_list) != null;
@@ -190,6 +192,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            if (own.inner) |inner| support.passStyle(ib, base.utility_base, set.attr_list, inner);
             // The line telling what it says now: told on, in this gadget's
             // name, and nothing to set.
             if (msg.method_id == classusr.OM_UPDATE and base.utility_base.FindTagItem(gc.STRINGA_TextVal, set.attr_list) != null) {

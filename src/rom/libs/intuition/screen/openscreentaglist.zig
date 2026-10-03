@@ -182,16 +182,23 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         .width = bounds.width(),
         .height = bounds.height(),
         .depth = sdk.rtg.bitmaps.formatBits(@enumFromInt(format)),
-        .pens = default_pens,
+        .pens = ib.system_pens,
         .draw_info = undefined,
         .pub_node = .{ .screen = @ptrCast(s) },
         .screen_type = if (pub_name != null) sc.PUBLICSCREEN else sc.CUSTOMSCREEN,
     };
     if (like) |wb| s.pens = wb.pens;
-    if (ub.FindTagItem(sc.SA_DetailPen, tags)) |item| s.pens[sc.DETAILPEN] = @truncate(item.data);
-    if (ub.FindTagItem(sc.SA_BlockPen, tags)) |item| s.pens[sc.BLOCKPEN] = @truncate(item.data);
+    if (ub.FindTagItem(sc.SA_DetailPen, tags)) |item| {
+        s.pens[sc.DETAILPEN] = @truncate(item.data);
+        s.own_pens = true;
+    }
+    if (ub.FindTagItem(sc.SA_BlockPen, tags)) |item| {
+        s.pens[sc.BLOCKPEN] = @truncate(item.data);
+        s.own_pens = true;
+    }
     if (ub.FindTagItem(sc.SA_Pens, tags)) |item| {
         s.pens = @as(*const [sc.NUMDRIPENS]Pen, @ptrFromInt(item.data)).*;
+        s.own_pens = true;
     }
     s.draw_info = .{ .pens = &s.pens, .font = font, .depth = s.depth };
     // Read now and kept, so the caller's list may go; none, or no memory

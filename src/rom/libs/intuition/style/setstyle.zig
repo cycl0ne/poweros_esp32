@@ -100,6 +100,7 @@ pub fn SetStyle(ib: *IntuitionBase, screen: ?*Screen, tags: ?[*]const TagItem) b
     ib.sys_base.Forbid();
     const old = if (screen) |s| @constCast(s.draw_info.style) else ib.system_style;
     if (screen) |s| s.draw_info.style = kept else ib.system_style = kept;
+    ib.style_serial +%= 1;
     ib.sys_base.Permit();
     _style.drop(ib, old);
 

@@ -30,6 +30,8 @@ pub const gadgets = @import("libs/gadgets/gadgets.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const crypto = @import("libs/crypto/crypto.zig");
 pub const diskfont = @import("libs/diskfont/diskfont.zig");
+/// The system's settings as files (ENV:Sys, ENVARC:Sys).
+pub const prefs = @import("libs/prefs/prefs.zig");
 pub const truetype = @import("libs/truetype/truetype.zig");
 pub const asl = @import("libs/asl/asl.zig");
 pub const iffparse = @import("libs/iffparse/iffparse.zig");

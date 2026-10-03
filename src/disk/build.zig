@@ -33,7 +33,7 @@ const commands = [_][]const u8{
     "backlight",    "rtg",        "showinfo", "setmap",        "mount",
     "showconfig",   "date",       "setdate",  "fontprefs",     "fixfonts",
     "adddatatypes", "listfonts",  "log",      "requestfile",   "requestchoice",
-    "diskchange",   "styleprefs",
+    "diskchange",   "styleprefs", "iprefs",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",  "gfx",     "anim",
@@ -51,6 +51,7 @@ const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnet
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
+    .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -175,6 +176,14 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
     .{ .disk = "prefs/env-archive/Sys/font.prefs", .source = "prefs/env-archive/Sys/font.prefs" },
     .{ .disk = "prefs/env-archive/Sys/style.prefs", .source = "prefs/env-archive/Sys/style.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/intuition.prefs", .source = "prefs/env-archive/Sys/intuition.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/palette.prefs", .source = "prefs/env-archive/Sys/palette.prefs" },
+    // The looks the preferences editor offers, a style file each.
+    .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
+    .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },
+    .{ .disk = "prefs/presets/styles/Flat.prefs", .source = "prefs/presets/styles/Flat.prefs" },
+    .{ .disk = "prefs/presets/styles/Soft.prefs", .source = "prefs/presets/styles/Soft.prefs" },
+    .{ .disk = "prefs/presets/styles/Contrast.prefs", .source = "prefs/presets/styles/Contrast.prefs" },
     .{ .disk = "prefs/env-archive/Sys/net/timeserver", .source = "prefs/env-archive/Sys/net/timeserver" },
     .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
     .{ .disk = "prefs/env-archive/Sys/net/hostname", .source = "prefs/env-archive/Sys/net/hostname" },

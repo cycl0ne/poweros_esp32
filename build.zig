@@ -75,6 +75,8 @@ const image_dirs = [_][]const u8{
     "prefs/env-archive/Sys",
     "prefs/env-archive/Sys/net",
     "prefs/env-archive/Sys/net/networks",
+    "prefs/presets",
+    "prefs/presets/styles",
 };
 
 pub fn build(b: *std.Build) void {

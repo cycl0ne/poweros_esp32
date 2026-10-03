@@ -403,7 +403,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     defer saved.restore(gb, r.rast_port);
     const b = gc.boxFor(gc.gadget(o), info);
     const parts = partsOf(base, own, o, info);
-    support.drawFrame(ib, own.frame.?, r.rast_port, .{ .left = b.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height }, ic.IDS_NORMAL, info.draw_info);
+    support.drawFrame(ib, own.frame.?, r.rast_port, .{ .left = b.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height }, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
     drawLines(base, own, o, r.rast_port, info, own.top, own.top + parts.visible);
     // The count in the scroller follows the size the list is drawn at.
     putScroller(base, own, o, null);

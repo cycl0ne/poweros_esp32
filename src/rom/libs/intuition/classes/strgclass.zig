@@ -386,7 +386,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
         d.box(gb, rp, b.left, b.top, b.width, b.height, set[1]);
         it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, style.DPF_EDGES_ONLY, &field, null);
     } else {
-        it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, 0, &field, null);
+        it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, style.DPF_CLEAR, &field, null);
     }
 
     const buffer = p.buffer orelse return;

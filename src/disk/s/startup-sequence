@@ -45,6 +45,10 @@ C:FontPrefs >NIL:
 ; it, those already open too.
 C:StylePrefs >NIL:
 
+; intuition's own settings, as ENV:Sys/intuition.prefs gives them: the
+; double-click time, the screens' font height, the keyboard on the screen.
+C:IPrefs >NIL:
+
 ; Where a command is looked for, before C:. C:test holds the programs that
 ; exercise a device or a library, C:net the network's tools, so they are
 ; called by name like the rest.

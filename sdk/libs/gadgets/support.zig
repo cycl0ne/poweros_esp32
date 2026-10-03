@@ -53,6 +53,31 @@ pub fn passMarks(o: *Object, inner: *Object) void {
     held.flags = (held.flags & ~marks) | (gc.gadget(o).flags & marks);
 }
 
+/// A gadget's own style (`GA_Style`) among `tags` handed on to the gadget
+/// inside it, which keeps a copy of its own: a class made of an inner
+/// gadget calls this as it is made and as it is set, so the inner one is
+/// drawn in its style too.
+pub fn passStyle(ib: *IntuitionBase, ub: anytype, tags: ?[*]const TagItem, inner: *Object) void {
+    const item = ub.FindTagItem(gc.GA_Style, tags) orelse return;
+    const pass = [_]TagItem{ .{ .tag = gc.GA_Style, .data = item.data }, .{} };
+    _ = ib.SetAttrsTagList(inner, &pass);
+}
+
+/// An image drawn at (`left`, `top`) in a state, in a gadget's own style
+/// over its screen's: `DrawImageState` with the style an image drawn from
+/// a style is to use (`ImpDraw.style`).
+pub fn drawImage(ib: *IntuitionBase, image: *Object, rp: *graphics.RastPort, left: i32, top: i32, state: u32, draw_info: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) void {
+    var draw = intuition.imageclass.ImpDraw{
+        .method_id = intuition.imageclass.IM_DRAW,
+        .rast_port = rp,
+        .offset = .{ .x = left, .y = top },
+        .state = state,
+        .draw_info = draw_info,
+        .style = own_style,
+    };
+    _ = ib.SendMessage(image, @ptrCast(&draw));
+}
+
 /// Drawn again, if it is in a window: a change of state that shows.
 pub fn redraw(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const rp = ib.ObtainGIRPort(gi) orelse return;
@@ -280,7 +305,7 @@ pub fn frameInset(ib: *IntuitionBase, frame: *Object, draw_info: ?*intuition.Dra
 }
 
 /// A frame image drawn round `box`, in a state.
-pub fn drawFrame(ib: *IntuitionBase, frame: *Object, rp: *graphics.RastPort, box: gc.Box, state: u32, draw_info: ?*intuition.DrawInfo) void {
+pub fn drawFrame(ib: *IntuitionBase, frame: *Object, rp: *graphics.RastPort, box: gc.Box, state: u32, draw_info: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) void {
     var draw = intuition.imageclass.ImpDraw{
         .method_id = intuition.imageclass.IM_DRAWFRAME,
         .rast_port = rp,
@@ -288,6 +313,7 @@ pub fn drawFrame(ib: *IntuitionBase, frame: *Object, rp: *graphics.RastPort, box
         .state = state,
         .draw_info = draw_info,
         .dimensions = .{ .width = box.width, .height = box.height },
+        .style = own_style,
     };
     _ = ib.SendMessage(frame, @ptrCast(&draw));
 }
@@ -373,7 +399,7 @@ pub const Arrow = struct {
 /// polygon, whose edges belong to one side and not the other. Without a
 /// frame it is the triangle alone, which is what a mark on a button is.
 pub fn drawArrow(ib: *IntuitionBase, gb: *GraphicsBase, frame: ?*Object, rp: *graphics.RastPort, draw_info: ?*intuition.DrawInfo, arrow: Arrow) void {
-    if (frame) |image| drawFrame(ib, image, rp, arrow.at, if (arrow.pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, draw_info);
+    if (frame) |image| drawFrame(ib, image, rp, arrow.at, if (arrow.pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, draw_info, null);
     const dri = draw_info orelse return;
     setPen(gb, rp, if (arrow.pressed) dri.pens[sc.FILLTEXTPEN] else dri.pens[sc.TEXTPEN]);
     const triangle = triangleIn(arrow.at, arrow.vertical) orelse return;

@@ -91,6 +91,9 @@ pub const Screen = extern struct {
     /// The bar and its trim line; 0 without a bar.
     bar_height: i32 = 0,
     pens: [sc.NUMDRIPENS]Pen,
+    /// Its pens are its own (`SA_Pens` and the like, or `SetScreenPens`
+    /// for it), not the system's.
+    own_pens: bool = false,
     draw_info: sc.DrawInfo,
     /// Nonzero for a public screen: its name is in `pub_name`, and
     /// `pub_node` is on the base's list of public screens.

@@ -33,7 +33,9 @@ const d = @import("../classes/draw.zig");
 ///   the look part of the way from one state to another, every colour
 ///   mixed channel by channel and every number rounded.
 /// - `flags` - `style.DPF_INVERT` to turn the border the other way,
-///   `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
+///   `style.DPF_EDGES_ONLY` to draw the border and leave the inside,
+///   `style.DPF_CLEAR` to clear a rounded part's corners to the
+///   RastPort's background first.
 /// - `box` - where the part goes, half-open.
 /// - `content` - where to write the room left inside the border and the
 ///   padding, or null.
@@ -165,6 +167,9 @@ pub fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const 
     } else null;
 
     if (radius > 0) {
+        // Outside the round shape is the window's, cleared when asked: a
+        // square look drawn there before would otherwise stay.
+        if (flags & style.DPF_CLEAR != 0) gb.EraseRect(target, box);
         // A round part is drawn with smooth edges: its corners are curves,
         // and a curve without them is a stair.
         gb.SetRPAttrs(target, &[_]sdk.utility.TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });

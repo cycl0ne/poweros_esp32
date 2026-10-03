@@ -2198,6 +2198,55 @@ fn click(ib: *IntuitionBase, x: i32, y: i32) void {
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, x, y);
 }
 
+test "the built-in pens are the ones palette.prefs says they are" {
+    try testing.expectEqualSlices(sdk.graphics.Pen, &sdk.prefs.palette.defaults, &_kscreen.default_pens);
+}
+
+test "SetScreenPens: the system's pens reach a screen and its window's ground; a screen's own stay" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWPREFS },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    const kept: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    var pens = kept.pens;
+    pens[sc.BACKGROUNDPEN] = graphics.penRGB(0xFF, 0, 0);
+    it.SetScreenPens(null, &pens);
+    try testing.expectEqual(graphics.penRGB(0xFF, 0, 0), kept.pens[sc.BACKGROUNDPEN]);
+    // The window's inside painted in it, and the window told.
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(30, 40));
+    const told = it.GetIMsg(w).?;
+    try testing.expectEqual(wn.IDCMP_NEWPREFS, told.class);
+    it.ReplyIMsg(told);
+
+    // A screen's own pens are its own: the system's pass it by.
+    var own = pens;
+    own[sc.BACKGROUNDPEN] = graphics.penRGB(0, 0, 0xFF);
+    it.SetScreenPens(screen, &own);
+    it.SetScreenPens(null, null);
+    try testing.expectEqual(graphics.penRGB(0, 0, 0xFF), kept.pens[sc.BACKGROUNDPEN]);
+    // Given back, it follows the system's - the built-in ones again.
+    it.SetScreenPens(screen, null);
+    try testing.expectEqual(_kscreen.default_pens[sc.BACKGROUNDPEN], kept.pens[sc.BACKGROUNDPEN]);
+    while (it.GetIMsg(w)) |m| it.ReplyIMsg(m);
+
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: a window that never takes the activation is pressed beside a field being typed into" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -3515,6 +3564,14 @@ test "ObtainGIRPort: a gadget draws in its own RastPort, and the lock comes back
     var gi = _gadget.info(win);
     const got = it.ObtainGIRPort(&gi).?;
     try testing.expect(got != rp);
+    // Its ground is the window's: EraseRect through it paints what the
+    // window's own does, not its block pen.
+    var ground_rp: usize = 0;
+    var ground_got: usize = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground_rp) }, .{} });
+    gb.GetRPAttrs(got, &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground_got) }, .{} });
+    try testing.expect(ground_rp != 0);
+    try testing.expectEqual(ground_rp, ground_got);
     it.ReleaseGIRPort(got);
 
     // It draws through it, and the program's pen and mode are untouched

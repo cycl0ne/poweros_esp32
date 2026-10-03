@@ -131,6 +131,17 @@ Espressif's QEMU. The ESP32-P4 is next.
   part and state, which `C:StylePrefs` hands over at boot and again
   whenever it is run: every open window is drawn again in it. See the
   [styles guide](sdk/docs/guides/styles.md).
+  `SYS:Programs/Prefs` edits the system's settings in one window - a
+  look picked from a list (classic, rounded, flat, soft, high contrast,
+  or any style file put in `SYS:Prefs/Presets/Styles`), or on its
+  advanced page every part in every state, its colours a screen pen or
+  one picked on a colour wheel; the screens' twelve pens; the system's
+  fonts, the double-click time, the screens' font height and the
+  keyboard on the screen - and saves them to `ENVARC:Sys` (Save) or uses
+  them until the next start (Use): every open window takes the new style
+  and colours at once. The screens' pens are kept in
+  `ENVARC:Sys/palette.prefs`, which `C:IPrefs` hands to intuition at
+  boot (`SetScreenPens`).
   Things move on one clock, motion.library: a value going from one
   number to another over a time through a curve (easing in, out, past
   the end and back, bouncing, or a Bezier of one's own), timers that

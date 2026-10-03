@@ -264,7 +264,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     support.fill(gb, rp, area, back);
     if (own.overrun > 0) support.fill(gb, rp, .{ .left = b.left + b.width, .top = area.top, .width = own.overrun, .height = area.height }, back);
     own.overrun = 0;
-    if (own.border != 0) if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info);
+    if (own.border != 0) if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
 
     if (own.runs) |runs| {
         drawRuns(base, own, rp, runs, area, front);

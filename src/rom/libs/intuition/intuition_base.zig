@@ -139,6 +139,14 @@ pub const IntuitionBase = extern struct {
     /// screen's own and before the default, so it changes every screen at
     /// once. Null until one is given; replaced under Forbid.
     system_style: ?*sdk.intuition.Style = null,
+    /// Raised each time a screen's style or the system's is replaced
+    /// (`SetStyle`): a class that keeps what it drew in a style draws it
+    /// again when this has moved on.
+    style_serial: u32 = 0,
+    /// The system's pens: what a screen opened without pens of its own
+    /// takes (`SetScreenPens` with no screen). The built-in ones until
+    /// then.
+    system_pens: [sdk.intuition.screens.NUMDRIPENS]sdk.graphics.Pen,
     /// motion.library, opened the first time a style asks for a
     /// transition; null before, and where there is none.
     motion_base: ?*sdk.interface.motion.MotionBase = null,
