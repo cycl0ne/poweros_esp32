@@ -26,6 +26,7 @@ const WF_NOCARE = _window.WF_NOCARE;
 const WF_NOTIFYDEPTH = _window.WF_NOTIFYDEPTH;
 const WF_REPORTMOUSE = _window.WF_REPORTMOUSE;
 const WF_RMBTRAP = _window.WF_RMBTRAP;
+const WF_NOACTIVATE = _window.WF_NOACTIVATE;
 const WF_SIMPLE = _window.WF_SIMPLE;
 const WF_SIZE = _window.WF_SIZE;
 const WF_SIZE_BBOTTOM = _window.WF_SIZE_BBOTTOM;
@@ -67,7 +68,9 @@ const zoomWidth = _window.zoomWidth;
 ///   `WA_Title` (not copied), `WA_CloseGadget`, `WA_DepthGadget`,
 ///   `WA_SizeGadget`, `WA_DragBar`, `WA_Borderless`, `WA_Backdrop`,
 ///   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
-///   `WA_Activate`, and `WA_IDCMP` for a message port. Its menus:
+///   `WA_Activate` - or `WA_NoActivate`, never active, its gadgets
+///   pressed beside whatever has the input - and `WA_IDCMP` for a message
+///   port. Its menus:
 ///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
 ///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
 ///   `WA_PointerDelay`, as
@@ -146,6 +149,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     flags |= flagIf(ub, wn.WA_Borderless, tags, WF_BORDERLESS);
     flags |= flagIf(ub, wn.WA_NoCareRefresh, tags, WF_NOCARE);
     flags |= flagIf(ub, wn.WA_RMBTrap, tags, WF_RMBTRAP);
+    flags |= flagIf(ub, wn.WA_NoActivate, tags, WF_NOACTIVATE);
     flags |= flagIf(ub, wn.WA_SizeBRight, tags, WF_SIZE_BRIGHT);
     // A window has a zoom gadget when it asks for a box to flip to, or when
     // it has both a sizing and a depth gadget: the two together are what a

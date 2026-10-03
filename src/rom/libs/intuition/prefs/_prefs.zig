@@ -34,6 +34,7 @@ pub fn gather(ib: *IntuitionBase) Preferences {
     return .{
         .double_click = .{ .secs = ib.double_seconds, .micro = ib.double_micros },
         .screen_font_height = ib.font_height,
+        .keyboard = ib.keyboard_mode,
     };
 }
 
@@ -65,5 +66,8 @@ pub fn scatter(ib: *IntuitionBase, prefs: *const Preferences, bytes: u32) void {
     }
     if (bytes >= @offsetOf(Preferences, "screen_font_height") + @sizeOf(u32)) {
         if (prefs.screen_font_height != 0) ib.font_height = prefs.screen_font_height;
+    }
+    if (bytes >= @offsetOf(Preferences, "keyboard") + @sizeOf(u32)) {
+        if (prefs.keyboard <= intuition.KEYBOARD_NEVER) ib.keyboard_mode = prefs.keyboard;
     }
 }

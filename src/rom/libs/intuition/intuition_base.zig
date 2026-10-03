@@ -121,6 +121,8 @@ pub const IntuitionBase = extern struct {
     /// How far apart two clicks may be and still be a double-click.
     double_seconds: u32,
     double_micros: u32,
+    /// When the on-screen keyboard comes up (`Preferences.keyboard`).
+    keyboard_mode: u32,
     /// The RastPorts `ObtainGIRPort` has given out, and the layer held for
     /// each, so that the release can let the right one go.
     held: [_gadget.held_max]_gadget.Held,

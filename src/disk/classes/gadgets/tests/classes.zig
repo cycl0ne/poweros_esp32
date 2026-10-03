@@ -55,6 +55,9 @@ const qc = sdk.gadgets.qrcode;
 const barcode = @import("../barcode/barcode.zig");
 const bcg = sdk.gadgets.barcode;
 const angles = sdk.gadgets.angles;
+const chart = @import("../chart/chart.zig");
+const keyboard = @import("../keyboard/keyboard.zig");
+const cr = sdk.gadgets.chart;
 const integer = @import("../integer/integer.zig");
 const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
@@ -1681,6 +1684,11 @@ test "arc.gadget: an angle on the ring is a level, a press turns it, the target 
     try testing.expectEqual(@as(i32, 100), arc.levelAt(&own, 280));
     try testing.expectEqual(@as(i32, 0), arc.levelAt(&own, 260));
 
+    // A track too near its ground to see is drawn darker instead.
+    try testing.expect(arc.tooClose(0xFFF4_F5F7, 0xFFFF_FFFF));
+    try testing.expect(arc.tooClose(0xFFAA_AAAA, 0xFFAA_AAAA));
+    try testing.expect(!arc.tooClose(0xFF88_8888, 0xFFFF_FFFF));
+
     // A ring without a knob is never pressed.
     const ring = ib.NewObjectTagList(null, ar.ARC_CLASS, &[_]TagItem{.{}}).?;
     var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 36, .y = 10 } };
@@ -1890,6 +1898,114 @@ test "barcode.gadget: Code 128 in set B or C, EAN-13 with its check digit" {
     });
     try testing.expectEqual(@as(usize, 1), attr(ib, label, bcg.BARCODE_Valid));
     ib.DisposeObject(label);
+    try rig.down();
+}
+
+test "keyboard.gadget: every row as wide as the others, the key under a point" {
+    for (keyboard.rows) |row| {
+        var quarters: u32 = 0;
+        for (row) |k| quarters += k.quarters;
+        try testing.expectEqual(@as(u32, 54), quarters);
+    }
+    // 540 by 100: a quarter is 10 pixels, a row 20.
+    const q = keyboard.keyAt(540, 100, 25, 30).?;
+    try testing.expectEqual(@as(usize, 1), q[0]);
+    try testing.expectEqual(@as(u8, 0x10), keyboard.rows[q[0]][q[1]].code);
+    // The half key before the q is a gap: no key.
+    try testing.expect(keyboard.keyAt(540, 100, 10, 30) == null);
+    // The space bar, and Return at the right of the third row.
+    const space = keyboard.keyAt(540, 100, 270, 90).?;
+    try testing.expectEqual(keyboard.Kind.space, keyboard.rows[space[0]][space[1]].kind);
+    const enter = keyboard.keyAt(540, 100, 530, 50).?;
+    try testing.expectEqual(keyboard.Kind.enter, keyboard.rows[enter[0]][enter[1]].kind);
+    const box = keyboard.keyBox(540, 100, 2, 12);
+    try testing.expectEqual(@as(i32, 480), box.left);
+    try testing.expectEqual(@as(i32, 60), box.width);
+}
+
+test "chart.gadget: values kept in a ring per series, the oldest let go, the scale round" {
+    var heard = Heard{ .tag = cr.CHART_Count, .ib = undefined };
+    var rig = try Rig.up(&chart.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const plot = ib.NewObjectTagList(null, cr.CHART_CLASS, &[_]TagItem{
+        .{ .tag = cr.CHART_Series, .data = 2 },
+        .{ .tag = cr.CHART_Capacity, .data = 4 },
+        .{ .tag = cr.CHART_Auto, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 200), attr(ib, plot, gc.GA_Width));
+    // Five values into a ring of four: the first is let go.
+    for ([_]i32{ 3, 17, 42, -5, 61 }) |value| {
+        _ = ib.SetAttrsTagList(plot, &[_]TagItem{
+            .{ .tag = cr.CHART_Current, .data = 0 },
+            .{ .tag = cr.CHART_Add, .data = @bitCast(@as(isize, value)) },
+            .{},
+        });
+    }
+    _ = ib.SetAttrsTagList(plot, &[_]TagItem{
+        .{ .tag = cr.CHART_Current, .data = 1 },
+        .{ .tag = cr.CHART_Add, .data = 8 },
+        .{ .tag = cr.CHART_Current, .data = 0 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 4), attr(ib, plot, cr.CHART_Count));
+    // From -5 to 61 in four lines: steps of 20, from -20 to 80.
+    try testing.expectEqual(@as(isize, -20), @as(isize, @bitCast(attr(ib, plot, cr.CHART_Min))));
+    try testing.expectEqual(@as(usize, 80), attr(ib, plot, cr.CHART_Max));
+    _ = ib.SetAttrsTagList(plot, &[_]TagItem{ .{ .tag = cr.CHART_Current, .data = 1 }, .{ .tag = cr.CHART_Clear, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, plot, cr.CHART_Count));
+    ib.DisposeObject(plot);
+    try rig.down();
+
+    var own = chart.Data{ .series = 1, .capacity = 3 };
+    var values: [3]i32 = undefined;
+    own.values = &values;
+    for ([_]i32{ 1, 2, 3, 4 }) |v| chart.add(&own, 0, v);
+    try testing.expectEqual(@as(i32, 2), chart.valueAt(&own, 0, 0));
+    try testing.expectEqual(@as(i32, 4), chart.valueAt(&own, 0, 2));
+}
+
+test "text.gadget: markup into runs, runs wrapped into lines" {
+    var heard = Heard{ .tag = tx.TEXT_Text, .ib = undefined };
+    var rig = try Rig.up(&text.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const sys = kexec.SysBase.iface();
+    const gb = rig.kib.graphics_base;
+    const parsed = text.rich.parse(sys, gb, "Press <b>OK</b> or <c=#C03030>Cancel</c><br><<done", sdk.graphics.POSPAZNAME).?;
+    const runs = &parsed.runs;
+    try testing.expectEqualStrings("Press ", std.mem.span(runs[0].text.?));
+    try testing.expectEqualStrings("OK", std.mem.span(runs[1].text.?));
+    try testing.expectEqual(@as(u32, sdk.graphics.FSF_BOLD), runs[1].style);
+    try testing.expectEqualStrings(" or ", std.mem.span(runs[2].text.?));
+    try testing.expectEqual(@as(u32, 0), runs[2].style);
+    try testing.expectEqualStrings("Cancel", std.mem.span(runs[3].text.?));
+    try testing.expectEqual(@as(sdk.graphics.Pen, 0xFFC0_3030), runs[3].colour);
+    try testing.expectEqualStrings("\n", std.mem.span(runs[4].text.?));
+    try testing.expectEqualStrings("<done", std.mem.span(runs[5].text.?));
+    try testing.expect(runs[6].text == null);
+    text.rich.free(sys, gb, parsed);
+
+    // One line unwrapped; narrow and wrapped, several.
+    const words = "one two three four five six";
+    const line = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        .{ .tag = tx.TEXT_Markup, .data = 1 },
+        .{ .tag = tx.TEXT_Text, .data = @intFromPtr(words) },
+        .{},
+    }).?;
+    const one_line = attr(ib, line, gc.GA_Height);
+    try testing.expect(one_line > 0);
+    const block = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        .{ .tag = tx.TEXT_Markup, .data = 1 },
+        .{ .tag = tx.TEXT_Wrap, .data = 1 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = tx.TEXT_Text, .data = @intFromPtr(words) },
+        .{},
+    }).?;
+    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(block, @ptrCast(&nominal));
+    try testing.expect(nominal.domain.height >= 3 * @as(i32, @intCast(one_line)));
+    ib.DisposeObject(line);
+    ib.DisposeObject(block);
     try rig.down();
 }
 

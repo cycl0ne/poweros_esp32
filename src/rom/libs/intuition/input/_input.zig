@@ -141,6 +141,15 @@ pub const State = extern struct {
     /// The signal another task wakes the input task with when gadgets wait
     /// to be drawn again (`QueueGadgetRefresh`).
     refresh_mask: u32 = 0,
+    /// A gadget of a window that never takes the activation, pressed
+    /// beside whatever has the input, and its window; and whether the
+    /// release of a press it was done with at once is still to come.
+    side: ?*Object = null,
+    side_window: ?*Window = null,
+    side_release: u8 = 0,
+    pad3: [3]u8 = .{ 0, 0, 0 },
+    /// The on-screen keyboard (`keyboard.zig`).
+    keyboard: @import("keyboard.zig").State = .{},
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -242,6 +251,9 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
             // A move followed by another move is only the way there.
             if (isMove(&e) and tail.* != head.* and isMove(&st.events[tail.* % ring_size])) continue;
             handle(ib, &e);
+            // The on-screen keyboard up or down, the event's work done
+            // and nothing held.
+            @import("keyboard.zig").follow(ib);
         }
     }
 }
@@ -341,6 +353,10 @@ pub fn windowEvent(ib: *IntuitionBase, w: *Window, class: u32, code: u32) void {
 /// screen semaphore.
 pub fn forget(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
+    if (st.side_window == w) {
+        st.side = null;
+        st.side_window = null;
+    }
     menus.forget(ib, w);
     if (st.mode == .verify and st.window == w) verify.drop(ib);
     if (st.hover_window == w) unhover(ib);
@@ -356,6 +372,10 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
     gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_REFRESH;
+    if (st.side == o) {
+        st.side = null;
+        st.side_window = null;
+    }
     if (st.hovered == o) unhover(ib);
     if (st.focused == o) focus(ib, null);
     if (st.mode == .active and st.active == o) {
@@ -478,6 +498,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         menus.handle(ib, e);
         return;
     }
+    if (side(ib, e)) return;
     if (st.mode == .verify) return sizeVerifying(ib, e);
     // A gadget with the input gets everything until it is done; a tick
     // still reaches the window as well.
@@ -593,6 +614,83 @@ fn feed(ib: *IntuitionBase, e: *const InputEvent) bool {
         return false;
     }
     return result & gc.GMR_REUSE != 0;
+}
+
+// --- a press beside the input ----------------------------------------------------
+
+/// A side gadget told an input method, as `pressGadget` and `feed` tell an
+/// active one.
+fn sideInput(ib: *IntuitionBase, w: *Window, o: *Object, method: u32, e: *const InputEvent, termination: *i32) usize {
+    const st = stateOf(ib);
+    const b = _gadget.box(ib, w, o);
+    var gi = _gadget.infoFor(ib, w, o);
+    const at = _gadget.toDomainFor(ib, w, o, st.x - w.left, st.y - w.top);
+    var msg = gc.GpInput{
+        .method_id = method,
+        .gadget_info = &gi,
+        .event = e,
+        .termination = termination,
+        .mouse = .{ .x = at.x - b.left, .y = at.y - b.top },
+    };
+    return ib.iface().SendMessage(o, @ptrCast(&msg));
+}
+
+/// A side gadget done: told so, and its program told what it did.
+fn sideDone(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination: i32) void {
+    const st = stateOf(ib);
+    st.side = null;
+    st.side_window = null;
+    const up = _gadget.reporter(ib, o, gadgetclass.GACT_RELVERIFY);
+    var gi = _gadget.infoFor(ib, w, o);
+    var msg = gc.GpGoInactive{ .gadget_info = &gi, .abort = 0 };
+    _ = ib.iface().SendMessage(o, @ptrCast(&msg));
+    if (result & gc.GMR_VERIFY != 0) {
+        if (up) |reported| _ = _window.sendWith(ib, w, wn.IDCMP_GADGETUP, @bitCast(termination), reported);
+    }
+}
+
+/// A press on a window that never takes the activation (`WA_NoActivate`):
+/// its gadget is pressed beside whatever has the input - the active window
+/// stays active, a field being typed into keeps the keys - and has the
+/// pointer's moves, its release and input.device's ticks until it is
+/// done. True when the event was the side's alone.
+fn side(ib: *IntuitionBase, e: *const InputEvent) bool {
+    const st = stateOf(ib);
+    if (st.side) |o| {
+        if (e.class != ie.IECLASS_NEWPOINTERPOS and e.class != ie.IECLASS_TIMER) return false;
+        var termination: i32 = 0;
+        const result = sideInput(ib, st.side_window.?, o, gc.GM_HANDLEINPUT, e, &termination);
+        if (result != gc.GMR_MEACTIVE) sideDone(ib, st.side_window.?, o, result, termination);
+        // A tick goes on to the rest as well.
+        return e.class == ie.IECLASS_NEWPOINTERPOS;
+    }
+    if (e.class != ie.IECLASS_NEWPOINTERPOS) return false;
+    // The release of a press the side gadget was done with at once.
+    if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX and st.side_release != 0) {
+        st.side_release = 0;
+        return true;
+    }
+    if (e.code != ie.IECODE_LBUTTON) return false;
+    const s = screenAt(ib) orelse return false;
+    if (overPanel(ib, s, st.x, st.y)) return false;
+    const w = windowAt(ib, s, st.x, st.y) orelse return false;
+    if (w.flags & _window.WF_NOACTIVATE == 0) return false;
+    switch (_gadget.hit(ib, w, st.x - w.left, st.y - w.top)) {
+        .gadget => |o| {
+            var termination: i32 = 0;
+            const result = sideInput(ib, w, o, gc.GM_GOACTIVE, e, &termination);
+            if (result == gc.GMR_MEACTIVE) {
+                st.side = o;
+                st.side_window = w;
+            } else {
+                st.side_window = w;
+                sideDone(ib, w, o, result, termination);
+                st.side_release = 1;
+            }
+        },
+        else => st.side_release = 1,
+    }
+    return true;
 }
 
 /// A gadget given the input with no press behind it - Tab arriving at it,

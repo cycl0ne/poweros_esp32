@@ -2198,6 +2198,85 @@ fn click(ib: *IntuitionBase, x: i32, y: i32) void {
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, x, y);
 }
 
+test "input: a window that never takes the activation is pressed beside a field being typed into" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    var buffer: [16]u8 = @splat(0);
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 40 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&buffer) },
+        .{ .tag = gc.STRINGA_MaxChars, .data = buffer.len },
+        .{},
+    }).?;
+    const typing = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    try testing.expect(it.ActivateGadget(field, typing, null));
+
+    const key = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 3 },
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 30 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+    const keys = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 44 },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_NoActivate, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(key) },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP },
+        .{},
+    }).?;
+    // Opened, and asked to be, it is not the active window.
+    const kept: *_window.Window = @ptrCast(@alignCast(keys));
+    try testing.expect(kept.flags & wn.WFLG_NOACTIVATE != 0);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+    it.ActivateWindow(keys);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+
+    // Its button pressed and let go: it reports, and the field still has
+    // the keys in the window that is still active.
+    click(ib, 10, 48);
+    const told = it.GetIMsg(keys).?;
+    try testing.expectEqual(wn.IDCMP_GADGETUP, told.class);
+    it.ReplyIMsg(told);
+    try testing.expect(ib.input.active == field);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+    // And the field takes a key after it.
+    rawKey(ib, 0x20); // 'a'
+    try testing.expectEqual(@as(u8, 'a'), buffer[0]);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, typing, wn.WA_Screen));
+    it.CloseWindow(keys);
+    it.DisposeObject(key);
+    it.CloseWindow(typing);
+    it.DisposeObject(field);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: clicks, keys and ticks to the active window; the border gadgets act" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -4591,6 +4670,19 @@ test "preferences: read, changed, told about, and set back to what the system st
     _ = it.GetPrefs(&again, @sizeOf(Preferences));
     try testing.expectEqual(@as(u32, 250_000), again.double_click.micro);
     try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+
+    // The on-screen keyboard: up on its own, by the board, unless told;
+    // a setting it does not know is left alone.
+    try testing.expectEqual(intuition.KEYBOARD_AUTO, again.keyboard);
+    var keys = again;
+    keys.keyboard = intuition.KEYBOARD_ALWAYS;
+    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
+    keys.keyboard = 7;
+    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
 
     // Back to what the system starts with.
     _ = it.SetPrefs(it.GetDefPrefs(&prefs, @sizeOf(Preferences)), @sizeOf(Preferences), false);

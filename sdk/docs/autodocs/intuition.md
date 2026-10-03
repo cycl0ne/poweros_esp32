@@ -4786,7 +4786,9 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   `WA_Title` (not copied), `WA_CloseGadget`, `WA_DepthGadget`,
   `WA_SizeGadget`, `WA_DragBar`, `WA_Borderless`, `WA_Backdrop`,
   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
-  `WA_Activate`, and `WA_IDCMP` for a message port. Its menus:
+  `WA_Activate` - or `WA_NoActivate`, never active, its gadgets
+  pressed beside whatever has the input - and `WA_IDCMP` for a message
+  port. Its menus:
   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as

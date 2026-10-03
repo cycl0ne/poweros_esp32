@@ -16,6 +16,9 @@
 //!   as Code 128, and an EAN-13.
 //! - **Looks**: a button whose own style rounds its raised bevel, beside a
 //!   group framed as a drop box.
+//! - **Chart and text**: two series the timer adds to, as lines, and a
+//!   text in markup - bold, italic, a colour, a size - wrapped to its
+//!   width.
 //!
 //! Every gadget let go is printed with its code. The close gadget or
 //! Ctrl-C end it.
@@ -51,6 +54,7 @@ const cv = sdk.gadgets.canvas;
 const qc = sdk.gadgets.qrcode;
 const bc = sdk.gadgets.barcode;
 const tx = sdk.gadgets.text;
+const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "Widgets";
 const VERSION_STRING = "\x00$VER: Widgets 1.0 (2.10.2026)\r\n";
@@ -175,6 +179,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const wanted = [_][*:0]const u8{
         mt.METER_LIBRARY,  ar.ARC_LIBRARY, ro.ROLLER_LIBRARY,  ca.CALENDAR_LIBRARY,
         cv.CANVAS_LIBRARY, qc.QR_LIBRARY,  bc.BARCODE_LIBRARY, tx.TEXT_LIBRARY,
+        cr.CHART_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
@@ -241,7 +246,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     });
     const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr("Drop here")), .{} });
 
-    const parts = [_]?*Object{ meter, arc, roller, calendar, canvas, code, bars, ean, round, note };
+    const plot = ib.NewObjectTagList(null, cr.CHART_CLASS, &[_]TagItem{
+        pair(cr.CHART_Series, 2),
+        pair(cr.CHART_Capacity, 24),
+        pair(cr.CHART_Auto, 1),
+        pair(gc.GA_Width, 260),
+        pair(gc.GA_Height, 90),
+        .{},
+    });
+    const rich = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Markup, 1),
+        pair(tx.TEXT_Wrap, 1),
+        pair(gc.GA_Width, 300),
+        pair(tx.TEXT_Text, @intFromPtr("Text in <b>bold</b>, in <i>italic</i>, <u>underlined</u>, in <c=#C03030>red</c> and <c=#3060C0><b>bold blue</b></c>, <s=24>bigger</s> and back, wrapped to the width of the gadget.<br>A new line.")),
+        .{},
+    });
+
+    const parts = [_]?*Object{ meter, arc, roller, calendar, canvas, code, bars, ean, round, note, plot, rich };
     for (parts) |part| if (part == null) {
         for (parts) |made| ib.DisposeObject(made);
         _ = Printf(dl, MSG_NOMEMORY, .{});
@@ -280,6 +301,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(lg.LAYOUTA_Spacing, 6),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(top_row)),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(bottom_row)),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(group(ib, "Chart and text", ic.FRAME_RIDGE, &.{ plot, rich }))),
+        pair(lg.CHILDA_WeightHeight, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(looks)),
         pair(lg.CHILDA_WeightHeight, 0),
         .{},
@@ -342,6 +365,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
         if (got & tick_mask != 0) {
             _ = ib.SetGadgetAttrsTagList(meter.?, window, &[_]TagItem{ pair(mt.METER_Level, levels[next_level]), .{} });
+            _ = ib.SetGadgetAttrsTagList(plot.?, window, &[_]TagItem{
+                pair(cr.CHART_Current, 0),
+                pair(cr.CHART_Add, levels[next_level]),
+                pair(cr.CHART_Current, 1),
+                pair(cr.CHART_Add, levels[(next_level + 3) % levels.len] / 2),
+                .{},
+            });
             next_level = (next_level + 1) % levels.len;
         }
         while (true) {

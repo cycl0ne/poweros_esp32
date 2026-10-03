@@ -68,3 +68,5 @@ pub const calendar = @import("calendar.zig");
 pub const canvas = @import("canvas.zig");
 pub const qrcode = @import("qrcode.zig");
 pub const barcode = @import("barcode.zig");
+pub const chart = @import("chart.zig");
+pub const keyboard = @import("keyboard.zig");

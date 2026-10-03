@@ -230,6 +230,7 @@ pub const WF_RMBTRAP = wn.WFLG_RMBTRAP;
 pub const WF_REPORTMOUSE = wn.WFLG_REPORTMOUSE;
 pub const WF_GZZ = wn.WFLG_GIMMEZEROZERO;
 pub const WF_ZOOMED = wn.WFLG_ZOOMED;
+pub const WF_NOACTIVATE = wn.WFLG_NOACTIVATE;
 pub const WF_HASZOOM = wn.WFLG_HASZOOM;
 pub const WF_MENUSTATE = wn.WFLG_MENUSTATE;
 pub const WF_INREQUEST = wn.WFLG_INREQUEST;
@@ -786,6 +787,8 @@ pub fn depthChanged(ib: *IntuitionBase, w: *Window) void {
 pub fn activate(ib: *IntuitionBase, w: *Window) void {
     const old = ib.active_window;
     if (old == w) return;
+    // A window that never takes the activation (`WA_NoActivate`).
+    if (w.flags & WF_NOACTIVATE != 0) return;
     ib.active_window = w;
     // Only the screen with the active window shows anything but its own
     // title: one the active window leaves goes back to its default, and the

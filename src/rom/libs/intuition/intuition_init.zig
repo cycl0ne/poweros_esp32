@@ -73,7 +73,10 @@ pub const LIBRARY_VERSION = 0;
 /// 23: hover and focus (GFLG_HOVERED, GFLG_FOCUSED), and SetStyle - a
 /// screen's style or the system's replaced while it is open. 24:
 /// QueueGadgetRefresh, GA_Animate and SA_Animate, for gadgets that move.
-pub const LIBRARY_REVISION = 24;
+/// 25: WA_NoActivate, a window pressed beside whatever has the input, and
+/// the on-screen keyboard while a field is typed into
+/// (Preferences.keyboard); STYLE_BorderGap; ImpDraw.style.
+pub const LIBRARY_REVISION = 25;
 const BUILD_DATE = "02.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -171,6 +174,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     // A second and a half, until there is a preference that says otherwise.
     ib.double_seconds = @import("prefs/_prefs.zig").default_double_seconds;
     ib.double_micros = @import("prefs/_prefs.zig").default_double_micros;
+    ib.keyboard_mode = sdk.intuition.KEYBOARD_AUTO;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));
     if (ib.pointer_class == null) {
         _ = ib.iface().FreeClass(ib.window_class);

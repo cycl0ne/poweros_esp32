@@ -4,8 +4,9 @@
 //!
 //! A gadgetclass gadget that draws in `GM_RENDER`: its box cleared to the
 //! gadget's background, the whole ring in the track colour - or, where the
-//! style's track is the ground's own colour, the ground a quarter of the
-//! way to the text colour, so the empty part shows - the part up to
+//! style's track is the ground's own colour or too near it to see
+//! (`tooClose`), the ground a quarter of the way to the text colour, so
+//! the empty part shows - the part up to
 //! the shown level over it in the indicator colour, the knob at the end
 //! when it has one, and the level written in the middle when a format is
 //! given - everything with smooth edges.
@@ -69,6 +70,10 @@ pub const Data = extern struct {
 };
 
 const fill_time = 250;
+/// How far the knob reaches past the ring's outer edge: its radius is
+/// half the ring's width and 2 more, and a disc reaches a pixel past its
+/// radius.
+const knob_over: i32 = 3;
 const nominal_size = 72;
 const least_size = 24;
 
@@ -95,9 +100,28 @@ const Ring = struct { cx: i32, cy: i32, outer: i32, inner: i32 };
 
 fn ringOf(own: *const Data, w: i32, h: i32) Ring {
     const size = @min(w, h);
-    const outer = @divTrunc(size, 2) - 1;
+    // A knob reaches past the ring by `knob_over`: the ring keeps that
+    // far in, so the knob stays inside the box at every angle.
+    const outer = @divTrunc(size, 2) - 1 - (if (own.turn != 0) knob_over else 0);
     const thick = if (own.width > 0) own.width else @max(@divTrunc(size, 8), 2);
     return .{ .cx = @divTrunc(w, 2), .cy = @divTrunc(h, 2), .outer = outer, .inner = @max(outer - thick, 0) };
+}
+
+/// How far apart two colours must be to tell apart: their red, green and
+/// blue differences added, out of 765. A style's track a shade off its
+/// ground - 0xF4F5F7 on white is 33 - is too close.
+const least_difference = 48;
+
+/// Whether two colours are too near each other for one to show on the
+/// other.
+pub fn tooClose(a: Pen, b: Pen) bool {
+    var difference: u32 = 0;
+    for ([_]u5{ 0, 8, 16 }) |shift| {
+        const ca: i32 = @intCast((a >> shift) & 0xFF);
+        const cb: i32 = @intCast((b >> shift) & 0xFF);
+        difference += @abs(ca - cb);
+    }
+    return difference < least_difference;
 }
 
 fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
@@ -153,9 +177,9 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     defer gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 0 }, .{} });
 
     const end = own.start - own.sweep;
-    // A track the colour of the ground would not show: then it is the
-    // ground a quarter of the way to the text.
-    support.setPen(gb, rp, if (channel == ground) support.mixPens(ink, ground, 4) else channel);
+    // A track the colour of the ground, or near it, would not show: then
+    // it is the ground a quarter of the way to the text.
+    support.setPen(gb, rp, if (tooClose(channel, ground)) support.mixPens(ink, ground, 4) else channel);
     gb.FillArc(rp, &.{ .cx = cx, .cy = cy, .radius = ring.outer, .inner = ring.inner, .from = end, .to = own.start });
     const reached = angleAt(own, own.fill.shown);
     if (reached != own.start) {

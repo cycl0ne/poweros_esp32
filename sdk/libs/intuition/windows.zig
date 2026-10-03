@@ -260,6 +260,8 @@ pub const TITLE_UNCHANGED: ?[*:0]const u8 = @ptrFromInt(~@as(usize, 0));
 /// Set by intuition.library, never by a program: it is showing its zoomed
 /// box rather than the one it was opened with.
 pub const WFLG_ZOOMED: u32 = 0x10000000;
+/// It is never made active (`WA_NoActivate`). Set by the system.
+pub const WFLG_NOACTIVATE: u32 = 0x00080000;
 /// It has a zoom gadget.
 pub const WFLG_HASZOOM: u32 = 0x20000000;
 /// Set by intuition.library, never by a program: this is the active window.
@@ -322,6 +324,12 @@ pub const WA_HidePointer = WA_Dummy + 0x10B;
 /// `SYSFONT_DEFAULT` unless given. A console asks for `SYSFONT_FIXED`.
 /// The title bar is in the screen's font whatever this says.
 pub const WA_SysFont = WA_Dummy + 0x10C;
+/// True: the window is never made the active one. A press on it reaches
+/// its gadgets and leaves the active window - and a gadget there with the
+/// input, a field being typed into - as they were: what an on-screen
+/// keyboard is. It has no menus and hears no keys. `OpenWindowTagList`
+/// only.
+pub const WA_NoActivate = WA_Dummy + 0x10D;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

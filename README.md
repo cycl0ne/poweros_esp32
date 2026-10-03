@@ -150,8 +150,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   that opens the file or font requester, a dial with a needle, a ring
   that fills or is turned like a knob, a wheel of choices turned by
   dragging, a month to pick a day from, a picture a program draws into,
-  and a text as a QR code, a Code 128 or an EAN-13 barcode
-  (`C:test/Widgets`).
+  values over time as lines or bars, text in runs of their own font,
+  style and colour - from a small markup, wrapped to the width - and a
+  text as a QR code, a Code 128 or an EAN-13 barcode (`C:test/Widgets`).
+  On a board with no keyboard, a keyboard comes up at the bottom of the
+  screen while a field is typed into, laid out from the keymap in use,
+  its keys going where a keyboard's would (`C:test/Keyboard`).
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,
