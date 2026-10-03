@@ -19,6 +19,15 @@
 //! drawing the ones that come into it; a view that cannot be blitted, or
 //! that moves further than it shows, is drawn whole.
 //!
+//! **A top set from outside glides there.** `LISTVIEW_Top` or a line made
+//! visible, more than a line away, moves the view over a little under a
+//! fifth of a second on motion.library's clock, slowing to the end: each
+//! step moves the top and asks intuition to draw the list again
+//! (`QueueGadgetRefresh`), the scroller's knob going with it. The view
+//! follows a drag of the scroller and the arrows at once, and a gadget
+//! or screen that does not move (`GA_Animate`, `SA_Animate`), or a system
+//! without motion.library, jumps.
+//!
 //! A press on a line selects it and holds the gadget: the selection
 //! follows the pointer, and with the pointer above or below the list the
 //! view moves a line at each timer event, selecting the line that comes
@@ -52,6 +61,8 @@ const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const sr = gadgets.scroller;
 const lv = gadgets.listview;
+const motion = sdk.motion;
+const MotionBase = sdk.interface.motion.MotionBase;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -117,7 +128,16 @@ pub const Data = extern struct {
     /// `LISTVIEW_SelectString`: where the selected line's name is
     /// written. The program's object, not this one's to dispose of.
     select_string: ?*Object = null,
+    /// What glides the view: motion.library, the animation, and the hook
+    /// its steps call - its data the gadget, its sub-entry the class's
+    /// base.
+    motion_base: ?*MotionBase = null,
+    glide: ?*motion.Animation = null,
+    glide_hook: utility.Hook = .{},
 };
+
+/// How long a glide to a new top takes, in milliseconds.
+const glide_time = 180;
 
 const shift_keys: u32 = ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT;
 
@@ -296,7 +316,8 @@ fn isDisabled(base: *gadgets.Base, own: *const Data, node: *exec.Node, line: u32
 /// will, else its name; ghosted when disabled.
 fn drawLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, origin: gc.Box, parts: Parts, line: u32, node: ?*exec.Node) void {
     const gb = base.graphics_base;
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(base.intuition_base, info.draw_info, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const row: i32 = @intCast(line - own.top);
     // The whole width inside the frame, margins included, so a selected
     // line's ground reaches the frame.
@@ -370,7 +391,7 @@ fn drawLines(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.Ra
         .top = b.top + parts.lines.top + used,
         .width = parts.lines.width + 2 * text_margin,
         .height = parts.lines.height - used,
-    }, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    }, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN));
 }
 
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
@@ -442,6 +463,59 @@ fn scrollTo(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetIn
         return;
     }
     drawLines(base, own, o, rp, info, top, top + parts.visible);
+}
+
+/// A step of a glide: the top moved, and intuition asked to draw the list
+/// - and the scroller with it. On motion.library's task: it waits for
+/// nothing.
+fn glided(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const msg: *const motion.AnimationMsg = @ptrCast(@alignCast(message.?));
+    const o: *Object = @ptrCast(@alignCast(hook.data.?));
+    const base: *gadgets.Base = @ptrCast(@alignCast(@constCast(hook.sub_entry.?)));
+    const own = classes.instData(Data, base.class, o);
+    own.top = @intCast(@max(msg.value, 0));
+    base.intuition_base.QueueGadgetRefresh(o);
+    return 0;
+}
+
+/// The view taken towards `wanted` over a glide, from where it is; false
+/// when it cannot glide - out of a window, more or less than a line away
+/// is no glide, it may not move, no motion.library - and the caller moves
+/// it at once.
+fn glideTo(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, wanted: u32) bool {
+    const info = gi orelse return false;
+    const parts = partsOf(base, own, o, gi);
+    const top = @min(wanted, lastTop(own, parts.visible));
+    const distance = if (top > own.top) top - own.top else own.top - top;
+    if (distance <= 1 or !gc.animates(gc.gadget(o), info.draw_info)) return false;
+    if (own.motion_base == null) {
+        own.motion_base = @ptrCast(base.sys_base.OpenLibrary(motion.MOTIONNAME, 1) orelse return false);
+    }
+    const mb = own.motion_base.?;
+    own.glide_hook = .{ .entry = &glided, .data = o, .sub_entry = base };
+    const tags = [_]TagItem{
+        .{ .tag = motion.ANIM_From, .data = own.top },
+        .{ .tag = motion.ANIM_To, .data = top },
+        .{ .tag = motion.ANIM_Duration, .data = glide_time },
+        .{ .tag = motion.ANIM_Easing, .data = motion.EASE_OUT },
+        .{ .tag = motion.ANIM_Rate, .data = 60 },
+        .{ .tag = motion.ANIM_StepHook, .data = @intFromPtr(&own.glide_hook) },
+        .{},
+    };
+    if (own.glide) |animation| {
+        _ = mb.SetAnimationAttrsTagList(animation, &tags);
+    } else {
+        own.glide = mb.CreateAnimationTagList(&tags);
+    }
+    const animation = own.glide orelse return false;
+    mb.StartAnimation(animation);
+    return true;
+}
+
+/// A glide stopped where it is: the view is someone else's to move now.
+fn stopGlide(own: *Data) void {
+    const animation = own.glide orelse return;
+    own.motion_base.?.StopAnimation(animation, motion.STOP_WHERE_IT_IS);
 }
 
 /// The selection moved to `line`: the old line and the new drawn again.
@@ -704,6 +778,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
             freeBits(base, own);
+            if (own.motion_base) |mb| {
+                // Its step is not running once this returns.
+                mb.DeleteAnimation(own.glide);
+                base.sys_base.CloseLibrary(mb.lib());
+            }
             ib.DisposeObject(own.scroller);
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
@@ -714,6 +793,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const ub = base.utility_base;
             // The scroller moving: the view follows it.
             if (msg.method_id == classusr.OM_UPDATE) if (ub.FindTagItem(sr.SCROLLER_Top, set.attr_list)) |item| {
+                stopGlide(own);
                 scrollTo(base, own, o.?, set.gadget_info, @truncate(item.data), false);
                 return 0;
             };
@@ -733,7 +813,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 putScroller(base, own, o.?, set.gadget_info);
                 changed = 1;
             } else if (top != own.top) {
-                scrollTo(base, own, o.?, set.gadget_info, top, true);
+                // From outside, more than a line away: it glides there.
+                if (!glideTo(base, own, o.?, set.gadget_info, top)) scrollTo(base, own, o.?, set.gadget_info, top, true);
             }
             if (ub.FindTagItem(gc.GA_Disabled, set.attr_list)) |item| {
                 const tags = [_]TagItem{ .{ .tag = gc.GA_Disabled, .data = item.data }, .{} };
@@ -848,6 +929,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const below = in.mouse.y >= parts.lines.top + @as(i32, @intCast(parts.visible)) * parts.line_height;
             if (above or below) {
                 if (e.class == ie.IECLASS_TIMER) {
+                    if (above or below) stopGlide(own);
                     if (above and own.top > 0) scrollTo(base, own, o.?, in.gadget_info, own.top - 1, true);
                     if (below) scrollTo(base, own, o.?, in.gadget_info, own.top + 1, true);
                 }

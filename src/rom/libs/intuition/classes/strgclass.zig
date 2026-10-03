@@ -38,8 +38,11 @@ const km = sdk.keymap;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
+const style = intuition.style;
+const ic = intuition.imageclass;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
+const _transition = @import("../style/_transition.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const d = @import("draw.zig");
 
@@ -359,20 +362,32 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const gb = ib.graphics_base;
     const p = own(cl, o);
     const b = boxOf(ib, o, gi);
-    const screen_pens = gi_.draw_info.pens;
     const saved = d.save(gb, rp);
     defer d.restore(gb, rp, saved);
     // Drawn last, over everything the gadget shows, whichever way it ends.
     const disabled = gadgetclass.gadgetOf(ib, o).flags & gadgetclass.GFLG_DISABLED != 0;
-    defer if (disabled) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
+    defer if (disabled) gadgetclass.ghost(ib, o, gi_, rp, b.left, b.top, b.width, b.height);
 
+    // The look is the style's `PART_FIELD`, focused while it is being
+    // edited and hovered while the pointer is over it, the gadget's own
+    // style asked first. Pens the gadget was given
+    // for its paper and ink are its own, and win.
+    const it = ib.iface();
+    const own_style: ?*const intuition.Style = gadgetclass.gadgetOf(ib, o).style;
+    const st = _transition.state(ib, o, gi_.draw_info, ic.PART_FIELD, (if (p.active != 0) style.STATE_FOCUSED else style.STATE_NORMAL) | gc.styleStates(gadgetclass.gadgetOf(ib, o).flags));
     const chosen = if (p.active != 0) p.active_pens orelse p.pens else p.pens;
-    const ink = if (chosen) |set| set[0] else screen_pens[sc.TEXTPEN];
-    const paper = if (chosen) |set| set[1] else if (p.active != 0) screen_pens[sc.FILLPEN] else screen_pens[sc.BACKGROUNDPEN];
+    const ink: graphics.Pen = if (chosen) |set| set[0] else @truncate(it.GetStyleAttr(gi_.draw_info, own_style, ic.PART_FIELD, st, style.STYLE_TextPen));
+    // The character under the cursor is drawn in it, the other way round.
+    const paper: graphics.Pen = if (chosen) |set| set[1] else @truncate(it.GetStyleAttr(gi_.draw_info, own_style, ic.PART_FIELD, st, style.STYLE_Background));
 
     // A sunk frame with the text in it: the box a line is typed into.
-    d.box(gb, rp, b.left, b.top, b.width, b.height, paper);
-    d.bevel(gb, rp, b.left, b.top, b.width, b.height, screen_pens[sc.SHADOWPEN], screen_pens[sc.SHINEPEN], 1, .none);
+    const field = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height };
+    if (chosen) |set| {
+        d.box(gb, rp, b.left, b.top, b.width, b.height, set[1]);
+        it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, style.DPF_EDGES_ONLY, &field, null);
+    } else {
+        it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, 0, &field, null);
+    }
 
     const buffer = p.buffer orelse return;
     // The gadget's own font if it has one, otherwise the RastPort's; and

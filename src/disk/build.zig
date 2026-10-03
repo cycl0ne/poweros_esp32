@@ -26,14 +26,14 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",         "dir",       "delete",   "makedir",       "rename",
-    "avail",        "assign",    "version",  "addbuffers",    "which",
-    "list",         "format",    "protect",  "changetaskpri", "wait",
-    "info",         "platform",  "copy",     "rdb",           "i2c",
-    "backlight",    "rtg",       "showinfo", "setmap",        "mount",
-    "showconfig",   "date",      "setdate",  "fontprefs",     "fixfonts",
-    "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",
+    "type",         "dir",        "delete",   "makedir",       "rename",
+    "avail",        "assign",     "version",  "addbuffers",    "which",
+    "list",         "format",     "protect",  "changetaskpri", "wait",
+    "info",         "platform",   "copy",     "rdb",           "i2c",
+    "backlight",    "rtg",        "showinfo", "setmap",        "mount",
+    "showconfig",   "date",       "setdate",  "fontprefs",     "fixfonts",
+    "adddatatypes", "listfonts",  "log",      "requestfile",   "requestchoice",
+    "diskchange",   "styleprefs",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",  "gfx",     "anim",
@@ -42,7 +42,7 @@ const tests = [_][]const u8{
     "screens",     "layout",     "classes",  "gadgets", "listview",
     "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
     "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",
+    "shapes",      "styles",     "motion",   "widgets", "keyboard",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -88,6 +88,16 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget" },
     .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget" },
     .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget" },
+    .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget" },
+    .{ .disk = "classes/gadgets/meter.gadget", .source = "classes/gadgets/meter/meter.zig", .name = "meter.gadget" },
+    .{ .disk = "classes/gadgets/arc.gadget", .source = "classes/gadgets/arc/arc.zig", .name = "arc.gadget" },
+    .{ .disk = "classes/gadgets/roller.gadget", .source = "classes/gadgets/roller/roller.zig", .name = "roller.gadget" },
+    .{ .disk = "classes/gadgets/calendar.gadget", .source = "classes/gadgets/calendar/calendar.zig", .name = "calendar.gadget" },
+    .{ .disk = "classes/gadgets/canvas.gadget", .source = "classes/gadgets/canvas/canvas.zig", .name = "canvas.gadget" },
+    .{ .disk = "classes/gadgets/qrcode.gadget", .source = "classes/gadgets/qrcode/qrcode.zig", .name = "qrcode.gadget" },
+    .{ .disk = "classes/gadgets/barcode.gadget", .source = "classes/gadgets/barcode/barcode.zig", .name = "barcode.gadget" },
+    .{ .disk = "classes/gadgets/chart.gadget", .source = "classes/gadgets/chart/chart.zig", .name = "chart.gadget" },
+    .{ .disk = "classes/gadgets/keyboard.gadget", .source = "classes/gadgets/keyboard/keyboard.zig", .name = "keyboard.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
     .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype" },
@@ -164,6 +174,7 @@ pub const files = [_]File{
     // its value to start with.
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
     .{ .disk = "prefs/env-archive/Sys/font.prefs", .source = "prefs/env-archive/Sys/font.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/style.prefs", .source = "prefs/env-archive/Sys/style.prefs" },
     .{ .disk = "prefs/env-archive/Sys/net/timeserver", .source = "prefs/env-archive/Sys/net/timeserver" },
     .{ .disk = "prefs/env-archive/Sys/net/hosts", .source = "prefs/env-archive/Sys/net/hosts" },
     .{ .disk = "prefs/env-archive/Sys/net/hostname", .source = "prefs/env-archive/Sys/net/hostname" },

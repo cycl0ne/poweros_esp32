@@ -41,6 +41,10 @@ C:AddDataTypes >NIL: QUIET
 ; window and console opened from here on uses them.
 C:FontPrefs >NIL:
 
+; The system's style, as ENV:Sys/style.prefs gives it: every screen takes
+; it, those already open too.
+C:StylePrefs >NIL:
+
 ; Where a command is looked for, before C:. C:test holds the programs that
 ; exercise a device or a library, C:net the network's tools, so they are
 ; called by name like the rest.

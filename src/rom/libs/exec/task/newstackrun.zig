@@ -34,6 +34,12 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// It is a call, not a task: the same task runs `code`, on different
 /// memory, and control comes back when it returns.
 ///
+/// **The new stack is guarded** as a task's is (`AddTask`): the dispatcher
+/// checks its bottom words while `code` runs, and this call checks them
+/// once more before it gives the stack back. A stack `code` ran past the
+/// end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
+/// written over below it.
+///
 /// CONTEXT:
 /// - Waits: only if `code` does.
 /// - Interrupts: no. It allocates.
@@ -73,11 +79,18 @@ pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, st
     const task = sys.FindTask(null).?;
     const lower = task.sp_lower;
     const upper = task.sp_upper;
+    const guarded = task.flags & sdk.exec.TF_GUARDED;
     task.sp_lower = @intFromPtr(stack);
     task.sp_upper = task.sp_lower + size;
+    _task.guardStack(task);
     defer {
         task.sp_lower = lower;
         task.sp_upper = upper;
+        task.flags = (task.flags & ~sdk.exec.TF_GUARDED) | guarded;
     }
-    return _task.task_hardware.call_on_stack(task.sp_upper, @ptrCast(code), arg);
+    const result = _task.task_hardware.call_on_stack(task.sp_upper, @ptrCast(code), arg);
+    if (!_task.guardIntact(@intFromPtr(stack))) {
+        _task.stackOverrun(@intFromPtr(stack));
+    }
+    return result;
 }

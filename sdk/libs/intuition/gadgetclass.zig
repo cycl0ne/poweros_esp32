@@ -39,6 +39,7 @@ const classusr = @import("classusr.zig");
 const ie = @import("../../devices/inputevent.zig");
 const MethodID = classusr.MethodID;
 const screens = @import("screens.zig");
+const style = @import("style.zig");
 const windows = @import("windows.zig");
 const requesters = @import("requesters.zig");
 const text_ = @import("text.zig");
@@ -175,6 +176,16 @@ pub const GA_DrawInfo = GA_Dummy + 0x21;
 /// The number is far enough above the tags of the gadget attributes named
 /// here that any of them can still be added at the number it is known by.
 pub const GA_Key = GA_Dummy + 0x30;
+/// A `[*]const TagItem`: the gadget's own style (`style.zig`), saying only
+/// how it differs from its screen's. Read when it is set and kept; the list
+/// may go away afterwards, and null takes it off again. Read back with
+/// OM_GET it is the style as kept, which is what to hand `DrawPart`.
+pub const GA_Style = GA_Dummy + 0x31;
+/// Bool: whether the gadget may move - fill, slide, fade - rather than
+/// jump to a new look (true). Turned off for one gadget, it changes at
+/// once; its screen can turn it off for all (`SA_Animate`). A class asks
+/// with `animates`.
+pub const GA_Animate = GA_Dummy + 0x32;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -227,6 +238,11 @@ pub const Gadget = extern struct {
     /// The window it is in, while it is in one.
     window: ?*windows.Window = null,
     requester: ?*requesters.Requester = null,
+    /// `GA_Style`, as kept.
+    style: ?*style.Style = null,
+    /// intuition's own: a transition of its look in progress, made the
+    /// first time its style asks for one.
+    transition: ?*anyopaque = null,
 };
 
 /// `Gadget.flags`.
@@ -248,6 +264,36 @@ pub const GFLG_GADGETHELP: u32 = 1 << 8;
 pub const GFLG_BOUNDS: u32 = 1 << 9;
 /// It stands for one of the window's own gadgets (`GA_SysGadget`).
 pub const GFLG_SYSGADGET: u32 = 1 << 10;
+/// The pointer is over it and nothing is held - a mouse's pointer, never a
+/// finger, which has no hover. Set and cleared by intuition alone.
+pub const GFLG_HOVERED: u32 = 1 << 11;
+/// It has the input: the keyboard reaches it. Set and cleared by intuition
+/// alone, while it is the active gadget.
+pub const GFLG_FOCUSED: u32 = 1 << 12;
+
+/// It does not move: `GA_Animate` false.
+pub const GFLG_STILL: u32 = 1 << 13;
+/// It is waiting to be drawn again by intuition, at a class's asking
+/// (`QueueGadgetRefresh`). Set and cleared by intuition alone.
+pub const GFLG_REFRESH: u32 = 1 << 14;
+
+/// Whether a class should move a gadget rather than change it at once:
+/// neither the gadget (`GA_Animate`) nor its screen (`SA_Animate`) said
+/// no. `draw_info` may be null.
+pub fn animates(g: *const Gadget, draw_info: ?*const screens.DrawInfo) bool {
+    if (g.flags & GFLG_STILL != 0) return false;
+    const dri = draw_info orelse return true;
+    return dri.flags & screens.DRIF_STILL == 0;
+}
+
+/// The style states a gadget's flags say that an image state (`IDS_`)
+/// cannot: `STATE_HOVERED` and `STATE_FOCUSED`, for `ImpDraw.style_state`.
+pub fn styleStates(flags: u32) u32 {
+    var states: u32 = 0;
+    if (flags & GFLG_HOVERED != 0) states |= style.STATE_HOVERED;
+    if (flags & GFLG_FOCUSED != 0) states |= style.STATE_FOCUSED;
+    return states;
+}
 
 /// `Gadget.activation`.
 pub const GACT_IMMEDIATE: u32 = 1 << 0;

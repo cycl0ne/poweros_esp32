@@ -33,6 +33,10 @@ pub const Base = classlibrary.Base;
 pub const baseOf = classlibrary.baseOf;
 /// What every class draws, tells and measures the same way (`support.zig`).
 pub const support = @import("support.zig");
+/// A shown number that goes to a new value over a moment (`moving.zig`).
+pub const moving = @import("moving.zig");
+/// Degrees without floating point, for the round classes (`angles.zig`).
+pub const angles = @import("angles.zig");
 
 /// The classes' tags and names, a file each.
 pub const checkbox = @import("checkbox.zig");
@@ -56,3 +60,13 @@ pub const page = @import("page.zig");
 pub const getclass = @import("getclass.zig");
 pub const getfile = @import("getfile.zig");
 pub const getfont = @import("getfont.zig");
+pub const spinner = @import("spinner.zig");
+pub const meter = @import("meter.zig");
+pub const arc = @import("arc.zig");
+pub const roller = @import("roller.zig");
+pub const calendar = @import("calendar.zig");
+pub const canvas = @import("canvas.zig");
+pub const qrcode = @import("qrcode.zig");
+pub const barcode = @import("barcode.zig");
+pub const chart = @import("chart.zig");
+pub const keyboard = @import("keyboard.zig");

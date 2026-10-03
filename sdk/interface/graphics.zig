@@ -99,6 +99,7 @@ pub const LVO = struct {
     pub const BltCoverBitMapRastPort = libraries.lvo(81);
     pub const BlurCoverage = libraries.lvo(82);
     pub const TextFitted = libraries.lvo(83);
+    pub const DrawRoundBevel = libraries.lvo(84);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -184,6 +185,7 @@ pub const Fn = struct {
     pub const BltCoverBitMapRastPort = *const fn (*GraphicsBase, *const rtg.Surface, *const graphics.Rect, *graphics.RastPort, i32, i32, *const graphics.Cover) callconv(.c) void;
     pub const BlurCoverage = *const fn (*GraphicsBase, *rtg.Surface, *const graphics.Rect, u32) callconv(.c) void;
     pub const TextFitted = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, i32) callconv(.c) u32;
+    pub const DrawRoundBevel = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Rect, u32, graphics.Pen, graphics.Pen) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -733,5 +735,14 @@ pub const GraphicsBase = opaque {
     /// dots alone: only they are drawn. Not even those: nothing is.
     pub fn TextFitted(self: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, width: i32) u32 {
         return libraries.call(self, LVO.TextFitted, Fn.TextFitted, .{ rp, string, count, width });
+    }
+
+    /// The outline of a rectangle whose corners are rounded, as a bevel:
+    /// `light` on the top and the left, `dark` on the bottom and the right,
+    /// meeting on the diagonal through the other two corners. As a wide
+    /// DrawRoundRect otherwise: RPTAG_LineWidth thick, growing inward, with
+    /// smooth edges under RPTAG_Smooth; the RastPort's pen is left as it was.
+    pub fn DrawRoundBevel(self: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32, light: graphics.Pen, dark: graphics.Pen) void {
+        return libraries.call(self, LVO.DrawRoundBevel, Fn.DrawRoundBevel, .{ rp, area, radius, light, dark });
     }
 };

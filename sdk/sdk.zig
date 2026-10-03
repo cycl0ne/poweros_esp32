@@ -34,6 +34,7 @@ pub const truetype = @import("libs/truetype/truetype.zig");
 pub const asl = @import("libs/asl/asl.zig");
 pub const iffparse = @import("libs/iffparse/iffparse.zig");
 pub const datatypes = @import("libs/datatypes/datatypes.zig");
+pub const motion = @import("libs/motion/motion.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

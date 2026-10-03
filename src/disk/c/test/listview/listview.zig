@@ -16,6 +16,11 @@
 //! button. Every line chosen and every scroller let go
 //! is printed with its code. OK, the close gadget or Ctrl-C end it.
 //!
+//! The two follow each other: the scroller let go sends the list to the
+//! same share of the way down, and a line chosen sends the scroller to
+//! that line's share - each set by the program, so each glides there
+//! rather than jumping.
+//!
 //! Each line is drawn by a hook of the program's own in two columns: the
 //! name at the left, and at the right the size in bytes or the word
 //! `Drawer`.
@@ -33,6 +38,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const intuition = sdk.intuition;
+const style = intuition.style;
 const wn = intuition.windows;
 const gc = intuition.gadgetclass;
 const lg = intuition.layoutgclass;
@@ -140,21 +146,31 @@ fn freeList(sys: *ExecBase, list: *exec.List) void {
 /// How many pixels lie between a line's text and the frame at either side.
 const column_margin = 4;
 
+/// What the hook draws with.
+const Drawing = struct {
+    gb: *sdk.interface.graphics.GraphicsBase,
+    ib: *IntuitionBase,
+};
+
 /// One line in two columns: the name at the left, what the entry is at
 /// the right. The hook fills the line's ground itself, so it answers
-/// `LVCB_OK` and the gadget draws nothing more of it.
+/// `LVCB_OK` and the gadget draws nothing more of it. Its colours are the
+/// screen's style: a chosen line is the selection part, any other the
+/// gadget's own ground and text.
 fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const msg: *const lv.LVDrawMsg = @ptrCast(@alignCast(message.?));
     if (msg.method_id != lv.LV_DRAW) return lv.LVCB_UNKNOWN;
-    const gb: *sdk.interface.graphics.GraphicsBase = @ptrCast(@alignCast(hook.data.?));
+    const drawing: *const Drawing = @ptrCast(@alignCast(hook.data.?));
+    const gb = drawing.gb;
     const rp = msg.rast_port.?;
     const node: *exec.Node = @ptrCast(@alignCast(object.?));
     const entry: *Entry = @fieldParentPtr("node", node);
-    const pens = msg.draw_info.?.pens;
     const selected = msg.state == lv.LVR_SELECTED or msg.state == lv.LVR_SELECTEDDISABLED;
+    const part = if (selected) style.PART_SELECTION else style.PART_MAIN;
+    const dri = msg.draw_info.?;
 
     const ground = [_]TagItem{
-        .{ .tag = sdk.graphics.RPTAG_APen, .data = pens[if (selected) intuition.screens.FILLPEN else intuition.screens.BACKGROUNDPEN] },
+        .{ .tag = sdk.graphics.RPTAG_APen, .data = drawing.ib.GetStyleAttr(dri, null, part, style.STATE_NORMAL, style.STYLE_Background) },
         .{ .tag = sdk.graphics.RPTAG_DrMd, .data = sdk.graphics.DRMD_JAM1 },
         .{},
     };
@@ -172,7 +188,7 @@ fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     const top = msg.bounds.min_y + @divTrunc(msg.bounds.max_y - msg.bounds.min_y - @as(i32, @intCast(height)), 2) + @as(i32, @intCast(baseline));
 
     const ink = [_]TagItem{
-        .{ .tag = sdk.graphics.RPTAG_APen, .data = pens[if (selected) intuition.screens.FILLTEXTPEN else intuition.screens.TEXTPEN] },
+        .{ .tag = sdk.graphics.RPTAG_APen, .data = drawing.ib.GetStyleAttr(dri, null, part, style.STATE_NORMAL, style.STYLE_TextPen) },
         .{},
     };
     gb.SetRPAttrs(rp, &ink);
@@ -199,7 +215,7 @@ fn drawEntry(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     return lv.LVCB_OK;
 }
 
-const Shown = struct { layout: *Object, list: *Object, selected: *Object };
+const Shown = struct { layout: *Object, list: *Object, selected: *Object, scroll: *Object };
 
 fn build(ib: *IntuitionBase, list: *exec.List, hook: *sdk.utility.Hook, multi: bool) ?Shown {
     const view = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
@@ -258,7 +274,7 @@ fn build(ib: *IntuitionBase, list: *exec.List, hook: *sdk.utility.Hook, multi: b
         for (parts) |part| ib.DisposeObject(part);
         return null;
     };
-    return .{ .layout = made, .list = view.?, .selected = selected.? };
+    return .{ .layout = made, .list = view.?, .selected = selected.?, .scroll = scroll.? };
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -290,7 +306,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(gfx_lib);
-    var draw_hook = sdk.utility.Hook{ .entry = &drawEntry, .data = gfx_lib };
+    var drawing = Drawing{ .gb = @ptrCast(@alignCast(gfx_lib)), .ib = ib };
+    var draw_hook = sdk.utility.Hook{ .entry = &drawEntry, .data = &drawing };
 
     // The class libraries, open for as long as their objects are there.
     const wanted = [_][*:0]const u8{ lv.LISTVIEW_LIBRARY, st.STRING_LIBRARY, sr.SCROLLER_LIBRARY };
@@ -368,7 +385,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_OK => return dos.RETURN_OK,
-                    ID_SCROLL => _ = Printf(dl, MSG_SCROLL, .{@as(u64, code)}),
+                    ID_SCROLL => {
+                        _ = Printf(dl, MSG_SCROLL, .{@as(u64, code)});
+                        // The list to the same share of the way down: it
+                        // glides there.
+                        const top: usize = @intCast(@as(u64, code) * count / 90);
+                        _ = ib.SetGadgetAttrsTagList(shown.list, window, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Top, .data = top }, .{} });
+                    },
                     ID_LIST => {
                         const line = code & ~lv.LISTVIEW_DOUBLE;
                         const picked = lv.nodeAt(&list, line) orelse continue;
@@ -390,6 +413,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             }
                         }
                         // The list writes the name into the field itself.
+                        // The scroller to the line's share of the way
+                        // down: it glides there.
+                        const share: usize = @intCast(@as(u64, line) * 90 / @max(count, 1));
+                        _ = ib.SetGadgetAttrsTagList(shown.scroll, window, &[_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = share }, .{} });
                     },
                     else => {},
                 },

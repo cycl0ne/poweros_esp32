@@ -634,13 +634,15 @@ fn paintStrip(ib: *IntuitionBase, w: *Window) void {
     ib.layers_base.LockLayer(layer);
     defer ib.layers_base.UnlockLayer(layer);
     graphics.SetFont(gb, rp, s.font);
-    d.box(gb, rp, 0, 0, s.width, s.bar_height - 1, s.pens[sc.BARBLOCKPEN]);
-    d.box(gb, rp, 0, s.bar_height - 1, s.width, 1, s.pens[sc.BARTRIMPEN]);
+    // The menu bar is the screen bar's look.
+    const look = _screen.barLook(ib, s);
+    d.box(gb, rp, 0, 0, s.width, s.bar_height - 1, look.ground);
+    d.box(gb, rp, 0, s.bar_height - 1, s.width, 1, look.trim);
     var menu = w.menu_strip;
     while (menu) |m| : (menu = m.next_menu) {
         const name = m.name orelse continue;
         var title = IntuiText{
-            .front_pen = s.pens[sc.BARDETAILPEN],
+            .front_pen = look.writing,
             .draw_mode = graphics.DRMD_JAM1,
             .left = _screen.bar_left,
             .top = _screen.bar_border,
@@ -648,7 +650,7 @@ fn paintStrip(ib: *IntuitionBase, w: *Window) void {
             .text = name,
         };
         ib.iface().PrintIText(rp, &title, m.left, 0);
-        if (m.flags & mn.MENUENABLED == 0) d.ghost(gb, rp, _screen.bar_left + m.left, 0, m.width, s.bar_height - 1, s.pens[sc.BARBLOCKPEN]);
+        if (m.flags & mn.MENUENABLED == 0) d.ghost(gb, rp, _screen.bar_left + m.left, 0, m.width, s.bar_height - 1, look.ground);
     }
 }
 
@@ -705,20 +707,17 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
     const gb = ib.graphics_base;
     const it = ib.iface();
     const s = w.screen;
-    const detail = s.pens[sc.BARDETAILPEN];
-    const block = s.pens[sc.BARBLOCKPEN];
+    // The panel is the style's `PART_MENU`: drawn whole, ground and edge,
+    // and its writing - a shortcut's key - in its text colour.
+    const detail: Pen = @truncate(it.GetStyleAttr(&s.draw_info, null, ic.PART_MENU, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_TextPen));
+    const block: Pen = @truncate(it.GetStyleAttr(&s.draw_info, null, ic.PART_MENU, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_Background));
     ib.layers_base.LockLayer(layer);
     defer ib.layers_base.UnlockLayer(layer);
     graphics.SetFont(gb, rp, s.font);
 
     const width = panel.max_x - panel.min_x + 1;
     const height = panel.max_y - panel.min_y + 1;
-    d.box(gb, rp, 0, 0, width, height, block);
-    // The edge: two pixels at the sides, one along the top and bottom.
-    d.box(gb, rp, 0, 0, 2, height, detail);
-    d.box(gb, rp, width - 2, 0, 2, height, detail);
-    d.box(gb, rp, 2, 0, width - 4, 1, detail);
-    d.box(gb, rp, 2, height - 1, width - 4, 1, detail);
+    it.DrawPart(rp, &s.draw_info, null, ic.PART_MENU, sdk.intuition.style.STATE_NORMAL, 0, &.{ .max_x = width, .max_y = height }, null);
 
     // How far in from the right the shortcuts' characters start: the
     // widest of them, so they line up.

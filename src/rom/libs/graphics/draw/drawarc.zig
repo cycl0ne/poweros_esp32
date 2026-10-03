@@ -72,6 +72,7 @@ const handOn = _draw.handOn;
 pub fn DrawArc(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32, from: i32, to: i32) void {
     rp.last_error = graphics.GERR_OK;
     if (radius < 0) return;
+    if (rp.line_width > 1 or rp.smooth) return @import("_wide.zig").arc(gb, rp, cx, cy, radius, from, to, @intCast(rp.line_width));
     var step: u32 = rp.pattern_step;
     var bound = Rect{};
     var any = false;

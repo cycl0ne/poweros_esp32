@@ -186,6 +186,13 @@ pub fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastP
         .draw_depth = 0,
         .last_error = graphics.GERR_OK,
     };
+    rp.line_width = @max(@as(u32, @truncate(ub.GetTagData(graphics.RPTAG_LineWidth, 1, tags))), 1);
+    rp.smooth = ub.GetTagData(graphics.RPTAG_Smooth, 0, tags) != 0;
+    // Without the memory for a fill style's copy the RastPort fills with
+    // its pen, and says so.
+    if (!_rastport.setFill(gb, rp, @ptrFromInt(ub.GetTagData(graphics.RPTAG_FillStyle, 0, tags)))) {
+        rp.last_error = graphics.GERR_NO_MEMORY;
+    }
     report(gb, tags, graphics.RPTAG_ErrorPtr, graphics.GERR_OK);
     return rp;
 }

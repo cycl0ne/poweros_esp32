@@ -2198,6 +2198,85 @@ fn click(ib: *IntuitionBase, x: i32, y: i32) void {
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, x, y);
 }
 
+test "input: a window that never takes the activation is pressed beside a field being typed into" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    var buffer: [16]u8 = @splat(0);
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 40 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_Buffer, .data = @intFromPtr(&buffer) },
+        .{ .tag = gc.STRINGA_MaxChars, .data = buffer.len },
+        .{},
+    }).?;
+    const typing = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    try testing.expect(it.ActivateGadget(field, typing, null));
+
+    const key = it.NewObjectTagList(null, classusr.BUTTONGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 3 },
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 30 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+    const keys = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 44 },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 10 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_NoActivate, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(key) },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP },
+        .{},
+    }).?;
+    // Opened, and asked to be, it is not the active window.
+    const kept: *_window.Window = @ptrCast(@alignCast(keys));
+    try testing.expect(kept.flags & wn.WFLG_NOACTIVATE != 0);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+    it.ActivateWindow(keys);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+
+    // Its button pressed and let go: it reports, and the field still has
+    // the keys in the window that is still active.
+    click(ib, 10, 48);
+    const told = it.GetIMsg(keys).?;
+    try testing.expectEqual(wn.IDCMP_GADGETUP, told.class);
+    it.ReplyIMsg(told);
+    try testing.expect(ib.input.active == field);
+    try testing.expect(ib.active_window == @as(*_window.Window, @ptrCast(@alignCast(typing))));
+    // And the field takes a key after it.
+    rawKey(ib, 0x20); // 'a'
+    try testing.expectEqual(@as(u8, 'a'), buffer[0]);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, typing, wn.WA_Screen));
+    it.CloseWindow(keys);
+    it.DisposeObject(key);
+    it.CloseWindow(typing);
+    it.DisposeObject(field);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: clicks, keys and ticks to the active window; the border gadgets act" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -2799,7 +2878,7 @@ fn firstChar(ib: *IntuitionBase, o: *Object) usize {
 
 /// A gadget that counts the times it is taken up and put down again - the
 /// two messages a group has to pass on to whichever member holds the input.
-const Told = extern struct { active: u32, inactive: u32, laid_out: u32 };
+const Told = extern struct { active: u32, inactive: u32, laid_out: u32, rendered: u32 };
 
 fn toldDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
@@ -2810,7 +2889,10 @@ fn toldDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) 
     const ie = sdk.devices.inputevent;
     switch (msg.method_id) {
         gc.GM_HITTEST => return gc.GMR_GADGETHIT,
-        gc.GM_RENDER => return 0,
+        gc.GM_RENDER => {
+            intuition.instData(Told, cl, o.?).rendered += 1;
+            return 0;
+        },
         gc.GM_GOACTIVE => {
             intuition.instData(Told, cl, o.?).active += 1;
             return gc.GMR_MEACTIVE;
@@ -2951,6 +3033,170 @@ test "gadgets: Tab hands the keyboard on, and a resize says so" {
     it.DisposeObject(middle);
     it.DisposeObject(second);
     try testing.expect(ib.iface().FreeClass(told_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "gadgets: one queued for drawing is drawn once by intuition, and not once it has left its window" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const told_class = toldClass(ib);
+    const moving = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const still = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 30 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(moving) },
+        .{ .tag = gc.GA_Animate, .data = 0 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(moving) },
+        .{},
+    }).?;
+    const drawn = struct {
+        fn of(cl: *Class, o: *Object) u32 {
+            return intuition.instData(Told, cl, o).rendered;
+        }
+    }.of;
+    const before = drawn(told_class, moving);
+    const still_before = drawn(told_class, still);
+
+    // Asked for three times before intuition gets to it: drawn once.
+    it.QueueGadgetRefresh(moving);
+    it.QueueGadgetRefresh(moving);
+    it.QueueGadgetRefresh(moving);
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+    try testing.expectEqual(still_before, drawn(told_class, still));
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+
+    // Taken out of its window with a drawing owed: never drawn.
+    it.QueueGadgetRefresh(moving);
+    _ = it.RemoveGList(w, moving, 1);
+    try testing.expectEqual(@as(u32, 0), gadgetclass.gadgetOf(ib, moving).flags & gc.GFLG_REFRESH);
+    _input.refreshQueued(ib);
+    try testing.expectEqual(before + 1, drawn(told_class, moving));
+
+    // GA_Animate, and a screen that says no for every gadget on it.
+    const dri = it.GetScreenDrawInfo(@ptrFromInt(windowAttr(ib, w, wn.WA_Screen)));
+    try testing.expect(gc.animates(gc.gadget(moving), dri));
+    try testing.expect(!gc.animates(gc.gadget(still), dri));
+    it.FreeScreenDrawInfo(@ptrFromInt(windowAttr(ib, w, wn.WA_Screen)), dri);
+    const quiet = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Animate, .data = 0 }, .{} }).?;
+    const quiet_dri = it.GetScreenDrawInfo(quiet);
+    try testing.expect(!gc.animates(gc.gadget(moving), quiet_dri));
+    it.FreeScreenDrawInfo(quiet, quiet_dri);
+    try testing.expect(it.CloseScreen(quiet));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(moving);
+    it.DisposeObject(still);
+    try testing.expect(it.FreeClass(told_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "gadgets: the pointer over a gadget hovers it, the one with the input is focused" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two buttons side by side and a line of text under them.
+    const left = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const right = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 30 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(left) },
+        .{},
+    }).?;
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 26 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(right) },
+        .{},
+    }).?;
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(left) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const flagsOf = struct {
+        fn of(base: *IntuitionBase, o: *intuition.Object) u32 {
+            return gadgetclass.gadgetOf(base, o).flags & (gc.GFLG_HOVERED | gc.GFLG_FOCUSED);
+        }
+    }.of;
+
+    // A finger has no hover.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, left));
+
+    // A mouse's pointer does: over one, then the other, then neither.
+    @import("input/pointer.zig").mouseSeen(ib);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 18);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, left));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 12, 19);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, left));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, left));
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, right));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 25, 18);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, right));
+
+    // The line of text pressed has the input, and is focused while it
+    // has it; a press elsewhere takes both away.
+    click(ib, 10, 30);
+    try testing.expect(flagsOf(ib, field) & gc.GFLG_FOCUSED != 0);
+    click(ib, 56, 37);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, field) & gc.GFLG_FOCUSED);
+
+    // Closing the window lets go of the gadget it was hovering.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 18);
+    try testing.expectEqual(gc.GFLG_HOVERED, flagsOf(ib, right));
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expectEqual(@as(?*intuition.Object, null), ib.input.hovered);
+    try testing.expectEqual(@as(u32, 0), flagsOf(ib, right));
+    try testing.expect(ib.iface().CloseScreen(screen));
+    it.DisposeObject(left);
+    it.DisposeObject(right);
+    it.DisposeObject(field);
     display.down(ib);
     try tearDown(ib);
 }
@@ -3994,6 +4240,269 @@ test "layoutgclass: a frame with a title takes its room before the children are 
     try tearDown(ib);
 }
 
+test "layoutgclass: a child smaller than its room sits where CHILDA_Align says" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A column of three buttons kept at their own width: as before, in the
+    // middle, at the right.
+    var buttons: [3]*Object = undefined;
+    for (&buttons, 0..) |*button, i| button.* = framedButton(ib, "OK", i);
+    const column = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 200 },
+        .{ .tag = gc.GA_Height, .data = 90 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[0]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[1]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_HCENTRE },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(buttons[2]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_RIGHT },
+        .{},
+    }).?;
+    // A row of two kept at their own height: at the top, at the bottom.
+    var low: [2]*Object = undefined;
+    for (&low, 0..) |*button, i| button.* = framedButton(ib, "Go", 10 + i);
+    const row = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 200 },
+        .{ .tag = gc.GA_Height, .data = 90 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(low[0]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_TOP },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(low[1]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_BOTTOM },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(column, @ptrCast(&lay));
+    _ = it.SendMessage(row, @ptrCast(&lay));
+
+    const first = boxOf(ib, buttons[0]);
+    const middle = boxOf(ib, buttons[1]);
+    const last = boxOf(ib, buttons[2]);
+    try testing.expect(first.width < 200);
+    try testing.expectEqual(@as(i32, 0), first.left);
+    try testing.expectEqual(@divTrunc(200 - middle.width, 2), middle.left);
+    try testing.expectEqual(200 - last.width, last.left);
+
+    const top = boxOf(ib, low[0]);
+    const bottom = boxOf(ib, low[1]);
+    try testing.expect(top.height < 90);
+    try testing.expectEqual(@as(i32, 0), top.top);
+    try testing.expectEqual(90 - bottom.height, bottom.top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(column);
+    it.DisposeObject(row);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a grid lines its cells up across rows, spans, and keeps reading order" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two columns of labelled fields, the labels of each column of a
+    // different length; a button across both; and one more field that
+    // names its cell - the second column of the first row - and is added
+    // last.
+    var fields: [4]*Object = undefined;
+    for (&fields) |*field| field.* = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const wide = framedButton(ib, "Across", 1);
+    const named = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const grid = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 120 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_GRID },
+        .{ .tag = lg.LAYOUTA_Columns, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[0]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("A") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[1]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Longer") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[2]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Longest of all") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wide) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[3]) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("B") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(named) },
+        .{ .tag = lg.CHILDA_Column, .data = 1 },
+        .{ .tag = lg.CHILDA_Row, .data = 3 },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(grid, @ptrCast(&lay));
+
+    // Reading order: A and Longer in the first row, Longest of all in the
+    // second, Across the third, B the fourth's first cell, the named one
+    // beside it.
+    const a = boxOf(ib, fields[0]);
+    const longer = boxOf(ib, fields[1]);
+    const longest = boxOf(ib, fields[2]);
+    const across = boxOf(ib, wide);
+    const b = boxOf(ib, fields[3]);
+    const beside = boxOf(ib, named);
+    // A column's fields start together, after its widest label.
+    try testing.expectEqual(a.left, longest.left);
+    try testing.expectEqual(a.left, b.left);
+    try testing.expect(a.left > 8 * 10);
+    // A row's cells start together; the second column after the first.
+    try testing.expectEqual(a.top, longer.top);
+    try testing.expect(longer.left > a.left + a.width);
+    try testing.expectEqual(b.top, beside.top);
+    try testing.expect(longest.top > a.top and across.top > longest.top and b.top > across.top);
+    // Across both columns, from the grid's edge to the far side.
+    try testing.expectEqual(@as(i32, 0), across.left);
+    try testing.expectEqual(longer.left + longer.width, across.left + across.width);
+
+    // The children are in reading order now, the named one last of all
+    // as it was added, since its cell is the last.
+    const members = intuition.instData(@import("classes/groupgclass.zig").Data, ib.group_class.?, grid);
+    var state: ?*sdk.exec.MinNode = members.members.head;
+    var seen: [6]*Object = undefined;
+    var n: usize = 0;
+    while (it.NextObject(&state)) |member| : (n += 1) seen[n] = member;
+    try testing.expectEqual(@as(usize, 6), n);
+    try testing.expectEqual(named, seen[5]);
+
+    // At its smallest, two columns and the gap between them.
+    var smallest = gc.GpDomain{ .gadget_info = &gi, .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(grid, @ptrCast(&smallest));
+    try testing.expect(smallest.domain.width < 300);
+    try testing.expect(smallest.domain.width >= a.left + 4);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(grid);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a row that wraps fits in one line when it can, in two when it cannot" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // The same row of five twice: once with room for all, once with
+    // room for about two.
+    var rows: [2]*Object = undefined;
+    var buttons: [2][5]*Object = undefined;
+    const widths = [_]usize{ 400, 100 };
+    for (&rows, &buttons, widths) |*row, *five, width| {
+        for (five, 0..) |*button, i| button.* = framedButton(ib, "Button", i);
+        row.* = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Width, .data = width },
+            .{ .tag = gc.GA_Height, .data = 150 },
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Wrap, .data = 1 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[0]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[1]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[2]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[3]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(five[4]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{},
+        }).?;
+    }
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 500;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    for (rows) |row| _ = it.SendMessage(row, @ptrCast(&lay));
+
+    // Room for all: one line, as a row that does not wrap.
+    const one = boxOf(ib, buttons[0][0]);
+    for (buttons[0][1..]) |button| try testing.expectEqual(one.top, boxOf(ib, button).top);
+    // Room for a few: the first line starts at the left and the next
+    // below it, at the left again; nothing past the row's width.
+    const first = boxOf(ib, buttons[1][0]);
+    const last = boxOf(ib, buttons[1][4]);
+    try testing.expect(last.top > first.top);
+    for (buttons[1]) |button| {
+        const box = boxOf(ib, button);
+        try testing.expect(box.left + box.width <= 100);
+    }
+    var lines_start: usize = 0;
+    for (buttons[1]) |button| {
+        if (boxOf(ib, button).left == 0) lines_start += 1;
+    }
+    try testing.expect(lines_start >= 2);
+
+    // At its smallest it is its widest child; and as deep as its lines
+    // go at the width it was given.
+    var smallest = gc.GpDomain{ .gadget_info = &gi, .which = gc.GDOMAIN_MINIMUM };
+    _ = it.SendMessage(rows[1], @ptrCast(&smallest));
+    try testing.expectEqual(first.width, smallest.domain.width);
+    try testing.expect(smallest.domain.height >= last.top + last.height - first.top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    for (rows) |row| it.DisposeObject(row);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "layoutgclass: in a window, its smallest size, and a button that reports by its own ID" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -4161,6 +4670,19 @@ test "preferences: read, changed, told about, and set back to what the system st
     _ = it.GetPrefs(&again, @sizeOf(Preferences));
     try testing.expectEqual(@as(u32, 250_000), again.double_click.micro);
     try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+
+    // The on-screen keyboard: up on its own, by the board, unless told;
+    // a setting it does not know is left alone.
+    try testing.expectEqual(intuition.KEYBOARD_AUTO, again.keyboard);
+    var keys = again;
+    keys.keyboard = intuition.KEYBOARD_ALWAYS;
+    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
+    keys.keyboard = 7;
+    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
+    _ = it.GetPrefs(&again, @sizeOf(Preferences));
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
 
     // Back to what the system starts with.
     _ = it.SetPrefs(it.GetDefPrefs(&prefs, @sizeOf(Preferences)), @sizeOf(Preferences), false);
@@ -5123,6 +5645,620 @@ test "images: a chain is drawn as one, and a button is as big as what it shows" 
     it.DisposeObject(first);
     it.DisposeObject(second);
     display.down(ib);
+    try tearDown(ib);
+}
+
+/// A frame drawn the way frameiclass drew one before there were styles:
+/// kept here as the measure the default style has to meet pixel for pixel.
+fn frameBeforeStyles(ib: *IntuitionBase, rp: *graphics.RastPort, frame_type: u32, recessed: bool, edges_only: bool, ids: u32, w: i32, h: i32) void {
+    const d = @import("classes/draw.zig");
+    const sc = intuition.screens;
+    const gb = ib.graphics_base;
+    const pens = d.pensOf(null);
+    const selected = ids == ic.IDS_SELECTED or ids == ic.IDS_INACTIVESELECTED;
+    const sunk = recessed != selected;
+    const light = if (sunk) pens[sc.SHADOWPEN] else pens[sc.SHINEPEN];
+    const dark = if (sunk) pens[sc.SHINEPEN] else pens[sc.SHADOWPEN];
+    const stroke: i32 = if (frame_type == ic.FRAME_DEFAULT) 1 else 2;
+    const ridge_inset: i32 = if (frame_type == ic.FRAME_RIDGE) 1 else 0;
+    const joins: d.Joins = if (frame_type == ic.FRAME_DEFAULT) .none else .angled;
+    d.bevel(gb, rp, 0, 0, w, h, light, dark, stroke, joins);
+    var dx = stroke;
+    var dy: i32 = 1;
+    if (ridge_inset > 0) {
+        dx = ridge_inset * stroke;
+        dy = ridge_inset;
+        d.bevel(gb, rp, dx, dy, w - 2 * dx, h - 2 * dy, dark, light, stroke, joins);
+        dx += stroke;
+        dy += 1;
+    }
+    if (!edges_only) {
+        const fill = if (selected) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
+        d.box(gb, rp, dx, dy, w - 2 * dx, h - 2 * dy, fill);
+    }
+}
+
+test "styles: with the default alone, every frame is the frame it was before styles" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 17;
+    const h = 11;
+    var now: [w * h]u32 = undefined;
+    var before: [w * h]u32 = undefined;
+    var now_surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&now), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .rgba32 };
+    var before_surface = now_surface;
+    before_surface.pixels = @ptrCast(&before);
+    const now_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&now_surface) }, .{} }).?;
+    const before_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&before_surface) }, .{} }).?;
+
+    const kinds = [_]u32{ ic.FRAME_DEFAULT, ic.FRAME_BUTTON, ic.FRAME_RIDGE };
+    const states = [_]u32{ ic.IDS_NORMAL, ic.IDS_SELECTED, ic.IDS_DISABLED, ic.IDS_SELECTEDDISABLED, ic.IDS_INACTIVESELECTED, ic.IDS_INACTIVENORMAL };
+    for (kinds) |kind| for ([_]bool{ false, true }) |recessed| for ([_]bool{ false, true }) |edges_only| {
+        const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{
+            .{ .tag = ic.IA_FrameType, .data = kind },
+            .{ .tag = ic.IA_Recessed, .data = @intFromBool(recessed) },
+            .{ .tag = ic.IA_EdgesOnly, .data = @intFromBool(edges_only) },
+            .{},
+        }).?;
+        defer it.DisposeObject(o);
+        for (states) |ids| {
+            // Something that is neither pen, so an edge left bare shows.
+            @memset(&now, 0x5A5A_5A5A);
+            @memset(&before, 0x5A5A_5A5A);
+            var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = now_rp, .state = ids, .dimensions = .{ .width = w, .height = h } };
+            _ = it.SendMessage(o, @ptrCast(&draw));
+            frameBeforeStyles(ib, before_rp, kind, recessed, edges_only, ids, w, h);
+            try testing.expectEqualSlices(u32, &before, &now);
+        }
+    };
+
+    gb.FreeRastPort(now_rp);
+    gb.FreeRastPort(before_rp);
+    try tearDown(ib);
+}
+
+test "styles: first one wins, TAG_MORE included, and a tag not known is passed over" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+
+    const behind = [_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF22_2222 },
+        .{ .tag = style.STYLE_Radius, .data = 7 },
+        .{},
+    };
+    var front = [_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF11_1111 },
+        .{ .tag = style.STYLE_Dummy + 0x7F, .data = 12345 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&behind) },
+    };
+    const own = _style.keep(ib, &front).?;
+    // The list is read once: what it says afterwards changes nothing.
+    @memset(&front, .{});
+
+    const it = ib.iface();
+    try testing.expectEqual(@as(usize, 0xFF11_1111), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Background));
+    try testing.expectEqual(@as(usize, 7), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: the most particular state wins, the exact combination before it, the gadget's own before its screen's" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const _style = @import("style/_style.zig");
+    const d = @import("classes/draw.zig");
+    const it = ib.iface();
+    const pens = d.pensOf(null);
+    const bg = style.STYLE_Background;
+
+    // The default alone: the screen's pens, as frames always were.
+    try testing.expectEqual(@as(usize, pens[sc.BACKGROUNDPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLTEXTPEN]), it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_TextPen));
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00AA },
+        .{ .tag = style.STYLE_State, .data = style.STATE_DISABLED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00DD },
+        .{ .tag = style.STYLE_State, .data = style.STATE_CHECKED | style.STATE_DISABLED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_00CC },
+        .{ .tag = style.STYLE_Part, .data = style.PART_TRACK },
+        .{ .tag = style.STYLE_Radius, .data = 3 },
+        .{ .tag = style.STYLE_Part, .data = style.classPart(style.PART_TRACK, 2) },
+        .{ .tag = style.STYLE_Radius, .data = 9 },
+        .{},
+    }).?;
+
+    // Normal is the gadget's; pressed it says nothing about, and the
+    // default's pressed is more particular than the gadget's normal.
+    try testing.expectEqual(@as(usize, 0xFF00_00AA), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, pens[sc.FILLPEN]), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED, bg));
+    // The combination named exactly; another combination falls to the
+    // single state that wins it, disabled over pressed.
+    try testing.expectEqual(@as(usize, 0xFF00_00CC), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_CHECKED | style.STATE_DISABLED, bg));
+    try testing.expectEqual(@as(usize, 0xFF00_00DD), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED | style.STATE_DISABLED, bg));
+    // A class's own part: its own entry when it has one, its base's when not.
+    try testing.expectEqual(@as(usize, 9), it.GetStyleAttr(null, own, style.classPart(style.PART_TRACK, 2), style.STATE_NORMAL, style.STYLE_Radius));
+    try testing.expectEqual(@as(usize, 3), it.GetStyleAttr(null, own, style.classPart(style.PART_TRACK, 5), style.STATE_NORMAL, style.STYLE_Radius));
+
+    // A screen's style, under the gadget's own.
+    const screen_style = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF00_BB00 },
+        .{ .tag = style.STYLE_Radius, .data = 4 },
+        .{},
+    }).?;
+    const dri = sc.DrawInfo{ .pens = pens, .style = screen_style };
+    try testing.expectEqual(@as(usize, 0xFF00_00AA), it.GetStyleAttr(&dri, own, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, 0xFF00_BB00), it.GetStyleAttr(&dri, null, style.PART_MAIN, style.STATE_NORMAL, bg));
+    try testing.expectEqual(@as(usize, 4), it.GetStyleAttr(&dri, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+
+    _style.drop(ib, own);
+    _style.drop(ib, screen_style);
+    try tearDown(ib);
+}
+
+test "styles: DrawPart measures without drawing, and a gadget and a screen keep a style of their own" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+
+    // The default button: two pixels of bevel and two of room at each
+    // side, one and one at the top and bottom.
+    var inside: graphics.Rect = undefined;
+    it.DrawPart(null, null, null, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = 100, .max_y = 50 }, &inside);
+    try testing.expectEqual(graphics.Rect{ .min_x = 4, .min_y = 2, .max_x = 96, .max_y = 48 }, inside);
+    // A box smaller than its border: an empty middle, never a negative one.
+    it.DrawPart(null, null, null, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = 4, .max_y = 2 }, &inside);
+    try testing.expect(inside.isEmpty() and inside.width() == 0 and inside.height() == 0);
+
+    // GA_Style, kept and read back; given back when the gadget goes.
+    const g = it.NewObjectTagList(ib.gadget_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 5 }, .{} }) },
+        .{},
+    }).?;
+    var kept: usize = 0;
+    try testing.expectEqual(@as(u32, 1), it.GetAttr(gc.GA_Style, g, &kept));
+    try testing.expectEqual(@as(usize, 5), it.GetStyleAttr(null, @ptrFromInt(kept), style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    it.DisposeObject(g);
+
+    // SA_Style: the screen's DrawInfo carries it, and it goes with the
+    // screen.
+    const display = try Display.up(ib);
+    const s = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 6 }, .{} }) },
+        .{},
+    }).?;
+    const dri = it.GetScreenDrawInfo(s);
+    try testing.expect(dri.style != null);
+    try testing.expectEqual(@as(usize, 6), it.GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    it.FreeScreenDrawInfo(s, dri);
+    try testing.expect(it.CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "styles: SetStyle gives the system a style under a screen's own, and replaces a screen's" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const plain = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const own = it.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 6 }, .{} }) },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(plain) },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWPREFS },
+        .{},
+    }).?;
+    const plain_dri = it.GetScreenDrawInfo(plain);
+    const own_dri = it.GetScreenDrawInfo(own);
+    const radius = struct {
+        fn of(base: *IntuitionBase, dri: *const sc.DrawInfo) usize {
+            return base.iface().GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius);
+        }
+    }.of;
+
+    // The system's style reaches the screen without one of its own, and
+    // its window hears; the screen with its own keeps it.
+    try testing.expect(it.SetStyle(null, &[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 3 }, .{} }));
+    try testing.expectEqual(@as(usize, 3), radius(ib, plain_dri));
+    try testing.expectEqual(@as(usize, 6), radius(ib, own_dri));
+    var got: [4]intuition.IntuiMessage = undefined;
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_NEWPREFS, got[0].class);
+
+    // A screen's own replaced; then taken away, which leaves the system's.
+    try testing.expect(it.SetStyle(own, &[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 9 }, .{} }));
+    try testing.expectEqual(@as(usize, 9), radius(ib, own_dri));
+    try testing.expect(it.SetStyle(own, null));
+    try testing.expectEqual(@as(usize, 3), radius(ib, own_dri));
+
+    // No style at all: the default again, which has square corners.
+    try testing.expect(it.SetStyle(null, null));
+    try testing.expectEqual(@as(usize, 0), radius(ib, plain_dri));
+
+    it.FreeScreenDrawInfo(plain, plain_dri);
+    it.FreeScreenDrawInfo(own, own_dri);
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(own));
+    try testing.expect(it.CloseScreen(plain));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "styles: a mixed state is the two looks part of the way, colour by channel and number rounded" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const it = ib.iface();
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF000000 },
+        .{ .tag = style.STYLE_Radius, .data = 0 },
+        .{ .tag = style.STYLE_State, .data = style.STATE_PRESSED },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFFFF00 },
+        .{ .tag = style.STYLE_Radius, .data = 10 },
+        .{},
+    }).?;
+    const at = struct {
+        fn of(base: *IntuitionBase, kept: *const intuition.Style, amount: u8, attr: utility.Tag) usize {
+            return base.iface().GetStyleAttr(null, kept, style.PART_MAIN, style.mixState(style.STATE_NORMAL, style.STATE_PRESSED, amount), attr);
+        }
+    }.of;
+    try testing.expectEqual(@as(usize, 0xFF000000), at(ib, own, 0, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 0xFFFFFF00), at(ib, own, 255, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 0xFF808000), at(ib, own, 128, style.STYLE_BackgroundRGB));
+    try testing.expectEqual(@as(usize, 5), at(ib, own, 128, style.STYLE_Radius));
+    // A pen in one state and a colour in the other: the pen looked up.
+    try testing.expectEqual(it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_BackgroundRGB), at(ib, own, 255, style.STYLE_BackgroundRGB));
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: without motion.library a gadget whose style takes time changes at once" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const button = it.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Transition, .data = 150 }, .{} }) },
+        .{},
+    }).?;
+    const _transition = @import("style/_transition.zig");
+    try testing.expectEqual(style.STATE_NORMAL, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_NORMAL));
+    try testing.expectEqual(style.STATE_PRESSED, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_PRESSED));
+    try testing.expectEqual(style.STATE_PRESSED, _transition.shown(gc.gadget(button), style.STATE_PRESSED));
+    it.DisposeObject(button);
+    try tearDown(ib);
+}
+
+test "styles: a background given as a fill style is copied, answered, and painted under its own border" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    // Black at the top to white at the bottom, a flat red line round it.
+    var down = graphics.FillStyle{ .flags = graphics.FILLF_NODITHER };
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_Padding, .data = 0 },
+        .{ .tag = style.STYLE_BackgroundFill, .data = @intFromPtr(&down) },
+        .{},
+    }).?;
+    // Changed after it was read: the style's copy is what counts.
+    down.stops[0].pen = 0xFF00_FF00;
+    const kept: *const graphics.FillStyle = @ptrFromInt(it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_BackgroundFill));
+    try testing.expectEqual(@as(graphics.Pen, 0xFF00_0000), kept.stops[0].pen);
+    try testing.expectEqual(@as(usize, 0xFF00_0000), it.GetStyleAttr(null, own, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Background));
+
+    const w = 8;
+    const h = 10;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = h }, null);
+
+    // The border in its own colour, the inside dark at the top and light
+    // at the bottom.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[0]);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[(h - 1) * w + 3]);
+    const top = pixels[1 * w + 3] & 0xFF;
+    const bottom = pixels[(h - 2) * w + 3] & 0xFF;
+    try testing.expect(top < 0x40 and bottom > 0xC0);
+    // And the RastPort is left without the fill style, as it came.
+    var fill: usize = 1;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
+    try testing.expectEqual(@as(usize, 0), fill);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a drop box's inner bevel sits a border's thickness inside its outer one" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 30;
+    const h = 14;
+    const ground: u32 = 0xFF12_3456;
+    var pixels: [w * h]u32 = @splat(ground);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_ICONDROPBOX }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    // Along the middle row from the left: the outer bevel (2), the ground
+    // between (2), the inner bevel (2) - the inside is the same pen as the
+    // gap, the background.
+    const row = 7 * w;
+    const shine = pixels[row + 0];
+    try testing.expectEqual(shine, pixels[row + 1]);
+    const gap = pixels[row + 2];
+    try testing.expect(gap != shine);
+    try testing.expectEqual(gap, pixels[row + 3]);
+    const inner = pixels[row + 4];
+    try testing.expect(inner != gap and inner != shine);
+    try testing.expectEqual(gap, pixels[row + 6]);
+    // Down the middle column: one row each.
+    try testing.expectEqual(shine, pixels[0 * w + 15]);
+    try testing.expectEqual(gap, pixels[1 * w + 15]);
+    try testing.expectEqual(inner, pixels[2 * w + 15]);
+
+    it.DisposeObject(o);
+    gb.FreeRastPort(rp);
+    try tearDown(ib);
+}
+
+test "styles: a rounded bevel is drawn in its shine on the top and its shadow on the bottom" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_RAISED },
+        .{ .tag = style.STYLE_BorderWidth, .data = 2 },
+        .{ .tag = style.STYLE_ShineRGB, .data = 0xFFFF_FFFF },
+        .{ .tag = style.STYLE_ShadowRGB, .data = 0xFF00_0000 },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFF80_8080 },
+        .{ .tag = style.STYLE_Radius, .data = 5 },
+        .{},
+    }).?;
+    const w = 40;
+    const h = 16;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = h }, null);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), pixels[0 * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFF00_0000), pixels[(h - 1) * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFF80_8080), pixels[8 * w + 20]);
+    // Turned the other way, recessed: the shadow on top.
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, style.DPF_INVERT, &.{ .max_x = w, .max_y = h }, null);
+    try testing.expectEqual(@as(u32, 0xFF00_0000), pixels[0 * w + 20]);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), pixels[(h - 1) * w + 20]);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a frame is drawn and measured in the style the message hands it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    // A gadget's own style: a red face, a flat line, room inside.
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_PaddingX, .data = 10 },
+        .{},
+    }).?;
+    const frame = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_BUTTON }, .{} }).?;
+
+    const w = 12;
+    const h = 8;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(frame, @ptrCast(&draw));
+    try testing.expect(pixels[4 * w + 6] != 0xFFFF_0000);
+    draw.style = own;
+    _ = it.SendMessage(frame, @ptrCast(&draw));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), pixels[4 * w + 6]);
+
+    // Measured with its padding: twenty wider than the contents and the
+    // line, where the screen's style alone gives less.
+    const contents = ic.Box{ .width = 30, .height = 10 };
+    var plain = ic.Box{};
+    var ask = ic.ImpFrameBox{ .contents = &contents, .frame = &plain };
+    _ = it.SendMessage(frame, @ptrCast(&ask));
+    var padded = ic.Box{};
+    ask = .{ .contents = &contents, .frame = &padded, .style = own };
+    _ = it.SendMessage(frame, @ptrCast(&ask));
+    try testing.expectEqual(@as(i32, 30 + 20 + 2), padded.width);
+    try testing.expect(plain.width < padded.width);
+
+    it.DisposeObject(frame);
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a frame on a RastPort with a wide line is the frame on a plain one, and the width comes back" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 17;
+    const h = 11;
+    var wide: [w * h]u32 = @splat(0);
+    var plain: [w * h]u32 = @splat(0);
+    var wide_surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&wide), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .rgba32 };
+    var plain_surface = wide_surface;
+    plain_surface.pixels = @ptrCast(&plain);
+    const wide_rp = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&wide_surface) },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 5 },
+        .{},
+    }).?;
+    const plain_rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&plain_surface) }, .{} }).?;
+
+    const o = it.NewObjectTagList(ib.frame_class, null, &[_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_RIDGE }, .{} }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = wide_rp, .dimensions = .{ .width = w, .height = h } };
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    draw.rast_port = plain_rp;
+    _ = it.SendMessage(o, @ptrCast(&draw));
+    try testing.expectEqualSlices(u32, &plain, &wide);
+
+    var width: u32 = 0;
+    gb.GetRPAttrs(wide_rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&width) }, .{} });
+    try testing.expectEqual(@as(u32, 5), width);
+
+    it.DisposeObject(o);
+    gb.FreeRastPort(wide_rp);
+    gb.FreeRastPort(plain_rp);
+    try tearDown(ib);
+}
+
+test "styles: a round part is drawn smooth, and the RastPort's own setting comes back" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const _style = @import("style/_style.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const own = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_NONE },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_FFFF },
+        .{ .tag = style.STYLE_Radius, .data = 6 },
+        .{},
+    }).?;
+    const w = 16;
+    var pixels: [w * w]u32 = @splat(0xFF00_0000);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = w, .pitch = w * 4, .size_bytes = w * w * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+    it.DrawPart(rp, null, own, style.PART_MAIN, style.STATE_NORMAL, 0, &.{ .max_x = w, .max_y = w }, null);
+
+    // A corner pixel neither black nor white: the curve is smooth.
+    var between = false;
+    for (0..6) |i| {
+        const g = pixels[i * w + 1] & 0xFF;
+        if (g != 0 and g != 0xFF) between = true;
+    }
+    try testing.expect(between);
+    var smooth: u32 = 7;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = @intFromPtr(&smooth) }, .{} });
+    try testing.expectEqual(@as(u32, 0), smooth);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, own);
+    try tearDown(ib);
+}
+
+test "styles: a check box's tick and box follow the style, and the default is the old look" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const _style = @import("style/_style.zig");
+    const d = @import("classes/draw.zig");
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+
+    const w = 26;
+    const h = 11;
+    var pixels: [w * h]u32 = @splat(0);
+    var surface = sdk.rtg.bitmaps.Surface{ .pixels = @ptrCast(&pixels), .width = w, .height = h, .pitch = w * 4, .size_bytes = w * h * 4, .format = .bgra32 };
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }).?;
+
+    // A red tick, and a box with a flat line and round corners.
+    const themed = _style.keep(ib, &[_]TagItem{
+        .{ .tag = style.STYLE_Part, .data = ic.PART_CHECKMARK },
+        .{ .tag = style.STYLE_BackgroundRGB, .data = 0xFFFF_0000 },
+        .{ .tag = style.STYLE_Part, .data = ic.PART_CHECK },
+        .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+        .{ .tag = style.STYLE_BorderWidth, .data = 1 },
+        .{ .tag = style.STYLE_Radius, .data = 4 },
+        .{},
+    }).?;
+    var dri = sc.DrawInfo{ .pens = d.pensOf(null), .style = themed };
+    const box = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.CHECKIMAGE },
+        .{ .tag = ic.IA_Width, .data = w },
+        .{ .tag = ic.IA_Height, .data = h },
+        .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{},
+    }).?;
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAW, .rast_port = rp, .state = ic.IDS_SELECTED, .draw_info = &dri };
+    _ = it.SendMessage(box, @ptrCast(&draw));
+
+    var red = false;
+    for (pixels) |px| {
+        if (px == 0xFFFF_0000) red = true;
+    }
+    try testing.expect(red);
+    // The corner is the window's ground, outside the rounded box, where
+    // the old bevel put its shine.
+    try testing.expectEqual(d.pensOf(null)[sc.BACKGROUNDPEN], pixels[0]);
+    it.DisposeObject(box);
+
+    // The default: the corner is the bevel's shine, as it always was.
+    dri.style = null;
+    const plain = it.NewObjectTagList(ib.sys_class, null, &[_]TagItem{
+        .{ .tag = ic.SYSIA_Which, .data = ic.CHECKIMAGE },
+        .{ .tag = ic.IA_Width, .data = w },
+        .{ .tag = ic.IA_Height, .data = h },
+        .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{},
+    }).?;
+    _ = it.SendMessage(plain, @ptrCast(&draw));
+    try testing.expectEqual(d.pensOf(null)[sc.SHINEPEN], pixels[0]);
+    it.DisposeObject(plain);
+
+    gb.FreeRastPort(rp);
+    _style.drop(ib, themed);
     try tearDown(ib);
 }
 
@@ -6995,6 +8131,35 @@ test "IDCMP_SIZEVERIFY: sizing waits for the reply, is given up by letting go or
     try tearDown(ib);
 }
 
+test "the busy ring: drawn at the first eighth, turned exactly at the quarters, whole between" {
+    const pointer = @import("input/pointer.zig");
+    const drawn = &pointer.busy_picture;
+    const size = drawn.width;
+    try testing.expectEqualSlices(u32, &drawn.pixels, &pointer.busy_frames[0].pixels);
+    var opaque_drawn: u32 = 0;
+    for (drawn.pixels) |pixel| opaque_drawn += @intFromBool(pixel != 0);
+    for (pointer.busy_frames, 0..) |frame, eighth| {
+        var count: u32 = 0;
+        for (0..size) |y| {
+            for (0..size) |x| {
+                const pixel = frame.pixels[y * size + x];
+                count += @intFromBool(pixel != 0);
+                // A quarter turn clockwise puts the drawn (x, y) at
+                // (size-1-y, x).
+                const from: ?u32 = switch (eighth) {
+                    2 => drawn.pixels[(size - 1 - x) * size + y],
+                    4 => drawn.pixels[(size - 1 - y) * size + (size - 1 - x)],
+                    6 => drawn.pixels[x * size + (size - 1 - y)],
+                    else => null,
+                };
+                if (from) |expected| try testing.expectEqual(expected, pixel);
+            }
+        }
+        // Between the quarters it neither loses nor gains much of itself.
+        try testing.expect(count * 10 >= opaque_drawn * 9 and count * 10 <= opaque_drawn * 11);
+    }
+}
+
 test "the pointer: seen once a mouse is, the active window's, busy now or after a while" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -7053,6 +8218,10 @@ test "the pointer: seen once a mouse is, the active window's, busy now or after 
     // The ring's point is its middle, 8 in from its corner.
     try testing.expectEqual(@as(i32, 3), log.pointer_left);
     try testing.expectEqual(@as(i32, 13), log.pointer_top);
+    // It turns an eighth on each tick.
+    const was = ib.pointer.frame;
+    tickEvent(ib);
+    try testing.expectEqual((was + 1) % pointer.busy_turn, ib.pointer.frame);
     it.SetWindowPointerA(w, null);
     try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
 

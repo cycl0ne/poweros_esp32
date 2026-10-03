@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT
+//! motion.library's functions: a clock for things that move. One task runs
+//! every animation and timer that is due, on timer.device's clock. Open it
+//! with OpenLibrary("motion.library", 1).
+##include libs/exec/exec as exec
+##include libs/utility/utility as utility
+##include libs/graphics/graphics as graphics
+##include libs/motion/motion as motion
+##basetype MotionBase
+##name motion.library
+##bias 4
+##public
+/// Where a curve (`EASE_`) is at `progress`, both in 16.16 fixed point:
+/// 0 at 0, `MOTION_ONE` at `MOTION_ONE`. Progress beyond either end is
+/// taken as that end.
+i32 Ease(u32 curve, u32 progress)
+/// Where the cubic Bezier curve from (0, 0) to (1, 1) with control points
+/// (x1, y1) and (x2, y2) is at `progress`, all in 16.16 fixed point. The
+/// x's are held to 0 to 1, so the curve goes forwards in time; the y's may
+/// go past either end.
+i32 EaseBezier(i32 x1, i32 y1, i32 x2, i32 y2, u32 progress)
+/// An animation, from the tags (`ANIM_`), the caller's until it deletes it
+/// or ends. Not running until `StartAnimation`. Null without the memory.
+?*motion.Animation CreateAnimationTagList(?[*]const utility.TagItem tags)
+/// The animation stopped where it is and freed. Null is allowed.
+void DeleteAnimation(?*motion.Animation animation)
+/// The animation run from its start: from its first value, after its
+/// delay. One that runs already starts again.
+void StartAnimation(*motion.Animation animation)
+/// The animation stopped, its value left where it is or put at its end
+/// (`STOP_`); its done hook and signal as when it ends by itself. Nothing
+/// for one that is not running.
+void StopAnimation(*motion.Animation animation, u32 where)
+/// The animation's tags changed; a new `ANIM_To` while it runs turns it
+/// from where it is. How many tags it took.
+u32 SetAnimationAttrsTagList(*motion.Animation animation, ?[*]const utility.TagItem tags)
+/// One of the animation's attributes: `ANIM_Value`, `ANIM_Progress`,
+/// `ANIM_Running`, or what a tag set. 0 for one it does not know.
+usize GetAnimationAttr(*motion.Animation animation, utility.Tag attr)
+/// Two colours (0xAARRGGBB) mixed channel by channel: `amount` 0 is `from`,
+/// `MOTION_ONE` is `to`.
+u32 MixColour(u32 from, u32 to, u32 amount)
+/// Two boxes mixed edge by edge into `result`: `amount` 0 is `from`,
+/// `MOTION_ONE` is `to`.
+void MixRect(*const graphics.Rect from, *const graphics.Rect to, u32 amount, *graphics.Rect result)
+/// A timer, from the tags (`TIMER_`), the caller's until it deletes it or
+/// ends. Not running until `StartTimer`. Null without the memory.
+?*motion.Timer CreateTimerTagList(?[*]const utility.TagItem tags)
+/// The timer stopped and freed. Null is allowed.
+void DeleteTimer(?*motion.Timer timer)
+/// The timer started from now: its first firing after its delay. One that
+/// runs already starts again, its count from 0.
+void StartTimer(*motion.Timer timer)
+/// The timer stopped, untold. Nothing for one that is not running.
+void StopTimer(*motion.Timer timer)
+/// A timeline, from the tags (`TIMELINE_`), empty and the caller's until
+/// it deletes it or ends. Null without the memory.
+?*motion.Timeline CreateTimelineTagList(?[*]const utility.TagItem tags)
+/// The timeline's animations stopped where they are and let go of, and
+/// the timeline freed; the animations stay the caller's. Null is allowed.
+void DeleteTimeline(?*motion.Timeline timeline)
+/// `animation` into the timeline, beginning `offset` milliseconds after
+/// the timeline does. False for one that plays for ever or is in a
+/// timeline already.
+bool AddTimelineAnimation(*motion.Timeline timeline, *motion.Animation animation, u32 offset)
+/// Every animation of the timeline run from the timeline's start - or its
+/// end, reversed.
+void StartTimeline(*motion.Timeline timeline)
+/// Every animation of the timeline stopped (`STOP_`), told as when each
+/// ends, and then the timeline's own done hook and signal.
+void StopTimeline(*motion.Timeline timeline, u32 where)
+/// Every animation of the timeline put where it is `at` milliseconds from
+/// the timeline's start, and its step hook told; the timeline stopped.
+void SetTimelineProgress(*motion.Timeline timeline, u32 at)
+/// The timeline's tags changed; how many it took.
+u32 SetTimelineAttrsTagList(*motion.Timeline timeline, ?[*]const utility.TagItem tags)
+##end

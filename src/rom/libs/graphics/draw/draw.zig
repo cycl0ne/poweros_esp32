@@ -88,6 +88,12 @@ pub fn Draw(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void {
     // it is where the next Draw starts from, not where the last one drew.
     rp.cp_x = x;
     rp.cp_y = y;
+    if (rp.line_width > 1) return @import("_wide.zig").line(gb, rp, from_x, from_y, x, y, @intCast(rp.line_width));
+    // Smooth along a slant; a line along a row or a column is exact as it
+    // is, and a patterned one keeps its hard pattern.
+    if (rp.smooth and rp.line_pattern == graphics.LINE_SOLID and from_x != x and from_y != y) {
+        return @import("_smooth.zig").line(gb, rp, from_x, from_y, x, y);
+    }
 
     var step: u32 = rp.pattern_step;
     var it = visible(rp, .{

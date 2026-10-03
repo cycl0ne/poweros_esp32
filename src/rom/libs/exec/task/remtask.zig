@@ -25,6 +25,10 @@ const Task = sdk.exec.Task;
 /// Nothing, and for null it does not return at all.
 ///
 /// BEHAVIOR:
+/// **First, its end hooks** (`AddTaskEndHook`) run, in the order they were
+/// put on, on the task calling this and with nothing held - what libraries
+/// held for the task is let go while the task is still there.
+///
 /// **Removing yourself** cannot free your own stack, because you are still
 /// running on it. The task is marked and the processor given up, and the
 /// scheduler frees the memory once nothing is running on it any more.
@@ -38,13 +42,15 @@ const Task = sdk.exec.Task;
 ///
 /// CONTEXT:
 /// - Waits: no. For null it never returns, which is not the same thing.
-/// - Interrupts: no. It takes Disable and may free memory.
+/// - Interrupts: no. It takes Disable, may free memory, and runs the
+///   task's end hooks.
 /// - Forbid: not needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Memory from `CreateTask` goes back to the system. Anything the task
-/// itself allocated is not freed - signals, ports, memory - so a task that
+/// Memory from `CreateTask` goes back to the system, and what a library
+/// held for the task through an end hook goes back to that library.
+/// Anything else the task itself allocated is not freed - signals, ports, memory - so a task that
 /// is removed from outside leaks whatever it was holding. That is why a
 /// task is normally asked to end itself.
 ///
@@ -56,7 +62,7 @@ const Task = sdk.exec.Task;
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddTask`, `CreateTask`, `Signal`
+/// `AddTask`, `CreateTask`, `Signal`, `AddTaskEndHook`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -66,6 +72,7 @@ pub fn RemTask(base: *ExecBase, task: ?*Task) void {
     const sys = base.iface();
     const current = sys.FindTask(null).?;
     const ending = task orelse current;
+    _task.runEndHooks(base, ending);
     sys.Disable();
     if (ending == current) {
         // Freed by reschedule once it no longer runs on it.

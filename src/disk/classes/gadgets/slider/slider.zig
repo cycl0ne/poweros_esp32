@@ -238,7 +238,8 @@ fn drawDisplay(base: *gadgets.Base, own: *Data, o: *Object, rp: *graphics.RastPo
     const b = gc.boxFor(gc.gadget(o), info);
     const area = partsOf(base, own, o, info).display;
     const at = gc.Box{ .left = b.left + area.left, .top = b.top + area.top, .width = area.width, .height = area.height };
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     support.fill(gb, rp, at, pens[sc.BACKGROUNDPEN]);
     const text = levelText(base, own, o);
     const width = gb.TextLength(rp, text, support.textLen(text));
@@ -265,6 +266,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const frame = gc.Box{ .left = b.left + parts.frame.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height };
     support.drawFrame(ib, own.frame.?, r.rast_port, frame, ic.IDS_NORMAL, info.draw_info);
     _ = placeInner(base, own, o, info);
+    support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));
     drawDisplay(base, own, o, r.rast_port, info);
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, r.rast_port, b, info.block_pen);

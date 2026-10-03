@@ -261,6 +261,14 @@ per gadget kind, and a program opens the ones it uses before it makes
 them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `scroller`, `listview`, `palette`, `colorwheel`, `gradientslider`,
 `tapedeck`, `fuelgauge` (a bar showing how far along something is),
+`spinner` (a ring of dots going round while something goes on),
+`meter` (a dial with a scale and a needle), `arc` (a ring filled to a
+level, or turned by its knob), `roller` (a wheel of choices turned by
+dragging), `calendar` (a month to pick a day from), `canvas` (a picture
+the program draws into and the gadget shows), `qrcode` and `barcode` (a
+text as a QR code, a Code 128 or an EAN-13), `chart` (values over time
+as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
+written to input.device as a keyboard's are),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), and `clicktab` with `page` (a
 row of tabs over pages of gadgets), and `getfile` with `getfont` (a
@@ -304,6 +312,40 @@ both taking their room before the children are placed. `C:test/Settings`
 is a window of all of this - tabs over pages, framed groups, a number
 field, a chooser and a fuel gauge.
 
+### Text in more than one look
+
+`text.gadget` shows runs of text each in its own font, soft style and
+colour - an array of `TextRun`s (`TEXT_Runs`), or its text read as a
+small markup (`TEXT_Markup`): `<b>`, `<i>`, `<u>`, `<c=#RRGGBB>`,
+`<s=N>` for a size, `</>` to end the last, `<br>` for a new line and
+`<<` for a `<`. With `TEXT_Wrap` it breaks the runs into lines as wide as
+the gadget:
+
+```zig
+const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
+    .{ .tag = tx.TEXT_Markup, .data = 1 },
+    .{ .tag = tx.TEXT_Wrap, .data = 1 },
+    .{ .tag = gc.GA_Width, .data = 200 },
+    .{ .tag = tx.TEXT_Text, .data = @intFromPtr("Press <b>OK</b> to go on.") },
+    .{},
+});
+```
+
+### A keyboard on the screen
+
+On a board whose only input is a touch panel, intuition brings a
+keyboard up at the bottom of the screen whenever a field gets the input,
+and takes it away when the field lets go: a program does nothing for
+it. `Preferences.keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
+the board, the default), `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
+`C:test/Keyboard` turns it on and opens a field to try it with.
+
+The keyboard is a window opened with `WA_NoActivate`: a press on it
+reaches its gadgets and leaves the active window - and the field being
+typed into - as they were. A program may open one of those too, for a
+palette of tools that should not take the keys from the window being
+worked in.
+
 
 ## When a check fails
 
@@ -340,6 +382,32 @@ A panic handler is handed no base, so it finds exec through
 `sdk.exec.AbsExecBase`, the one fixed address in the system, and reports
 with `AlertAt`. Code that is handed SysBase keeps using what it was
 handed.
+
+### A stack that runs out
+
+A command runs on a stack of its own, `CLI_DEFAULT_STACK` (16 KiB) unless
+the shell's `Stack` command set another size. A window of gadgets uses
+more of it than its size suggests: a layout in a group in a page, and
+every message passing through several calls, each with a frame on a
+register-window stack.
+
+The bottom words of every stack - a task's, and the one a command runs on
+- hold a guard. exec looks at it each time it switches away from the task,
+and once more when the command ends; a stack that ran past its end has
+written over it, and the machine stops at that moment rather than in
+whatever memory the overflow landed on:
+
+```
+*** Software Failure.
+*** Guru Meditation #8100000E.7C063C20
+*** a task's stack ran past its end
+*** Task "Shell Process [1]" at 0x3C06C518
+```
+
+`8100000E` is `AN_StackProbe`. A command that needs more is run after
+`Stack 32000`; a task a program makes is given more with `CreateTask`'s or
+`NP_StackSize`'s size. The bottom 16 bytes of a stack are the guard's, not
+the task's.
 
 ## The system log
 

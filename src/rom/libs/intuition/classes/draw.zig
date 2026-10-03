@@ -19,19 +19,38 @@ const default_pens = @import("../screen/_screen.zig").default_pens;
 ///
 /// The font is in here because an image whose shape is words sets one, and
 /// an image is only passing through: the caller's next line of text would
-/// otherwise come out in a font it never asked for.
-pub const Saved = struct { apen: u32 = 0, bpen: u32 = 0, mode: u32 = 0, font: usize = 0 };
+/// otherwise come out in a font it never asked for. The fill style for the
+/// same reason, and as a copy: the RastPort answers a pointer to its own,
+/// which setting another overwrites.
+pub const Saved = struct {
+    apen: u32 = 0,
+    bpen: u32 = 0,
+    mode: u32 = 0,
+    font: usize = 0,
+    fill: graphics.FillStyle = .{},
+    filling: bool = false,
+    line_width: u32 = 1,
+    smooth: u32 = 0,
+};
 
 pub fn save(gb: *GraphicsBase, rp: *graphics.RastPort) Saved {
     var s: Saved = .{};
+    var fill: usize = 0;
     const ask = [_]TagItem{
         .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&s.apen) },
         .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&s.bpen) },
         .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&s.mode) },
         .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&s.font) },
+        .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&s.line_width) },
+        .{ .tag = graphics.RPTAG_Smooth, .data = @intFromPtr(&s.smooth) },
         .{},
     };
     gb.GetRPAttrs(rp, &ask);
+    if (fill != 0) {
+        s.fill = @as(*const graphics.FillStyle, @ptrFromInt(fill)).*;
+        s.filling = true;
+    }
     return s;
 }
 
@@ -41,16 +60,31 @@ pub fn restore(gb: *GraphicsBase, rp: *graphics.RastPort, s: Saved) void {
         .{ .tag = graphics.RPTAG_BPen, .data = s.bpen },
         .{ .tag = graphics.RPTAG_DrMd, .data = s.mode },
         .{ .tag = graphics.RPTAG_Font, .data = s.font },
+        .{ .tag = graphics.RPTAG_FillStyle, .data = if (s.filling) @intFromPtr(&s.fill) else 0 },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = s.line_width },
+        .{ .tag = graphics.RPTAG_Smooth, .data = s.smooth },
         .{},
     };
     gb.SetRPAttrs(rp, &put);
 }
 
-/// Draw from now on in one opaque pen, plainly.
+/// Fill shapes from now on with a fill style, or with the pen again for
+/// null. The RastPort copies it.
+pub fn fillWith(gb: *GraphicsBase, rp: *graphics.RastPort, fill: ?*const graphics.FillStyle) void {
+    const put = [_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(fill) }, .{} };
+    gb.SetRPAttrs(rp, &put);
+}
+
+/// Draw from now on in one pen, plainly: written as it is when it is
+/// opaque, laid over what is there by its alpha when it is not - which is
+/// how a style's opacity reaches every line and fill drawn here - and one
+/// pixel wide, whatever the caller's RastPort had.
 pub fn pen(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen) void {
+    const mode: u32 = if (graphics.penIsOpaque(value)) graphics.DRMD_JAM1 else graphics.DRMD_JAM1 | graphics.DRMD_BLEND;
     const put = [_]TagItem{
         .{ .tag = graphics.RPTAG_APen, .data = value },
-        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+        .{ .tag = graphics.RPTAG_DrMd, .data = mode },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 1 },
         .{},
     };
     gb.SetRPAttrs(rp, &put);
@@ -181,8 +215,14 @@ pub const Joins = enum {
 /// further from the corner the other colour owns - which is what makes the
 /// join a diagonal rather than a step.
 pub fn bevel(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, w: i32, h: i32, light: Pen, dark: Pen, thick: i32, joins: Joins) void {
-    if (w <= 1 or h <= 1 or thick < 1) return;
-    const flat: i32 = 1;
+    bevelXY(gb, rp, x, y, w, h, light, dark, thick, 1, joins);
+}
+
+/// `bevel` with the top and bottom edges `flat` rows thick instead of one:
+/// what a style's border is drawn with, where the two thicknesses are each
+/// the style's to say.
+pub fn bevelXY(gb: *GraphicsBase, rp: *graphics.RastPort, x: i32, y: i32, w: i32, h: i32, light: Pen, dark: Pen, thick: i32, flat: i32, joins: Joins) void {
+    if (w <= 1 or h <= 1 or thick < 1 or flat < 1) return;
     const right = x + w - 1;
     const bottom = y + h - 1;
     // How far each edge keeps clear of the corner the other colour owns. An

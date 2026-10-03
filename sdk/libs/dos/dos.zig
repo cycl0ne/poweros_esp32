@@ -344,6 +344,7 @@ pub const CLI_MAX_PROMPT = dosextens.CLI_MAX_PROMPT;
 pub const CLI_MAX_COMMAND_FILE = dosextens.CLI_MAX_COMMAND_FILE;
 pub const CLI_INITIAL_FAIL_LEVEL = dosextens.CLI_INITIAL_FAIL_LEVEL;
 pub const CLI_DEFAULT_PROMPT = dosextens.CLI_DEFAULT_PROMPT;
+pub const CLI_DEFAULT_STACK = dosextens.CLI_DEFAULT_STACK;
 pub const ExAllData = exall.ExAllData;
 pub const AnchorPath = dosasl.AnchorPath;
 /// struct DateTime: what DateToStr writes and StrToDate reads

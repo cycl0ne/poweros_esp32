@@ -98,7 +98,7 @@ fn nominal(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*con
     for (0..own.count) |i| widest = @max(widest, measure.width(ib, own.labels.?[i].?));
     var contents = ic.Box{ .width = glyph_width + widest + 2 * text_margin, .height = measure.lineHeight(base.graphics_base) };
     var box = ic.Box{};
-    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = if (gi) |info| info.draw_info else g.draw_info };
+    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = if (gi) |info| info.draw_info else g.draw_info, .style = g.style };
     // A frame that cannot say: room for a bevel all round.
     if (own.frame == null or ib.SendMessage(own.frame, @ptrCast(&msg)) == 0) {
         return .{ .width = contents.width + 8, .height = contents.height + 6 };
@@ -127,7 +127,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(g, gi);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const selected = g.flags & gc.GFLG_SELECTED != 0;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
@@ -140,6 +141,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
             .state = if (selected) ic.IDS_SELECTED else ic.IDS_NORMAL,
             .draw_info = info.draw_info,
             .dimensions = .{ .width = b.width, .height = b.height },
+            .style = g.style,
         };
         _ = ib.SendMessage(frame, @ptrCast(&draw));
     }

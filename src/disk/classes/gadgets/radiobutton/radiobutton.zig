@@ -166,7 +166,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
     fitImage(base, own, lines.mark);
     const image = own.image orelse return;
     const b = gc.boxFor(g, gi);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
 

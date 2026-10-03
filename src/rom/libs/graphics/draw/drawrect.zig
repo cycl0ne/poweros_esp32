@@ -60,6 +60,7 @@ pub fn DrawRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;
+    if (rp.line_width > 1) return @import("_wide.zig").rect(gb, rp, area.*, @intCast(rp.line_width));
     const w = area.width();
     const h = area.height();
     graphics_lib.DrawHLine(@ptrCast(rp), area.min_x, area.min_y, w);

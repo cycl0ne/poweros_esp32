@@ -2,17 +2,26 @@
 //! Layout: a window whose gadgets are placed by layoutgclass. Built
 //! against the SDK only.
 //!
-//!   Layout MARGIN/N,SPACING/N
+//!   Layout MARGIN/N,SPACING/N,GRID/S
 //!
 //! It opens a window on the default public screen through windowclass,
 //! holding one layout: a column of a line to type a name in and a slider,
 //! each labelled; a row of three buttons that takes whatever height is
-//! spare; and OK and Cancel along the bottom, kept at least two lines of
+//! spare; a button kept to its own width in the middle of the column and
+//! one at its right end (`CHILDA_Align`); and OK and Cancel along the
+//! bottom, kept at least two lines of
 //! the screen's font high so that a finger finds them. Nothing in it is
 //! given a place: the window opens in the middle of the screen at half its
 //! size (a `WA_` tag handed on to the window) or the layout's nominal
 //! size, whichever is larger, and everything is placed again as the window
-//! is sized - which it cannot be smaller than the layout fits in.
+//! is sized - which it cannot be smaller than the layout fits in. The rows
+//! of buttons wrap: sized narrower than a row's buttons, the ones that do
+//! not fit go onto a line beneath.
+//!
+//! GRID lays the same window out as a grid of two columns: Name and
+//! Volume side by side, Place and Balance under them, each column's
+//! fields after its own labels and lined up with the row above; the
+//! buttons across both columns.
 //!
 //! Every gadget let go is printed with its ID - the button itself, not
 //! the layout it is in - as WM_HANDLEINPUT answers it. OK prints the name
@@ -40,12 +49,13 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Layout";
-const VERSION_STRING = "\x00$VER: Layout 1.1 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Layout 1.3 (2.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "MARGIN/N,SPACING/N";
+const template = "MARGIN/N,SPACING/N,GRID/S";
 const arg_margin = 0;
 const arg_spacing = 1;
+const arg_grid = 2;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display\n";
@@ -63,6 +73,10 @@ const ID_TWO = 4;
 const ID_THREE = 5;
 const ID_OK = 6;
 const ID_CANCEL = 7;
+const ID_CENTRED = 8;
+const ID_HELP = 9;
+const ID_PLACE = 10;
+const ID_BALANCE = 11;
 
 const default_margin = 6;
 const default_spacing = 4;
@@ -84,19 +98,26 @@ fn button(ib: *IntuitionBase, text: [*:0]const u8, id: usize) ?*Object {
     });
 }
 
-/// A row of gadgets, all as tall as the row; null, with every one of them
-/// freed, when one could not be made or taken.
-fn row(ib: *IntuitionBase, spacing: usize, children: []const ?*Object) ?*Object {
+/// A row of gadgets, all as tall as the row and none narrower than
+/// `least` (0 for their own), that wraps onto a second line when the
+/// window is too narrow for it; null, with every one of them freed, when
+/// one could not be made or taken.
+fn row(ib: *IntuitionBase, spacing: usize, least: u32, children: []const ?*Object) ?*Object {
     var whole = true;
     for (children) |child| whole = whole and child != null;
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
         .{ .tag = lg.LAYOUTA_Spacing, .data = spacing },
+        .{ .tag = lg.LAYOUTA_Wrap, .data = 1 },
         .{},
     }) else null;
     for (children, 0..) |child, i| {
         if (layout) |into| {
-            const add = [_]TagItem{ .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(child) }, .{} };
+            const add = [_]TagItem{
+                .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(child) },
+                .{ .tag = if (least != 0) lg.CHILDA_MinWidth else sdk.utility.TAG_IGNORE, .data = least },
+                .{},
+            };
             if (ib.SetAttrsTagList(into, &add) != 0) continue;
             // Not taken: it and the rest are still ours, what went before
             // goes with the layout.
@@ -112,7 +133,7 @@ fn row(ib: *IntuitionBase, spacing: usize, children: []const ?*Object) ?*Object 
 /// The whole of it. A gadget that could not be made takes the others
 /// with it: whatever the layout already holds goes when it does, and the
 /// rest are freed here.
-fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize) ?Gadgets {
+fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: bool) ?Gadgets {
     const name = ib.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
         .{ .tag = gc.STRINGA_MaxChars, .data = 64 },
         .{ .tag = gc.GA_ID, .data = ID_NAME },
@@ -130,16 +151,77 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize) ?Gadgets 
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     });
-    const middle = row(ib, spacing, &.{ button(ib, "One", ID_ONE), button(ib, "Two", ID_TWO), button(ib, "Three", ID_THREE) });
-    const bottom = row(ib, spacing, &.{ button(ib, "OK", ID_OK), button(ib, "Cancel", ID_CANCEL) });
-    if (name == null or volume == null or middle == null or bottom == null) {
+    // Wide enough for a finger each: the row the window wraps first.
+    const middle = row(ib, spacing, 6 * line, &.{ button(ib, "One", ID_ONE), button(ib, "Two", ID_TWO), button(ib, "Three", ID_THREE) });
+    const bottom = row(ib, spacing, 0, &.{ button(ib, "OK", ID_OK), button(ib, "Cancel", ID_CANCEL) });
+    const centred = button(ib, "Centred", ID_CENTRED);
+    const help = button(ib, "Help", ID_HELP);
+    // The grid's second row.
+    const place = if (grid) ib.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.STRINGA_MaxChars, .data = 64 },
+        .{ .tag = gc.GA_ID, .data = ID_PLACE },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{},
+    }) else null;
+    const balance = if (grid) ib.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
+        .{ .tag = pg.PGA_Total, .data = 100 },
+        .{ .tag = pg.PGA_Visible, .data = 10 },
+        .{ .tag = pg.PGA_Top, .data = 45 },
+        .{ .tag = gc.GA_Width, .data = 100 },
+        .{ .tag = gc.GA_Height, .data = line },
+        .{ .tag = gc.GA_ID, .data = ID_BALANCE },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }) else null;
+    if (name == null or volume == null or middle == null or bottom == null or centred == null or help == null or
+        (grid and (place == null or balance == null)))
+    {
         ib.DisposeObject(name);
         ib.DisposeObject(volume);
         ib.DisposeObject(middle);
         ib.DisposeObject(bottom);
+        ib.DisposeObject(centred);
+        ib.DisposeObject(help);
+        ib.DisposeObject(place);
+        ib.DisposeObject(balance);
         return null;
     }
-    const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+    const grid_tags = [_]TagItem{
+        .{ .tag = lg.LAYOUTA_Margin, .data = margin },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = spacing },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_GRID },
+        .{ .tag = lg.LAYOUTA_Columns, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Name") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(volume) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Volume") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(place) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Place") },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(balance) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Balance") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(middle) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(centred) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_HCENTRE },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(help) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_RIGHT },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(bottom) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_MinHeight, .data = 2 * line },
+        .{},
+    };
+    const layout = (if (grid) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &grid_tags) else ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = margin },
         .{ .tag = lg.LAYOUTA_Spacing, .data = spacing },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
@@ -148,15 +230,27 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize) ?Gadgets 
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Volume") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(middle) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(centred) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_HCENTRE },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(help) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_RIGHT },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(bottom) },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.CHILDA_MinHeight, .data = 2 * line },
         .{},
-    }) orelse {
+    })) orelse {
         ib.DisposeObject(name);
         ib.DisposeObject(volume);
         ib.DisposeObject(middle);
         ib.DisposeObject(bottom);
+        ib.DisposeObject(centred);
+        ib.DisposeObject(help);
+        ib.DisposeObject(place);
+        ib.DisposeObject(balance);
         return null;
     };
     return .{ .name = name.?, .volume = volume.?, .layout = layout };
@@ -176,6 +270,9 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_THREE => "Three",
         ID_OK => "OK",
         ID_CANCEL => "Cancel",
+        ID_CENTRED => "Centred",
+        ID_HELP => "Help",
+        ID_PLACE => "Place",
         else => "?",
     };
 }
@@ -187,7 +284,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -223,7 +320,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         line = @intCast(extent.height);
     }
 
-    const gadgets = build(ib, line, margin, spacing) orelse {
+    const gadgets = build(ib, line, margin, spacing, argv[arg_grid] != 0) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };

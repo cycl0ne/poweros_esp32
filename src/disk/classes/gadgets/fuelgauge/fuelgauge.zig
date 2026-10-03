@@ -13,6 +13,15 @@
 //! it does not, so that it stays readable as the bar passes under it.
 //! Drawing it character by character rather than clipping the line twice
 //! keeps the gauge to one pass over the RastPort and needs no region.
+//!
+//! **A new level fills towards it.** Told a level while it is in a window,
+//! the gauge keeps it and moves the level it shows there over a quarter of
+//! a second, slowing to the end, on motion.library's clock: the step only
+//! moves the shown level and asks intuition to draw the gauge again
+//! (`QueueGadgetRefresh`). A new level on the way turns it from where it
+//! is. Out of a window, with `GA_Animate` off for it or its screen, or
+//! without motion.library, it jumps. motion.library is opened by the first
+//! gauge that moves, and closed with it.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -27,6 +36,8 @@ const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const fg = gadgets.fuelgauge;
 const tx = gadgets.text;
+const motion = sdk.motion;
+const MotionBase = sdk.interface.motion.MotionBase;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -49,6 +60,8 @@ pub const Data = extern struct {
     min: i32 = 0,
     max: i32 = 100,
     level: i32 = 0,
+    /// The level drawn: the level, or on the way to it.
+    shown_level: i32 = 0,
     /// Filled from the bottom rather than from the left.
     vertical: u8 = 0,
     /// The number shown is the hundredths, not the level.
@@ -61,7 +74,15 @@ pub const Data = extern struct {
     frame: ?*Object = null,
     /// The number as text.
     written: [40]u8 = @splat(0),
+    /// What moves it: motion.library, the animation, and the hook its
+    /// steps call - its data the gauge, its sub-entry the class's base.
+    motion_base: ?*MotionBase = null,
+    animation: ?*motion.Animation = null,
+    hook: utility.Hook = .{},
 };
+
+/// How long a new level takes to fill to, in milliseconds.
+const fill_time = 250;
 
 /// How long a gauge is at the least, and as it looks right.
 const least_length = 32;
@@ -76,19 +97,73 @@ fn clamp(own: *Data) void {
     own.level = @max(own.min, @min(own.level, own.max));
 }
 
-/// How far along it is, in hundredths; 100 when it has nowhere to go.
-pub fn percentOf(own: *const Data) i32 {
+/// How far along `level` is, in hundredths; 100 when it has nowhere to go.
+pub fn percentAt(own: *const Data, level: i32) i32 {
     const span: i64 = @as(i64, own.max) - own.min;
     if (span <= 0) return 100;
-    return @intCast(@divTrunc((@as(i64, own.level) - own.min) * 100, span));
+    return @intCast(@divTrunc((@as(i64, level) - own.min) * 100, span));
 }
 
-/// How much of `room` is filled.
+/// How much of `room` the shown level fills.
 fn filledIn(own: *const Data, room: i32) i32 {
     if (room <= 0) return 0;
     const span: i64 = @as(i64, own.max) - own.min;
     if (span <= 0) return room;
-    return @intCast(@divTrunc((@as(i64, own.level) - own.min) * room, span));
+    return @intCast(@divTrunc((@as(i64, own.shown_level) - own.min) * room, span));
+}
+
+/// A step of the fill: the shown level moved, and intuition asked to draw
+/// the gauge. On motion.library's task: it waits for nothing.
+fn fillStep(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const msg: *const motion.AnimationMsg = @ptrCast(@alignCast(message.?));
+    const o: *Object = @ptrCast(@alignCast(hook.data.?));
+    const base: *gadgets.Base = @ptrCast(@alignCast(@constCast(hook.sub_entry.?)));
+    const own = classes.instData(Data, base.class, o);
+    own.shown_level = msg.value;
+    base.intuition_base.QueueGadgetRefresh(o);
+    return 0;
+}
+
+/// The shown level moved towards the level: from where it is, if the
+/// gauge is in a window and moves; at once otherwise. True when it moves,
+/// and so draws itself.
+fn fillTowards(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) bool {
+    const info = gi orelse {
+        own.shown_level = own.level;
+        return false;
+    };
+    if (own.shown_level == own.level or !gc.animates(gc.gadget(o), info.draw_info)) {
+        if (own.animation) |animation| own.motion_base.?.StopAnimation(animation, motion.STOP_WHERE_IT_IS);
+        own.shown_level = own.level;
+        return false;
+    }
+    if (own.motion_base == null) {
+        own.motion_base = @ptrCast(base.sys_base.OpenLibrary(motion.MOTIONNAME, 1) orelse {
+            own.shown_level = own.level;
+            return false;
+        });
+    }
+    const mb = own.motion_base.?;
+    own.hook = .{ .entry = &fillStep, .data = o, .sub_entry = base };
+    const tags = [_]TagItem{
+        .{ .tag = motion.ANIM_From, .data = @bitCast(@as(isize, own.shown_level)) },
+        .{ .tag = motion.ANIM_To, .data = @bitCast(@as(isize, own.level)) },
+        .{ .tag = motion.ANIM_Duration, .data = fill_time },
+        .{ .tag = motion.ANIM_Easing, .data = motion.EASE_OUT },
+        .{ .tag = motion.ANIM_StepHook, .data = @intFromPtr(&own.hook) },
+        .{},
+    };
+    if (own.animation) |animation| {
+        _ = mb.SetAnimationAttrsTagList(animation, &tags);
+    } else {
+        own.animation = mb.CreateAnimationTagList(&tags);
+    }
+    const animation = own.animation orelse {
+        own.shown_level = own.level;
+        return false;
+    };
+    mb.StartAnimation(animation);
+    return true;
 }
 
 /// The attributes among `tags`: whether anything that shows changed.
@@ -162,7 +237,7 @@ fn barOf(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.Draw
 /// The number as text; null when no format says to show one.
 fn shown(base: *gadgets.Base, own: *Data) ?[*:0]const u8 {
     const format = own.format orelse return null;
-    const number: i64 = if (own.percent != 0) percentOf(own) else own.level;
+    const number: i64 = if (own.percent != 0) percentAt(own, own.shown_level) else own.shown_level;
     return support.formatNumber(base.sys_base, format, number, &own.written);
 }
 
@@ -216,7 +291,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     const b = gc.boxFor(gc.gadget(o), info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_INDICATOR);
+    const pens: [*]const graphics.Pen = &styled;
     const bar = barOf(base, own, b, info.draw_info);
     const room = if (own.vertical != 0) bar.height else bar.width;
     const filled = filledIn(own, room);
@@ -268,6 +344,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
             _ = setAttrs(base, own, new.attr_list, true);
+            own.shown_level = own.level;
             const ub = base.utility_base;
             if (ub.FindTagItem(gc.GA_Width, new.attr_list) == null and ub.FindTagItem(gc.GA_Height, new.attr_list) == null) {
                 const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
@@ -284,12 +361,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
             ib.DisposeObject(own.frame);
+            if (own.motion_base) |mb| {
+                // Its step is not running once this returns.
+                mb.DeleteAnimation(own.animation);
+                base.sys_base.CloseLibrary(mb.lib());
+            }
             return ib.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             var changed = ib.SendSuperMessage(cl, o, msg);
-            if (setAttrs(base, classes.instData(Data, cl, o.?), set.attr_list, false)) changed = 1;
+            const own = classes.instData(Data, cl, o.?);
+            const was = own.level;
+            if (setAttrs(base, own, set.attr_list, false)) changed = 1;
+            // A new level fills towards it, drawing itself as it goes.
+            if (own.level != was and fillTowards(base, own, o.?, set.gadget_info)) return 0;
+            own.shown_level = own.level;
             if (changed != 0 and classes.objectClass(o.?) == cl and set.gadget_info != null) {
                 support.redraw(ib, o.?, set.gadget_info);
                 return 0;
@@ -303,7 +390,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 fg.GAUGE_Level => get.storage.* = @bitCast(@as(isize, own.level)),
                 fg.GAUGE_Min => get.storage.* = @bitCast(@as(isize, own.min)),
                 fg.GAUGE_Max => get.storage.* = @bitCast(@as(isize, own.max)),
-                fg.GAUGE_Percent => get.storage.* = @bitCast(@as(isize, percentOf(own))),
+                fg.GAUGE_Percent => get.storage.* = @bitCast(@as(isize, percentAt(own, own.level))),
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;

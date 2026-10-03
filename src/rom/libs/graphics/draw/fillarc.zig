@@ -6,12 +6,13 @@ const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
-const fillSpan = _draw.fillSpan;
+const _smooth = @import("_smooth.zig");
+const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
 const inSweep = _draw.inSweep;
 const grow = _draw.grow;
 const pieceAt = _draw.pieceAt;
-const plot = _draw.plot;
+const plot = _draw.plotShape;
 const Rect = graphics.Rect;
 const RastPort = _draw.RastPort;
 const Arc = graphics.Arc;
@@ -94,6 +95,21 @@ pub fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void {
     if (turn == 0) return;
     const whole = @mod(turn, 360) == 0;
 
+    rp.fill_box = .{ .min_x = arc.cx - radius, .min_y = arc.cy - radius, .max_x = arc.cx + radius + 1, .max_y = arc.cy + radius + 1 };
+    if (rp.smooth) {
+        // The hole of a hard ring is the pixels nearer than `inner`, which
+        // is a circle reaching to the far side of the pixels `inner - 1`
+        // away.
+        const S = _smooth.Cut(_smooth.Oval, _smooth.Oval);
+        var shape = S{ .outer = .{ .cx = arc.cx, .cy = arc.cy, .rx = radius, .ry = radius } };
+        if (inner > 0) shape.hole = .{ .cx = arc.cx, .cy = arc.cy, .rx = inner - 1, .ry = inner - 1 };
+        if (!whole) {
+            shape.sweep = .{ arc.from, arc.to };
+            shape.centre = .{ 8 * @as(i64, arc.cx) + 4, 8 * @as(i64, arc.cy) + 4 };
+        }
+        _smooth.fill(gb, rp, shape, arc.cy - radius, arc.cy + radius, true);
+        return;
+    }
     var bound = Rect{};
     var any = false;
     var dy: i32 = -radius;

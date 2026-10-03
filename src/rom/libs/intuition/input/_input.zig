@@ -55,6 +55,7 @@ const pointer = @import("pointer.zig");
 const _requester = @import("../requester/_requester.zig");
 const rq = sdk.intuition.requesters;
 const gadgetclass = @import("../classes/gadgetclass.zig");
+const _style = @import("../style/_style.zig");
 const gc = sdk.intuition.gadgetclass;
 const Object = sdk.intuition.Object;
 
@@ -131,6 +132,24 @@ pub const State = extern struct {
     help_y: i32 = -1,
     help_target: ?*anyopaque = null,
     help_code: usize = 0,
+    /// The gadget the pointer is over with nothing held, and its window:
+    /// the one marked `GFLG_HOVERED`.
+    hovered: ?*Object = null,
+    hover_window: ?*Window = null,
+    /// The gadget that has the input: the one marked `GFLG_FOCUSED`.
+    focused: ?*Object = null,
+    /// The signal another task wakes the input task with when gadgets wait
+    /// to be drawn again (`QueueGadgetRefresh`).
+    refresh_mask: u32 = 0,
+    /// A gadget of a window that never takes the activation, pressed
+    /// beside whatever has the input, and its window; and whether the
+    /// release of a press it was done with at once is still to come.
+    side: ?*Object = null,
+    side_window: ?*Window = null,
+    side_release: u8 = 0,
+    pad3: [3]u8 = .{ 0, 0, 0 },
+    /// The on-screen keyboard (`keyboard.zig`).
+    keyboard: @import("keyboard.zig").State = .{},
 };
 
 fn stateOf(ib: *IntuitionBase) *State {
@@ -200,6 +219,8 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     const ib: *IntuitionBase = @alignCast(@fieldParentPtr("input", st));
     const signal = sys.AllocSignal(-1);
     if (signal >= 0) st.mask = @as(u32, 1) << @intCast(signal);
+    const refresh_signal = sys.AllocSignal(-1);
+    if (refresh_signal >= 0) st.refresh_mask = @as(u32, 1) << @intCast(refresh_signal);
     if (st.starter) |starter| {
         st.starter = null;
         sys.Signal(starter, @as(u32, 1) << @intCast(st.start_signal));
@@ -217,18 +238,22 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     const head: *volatile u32 = &st.head;
     const tail: *volatile u32 = &st.tail;
     while (true) {
-        const got = sys.Wait(st.mask | verify_mask);
+        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask);
         if (got & verify_mask != 0) {
             _window.lock(ib);
             verify.poll(ib);
             _window.unlock(ib);
         }
+        if (got & st.refresh_mask != 0) refreshQueued(ib);
         while (tail.* != head.*) {
             const e = st.events[tail.* % ring_size];
             tail.* +%= 1;
             // A move followed by another move is only the way there.
             if (isMove(&e) and tail.* != head.* and isMove(&st.events[tail.* % ring_size])) continue;
             handle(ib, &e);
+            // The on-screen keyboard up or down, the event's work done
+            // and nothing held.
+            @import("keyboard.zig").follow(ib);
         }
     }
 }
@@ -328,8 +353,13 @@ pub fn windowEvent(ib: *IntuitionBase, w: *Window, class: u32, code: u32) void {
 /// screen semaphore.
 pub fn forget(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
+    if (st.side_window == w) {
+        st.side = null;
+        st.side_window = null;
+    }
     menus.forget(ib, w);
     if (st.mode == .verify and st.window == w) verify.drop(ib);
+    if (st.hover_window == w) unhover(ib);
     if (st.window == w) {
         if (st.mode == .active) abort(ib);
         st.window = null;
@@ -341,6 +371,13 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
 /// told it has lost it. Under the screen semaphore.
 pub fn forgetGadget(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
+    gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_REFRESH;
+    if (st.side == o) {
+        st.side = null;
+        st.side_window = null;
+    }
+    if (st.hovered == o) unhover(ib);
+    if (st.focused == o) focus(ib, null);
     if (st.mode == .active and st.active == o) {
         abort(ib);
         st.window = null;
@@ -367,6 +404,7 @@ fn abort(ib: *IntuitionBase) void {
     // already gone cannot leave a gadget pointer behind that the next
     // press would find.
     st.active = null;
+    focus(ib, null);
     const w = st.window orelse return;
     var gi = _gadget.infoFor(ib, w, o);
     var msg = gc.GpGoInactive{ .gadget_info = &gi, .abort = 1 };
@@ -460,6 +498,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         menus.handle(ib, e);
         return;
     }
+    if (side(ib, e)) return;
     if (st.mode == .verify) return sizeVerifying(ib, e);
     // A gadget with the input gets everything until it is done; a tick
     // still reaches the window as well.
@@ -518,6 +557,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
                 press(ib, e);
             } else if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
                 release(ib);
+                if (stateOf(ib).mode == .none) hover(ib);
             } else if (e.code == ie.IECODE_NOBUTTON) {
                 moved(ib);
             } else {
@@ -576,6 +616,83 @@ fn feed(ib: *IntuitionBase, e: *const InputEvent) bool {
     return result & gc.GMR_REUSE != 0;
 }
 
+// --- a press beside the input ----------------------------------------------------
+
+/// A side gadget told an input method, as `pressGadget` and `feed` tell an
+/// active one.
+fn sideInput(ib: *IntuitionBase, w: *Window, o: *Object, method: u32, e: *const InputEvent, termination: *i32) usize {
+    const st = stateOf(ib);
+    const b = _gadget.box(ib, w, o);
+    var gi = _gadget.infoFor(ib, w, o);
+    const at = _gadget.toDomainFor(ib, w, o, st.x - w.left, st.y - w.top);
+    var msg = gc.GpInput{
+        .method_id = method,
+        .gadget_info = &gi,
+        .event = e,
+        .termination = termination,
+        .mouse = .{ .x = at.x - b.left, .y = at.y - b.top },
+    };
+    return ib.iface().SendMessage(o, @ptrCast(&msg));
+}
+
+/// A side gadget done: told so, and its program told what it did.
+fn sideDone(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination: i32) void {
+    const st = stateOf(ib);
+    st.side = null;
+    st.side_window = null;
+    const up = _gadget.reporter(ib, o, gadgetclass.GACT_RELVERIFY);
+    var gi = _gadget.infoFor(ib, w, o);
+    var msg = gc.GpGoInactive{ .gadget_info = &gi, .abort = 0 };
+    _ = ib.iface().SendMessage(o, @ptrCast(&msg));
+    if (result & gc.GMR_VERIFY != 0) {
+        if (up) |reported| _ = _window.sendWith(ib, w, wn.IDCMP_GADGETUP, @bitCast(termination), reported);
+    }
+}
+
+/// A press on a window that never takes the activation (`WA_NoActivate`):
+/// its gadget is pressed beside whatever has the input - the active window
+/// stays active, a field being typed into keeps the keys - and has the
+/// pointer's moves, its release and input.device's ticks until it is
+/// done. True when the event was the side's alone.
+fn side(ib: *IntuitionBase, e: *const InputEvent) bool {
+    const st = stateOf(ib);
+    if (st.side) |o| {
+        if (e.class != ie.IECLASS_NEWPOINTERPOS and e.class != ie.IECLASS_TIMER) return false;
+        var termination: i32 = 0;
+        const result = sideInput(ib, st.side_window.?, o, gc.GM_HANDLEINPUT, e, &termination);
+        if (result != gc.GMR_MEACTIVE) sideDone(ib, st.side_window.?, o, result, termination);
+        // A tick goes on to the rest as well.
+        return e.class == ie.IECLASS_NEWPOINTERPOS;
+    }
+    if (e.class != ie.IECLASS_NEWPOINTERPOS) return false;
+    // The release of a press the side gadget was done with at once.
+    if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX and st.side_release != 0) {
+        st.side_release = 0;
+        return true;
+    }
+    if (e.code != ie.IECODE_LBUTTON) return false;
+    const s = screenAt(ib) orelse return false;
+    if (overPanel(ib, s, st.x, st.y)) return false;
+    const w = windowAt(ib, s, st.x, st.y) orelse return false;
+    if (w.flags & _window.WF_NOACTIVATE == 0) return false;
+    switch (_gadget.hit(ib, w, st.x - w.left, st.y - w.top)) {
+        .gadget => |o| {
+            var termination: i32 = 0;
+            const result = sideInput(ib, w, o, gc.GM_GOACTIVE, e, &termination);
+            if (result == gc.GMR_MEACTIVE) {
+                st.side = o;
+                st.side_window = w;
+            } else {
+                st.side_window = w;
+                sideDone(ib, w, o, result, termination);
+                st.side_release = 1;
+            }
+        },
+        else => st.side_release = 1,
+    }
+    return true;
+}
+
 /// A gadget given the input with no press behind it - Tab arriving at it,
 /// or a program asking. The event a press would have carried is null,
 /// which is how a class tells the two apart.
@@ -590,6 +707,8 @@ fn activateGadget(ib: *IntuitionBase, w: *Window, o: *Object) void {
         .termination = &termination,
         .mouse = .{ .x = 0, .y = 0 },
     };
+    // Marked before it is told, so that it draws itself focused.
+    focus(ib, o);
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) {
         st.mode = .active;
@@ -618,6 +737,7 @@ pub fn activateFor(ib: *IntuitionBase, w: *Window, o: *Object, requester: ?*sdk.
 fn finish(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination: i32) void {
     const st = stateOf(ib);
     st.active = null;
+    focus(ib, null);
     st.mode = .none;
     st.window = null;
     // Who it was, asked before it is told it is done: a group forgets
@@ -655,6 +775,7 @@ fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent)
     if (_gadget.reporter(ib, o, gadgetclass.GACT_IMMEDIATE)) |reported| {
         _ = _window.sendWith(ib, w, wn.IDCMP_GADGETDOWN, 0, reported);
     }
+    focus(ib, _gadget.innermost(ib, o));
     const result = ib.iface().SendMessage(o, @ptrCast(&msg));
     if (result == gc.GMR_MEACTIVE) {
         st.mode = .active;
@@ -823,10 +944,163 @@ fn moved(ib: *IntuitionBase) void {
         // A move with nothing held goes only to a window that asked to hear
         // the pointer over it. Without that a window listening for the class
         // at all would be told about every move anywhere on the screen.
-        else => if (ib.active_window) |w| {
-            if (w.flags & _window.WF_REPORTMOUSE != 0) _window.send(ib, w, wn.IDCMP_MOUSEMOVE, 0);
+        else => {
+            if (st.mode == .none) hover(ib);
+            if (ib.active_window) |w| {
+                if (w.flags & _window.WF_REPORTMOUSE != 0) _window.send(ib, w, wn.IDCMP_MOUSEMOVE, 0);
+            }
         },
     }
+}
+
+// --- gadgets drawn at another task's asking ----------------------------------------
+
+/// `o` marked to be drawn again, and the input task woken. Never waits.
+pub fn queueRefresh(ib: *IntuitionBase, o: *Object) void {
+    const st = stateOf(ib);
+    const sys = ib.sys_base;
+    sys.Forbid();
+    gadgetclass.gadgetOf(ib, o).flags |= gadgetclass.GFLG_REFRESH;
+    sys.Permit();
+    if (st.started == 1 and st.refresh_mask != 0) sys.Signal(&st.task, st.refresh_mask);
+}
+
+/// What `refreshQueued` carries to each window.
+const Refreshing = struct {
+    ib: *IntuitionBase,
+
+    fn window(r: *Refreshing, w: *Window) void {
+        var next = w.gadgets;
+        while (next) |o| : (next = gadgetclass.gadgetOf(r.ib, o).next) _gadget.visit(r.ib, o, &Owed{ .ib = r.ib, .w = w }, Owed.each);
+        var req = w.first_request;
+        while (req) |each| : (req = each.older) {
+            var gadget = each.gadgets;
+            while (gadget) |o| : (gadget = gadgetclass.gadgetOf(r.ib, o).next) _gadget.visit(r.ib, o, &Owed{ .ib = r.ib, .w = w }, Owed.each);
+        }
+    }
+};
+
+/// One gadget, drawn if it was marked.
+const Owed = struct {
+    ib: *IntuitionBase,
+    w: *Window,
+
+    fn each(owed: *const Owed, o: *Object) void {
+        const g = gadgetclass.gadgetOf(owed.ib, o);
+        const sys = owed.ib.sys_base;
+        sys.Forbid();
+        const waiting = g.flags & gadgetclass.GFLG_REFRESH != 0;
+        g.flags &= ~gadgetclass.GFLG_REFRESH;
+        sys.Permit();
+        if (waiting) _gadget.render(owed.ib, owed.w, o, gc.GREDRAW_UPDATE);
+    }
+};
+
+/// Every gadget of every window that was marked drawn again, its mark
+/// taken off first so that one marked while it is drawn is drawn again.
+/// On the input task; the host tests call it themselves.
+pub fn refreshQueued(ib: *IntuitionBase) void {
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    var refreshing = Refreshing{ .ib = ib };
+    _window.eachWindow(ib, &refreshing, Refreshing.window);
+}
+
+// --- hover and focus ----------------------------------------------------------------
+
+/// The gadget under the pointer marked hovered, the one it left unmarked.
+/// Only a mouse's pointer hovers: a finger is pressed or not there, and a
+/// gadget lit where a finger last lifted would stay lit with nobody
+/// pointing at it.
+///
+/// A move that stays inside the box of the gadget already hovered asks
+/// nothing; only leaving it asks the window's gadgets which is under the
+/// pointer now, which keeps the price of a move to a box test.
+fn hover(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    if (@as(*volatile u8, &ib.pointer.mouse).* == 0) return;
+    const s = screenAt(ib) orelse return unhover(ib);
+    if (overPanel(ib, s, st.x, st.y)) return unhover(ib);
+    const w = windowAt(ib, s, st.x, st.y) orelse return unhover(ib);
+    const x = st.x - w.left;
+    const y = st.y - w.top;
+    if (st.hovered) |o| {
+        if (st.hover_window == w and inBox(ib, w, o, x, y)) return;
+    }
+    const found = gadgetUnder(ib, w, x, y) orelse return unhover(ib);
+    if (found == st.hovered) return;
+    unhover(ib);
+    st.hovered = found;
+    st.hover_window = w;
+    marked(ib, w, found, gadgetclass.GFLG_HOVERED, true);
+}
+
+/// Nothing hovered any more.
+fn unhover(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const o = st.hovered orelse return;
+    const w = st.hover_window;
+    st.hovered = null;
+    st.hover_window = null;
+    if (w) |window| {
+        marked(ib, window, o, gadgetclass.GFLG_HOVERED, false);
+    } else {
+        gadgetclass.gadgetOf(ib, o).flags &= ~gadgetclass.GFLG_HOVERED;
+    }
+}
+
+/// A flag of a gadget's set or cleared, and the gadget drawn again when a
+/// style it is drawn from has anything to say about hovering: under the
+/// system's default alone it would draw the same pixels again.
+fn marked(ib: *IntuitionBase, w: *Window, o: *Object, flag: u32, on: bool) void {
+    const g = gadgetclass.gadgetOf(ib, o);
+    if (on) g.flags |= flag else g.flags &= ~flag;
+    const gi = _gadget.infoFor(ib, w, o);
+    if (_style.mentions(ib, g.style, gi.draw_info, sdk.intuition.style.STATE_HOVERED)) {
+        _gadget.render(ib, w, o, gc.GREDRAW_UPDATE);
+    }
+}
+
+/// Whether (x, y), in the window's coordinates, is inside a gadget's box.
+fn inBox(ib: *IntuitionBase, w: *Window, o: *Object, x: i32, y: i32) bool {
+    const g = gadgetclass.gadgetOf(ib, o);
+    const gi = _gadget.infoFor(ib, w, o);
+    const b = _gadget.boxIn(g, gi.domain_width, gi.domain_height);
+    const at_x = x - gi.domain_left;
+    const at_y = y - gi.domain_top;
+    return at_x >= b.left and at_y >= b.top and at_x < b.left + b.width and at_y < b.top + b.height;
+}
+
+/// The enabled gadget a press at (x, y) would reach - the member of a
+/// group, not the group - or null. A requester up offers only its own
+/// gadgets, and only over itself; a gadget standing for one of the
+/// window's own border gadgets is not hovered, as they are not.
+fn gadgetUnder(ib: *IntuitionBase, w: *Window, x: i32, y: i32) ?*Object {
+    const st = stateOf(ib);
+    var list = w.gadgets;
+    if (w.first_request) |req| {
+        const layer = ib.layers_base.WhichLayer(w.screen.layer_info, st.x, st.y);
+        if (req.layer == null or layer != req.layer) return null;
+        list = req.gadgets;
+    } else switch (partAt(w, x, y)) {
+        .inside, .border, .drag => {},
+        else => return null,
+    }
+    return switch (_gadget.hitList(ib, w, list, x, y)) {
+        .gadget => |o| if (sysPartOf(ib, o) != null) null else _gadget.innermost(ib, o),
+        else => null,
+    };
+}
+
+/// The gadget that has the input marked focused, the one before unmarked.
+/// Nothing is drawn here: a gadget draws itself as it goes active and as
+/// it goes inactive, and the flag is set before the first and cleared
+/// before the second.
+fn focus(ib: *IntuitionBase, o: ?*Object) void {
+    const st = stateOf(ib);
+    if (st.focused) |old| gadgetclass.gadgetOf(ib, old).flags &= ~gadgetclass.GFLG_FOCUSED;
+    st.focused = o;
+    if (o) |new| gadgetclass.gadgetOf(ib, new).flags |= gadgetclass.GFLG_FOCUSED;
 }
 
 /// The menu and middle buttons: told to the active window, wherever the

@@ -328,6 +328,65 @@ pub const Arc = extern struct {
     to: i32 = 360,
 };
 
+/// A whole box, in a `FillStyle`'s coordinates: 0 is a shape's left or top
+/// edge, `FILL_ONE` its right or bottom. Positions past either end are
+/// allowed, which puts a gradient's ends outside the shape.
+pub const FILL_ONE: i32 = 4096;
+
+/// `FillStyle.kind`: from one colour to another along a line.
+pub const FILL_LINEAR: u32 = 1;
+/// `FillStyle.kind`: from one colour at a centre outward in rings.
+pub const FILL_RADIAL: u32 = 2;
+/// `FillStyle.kind`: a picture repeated, anchored to the RastPort so two
+/// shapes filled with it line up where they meet.
+pub const FILL_TILE: u32 = 3;
+
+/// `FillStyle.flags`: no dithering. A gradient put down on a surface of 16
+/// bits a pixel is dithered unless this is set, because there it would
+/// otherwise come out in visible bands; set it where exact colours matter
+/// more than smooth ones.
+pub const FILLF_NODITHER: u32 = 1 << 0;
+
+/// A colour at a place along a gradient: `at` from 0 to `FILL_ONE`.
+pub const GradientStop = extern struct {
+    at: i32 = 0,
+    pen: Pen = 0,
+};
+
+/// What a shape is filled with instead of the pen (`RPTAG_FillStyle`).
+///
+/// **A gradient** runs from `from` to `to`, two points given in the shape's
+/// own box (`FILL_ONE` is the whole of it), so one fill style fits a shape
+/// of any size: `from` at the top and `to` at the bottom is a gradient
+/// down any box. A linear one changes colour along that line and keeps it
+/// across it; a radial one is centred on `from` and reaches its last stop
+/// at the distance to `to`. Between two stops the colours - alpha included
+/// - are mixed in proportion; before the first stop and after the last the
+/// end colours carry on.
+///
+/// **A tile** is a picture repeated, `tile` in any format the library reads.
+///
+/// A colour with an alpha below 255 is laid over what is there by it, as a
+/// translucent pen is.
+pub const FillStyle = extern struct {
+    kind: u32 = FILL_LINEAR,
+    flags: u32 = 0,
+    from_x: i32 = 0,
+    from_y: i32 = 0,
+    to_x: i32 = 0,
+    to_y: i32 = FILL_ONE,
+    /// How many of `stops` are used: 1 to 4.
+    count: u32 = 2,
+    stops: [4]GradientStop = .{
+        .{ .at = 0, .pen = 0xFF00_0000 },
+        .{ .at = FILL_ONE, .pen = 0xFFFF_FFFF },
+        .{},
+        .{},
+    },
+    /// The picture of a `FILL_TILE`, or null.
+    tile: ?*const Surface = null,
+};
+
 /// How much of a blit lands: all of it, some of it everywhere, or a
 /// different amount at every pixel.
 ///
@@ -466,6 +525,32 @@ pub const RPTAG_BackFill = RPTAG_Dummy + 21;
 /// `RPTAG_BackFill` with this instead of a hook: leave the area exactly as
 /// it is. A value and not a hook, so that "do nothing" costs no call.
 pub const BACKFILL_NONE: usize = 1;
+
+/// What a shape is filled with instead of the pen: a `*const FillStyle`,
+/// or 0 for the pen again. The RastPort keeps a copy, so the caller's may
+/// go; read back, it is a pointer to that copy, or 0. Taken by the fills -
+/// `RectFill`, `FillRoundRect`, `FillArc`, `AreaEnd` - and by nothing else:
+/// lines, outlines and text keep the pen.
+pub const RPTAG_FillStyle = RPTAG_Dummy + 23;
+
+/// How wide an outline is, in pixels: 1, the least, is every line's width
+/// unless this says otherwise. Taken by `Draw`, `DrawPoly`, `DrawRect`,
+/// `DrawRoundRect`, `DrawCircle`, `DrawEllipse` and `DrawArc`. A closed
+/// shape's outline grows inward, so a wider one never makes the shape
+/// bigger; a line is centred on its path and has square ends. A wider
+/// outline of a closed shape is solid; a line keeps the line pattern.
+/// `DrawHLine` and `DrawVLine` are rows and columns of pixels and stay
+/// one wide.
+pub const RPTAG_LineWidth = RPTAG_Dummy + 24;
+
+/// 1 for smooth edges: a curve's edge pixels laid over what is there by
+/// how much of each the shape covers, so circles, rings, wedges and round
+/// corners come out without stairs - in `FillRoundRect`, `FillArc`,
+/// `DrawRoundRect`, `DrawCircle`, `DrawEllipse`, `DrawArc` and a `Draw` one
+/// pixel wide with a solid pattern. 0, the default, for hard edges, which
+/// is what every pixel-exact drawing wants. Straight edges along the rows
+/// and columns are the same either way.
+pub const RPTAG_Smooth = RPTAG_Dummy + 25;
 
 /// What a hook that paints an empty area is told.
 ///

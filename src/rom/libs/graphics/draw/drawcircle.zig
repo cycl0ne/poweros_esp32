@@ -61,6 +61,7 @@ const handOn = _draw.handOn;
 pub fn DrawCircle(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32) void {
     rp.last_error = graphics.GERR_OK;
     if (radius < 0) return;
+    if (rp.line_width > 1 or rp.smooth) return @import("_wide.zig").circle(gb, rp, cx, cy, radius, @intCast(rp.line_width));
     var step: u32 = rp.pattern_step;
     var bound = Rect{};
     var any = false;

@@ -121,6 +121,8 @@ pub const IntuitionBase = extern struct {
     /// How far apart two clicks may be and still be a double-click.
     double_seconds: u32,
     double_micros: u32,
+    /// When the on-screen keyboard comes up (`Preferences.keyboard`).
+    keyboard_mode: u32,
     /// The RastPorts `ObtainGIRPort` has given out, and the layer held for
     /// each, so that the release can let the right one go.
     held: [_gadget.held_max]_gadget.Held,
@@ -128,6 +130,18 @@ pub const IntuitionBase = extern struct {
     /// IDCMP_VANILLAKEY through it. Null without it, and then keys are only
     /// ever IDCMP_RAWKEY.
     keymap_base: ?*sdk.interface.keymap.KeymapBase,
+    /// The system's default style: what every part looks like where
+    /// neither a gadget's own style nor its screen's says. Read by the
+    /// compiler into the ROM's constant data, so it is never allocated
+    /// and never freed.
+    default_style: ?*const sdk.intuition.Style,
+    /// The system's style (`SetStyle` with no screen): asked after a
+    /// screen's own and before the default, so it changes every screen at
+    /// once. Null until one is given; replaced under Forbid.
+    system_style: ?*sdk.intuition.Style = null,
+    /// motion.library, opened the first time a style asks for a
+    /// transition; null before, and where there is none.
+    motion_base: ?*sdk.interface.motion.MotionBase = null,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

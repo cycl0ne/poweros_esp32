@@ -36,6 +36,7 @@ Generated from the source by `./zig build autodoc`.
 - [DrawBorder](#drawborder) - Draws a Border and the Borders linked after it.
 - [DrawImage](#drawimage) - Draws an image.
 - [DrawImageState](#drawimagestate) - Draws an image in a state.
+- [DrawPart](#drawpart) - Draws a part of a gadget in a state, from its style.
 - [EasyRequestArgs](#easyrequestargs) - Asks something in a requester and waits for the answer.
 - [EndRefresh](#endrefresh) - Ends a redraw begun with BeginRefresh.
 - [EndRequest](#endrequest) - Takes a requester down.
@@ -54,6 +55,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetPrefs](#getprefs) - The settings as they are now.
 - [GetScreenAttrs](#getscreenattrs) - Reads a screen.
 - [GetScreenDrawInfo](#getscreendrawinfo) - The pens and font a screen's parts are drawn in.
+- [GetStyleAttr](#getstyleattr) - One property of a part in a state, found as `DrawPart` finds it.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
 - [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
@@ -84,6 +86,7 @@ Generated from the source by `./zig build autodoc`.
 - [PointInImage](#pointinimage) - Whether a point is inside an image.
 - [PrintIText](#printitext) - Draws a run of text and the runs linked after it.
 - [PubScreenStatus](#pubscreenstatus) - Opens a public screen to visitors, or closes it to them.
+- [QueueGadgetRefresh](#queuegadgetrefresh) - A gadget drawn again by intuition soon, with whatever it holds then.
 - [RefreshGList](#refreshglist) - Draws gadgets of a window.
 - [RefreshWindowFrame](#refreshwindowframe) - Draws a window's border again.
 - [ReleaseGIRPort](#releasegirport) - Gives back a RastPort from `ObtainGIRPort`.
@@ -108,11 +111,13 @@ Generated from the source by `./zig build autodoc`.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
 - [SetPrefs](#setprefs) - The settings changed.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
+- [SetStyle](#setstyle) - A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
 - [SetSystemFonts](#setsystemfonts) - The fonts screens, windows and consoles use from now on.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
 - [SetWindowTitles](#setwindowtitles) - Changes a window's title and the screen title it shows while active.
 - [ShowTitle](#showtitle) - Puts a screen's title bar in front of its backdrop windows, or behind them.
 - [SizeWindow](#sizewindow) - Sizes a window.
+- [StylePens](#stylepens) - The screen's pens, with the ones that stand for a gadget's look taken from a part of the style.
 - [SysReqHandler](#sysreqhandler) - Reads what arrived at a requester.
 - [TimedDisplayAlert](#timeddisplayalert) - Shows an alert and waits for an answer, or for the time to run out.
 - [UnlockClassList](#unlockclasslist) - Lets the public class list go.
@@ -1831,6 +1836,110 @@ None known.
 ib.DrawImageState(rp, button_face, 0, 0, imageclass.IDS_SELECTED, null);
 ```
 
+## DrawPart
+
+Draws a part of a gadget in a state, from its style.
+
+**SYNOPSIS**
+
+```zig
+fn DrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort,
+    draw_info: ?*const DrawInfo, own: ?*const Style, part: u32,
+    state: u32, flags: u32, box: *const Rect, content: ?*Rect) void
+```
+
+**SINCE**
+
+0.20. LVO -476.
+
+**INPUTS**
+
+- `rp` - where to draw, or null to draw nothing and only answer
+  `content`.
+- `draw_info` - the screen's, for its pens and its style; null for the
+  default pens and the system's default style alone.
+- `own` - a gadget's own style (`GA_Style`, read back), or null.
+- `part` - a `style.PART_` number, or a class's own (`style.classPart`).
+- `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+  the look part of the way from one state to another, every colour
+  mixed channel by channel and every number rounded.
+- `flags` - `style.DPF_INVERT` to turn the border the other way,
+  `style.DPF_EDGES_ONLY` to draw the border and leave the inside.
+- `box` - where the part goes, half-open.
+- `content` - where to write the room left inside the border and the
+  padding, or null.
+
+**RESULT**
+
+Nothing. `content`, when given, is `box` less the border and the
+padding on each side; a box too small for them gives an empty one at
+its middle rather than a negative one.
+
+**BEHAVIOR**
+
+Every property is found on its own, by the order the styles header
+describes: the most particular state first, then the gadget's own style
+before the screen's before the default, then the exact part before the
+one it falls back to.
+
+What is drawn, in order:
+
+- **The inside** in the background - a colour, or a fill style laid
+  across the inside as a gradient or a tile - inside the border, or, for
+  a part with a radius, the whole rounded shape with the border drawn
+  over it. Not with `DPF_EDGES_ONLY`.
+- **The border**, by its kind: a flat one in the border colour; a raised
+  or recessed bevel in the shine and shadow colours, `STYLE_BorderX`
+  thick at the sides and `STYLE_BorderY` at the top and bottom, its
+  corners meeting as `STYLE_Joins` says; a ridge or a groove as two
+  bevels, one inside the other, turned opposite ways, with
+  `STYLE_BorderGap` thicknesses of the inside between them. A bevel with a
+  radius is drawn by `DrawRoundBevel`: its two colours meet on the
+  diagonal through the top-right and bottom-left corners.
+
+An opacity below 255 lays every colour over what is there by that much.
+A part with a radius is drawn with smooth edges (`RPTAG_Smooth`), the
+RastPort's own setting given back afterwards.
+
+The RastPort's pens, draw mode and font are put back as they were.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated, and the styles are only read.
+
+**NOTES**
+
+- With nothing set anywhere - a screen given no style - every part looks
+  as frames always have: the default style is written to be that look.
+- A class measures a part with `rp` null: the content box of a part in
+  a given box is what a frame around contents needs to add.
+
+**BUGS**
+
+- A rounded border is as thick all round as the thicker of its two
+  thicknesses.
+
+**SEE ALSO**
+
+`GetStyleAttr`, `SA_Style`, `GA_Style`, `DrawImageState`
+
+**EXAMPLES**
+
+```zig
+// A button's body, and the room for its label inside it.
+var inside: graphics.Rect = undefined;
+ib.DrawPart(rp, draw_info, own, style.PART_MAIN,
+    if (pressed) style.STATE_PRESSED else style.STATE_NORMAL, 0,
+    &box, &inside);
+```
+
 ## EasyRequestArgs
 
 Asks something in a requester and waits for the answer.
@@ -2915,6 +3024,84 @@ None known.
 const dri = ib.GetScreenDrawInfo(screen);
 defer ib.FreeScreenDrawInfo(screen, dri);
 const text = dri.pens[TEXTPEN];
+```
+
+## GetStyleAttr
+
+One property of a part in a state, found as `DrawPart` finds it.
+
+**SYNOPSIS**
+
+```zig
+fn GetStyleAttr(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
+    own: ?*const Style, part: u32, state: u32, attr: Tag) usize
+```
+
+**SINCE**
+
+0.20. LVO -480.
+
+**INPUTS**
+
+- `draw_info` - the screen's, for its pens and its style; null for the
+  default pens and the system's default style alone.
+- `own` - a gadget's own style (`GA_Style`, read back), or null.
+- `part` - a `style.PART_` number, or a class's own.
+- `state` - `style.STATE_` bits, or a mixed state (`style.mixState`):
+  the look part of the way from one state to another, every colour
+  mixed channel by channel and every number rounded.
+- `attr` - a `style.STYLE_` tag.
+
+**RESULT**
+
+A colour as 0xAARRGGBB, whichever of its two tags `attr` is - a pen
+index in the style is looked up in the screen's pens, so the answer can
+go straight into `RPTAG_APen`. `STYLE_BackgroundFill` answers a
+`*const graphics.FillStyle`, the style's own copy - good until that
+style is replaced (`SetStyle`) - or 0 when the background is a colour; asked for the background colour of one that is
+a fill style, the colour of its first stop. Any other property as its number:
+`STYLE_BorderWidth` answers `STYLE_BorderX` and `STYLE_Padding`
+`STYLE_PaddingX`. 0 for a tag that is not a property.
+
+**BEHAVIOR**
+
+The property is found by the same order `DrawPart` uses: the most
+particular state first, then the gadget's own style before the screen's
+before the default, then the exact part before the one it falls back
+to. A colour is answered as it is in the style; the part's opacity is
+not laid on it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+What a class asks when it draws something of its own in the style's
+colours - its label, a mark - rather than having `DrawPart` draw it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DrawPart`, `SA_Style`, `GA_Style`
+
+**EXAMPLES**
+
+```zig
+// A button's label in the colour its style gives pressed text.
+const ink = ib.GetStyleAttr(draw_info, own, style.PART_MAIN,
+    style.STATE_PRESSED, style.STYLE_TextPen);
+gb.SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{} });
 ```
 
 ## GetWindowAttrs
@@ -4599,7 +4786,9 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   `WA_Title` (not copied), `WA_CloseGadget`, `WA_DepthGadget`,
   `WA_SizeGadget`, `WA_DragBar`, `WA_Borderless`, `WA_Backdrop`,
   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
-  `WA_Activate`, and `WA_IDCMP` for a message port. Its menus:
+  `WA_Activate` - or `WA_NoActivate`, never active, its gadgets
+  pressed beside whatever has the input - and `WA_IDCMP` for a message
+  port. Its menus:
   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as
@@ -4850,6 +5039,83 @@ None known.
 const screen = ib.OpenScreenTagList(&tags) orelse return;
 // Set up, now visitors are welcome.
 _ = ib.PubScreenStatus(screen, 0);
+```
+
+## QueueGadgetRefresh
+
+A gadget drawn again by intuition soon, with whatever it holds then.
+
+**SYNOPSIS**
+
+```zig
+fn QueueGadgetRefresh(ib: *IntuitionBase, gadget: *Object) void
+```
+
+**SINCE**
+
+0.24. LVO -492.
+
+**INPUTS**
+
+- `gadget` - any gadget, in a window, a requester or a group, or in
+  none.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The gadget is marked and intuition's input task woken; that task,
+which draws gadgets as they are pressed, draws every marked one again
+(`GM_RENDER`, `GREDRAW_UPDATE`) with what it holds at that moment.
+Asked several times before it gets round to it, it is drawn once, in
+its newest state. A gadget that is in no window by then is not drawn,
+and taken out of its window it is not drawn either.
+
+It never waits: it neither takes intuition's lock nor locks a layer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: may be held; it takes Forbid for a moment itself.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+What a class's animation calls at each step, on motion.library's task:
+the step stores the gadget's new value - with `SetAttrsTagList`, no
+GadgetInfo, so nothing is drawn there - and asks for the drawing here.
+Drawing on the clock's own task would have it wait for a window whose
+task may be waiting for the clock.
+
+**BUGS**
+
+- Without input.device - the host tests - there is no task to draw it,
+  and nothing is drawn.
+
+**SEE ALSO**
+
+`RefreshGList`, `GA_Animate`, motion.library `CreateAnimationTagList`
+
+**EXAMPLES**
+
+```zig
+fn step(hook: *Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const msg: *const motion.AnimationMsg = @ptrCast(@alignCast(message.?));
+    const gauge: *Object = @ptrCast(hook.data.?);
+    _ = ib.SetAttrsTagList(gauge, &[_]TagItem{
+        .{ .tag = FUELGAUGE_Level, .data = @intCast(msg.value) },
+        .{},
+    });
+    ib.QueueGadgetRefresh(gauge);
+    return 0;
+}
 ```
 
 ## RefreshGList
@@ -6338,6 +6604,97 @@ const old = ib.SetPubScreenModes(sc.POPPUBSCREEN);
 _ = old;
 ```
 
+## SetStyle
+
+A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
+
+**SYNOPSIS**
+
+```zig
+fn SetStyle(ib: *IntuitionBase, screen: ?*Screen,
+    tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+0.23. LVO -488.
+
+**INPUTS**
+
+- `screen` - the screen whose own style it is, as `SA_Style` gives one
+  at open; null for the system's style.
+- `tags` - the style, a tag list as `SA_Style` takes; null, or one
+  with no property in it, for none.
+
+**RESULT**
+
+True when the style is in place; false when there was no memory for
+it, and then the one before is kept.
+
+**BEHAVIOR**
+
+The list is read once, as `SA_Style`'s is, and may go once the call
+returns. **The system's style** is asked after a screen's own and
+before the system's default, so it changes the look of every screen
+at once, those already open among them, and of every screen opened
+after; a screen's own style still wins over it. **A screen's own**
+replaces what `SA_Style`, or an earlier call, gave that screen.
+
+Every window on the screens it reaches is then drawn again: its
+gadgets laid out - a border or a padding may have changed what fits -
+its frame and its gadgets drawn, and the screen's bar. Each such window
+that listens for `IDCMP_NEWPREFS` hears it, for what it draws itself.
+
+**CONTEXT**
+
+- Waits: yes - for intuition's lock, and for the layers it draws in.
+- Interrupts: no.
+- Forbid: must not be held. The style is changed under a Forbid of the
+  call's own.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list stays the caller's; intuition keeps its own copy, and frees
+the one it replaces. A screen's style is freed when the screen
+closes.
+
+**NOTES**
+
+- What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
+  into the style it came from, and is good only until that style is
+  replaced.
+- What `C:StylePrefs` calls, with no screen, from
+  `ENV:Sys/style.prefs`.
+
+**BUGS**
+
+- A window keeps the border sizes it opened with: a style whose window
+  border is wider or narrower than the one before shows it only in
+  windows opened after.
+- A gadget drawn smaller than before leaves what was outside it until
+  the window is drawn again for some other reason.
+
+**SEE ALSO**
+
+`SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`
+
+**EXAMPLES**
+
+```zig
+// Every screen's buttons with a blue line round them.
+const blue = [_]TagItem{
+    .{ .tag = style.STYLE_Part, .data = style.PART_MAIN },
+    .{ .tag = style.STYLE_Border, .data = style.BORDER_FLAT },
+    .{ .tag = style.STYLE_BorderRGB, .data = 0xFF3A6EA5 },
+    .{},
+};
+if (!ib.SetStyle(null, &blue)) return dos.RETURN_FAIL;
+
+// And back to the default.
+_ = ib.SetStyle(null, null);
+```
+
 ## SetSystemFonts
 
 The fonts screens, windows and consoles use from now on.
@@ -6671,6 +7028,84 @@ None known.
 
 ```zig
 ib.SizeWindow(window, 20, 20);
+```
+
+## StylePens
+
+The screen's pens, with the ones that stand for a gadget's look taken from a part of the style.
+
+**SYNOPSIS**
+
+```zig
+fn StylePens(ib: *IntuitionBase, draw_info: ?*const DrawInfo,
+    own: ?*const Style, part: u32, pens: [*]graphics.Pen) void
+```
+
+**SINCE**
+
+0.22. LVO -484.
+
+**INPUTS**
+
+- `draw_info` - the screen's, for its pens and its style; null for the
+  default pens and the system's default style alone.
+- `own` - a gadget's own style (`GA_Style`, read back), or null.
+- `part` - a `style.PART_` number, or a class's own.
+- `pens` - room for `NUMDRIPENS` pens, written.
+
+**RESULT**
+
+Nothing; the pens are in `pens`, as 0xAARRGGBB.
+
+**BEHAVIOR**
+
+Every pen is the screen's, except six:
+
+| pen | from the part |
+|---|---|
+| `BACKGROUNDPEN` | its background, at rest |
+| `TEXTPEN` | its text, at rest |
+| `FILLPEN` | its background, pressed |
+| `FILLTEXTPEN` | its text, pressed |
+| `SHINEPEN` | its bevel's light side |
+| `SHADOWPEN` | its bevel's dark side |
+
+Each is found as `DrawPart` finds a property. With the system's default
+style and `style.PART_MAIN`, all six are the screen's own pens again,
+so a class that draws with these instead of the screen's draws exactly
+as it did - and follows whatever style its screen or the gadget has.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`pens` is the caller's; nothing is kept.
+
+**NOTES**
+
+A class that also shows a selection or a level takes `FILLPEN` and
+`FILLTEXTPEN` from `style.PART_SELECTION` or `style.PART_INDICATOR`
+with `GetStyleAttr` afterwards.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetStyleAttr`, `DrawPart`
+
+**EXAMPLES**
+
+```zig
+var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
+ib.StylePens(info.draw_info, gadget.style, style.PART_MAIN, &pens);
+// ... draw as before, with `pens` for `info.draw_info.pens`.
 ```
 
 ## SysReqHandler

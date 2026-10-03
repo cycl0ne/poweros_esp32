@@ -178,7 +178,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const g = gc.gadget(o);
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(g, info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     const pressed = own.layer != null;
@@ -304,7 +305,8 @@ fn panelRastPort(base: *gadgets.Base, own: *const Data) ?*graphics.RastPort {
 /// on the fill pen, the rest on the background.
 fn paintLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo, which: u32) void {
     const gb = base.graphics_base;
-    const pens = dri.pens;
+    const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     const row: i32 = @intCast(which - own.first);
     const lines = linesIn(own);
     const at = gc.Box{
@@ -365,7 +367,8 @@ fn paintBar(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: 
     const at = barIn(own);
     if (at.width == 0 or own.count == 0) return;
     const gb = base.graphics_base;
-    const pens = dri.pens;
+    const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     support.fill(gb, rp, at, support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], 13));
     // The knob: never shorter than it can be seen and taken hold of.
     const shown: i64 = @intCast(own.visible);

@@ -499,6 +499,62 @@ test "DrawRoundRect: an outline round a fill of the same shape leaves no gap" {
     try tearDown(gb);
 }
 
+test "DrawRoundBevel: light on the top and left, dark on the bottom and right, meeting on the diagonals" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [40 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 40, 16);
+    const blue = graphics.penRGB(0, 0, 255);
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = blue },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 2 },
+        .{},
+    };
+    const rp = try onMemory(gb, &surface, &tags);
+    const light = graphics.penRGB(255, 255, 255);
+    const dark = graphics.penRGB(255, 0, 0);
+    const box = graphics.Rect{ .max_x = 40, .max_y = 16 };
+    base(gb).DrawRoundBevel(@ptrCast(rp), &box, 6, light, dark);
+
+    const white: u16 = 0xFFFF;
+    const red: u16 = 0xF800;
+    // The straight runs: top and left light, bottom and right dark, two
+    // pixels deep, the inside untouched.
+    try testing.expectEqual(white, pixelAt(&surface, 20, 0));
+    try testing.expectEqual(white, pixelAt(&surface, 20, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 20, 2));
+    try testing.expectEqual(white, pixelAt(&surface, 0, 8));
+    try testing.expectEqual(red, pixelAt(&surface, 20, 15));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 8));
+    // The top-right corner: light above its diagonal, dark to the right
+    // of it; the bottom-left the same way round.
+    try testing.expectEqual(white, pixelAt(&surface, 34, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 5));
+    try testing.expectEqual(white, pixelAt(&surface, 0, 10));
+    try testing.expectEqual(red, pixelAt(&surface, 5, 15));
+    // On a box this wide the change is in the corners, not in the middle
+    // of the long edges.
+    try testing.expectEqual(white, pixelAt(&surface, 30, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 10, 15));
+    // The pen as it was.
+    var pen: graphics.Pen = 0;
+    base(gb).GetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&pen) }, .{} });
+    try testing.expectEqual(blue, pen);
+
+    // Smooth: the same two sides, and every pixel one colour or the other
+    // or the ground - the change between them is hard.
+    @memset(&pixels, 0);
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+    base(gb).DrawRoundBevel(@ptrCast(rp), &box, 6, light, dark);
+    try testing.expectEqual(white, pixelAt(&surface, 20, 0));
+    try testing.expectEqual(red, pixelAt(&surface, 20, 15));
+    try testing.expectEqual(red, pixelAt(&surface, 39, 8));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "FillArc: a whole turn is a disc, a sweep is a wedge, and none is nothing" {
     const gb = try setUp();
     defer kexec.deinit();
@@ -650,6 +706,260 @@ test "BlurCoverage: a hard edge becomes a slope, and only gray8 is touched" {
     base(gb).BlurCoverage(&rgb, &.{ .max_x = 8, .max_y = 4 }, 2);
     for (other) |byte| try testing.expectEqual(@as(u8, 0x5A), byte);
 
+    try tearDown(gb);
+}
+
+test "RPTAG_FillStyle: a gradient down a rectangle, kept as a copy, and lines keep the pen" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .rgb565);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const rp = try onMemory(gb, &surface, &red);
+
+    // Black at the top to white at the bottom, undithered so every pixel
+    // of a row is the same.
+    var fill = graphics.FillStyle{ .flags = graphics.FILLF_NODITHER };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
+    // Changed after it was set: the RastPort's copy is what counts.
+    fill.stops[0].pen = graphics.penRGB(0, 255, 0);
+    var kept: usize = 0;
+    base(gb).GetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&kept) }, .{} });
+    try testing.expect(kept != 0 and kept != @intFromPtr(&fill));
+    try testing.expectEqual(@as(graphics.Pen, 0xFF00_0000), @as(*const graphics.FillStyle, @ptrFromInt(kept)).stops[0].pen);
+
+    base(gb).RectFill(@ptrCast(rp), &.{ .max_x = 8, .max_y = 4 });
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 0, 0));
+    try testing.expectEqual(pixelAt(&surface, 0, 2), pixelAt(&surface, 7, 2));
+    try testing.expect(pixelAt(&surface, 0, 3) > pixelAt(&surface, 0, 1));
+    try testing.expect(pixelAt(&surface, 0, 1) != 0);
+
+    // A line is not a fill: it keeps the pen.
+    base(gb).DrawHLine(@ptrCast(rp), 0, 0, 8);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 3, 0));
+
+    // 0 is the pen again.
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = 0 }, .{} });
+    base(gb).RectFill(@ptrCast(rp), &.{ .max_x = 8, .max_y = 4 });
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 4, 3));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "RPTAG_FillStyle: radial from a centre, a tile anchored to the RastPort, and dithering on 16 bits" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 16, 16);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{.{}});
+    const half = graphics.FILL_ONE / 2;
+
+    // White at the centre, black at the edge: a disc filled from its middle.
+    const ring = graphics.FillStyle{
+        .kind = graphics.FILL_RADIAL,
+        .flags = graphics.FILLF_NODITHER,
+        .from_x = half,
+        .from_y = half,
+        .to_x = graphics.FILL_ONE,
+        .to_y = half,
+        .stops = .{ .{ .at = 0, .pen = 0xFFFF_FFFF }, .{ .at = graphics.FILL_ONE, .pen = 0xFF00_0000 }, .{}, .{} },
+    };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&ring) }, .{} });
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 8, .cy = 8, .radius = 7 });
+    try testing.expectEqual(@as(u16, 0xFFFF), pixelAt(&surface, 8, 8));
+    try testing.expect(pixelAt(&surface, 8, 8) > pixelAt(&surface, 8, 3));
+
+    // A tile of two pixels, red and blue, repeated along a row.
+    var tile_pixels = [_]u16{ 0xF800, 0x001F };
+    const tile = rtg.Surface{ .pixels = @ptrCast(&tile_pixels), .width = 2, .height = 1, .pitch = 4, .size_bytes = 4, .format = .rgb565 };
+    const tiled = graphics.FillStyle{ .kind = graphics.FILL_TILE, .tile = &tile };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&tiled) }, .{} });
+    base(gb).RectFill(@ptrCast(rp), &.{ .min_x = 1, .max_x = 6, .max_y = 1 });
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&surface, 1, 0));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 2, 0));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&surface, 3, 0));
+
+    // A gradient whose colours lie between two of rgb565's steps: flat
+    // undithered, a pattern dithered.
+    const narrow = [2]graphics.GradientStop{ .{ .at = 0, .pen = 0xFF44_4444 }, .{ .at = graphics.FILL_ONE, .pen = 0xFF44_4444 } };
+    var flat = graphics.FillStyle{ .flags = graphics.FILLF_NODITHER };
+    flat.stops[0] = narrow[0];
+    flat.stops[1] = narrow[1];
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&flat) }, .{} });
+    base(gb).RectFill(@ptrCast(rp), &.{ .min_y = 4, .max_x = 16, .max_y = 8 });
+    var differs = false;
+    for (0..16) |x| {
+        if (pixelAt(&surface, @intCast(x), 5) != pixelAt(&surface, 0, 5)) differs = true;
+    }
+    try testing.expect(!differs);
+    var smooth = flat;
+    smooth.flags = 0;
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&smooth) }, .{} });
+    base(gb).RectFill(@ptrCast(rp), &.{ .min_y = 4, .max_x = 16, .max_y = 8 });
+    for (0..16) |x| {
+        if (pixelAt(&surface, @intCast(x), 5) != pixelAt(&surface, 0, 5)) differs = true;
+    }
+    try testing.expect(differs);
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "RPTAG_LineWidth: an outline grows inward, a ring has no gaps, a line is a brush" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [16 * 16 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 16, 16);
+    const red = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) },
+        .{ .tag = graphics.RPTAG_LineWidth, .data = 3 },
+        .{},
+    };
+    const rp = try onMemory(gb, &surface, &red);
+    var width: u32 = 0;
+    base(gb).GetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&width) }, .{} });
+    try testing.expectEqual(@as(u32, 3), width);
+
+    // Three deep on every side of the box, inside it, and nothing outside.
+    base(gb).DrawRect(@ptrCast(rp), &.{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 14 });
+    for ([_]u32{ 2, 3, 4 }) |x| try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, x, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 5, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 1, 8));
+    for ([_]u32{ 11, 12, 13 }) |x| try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, x, 8));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 8, 4));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 8, 5));
+
+    // A circle's ring: on every row it crosses, the ring is unbroken from
+    // its outer edge in - no pixel missing between the two edges of it.
+    @memset(&pixels, 0);
+    base(gb).DrawCircle(@ptrCast(rp), 8, 8, 6);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 8, 8));
+    for (2..15) |row| {
+        var x: u32 = 0;
+        while (x < 16 and pixelAt(&surface, x, @intCast(row)) == 0) x += 1;
+        if (x == 16) continue;
+        var run: u32 = 0;
+        while (x < 16 and pixelAt(&surface, x, @intCast(row)) != 0) : (x += 1) run += 1;
+        try testing.expect(run >= 1);
+    }
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 2, 8));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 4, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 5, 8));
+
+    // A line three wide: three rows, square at its ends.
+    @memset(&pixels, 0);
+    base(gb).Move(@ptrCast(rp), 3, 8);
+    base(gb).Draw(@ptrCast(rp), 12, 8);
+    for ([_]u32{ 7, 8, 9 }) |y| try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 7, y));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 7, 6));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 2, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 1, 8));
+
+    // One is the least, and is every line's width as before.
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = 0 }, .{} });
+    base(gb).GetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&width) }, .{} });
+    try testing.expectEqual(@as(u32, 1), width);
+    @memset(&pixels, 0);
+    base(gb).DrawRect(@ptrCast(rp), &.{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 14 });
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&surface, 2, 8));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 3, 8));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "RPTAG_Smooth: a curve's edge lands part-way, a straight edge is exactly as hard" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [24 * 24 * 4]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .bgra32, 24, 24);
+    const white = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{ .tag = graphics.RPTAG_Smooth, .data = 1 },
+        .{},
+    };
+    const rp = try onMemory(gb, &surface, &white);
+    const at = struct {
+        fn grey(px: []const u8, x: usize, y: usize) u8 {
+            return px[(y * 24 + x) * 4];
+        }
+    };
+
+    // A disc: solid in the middle, nothing well outside, and somewhere on
+    // its edge a pixel neither.
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 12, .cy = 12, .radius = 9 });
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 12, 12));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 0, 0));
+    var between = false;
+    for (0..24) |x| {
+        const g = at.grey(&pixels, x, 6);
+        if (g != 0 and g != 255) between = true;
+    }
+    try testing.expect(between);
+
+    // A rectangle has no curve: exactly the hard one.
+    @memset(&pixels, 0);
+    base(gb).RectFill(@ptrCast(rp), &.{ .min_x = 3, .min_y = 3, .max_x = 9, .max_y = 9 });
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 3, 3));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 2, 3));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 9, 8));
+
+    // A ring with a hole: solid on its band, nothing in the hole.
+    @memset(&pixels, 0);
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 12, .cy = 12, .radius = 10, .inner = 5 });
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 12, 12));
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 4, 12));
+
+    // A slanted line shares its ink between neighbours; a level one does
+    // not need to.
+    @memset(&pixels, 0);
+    base(gb).Move(@ptrCast(rp), 2, 2);
+    base(gb).Draw(@ptrCast(rp), 21, 9);
+    var shared = false;
+    for (0..24) |x| {
+        for (0..24) |y| {
+            const g = at.grey(&pixels, x, y);
+            if (g != 0 and g != 255) shared = true;
+        }
+    }
+    try testing.expect(shared);
+
+    // Hard again: no pixel between.
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 0 }, .{} });
+    @memset(&pixels, 0);
+    base(gb).FillArc(@ptrCast(rp), &.{ .cx = 12, .cy = 12, .radius = 9 });
+    for (0..24) |x| {
+        const g = at.grey(&pixels, x, 6);
+        try testing.expect(g == 0 or g == 255);
+    }
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
+test "RPTAG_Smooth: a picture made larger is mixed between its pixels" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 4]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .bgra32);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+
+    // Black and white side by side, stretched across eight: the middle of
+    // it is grey, the ends are what they were.
+    const two = [2]u32{ 0xFF00_0000, 0xFFFF_FFFF };
+    base(gb).ScalePixelArray(@ptrCast(rp), @ptrCast(&two), 8, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), &.{ .max_x = 2, .max_y = 1 }, &.{ .max_x = 8, .max_y = 1 });
+    try testing.expectEqual(@as(u8, 0), pixels[0]);
+    try testing.expectEqual(@as(u8, 255), pixels[7 * 4]);
+    const middle = pixels[4 * 4];
+    try testing.expect(middle > 40 and middle < 215);
+
+    base(gb).FreeRastPort(@ptrCast(rp));
     try tearDown(gb);
 }
 

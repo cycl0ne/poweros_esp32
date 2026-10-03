@@ -133,6 +133,11 @@ pub const LVO = struct {
     pub const GetPrefs = libraries.lvo(115);
     pub const GetDefPrefs = libraries.lvo(116);
     pub const SetPrefs = libraries.lvo(117);
+    pub const DrawPart = libraries.lvo(118);
+    pub const GetStyleAttr = libraries.lvo(119);
+    pub const StylePens = libraries.lvo(120);
+    pub const SetStyle = libraries.lvo(121);
+    pub const QueueGadgetRefresh = libraries.lvo(122);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -252,6 +257,11 @@ pub const Fn = struct {
     pub const GetPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
     pub const GetDefPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
     pub const SetPrefs = *const fn (*IntuitionBase, *const intuition.Preferences, u32, bool) callconv(.c) *intuition.Preferences;
+    pub const DrawPart = *const fn (*IntuitionBase, ?*graphics.RastPort, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, u32, *const graphics.Rect, ?*graphics.Rect) callconv(.c) void;
+    pub const GetStyleAttr = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, utility.Tag) callconv(.c) usize;
+    pub const StylePens = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, [*]graphics.Pen) callconv(.c) void;
+    pub const SetStyle = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const QueueGadgetRefresh = *const fn (*IntuitionBase, *intuition.Object) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -941,5 +951,47 @@ pub const IntuitionBase = opaque {
     /// that listens is told IDCMP_NEWPREFS. Answers what was taken.
     pub fn SetPrefs(self: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) *intuition.Preferences {
         return libraries.call(self, LVO.SetPrefs, Fn.SetPrefs, .{ prefs, size, announce });
+    }
+
+    /// Draw a part of a gadget in a state, from its style, into `box`: the
+    /// background, then the border. `own` is a gadget's own style (GA_Style's
+    /// value read back) or null, and is asked before the screen's in
+    /// `draw_info`, which is asked before the system's default. `flags` are
+    /// DPF_ bits. With `content` the room left inside the border and the
+    /// padding is written there - and with `rp` null that is all it does, which
+    /// is how a class measures a part without drawing it.
+    pub fn DrawPart(self: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, flags: u32, box: *const graphics.Rect, content: ?*graphics.Rect) void {
+        return libraries.call(self, LVO.DrawPart, Fn.DrawPart, .{ rp, draw_info, own, part, state, flags, box, content });
+    }
+
+    /// One property of a part in a state, found as DrawPart finds it: a colour
+    /// as 0xAARRGGBB whichever of its two tags `attr` is, a number as the
+    /// number. What a class asks when it draws something of its own - the pen
+    /// for its text - in the style's colours.
+    pub fn GetStyleAttr(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, attr: utility.Tag) usize {
+        return libraries.call(self, LVO.GetStyleAttr, Fn.GetStyleAttr, .{ draw_info, own, part, state, attr });
+    }
+
+    /// The screen's pens, NUMDRIPENS of them, with the six that stand for a
+    /// gadget's look taken from a part of the style: its background and text
+    /// at rest, its fill and fill text from the part pressed, its shine and
+    /// shadow. What a class that draws with pens asks for instead of the
+    /// screen's own, so that a style reaches it without its drawing changing.
+    pub fn StylePens(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, pens: [*]graphics.Pen) void {
+        return libraries.call(self, LVO.StylePens, Fn.StylePens, .{ draw_info, own, part, pens });
+    }
+
+    /// A screen's style, or with no screen the system's, replaced while it is
+    /// open, and every window it reaches drawn again in it. False when there
+    /// was no memory for it.
+    pub fn SetStyle(self: *IntuitionBase, screen: ?*intuition.Screen, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.SetStyle, Fn.SetStyle, .{ screen, tags });
+    }
+
+    /// The gadget drawn again by intuition soon, with whatever it holds then:
+    /// what a class calls from a task that must not wait for its window - an
+    /// animation's step - after changing its value. Never waits.
+    pub fn QueueGadgetRefresh(self: *IntuitionBase, gadget: *intuition.Object) void {
+        return libraries.call(self, LVO.QueueGadgetRefresh, Fn.QueueGadgetRefresh, .{gadget});
     }
 };

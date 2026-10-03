@@ -13,6 +13,13 @@
 //! Given `TEXT_CopyText`, it keeps a copy of each text it is given, in
 //! memory of its own, freed with the gadget. Given `TEXT_Font`, it draws
 //! in that font and not the window's.
+//!
+//! **Rich text** is `_runs.zig`'s: runs given (`TEXT_Runs`) or parsed from
+//! markup (`TEXT_Markup`) are laid out a line at a time and drawn on each
+//! line's baseline, each line placed by the justification; with
+//! `TEXT_Wrap` lines from the top of the box until it is full, otherwise
+//! the one line in its middle. Its size is measured the same way on a
+//! RastPort of its own over a bitmap of a pixel.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -27,6 +34,8 @@ const sc = intuition.screens;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const tx = gadgets.text;
+/// Rich text: markup into runs, runs into lines.
+pub const rich = @import("_runs.zig");
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -35,7 +44,7 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .date = "02.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -70,7 +79,24 @@ const Data = extern struct {
     written: [40]u8 = @splat(0),
     /// The font it draws in, the caller's; null for the RastPort's own.
     font: ?*graphics.TextFont = null,
+    /// Rich text: the runs shown, the caller's or `parsed`'s.
+    runs: ?[*]const tx.TextRun = null,
+    parsed: ?*rich.Parsed = null,
+    markup: u8 = 0,
+    wrap: u8 = 0,
+    pad2: [2]u8 = .{ 0, 0 },
 };
+
+/// Markup parsed into runs of its own, what was parsed before let go.
+fn takeMarkup(base: *gadgets.Base, own: *Data, text: ?[*:0]const u8) void {
+    rich.free(base.sys_base, base.graphics_base, own.parsed);
+    own.parsed = null;
+    own.runs = null;
+    const given = text orelse return;
+    const name: [*:0]const u8 = if (own.font) |font| (font.node.name orelse graphics.POSPAZNAME) else graphics.POSPAZNAME;
+    own.parsed = rich.parse(base.sys_base, base.graphics_base, given, name);
+    if (own.parsed) |parsed| own.runs = &parsed.runs;
+}
 
 fn textLen(text: [*:0]const u8) usize {
     var n: usize = 0;
@@ -118,6 +144,20 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             },
             tx.TEXT_Text => {
                 takeText(base, own, @ptrFromInt(item.data));
+                if (own.markup != 0) takeMarkup(base, own, own.text);
+                changed = true;
+            },
+            tx.TEXT_Markup => if (new) {
+                own.markup = @intFromBool(item.data != 0);
+            },
+            tx.TEXT_Runs => {
+                rich.free(base.sys_base, base.graphics_base, own.parsed);
+                own.parsed = null;
+                own.runs = @ptrFromInt(item.data);
+                changed = true;
+            },
+            tx.TEXT_Wrap => {
+                own.wrap = @intFromBool(item.data != 0);
                 changed = true;
             },
             tx.TEXT_Number => {
@@ -171,6 +211,8 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
     if (new and own.copies != 0 and own.owns_text == 0 and own.shows_number == 0) {
         if (own.text) |text| takeText(base, own, text);
     }
+    // Markup given after the text: the text is parsed now.
+    if (new and own.markup != 0 and own.parsed == null and own.runs == null) takeMarkup(base, own, own.text);
     return changed;
 }
 
@@ -199,7 +241,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const rp = r.rast_port;
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(gc.gadget(o), info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const front = if (own.has_front != 0) own.front else pens[sc.TEXTPEN];
     const back = if (own.has_back != 0) own.back else pens[sc.BACKGROUNDPEN];
     const saved = support.Saved.of(gb, rp);
@@ -223,6 +266,11 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     own.overrun = 0;
     if (own.border != 0) if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info);
 
+    if (own.runs) |runs| {
+        drawRuns(base, own, rp, runs, area, front);
+        if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
+        return;
+    }
     const text = shown(base, own) orelse return;
     var count: u32 = @intCast(textLen(text));
     var width = gb.TextLength(rp, text, count);
@@ -252,12 +300,88 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
 }
 
+/// The font a RastPort has now.
+fn fontOf(gb: anytype, rp: *graphics.RastPort) ?*graphics.TextFont {
+    var font: usize = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} });
+    return @ptrFromInt(font);
+}
+
+/// Where a line goes across `area` by the justification.
+fn lineLeft(own: *const Data, area: gc.Box, width: i32) i32 {
+    return switch (own.justification) {
+        tx.TEXT_JUSTIFY_RIGHT => area.left + area.width - width,
+        tx.TEXT_JUSTIFY_CENTER => area.left + @divTrunc(area.width - width, 2),
+        else => area.left,
+    };
+}
+
+/// Rich text in `area`: wrapped lines from its top while they fit, or the
+/// one line in its middle.
+fn drawRuns(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, runs: [*]const tx.TextRun, area: gc.Box, front: graphics.Pen) void {
+    const gb = base.graphics_base;
+    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return, .front = front };
+    const wrap = own.wrap != 0;
+    var pos = rich.Pos{};
+    var top = area.top;
+    var first = true;
+    while (rich.lineAt(ink, runs, pos, area.width, wrap)) |line| {
+        if (first and !wrap) top = area.top + @divTrunc(area.height - line.height, 2);
+        first = false;
+        if (top + line.height > area.top + area.height and !(top == area.top)) break;
+        rich.drawLine(ink, runs, line, lineLeft(own, area, line.width), top);
+        top += line.height;
+        if (line.end.run == pos.run and line.end.at == pos.at) break;
+        pos = line.end;
+    }
+}
+
+/// Rich text's size: its lines in `width` (or one line), measured on a
+/// RastPort of its own in the gadget's font.
+fn measureRuns(base: *gadgets.Base, own: *const Data, runs: [*]const tx.TextRun, font: ?*graphics.TextFont, width: i32) gc.Box {
+    const gb = base.graphics_base;
+    const pixel = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = 1 },
+        .{ .tag = graphics.BMTAG_Height, .data = 1 },
+        .{},
+    }) orelse return .{};
+    defer gb.FreeBitMap(pixel);
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(pixel) }, .{} }) orelse return .{};
+    defer gb.FreeRastPort(rp);
+    if (font) |f| graphics.SetFont(gb, rp, f);
+    // No font to measure in anywhere: the system's own.
+    const opened = if (fontOf(gb, rp) == null) gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) else null;
+    defer gb.CloseFont(opened);
+    if (opened) |f| graphics.SetFont(gb, rp, f);
+    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return .{}, .front = 0 };
+    const wrap = own.wrap != 0;
+    var pos = rich.Pos{};
+    var box = gc.Box{};
+    while (rich.lineAt(ink, runs, pos, width, wrap)) |line| {
+        box.width = @max(box.width, line.width);
+        box.height += line.height;
+        if (line.end.run == pos.run and line.end.at == pos.at) break;
+        pos = line.end;
+    }
+    return box;
+}
+
 /// Its size: a line of the font, the text's width, and the frame.
 fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, which: u32) gc.Box {
     const ib = base.intuition_base;
     const measure = support.Measure.of(ib, g, gi);
     defer measure.done(ib);
     var box = gc.Box{ .width = if (shown(base, own)) |text| measure.width(ib, text) else 0, .height = measure.lineHeight(base.graphics_base) };
+    if (own.runs) |runs| {
+        const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
+        const measured = measureRuns(base, own, runs, own.font orelse measure.font, if (own.wrap != 0) g.given_width - room.width else 0x7FFF);
+        const lines = gc.Box{ .width = measured.width + room.width, .height = @max(measured.height, 1) + room.height };
+        return switch (which) {
+            gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0) 0 else lines.width, .height = lines.height },
+            gc.GDOMAIN_NOMINAL => .{ .width = @max(lines.width, g.given_width), .height = lines.height },
+            else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = lines.height },
+        };
+    }
     // In a font of its own: a line of that font, and its nominal width a
     // character.
     if (own.font) |font| {
@@ -306,6 +430,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
             if (own.owns_text != 0) base.sys_base.FreeVec(@ptrCast(@constCast(own.text)));
+            rich.free(base.sys_base, base.graphics_base, own.parsed);
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
         },

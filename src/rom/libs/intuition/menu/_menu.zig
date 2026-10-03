@@ -318,7 +318,7 @@ pub const Layout = struct {
             .item_height = @max(extent.height, 8) + 1,
             .check_width = imageWidth(ib, check),
             .comm_width = imageWidth(ib, key),
-            .front_pen = @truncate(ub.GetTagData(mn.GTMN_FrontPen, s.pens[sc.BARDETAILPEN], tags)),
+            .front_pen = @truncate(ub.GetTagData(mn.GTMN_FrontPen, ib.iface().GetStyleAttr(&s.draw_info, null, sdk.intuition.imageclass.PART_MENU, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_TextPen), tags)),
         };
     }
 

@@ -272,7 +272,8 @@ pub fn freePath(db: *DosBase, path: ?*PathNode) void {
 /// - `block` - the cleared room for the CLI and its name buffers.
 /// - `mine` - the calling process's CLI, or null.
 /// - `command_name` - NP_CommandName, or null for the caller's.
-/// - `stack` - the process's stack size.
+/// - `stack` - the process's stack size; its commands get at least
+///   `CLI_DEFAULT_STACK`.
 pub fn makeCli(db: *DosBase, block: [*]u8, mine: ?*CommandLineInterface, command_name: ?[*:0]const u8, stack: usize) *CommandLineInterface {
     const c = objects.initCli(block);
     copyName(db, c.prompt.?, if (mine) |m| m.prompt else null, dos.CLI_MAX_PROMPT);
@@ -282,7 +283,7 @@ pub fn makeCli(db: *DosBase, block: [*]u8, mine: ?*CommandLineInterface, command
         copyName(db, c.set_name.?, m.set_name, dos.CLI_MAX_SET_NAME);
         c.fail_level = m.fail_level;
     }
-    c.default_stack = @intCast(stack);
+    c.default_stack = @max(@as(u32, @intCast(stack)), dos.CLI_DEFAULT_STACK);
     return c;
 }
 

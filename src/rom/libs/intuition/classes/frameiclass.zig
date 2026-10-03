@@ -1,16 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
-//! frameiclass: a bevelled frame, drawn to whatever size it is asked for.
+//! frameiclass: a frame, drawn to whatever size it is asked for.
 //!
-//! An imageclass image whose drawing is its own: a bevel of the screen's
-//! shine and shadow pens, raised or (`IA_Recessed`) sunk, filled with the
-//! background pen unless `IA_EdgesOnly`. `IM_DRAWFRAME` draws it to the
-//! dimensions in the message rather than the image's own, which is what
-//! lets one frame object serve every window border and every button,
-//! whatever their size. A selected frame is drawn sunk and filled with the
-//! fill pen, as a pressed button is.
+//! An imageclass image whose look is its screen's style - and a gadget's
+//! own over it, when the gadget hands it over (`ImpDraw.style`,
+//! `ImpFrameBox.style`), so a framed button's `GA_Style` is its frame's
+//! too: each frame kind is
+//! a part of a style (`ic.PART_FRAME_PLAIN`, `style.PART_MAIN`,
+//! `style.PART_GROUP`, `ic.PART_FRAME_DROPBOX`) and the image's state is
+//! the part's state - with the hovered and focused states a gadget adds
+//! (`ImpDraw.style_state`) - so a frame is drawn by `DrawPart` and looks
+//! however the style says that part looks. `IA_Recessed` turns its border the other
+//! way and `IA_EdgesOnly` leaves its inside alone. `IM_DRAWFRAME` draws it
+//! to the dimensions in the message rather than the image's own, which is
+//! what lets one frame object serve every window border and every button,
+//! whatever their size.
 //!
-//! The pens come from the DrawInfo in the message, or the default ones
-//! without it.
+//! With no style anywhere - the system's default alone - a frame is a
+//! bevel of the screen's shine and shadow pens filled with its background
+//! pen, and a selected one is sunk and filled with the fill pen, as a
+//! pressed button is: the default is written to be the look frames always
+//! had.
+//!
+//! How much bigger a frame is than what it holds (`IM_FRAMEBOX`) is the
+//! style's border and padding, measured by `DrawPart` without drawing.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -23,17 +35,24 @@ const pack = utility.pack;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
+const graphics = sdk.graphics;
+const style = intuition.style;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
-const d = @import("draw.zig");
+const _style = @import("../style/_style.zig");
 
 /// frameiclass's part of an object.
 pub const Data = extern struct {
-    /// FRAMEF_RECESSED, FRAMEF_EDGES_ONLY.
+    /// FRAMEF_RECESSED, FRAMEF_EDGES_ONLY, FRAMEF_PART.
     flags: u32 = 0,
     frame_type: u32 = ic.FRAME_DEFAULT,
+    /// `IA_StylePart`, when FRAMEF_PART says one was given. A flag rather
+    /// than a value meaning none, because an object's data starts cleared
+    /// and 0 is a part.
+    part: u32 = 0,
 };
 const FRAMEF_RECESSED: u32 = 1 << 0;
 const FRAMEF_EDGES_ONLY: u32 = 1 << 1;
+const FRAMEF_PART: u32 = 1 << 2;
 
 const pack_table = [_]u32{
     ic.IA_Dummy,
@@ -53,52 +72,31 @@ pub fn make(ib: *IntuitionBase) ?*Class {
     return cl;
 }
 
-// How a frame of each kind is drawn, and how much bigger than its contents
-// it has to be.
-//
-// `stroke` is how thick the vertical strokes are - the horizontal ones are
-// always one, since a pixel is taller than it is wide on the displays this
-// came from and a frame drawn square looks heavy. `inset` is how many
-// strokes in the second frame sits, which is what makes a ridge a ridge.
-//
-// The padding follows from those two: `(inset + 2) * stroke`, doubled for
-// the two sides. The two is one stroke to get inside the inner frame and one
-// to leave a little air around the contents.
-
-const FrameKind = struct { stroke: i32, inset: i32 };
-
-const kinds = [_]FrameKind{
-    .{ .stroke = 1, .inset = 0 }, // FRAME_DEFAULT
-    .{ .stroke = 2, .inset = 0 }, // FRAME_BUTTON
-    .{ .stroke = 2, .inset = 1 }, // FRAME_RIDGE
-    .{ .stroke = 2, .inset = 2 }, // FRAME_ICONDROPBOX
-};
-
-/// The strokes are one pixel tall whatever they are wide.
-const stroke_height: i32 = 1;
-
-fn kindOf(frame_type: u32) FrameKind {
-    return kinds[if (frame_type < kinds.len) frame_type else 0];
-}
-
-/// How much wider and taller than its contents a frame of this kind is.
-fn padOf(frame_type: u32) struct { width: i32, height: i32 } {
-    const k = kindOf(frame_type);
-    return .{
-        .width = (k.inset + 2) * k.stroke * 2,
-        .height = (k.inset + 2) * stroke_height * 2,
+/// The part of a style a frame is drawn as: the one `IA_StylePart` named,
+/// or its kind's. A kind this class does not know is a plain frame.
+fn partOf(fd: *const Data) u32 {
+    if (fd.flags & FRAMEF_PART != 0) return fd.part;
+    return switch (fd.frame_type) {
+        ic.FRAME_BUTTON => style.PART_MAIN,
+        ic.FRAME_RIDGE => style.PART_GROUP,
+        ic.FRAME_ICONDROPBOX => ic.PART_FRAME_DROPBOX,
+        else => ic.PART_FRAME_PLAIN,
     };
 }
 
 /// IM_FRAMEBOX: how big this frame must be to sit around `contents`, and
 /// where it then goes. The frame is centred on the contents, so what a
 /// caller does with the answer is put the contents back in the middle.
-fn frameBox(cl: *Class, o: *Object, msg: *ic.ImpFrameBox) usize {
+fn frameBox(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpFrameBox) usize {
     const fd = classes.instData(Data, cl, o);
     if (msg.flags & ic.FRAMEF_SPECIFY == 0) {
-        const pad = padOf(fd.frame_type);
-        msg.frame.width = msg.contents.width + pad.width;
-        msg.frame.height = msg.contents.height + pad.height;
+        // The border and the padding, as DrawPart finds them, measured on a
+        // box large enough that nothing is cut short.
+        const probe = graphics.Rect{ .max_x = 4096, .max_y = 4096 };
+        var inside: graphics.Rect = undefined;
+        ib.iface().DrawPart(null, msg.draw_info, msg.style, partOf(fd), style.STATE_NORMAL, 0, &probe, &inside);
+        msg.frame.width = msg.contents.width + probe.width() - inside.width();
+        msg.frame.height = msg.contents.height + probe.height() - inside.height();
     }
     msg.frame.left = msg.contents.left - @divTrunc(msg.frame.width - msg.contents.width, 2);
     msg.frame.top = msg.contents.top - @divTrunc(msg.frame.height - msg.contents.height, 2);
@@ -115,38 +113,21 @@ fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) usize {
     const x = im.left + msg.offset.x;
     const y = im.top + msg.offset.y;
 
-    const gb = ib.graphics_base;
-    const rp = msg.rast_port;
-    const saved = d.save(gb, rp);
-    defer d.restore(gb, rp, saved);
-
-    const pens = d.pensOf(msg.draw_info);
-    const selected = msg.state == ic.IDS_SELECTED or msg.state == ic.IDS_INACTIVESELECTED;
-    const sunk = (fd.flags & FRAMEF_RECESSED != 0) != selected;
-    const light = if (sunk) pens[sc.SHADOWPEN] else pens[sc.SHINEPEN];
-    const dark = if (sunk) pens[sc.SHINEPEN] else pens[sc.SHADOWPEN];
-
-    // The outer frame, then the inner one a kind with an inset has, sunk
-    // the other way round so the two together read as a ridge.
-    const k = kindOf(fd.frame_type);
-    // The plainest frame's edges each keep clear of the other's corners;
-    // every other kind lets them meet on the diagonal.
-    const joins: d.Joins = if (fd.frame_type == ic.FRAME_DEFAULT) .none else .angled;
-    d.bevel(gb, rp, x, y, w, h, light, dark, k.stroke, joins);
-    var dx = k.stroke;
-    var dy = stroke_height;
-    if (k.inset > 0) {
-        dx = k.inset * k.stroke;
-        dy = k.inset * stroke_height;
-        d.bevel(gb, rp, x + dx, y + dy, w - 2 * dx, h - 2 * dy, dark, light, k.stroke, joins);
-        dx += k.stroke;
-        dy += stroke_height;
-    }
-    if (fd.flags & FRAMEF_EDGES_ONLY == 0) {
-        const fill = if (selected) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
-        d.box(gb, rp, x + dx, y + dy, w - 2 * dx, h - 2 * dy, fill);
-    }
+    var flags: u32 = 0;
+    if (fd.flags & FRAMEF_RECESSED != 0) flags |= style.DPF_INVERT;
+    if (fd.flags & FRAMEF_EDGES_ONLY != 0) flags |= style.DPF_EDGES_ONLY;
+    const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + w, .max_y = y + h };
+    // A mixed state is whole: it stands for the image state too.
+    const states = if (msg.style_state & style.STATE_MIXED != 0) msg.style_state else _style.statesOfImage(msg.state) | msg.style_state;
+    ib.iface().DrawPart(msg.rast_port, msg.draw_info, msg.style, partOf(fd), states, flags, &box, null);
     return 1;
+}
+
+/// `IA_StylePart`, when the list has it.
+fn takePart(ib: *IntuitionBase, fd: *Data, tags: ?[*]const TagItem) void {
+    const item = ib.utility_base.FindTagItem(ic.IA_StylePart, tags) orelse return;
+    fd.part = @truncate(item.data);
+    fd.flags |= FRAMEF_PART;
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
@@ -161,18 +142,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const made = it.SendSuperMessage(cl, o, msg);
             if (made == 0) return 0;
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
-            _ = ib.utility_base.PackStructureTags(classes.instData(Data, cl, @ptrFromInt(made)), &pack_table, new.attr_list);
+            const fd = classes.instData(Data, cl, @ptrFromInt(made));
+            _ = ib.utility_base.PackStructureTags(fd, &pack_table, new.attr_list);
+            takePart(ib, fd, new.attr_list);
             return made;
         },
         classusr.OM_SET => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             _ = it.SendSuperMessage(cl, o, msg);
-            _ = ib.utility_base.PackStructureTags(classes.instData(Data, cl, o orelse return 0), &pack_table, set.attr_list);
+            const fd = classes.instData(Data, cl, o orelse return 0);
+            _ = ib.utility_base.PackStructureTags(fd, &pack_table, set.attr_list);
+            takePart(ib, fd, set.attr_list);
             // Any of its attributes may change how it looks.
             return 1;
         },
         ic.IM_DRAW, ic.IM_DRAWFRAME => return draw(ib, cl, o orelse return 0, @ptrCast(@alignCast(msg))),
-        ic.IM_FRAMEBOX => return frameBox(cl, o orelse return 0, @ptrCast(@alignCast(msg))),
+        ic.IM_FRAMEBOX => return frameBox(ib, cl, o orelse return 0, @ptrCast(@alignCast(msg))),
         else => return it.SendSuperMessage(cl, o, msg),
     }
 }

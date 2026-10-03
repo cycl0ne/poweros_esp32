@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every library, device and resource call |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [network](sdk/docs/guides/network.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [animation](sdk/docs/guides/animation.md), [network](sdk/docs/guides/network.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -72,7 +72,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   is none; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 35 commands in `C:`, test
+  a shell with scripts and resident commands, 36 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
   `LIBS:iffparse.library` reads and writes IFF, the shape a picture, a
   piece of text or a sound is kept in when one program hands it to
@@ -105,18 +105,57 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Graphics and windows:** rtg.library for the displays, graphics.library
   for drawing - including a picture of one's own pixels put down as it
   is, laid over what is there by its own coverage, or at another size;
-  rectangles with rounded corners, pies and rings, a surface laid down
-  through a coverage that can be softened into a shadow, and a string
-  drawn to fit a width with dots where it was cut - layers.library for overlapping windows, and
+  rectangles with rounded corners and bevels round them in two colours,
+  pies and rings, outlines of any width
+  that grow inward so a shape keeps its size, curves and slanted lines
+  with smooth edges and pictures scaled smoothly, any filled shape in a
+  gradient (linear or radial, dithered on 16-bit displays) or a tile, a
+  surface laid down through a coverage that can be softened into a
+  shadow, and a string drawn to fit a width with dots where it was cut -
+  layers.library for overlapping windows, and
   intuition.library - screens, windows, menus, requesters, a mouse
   pointer, and an object system of gadget classes with layouts that fit
   any display - a layout in a frame with a title in its edge groups the
-  settings of a window. More gadget classes on the disk in
+  settings of a window, a grid lines labelled fields up in columns, a row
+  too narrow for its gadgets wraps them onto the next line, and a child
+  sits at the start, the middle or the end of its room. Everything intuition draws - frames, buttons,
+  fields, scroll bars, check boxes, radio buttons, window borders and title
+  bars, the screen's bar, menus and requesters, and the disk's gadget
+  classes with them, down to a list's chosen line and a gauge's level - is
+  drawn from a style: the look of each
+  part of a gadget in each state - pressed, checked, disabled, under the
+  pointer, holding the keyboard - given as a tag list that a screen
+  carries for all its windows and a single gadget may override, so a
+  screen can look different with no program changed (`C:test/Styles`).
+  The system's own style comes from `ENV:Sys/style.prefs`, a line per
+  part and state, which `C:StylePrefs` hands over at boot and again
+  whenever it is run: every open window is drawn again in it. See the
+  [styles guide](sdk/docs/guides/styles.md).
+  Things move on one clock, motion.library: a value going from one
+  number to another over a time through a curve (easing in, out, past
+  the end and back, bouncing, or a Bezier of one's own), timers that
+  fire every so often without drifting, and timelines that play several
+  as one, forwards, backwards or scrubbed. A change of look fades over
+  the time a style gives it, a gauge fills to its new level, a list and
+  a scroller glide to a new top, a ring of dots turns while something
+  goes on, and so does the busy pointer - each step stored and drawn by
+  intuition, so the clock never waits for a window, and a screen can
+  turn it all off. See the [animation guide](sdk/docs/guides/animation.md).
+  More gadget classes on the disk in
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of
   gadgets, a number field with stepping arrows, a button that pops a list
-  up to pick from, a bar that shows how far along something is, and a
-  field with a button that opens the file or font requester.
+  up to pick from, a bar that shows how far along something is, a ring
+  of dots that turns while something goes on, a field with a button
+  that opens the file or font requester, a dial with a needle, a ring
+  that fills or is turned like a knob, a wheel of choices turned by
+  dragging, a month to pick a day from, a picture a program draws into,
+  values over time as lines or bars, text in runs of their own font,
+  style and colour - from a small markup, wrapped to the width - and a
+  text as a QR code, a Code 128 or an EAN-13 barcode (`C:test/Widgets`).
+  On a board with no keyboard, a keyboard comes up at the bottom of the
+  screen while a field is typed into, laid out from the keymap in use,
+  its keys going where a keyboard's would (`C:test/Keyboard`).
   Settings a program can change while it runs (`SetPrefs`), and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,

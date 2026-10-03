@@ -22,6 +22,7 @@ const inUse = _screen.inUse;
 const showFront = _screen.showFront;
 const drawBar = _screen.drawBar;
 const _font = @import("../font/_font.zig");
+const _style = @import("../style/_style.zig");
 
 /// The font a screen given none opens for itself: the Workbench's, for a
 /// screen like it; else the system font asked for.
@@ -193,6 +194,10 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         s.pens = @as(*const [sc.NUMDRIPENS]Pen, @ptrFromInt(item.data)).*;
     }
     s.draw_info = .{ .pens = &s.pens, .font = font, .depth = s.depth };
+    // Read now and kept, so the caller's list may go; none, or no memory
+    // for it, is the default alone.
+    s.draw_info.style = _style.keep(ib, @ptrFromInt(ub.GetTagData(sc.SA_Style, 0, tags)));
+    if (ub.GetTagData(sc.SA_Animate, 1, tags) == 0) s.draw_info.flags |= sc.DRIF_STILL;
     if (pub_name) |name| {
         s.public = true;
         for (0..nameLen(name)) |i| s.pub_name[i] = name[i];

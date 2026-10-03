@@ -210,7 +210,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const own = classes.instData(Data, cl, o);
     const g = gc.gadget(o);
     const b = gc.boxFor(g, info);
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(ib, info.draw_info, g.style, sdk.intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const rp = r.rast_port;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);

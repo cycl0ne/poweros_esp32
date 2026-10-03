@@ -230,6 +230,7 @@ pub const WF_RMBTRAP = wn.WFLG_RMBTRAP;
 pub const WF_REPORTMOUSE = wn.WFLG_REPORTMOUSE;
 pub const WF_GZZ = wn.WFLG_GIMMEZEROZERO;
 pub const WF_ZOOMED = wn.WFLG_ZOOMED;
+pub const WF_NOACTIVATE = wn.WFLG_NOACTIVATE;
 pub const WF_HASZOOM = wn.WFLG_HASZOOM;
 pub const WF_MENUSTATE = wn.WFLG_MENUSTATE;
 pub const WF_INREQUEST = wn.WFLG_INREQUEST;
@@ -419,9 +420,12 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
     graphics.SetFont(gb, rp, w.screen.font);
 
     const dri = &w.screen.draw_info;
-    const pens = dri.pens;
     const active = w.flags & WF_ACTIVE != 0;
-    const fill: Pen = if (active) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN];
+    // The border is the title bar's part, a window that is not active its
+    // own: the strips in its background, the title in its text colour.
+    const bar = if (active) sdk.intuition.style.PART_TITLE else ic.PART_TITLE_INACTIVE;
+    const fill: Pen = @truncate(it.GetStyleAttr(dri, null, bar, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_Background));
+    const ink: Pen = @truncate(it.GetStyleAttr(dri, null, bar, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_TextPen));
     const state: u32 = if (active) ic.IDS_NORMAL else ic.IDS_INACTIVENORMAL;
     const inner_w = w.width - w.border_left - w.border_right;
     const inner_h = w.height - w.border_top - w.border_bottom;
@@ -466,7 +470,7 @@ fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
             .{},
         };
         gb.GetRPAttrs(rp, &metric);
-        d.pen(gb, rp, if (active) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
+        d.pen(gb, rp, ink);
         const x: i32 = if (w.close_image != null) closeWidthOf(w) + 4 else 4;
         const y = @divTrunc(w.border_top - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
         gb.Move(rp, x, y);
@@ -783,6 +787,8 @@ pub fn depthChanged(ib: *IntuitionBase, w: *Window) void {
 pub fn activate(ib: *IntuitionBase, w: *Window) void {
     const old = ib.active_window;
     if (old == w) return;
+    // A window that never takes the activation (`WA_NoActivate`).
+    if (w.flags & WF_NOACTIVATE != 0) return;
     ib.active_window = w;
     // Only the screen with the active window shows anything but its own
     // title: one the active window leaves goes back to its default, and the

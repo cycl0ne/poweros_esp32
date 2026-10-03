@@ -30,6 +30,8 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
+const _style = @import("../style/_style.zig");
+const _transition = @import("../style/_transition.zig");
 const d = @import("draw.zig");
 
 /// gadgetclass's part of an object: the gadget.
@@ -83,6 +85,11 @@ pub const Data = extern struct {
     /// The requester of that window it is in, while that is up; null for
     /// one of the window's own.
     requester: ?*intuition.Requester = null,
+    /// `GA_Style`, as kept: read once when it is set, given back when it is
+    /// set again or the gadget goes.
+    style: ?*intuition.Style = null,
+    /// A transition of its look in progress (`style/_transition.zig`).
+    transition: ?*anyopaque = null,
 };
 
 // The flags are the SDK's: `gc.Gadget` is the public view of `Data`.
@@ -98,6 +105,10 @@ pub const GFLG_GZZGADGET = gc.GFLG_GZZGADGET;
 pub const GFLG_GADGETHELP = gc.GFLG_GADGETHELP;
 pub const GFLG_BOUNDS = gc.GFLG_BOUNDS;
 pub const GFLG_SYSGADGET = gc.GFLG_SYSGADGET;
+pub const GFLG_HOVERED = gc.GFLG_HOVERED;
+pub const GFLG_FOCUSED = gc.GFLG_FOCUSED;
+pub const GFLG_STILL = gc.GFLG_STILL;
+pub const GFLG_REFRESH = gc.GFLG_REFRESH;
 pub const GACT_IMMEDIATE = gc.GACT_IMMEDIATE;
 pub const GACT_RELVERIFY = gc.GACT_RELVERIFY;
 pub const GACT_TOGGLESELECT = gc.GACT_TOGGLESELECT;
@@ -266,12 +277,41 @@ pub fn drawLabel(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, lef
     var baseline: u32 = 0;
     const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) }, .{} };
     gb.GetRPAttrs(rp, &metric);
-    const pens = dri.pens;
     const selected = state == ic.IDS_SELECTED or state == ic.IDS_INACTIVESELECTED;
-    const ink = if (selected) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN];
+    // The text colour of a gadget's body, pressed or not, from the style
+    // with the gadget's own asked first.
+    // In the state the frame is drawn in, part of the way into the next
+    // while its look changes.
+    const to = (if (selected) intuition.style.STATE_PRESSED else intuition.style.STATE_NORMAL) | gc.styleStates(g.flags);
+    const ink: graphics.Pen = @truncate(it.GetStyleAttr(dri, g.style, intuition.style.PART_MAIN, _transition.shown(@ptrCast(g), to), intuition.style.STYLE_TextPen));
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ink }, .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(rp, &tags);
     d.labelText(gb, rp, x, y + @as(i32, @intCast(baseline)), text);
+}
+
+/// A disabled gadget's look, laid over what it has drawn: the hatch of the
+/// screen's block pen, unless the style gives the disabled state an
+/// opacity - then the gadget is faded under the window's ground by that
+/// much, which is a disabled look that keeps it readable. The gadget's own
+/// style is asked first.
+///
+/// INPUTS:
+/// - `ib` - the library.
+/// - `o` - the gadget, for its own style.
+/// - `gi` - where it is drawn: the screen's DrawInfo, its block pen.
+/// - `rp` - the RastPort it drew in.
+/// - `x`, `y`, `width`, `height` - its box.
+pub fn ghost(ib: *IntuitionBase, o: *Object, gi: *const classusr.GadgetInfo, rp: *graphics.RastPort, x: i32, y: i32, width: i32, height: i32) void {
+    const it = ib.iface();
+    const gb = ib.graphics_base;
+    const own_style: ?*const intuition.Style = gadgetOf(ib, o).style;
+    const opacity = it.GetStyleAttr(gi.draw_info, own_style, intuition.style.PART_MAIN, intuition.style.STATE_DISABLED, intuition.style.STYLE_Opacity);
+    if (opacity >= 255) return d.ghost(gb, rp, x, y, width, height, gi.block_pen);
+    if (width <= 0 or height <= 0) return;
+    const ground = gi.draw_info.pens[sc.BACKGROUNDPEN];
+    const veil: graphics.Pen = (ground & 0x00FF_FFFF) | @as(graphics.Pen, @intCast(255 - opacity)) << 24;
+    d.pen(gb, rp, veil);
+    gb.RectFill(rp, &.{ .min_x = x, .min_y = y, .max_x = x + width, .max_y = y + height });
 }
 
 /// Make gadgetclass, from rootclass, and put it on the public list.
@@ -341,6 +381,12 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
                 // same call has the last word, whichever order they come
                 // in, because it is read again at the end.
                 g.key = gc.labelKey(g.text);
+                changed = 1;
+            },
+            gc.GA_Animate => setFlag(&g.flags, GFLG_STILL, v == 0),
+            gc.GA_Style => {
+                _style.drop(ib, g.style);
+                g.style = _style.keep(ib, @ptrFromInt(v));
                 changed = 1;
             },
             gc.GA_IntuiText => {
@@ -420,6 +466,8 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Disabled => out.* = @intFromBool(g.flags & GFLG_DISABLED != 0),
         gc.GA_Text => out.* = @intFromPtr(g.text),
         gc.GA_Key => out.* = g.key,
+        gc.GA_Style => out.* = @intFromPtr(g.style),
+        gc.GA_Animate => out.* = @intFromBool(g.flags & GFLG_STILL == 0),
         gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
         gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
         gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
@@ -509,6 +557,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_GET => {
             if (get(classes.instData(Data, cl, o orelse return 0), @ptrCast(@alignCast(msg)))) return 1;
+            return it.SendSuperMessage(cl, o, msg);
+        },
+        classusr.OM_DISPOSE => {
+            _style.drop(ib, classes.instData(Data, cl, o orelse return 0).style);
+            _transition.free(ib, gc.gadget(o.?));
             return it.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_NOTIFY => {

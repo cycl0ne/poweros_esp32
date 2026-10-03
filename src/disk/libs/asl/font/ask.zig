@@ -335,7 +335,8 @@ fn drawSample(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
     const gb = s.gb;
     const rp = msg.rast_port.?;
     const r = s.r;
-    const pens = msg.draw_info.?.pens;
+    const styled = sdk.gadgets.support.pensFor(s.ib, msg.draw_info.?, null, intuition.style.PART_MAIN, null);
+    const pens: [*]const graphics.Pen = &styled;
     const front = if (r.flags1 & asl.FOF_DOFRONTPEN != 0) r.public.font.front_pen else pens[sc.TEXTPEN];
     const back = if (r.flags1 & asl.FOF_DOBACKPEN != 0) r.public.font.back_pen else pens[sc.BACKGROUNDPEN];
 

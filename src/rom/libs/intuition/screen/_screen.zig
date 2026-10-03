@@ -249,6 +249,25 @@ pub fn setPen(ib: *IntuitionBase, rp: *graphics.RastPort, pen: Pen) void {
 }
 
 /// The title bar: its fill, the title, and the trim line under it.
+/// A screen bar's colours, from the style: what the bar and the menu bar
+/// it turns into are drawn in.
+pub const BarLook = struct { ground: Pen, trim: Pen, writing: Pen };
+
+pub fn barLook(ib: *IntuitionBase, s: *Screen) BarLook {
+    const it = ib.iface();
+    const st = sdk.intuition.style;
+    const ask = struct {
+        fn colour(face: anytype, dri: *const sc.DrawInfo, attr: sdk.utility.Tag) Pen {
+            return @truncate(face.GetStyleAttr(dri, null, ic.PART_SCREEN_BAR, st.STATE_NORMAL, attr));
+        }
+    }.colour;
+    return .{
+        .ground = ask(it, &s.draw_info, st.STYLE_Background),
+        .trim = ask(it, &s.draw_info, st.STYLE_BorderPen),
+        .writing = ask(it, &s.draw_info, st.STYLE_TextPen),
+    };
+}
+
 pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     const bar = s.bar orelse return;
     const gb = ib.graphics_base;
@@ -261,9 +280,12 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     ib.layers_base.LockLayer(bar);
     defer ib.layers_base.UnlockLayer(bar);
 
-    setPen(ib, rp, s.pens[sc.BARBLOCKPEN]);
+    // The bar is the style's `PART_SCREEN_BAR`: its ground, the line under
+    // it in its border colour, its title in its text colour.
+    const look = barLook(ib, s);
+    setPen(ib, rp, look.ground);
     gb.RectFill(rp, &.{ .max_x = s.width, .max_y = s.bar_height - 1 });
-    setPen(ib, rp, s.pens[sc.BARTRIMPEN]);
+    setPen(ib, rp, look.trim);
     gb.DrawHLine(rp, 0, s.bar_height - 1, s.width);
 
     defer drawDepthOn(ib, s, rp);
@@ -272,7 +294,7 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     var baseline: u32 = 0;
     const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) }, .{} };
     gb.GetRPAttrs(rp, &metric);
-    setPen(ib, rp, s.pens[sc.BARDETAILPEN]);
+    setPen(ib, rp, look.writing);
     gb.Move(rp, bar_left, bar_border + @as(i32, @intCast(baseline)));
     gb.Text(rp, title, @intCast(nameLen(title)));
 }

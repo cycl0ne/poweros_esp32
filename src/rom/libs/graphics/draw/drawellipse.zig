@@ -64,6 +64,7 @@ pub fn DrawEllipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, 
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (rx < 0 or ry < 0) return;
+    if (rp.line_width > 1 or (rp.smooth and rx > 0 and ry > 0)) return @import("_wide.zig").ellipse(gb, rp, cx, cy, rx, ry, @intCast(rp.line_width));
     if (rx == 0 or ry == 0) {
         // Flat: a run rather than a curve, which the walk below cannot do.
         if (rx == 0 and ry == 0) {

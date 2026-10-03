@@ -41,4 +41,14 @@ pub const Preferences = extern struct {
     /// How tall the font a screen opens with is, when the screen is
     /// given none. Rows.
     screen_font_height: u32 = 16,
+    /// When a keyboard comes up on the screen while a field is typed into:
+    /// `KEYBOARD_AUTO`, `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
+    keyboard: u32 = KEYBOARD_AUTO,
 };
+
+/// `Preferences.keyboard`: on a board with no keyboard of its own.
+pub const KEYBOARD_AUTO: u32 = 0;
+/// On every board.
+pub const KEYBOARD_ALWAYS: u32 = 1;
+/// On none.
+pub const KEYBOARD_NEVER: u32 = 2;

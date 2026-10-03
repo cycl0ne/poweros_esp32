@@ -48,6 +48,7 @@ Generated from the source by `./zig build autodoc`.
 - [DrawHLine](#drawhline) - A run of pixels rightward.
 - [DrawPoly](#drawpoly) - A line through each of a list of points.
 - [DrawRect](#drawrect) - The outline of a rectangle.
+- [DrawRoundBevel](#drawroundbevel) - Draws the outline of a rectangle whose corners are rounded as a bevel: one colour on the top and the left, another on the bottom and the right.
 - [DrawRoundRect](#drawroundrect) - The outline of a rectangle whose corners are rounded.
 - [DrawVLine](#drawvline) - A run of pixels downward. `DrawHLine` turned on its side.
 - [EndDraw](#enddraw) - The rows gathered since `BeginDraw` handed to the display, in one.
@@ -2530,6 +2531,88 @@ None known.
 
 ```zig
 gb.DrawRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 110, .max_y = 60 });
+```
+
+## DrawRoundBevel
+
+Draws the outline of a rectangle whose corners are rounded as a bevel: one colour on the top and the left, another on the bottom and the right.
+
+**SYNOPSIS**
+
+```zig
+fn DrawRoundBevel(gb: *GraphicsBase, rp: *RastPort, area: *const Rect,
+    radius: u32, light: Pen, dark: Pen) void
+```
+
+**SINCE**
+
+0.25. LVO -340.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its line width, its smooth edges, its draw mode
+  and its clip decide the result; its pen is left as it was.
+- `area` - the rectangle the outline sits in, half-open.
+- `radius` - how far the corners are rounded. 0 is a square bevel.
+- `light` - the colour of the top and the left: the shine of a raised
+  bevel, the shadow of a recessed one.
+- `dark` - the colour of the bottom and the right.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The outline is the one `DrawRoundRect` draws with the same line width:
+`RPTAG_LineWidth` thick, growing inward, its inner edge the same shape
+with a radius that much smaller, with smooth edges under
+`RPTAG_Smooth`.
+
+A pixel of it is light when it is nearer the top or the left edge than
+the bottom or the right one, and dark otherwise. The two colours meet
+on the diagonal through the top-right and the bottom-left corner, which
+runs through the middle of a rounded corner's quarter circle - where a
+square bevel's angled joins meet too - however long or short the box
+is. The change is hard: each pixel is wholly one colour, decided at its
+middle. A pixel exactly on the diagonal is light in the box's left half
+and dark in its right one, so the two corners mirror each other.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not held and not wanted.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+- The line pattern is not used: a bevel is solid.
+- A ridge or a groove is two of these, the inner one in the box the
+  outer one leaves, with its colours the other way round.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DrawRoundRect`, `FillRoundRect`, `RPTAG_LineWidth`, `RPTAG_Smooth`
+
+**EXAMPLES**
+
+```zig
+// A raised button two pixels deep with rounded corners.
+gb.SetRPAttrs(rp, &[_]TagItem{
+    .{ .tag = graphics.RPTAG_LineWidth, .data = 2 },
+    .{ .tag = graphics.RPTAG_Smooth, .data = 1 },
+    .{},
+});
+gb.DrawRoundBevel(rp, &box, 6, shine, shadow);
 ```
 
 ## DrawRoundRect

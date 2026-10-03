@@ -24,6 +24,8 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
+const _style = @import("../style/_style.zig");
+const _transition = @import("../style/_transition.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const d = @import("draw.zig");
 
@@ -63,7 +65,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const saved = d.save(gb, rp);
     defer d.restore(gb, rp, saved);
     // Drawn last, over everything the gadget shows, whichever way it ends.
-    defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) d.ghost(gb, rp, b.left, b.top, b.width, b.height, gi_.block_pen);
+    defer if (g.flags & gadgetclass.GFLG_DISABLED != 0) gadgetclass.ghost(ib, o, gi_, rp, b.left, b.top, b.width, b.height);
 
     const drawn = gadgetclass.drawnState(g, state(g, gi));
     defer gadgetclass.drawHighlightBox(ib, g, rp, b.left, b.top, b.width, b.height);
@@ -76,6 +78,10 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
             .state = drawn,
             .draw_info = dri,
             .dimensions = .{ .width = b.width, .height = b.height },
+            // Part of the way into its new look while its style says it takes
+            // time (`STYLE_Transition`).
+            .style_state = _transition.state(ib, o, dri, intuition.style.PART_MAIN, _style.statesOfImage(drawn) | gc.styleStates(g.flags)),
+            .style = g.style,
         };
         _ = it.SendMessage(frame, @ptrCast(&draw));
     }
@@ -132,7 +138,7 @@ pub fn framed(ib: *IntuitionBase, o: *Object, frame: *Object, gi: ?*classusr.Gad
 
     var box = ic.Box{};
     const dri = if (gi) |info| info.draw_info else g.draw_info;
-    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = dri };
+    var msg = ic.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = dri, .style = g.style };
     if (it.SendMessage(frame, @ptrCast(&msg)) == 0) return null;
     return box;
 }

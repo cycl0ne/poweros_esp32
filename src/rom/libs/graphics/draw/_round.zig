@@ -44,6 +44,43 @@ pub fn insets(radius: i32, into: []i32) void {
     }
 }
 
+/// How far in from the edge row `i` of a corner of `radius` begins, from
+/// the top row of the corner down: what `insets` writes into a table,
+/// worked out for one row.
+///
+/// INPUTS:
+/// - `radius` - the corner's radius.
+/// - `i` - the row, 0 to `radius - 1`.
+pub fn insetAt(radius: i32, i: i32) i32 {
+    const up = radius - 1 - i;
+    return radius - isqrt(@intCast(radius * radius - up * up));
+}
+
+/// How far in a rounded rectangle's row `y` starts: the corner's inset on
+/// the rows a corner reaches, nothing between them.
+///
+/// INPUTS:
+/// - `box` - the rectangle.
+/// - `radius` - its corners' radius, already fitted to it.
+/// - `y` - the row.
+pub fn rowInset(box: @import("sdk").graphics.Rect, radius: i32, y: i32) i32 {
+    if (radius <= 0) return 0;
+    if (y < box.min_y + radius) return insetAt(radius, y - box.min_y);
+    if (y >= box.max_y - radius) return insetAt(radius, box.max_y - 1 - y);
+    return 0;
+}
+
+/// How far across an ellipse of `rx` by `ry` reaches on the row `dy` from
+/// its centre: the hard-edged span's half.
+pub fn halfAcross(rx: i32, ry: i32, dy: i32) i32 {
+    if (ry <= 0) return rx;
+    const a: i64 = rx;
+    const b: i64 = ry;
+    const d: i64 = dy;
+    const across = @divTrunc(a * a * (b * b - d * d), b * b);
+    return isqrt(@intCast(@max(across, 0)));
+}
+
 /// The whole-number square root: the largest `n` with `n * n <= value`.
 ///
 /// By Newton's method on whole numbers, which settles in a handful of

@@ -34,6 +34,18 @@
 //! with a line of shine down its right side where the bar begins; for
 //! depth and zoom, at the right, with a line of shadow down its left side,
 //! and placed one pixel into the bar's groove.
+//!
+//! **The colours are the style's** (`style.zig`), the shapes the vectors'
+//! own. Each pen that stands for part of a look is taken from the part the
+//! image is: a border gadget's ground, shine and shadow from the title bar
+//! (`style.PART_TITLE`, or `ic.PART_TITLE_INACTIVE` in a window that is
+//! not active); a check box's tick from `ic.PART_CHECKMARK`, and its box
+//! drawn whole by `DrawPart` as `ic.PART_CHECK`, so a style that rounds a
+//! button rounds a check box too; a radio button's ring from
+//! `ic.PART_RADIO` and its dot from `ic.PART_RADIOMARK`. A selected border
+//! gadget is pressed and a selected check box or radio button checked.
+//! With the default style every one of those is the screen pen it always
+//! was. Pens given with `SYSIA_Pens` are used as they are.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -50,6 +62,7 @@ const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const style = intuition.style;
 const d = @import("draw.zig");
 
 // --- the vectors ------------------------------------------------------------------
@@ -258,18 +271,30 @@ fn line(gb: *GraphicsBase, rp: *graphics.RastPort, value: Pen, x: i32, y0: i32, 
 
 /// One state of a design, drawn at `w` by `h` into `rp`, whose room for
 /// filled shapes the caller has made.
-fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen) void {
+fn render(ib: *IntuitionBase, rp: *graphics.RastPort, design: *const Design, state: usize, w: i32, h: i32, pens: [*]const Pen, from_style: bool, dri: ?*sc.DrawInfo) void {
+    const gb = ib.graphics_base;
     // The ground: a menu panel's own for an image on one; the background
     // pen for one in a box of its own - a screen's depth gadget - for one
     // on the window's ground, and in an inactive window border; the fill
     // pen in an active one.
     const ground = if (design.edge == .in_menu)
         pens[sc.BARBLOCKPEN]
-    else if (design.edge == .in_screen_bar or design.edge == .thick_bevel or design.edge == .none or state == INACTIVE)
+    else if (design.edge == .thick_bevel or design.edge == .none)
+        (if (from_style) d.pensOf(dri) else pens)[sc.BACKGROUNDPEN]
+    else if (design.edge == .in_screen_bar or state == INACTIVE)
         pens[sc.BACKGROUNDPEN]
     else
         pens[sc.FILLPEN];
     d.box(gb, rp, 0, 0, w, h, ground);
+
+    // A check box's box is the style's part, drawn whole before the tick
+    // goes on it - unless the caller gave its own pens, which then draw it
+    // as they always have.
+    if (design.edge == .thick_bevel and from_style) {
+        const it = ib.iface();
+        const box = graphics.Rect{ .max_x = w, .max_y = h };
+        it.DrawPart(rp, dri, null, ic.PART_CHECK, checkState(state), 0, &box, null);
+    }
 
     const mask: u8 = @as(u8, 1) << @intCast(state);
     for (design.vectors) |v| {
@@ -311,8 +336,9 @@ fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, stat
     const raised = state != SELECTED;
     switch (design.edge) {
         .in_menu, .none => {},
-        // Raised in every state: a check box does not press in.
-        .thick_bevel => d.bevel(gb, rp, 0, 0, w, h, pens[sc.SHINEPEN], pens[sc.SHADOWPEN], 2, .angled),
+        // Drawn above, as the style's part; in the caller's own pens,
+        // raised in every state - a check box does not press in.
+        .thick_bevel => if (!from_style) d.bevel(gb, rp, 0, 0, w, h, pens[sc.SHINEPEN], pens[sc.SHADOWPEN], 2, .angled),
         .in_screen_bar => edge3d(gb, rp, pens, raised, 0, w, h),
         .corner => {
             edge3d(gb, rp, pens, raised, 0, w, h);
@@ -334,6 +360,55 @@ fn render(gb: *GraphicsBase, rp: *graphics.RastPort, design: *const Design, stat
             dot(gb, rp, pens[sc.SHINEPEN], 0, 0);
             dot(gb, rp, pens[sc.SHADOWPEN], 0, h - 1);
         },
+    }
+}
+
+/// The style state a check box or a radio button is in: selected is
+/// checked, for them.
+fn checkState(state: usize) u32 {
+    return if (state == SELECTED) style.STATE_CHECKED else style.STATE_NORMAL;
+}
+
+/// The pens a design is drawn in: the screen's, with each that stands for
+/// part of a look taken from the part the image is.
+///
+/// INPUTS:
+/// - `ib` - the library, to ask the style.
+/// - `design` - the image's design, which says what part it is.
+/// - `state` - NORMAL, SELECTED or INACTIVE.
+/// - `dri` - the screen's DrawInfo, for its pens and its style, or null.
+/// - `table` - where the pens are written.
+fn pensFor(ib: *IntuitionBase, design: *const Design, state: usize, dri: ?*sc.DrawInfo, table: *[sc.NUMDRIPENS]Pen) void {
+    const it = ib.iface();
+    const base = d.pensOf(dri);
+    for (table, 0..) |*slot, i| slot.* = base[i];
+    const ask = struct {
+        fn colour(face: anytype, info: ?*sc.DrawInfo, part: u32, st: u32, attr: utility.Tag) Pen {
+            return @truncate(face.GetStyleAttr(info, null, part, st, attr));
+        }
+    }.colour;
+    switch (design.edge) {
+        .left_of_bar, .right_of_bar, .corner, .in_screen_bar => {
+            const part = if (state == INACTIVE) ic.PART_TITLE_INACTIVE else style.PART_TITLE;
+            const st = if (state == SELECTED) style.STATE_PRESSED else style.STATE_NORMAL;
+            table[sc.SHINEPEN] = ask(it, dri, part, st, style.STYLE_ShinePen);
+            table[sc.SHADOWPEN] = ask(it, dri, part, st, style.STYLE_ShadowPen);
+            // The ground of a border gadget: the fill pen in an active
+            // border, the background in an inactive one. A screen's depth
+            // gadget keeps the screen's background.
+            if (design.edge != .in_screen_bar) {
+                const ground = ask(it, dri, part, st, style.STYLE_Background);
+                if (state == INACTIVE) table[sc.BACKGROUNDPEN] = ground else table[sc.FILLPEN] = ground;
+            }
+        },
+        .thick_bevel => table[sc.TEXTPEN] = ask(it, dri, ic.PART_CHECKMARK, checkState(state), style.STYLE_Background),
+        .none => {
+            const st = checkState(state);
+            table[sc.SHINEPEN] = ask(it, dri, ic.PART_RADIO, st, style.STYLE_ShinePen);
+            table[sc.SHADOWPEN] = ask(it, dri, ic.PART_RADIO, st, style.STYLE_ShadowPen);
+            table[sc.FILLPEN] = ask(it, dri, ic.PART_RADIOMARK, st, style.STYLE_Background);
+        },
+        .in_menu => {},
     }
 }
 
@@ -374,7 +449,12 @@ fn stateImage(ib: *IntuitionBase, sd: *Data, design: *const Design, state: usize
         gb.FreeBitMap(surface);
         return null;
     }
-    render(gb, rp, design, state, w, h, sd.pens orelse d.pensOf(dri));
+    var table: [sc.NUMDRIPENS]Pen = undefined;
+    const pens: [*]const Pen = sd.pens orelse styled: {
+        pensFor(ib, design, state, dri, &table);
+        break :styled &table;
+    };
+    render(ib, rp, design, state, w, h, pens, sd.pens == null, dri);
     _ = gb.InitArea(rp, 0);
     sd.drawn[state] = surface;
     return surface;

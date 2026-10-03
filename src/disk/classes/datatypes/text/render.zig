@@ -47,7 +47,8 @@ pub fn penOf(which: u32, info: *const classusr.GadgetInfo) graphics.Pen {
 /// across and `top` pixels down it.
 pub fn paint(base: *Base, own: *Data, info: *classusr.GadgetInfo, rp: *graphics.RastPort, box: gc.Box, left: i32, top: i32) void {
     const gb = base.graphics_base;
-    const pens = info.draw_info.pens;
+    const styled = support.pensFor(base.intuition_base, info.draw_info, null, intuition.style.PART_MAIN, intuition.style.PART_SELECTION);
+    const pens: [*]const graphics.Pen = &styled;
     support.fill(gb, rp, box, pens[sc.BACKGROUNDPEN]);
     const lines = own.lines orelse return;
     const buffer = own.buffer orelse return;

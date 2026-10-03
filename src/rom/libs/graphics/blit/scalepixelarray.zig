@@ -112,6 +112,17 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * to_bytes;
             var x: i32 = r.rect.min_x;
+            if (rp.smooth) {
+                // Between the pixels, for a RastPort that wants it smooth.
+                const fy = _blit.sourceOf(y, dest_area.min_y, dest_h, src_area.min_y, src_h);
+                while (x < r.rect.max_x) : (x += 1) {
+                    const fx = _blit.sourceOf(x, dest_area.min_x, dest_w, src_area.min_x, src_w);
+                    const pen = _blit.sampleBetween(pixels, pitch, from, src_area.*, fx, fy);
+                    _blit.blendPixel(to + @as(usize, @intCast(x - r.rect.min_x)) * to_bytes, to_bytes, to_format, pen);
+                }
+                drawing.grow(&bound, y, &any);
+                continue;
+            }
             while (x < r.rect.max_x) : (x += 1) {
                 const sx = src_area.min_x + @divTrunc((x - dest_area.min_x) * src_w, dest_w);
                 const pen = rastport.unpackPen(from, drawing.getPixel(row + @as(usize, @intCast(sx)) * src_bytes, src_bytes));

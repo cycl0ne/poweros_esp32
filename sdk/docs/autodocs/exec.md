@@ -21,6 +21,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddSemaphore](#addsemaphore) - Makes a semaphore public, so that anything can find it by name.
 - [AddTail](#addtail) - Puts a node at the tail of a list.
 - [AddTask](#addtask) - Starts a task the caller has laid out, and makes it ready to run.
+- [AddTaskEndHook](#addtaskendhook) - Have a hook run when a task ends.
 - [Alert](#alert) - Reports that the system has a problem, and for a dead end stops.
 - [AlertAt](#alertat) - Reports a problem found at a place the caller names, with what went wrong in words, and for a dead end stops.
 - [AllocMem](#allocmem) - Allocates memory from the system, from the first region that suits.
@@ -105,6 +106,7 @@ Generated from the source by `./zig build autodoc`.
 - [RemSemaphore](#remsemaphore) - Takes a semaphore off the public list.
 - [RemTail](#remtail) - Takes the last node off a list and answers it.
 - [RemTask](#remtask) - Ends a task, and frees what `CreateTask` allocated for it.
+- [RemTaskEndHook](#remtaskendhook) - Take a hook off the task it waits on, so it does not run.
 - [Remove](#remove) - Takes a node off whatever list it is on.
 - [ReplyIO](#replyio) - For a device: finishes a request and sends it back.
 - [ReplyMsg](#replymsg) - Sends a message back to whoever sent it.
@@ -845,6 +847,13 @@ The new task is enqueued as ready, and **if its priority is higher than
 the running task's it runs at once** - before this call returns, since
 the `Enable` at the end of it is a point at which a switch is taken.
 
+**The bottom four words of its stack become its guard** (from
+`sp_lower`): a pattern the dispatcher looks at each time it switches
+away from the task. Written over - the stack ran past its end - is a
+dead-end alert, `AN_StackProbe`, in that task, before what the overflow
+wrote over is used by anyone else. Those words are not the task's to
+use.
+
 **CONTEXT**
 
 - Waits: no, but it may switch, so the caller may lose the processor
@@ -883,6 +892,78 @@ task.node.pri = 0;
 task.sp_lower = @intFromPtr(stack);
 task.sp_upper = task.sp_lower + stack_size;
 _ = sys.AddTask(task, &myTask, null);
+```
+
+## AddTaskEndHook
+
+Have a hook run when a task ends.
+
+**SYNOPSIS**
+
+```zig
+fn AddTaskEndHook(base: *ExecBase, task: ?*Task, hook: *TaskEndHook) void
+```
+
+**SINCE**
+
+1.1. LVO -480.
+
+**INPUTS**
+
+- `task` - the task whose end it waits for, or **null for the caller**.
+- `hook` - `code` set, `data` as the caller likes, on no task's list.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The hook goes on the task's own list, in its TCB (`Task.end_hooks`),
+after the ones put on before it. When the task ends - its code returns,
+it calls `RemTask(null)`, or another task removes it - `RemTask` takes
+each hook off in that order and runs it, before the task is taken away.
+A hook runs once; `hook.task` is null again before it runs.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed; it takes Forbid for the list itself.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The hook stays the caller's memory, and must stay valid until it has
+run or been taken off with `RemTaskEndHook`.
+
+**NOTES**
+
+- What it is for: a library that hands a task something - an
+  animation, a timer, a socket - lets it go when the task ends without
+  giving it back, so nothing is left calling into code that is gone.
+- The hook runs on the task that called `RemTask`, with nothing held:
+  it may take semaphores and free memory, and should not wait long,
+  since the task's end waits for it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemTaskEndHook`, `RemTask`
+
+**EXAMPLES**
+
+```zig
+fn ended(sys: *ExecBase, task: *Task, hook: *TaskEndHook) callconv(.c) void {
+    const owner: *Owner = @ptrCast(@alignCast(hook.data.?));
+    owner.letGo(sys, task);
+}
+
+owner.hook = .{ .code = &ended, .data = owner };
+sys.AddTaskEndHook(null, &owner.hook);
 ```
 
 ## Alert
@@ -4561,6 +4642,12 @@ much stack is left sees the right one.
 It is a call, not a task: the same task runs `code`, on different
 memory, and control comes back when it returns.
 
+**The new stack is guarded** as a task's is (`AddTask`): the dispatcher
+checks its bottom words while `code` runs, and this call checks them
+once more before it gives the stack back. A stack `code` ran past the
+end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
+written over below it.
+
 **CONTEXT**
 
 - Waits: only if `code` does.
@@ -6261,6 +6348,10 @@ Nothing, and for null it does not return at all.
 
 **BEHAVIOR**
 
+**First, its end hooks** (`AddTaskEndHook`) run, in the order they were
+put on, on the task calling this and with nothing held - what libraries
+held for the task is let go while the task is still there.
+
 **Removing yourself** cannot free your own stack, because you are still
 running on it. The task is marked and the processor given up, and the
 scheduler frees the memory once nothing is running on it any more.
@@ -6275,14 +6366,16 @@ it.
 **CONTEXT**
 
 - Waits: no. For null it never returns, which is not the same thing.
-- Interrupts: no. It takes Disable and may free memory.
+- Interrupts: no. It takes Disable, may free memory, and runs the
+  task's end hooks.
 - Forbid: not needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-Memory from `CreateTask` goes back to the system. Anything the task
-itself allocated is not freed - signals, ports, memory - so a task that
+Memory from `CreateTask` goes back to the system, and what a library
+held for the task through an end hook goes back to that library.
+Anything else the task itself allocated is not freed - signals, ports, memory - so a task that
 is removed from outside leaks whatever it was holding. That is why a
 task is normally asked to end itself.
 
@@ -6297,12 +6390,72 @@ None known.
 
 **SEE ALSO**
 
-`AddTask`, `CreateTask`, `Signal`
+`AddTask`, `CreateTask`, `Signal`, `AddTaskEndHook`
 
 **EXAMPLES**
 
 ```zig
 sys.RemTask(null); // does not return
+```
+
+## RemTaskEndHook
+
+Take a hook off the task it waits on, so it does not run.
+
+**SYNOPSIS**
+
+```zig
+fn RemTaskEndHook(base: *ExecBase, hook: *TaskEndHook) void
+```
+
+**SINCE**
+
+1.1. LVO -484.
+
+**INPUTS**
+
+- `hook` - a hook put on with `AddTaskEndHook`, or one that has run or
+  was never put on.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A hook on a task's list is taken off it and will not run; its `task` is
+null again. A hook on no list - one that has run, or never was put on -
+is left as it is, so a library may call this whatever has happened.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed; it takes Forbid for the list itself.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The hook is the caller's again, to free or put on another task.
+
+**NOTES**
+
+What a library calls when a task gives back what it held: nothing is
+left for the task's end to do.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddTaskEndHook`, `RemTask`
+
+**EXAMPLES**
+
+```zig
+sys.RemTaskEndHook(&owner.hook);
+sys.FreeVec(owner);
 ```
 
 ## Remove

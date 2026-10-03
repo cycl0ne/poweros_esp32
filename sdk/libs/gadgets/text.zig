@@ -9,6 +9,29 @@
 //! frame with `TEXT_Border`. It is a line of the font high, and as wide as
 //! its text unless it is given a width.
 //!
+//! **Rich text.** Given `TEXT_Runs`, it shows runs of text each in its own
+//! font, soft style and colour, one after another; with `TEXT_Markup`,
+//! `TEXT_Text` is read as a small markup and turned into runs:
+//!
+//! - `<b>`, `<i>`, `<u>`: bold, italic, underlined
+//! - `<c=#RRGGBB>`: in that colour
+//! - `<s=N>`: in the gadget's font at N rows tall
+//! - `</>` (or `</b>` and the like): the last of those ends
+//! - `<br>`: a new line; `<<`: a `<`
+//!
+//! With `TEXT_Wrap` the runs are broken at spaces into lines as wide as
+//! the gadget, each as tall as its tallest run, their baselines lined up;
+//! the gadget is as tall as its lines when it is made. Without, they make
+//! one line.
+//!
+//!   const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
+//!       .{ .tag = tx.TEXT_Text, .data = @intFromPtr("Press <b>OK</b> to go on, <c=#C03030>Cancel</c> to stop.") },
+//!       .{ .tag = tx.TEXT_Markup, .data = 1 },
+//!       .{ .tag = tx.TEXT_Wrap, .data = 1 },
+//!       .{ .tag = gc.GA_Width, .data = 160 },
+//!       .{},
+//!   });
+//!
 //!   const status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 //!       .{ .tag = tx.TEXT_Number, .data = 42 },
 //!       .{ .tag = tx.TEXT_Format, .data = @intFromPtr("%ld files") },
@@ -17,6 +40,7 @@
 //!   });
 
 const gadgets = @import("gadgets.zig");
+const graphics = @import("../graphics/graphics.zig");
 
 /// What a program opens, and the class it then asks for.
 pub const TEXT_LIBRARY = "gadgets/text.gadget";
@@ -49,6 +73,28 @@ pub const TEXT_BackPen = TEXT_Dummy + 0x09;
 /// keeps open for as long as the gadget has it; null for the window's.
 /// Made and set; the gadget is as tall as a line of it.
 pub const TEXT_Font = TEXT_Dummy + 0x0A;
+/// `[*]const TextRun`: runs of text shown in place of the text, ended by a
+/// run whose text is null. Not copied: the caller keeps them, and the
+/// fonts they name, for as long as the gadget has them. Made and set.
+pub const TEXT_Runs = TEXT_Dummy + 0x0B;
+/// Bool: `TEXT_Text` is markup, turned into runs when it is set (false).
+/// Made only; give it before the text.
+pub const TEXT_Markup = TEXT_Dummy + 0x0C;
+/// Bool: runs are broken into lines as wide as the gadget (false). Made
+/// and set.
+pub const TEXT_Wrap = TEXT_Dummy + 0x0D;
+
+/// A run of text in one look.
+pub const TextRun = extern struct {
+    /// The text; null ends the runs. A `\n` in it starts a new line.
+    text: ?[*:0]const u8 = null,
+    /// The font, or null for the gadget's.
+    font: ?*graphics.TextFont = null,
+    /// Soft styles, `graphics.FSF_BOLD` and the rest.
+    style: u32 = 0,
+    /// The colour, 0xAARRGGBB, or 0 for the front pen.
+    colour: graphics.Pen = 0,
+};
 
 pub const TEXT_JUSTIFY_LEFT: u32 = 0;
 pub const TEXT_JUSTIFY_RIGHT: u32 = 1;
