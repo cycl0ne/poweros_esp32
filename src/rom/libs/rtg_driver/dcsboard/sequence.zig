@@ -9,7 +9,8 @@
 //! maker's table, and what a tag can point at.
 
 const std = @import("std");
-const step = @import("sdk").rtg.tags.dcsStep;
+const rtg = @import("sdk").rtg;
+const step = rtg.tags.dcsStep;
 
 /// One step of a bring-up.
 pub const Step = struct {
@@ -93,6 +94,15 @@ pub const Turn = enum {
     counter_clockwise,
 };
 
+/// Where row `row` of a picture made of bands starts: in the buffer of
+/// the band that covers it, at the band's row for it.
+pub fn bandRow(bands: []const rtg.RtgBand, row: u32) [*]const u8 {
+    var which: usize = 0;
+    while (which + 1 < bands.len and bands[which + 1].line <= row) which += 1;
+    const band = bands[which];
+    return band.bitmap.pixels.? + @as(usize, band.rowAt(row)) * band.bitmap.pitch;
+}
+
 /// What a turned picture is, for the rows taken out of it.
 pub const Turned = struct {
     /// The picture: where it starts, its bytes a row, and the panel it is
@@ -102,6 +112,15 @@ pub const Turned = struct {
     panel_width: u32,
     panel_height: u32,
     turn: Turn,
+    /// The bands the picture is made of; empty for one buffer, the one
+    /// at `pixels`.
+    bands: []const rtg.RtgBand = &.{},
+
+    /// Where picture row `row` starts.
+    pub fn rowAt(picture: Turned, row: u32) [*]const u8 {
+        if (picture.bands.len > 0) return bandRow(picture.bands, row);
+        return picture.pixels + @as(usize, row) * picture.pitch;
+    }
 };
 
 /// Rows `y` to `y + rows` of a turned picture are a strip of the panel's
@@ -135,12 +154,11 @@ pub fn turnedRow(into: []u8, picture: Turned, row: u32, first: u32, count: u32) 
     const clockwise = picture.turn == .clockwise;
     // The picture column this panel row is.
     const column = if (clockwise) row else picture.panel_height - 1 - row;
-    const at = picture.pixels + @as(usize, column) * 2;
     for (0..count) |i| {
         const panel_column = first + @as(u32, @intCast(i));
         // Clockwise, the panel's first column is the picture's last row.
         const picture_row = if (clockwise) picture.panel_width - 1 - panel_column else panel_column;
-        const from = at + @as(usize, picture_row) * picture.pitch;
+        const from = picture.rowAt(picture_row) + @as(usize, column) * 2;
         into[i * 2] = from[1];
         into[i * 2 + 1] = from[0];
     }
@@ -181,7 +199,7 @@ pub fn turnedBand(
         const panel_column = first_column + @as(u32, @intCast(i));
         // Clockwise, the panel's first column is the picture's last row.
         const picture_row = if (clockwise) picture.panel_width - 1 - panel_column else panel_column;
-        const from = picture.pixels + @as(usize, picture_row) * picture.pitch;
+        const from = picture.rowAt(picture_row);
         var at = i * 2;
         for (0..rows) |j| {
             const panel_row = first_row + @as(u32, @intCast(j));
@@ -405,8 +423,49 @@ test "a turned band of one row, and of the whole panel" {
     try std.testing.expectEqualSlices(u8, &rows, &all);
 }
 
+test "a picture in bands: each row from the band that covers it" {
+    // Two buffers of 2 by 4, each pixel its buffer's number and its row;
+    // display rows 0-1 from the first, 2-3 from the second's rows 0-1.
+    const width = 2;
+    const height = 4;
+    const pitch = width * 2;
+    var back: [height * pitch]u8 = undefined;
+    var front: [height * pitch]u8 = undefined;
+    for (0..height) |y| {
+        for (0..width) |x| {
+            back[y * pitch + x * 2] = @intCast(0x10 + y);
+            back[y * pitch + x * 2 + 1] = 0;
+            front[y * pitch + x * 2] = @intCast(0x20 + y);
+            front[y * pitch + x * 2 + 1] = 0;
+        }
+    }
+    var back_bm = rtg.RtgBitMap{ .pixels = &back, .width = width, .height = height, .pitch = pitch };
+    var front_bm = rtg.RtgBitMap{ .pixels = &front, .width = width, .height = height, .pitch = pitch };
+    const bands = [_]rtg.RtgBand{
+        .{ .bitmap = &back_bm, .line = 0, .origin = 0 },
+        .{ .bitmap = &front_bm, .line = 2, .origin = 2 },
+    };
+    try std.testing.expectEqual(@as(u8, 0x11), bandRow(&bands, 1)[0]);
+    try std.testing.expectEqual(@as(u8, 0x20), bandRow(&bands, 2)[0]);
+    try std.testing.expectEqual(@as(u8, 0x21), bandRow(&bands, 3)[0]);
+
+    // Turned counter-clockwise onto a panel 4 by 2: panel column c is
+    // picture row c, so the band reads both buffers along a panel row.
+    const picture: Turned = .{
+        .pixels = &back,
+        .pitch = pitch,
+        .panel_width = height,
+        .panel_height = width,
+        .turn = .counter_clockwise,
+        .bands = &bands,
+    };
+    var into: [height * 2]u8 = undefined;
+    turnedBand(&into, picture, 0, 1, 0, height);
+    // High byte first: each pixel's 0, then its number.
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0x10, 0, 0x11, 0, 0x20, 0, 0x21 }, &into);
+}
+
 test "the pointer laid over a band, upright and turned, where the picture is" {
-    const rtg = @import("sdk").rtg;
     // Two by one: a pixel of the pointer, then one clear.
     const pixels = [_]u16{ 0x1234, 0xFFFF };
     const mask = [_]u8{0x80};

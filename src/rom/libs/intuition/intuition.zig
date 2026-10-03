@@ -808,6 +808,9 @@ const Display = struct {
         try testing.expect(rb.AddRtgDriver(&state.driver));
         const empty = [_]TagItem{.{}};
         const board = rb.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
+        // The display is the size of the buffer it is brought up with.
+        board.info.width = width;
+        board.info.height = height;
         const bitmap = rb.AllocBitMap(board, width, height, @intFromEnum(format), sdk.rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
         try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rb.ShowBitMap(board, bitmap, 0, 0));
         return .{ .state = state, .board = board, .bitmap = bitmap };
@@ -1066,6 +1069,101 @@ test "screens: the depth gadget in the bar, and the tags a screen opens with or 
     try tearDown(ib);
 }
 
+test "screens: pulled down to show the one behind, by MoveScreen, by tags and by the bar" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const log = &display.state.log;
+
+    const back = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const front = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const behind: *_kscreen.Screen = @ptrCast(@alignCast(back));
+    const ahead: *_kscreen.Screen = @ptrCast(@alignCast(front));
+    try testing.expectEqual(ahead.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(u32, 0), log.bands_shown);
+
+    // Down by 20: the screen behind above it, each from its own top.
+    it.MoveScreen(front, 0, 20);
+    try testing.expectEqual(@as(usize, 20), screenAttr(ib, front, sc.SA_Top));
+    try testing.expectEqual(@as(u32, 2), log.band_count);
+    try testing.expectEqual(behind.shown, log.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 0), log.bands[0].line);
+    try testing.expectEqual(ahead.shown, log.bands[1].bitmap);
+    try testing.expectEqual(@as(u32, 20), log.bands[1].line);
+    try testing.expectEqual(@as(u32, 20), log.bands[1].origin);
+
+    // The one behind pulled down too: above it nothing, a row of its
+    // background pen repeated - not its own top shown again.
+    it.MoveScreen(back, 0, 10);
+    try testing.expectEqual(@as(u32, 3), log.band_count);
+    try testing.expectEqual(behind.blank.?, log.bands[0].bitmap);
+    try testing.expectEqual(sdk.rtg.RTGBANDF_REPEAT, log.bands[0].flags);
+    {
+        const blank_row: [*]const u16 = @ptrCast(@alignCast(behind.blank.?.pixels.?));
+        const ground_row: [*]const u16 = @ptrCast(@alignCast(behind.bitmap.pixels.? + 30 * behind.bitmap.pitch));
+        try testing.expectEqual(ground_row[10], blank_row[10]);
+    }
+    try testing.expectEqual(behind.shown, log.bands[1].bitmap);
+    try testing.expectEqual(@as(u32, 10), log.bands[1].line);
+    try testing.expectEqual(@as(u32, 10), log.bands[1].origin);
+    it.MoveScreen(back, 0, -10);
+    try testing.expectEqual(@as(u32, 2), log.band_count);
+
+    // Never further than its bar stays on the glass, never above the top.
+    it.MoveScreen(front, 0, 100);
+    try testing.expectEqual(@as(usize, @intCast(40 - ahead.bar_height)), screenAttr(ib, front, sc.SA_Top));
+    it.MoveScreen(front, 0, -100);
+    try testing.expectEqual(@as(usize, 0), screenAttr(ib, front, sc.SA_Top));
+    try testing.expectEqual(ahead.bitmap, display.board.showing.?);
+    try testing.expect(!ib.banded);
+
+    // By tags: where it goes, or how far.
+    it.ScreenPositionTagList(front, &[_]TagItem{ .{ .tag = sc.SPOS_Top, .data = 5 }, .{} });
+    try testing.expectEqual(@as(usize, 5), screenAttr(ib, front, sc.SA_Top));
+    const up_two: isize = -2;
+    it.ScreenPositionTagList(front, &[_]TagItem{
+        .{ .tag = sc.SPOS_Top, .data = @bitCast(up_two) },
+        .{ .tag = sc.SPOS_Relative, .data = 1 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 3), screenAttr(ib, front, sc.SA_Top));
+
+    // One that may not be dragged moves only when forced; while it is in
+    // front at the top, it is all that is shown.
+    const fixed = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Draggable, .data = 0 }, .{} }).?;
+    const fixed_s: *_kscreen.Screen = @ptrCast(@alignCast(fixed));
+    try testing.expectEqual(fixed_s.bitmap, display.board.showing.?);
+    it.MoveScreen(fixed, 0, 10);
+    try testing.expectEqual(@as(usize, 0), screenAttr(ib, fixed, sc.SA_Top));
+    it.ScreenPositionTagList(fixed, &[_]TagItem{ .{ .tag = sc.SPOS_Top, .data = 10 }, .{ .tag = sc.SPOS_ForceDrag, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 10), screenAttr(ib, fixed, sc.SA_Top));
+    try testing.expectEqual(fixed_s.shown, log.bands[log.band_count - 1].bitmap);
+    try testing.expect(it.CloseScreen(fixed));
+    // The one in front again keeps its place.
+    try testing.expectEqual(@as(usize, 3), screenAttr(ib, front, sc.SA_Top));
+    try testing.expectEqual(ahead.shown, log.bands[1].bitmap);
+    try testing.expectEqual(@as(u32, 3), log.bands[1].line);
+
+    // Dragged by its bar: pressed at line 5, its bar's second line, and
+    // let go 10 lines lower. The press lands in its bar, not in the one
+    // behind that shows above it.
+    pointerEvent(ib, ie.IECODE_LBUTTON, 10, 5);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 10, 15);
+    try testing.expectEqual(@as(usize, 13), screenAttr(ib, front, sc.SA_Top));
+    // Coordinates on a screen pulled down are its own.
+    try testing.expectEqual(@as(usize, 2), screenAttr(ib, front, sc.SA_MouseY));
+
+    try testing.expect(it.CloseScreen(front));
+    try testing.expectEqual(behind.bitmap, display.board.showing.?);
+    try testing.expect(it.CloseScreen(back));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "DisplayBeep, CurrentTime, TimedDisplayAlert" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -1118,6 +1216,7 @@ test "DisplayBeep, CurrentTime, TimedDisplayAlert" {
     press(ib, ie.IECODE_LBUTTON, 40);
     try testing.expectEqual(@import("misc/_misc.zig").Answer.no, ib.alert.answer);
     ib.alert = .{};
+    ib.banded = false;
 
     try testing.expect(it.CloseScreen(screen));
     display.down(ib);

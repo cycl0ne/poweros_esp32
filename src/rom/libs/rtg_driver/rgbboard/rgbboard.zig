@@ -16,6 +16,10 @@
 //! the block. Per-board state is the `Panel` the library allocates beside
 //! each handle.
 //!
+//! A picture may also be several buffers at once, in bands of lines
+//! (ShowBitMapBands): the copy's chains then take each line from the band
+//! that covers it, a descriptor a line, so a band starts on any line.
+//!
 //! The order matters and none of it is optional. `CreateBoardTagList`
 //! lets the panel out of reset, takes its memory and its DMA channels and
 //! programs the peripheral; `SetBoardMode` puts the timings in; and
@@ -168,6 +172,20 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     return panels.start(panel, pixels);
 }
 
+/// Several buffers at once, in bands: the copy reads each display line
+/// from the row of the band that covers it, so a band may start on any
+/// line. Shown from the next frame on, as a flip is.
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    for (bands[0..count]) |band| {
+        const bm = band.bitmap;
+        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
+        if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+    }
+    return panels.showBands(panel, bands[0..count]);
+}
+
 /// Rows the CPU wrote, handed to the panel: it reads that memory without
 /// going through the cache, so what was written has to be pushed out of
 /// it first. The stream never stops, so that is the whole of it.
@@ -260,6 +278,7 @@ const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .set_mode = &setMode,
     .show_bitmap = &showBitMap,
+    .show_bands = &showBands,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,

@@ -40,6 +40,7 @@ const AllocBitMap = @import("bitmap/allocbitmap.zig").AllocBitMap;
 const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
 const FreeBitMap = @import("bitmap/freebitmap.zig").FreeBitMap;
 const ShowBitMap = @import("display/showbitmap.zig").ShowBitMap;
+const ShowBitMapBands = @import("display/showbitmapbands.zig").ShowBitMapBands;
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
 const RefreshBitMap = @import("bitmap/refreshbitmap.zig").RefreshBitMap;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
@@ -123,6 +124,7 @@ const contract_files = [_][]const u8{
     @embedFile("bitmap/attachbitmap.zig"),
     @embedFile("bitmap/freebitmap.zig"),
     @embedFile("display/showbitmap.zig"),
+    @embedFile("display/showbitmapbands.zig"),
     @embedFile("display/boarddisplaybitmap.zig"),
     @embedFile("bitmap/refreshbitmap.zig"),
     @embedFile("display/waitvblank.zig"),
@@ -316,6 +318,9 @@ fn lvoMoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) callc
 fn lvoShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     return ShowBoardPointer(rb, board, show);
 }
+fn lvoShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    return ShowBitMapBands(rb, board, bands, count);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -377,6 +382,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetBoardPointer),
     vec(lvoMoveBoardPointer),
     vec(lvoShowBoardPointer),
+    vec(lvoShowBitMapBands),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -384,7 +390,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 57), vectors.len);
+    try testing.expectEqual(@as(usize, 58), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

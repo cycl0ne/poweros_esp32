@@ -139,6 +139,8 @@ pub const LVO = struct {
     pub const SetStyle = libraries.lvo(121);
     pub const QueueGadgetRefresh = libraries.lvo(122);
     pub const SetScreenPens = libraries.lvo(123);
+    pub const MoveScreen = libraries.lvo(124);
+    pub const ScreenPositionTagList = libraries.lvo(125);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -264,6 +266,8 @@ pub const Fn = struct {
     pub const SetStyle = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const QueueGadgetRefresh = *const fn (*IntuitionBase, *intuition.Object) callconv(.c) void;
     pub const SetScreenPens = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const graphics.Pen) callconv(.c) void;
+    pub const MoveScreen = *const fn (*IntuitionBase, *intuition.Screen, i32, i32) callconv(.c) void;
+    pub const ScreenPositionTagList = *const fn (*IntuitionBase, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1003,5 +1007,18 @@ pub const IntuitionBase = opaque {
     /// is painted again, its windows told IDCMP_NEWPREFS.
     pub fn SetScreenPens(self: *IntuitionBase, screen: ?*intuition.Screen, pens: ?[*]const graphics.Pen) void {
         return libraries.call(self, LVO.SetScreenPens, Fn.SetScreenPens, .{ screen, pens });
+    }
+
+    /// The screen moved down its display by `dy` (up for less), as far as it
+    /// may go: the screen behind shows above it. `dx` is taken for its sign
+    /// only; screens are as wide as their display.
+    pub fn MoveScreen(self: *IntuitionBase, screen: *intuition.Screen, dx: i32, dy: i32) void {
+        return libraries.call(self, LVO.MoveScreen, Fn.MoveScreen, .{ screen, dx, dy });
+    }
+
+    /// The screen put where the tags say on its display (SPOS_Top, SPOS_Left,
+    /// SPOS_Relative, SPOS_ForceDrag), as far as it may go.
+    pub fn ScreenPositionTagList(self: *IntuitionBase, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) void {
+        return libraries.call(self, LVO.ScreenPositionTagList, Fn.ScreenPositionTagList, .{ screen, tags });
     }
 };

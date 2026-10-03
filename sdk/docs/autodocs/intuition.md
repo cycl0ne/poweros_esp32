@@ -70,6 +70,7 @@ Generated from the source by `./zig build autodoc`.
 - [LockPubScreenList](#lockpubscreenlist) - Holds the list of public screens, and answers it.
 - [MakeClass](#makeclass) - Makes a class.
 - [ModifyIDCMP](#modifyidcmp) - Changes which messages a window gets.
+- [MoveScreen](#movescreen) - Moves a screen up or down its display by an amount.
 - [MoveWindow](#movewindow) - Moves a window.
 - [MoveWindowInFrontOf](#movewindowinfrontof) - Puts a window just in front of another.
 - [NewObjectTagList](#newobjecttaglist) - Makes an object.
@@ -97,6 +98,7 @@ Generated from the source by `./zig build autodoc`.
 - [Request](#request) - Puts a requester up in a window.
 - [ResetMenuStrip](#resetmenustrip) - Gives a window back a strip it already had.
 - [ScreenDepth](#screendepth) - Moves a screen to the front of its display or to the back.
+- [ScreenPositionTagList](#screenpositiontaglist) - Puts a screen at a place on its display, or moves it by an amount.
 - [ScreenToBack](#screentoback) - Puts a screen behind the others on its display.
 - [ScreenToFront](#screentofront) - Brings a screen to the front of its display.
 - [ScrollWindowRaster](#scrollwindowraster) - Moves part of what a window shows, and clears what it leaves.
@@ -2944,9 +2946,11 @@ fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen,
   now), `SA_DefaultTitle`, `SA_Font`, `SA_PubName` (0 for a private
   screen), `SA_Type`, `SA_ShowTitle`, `SA_RastPort`, `SA_LayerInfo`,
   `SA_BarHeight`, `SA_BarVBorder`, `SA_BarHBorder`, `SA_MouseX`,
-  `SA_MouseY`, `SA_WBorTop`, `SA_WBorLeft`, `SA_WBorRight`,
-  `SA_WBorBottom`. A tag it does not know, or a null data, is passed
-  over.
+  `SA_MouseY` (the pointer in the screen's own coordinates, wherever
+  on the display the screen is), `SA_WBorTop`, `SA_WBorLeft`,
+  `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
+  the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`.
+  A tag it does not know, or a null data, is passed over.
 
 **RESULT**
 
@@ -4025,6 +4029,73 @@ None known.
 
 ```zig
 if (!ib.ModifyIDCMP(window, IDCMP_REFRESHWINDOW | IDCMP_NEWSIZE)) return;
+```
+
+## MoveScreen
+
+Moves a screen up or down its display by an amount.
+
+**SYNOPSIS**
+
+```zig
+fn MoveScreen(ib: *IntuitionBase, screen: *Screen, dx: i32, dy: i32) void
+```
+
+**SINCE**
+
+0.29. LVO -500.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `dx` - across: screens are as wide as their display, so it stays
+  where it is.
+- `dy` - down, in lines; up for less than 0.
+
+**RESULT**
+
+Nothing. GetScreenAttrs' `SA_Top` says where it went.
+
+**BEHAVIOR**
+
+The screen goes as far as it may: not above its display's top, and not
+so far down that its bar leaves the glass, so it can be pulled back. The
+screen behind shows above it, from its own top - and above that, the one
+behind it - and the display's home where no screen reaches. Nothing is
+drawn again: each screen keeps its picture, and the display shows the
+new bands at its next frame. A screen opened with `{SA_Draggable,
+false}` does not move, nor does an exclusive one.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and for the display to take
+  the new picture up at its next frame.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+What the pointer is over goes with the bands: a press above a screen
+pulled down is a press on the screen behind it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScreenPositionTagList`, `ScreenDepth`, `GetScreenAttrs`
+
+**EXAMPLES**
+
+```zig
+ib.MoveScreen(screen, 0, 200); // pulled down 200 lines
+ib.MoveScreen(screen, 0, -200); // and back
 ```
 
 ## MoveWindow
@@ -5748,6 +5819,79 @@ None known.
 
 ```zig
 ib.ScreenDepth(screen, sc.SDEPTH_TOBACK);
+```
+
+## ScreenPositionTagList
+
+Puts a screen at a place on its display, or moves it by an amount.
+
+**SYNOPSIS**
+
+```zig
+fn ScreenPositionTagList(ib: *IntuitionBase, screen: *Screen, tags: ?[*]const utility.TagItem) void
+```
+
+**SINCE**
+
+0.29. LVO -504.
+
+**INPUTS**
+
+- `screen` - the screen.
+- `tags`:
+  - `SPOS_Top` (i32) - the display line its top edge goes to, or with
+    `SPOS_Relative` how far down it moves (up for less than 0); left
+    where it is without the tag.
+  - `SPOS_Left` (i32) - the same across; screens are as wide as their
+    display, so it stays at 0.
+  - `SPOS_Relative` (bool) - the two are a move, not a place (false).
+  - `SPOS_ForceDrag` (bool) - move a screen opened with
+    `{SA_Draggable, false}` as well (false).
+
+**RESULT**
+
+Nothing. GetScreenAttrs' `SA_Top` says where it went.
+
+**BEHAVIOR**
+
+As `MoveScreen`: the screen goes as far as it may - not above the top,
+its bar kept on the glass - and the screens behind show above it. A
+screen that may not be dragged moves only with `SPOS_ForceDrag`; an
+exclusive one stays at the top.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and for the display to take
+  the new picture up at its next frame.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands. The tags are read, not kept.
+
+**NOTES**
+
+Only the screen's owner should set `SPOS_ForceDrag`: a screen that may
+not be dragged is that way for a reason of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MoveScreen`, `ScreenDepth`, `GetScreenAttrs`
+
+**EXAMPLES**
+
+```zig
+// Half way down the display.
+ib.ScreenPositionTagList(screen, &[_]utility.TagItem{
+    .{ .tag = sc.SPOS_Top, .data = 300 },
+    .{},
+});
 ```
 
 ## ScreenToBack

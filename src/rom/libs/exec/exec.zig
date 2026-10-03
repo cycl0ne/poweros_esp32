@@ -609,10 +609,10 @@ test {
     _ = @import("library/openresource.zig");
 }
 
-var test_ram: [64 * 1024]u8 align(16) = undefined;
+var test_ram: [80 * 1024]u8 align(16) = undefined;
 var test_ram_free: u32 = 0;
 
-/// exec with 64 KiB of test RAM. It claims no attribute and sits at the
+/// exec with 80 KiB of test RAM. It claims no attribute and sits at the
 /// lowest priority, so a region a test adds itself is always picked first.
 /// Also for the tests of the other libraries.
 pub fn setUp() !void {

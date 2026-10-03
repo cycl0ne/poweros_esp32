@@ -73,6 +73,7 @@ pub const LVO = struct {
     pub const SetBoardPointer = libraries.lvo(54);
     pub const MoveBoardPointer = libraries.lvo(55);
     pub const ShowBoardPointer = libraries.lvo(56);
+    pub const ShowBitMapBands = libraries.lvo(57);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -131,6 +132,7 @@ pub const Fn = struct {
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
     pub const MoveBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
     pub const ShowBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
+    pub const ShowBitMapBands = *const fn (*RtgBase, *rtg.RtgBoard, [*]const rtg.RtgBand, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -452,5 +454,11 @@ pub const RtgBase = opaque {
     /// Lay the pointer over the picture, or stop.
     pub fn ShowBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
         return libraries.call(self, LVO.ShowBoardPointer, Fn.ShowBoardPointer, .{ board, show });
+    }
+
+    /// Show several buffers at once, each in a band of display lines: a
+    /// screen pulled down shows the one behind above it.
+    pub fn ShowBitMapBands(self: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
+        return libraries.call(self, LVO.ShowBitMapBands, Fn.ShowBitMapBands, .{ board, bands, count });
     }
 };

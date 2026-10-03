@@ -23,6 +23,10 @@
 //! reports no RTGBF_STREAMING, and a buffer that is not being shown is
 //! not sent at all until it is.
 //!
+//! A picture may be several buffers at once, in bands of lines
+//! (ShowBitMapBands): every line is read from the band that covers it,
+//! and a buffer's refresh sends the lines it shows there.
+//!
 //! The pointer is laid into each band after it is turned round and before
 //! it goes, so the picture in PSRAM never holds it. Moving it sends the
 //! rows it left and the rows it came to, which the picture supplies again
@@ -130,6 +134,11 @@ const Panel = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+
+    /// What the controller is sent from: the bands of the picture shown,
+    /// one for a single buffer, none before the first.
+    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    band_count: u32 = 0,
 };
 
 /// The rows the marks cover, which is more than any mode this board has.
@@ -329,12 +338,32 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
-    const bm = bitmap orelse return err.RTGERR_OK;
+    const bm = bitmap orelse {
+        panel.band_count = 0;
+        return err.RTGERR_OK;
+    };
     if (bm.pixels == null) return err.RTGERR_BAD_ARG;
     if (bm.width != panel.width or bm.height != panel.height) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     panel.stats.buffer_swaps += 1;
-    return send(panel, bm, 0, bm.height);
+    panel.bands[0] = .{ .bitmap = bm };
+    panel.band_count = 1;
+    return send(panel, 0, bm.height);
+}
+
+/// Several buffers at once, in bands: the whole picture sent, each line
+/// from the band that covers it, and a refresh of any of them sends the
+/// lines it shows from then on.
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    for (bands[0..count]) |band| {
+        if (band.bitmap.pixels == null) return err.RTGERR_BAD_ARG;
+        if (band.bitmap.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    panel.stats.buffer_swaps += 1;
+    @memcpy(panel.bands[0..count], bands[0..count]);
+    panel.band_count = count;
+    return send(panel, 0, panel.height);
 }
 
 /// Rows the CPU wrote. Only the buffer being shown goes anywhere: the
@@ -346,18 +375,31 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// the caller was still writing it and put a half-written row on the
 /// glass - which is what a caller gathering its drawing into one refresh
 /// (graphics.library's BeginDraw) is taking trouble to avoid.
+///
+/// A buffer shown in a band sends the lines of its rows that the band
+/// shows, and only those.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     panel.stats.refreshes += 1;
     panel.stats.rows_refreshed +%= if (rows == 0) bitmap.height else rows;
-    if (board.showing != bitmap) {
-        panel.stats.refreshes_dropped += 1;
-        return err.RTGERR_OK;
-    }
     const top = @min(y, bitmap.height);
     const end = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
-    markAsked(panel, top, end);
-    return send(panel, bitmap, y, rows);
+    const shown = panel.bands[0..panel.band_count];
+    var code: i32 = err.RTGERR_OK;
+    var sent = false;
+    for (shown, 0..) |band, i| {
+        if (band.bitmap != bitmap) continue;
+        // The band's lines, and those of them the rows asked for are on.
+        const band_end = if (i + 1 < shown.len) shown[i + 1].line else panel.height;
+        const lines = band.linesOf(top, end, band_end);
+        if (lines.first >= lines.end) continue;
+        sent = true;
+        markAsked(panel, lines.first, lines.end);
+        code = send(panel, lines.first, lines.end - lines.first);
+        if (code != err.RTGERR_OK) return code;
+    }
+    if (!sent) panel.stats.refreshes_dropped += 1;
+    return code;
 }
 
 /// Rows `top` to `end` marked as asked for.
@@ -368,25 +410,27 @@ fn markAsked(panel: *Panel, top: u32, end: u32) void {
     }
 }
 
-/// Rows `y` to `y + rows` of `bm` (0: all of them) to the panel, upright
-/// or turned, and a count of the sends that did not get there.
-fn send(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
-    const code = if (panel.turn != .none) sendTurned(panel, bm, y, rows) else sendUpright(panel, bm, y, rows);
+/// Lines `y` to `y + rows` of the picture shown (0: all of them) to the
+/// panel, upright or turned, and a count of the sends that did not get
+/// there.
+fn send(panel: *Panel, y: u32, rows: u32) i32 {
+    if (panel.band_count == 0) return err.RTGERR_OK;
+    const code = if (panel.turn != .none) sendTurned(panel, y, rows) else sendUpright(panel, y, rows);
     // A send that stopped part way has told the panel a window and then
     // not filled it, so what is on the glass is part old and part new.
     if (code != err.RTGERR_OK) panel.stats.failed_sends += 1;
     return code;
 }
 
-/// Rows `y` to `y + rows` of `bm` (0: all of them) to the controller, in
-/// bands of whole alignments, each with its window.
-fn sendUpright(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
+/// Lines `y` to `y + rows` (0: all of them) to the controller, in bands
+/// of whole alignments, each with its window.
+fn sendUpright(panel: *Panel, y: u32, rows: u32) i32 {
     const rb = panel.rtg_base;
-    const pixels = bm.pixels orelse return err.RTGERR_BAD_ARG;
+    const shown = panel.bands[0..panel.band_count];
     const band = panel.band orelse return err.RTGERR_NO_MEMORY;
-    const area = sequence.window(y, rows, bm.height, panel.alignment);
-    const row_bytes = bm.width * 2;
-    const columns = windowBytes(0, bm.width - 1);
+    const area = sequence.window(y, rows, panel.height, panel.alignment);
+    const row_bytes = panel.width * 2;
+    const columns = windowBytes(0, panel.width - 1);
 
     var code: i32 = err.RTGERR_OK;
     var row = area.top;
@@ -400,7 +444,7 @@ fn sendUpright(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
             defer panel.sys.Permit();
             for (0..count) |i| {
                 // Rows start on the region's alignment, a whole cache line.
-                const from: [*]align(4) const u8 = @alignCast(pixels + (row + i) * bm.pitch);
+                const from: [*]align(4) const u8 = @alignCast(sequence.bandRow(shown, row + @as(u32, @intCast(i))));
                 const into: [*]align(4) u8 = @alignCast(band + i * row_bytes);
                 sequence.swapPixels(into[0..row_bytes], from[0..row_bytes]);
             }
@@ -408,9 +452,9 @@ fn sendUpright(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
                 .first_row = row,
                 .rows = count,
                 .first_column = 0,
-                .columns = bm.width,
-                .picture_width = bm.width,
-                .picture_height = bm.height,
+                .columns = panel.width,
+                .picture_width = panel.width,
+                .picture_height = panel.height,
                 .turn = .none,
             });
             break :band_done writeBand(panel, rb, &columns, &lines, band, count * row_bytes);
@@ -425,8 +469,10 @@ fn sendUpright(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
 /// The same for a picture the panel cannot turn itself: rows of the
 /// picture are a strip of the panel's columns, and every panel row in that
 /// strip is read down a column of the picture as it is copied.
-fn sendTurned(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
+fn sendTurned(panel: *Panel, y: u32, rows: u32) i32 {
     const rb = panel.rtg_base;
+    const shown = panel.bands[0..panel.band_count];
+    const bm = shown[0].bitmap;
     const pixels = bm.pixels orelse return err.RTGERR_BAD_ARG;
     const band = panel.band orelse return err.RTGERR_NO_MEMORY;
     const strip = sequence.turnedColumns(panel.turn, y, rows, panel.native_width, panel.alignment);
@@ -442,6 +488,7 @@ fn sendTurned(panel: *Panel, bm: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
         .panel_width = panel.native_width,
         .panel_height = panel.native_height,
         .turn = panel.turn,
+        .bands = shown,
     };
     const per_band = sequence.bandRows(band_bytes, row_bytes, panel.alignment);
     var code: i32 = err.RTGERR_OK;
@@ -517,12 +564,11 @@ fn layPointer(panel: *Panel, into: []u8, band: sequence.Band) void {
 /// again: what is on the glass there follows the pointer.
 fn sendPointerRows(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage, top: i32) void {
     const panel = panelOf(board);
-    const shown = board.showing orelse return;
     const one = image orelse return;
     const first = @max(top, 0);
-    const end = @min(top + @as(i32, @intCast(one.height)), @as(i32, @intCast(shown.height)));
+    const end = @min(top + @as(i32, @intCast(one.height)), @as(i32, @intCast(panel.height)));
     if (first >= end) return;
-    _ = send(panel, shown, @intCast(first), @intCast(end - first));
+    _ = send(panel, @intCast(first), @intCast(end - first));
 }
 
 fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
@@ -549,10 +595,9 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const image = panel.pointer orelse return;
     const height: i32 = @intCast(image.height);
     if (top < old_top + height and old_top < top + height) {
-        const shown = board.showing orelse return;
         const first = @max(@min(top, old_top), 0);
-        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(shown.height)));
-        if (first < end) _ = send(panel, shown, @intCast(first), @intCast(end - first));
+        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(panel.height)));
+        if (first < end) _ = send(panel, @intCast(first), @intCast(end - first));
         return;
     }
     sendPointerRows(board, image, old_top);
@@ -677,6 +722,7 @@ const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .set_mode = &setMode,
     .show_bitmap = &showBitMap,
+    .show_bands = &showBands,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,

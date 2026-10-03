@@ -64,6 +64,7 @@ pub fn CloseScreen(ib: *IntuitionBase, screen: ?*Screen) bool {
     defer unlock(ib);
     if (s.pub_node.visitor_count != 0 or !s.windows.isEmpty()) return false;
     ib.sys_base.Remove(@ptrCast(&s.node));
+    @import("../input/_input.zig").forgetScreen(ib, s);
     if (s.public) ib.sys_base.Remove(&s.pub_node.node);
     if (ib.default_pub == s) ib.default_pub = null;
     ib.iface().DisposeObject(s.draw_info.check_mark);
@@ -78,6 +79,7 @@ pub fn CloseScreen(ib: *IntuitionBase, screen: ?*Screen) bool {
     ib.layers_base.DisposeLayerInfo(s.layer_info);
     s.shown = s.bitmap;
     showFront(ib, s.board, s.home);
+    _screen.dropBlank(ib, s);
     if (s.own_bitmap) {
         gb.FreeRastPort(s.rp);
         if (ib.rtg_base) |rb| rb.FreeBitMap(s.bitmap);

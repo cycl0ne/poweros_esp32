@@ -75,7 +75,7 @@ const ring_size = 64;
 /// `screen_depth` the depth gadget in a screen's title bar pressed,
 /// `sys_gadget` a gadget standing for the window's close, depth or zoom
 /// gadget (`GA_SysGadget`) held.
-const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth, sys_gadget };
+const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth, sys_gadget, screen_drag };
 
 /// Where on a window a point is.
 pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, size };
@@ -98,10 +98,16 @@ pub const State = extern struct {
     tail: u32 = 0,
     events: [ring_size]InputEvent = undefined,
 
-    /// The pointer on the display, and the event being handled: every
-    /// message sent while it is handled carries its qualifiers and time.
+    /// The pointer on the screen `on` - the one at its line of the
+    /// display, or the one a held button began on - and the event being
+    /// handled: every message sent while it is handled carries its
+    /// qualifiers and time.
     x: i32 = 0,
     y: i32 = 0,
+    /// The pointer on the display, and the screen `x` and `y` are on.
+    disp_x: i32 = 0,
+    disp_y: i32 = 0,
+    on: ?*Screen = null,
     qualifier: u32 = 0,
     time: timer.TimeVal = .{},
 
@@ -121,7 +127,8 @@ pub const State = extern struct {
     pad2: [3]u8 = .{ 0, 0, 0 },
     /// The window's own gadget that has the input, in `mode` active.
     active: ?*Object = null,
-    /// The screen whose depth gadget is pressed, in `mode` screen_depth.
+    /// The screen whose depth gadget is pressed, in `mode` screen_depth,
+    /// or that is dragged by its bar, in `mode` screen_drag.
     screen: ?*Screen = null,
     /// Gadget help: where the pointer was at the last timer event, where
     /// help was last worked out, and what it said - the address and code
@@ -435,11 +442,48 @@ pub fn partAt(w: *const Window, x: i32, y: i32) Part {
     return .border;
 }
 
-/// The screen the pointer is on: the one screen of the display.
+/// The screen the pointer is on: the one at its line of the display -
+/// a screen pulled down shows the one behind above it - or, while a
+/// button is held, the one it was pressed on.
 fn screenAt(ib: *IntuitionBase) ?*Screen {
+    if (stateOf(ib).on) |s| return s;
     const first = ib.screen_list.head orelse return null;
     if (first.succ == null) return null;
     return @ptrCast(@alignCast(first));
+}
+
+/// The pointer's screen and its place on it, from where it is on the
+/// display. A held button keeps the screen it was pressed on; the place
+/// follows the pointer, beyond the screen's edges if need be.
+fn locate(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const free = st.mode == .none and !menus.busy(ib);
+    if (free or st.on == null) {
+        st.on = null;
+        const first = ib.screen_list.head;
+        if (first != null and first.?.succ != null) {
+            const front: *Screen = @ptrCast(@alignCast(first.?));
+            st.on = _kscreen.screenAtLine(ib, front.board, st.disp_y) orelse front;
+        }
+    }
+    st.x = st.disp_x;
+    st.y = if (st.on) |s| st.disp_y - s.top else st.disp_y;
+}
+
+/// The pointer's place on `s`, wherever on the display `s` is.
+pub fn pointerOn(ib: *IntuitionBase, s: *const Screen) struct { x: i32, y: i32 } {
+    const st = stateOf(ib);
+    return .{ .x = st.disp_x, .y = st.disp_y - s.top };
+}
+
+/// A screen gone: nothing is left pointing at it.
+pub fn forgetScreen(ib: *IntuitionBase, s: *Screen) void {
+    const st = stateOf(ib);
+    if (st.on == s) st.on = null;
+    if (st.screen == s) {
+        st.screen = null;
+        if (st.mode == .screen_drag or st.mode == .screen_depth) st.mode = .none;
+    }
 }
 
 /// The window whose visible part is at (x, y) on its screen, or null for
@@ -484,8 +528,9 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     st.qualifier = e.qualifier;
     st.time = e.time;
     if (e.class == ie.IECLASS_NEWPOINTERPOS) {
-        st.x = e.x;
-        st.y = e.y;
+        st.disp_x = e.x;
+        st.disp_y = e.y;
+        locate(ib);
         pointer.followed(ib);
     }
     if (e.class == ie.IECLASS_TIMER) pointer.tick(ib);
@@ -819,6 +864,15 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
         _kscreen.drawDepth(ib, s, true);
         return;
     }
+    // Its bar, where no window covers it: the screen dragged down its
+    // display, or back up, while the button is held.
+    if (_kscreen.onBar(ib, s, st.x, st.y) and s.draggable and !s.exclusive) {
+        st.mode = .screen_drag;
+        st.screen = s;
+        st.grab_y = st.disp_y;
+        st.box_top = s.top;
+        return;
+    }
     const w = windowAt(ib, s, st.x, st.y) orelse return;
     if (ib.active_window != w) ib.iface().ActivateWindow(@ptrCast(w));
     const part = partAt(w, st.x - w.left, st.y - w.top);
@@ -926,6 +980,7 @@ fn moved(ib: *IntuitionBase) void {
             st.box_width + st.x - st.grab_x,
             st.box_height + st.y - st.grab_y,
         ),
+        .screen_drag => if (st.screen) |s| _kscreen.moveTo(ib, s, st.box_top + st.disp_y - st.grab_y),
         .screen_depth => if (st.screen) |s| {
             const over: u8 = @intFromBool(_kscreen.onDepthGadget(ib, s, st.x, st.y));
             if (over != st.over) {
@@ -1185,6 +1240,10 @@ fn release(ib: *IntuitionBase) void {
     const mode = st.mode;
     st.mode = .none;
     if (mode == .screen_depth) return releaseScreenDepth(ib);
+    if (mode == .screen_drag) {
+        st.screen = null;
+        return;
+    }
     const w = st.window orelse return;
     st.window = null;
     if (mode == .sys_gadget) return releaseSysGadget(ib, w);

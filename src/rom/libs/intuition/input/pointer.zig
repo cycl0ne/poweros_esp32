@@ -267,7 +267,7 @@ pub fn update(ib: *IntuitionBase) void {
         st.kind = kind;
         st.object = object;
     }
-    rb.MoveBoardPointer(now, ib.input.x, ib.input.y);
+    rb.MoveBoardPointer(now, ib.input.disp_x, ib.input.disp_y);
     const want: u8 = if (st.mouse != 0 and kind != .hidden) 1 else 0;
     if (want != st.shown and rb.ShowBoardPointer(now, want != 0) == rtg.errors.RTGERR_OK) st.shown = want;
 }
@@ -347,7 +347,7 @@ pub fn followed(ib: *IntuitionBase) void {
     const board = if (frontScreen(ib)) |s| s.board else null;
     if (board != st.board or (st.mouse != 0 and st.shown == 0)) return update(ib);
     if (board) |now| {
-        if (ib.rtg_base) |rb| rb.MoveBoardPointer(now, ib.input.x, ib.input.y);
+        if (ib.rtg_base) |rb| rb.MoveBoardPointer(now, ib.input.disp_x, ib.input.disp_y);
     }
 }
 

@@ -16,8 +16,8 @@ const RtgBase = @import("rtg_base.zig").RtgBase;
 pub const LIBRARY_NAME = rtg.RTGNAME;
 pub const LIBRARY_VERSION = 1;
 /// 1: the pointer - SetBoardPointer, MoveBoardPointer, ShowBoardPointer.
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "25.09.2026";
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "03.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -374,7 +374,51 @@ pub const RtgBoardOps = extern struct {
     move_pointer: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
     /// Lay it over the picture, or stop.
     show_pointer: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
+
+    // --- several buffers on the glass at once. ---
+
+    /// Show these bands from now on: each a buffer from its `line` to the
+    /// next band's, the last to the display's bottom. The library has
+    /// checked them (`ShowBitMapBands`); the driver keeps its own copy.
+    show_bands: ?*const fn (*RtgBoard, [*]const RtgBand, u32) callconv(.c) i32 = null,
 };
+
+/// Part of the display shown from a buffer: from display line `line`
+/// down to where the next band starts - or the display's bottom - the
+/// buffer's rows, its first row at display line `origin`. A screen pulled
+/// down is one: the screen behind shows above it. With `RTGBANDF_REPEAT`
+/// every line of the band shows the buffer's first row instead, so one
+/// row fills a band of any height.
+pub const RtgBand = extern struct {
+    bitmap: *RtgBitMap,
+    /// The first display line the band covers.
+    line: u32 = 0,
+    /// The display line the buffer's first row is at; at most `line`.
+    origin: u32 = 0,
+    /// RTGBANDF_*.
+    flags: u32 = 0,
+
+    /// The buffer row display line `y` of the band shows.
+    pub fn rowAt(band: RtgBand, y: u32) u32 {
+        return if (band.flags & RTGBANDF_REPEAT != 0) 0 else y - band.origin;
+    }
+
+    /// The display lines, from `first` up to `end`, that show buffer rows
+    /// `top` up to `rows_end` of a band reaching down to `band_end`; none
+    /// when `first` is not below `end`.
+    pub fn linesOf(band: RtgBand, top: u32, rows_end: u32, band_end: u32) struct { first: u32, end: u32 } {
+        if (band.flags & RTGBANDF_REPEAT != 0) {
+            return if (top == 0 and rows_end > 0) .{ .first = band.line, .end = band_end } else .{ .first = 0, .end = 0 };
+        }
+        return .{ .first = @max(band.line, top +| band.origin), .end = @min(band_end, rows_end +| band.origin) };
+    }
+};
+
+/// RtgBand's flags: every line of the band shows the buffer's first row.
+pub const RTGBANDF_REPEAT: u32 = 1 << 0;
+
+/// The most bands a display shows at once.
+pub const RTG_MAX_BANDS = 8;
 
 /// BoardControl's `what`. Everything below RTGCTRL_DRIVER means the same
 /// on every board; a driver's own start at RTGCTRL_DRIVER and are listed

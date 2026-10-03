@@ -80,8 +80,10 @@ pub const LIBRARY_VERSION = 0;
 /// 27: STYLE_Alone, a style that stands on the default alone; a gadget
 /// drawn for being hovered is drawn with GREDRAW_STATE. 28: GetPrefs,
 /// GetDefPrefs and SetPrefs take tag lists (IPREFS_), the fonts, the
-/// pens and the style among them.
-pub const LIBRARY_REVISION = 28;
+/// pens and the style among them. 29: a screen's place on its display -
+/// MoveScreen, ScreenPositionTagList, SA_Top, SA_Draggable, SA_Exclusive -
+/// and screens dragged by their bar.
+pub const LIBRARY_REVISION = 29;
 const BUILD_DATE = "03.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -145,6 +147,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.timer_io = .{};
     ib.timer_open = false;
     ib.alert = .{};
+    ib.banded = false;
     sys_base.InitSemaphore(&ib.alert_lock);
     ib.default_edit_hook = .{ .entry = &strgclass.defaultEdit };
     ib.edit_hook = &ib.default_edit_hook;

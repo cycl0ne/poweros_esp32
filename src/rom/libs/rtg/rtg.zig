@@ -484,6 +484,66 @@ test "showing a buffer, and what may not be shown" {
     try tearDown(rb);
 }
 
+test "showing buffers in bands, and what may not be shown so" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    board.info.width = 16;
+    board.info.height = 16;
+    const fk = fakeOf(rb);
+
+    const back = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const front = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const hidden = base(rb).AllocBitMap(board, 16, 16, format, 0).?;
+    const small = base(rb).AllocBitMap(board, 16, 8, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+
+    // The back buffer from the top, the front one from line 6 on, its own
+    // first row there.
+    const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(@as(u32, 2), fk.log.band_count);
+    try testing.expectEqual(@as(u32, 6), fk.log.bands[1].line);
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+
+    // Lines out of order, a first band below the top, a buffer that
+    // cannot be shown, one too short for its lines, none at all.
+    const unordered = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6 }, .{ .bitmap = back, .line = 4 } };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &unordered, unordered.len));
+    const low = [_]rtg.RtgBand{.{ .bitmap = back, .line = 2 }};
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &low, low.len));
+    const unseen = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = hidden, .line = 8 } };
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMapBands(board, &unseen, unseen.len));
+    const short = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = small, .line = 4 } };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &short, short.len));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &two, 0));
+    // One row repeated over a band; a buffer of no rows refused for it.
+    const row = base(rb).AllocBitMap(board, 16, 1, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const repeated = [_]rtg.RtgBand{ .{ .bitmap = row, .flags = rtg.RTGBANDF_REPEAT }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &repeated, repeated.len));
+    try testing.expectEqual(@as(u32, 0), repeated[0].rowAt(5));
+    try testing.expectEqual(@as(u32, 0), repeated[0].linesOf(0, 1, 6).first);
+    try testing.expectEqual(@as(u32, 6), repeated[0].linesOf(0, 1, 6).end);
+    try testing.expectEqual(@as(u32, 4), repeated[1].rowAt(10));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    base(rb).FreeBitMap(row);
+    try testing.expectEqual(@as(u32, 3), fk.log.bands_shown);
+
+    // One buffer again: the other is no longer read.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+
+    base(rb).FreeBitMap(small);
+    base(rb).FreeBitMap(hidden);
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "what is written is handed on by the row" {
     const rb = try setUp();
     defer kexec.deinit();

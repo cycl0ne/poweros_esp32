@@ -167,4 +167,7 @@ i32 SetBoardPointer(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u
 void MoveBoardPointer(*rtg.RtgBoard board, i32 x, i32 y)
 /// Lay the pointer over the picture, or stop.
 i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
+/// Show several buffers at once, each in a band of display lines: a
+/// screen pulled down shows the one behind above it.
+i32 ShowBitMapBands(*rtg.RtgBoard board, [*]const rtg.RtgBand bands, u32 count)
 ##end

@@ -162,7 +162,8 @@ pub fn put(ib: *IntuitionBase, w: *Window, req: *Requester, under_pointer: bool)
     req.older = w.first_request;
     if (req.flags & rq.POINTREL != 0) {
         if (under_pointer) {
-            pointRel(w, req, ib.input.x - w.left, ib.input.y - w.top);
+            const at = @import("../input/_input.zig").pointerOn(ib, w.screen);
+            pointRel(w, req, at.x - w.left, at.y - w.top);
         } else {
             pointRel(w, req, @divTrunc(w.width - req.width, 2), @divTrunc(w.height - req.height, 2));
         }

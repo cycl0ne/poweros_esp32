@@ -90,6 +90,10 @@ pub const Panel = struct {
     /// for whatever buffer is there - and flipping between buffers that
     /// have been shown before builds nothing.
     cached: [max_cached]Cached = @splat(.{}),
+    /// The chains of a picture made of bands (`bandChains`): the ones on
+    /// the panel or on their way there, kept until a picture replaces
+    /// them.
+    banded: ?[*]?*dmares.DMADescriptor = null,
     /// The chains of a picture to be shown from the next frame on, and the
     /// task waiting to hear it has been: the copy's interrupt takes them up
     /// as it starts the frame's first stretch.
@@ -376,14 +380,77 @@ fn freeChains(panel: *Panel, chains: [*]?*dmares.DMADescriptor) void {
     panel.sys.FreeVec(@ptrCast(chains));
 }
 
+/// The chains over a picture made of bands: display line y comes from
+/// the row of the band that covers it (`RtgBand.rowAt`). A descriptor
+/// per line, the stretch's last one ending it, all in one block with the
+/// stretches' heads in front, so `freeBanded` frees it whole. Null when
+/// there is no memory for them.
+pub fn bandChains(panel: *Panel, bands: []const rtg.RtgBand) ?[*]?*dmares.DMADescriptor {
+    const lines = panel.config.bounce_lines;
+    const line_bytes = panel.bounce_bytes / lines;
+    const heads = panel.stretches * @sizeOf(?*dmares.DMADescriptor);
+    const count = panel.stretches * lines;
+    const memory = panel.sys.AllocVec(heads + count * @sizeOf(dmares.DMADescriptor), exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return null;
+    const chains: [*]?*dmares.DMADescriptor = @ptrCast(@alignCast(memory));
+    const descriptors: [*]dmares.DMADescriptor = @ptrFromInt(@intFromPtr(memory) + heads);
+    var band: usize = 0;
+    for (0..count) |y| {
+        while (band + 1 < bands.len and bands[band + 1].line <= y) band += 1;
+        const shown = bands[band];
+        const row = shown.rowAt(@intCast(y));
+        const from = @intFromPtr(shown.bitmap.pixels.?) + row * shown.bitmap.pitch;
+        const last = (y + 1) % lines == 0;
+        const flags = dmares.DMADF_OWNER | if (last) dmares.DMADF_SUC_EOF else 0;
+        descriptors[y] = .init(@ptrFromInt(from), line_bytes, line_bytes, flags);
+        descriptors[y].next = if (last) null else &descriptors[y + 1];
+        if (y % lines == 0) chains[y / lines] = &descriptors[y];
+    }
+    return chains;
+}
+
+/// The band chains let go of, if the copy no longer reads them nor is
+/// about to.
+fn freeBanded(panel: *Panel) void {
+    const chains = panel.banded orelse return;
+    if (chains == panel.fill_from or chains == panel.pending) return;
+    panel.sys.FreeVec(@ptrCast(chains));
+    panel.banded = null;
+}
+
+/// Show a picture made of bands from the next frame on, as `flip` shows
+/// one buffer, or start the stream on it. The chains of the one shown
+/// before in bands are freed once it is no longer read.
+pub fn showBands(panel: *Panel, bands: []const rtg.RtgBand) i32 {
+    const chains = bandChains(panel, bands) orelse return err.RTGERR_NO_MEMORY;
+    const old = panel.banded;
+    const code = if (panel.streaming and panel.aligned) swapTo(panel, chains) else startOn(panel, chains);
+    if (code != err.RTGERR_OK) {
+        panel.sys.FreeVec(@ptrCast(chains));
+        return code;
+    }
+    if (old) |previous| {
+        if (previous != panel.fill_from and previous != panel.pending) panel.sys.FreeVec(@ptrCast(previous));
+    }
+    panel.banded = chains;
+    return err.RTGERR_OK;
+}
+
 /// Show the picture at `pixels` from the next frame on, with the stream
 /// running: its chains take over as the copy starts the frame's first
 /// stretch, so the whole of that frame and none of the one before comes
 /// from it. Returns once they have, when the old picture is no longer
 /// read and may be drawn into.
 pub fn flip(panel: *Panel, pixels: [*]u8) i32 {
-    const sys = panel.sys;
     const chains = chainsFor(panel, pixels) orelse return err.RTGERR_NO_MEMORY;
+    const code = swapTo(panel, chains);
+    freeBanded(panel);
+    return code;
+}
+
+/// `chains` made the ones the copy reads from the next frame on; returns
+/// once they are.
+fn swapTo(panel: *Panel, chains: [*]?*dmares.DMADescriptor) i32 {
+    const sys = panel.sys;
     if (chains == panel.fill_from) return err.RTGERR_OK;
     const bit = sys.AllocSignal(-1);
     if (bit < 0) return err.RTGERR_NO_MEMORY;
@@ -413,9 +480,15 @@ fn takePending(panel: *Panel) void {
 /// Feed the panel from `pixels` and start it, the stream stopped first if
 /// it was running.
 pub fn start(panel: *Panel, pixels: [*]u8) i32 {
-    const db = panel.dma orelse return err.RTGERR_NO_DISPLAY;
     const chains = chainsFor(panel, pixels) orelse return err.RTGERR_NO_MEMORY;
+    const code = startOn(panel, chains);
+    freeBanded(panel);
+    return code;
+}
 
+/// The stream started on `chains`, stopped first if it was running.
+fn startOn(panel: *Panel, chains: [*]?*dmares.DMADescriptor) i32 {
+    const db = panel.dma orelse return err.RTGERR_NO_DISPLAY;
     if (panel.streaming) stream.stopStream(panel);
     panel.fill_from = chains;
 
@@ -467,6 +540,7 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
         }
         panel.fill_from = null;
         panel.pending = null;
+        freeBanded(panel);
         for (&panel.bounce_chain) |*c| {
             if (c.*) |chain| db.FreeDMAChain(chain);
             c.* = null;

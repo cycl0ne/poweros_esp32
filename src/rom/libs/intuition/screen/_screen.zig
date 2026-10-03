@@ -24,6 +24,16 @@
 //! at a frame's start, so nothing is copied and nothing tears. When a
 //! display's last screen closes, its home is shown again, black.
 //!
+//! **Position.** A screen's top edge may be further down its display than
+//! line 0: pulled down by its bar, or moved by MoveScreen. The display then
+//! shows it from that line, and above it the screen behind - from that
+//! one's own top - and so on up, in bands (rtg's ShowBitMapBands). What no
+//! screen reaches is empty, in the background pen of the screen below it:
+//! a band that repeats one row the screen keeps for that. Nothing is drawn
+//! again or copied for a move: each screen keeps its buffer, only the
+//! bands change. An
+//! exclusive screen shows alone, at its top, and never behind another.
+//!
 //! The list of screens and every public screen's lock count are guarded by
 //! one semaphore in the base, which nests, so LockPubScreen can open the
 //! default screen while it holds it.
@@ -104,6 +114,17 @@ pub const Screen = extern struct {
     pub_node: sc.PubScreenNode,
     /// Its windows, oldest first. It cannot close while it has any.
     windows: exec.MinList = .{},
+    /// How far down its display its top edge is.
+    top: i32 = 0,
+    /// Whether its bar drags it and MoveScreen moves it (`SA_Draggable`).
+    draggable: bool = true,
+    /// Whether it never shares its display (`SA_Exclusive`).
+    exclusive: bool = false,
+    /// A row of its background pen, as wide as its display, and a
+    /// RastPort over it: what shows above it, pulled down, where no
+    /// screen is behind it (`blankOf`). Made the first time it is needed.
+    blank: ?*rtg.RtgBitMap = null,
+    blank_rp: ?*graphics.RastPort = null,
 };
 
 /// The default pens: a grey ground, black text and edges, white shine and
@@ -220,17 +241,138 @@ pub fn inUse(ib: *IntuitionBase, bitmap: *rtg.RtgBitMap) bool {
     return false;
 }
 
-/// The display shows its frontmost screen, or its home when it has none.
-/// Showing a buffer waits for the frame it starts on, so this is called
-/// with the list held but never under Forbid.
+/// The bands a display shows, from the top down: each screen from its top
+/// edge to the top of the one in front of it, front first; an exclusive
+/// screen only in front, and then alone; above them all the topmost
+/// one's blank row, repeated - or the home buffer, with no screen or no
+/// memory for the row. Answers how many there are.
+fn bandsOf(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap, into: *[rtg.RTG_MAX_BANDS]rtg.RtgBand) u32 {
+    var reversed: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+    var count: u32 = 0;
+    // The line every screen further back is covered from.
+    var covered: i32 = @intCast(board.info.height);
+    var first = true;
+    // The screen at the top of what is shown so far.
+    var topmost: ?*Screen = null;
+    var node = ib.screen_list.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(n));
+        if (s.board != board) continue;
+        const in_front = first;
+        first = false;
+        if (s.exclusive and !in_front) continue;
+        const top: i32 = if (s.exclusive) 0 else s.top;
+        if (top >= covered) continue;
+        if (count == reversed.len - 1) break;
+        reversed[count] = .{ .bitmap = s.shown, .line = @intCast(top), .origin = @intCast(top) };
+        count += 1;
+        covered = top;
+        topmost = s;
+        if (covered == 0 or s.exclusive) break;
+    }
+    if (covered > 0) {
+        const blank = if (topmost) |s| blankOf(ib, s) else null;
+        reversed[count] = if (blank) |row|
+            .{ .bitmap = row, .flags = rtg.RTGBANDF_REPEAT }
+        else
+            .{ .bitmap = home, .line = 0, .origin = 0 };
+        count += 1;
+    }
+    for (0..count) |i| into[i] = reversed[count - 1 - i];
+    return count;
+}
+
+/// The screen's blank row, filled with its background pen - each time,
+/// since its pens may have changed. Null without memory for it.
+fn blankOf(ib: *IntuitionBase, s: *Screen) ?*rtg.RtgBitMap {
+    const rb = ib.rtg_base orelse return null;
+    if (s.blank == null) {
+        const row = rb.AllocBitMap(s.board, s.home.width, 1, @intFromEnum(s.home.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return null;
+        const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(row) }, .{} };
+        s.blank_rp = ib.graphics_base.CreateRastPortTagList(&on) orelse {
+            rb.FreeBitMap(row);
+            return null;
+        };
+        s.blank = row;
+    }
+    setPen(ib, s.blank_rp.?, s.pens[sc.BACKGROUNDPEN]);
+    ib.graphics_base.RectFill(s.blank_rp.?, &.{ .max_x = @intCast(s.home.width), .max_y = 1 });
+    return s.blank;
+}
+
+/// The screen's blank row given back, once nothing shows it.
+pub fn dropBlank(ib: *IntuitionBase, s: *Screen) void {
+    if (s.blank_rp) |rp| ib.graphics_base.FreeRastPort(rp);
+    if (s.blank) |row| if (ib.rtg_base) |rb| rb.FreeBitMap(row);
+    s.blank_rp = null;
+    s.blank = null;
+}
+
+/// The display shows its screens: the frontmost, and above it, where it
+/// is pulled down, the ones behind - or its home when it has none.
+/// Showing waits for the frame it starts on, so this is called with the
+/// list held but never under Forbid. A board that shows one buffer only
+/// shows the frontmost screen.
 pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
     const rb = ib.rtg_base orelse return;
     // An alert up keeps the display; it shows the front screen when it
     // comes down.
     if (ib.alert.active) return;
-    const wanted = if (frontOn(ib, board)) |s| s.shown else home;
-    if (board.showing == wanted) return;
-    _ = rb.ShowBitMap(board, wanted, 0, 0);
+    var bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+    const count = bandsOf(ib, board, home, &bands);
+    if (count == 1) {
+        if (board.showing == bands[0].bitmap and !ib.banded) return;
+        ib.banded = false;
+        _ = rb.ShowBitMap(board, bands[0].bitmap, 0, 0);
+        return;
+    }
+    if (rb.ShowBitMapBands(board, &bands, count) == rtg.errors.RTGERR_OK) {
+        ib.banded = true;
+        return;
+    }
+    // No bands on this board: the front screen alone.
+    ib.banded = false;
+    const front = bands[count - 1].bitmap;
+    if (board.showing != front) _ = rb.ShowBitMap(board, front, 0, 0);
+}
+
+/// The screen display line `y` shows, as `bandsOf` lays them: null for the
+/// home buffer.
+pub fn screenAtLine(ib: *IntuitionBase, board: *rtg.RtgBoard, y: i32) ?*Screen {
+    var first = true;
+    var node = ib.screen_list.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(n));
+        if (s.board != board) continue;
+        const in_front = first;
+        first = false;
+        if (s.exclusive) {
+            if (in_front) return s;
+            continue;
+        }
+        if (y >= s.top) return s;
+    }
+    return null;
+}
+
+/// How far down its display a screen may go: its bar stays on the glass,
+/// so it can be pulled back up - a line of it without one. An exclusive
+/// screen stays at the top.
+pub fn lowestTop(s: *const Screen) i32 {
+    if (s.exclusive) return 0;
+    const height: i32 = @intCast(s.board.info.height);
+    return @max(height - @max(s.bar_height, 1), 0);
+}
+
+/// The screen's top edge at `top`, held to where it may be, and its
+/// display shown again. With the list held.
+pub fn moveTo(ib: *IntuitionBase, s: *Screen, top: i32) void {
+    const held = @min(@max(top, 0), lowestTop(s));
+    if (held == s.top) return;
+    s.top = held;
+    showFront(ib, s.board, s.home);
 }
 
 /// A screen to the front of the list, or to the back, and its display
@@ -325,6 +467,13 @@ pub fn drawDepth(ib: *IntuitionBase, s: *Screen, pressed: bool) void {
 
 /// Whether (x, y) is on the bar's depth gadget where it shows - no window
 /// in front of it there.
+/// Whether (`x`, `y`) on the screen is its bar, where no window covers it.
+pub fn onBar(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) bool {
+    const bar = s.bar orelse return false;
+    if (x < 0 or x >= s.width or y < 0 or y >= s.bar_height) return false;
+    return ib.layers_base.WhichLayer(s.layer_info, x, y) == bar;
+}
+
 pub fn onDepthGadget(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) bool {
     const bar = s.bar orelse return false;
     if (s.depth_image == null) return false;

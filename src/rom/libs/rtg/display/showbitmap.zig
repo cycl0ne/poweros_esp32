@@ -10,8 +10,7 @@ const TagItem = utility.TagItem;
 const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
-const privateOf = _board.privateOf;
-const _board = @import("../board/_board.zig");
+const _display = @import("_display.zig");
 
 /// Shows a buffer on a board's display.
 ///
@@ -36,8 +35,8 @@ const _board = @import("../board/_board.zig");
 /// driver answered.
 ///
 /// BEHAVIOR:
-/// The buffer shown before is no longer marked showing, so it can be
-/// freed; the new one is, so it cannot. A display that is already showing
+/// The buffers shown before - one, or several in bands - are no longer
+/// marked showing, so they can be freed; the new one is, so it cannot. A display that is already showing
 /// takes the new buffer up whole, at the start of a frame, and this
 /// returns when it has: the one shown before is no longer read and may be
 /// drawn into - which is how a program shows a frame while it draws the
@@ -63,7 +62,6 @@ const _board = @import("../board/_board.zig");
 /// _ = rb.ShowBitMap(board, buffer, 0, 0);
 /// ```
 pub fn ShowBitMap(_: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32 {
-    const private = privateOf(board);
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     const show = ops.show_bitmap orelse return err.RTGERR_NOT_SUPPORTED;
 
@@ -74,14 +72,6 @@ pub fn ShowBitMap(_: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x:
     const code = show(board, bitmap, x, y);
     if (code != err.RTGERR_OK) return code;
 
-    if (board.showing) |old| old.flags &= ~rtg.bitmaps.RTGBMF_SHOWING;
-    board.showing = bitmap;
-    if (bitmap) |bm| {
-        bm.flags |= rtg.bitmaps.RTGBMF_SHOWING;
-        board.info.flags |= rtg.boards.RTGBF_SHOWING;
-        private.buffer_swaps +%= 1;
-    } else {
-        board.info.flags &= ~rtg.boards.RTGBF_SHOWING;
-    }
+    if (bitmap) |bm| _display.markShowing(board, &.{bm}, bm) else _display.markShowing(board, &.{}, null);
     return err.RTGERR_OK;
 }

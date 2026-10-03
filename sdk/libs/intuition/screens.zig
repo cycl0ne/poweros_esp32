@@ -47,6 +47,13 @@ pub const MAXPUBSCREENNAME = 31;
 
 pub const SA_Dummy = utility.TAG_USER + 32;
 /// Read only: the screen's size, which is its display's.
+/// i32: where the screen's left edge is on its display. Screens are as
+/// wide as their display, so 0 is the only place there is.
+pub const SA_Left = SA_Dummy + 0x0001;
+/// i32: how far down its display the screen's top edge is (0): a screen
+/// opened further down shows the one behind above it. Read back by
+/// GetScreenAttrs as where it is now.
+pub const SA_Top = SA_Dummy + 0x0002;
 pub const SA_Width = SA_Dummy + 0x0003;
 pub const SA_Height = SA_Dummy + 0x0004;
 /// Read only: bits per pixel of the display.
@@ -103,6 +110,13 @@ pub const SA_Quiet = SA_Dummy + 0x0018;
 /// Open only: a `*const [NUMDRIPENS]graphics.Pen`, copied, in place of
 /// the default pens.
 pub const SA_Pens = SA_Dummy + 0x001A;
+/// Bool: the screen may be dragged by its bar and moved by MoveScreen
+/// (true). A screen that may not is still moved by ScreenPositionTagList
+/// with SPOS_ForceDrag, which only its owner should use.
+pub const SA_Draggable = SA_Dummy + 0x001E;
+/// Bool: the screen never shares its display (false): it cannot be pulled
+/// down, and does not show behind a screen that is.
+pub const SA_Exclusive = SA_Dummy + 0x001F;
 /// Open only: a `*utility.Hook` that paints the screen's background - what
 /// shows where no window is - in place of the background pen. It is called
 /// as a layer's backfill hook: the RastPort as the object and a
@@ -188,6 +202,21 @@ pub const SB_COPY_BITMAP: u32 = 2;
 /// `ScreenDepth`: to the front of its display, or to the back.
 pub const SDEPTH_TOFRONT: u32 = 0;
 pub const SDEPTH_TOBACK: u32 = 1;
+
+/// `ScreenPositionTagList`'s tags.
+pub const SPOS_Dummy = utility.TAG_USER + 0x39800;
+/// i32: where the screen's left edge goes - or, with SPOS_Relative, how
+/// far it moves. Screens are as wide as their display, so it stays at 0.
+pub const SPOS_Left = SPOS_Dummy + 0x01;
+/// i32: where the screen's top edge goes on its display - or, with
+/// SPOS_Relative, how far it moves, down for more.
+pub const SPOS_Top = SPOS_Dummy + 0x02;
+/// Bool: SPOS_Left and SPOS_Top are a move from where the screen is, not
+/// a place (false).
+pub const SPOS_Relative = SPOS_Dummy + 0x03;
+/// Bool: move a screen opened with {SA_Draggable, false} too (false).
+/// Only the screen's owner should set it.
+pub const SPOS_ForceDrag = SPOS_Dummy + 0x04;
 
 // --- public screens -----------------------------------------------------------
 

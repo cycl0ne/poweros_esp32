@@ -236,8 +236,9 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             top = @divTrunc(s.height - height, 2);
         },
         wn.WPOS_CENTERMOUSE => {
-            left = ib.input.x - @divTrunc(width, 2);
-            top = ib.input.y - @divTrunc(height, 2);
+            const at = @import("../input/_input.zig").pointerOn(ib, s);
+            left = at.x - @divTrunc(width, 2);
+            top = at.y - @divTrunc(height, 2);
         },
         else => {},
     };

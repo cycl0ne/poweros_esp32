@@ -27,7 +27,7 @@ const tags = rtg.tags;
 pub const DRIVER_NAME = "fake";
 
 /// The display memory it reports. Small on purpose: the host tests run
-/// exec on 64 KiB of test RAM and everything else has to fit beside it.
+/// exec on 80 KiB of test RAM and everything else has to fit beside it.
 pub const region_bytes: usize = 16 * 1024;
 /// How much of it a display that was already running is using, when the
 /// board is made to come up that way.
@@ -76,6 +76,11 @@ pub const Log = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The bands last shown, as the driver got them, and how often bands
+    /// were.
+    bands_shown: u32 = 0,
+    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    band_count: u32 = 0,
 };
 
 /// Everything this driver has that changes, allocated by `create`.
@@ -198,6 +203,15 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     log.shown += 1;
     log.last_show_x = x;
     log.last_show_y = y;
+    return err.RTGERR_OK;
+}
+
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.bands_shown += 1;
+    @memcpy(log.bands[0..count], bands[0..count]);
+    log.band_count = count;
     return err.RTGERR_OK;
 }
 
@@ -372,6 +386,7 @@ const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
     .set_mode = &setMode,
     .show_bitmap = &showBitMap,
+    .show_bands = &showBands,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,

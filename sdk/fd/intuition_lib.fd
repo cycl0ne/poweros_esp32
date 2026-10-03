@@ -386,4 +386,11 @@ void QueueGadgetRefresh(*intuition.Object gadget)
 /// go back to the system's or the built-in ones. Every screen it reaches
 /// is painted again, its windows told IDCMP_NEWPREFS.
 void SetScreenPens(?*intuition.Screen screen, ?[*]const graphics.Pen pens)
+/// The screen moved down its display by `dy` (up for less), as far as it
+/// may go: the screen behind shows above it. `dx` is taken for its sign
+/// only; screens are as wide as their display.
+void MoveScreen(*intuition.Screen screen, i32 dx, i32 dy)
+/// The screen put where the tags say on its display (SPOS_Top, SPOS_Left,
+/// SPOS_Relative, SPOS_ForceDrag), as far as it may go.
+void ScreenPositionTagList(*intuition.Screen screen, ?[*]const utility.TagItem tags)
 ##end

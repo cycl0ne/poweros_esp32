@@ -44,6 +44,7 @@ rtg.library/SetBoardGap
 rtg.library/SetBoardMode
 rtg.library/SetBoardPointer
 rtg.library/ShowBitMap
+rtg.library/ShowBitMapBands
 rtg.library/ShowBoardPointer
 rtg.library/SignalRtgEvent
 rtg.library/SwapBoardAxes
@@ -1884,8 +1885,8 @@ rtg.library/WaitVBlank
 	driver answered.
 
    BEHAVIOR
-	The buffer shown before is no longer marked showing, so it can be
-	freed; the new one is, so it cannot. A display that is already showing
+	The buffers shown before - one, or several in bands - are no longer
+	marked showing, so they can be freed; the new one is, so it cannot. A display that is already showing
 	takes the new buffer up whole, at the start of a frame, and this
 	returns when it has: the one shown before is no longer read and may be
 	drawn into - which is how a program shows a frame while it draws the
@@ -1908,6 +1909,77 @@ rtg.library/WaitVBlank
 
    EXAMPLES
 	    _ = rb.ShowBitMap(board, buffer, 0, 0);
+rtg.library/ShowBitMapBands                        rtg.library/ShowBitMapBands
+
+   NAME
+	ShowBitMapBands -- Shows several of a board's buffers at once, each in a band of display lines.
+
+   SYNOPSIS
+	    fn ShowBitMapBands(_: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
+
+   SINCE
+	1.2. LVO -232.
+
+   INPUTS
+	- `board` - the board.
+	- `bands` - `count` bands, from the top of the display down: each a
+	  buffer of the board made `RTGBMF_DISPLAYABLE` and as large as the
+	  display, the display `line` its band starts at, and the display line
+	  its first row sits at (`origin`, at most `line`); or, with
+	  `RTGBANDF_REPEAT` in its `flags`, a buffer as wide as the display
+	  and at least a row high, whose first row every line of the band
+	  shows. The first band
+	  starts at line 0, every other below the one before, and the last
+	  runs to the display's bottom.
+	- `count` - 1 to `RTG_MAX_BANDS`.
+
+   RESULT
+	`RTGERR_OK`, or: `RTGERR_BAD_ARG` for bands out of order, another
+	board's buffer, a buffer not the display's size, or rows a band would
+	show that its buffer has not got; `RTGERR_NOT_DISPLAYABLE`;
+	`RTGERR_NOT_SUPPORTED` for a board that can show only one buffer -
+	unless the bands are one buffer at its own origin, which is what
+	`ShowBitMap` shows; or what the driver answered.
+
+   BEHAVIOR
+	Display line `y` of a band shows its buffer's row `y - origin`, so a
+	screen pulled down a hundred lines is a band from line 100 with its
+	origin there, and the screen behind it a band from line 0 above it.
+	A repeating band shows one row on all its lines: an empty stretch of
+	the display in a colour, from a buffer of one row.
+	Every buffer in a band is marked showing and cannot be freed; the
+	others of the board are not. `BoardDisplayBitMap` answers the last
+	band's buffer, the one at the display's bottom. A display that is
+	already showing takes the new bands up at the start of a frame, and
+	this returns when it has.
+
+   CONTEXT
+	- Waits: for the display's next frame, where the board streams one.
+	- Interrupts: no. The driver may wait on its bus.
+	- Forbid: must not be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The bands are read, not kept: the driver keeps its own copy. The
+	buffers stay the caller's.
+
+   NOTES
+	What is drawn into any shown buffer is handed on by `RefreshBitMap` as
+	for one shown alone: the board knows which of its rows are on the glass.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ShowBitMap`, `BoardDisplayBitMap`, `RefreshBitMap`
+
+   EXAMPLES
+	    // The front screen pulled down 120 lines, the one behind above it.
+	    const bands = [_]rtg.RtgBand{
+	        .{ .bitmap = behind, .line = 0, .origin = 0 },
+	        .{ .bitmap = front, .line = 120, .origin = 120 },
+	    };
+	    _ = rb.ShowBitMapBands(board, &bands, bands.len);
 rtg.library/ShowBoardPointer                      rtg.library/ShowBoardPointer
 
    NAME

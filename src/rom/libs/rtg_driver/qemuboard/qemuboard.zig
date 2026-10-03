@@ -26,6 +26,11 @@
 //! With no pointer shown the window reads the shown buffer itself, as it
 //! always did, and nothing is copied.
 //!
+//! Several buffers shown at once, in bands of lines - a screen pulled down
+//! over the one behind - are composed the same way: each row of the
+//! composed frame copied from the band that covers it, the buffer's row
+//! that far below the band's origin, and the pointer over them.
+//!
 //! It exists so that the layers above it can be looked at before anything
 //! is flashed. A board here means rtg.library lists a display,
 //! graphics.library finds a View, and what is drawn can be seen - in the
@@ -101,6 +106,11 @@ const Screen = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The bands shown, from the top: one, the shown buffer at its own
+    /// origin, unless a screen is pulled down. With more than one the
+    /// window is fed from the composed frame, each row from its band.
+    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    band_count: u32 = 0,
 };
 
 /// A frame of the panel the window stands in for, at 60 a second.
@@ -166,18 +176,36 @@ fn present(screen: *Screen) void {
 // --- the pointer, in the composed frame -----------------------------------
 
 /// Whether the window is fed from the composed frame: a pointer with an
-/// image is shown over a picture.
+/// image is shown over a picture, or the picture is several in bands.
 fn composing(screen: *Screen) bool {
-    return screen.pointer_shown and screen.pointer != null and screen.composed != null and screen.showing != null;
+    if (screen.composed == null or screen.showing == null) return false;
+    return screen.band_count > 1 or (screen.pointer_shown and screen.pointer != null);
 }
 
-/// Rows `top` to `end` of the shown buffer into the composed frame.
+/// Where display row `y` comes from: its band's buffer, that buffer's row
+/// `y - origin`.
+fn sourceRow(screen: *Screen, y: u32) ?[*]u8 {
+    var i = screen.band_count;
+    while (i > 0) {
+        i -= 1;
+        const band = screen.bands[i];
+        if (y < band.line) continue;
+        const pitch = screen.width * bytes_per_pixel;
+        return band.bitmap.pixels.? + band.rowAt(y) * pitch;
+    }
+    return null;
+}
+
+/// Display rows `top` to `end`, each from its band, into the composed
+/// frame.
 fn copyRows(screen: *Screen, top: u32, end: u32) void {
-    const shown = screen.showing orelse return;
     const composed = screen.composed orelse return;
-    if (top >= end) return;
     const pitch = screen.width * bytes_per_pixel;
-    screen.sys.CopyMem(shown.pixels.? + top * pitch, composed + top * pitch, (end - top) * pitch);
+    var y = top;
+    while (y < end) : (y += 1) {
+        const from = sourceRow(screen, y) orelse continue;
+        screen.sys.CopyMem(from, composed + y * pitch, pitch);
+    }
 }
 
 /// The part of the image's rectangle at (left, top) that is on the
@@ -202,13 +230,13 @@ fn restore(screen: *Screen) void {
     const left = screen.pointer_left;
     const top = screen.pointer_top;
     const clip = clipOf(screen, image, left, top) orelse return;
-    const shown = screen.showing orelse return;
     const composed = screen.composed orelse return;
     const pitch = screen.width * bytes_per_pixel;
     var y = clip.y0;
     while (y < clip.y1) : (y += 1) {
-        const at = y * pitch + clip.x0 * bytes_per_pixel;
-        screen.sys.CopyMem(shown.pixels.? + at, composed + at, (clip.x1 - clip.x0) * bytes_per_pixel);
+        const from = sourceRow(screen, y) orelse continue;
+        const at = clip.x0 * bytes_per_pixel;
+        screen.sys.CopyMem(from + at, composed + y * pitch + at, (clip.x1 - clip.x0) * bytes_per_pixel);
     }
 }
 
@@ -374,8 +402,13 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     // A flip from one picture to another takes a frame, as on the glass.
     // The first picture shown is not waited for: it comes up at cold
     // start, under the display module's Forbid.
-    const flip = screen.showing != null and bitmap != null and screen.showing != bitmap;
+    const flip = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
     screen.showing = bitmap;
+    screen.band_count = 0;
+    if (bitmap) |bm| {
+        screen.bands[0] = .{ .bitmap = bm };
+        screen.band_count = 1;
+    }
     rebuild(screen);
     if (bitmap != null) present(screen);
     if (flip) pace(screen, 1);
@@ -386,19 +419,48 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// so this is the doorbell and nothing more.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const screen = screenOf(board);
+    // With the composed frame the rows go into it first - those of them
+    // the bands show - and the pointer back over them where they cross it.
+    if (composing(screen)) {
+        var shown = false;
+        for (screen.bands[0..screen.band_count], 0..) |band, i| {
+            if (band.bitmap != bitmap) continue;
+            const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
+            const first = if (rows == 0) 0 else y;
+            const last = if (rows == 0) bitmap.height else y +| rows;
+            const lines = band.linesOf(first, last, band_end);
+            if (lines.first >= lines.end) continue;
+            copyRows(screen, lines.first, lines.end);
+            shown = true;
+        }
+        if (!shown) return err.RTGERR_OK;
+        lay(screen);
+        present(screen);
+        return err.RTGERR_OK;
+    }
     // Refreshing a buffer that is not the one being shown is not an error
     // - it is a program drawing ahead into another buffer - but there is
     // nothing to hand to the window.
     if (screen.showing != bitmap) return err.RTGERR_OK;
-    // With a pointer shown, the rows go into the composed frame first, and
-    // the pointer back over them where they cross it.
-    if (composing(screen)) {
-        const top = @min(y, screen.height);
-        const end = if (rows == 0) screen.height else @min(y +| rows, screen.height);
-        copyRows(screen, if (rows == 0) 0 else top, end);
-        lay(screen);
-    }
     present(screen);
+    return err.RTGERR_OK;
+}
+
+/// Several buffers at once, in bands: kept, composed, handed to the window,
+/// and a frame waited out, as a flip is.
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    for (bands[0..count]) |band| {
+        const bm = band.bitmap;
+        if (bm.pixels == null or bm.pitch != screen.width * bytes_per_pixel) return err.RTGERR_NOT_DISPLAYABLE;
+    }
+    const was_shown = screen.showing != null;
+    @memcpy(screen.bands[0..count], bands[0..count]);
+    screen.band_count = count;
+    screen.showing = bands[count - 1].bitmap;
+    rebuild(screen);
+    present(screen);
+    if (was_shown) pace(screen, 1);
     return err.RTGERR_OK;
 }
 
@@ -424,7 +486,8 @@ const ops = rtg.boards.RtgBoardOps{
     .stats = &stats,
 };
 
-/// The same with the pointer, for a board with a frame to compose it in.
+/// The same with the pointer and with bands, for a board with a frame to
+/// compose them in.
 const pointer_ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
     .set_mode = &setMode,
@@ -435,6 +498,7 @@ const pointer_ops = rtg.boards.RtgBoardOps{
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,
+    .show_bands = &showBands,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

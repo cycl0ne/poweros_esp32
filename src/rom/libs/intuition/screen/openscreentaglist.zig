@@ -269,6 +269,11 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         gb.RectFill(rp, &bounds);
     }
     drawBar(ib, s);
+    // Where on its display it is: down from the top, as far as it may go.
+    s.draggable = ub.GetTagData(sc.SA_Draggable, 1, tags) != 0;
+    s.exclusive = ub.GetTagData(sc.SA_Exclusive, 0, tags) != 0;
+    const asked_top: i32 = @truncate(@as(isize, @bitCast(ub.GetTagData(sc.SA_Top, 0, tags))));
+    s.top = @min(@max(asked_top, 0), _screen.lowestTop(s));
 
     s.windows.init();
     // In front of the display's other screens, and shown, unless it was

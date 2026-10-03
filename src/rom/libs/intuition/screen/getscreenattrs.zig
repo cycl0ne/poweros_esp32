@@ -28,9 +28,11 @@ const _window = @import("../window/_window.zig");
 ///   now), `SA_DefaultTitle`, `SA_Font`, `SA_PubName` (0 for a private
 ///   screen), `SA_Type`, `SA_ShowTitle`, `SA_RastPort`, `SA_LayerInfo`,
 ///   `SA_BarHeight`, `SA_BarVBorder`, `SA_BarHBorder`, `SA_MouseX`,
-///   `SA_MouseY`, `SA_WBorTop`, `SA_WBorLeft`, `SA_WBorRight`,
-///   `SA_WBorBottom`. A tag it does not know, or a null data, is passed
-///   over.
+///   `SA_MouseY` (the pointer in the screen's own coordinates, wherever
+///   on the display the screen is), `SA_WBorTop`, `SA_WBorLeft`,
+///   `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
+///   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`.
+///   A tag it does not know, or a null data, is passed over.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -84,8 +86,12 @@ pub fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen, tags: ?[*]const TagIt
             sc.SA_DefaultTitle => out.* = @intFromPtr(screen.default_title),
             // The pointer is on the display, and a screen is the display's
             // size: its coordinates are the screen's.
-            sc.SA_MouseX => out.* = @bitCast(@as(isize, ib.input.x)),
-            sc.SA_MouseY => out.* = @bitCast(@as(isize, ib.input.y)),
+            sc.SA_MouseX => out.* = @bitCast(@as(isize, ib.input.disp_x)),
+            sc.SA_MouseY => out.* = @bitCast(@as(isize, ib.input.disp_y - screen.top)),
+            sc.SA_Top => out.* = @bitCast(@as(isize, screen.top)),
+            sc.SA_Left => out.* = 0,
+            sc.SA_Draggable => out.* = @intFromBool(screen.draggable),
+            sc.SA_Exclusive => out.* = @intFromBool(screen.exclusive),
             // What OpenWindowTagList gives a window with a title bar and no
             // size gadget on this screen.
             sc.SA_WBorTop => out.* = fontHeight(ib, screen) + 3,

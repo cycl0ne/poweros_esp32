@@ -57,6 +57,9 @@ pub const IntuitionBase = extern struct {
     /// The alert up, if one is; one at a time, under `alert_lock`.
     alert: @import("misc/_misc.zig").AlertState,
     alert_lock: exec.SignalSemaphore,
+    /// Whether a display shows its screens in bands - one pulled down -
+    /// so showing the front one alone again is a change.
+    banded: bool,
     /// The system's fonts by `SYSFONT_*`, each held open here, or null for
     /// pospaz; set by `SetSystemFonts` and read under `system_font_lock`.
     system_fonts: [3]?*graphics.TextFont,
