@@ -37,6 +37,8 @@ pub const asl = @import("libs/asl/asl.zig");
 pub const iffparse = @import("libs/iffparse/iffparse.zig");
 pub const datatypes = @import("libs/datatypes/datatypes.zig");
 pub const motion = @import("libs/motion/motion.zig");
+/// A disk's RigidDiskBlock and partitions, through rdb.library.
+pub const rdb = @import("libs/rdb/rdb.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

@@ -53,9 +53,14 @@ hand.
 - [Styles](guides/styles.md) - what a style is, parts, states and
   properties, where a style comes from and how a property is found,
   `style.prefs`, drawing a part in a class, hover and focus.
-- [Animation](guides/animation.md) - the clock, curves, animations,
-  hearing of them by a hook or a signal, timers, timelines, moving a
-  gadget, and what moves on its own.
+- [Motion](guides/motion.md) - motion.library: the clock, curves and
+  ease hooks, animations and turning them, hearing of them by a signal
+  or a hook, mixing colours and boxes, timers (timeouts, repeating
+  keys), timelines (there and back, scrubbing), moving a gadget, what
+  moves on its own, and a whole program.
 - [Network](guides/network.md) - sockets, waiting on them, names,
   interfaces and their files, the network device API, wireless devices,
   writing a network driver, telnet.device, and the commands.
+- [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
+  partitions, rdb.library: reading a disk's table, changing it, a fresh
+  one, errors, when a change is seen, and `C:RDB`.

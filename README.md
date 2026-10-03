@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every library, device and resource call |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [animation](sdk/docs/guides/animation.md), [network](sdk/docs/guides/network.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -74,6 +74,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
   a shell with scripts and resident commands, 36 commands in `C:`, test
   programs in `C:test` and network tools in `C:net`.
+  A disk's partitions are what its RigidDiskBlock says, and dos mounts
+  them at boot: `LIBS:rdb.library` reads that table from any block
+  device into memory, changes it there and writes it back, and `C:RDB`
+  shows it, starts it afresh, and adds or takes out a partition. See
+  the [disks guide](sdk/docs/guides/rdb.md).
   `LIBS:iffparse.library` reads and writes IFF, the shape a picture, a
   piece of text or a sound is kept in when one program hands it to
   another, and `DEVS:clipboard.device` is where it is handed over: a
@@ -152,7 +157,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   a scroller glide to a new top, a ring of dots turns while something
   goes on, and so does the busy pointer - each step stored and drawn by
   intuition, so the clock never waits for a window, and a screen can
-  turn it all off. See the [animation guide](sdk/docs/guides/animation.md).
+  turn it all off. See the [motion guide](sdk/docs/guides/motion.md).
   More gadget classes on the disk in
   `SYS:classes/gadgets/`, worked by the pointer or by the letter
   underlined in each label: among them a row of tabs over pages of

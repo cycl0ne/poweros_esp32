@@ -1,0 +1,28 @@
+//! rdb.library's functions: a disk's RigidDiskBlock and partitions read
+//! into memory, changed there and written back. Open it with
+//! OpenLibrary("rdb.library", 1); the structures are in sdk.rdb.
+##include libs/rdb/rdb as rdb
+##basetype RDBBase
+##name rdb.library
+##bias 4
+##public
+/// The RigidDiskBlock and partitions of a unit of a block device, read
+/// into a handle; null, and why in `err`, when the device cannot be used.
+?*rdb.RDBHandle OpenRDB([*:0]const u8 device, u32 unit, ?*i32 err)
+/// The handle, its partitions and the device let go of.
+void CloseRDB(?*rdb.RDBHandle handle)
+/// A fresh RigidDiskBlock for the whole medium in the handle, with no
+/// partitions: written by WriteRDB.
+i32 InitRDB(*rdb.RDBHandle handle)
+/// The partition after `previous` on the handle's list, or the first.
+?*rdb.RDBPartition NextPartition(*rdb.RDBHandle handle, ?*rdb.RDBPartition previous)
+/// The partition called `name`, in any case.
+?*rdb.RDBPartition FindPartition(*rdb.RDBHandle handle, [*:0]const u8 name)
+/// A new partition called `name` over cylinders `low_cyl` to `high_cyl`
+/// (0 and 0: the largest free run) for the file system `dos_type`.
+i32 AddPartition(*rdb.RDBHandle handle, [*:0]const u8 name, u32 low_cyl, u32 high_cyl, u32 dos_type)
+/// A partition taken off the handle's list and freed.
+void RemPartition(*rdb.RDBHandle handle, *rdb.RDBPartition partition)
+/// The handle's table checked and written to the disk.
+i32 WriteRDB(*rdb.RDBHandle handle)
+##end

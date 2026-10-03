@@ -1,51 +1,71 @@
 // SPDX-License-Identifier: MIT
 //! RDB: what a disk says about itself - the RigidDiskBlock in its first
-//! blocks and the partitions hanging off it. Built against the SDK only.
+//! blocks and the partitions hanging off it - and changes to it, through
+//! LIBS:rdb.library. Built against the SDK only.
 //!
-//!   RDB DEVICE,UNIT/K/N,FULL/S
+//!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
+//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K
 //!
-//!   RDB                     flash.device unit 0
-//!   RDB flash.device UNIT 0 the same, said out loud
-//!   RDB FULL                every field, and each partition's environment
+//!   RDB                         flash.device unit 0
+//!   RDB sdcard.device UNIT 0    another disk
+//!   RDB FULL                    every field, and each partition's environment
+//!   RDB INIT                    a fresh table on a disk that has none
+//!   RDB INIT FORCE              ... or in place of the one it has
+//!   RDB ADD DH1                 a partition over the largest free run
+//!   RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
+//!   RDB REMOVE DH1              a partition taken out of the table
 //!
 //! The device is an exec device with trackdisk's commands, so anything
-//! that answers TD_GETGEOMETRY and CMD_READ can be read. The first
-//! `RDB_LOCATION_LIMIT` blocks are searched for a sound RigidDiskBlock,
-//! and its partition list is walked from there.
+//! that answers TD_GETGEOMETRY and CMD_READ can be read. A change is made
+//! in the order INIT, REMOVE, ADD, then the table is written as a whole
+//! and printed. Only the table's own blocks are written: what is on a
+//! partition's cylinders stays. dos reads the table at boot, so a
+//! partition added or taken out is mounted, or no longer, at the next one.
 //!
-//! Nothing here writes. A disk with no RigidDiskBlock is not an error: it
-//! says so and stops, since that is the normal state of a blank chip.
+//! A disk with no RigidDiskBlock is not an error: it says so and stops,
+//! since that is the normal state of a blank chip.
 //!
 //! A DosType is printed the way a disk labels itself - four characters,
 //! with an unprintable one written as `\<n>`, so the flash file system's
-//! `FLS\0` reads as it is spelled - and the longword after it.
+//! `FLS\0` reads as it is spelled - and the longword after it. DOSTYPE
+//! takes it the same way (`FLS\0`, or `FLS` with the zero left off) or as
+//! a number (`0x464C5300`); without it a partition is for the flash file
+//! system.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
+const rdb = sdk.rdb;
 const trackdisk = sdk.devices.trackdisk;
 const hardblocks = dos.hardblocks;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const RDBBase = sdk.interface.rdb.RDBBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.1 (03.10.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
-const arg_count = 3;
+const arg_init = 3;
+const arg_force = 4;
+const arg_add = 5;
+const arg_low = 6;
+const arg_high = 7;
+const arg_dostype = 8;
+const arg_bootable = 9;
+const arg_remove = 10;
+const arg_count = 11;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
 
-/// The most partitions it follows before it decides the list is a ring.
-const max_partitions = 32;
-
 const MSG_NO_RDB = "%s unit %d has no RigidDiskBlock in its first %d blocks\n";
+const MSG_FOREIGN = "%s unit %d has a RigidDiskBlock for another block size\n";
 const MSG_NO_PARTS = "  (no partitions)\n";
 
 /// One row of the partition table. The same format prints the heading and
@@ -55,7 +75,8 @@ const row = "  %-8s %5s %-13s %9s %7s %-16s %s\n";
 const Run = struct {
     sys: *ExecBase,
     dl: *DosBase,
-    io: *exec.IOStdReq,
+    rb: *RDBBase,
+    handle: *rdb.RDBHandle,
     full: bool,
 };
 
@@ -76,65 +97,148 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const device = rdargs.string(argv[arg_device]) orelse default_device;
     const unit: u32 = if (rdargs.number(argv[arg_unit])) |n| @intCast(@max(n, 0)) else 0;
 
-    // The request and its port belong to this program; a device is opened
-    // for as long as it takes to read a few blocks.
-    const port = sys.CreateMsgPort() orelse {
-        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+    const rdb_lib = sys.OpenLibrary(rdb.RDBNAME, 1) orelse {
+        _ = Printf(dl, "%s: cannot open %s\n", .{ COMMAND_NAME, rdb.RDBNAME });
         return dos.RETURN_FAIL;
     };
-    defer sys.DeleteMsgPort(port);
-    const request = sys.CreateIORequest(port, @sizeOf(exec.IOStdReq)) orelse {
-        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+    defer sys.CloseLibrary(rdb_lib);
+    const rb: *RDBBase = @ptrCast(rdb_lib);
+
+    var err: i32 = rdb.RDBERR_OK;
+    const handle = rb.OpenRDB(device, unit, &err) orelse {
+        _ = Printf(dl, "%s unit %d: %s\n", .{ device, unit, errorText(err) });
         return dos.RETURN_FAIL;
     };
-    defer sys.DeleteIORequest(request);
-    const io: *exec.IOStdReq = @ptrCast(@alignCast(request));
+    defer rb.CloseRDB(handle);
 
-    if (sys.OpenDevice(device, unit, request, 0) != 0) {
-        _ = Printf(dl, "%s unit %d: no such device or unit\n", .{ device, unit });
-        return dos.RETURN_FAIL;
+    var run: Run = .{ .sys = sys, .dl = dl, .rb = rb, .handle = handle, .full = argv[arg_full] != 0 };
+    showDrive(&run, device, unit, &handle.geometry);
+
+    if (argv[arg_init] != 0 or argv[arg_add] != 0 or argv[arg_remove] != 0) {
+        const rc = change(&run, &argv);
+        if (rc != dos.RETURN_OK) return rc;
     }
-    defer sys.CloseDevice(request);
 
-    var run: Run = .{ .sys = sys, .dl = dl, .io = io, .full = argv[arg_full] != 0 };
-
-    var geo: trackdisk.DriveGeometry = .{};
-    if (command(&run, trackdisk.TD_GETGEOMETRY, 0, @sizeOf(trackdisk.DriveGeometry), &geo) != 0) {
-        _ = Printf(dl, "%s unit %d: it does not answer TD_GETGEOMETRY\n", .{ device, unit });
-        return dos.RETURN_FAIL;
-    }
-    showDrive(&run, device, unit, &geo);
-
-    var rdb: hardblocks.RigidDiskBlock = undefined;
-    const at = findRdb(&run, &geo, &rdb) orelse {
-        _ = Printf(dl, MSG_NO_RDB, .{ device, unit, hardblocks.RDB_LOCATION_LIMIT });
+    if (handle.flags & rdb.RDBF_FOUND == 0) {
+        if (handle.flags & rdb.RDBF_FOREIGN != 0) {
+            _ = Printf(dl, MSG_FOREIGN, .{ device, unit });
+        } else {
+            _ = Printf(dl, MSG_NO_RDB, .{ device, unit, hardblocks.RDB_LOCATION_LIMIT });
+        }
         return dos.RETURN_WARN;
-    };
-    showRdb(&run, at, &rdb);
-    return showPartitions(&run, &rdb);
-}
-
-/// One command to the device; its io_Error.
-fn command(run: *Run, code: u16, offset: u64, length: u64, data: ?*anyopaque) i8 {
-    run.io.req.command = code;
-    run.io.offset = offset;
-    run.io.length = length;
-    run.io.data = data;
-    run.io.actual = 0;
-    _ = run.sys.DoIO(&run.io.req);
-    return run.io.req.err;
-}
-
-/// The RigidDiskBlock, if one of the first blocks holds a sound one, and
-/// which block that was.
-fn findRdb(run: *Run, geo: *const trackdisk.DriveGeometry, into: *hardblocks.RigidDiskBlock) ?u32 {
-    var block: u32 = 0;
-    while (block < hardblocks.RDB_LOCATION_LIMIT and block < geo.total_sectors) : (block += 1) {
-        const at = @as(u64, block) * geo.sector_size;
-        if (command(run, exec.CMD_READ, at, @sizeOf(hardblocks.RigidDiskBlock), into) != 0) continue;
-        if (hardblocks.sound(into, hardblocks.IDNAME_RIGIDDISK)) return block;
     }
-    return null;
+    showRdb(&run, handle.block, &handle.rdb);
+    return showPartitions(&run);
+}
+
+/// INIT, REMOVE and ADD made to the table, and the table written.
+fn change(run: *Run, argv: *const [arg_count]usize) i32 {
+    const dl = run.dl;
+    const rb = run.rb;
+    const handle = run.handle;
+
+    if (argv[arg_init] != 0) {
+        if (handle.flags & rdb.RDBF_FOUND != 0 and argv[arg_force] == 0) {
+            _ = dl.PutStr("The disk has a table already: INIT FORCE replaces it, and every partition with it\n");
+            return dos.RETURN_ERROR;
+        }
+        if (failed(run, "INIT", rb.InitRDB(handle))) return dos.RETURN_ERROR;
+    }
+    if (rdargs.string(argv[arg_remove])) |name| {
+        const part = rb.FindPartition(handle, name) orelse {
+            _ = Printf(dl, "REMOVE: there is no partition %s\n", .{name});
+            return dos.RETURN_ERROR;
+        };
+        rb.RemPartition(handle, part);
+    }
+    if (rdargs.string(argv[arg_add])) |name| {
+        const low = rdargs.number(argv[arg_low]);
+        const high = rdargs.number(argv[arg_high]);
+        if ((low == null) != (high == null) or (low orelse 0) < 0 or (high orelse 0) < 0) {
+            _ = dl.PutStr("ADD: LOW and HIGH go together, or are both left out for the largest free run\n");
+            return dos.RETURN_ERROR;
+        }
+        var dos_type: u32 = dos.flashfs.ID_FLASHFS_DISK;
+        if (rdargs.string(argv[arg_dostype])) |text| {
+            dos_type = parseDosType(text) orelse {
+                _ = Printf(dl, "DOSTYPE: %s is neither four characters nor a number\n", .{text});
+                return dos.RETURN_ERROR;
+            };
+        }
+        const low_cyl: u32 = @intCast(low orelse 0);
+        const high_cyl: u32 = @intCast(high orelse 0);
+        if (failed(run, "ADD", rb.AddPartition(handle, name, low_cyl, high_cyl, dos_type))) return dos.RETURN_ERROR;
+        if (argv[arg_bootable] != 0) {
+            if (rb.FindPartition(handle, name)) |part| part.block.flags |= hardblocks.PBFF_BOOTABLE;
+        }
+    }
+
+    if (failed(run, "Writing the table", rb.WriteRDB(handle))) return dos.RETURN_ERROR;
+    _ = dl.PutStr("Table written: the partitions are mounted as it says at the next boot\n");
+    return dos.RETURN_OK;
+}
+
+/// Whether a call failed; if it did, what it said.
+fn failed(run: *Run, what: [*:0]const u8, err: i32) bool {
+    if (err == rdb.RDBERR_OK) return false;
+    _ = Printf(run.dl, "%s: %s\n", .{ what, errorText(err) });
+    return true;
+}
+
+fn errorText(err: i32) [*:0]const u8 {
+    return switch (err) {
+        rdb.RDBERR_NOMEM => "not enough memory",
+        rdb.RDBERR_DEVICE => "no such device or unit, or no medium in it",
+        rdb.RDBERR_IO => "the device refused a transfer",
+        rdb.RDBERR_NORDB => "the disk has no table (INIT makes one)",
+        rdb.RDBERR_BLOCKSIZE => "the medium cannot take blocks of this size",
+        rdb.RDBERR_NAME => "a name that is empty, too long, holds a colon or a slash, or is taken",
+        rdb.RDBERR_RANGE => "cylinders outside the usable ones, the wrong way round, or taken",
+        rdb.RDBERR_FULL => "no room in the table's blocks for another partition",
+        else => "failed",
+    };
+}
+
+/// A DosType as written on the command line: `0x` and a number, or up to
+/// four characters with `\<n>` for a byte by its value, the rest zero.
+fn parseDosType(text: [*:0]const u8) ?u32 {
+    if (text[0] == '0' and (text[1] == 'x' or text[1] == 'X')) {
+        var value: u32 = 0;
+        var at: usize = 2;
+        if (text[at] == 0) return null;
+        while (text[at] != 0) : (at += 1) {
+            const digit: u32 = switch (text[at]) {
+                '0'...'9' => text[at] - '0',
+                'a'...'f' => text[at] - 'a' + 10,
+                'A'...'F' => text[at] - 'A' + 10,
+                else => return null,
+            };
+            if (at >= 10) return null;
+            value = value << 4 | digit;
+        }
+        return value;
+    }
+    var value: u32 = 0;
+    var chars: u32 = 0;
+    var at: usize = 0;
+    while (text[at] != 0) : (chars += 1) {
+        if (chars == 4) return null;
+        var byte: u32 = text[at];
+        at += 1;
+        if (byte == '\\') {
+            byte = 0;
+            var digits: u32 = 0;
+            while (text[at] >= '0' and text[at] <= '9') : (at += 1) {
+                byte = byte * 10 + (text[at] - '0');
+                digits += 1;
+            }
+            if (digits == 0 or byte > 255) return null;
+        }
+        value = value << 8 | byte;
+    }
+    if (chars == 0) return null;
+    while (chars < 4) : (chars += 1) value <<= 8;
+    return value;
 }
 
 // --- What it prints ---------------------------------------------------------
@@ -167,37 +271,37 @@ fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.
     }
 }
 
-fn showRdb(run: *Run, at: u32, rdb: *const hardblocks.RigidDiskBlock) void {
+fn showRdb(run: *Run, at: u32, table: *const hardblocks.RigidDiskBlock) void {
     const dl = run.dl;
     _ = Printf(dl, "\nRigidDiskBlock in block %d\n", .{at});
-    _ = Printf(dl, "  Blocks       %d bytes\n", .{rdb.block_bytes});
+    _ = Printf(dl, "  Blocks       %d bytes\n", .{table.block_bytes});
     _ = Printf(dl, "  Drive        %d cylinders, %d head(s), %d sector(s) per track\n", .{
-        rdb.cylinders,
-        rdb.heads,
-        rdb.sectors,
+        table.cylinders,
+        table.heads,
+        table.sectors,
     });
     _ = Printf(dl, "  Kept back    blocks %d to %d, for these structures\n", .{
-        rdb.rdb_blocks_lo,
-        rdb.rdb_blocks_hi,
+        table.rdb_blocks_lo,
+        table.rdb_blocks_hi,
     });
     _ = Printf(dl, "  Usable       cylinders %d to %d, %d block(s) each\n", .{
-        rdb.lo_cylinder,
-        rdb.hi_cylinder,
-        rdb.cyl_blocks,
+        table.lo_cylinder,
+        table.hi_cylinder,
+        table.cyl_blocks,
     });
     if (!run.full) return;
 
     var where: [16:0]u8 = @splat(0);
-    blockAsText(&where, rdb.partition_list);
+    blockAsText(&where, table.partition_list);
     _ = Printf(dl, "  Partitions   %s\n", .{@as([*:0]const u8, @ptrCast(&where))});
-    blockAsText(&where, rdb.bad_block_list);
+    blockAsText(&where, table.bad_block_list);
     _ = Printf(dl, "  Bad blocks   %s\n", .{@as([*:0]const u8, @ptrCast(&where))});
-    blockAsText(&where, rdb.file_sys_header_list);
+    blockAsText(&where, table.file_sys_header_list);
     _ = Printf(dl, "  File systems %s\n", .{@as([*:0]const u8, @ptrCast(&where))});
 
-    identity(run, "  Disk         ", &rdb.disk_vendor, &rdb.disk_product, &rdb.disk_revision);
-    identity(run, "  Controller   ", &rdb.controller_vendor, &rdb.controller_product, &rdb.controller_revision);
-    _ = Printf(dl, "  Flags        0x%08x, host id %d\n", .{ rdb.flags, rdb.host_id });
+    identity(run, "  Disk         ", &table.disk_vendor, &table.disk_product, &table.disk_revision);
+    identity(run, "  Controller   ", &table.controller_vendor, &table.controller_product, &table.controller_revision);
+    _ = Printf(dl, "  Flags        0x%08x, host id %d\n", .{ table.flags, table.host_id });
 }
 
 /// The vendor, product and revision strings a drive carries, when it
@@ -229,40 +333,24 @@ fn identity(
     _ = Printf(run.dl, "%s%s\n", .{ label, @as([*:0]const u8, @ptrCast(&text)) });
 }
 
-fn showPartitions(run: *Run, rdb: *const hardblocks.RigidDiskBlock) i32 {
+fn showPartitions(run: *Run) i32 {
     const dl = run.dl;
+    const rb = run.rb;
     _ = dl.PutStr("\nPartitions\n");
     _ = Printf(dl, row, .{ "Name", "Block", "Cylinders", "Blocks", "Size", "File system", "Flags" });
     _ = Printf(dl, row, .{ "--------", "-----", "-------------", "---------", "-------", "----------------", "-----" });
 
-    var next = rdb.partition_list;
-    var seen: u32 = 0;
-    var rc: i32 = dos.RETURN_OK;
-    var part: hardblocks.PartitionBlock = undefined;
-    while (next != hardblocks.end_of_list and seen < max_partitions) : (seen += 1) {
-        if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
-            _ = dl.PrintFault(dos.ERROR_BREAK, null);
-            return dos.RETURN_WARN;
-        }
-        const at = @as(u64, next) * rdb.block_bytes;
-        if (command(run, exec.CMD_READ, at, @sizeOf(hardblocks.PartitionBlock), &part) != 0) {
-            _ = Printf(dl, "  block %d cannot be read\n", .{next});
-            return dos.RETURN_ERROR;
-        }
-        if (!hardblocks.sound(&part, hardblocks.IDNAME_PARTITION)) {
-            _ = Printf(dl, "  block %d is not a sound PartitionBlock\n", .{next});
-            return dos.RETURN_ERROR;
-        }
-        partitionRow(run, next, &part);
-        if (run.full) partitionDetail(run, &part);
-        next = part.next;
+    var part = rb.NextPartition(run.handle, null);
+    if (part == null) _ = dl.PutStr(MSG_NO_PARTS);
+    while (part) |p| : (part = rb.NextPartition(run.handle, p)) {
+        partitionRow(run, p.at, &p.block);
+        if (run.full) partitionDetail(run, &p.block);
     }
-    if (seen == 0) _ = dl.PutStr(MSG_NO_PARTS);
-    if (seen == max_partitions and next != hardblocks.end_of_list) {
-        _ = Printf(dl, "  (the list does not end after %d partitions)\n", .{max_partitions});
-        rc = dos.RETURN_WARN;
+    if (run.handle.flags & rdb.RDBF_DAMAGED != 0) {
+        _ = dl.PutStr("  (the chain breaks after these: a block that is not a sound PartitionBlock)\n");
+        return dos.RETURN_ERROR;
     }
-    return rc;
+    return dos.RETURN_OK;
 }
 
 fn partitionRow(run: *Run, block: u32, part: *const hardblocks.PartitionBlock) void {
