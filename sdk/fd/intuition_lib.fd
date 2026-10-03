@@ -343,16 +343,16 @@ bool SetSystemFonts(?*graphics.TextFont screen_font, ?*graphics.TextFont default
 /// One of the system's fonts (SYSFONT_*), opened: CloseFont it.
 ?*graphics.TextFont OpenSystemFont(u32 which)
 // The settings
-/// The settings as they are now, into `prefs`, of which `size` bytes are
-/// written: a caller built against an older SDK gets the part it knows.
-/// Answers `prefs`.
-*intuition.Preferences GetPrefs(*intuition.Preferences prefs, u32 size)
-/// The settings the system starts with, into `prefs`. Answers `prefs`.
-*intuition.Preferences GetDefPrefs(*intuition.Preferences prefs, u32 size)
-/// The settings taken from `prefs`, of which `size` bytes are read; what
-/// is not there keeps the value it had. With `announce`, every window
-/// that listens is told IDCMP_NEWPREFS. Answers what was taken.
-*intuition.Preferences SetPrefs(*const intuition.Preferences prefs, u32 size, bool announce)
+/// The system's settings as they are now: each tag's data is where its
+/// value is written (IPREFS_). Answers how many were written.
+u32 GetPrefs(?[*]const utility.TagItem tags)
+/// The settings the system starts with, written as GetPrefs writes them.
+/// Answers how many were written.
+u32 GetDefPrefs(?[*]const utility.TagItem tags)
+/// The system's settings changed: each tag's data is the value
+/// (IPREFS_); one left out keeps its value. Every window that listens is
+/// told IDCMP_NEWPREFS. False when one could not be taken.
+bool SetPrefs(?[*]const utility.TagItem tags)
 // Styles
 /// Draw a part of a gadget in a state, from its style, into `box`: the
 /// background, then the border. `own` is a gadget's own style (GA_Style's

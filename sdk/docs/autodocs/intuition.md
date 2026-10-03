@@ -52,7 +52,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetDefPrefs](#getdefprefs) - The settings the system starts with.
 - [GetDefaultPubScreen](#getdefaultpubscreen) - Names the default public screen.
 - [GetIMsg](#getimsg) - Takes the next message off a window's port.
-- [GetPrefs](#getprefs) - The settings as they are now.
+- [GetPrefs](#getprefs) - The system's settings as they are now.
 - [GetScreenAttrs](#getscreenattrs) - Reads a screen.
 - [GetScreenDrawInfo](#getscreendrawinfo) - The pens and font a screen's parts are drawn in.
 - [GetStyleAttr](#getstyleattr) - One property of a part in a state, found as `DrawPart` finds it.
@@ -109,7 +109,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetGadgetAttrsTagList](#setgadgetattrstaglist) - Changes a gadget's attributes, and lets it show the change.
 - [SetMenuStrip](#setmenustrip) - Gives a window its menus.
 - [SetMouseQueue](#setmousequeue) - Sets how many pointer moves a window may have waiting.
-- [SetPrefs](#setprefs) - The settings changed.
+- [SetPrefs](#setprefs) - The system's settings changed.
 - [SetPubScreenModes](#setpubscreenmodes) - Sets how public screens behave, for every program.
 - [SetScreenPens](#setscreenpens) - A screen's pens, or the system's, replaced - and every screen it reaches painted again in them.
 - [SetStyle](#setstyle) - A screen's style, or the system's, replaced - and every window it reaches drawn again in it.
@@ -2676,7 +2676,7 @@ The settings the system starts with.
 **SYNOPSIS**
 
 ```zig
-fn GetDefPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
+fn GetDefPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 ```
 
 **SINCE**
@@ -2686,18 +2686,20 @@ fn GetDefPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
 **INPUTS**
 
 - `ib` - intuition.library's base.
-- `prefs` - where to write them.
-- `size` - how many bytes of `prefs` there are.
+- `tags` - the settings wanted, as `GetPrefs` takes them.
 
 **RESULT**
 
-`prefs`.
+How many were written.
 
 **BEHAVIOR**
 
-What the library was born with, whatever has been set since: this is
-what a settings editor's "use the defaults" hands to `SetPrefs`. As
-with `GetPrefs`, only as much as the caller knows is written.
+What the system is born with, whatever has been set since: a
+double-click of 1500 milliseconds, a screen font 16 rows tall, the
+keyboard on the screen on a board with none, pospaz from the ROM for
+all three fonts, the built-in pens. Written as `GetPrefs` writes them;
+what a settings editor's "use the defaults" hands to `SetPrefs`. The
+style is the default when none is set: `IPREFS_Style` with null.
 
 **CONTEXT**
 
@@ -2708,7 +2710,11 @@ with `GetPrefs`, only as much as the caller knows is written.
 
 **OWNERSHIP**
 
-The storage is the caller's.
+The storage is the caller's; a font written is the caller's to close.
+
+**BUGS**
+
+None known.
 
 **SEE ALSO**
 
@@ -2717,8 +2723,9 @@ The storage is the caller's.
 **EXAMPLES**
 
 ```zig
-var prefs: intuition.Preferences = undefined;
-_ = ib.SetPrefs(ib.GetDefPrefs(&prefs, @sizeOf(@TypeOf(prefs))), @sizeOf(@TypeOf(prefs)), true);
+var ms: u32 = 0;
+_ = ib.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) }, .{} });
+_ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = ms }, .{} });
 ```
 
 ## GetDefaultPubScreen
@@ -2849,12 +2856,12 @@ while (ib.GetIMsg(window)) |im| {
 
 ## GetPrefs
 
-The settings as they are now.
+The system's settings as they are now.
 
 **SYNOPSIS**
 
 ```zig
-fn GetPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
+fn GetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 ```
 
 **SINCE**
@@ -2864,25 +2871,26 @@ fn GetPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
 **INPUTS**
 
 - `ib` - intuition.library's base.
-- `prefs` - where to write them.
-- `size` - how many bytes of `prefs` there are, which a caller gives
-  as `@sizeOf(Preferences)` of the SDK it was built against.
+- `tags` - the settings wanted, each an `IPREFS_` tag whose data is
+  where its value is written: a `*u32` for `IPREFS_DoubleClick`
+  (milliseconds), `IPREFS_ScreenFontHeight` (rows) and
+  `IPREFS_Keyboard`; a `*?*graphics.TextFont` for the three fonts; a
+  `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 
 **RESULT**
 
-`prefs`.
+How many were written.
 
 **BEHAVIOR**
 
-As much of the structure as both the caller and the library know is
-written; anything the library has and the caller does not is left
-out, and `struct_size` says how much was written. A caller built
-against an older SDK therefore reads the part it knows and nothing
-past the end of its own storage.
+Each tag asked is written; a data of 0, a tag that is not a setting,
+and `IPREFS_Style` - a style once read is intuition's own and has no
+list to give back - are passed over. A font is opened for the caller,
+as `OpenSystemFont` opens it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: for a font asked for, while another task sets the fonts.
 - Interrupts: no.
 - Forbid: not held and not needed.
 - Process: a Task will do.
@@ -2890,17 +2898,27 @@ past the end of its own storage.
 **OWNERSHIP**
 
 The storage is the caller's. What is written is a copy: changing it
-changes nothing until `SetPrefs`.
+changes nothing until `SetPrefs`. A font written is the caller's to
+close with `CloseFont`.
+
+**BUGS**
+
+None known.
 
 **SEE ALSO**
 
-`SetPrefs`, `GetDefPrefs`
+`SetPrefs`, `GetDefPrefs`, `OpenSystemFont`
 
 **EXAMPLES**
 
 ```zig
-var prefs: intuition.Preferences = undefined;
-_ = ib.GetPrefs(&prefs, @sizeOf(@TypeOf(prefs)));
+var ms: u32 = 0;
+var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
+_ = ib.GetPrefs(&[_]TagItem{
+    .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
+    .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&pens) },
+    .{},
+});
 ```
 
 ## GetScreenAttrs
@@ -6486,12 +6504,12 @@ _ = ib.SetMouseQueue(window, 16);
 
 ## SetPrefs
 
-The settings changed.
+The system's settings changed.
 
 **SYNOPSIS**
 
 ```zig
-fn SetPrefs(ib: *IntuitionBase, prefs: *const Preferences, size: u32, announce: bool) *Preferences
+fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool
 ```
 
 **SINCE**
@@ -6501,53 +6519,74 @@ fn SetPrefs(ib: *IntuitionBase, prefs: *const Preferences, size: u32, announce: 
 **INPUTS**
 
 - `ib` - intuition.library's base.
-- `prefs` - the settings to take.
-- `size` - how many bytes of `prefs` there are. Fields past that keep
-  the value they had, so a caller built against an older SDK changes
-  what it knows and leaves the rest alone.
-- `announce` - true to tell every window that listens.
+- `tags` - the settings to change, each an `IPREFS_` tag with its
+  value as the data. Null changes nothing.
 
 **RESULT**
 
-`prefs`, as it was handed in.
+True when every setting given was taken; false when one was not - a
+value that means nothing, a fixed font that is proportional, no memory
+for a style - and then that one keeps its value and the rest are
+taken all the same.
 
 **BEHAVIOR**
 
-Each field goes to what the library keeps it in and takes effect at
-once: the double-click time is used by the next press, the screen
-font height by the next screen opened without a font of its own. A
-screen already open keeps what it opened with.
+Each setting takes effect at once and a setting left out keeps its
+value:
 
-A number that means nothing - a double-click time of no time at all,
-a font of no height - is left alone rather than taken, since a
-caller that writes one has nothing to gain by it and everything
-after it to lose.
+- `IPREFS_DoubleClick`, milliseconds: the next press is measured by
+  it. 0 is refused.
+- `IPREFS_ScreenFontHeight`, rows: the next screen opened without a
+  font of its own takes it. 0 is refused.
+- `IPREFS_Keyboard`: when the keyboard on the screen comes up. A
+  value past `KEYBOARD_NEVER` is refused.
+- `IPREFS_ScreenFont`, `IPREFS_DefaultFont`, `IPREFS_FixedFont`: the
+  fonts screens, windows and consoles opened from now on use, as
+  `SetSystemFonts` sets them; one not given keeps the font it has.
+- `IPREFS_Pens`: the system's pens, as `SetScreenPens` with no screen
+  sets them - every screen without pens of its own is painted again.
+- `IPREFS_Style`: the system's style, as `SetStyle` with no screen
+  sets it - every window it reaches is drawn again.
 
-With `announce`, every window that asked for `IDCMP_NEWPREFS` is
-sent one, whichever screen it is on. A window that draws something
-the settings decide reads them again and draws it anew; a window
-that asked for nothing hears nothing.
+Every window that asked for `IDCMP_NEWPREFS` is told, whichever
+screen it is on: a window that draws something the settings decide
+reads them again and draws it anew.
 
 **CONTEXT**
 
-- Waits: for the screen list, to walk the windows.
+- Waits: yes - for the fonts, the screen list and the layers it draws
+  in.
 - Interrupts: no.
-- Forbid: not held and not to be held while it announces.
+- Forbid: must not be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-The structure stays the caller's and is only read.
+The list and all it points to stay the caller's: intuition opens fonts
+of its own and copies the pens and the style.
+
+**NOTES**
+
+- What `C:SetPrefs` calls at boot, from the files in `ENV:Sys`.
+
+**BUGS**
+
+None known.
 
 **SEE ALSO**
 
-`GetPrefs`, `GetDefPrefs`
+`GetPrefs`, `GetDefPrefs`, `SetStyle`, `SetScreenPens`,
+`SetSystemFonts`
 
 **EXAMPLES**
 
 ```zig
-prefs.double_click = .{ .secs = 0, .micro = 300_000 };
-_ = ib.SetPrefs(&prefs, @sizeOf(@TypeOf(prefs)), true);
+// A quicker double-click, and no keyboard on the screen.
+_ = ib.SetPrefs(&[_]TagItem{
+    .{ .tag = intuition.IPREFS_DoubleClick, .data = 400 },
+    .{ .tag = intuition.IPREFS_Keyboard, .data = intuition.KEYBOARD_NEVER },
+    .{},
+});
 ```
 
 ## SetPubScreenModes
@@ -6663,7 +6702,8 @@ The pens stay the caller's; the screen keeps a copy.
 
 **NOTES**
 
-- What `C:IPrefs` calls, with no screen, from `ENV:Sys/palette.prefs`.
+- With no screen, what `SetPrefs` does with `IPREFS_Pens` - which
+  `C:SetPrefs` gives from `ENV:Sys/palette.prefs`.
 - A style that gives colours of its own (`STYLE_BackgroundRGB` and the
   rest) keeps them: only what is drawn in pens changes.
 
@@ -6675,7 +6715,7 @@ The pens stay the caller's; the screen keeps a copy.
 
 **SEE ALSO**
 
-`SA_Pens`, `GetScreenDrawInfo`, `SetStyle`
+`SA_Pens`, `GetScreenDrawInfo`, `SetStyle`, `SetPrefs`
 
 **EXAMPLES**
 
@@ -6746,8 +6786,8 @@ closes.
 - What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
   into the style it came from, and is good only until that style is
   replaced.
-- What `C:StylePrefs` calls, with no screen, from
-  `ENV:Sys/style.prefs`.
+- With no screen, what `SetPrefs` does with `IPREFS_Style` - which
+  `C:SetPrefs` gives from `ENV:Sys/style.prefs`.
 
 **BUGS**
 
@@ -6759,7 +6799,7 @@ closes.
 
 **SEE ALSO**
 
-`SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`
+`SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`, `SetPrefs`
 
 **EXAMPLES**
 
@@ -6834,7 +6874,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenSystemFont`, `diskfont.library/OpenDiskFont`
+`OpenSystemFont`, `SetPrefs`, `diskfont.library/OpenDiskFont`
 
 **EXAMPLES**
 

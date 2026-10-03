@@ -12,7 +12,7 @@
 //! as any key does. When nothing is being typed into any more - the field
 //! let go, Return pressed - and no key of it is held, it closes again.
 //!
-//! **Wanted** is `Preferences.keyboard`: always, never, or - the default -
+//! **Wanted** is `IPREFS_Keyboard`: always, never, or - the default -
 //! when the board has no keyboard of its own (expansion.library has no
 //! `PARTKIND_KEYBOARD`), which is asked once.
 //!

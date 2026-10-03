@@ -62,12 +62,18 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expectEqualStrings("SCREEN=go.font/10P DEFAULT=go.font/9P", out[0..prefs.font.write(&fonts, &out)]);
     try testing.expect(prefs.font.parse("SCREEN=go.font", &fonts) != null);
 
-    var settings: sdk.intuition.Preferences = .{};
+    var settings: prefs.intuition.Settings = .{};
     try testing.expect(prefs.intuition.parse("DOUBLECLICK=400 KEYBOARD=always", &settings) == null);
-    try testing.expectEqual(@as(u32, 400_000), settings.double_click.micro);
+    try testing.expectEqual(@as(u32, 400), settings.double_click);
     try testing.expectEqual(sdk.intuition.KEYBOARD_ALWAYS, settings.keyboard);
-    try testing.expectEqual(@as(u32, 16), settings.screen_font_height);
+    try testing.expectEqual(@as(u32, 16), settings.screen_font);
     try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS", out[0..prefs.intuition.write(&settings, &out)]);
+    // Only what the line gave becomes a tag: the font height was left out.
+    var tags: [3]sdk.utility.TagItem = undefined;
+    try testing.expectEqual(@as(usize, 2), prefs.intuition.toTags(&settings, &tags));
+    try testing.expectEqual(sdk.intuition.IPREFS_DoubleClick, tags[0].tag);
+    try testing.expectEqual(@as(usize, 400), tags[0].data);
+    try testing.expectEqual(sdk.intuition.IPREFS_Keyboard, tags[1].tag);
     try testing.expect(prefs.intuition.parse("KEYBOARD=SOMETIMES", &settings) != null);
 }
 

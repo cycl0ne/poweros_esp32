@@ -63,8 +63,8 @@ const Screen = _screen.Screen;
 /// - What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
 ///   into the style it came from, and is good only until that style is
 ///   replaced.
-/// - What `C:StylePrefs` calls, with no screen, from
-///   `ENV:Sys/style.prefs`.
+/// - With no screen, what `SetPrefs` does with `IPREFS_Style` - which
+///   `C:SetPrefs` gives from `ENV:Sys/style.prefs`.
 ///
 /// BUGS:
 /// - A window keeps the border sizes it opened with: a style whose window
@@ -74,7 +74,7 @@ const Screen = _screen.Screen;
 ///   the window is drawn again for some other reason.
 ///
 /// SEE ALSO:
-/// `SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`
+/// `SA_Style`, `GA_Style`, `DrawPart`, `GetStyleAttr`, `SetPrefs`
 ///
 /// EXAMPLES:
 /// ```zig

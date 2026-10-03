@@ -51,7 +51,7 @@ const _font = @import("_font.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenSystemFont`, `diskfont.library/OpenDiskFont`
+/// `OpenSystemFont`, `SetPrefs`, `diskfont.library/OpenDiskFont`
 ///
 /// EXAMPLES:
 /// ```zig

@@ -1,5 +1,5 @@
 # ENVARC:Sys/intuition.prefs - intuition.library's own settings, which
-# C:IPrefs hands to it at boot. One line:
+# C:SetPrefs hands to it at boot. One line:
 #
 # DOUBLECLICK  how far apart two presses may be and still be one
 #              double-click, in milliseconds.

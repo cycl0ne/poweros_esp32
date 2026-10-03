@@ -126,8 +126,9 @@ Four styles may be asked, in this order:
 1. **the gadget's own** - `GA_Style`, for one gadget;
 2. **its screen's** - `SA_Style` when the screen opened, or `SetStyle`
    with the screen;
-3. **the system's** - `SetStyle` with no screen, which `C:StylePrefs`
-   gives from `ENV:Sys/style.prefs`;
+3. **the system's** - `SetPrefs` with `IPREFS_Style`, which
+   `C:SetPrefs` gives from `ENV:Sys/style.prefs` (`SetStyle` with no
+   screen does the same);
 4. **the system's default** - in the ROM, the look with no style anywhere.
 
 A style with `STYLE_Alone` set stands on the default alone: after it
@@ -181,7 +182,7 @@ they open their windows there. `C:test/Styles` does exactly this.
 ## The system's style and style.prefs
 
 `ENV:Sys/style.prefs` holds a line per part and state, read by
-`C:StylePrefs` at boot and whenever it is run again:
+`C:SetPrefs` at boot and whenever it is run again:
 
 ```
 PART=MAIN BORDER=FLAT BORDERCOLOUR=#404850 BORDERWIDTH=1 RADIUS=6 BACKGROUND=#FAFBFC..#D8DCE2
@@ -215,14 +216,15 @@ of the screen's pens by its name, or a colour of its own picked on a
 colour wheel. Both draw a few gadgets in the style as it is. It
 writes the file back in the same form, its explanation and the default
 kept: Save to `ENV:` and `ENVARC:`, Use to `ENV:` alone. Either
-then runs `C:StylePrefs`, so every open window takes it. A program of
+then runs `C:SetPrefs`, so every open window takes it. A program of
 its own reads and writes the file through `sdk.prefs.style`, the one
 definition of its form that the command and the editor share.
 
 The file on the disk has the system's default written out in comments,
 which makes it its own reference, and a flatter look to try. The
 system's style reaches every screen, those open too, under a screen's own
-style. `StylePrefs RESET` leaves the default alone.
+style. `SetPrefs RESET` leaves the default alone, and every other
+setting as the system starts.
 
 Every window on a screen whose style changes has its gadgets laid out
 again and drawn, and hears `IDCMP_NEWPREFS` for what it draws itself. A
@@ -234,15 +236,16 @@ A style that names a pen - `TEXT`, `FILL`, `SHINE` - draws in whatever
 colour the screen gives that pen, so the pens change every look at once.
 The system's twelve pens are what every screen opened without pens of
 its own (`SA_Pens`, `SA_DetailPen`, `SA_BlockPen`) draws in.
-`SetScreenPens(null, pens)` replaces them - on the screens open too,
+`SetPrefs` with `IPREFS_Pens` (or `SetScreenPens(null, pens)`) replaces
+them - on the screens open too,
 whose ground, bar and windows are drawn again - and
 `SetScreenPens(screen, pens)` gives one screen its own; null pens go
 back to the built-in ones, or for a screen to the system's.
 
 `ENVARC:Sys/palette.prefs` keeps them, one line of a pen's name and its
 colour each - `BACKGROUND=#AAAAAA TEXT=#000000 ...` - with the built-in
-pens written out in a comment. `C:IPrefs` hands the file to intuition at
-boot, after `ENV:Sys/intuition.prefs`; a pen the line leaves out keeps
+pens written out in a comment. `C:SetPrefs` hands the file to intuition
+at boot with the other three; a pen the line leaves out keeps
 the colour it has. `SYS:Programs/Prefs` edits them on its Colours page,
 each typed as `#RRGGBB` or picked on the colour wheel, and writes the
 file only when a colour was changed. Its form is `sdk.prefs.palette`.
@@ -364,8 +367,7 @@ by its class as it goes active and inactive, which it does anyway.
 
 | Command | What it does |
 |---------|--------------|
-| `C:StylePrefs` | sets the system's style from `ENV:Sys/style.prefs`, or `FROM` another file; `RESET` back to the default |
+| `C:SetPrefs` | hands the style, the pens, the fonts and intuition's settings from the files in `ENV:Sys` - or `FROM` another directory - to intuition in one `SetPrefs`; `RESET` back to what the system starts with; `SHOW` prints what is in force |
 | `SYS:Programs/Prefs` | edits the style, the screens' pens, the fonts and intuition's settings in a window; Save, Use, Cancel |
-| `C:IPrefs` | hands `ENV:Sys/intuition.prefs` and the screens' pens in `ENV:Sys/palette.prefs` to intuition |
 | `C:test/Styles` | a public screen in a style of its own, made the default public screen; `DARK` with dark pens and a style to match |
 | `C:test/Gadgets`, `C:test/Layout`, `C:test/ListView` | windows of gadgets to look at in either |

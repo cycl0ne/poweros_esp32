@@ -16,7 +16,7 @@
 //! (pressed while held, checked for Shift and the page key).
 //!
 //! intuition opens one by itself at the bottom of the screen when a field
-//! gets the input on a board with no keyboard (`Preferences.keyboard`).
+//! gets the input on a board with no keyboard (`IPREFS_Keyboard`).
 //!
 //!   const keys = ib.NewObjectTagList(null, kb.KEYBOARD_CLASS, &.{
 //!       .{ .tag = gc.GA_RelWidth, .data = 0 },

@@ -7,7 +7,7 @@
 //! `parse` reads the line into twelve colours and which of them it gave,
 //! `write` writes twelve colours as the line, and `header` is the
 //! explanation a program that writes the file puts before it; `defaults`
-//! are the built-in pens. C:IPrefs
+//! are the built-in pens. C:SetPrefs
 //! hands the file to intuition at boot (`SetScreenPens`).
 
 const graphics = @import("../graphics/graphics.zig");
@@ -81,7 +81,7 @@ pub fn write(pens: *const [sc.NUMDRIPENS]Pen, into: []u8) usize {
 /// The file's explanation, every line a comment.
 pub const header =
     \\# ENVARC:Sys/palette.prefs - the system's pens: the colours every
-    \\# screen opened without pens of its own draws in, which C:IPrefs hands
+    \\# screen opened without pens of its own draws in, which C:SetPrefs hands
     \\# to intuition at boot. One line, a pen's name and its colour for each:
     \\#
     \\# DETAIL BLOCK TEXT SHINE SHADOW FILL FILLTEXT BACKGROUND HIGHLIGHTTEXT

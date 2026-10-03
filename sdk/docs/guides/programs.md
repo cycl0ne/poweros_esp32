@@ -336,15 +336,27 @@ const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 On a board whose only input is a touch panel, intuition brings a
 keyboard up at the bottom of the screen whenever a field gets the input,
 and takes it away when the field lets go: a program does nothing for
-it. `Preferences.keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
+it. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
 the board, the default), `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
 `C:test/Keyboard` turns it on and opens a field to try it with.
 The setting is kept in `ENVARC:Sys/intuition.prefs` with intuition's
 other two - `DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO` - which
-`C:IPrefs` hands to intuition at boot and `SYS:Programs/Prefs` edits.
-`C:IPrefs` also hands over the screens' pens from
-`ENVARC:Sys/palette.prefs` (`SetScreenPens`); the
-[styles guide](styles.md#the-screens-pens) has them.
+`C:SetPrefs` hands to intuition at boot and `SYS:Programs/Prefs` edits.
+
+Every setting the system keeps is a tag: `SetPrefs` changes those
+given and tells every window that listens (`IDCMP_NEWPREFS`), `GetPrefs`
+writes each where its tag's data points, and `GetDefPrefs` the ones the
+system starts with:
+
+```zig
+var ms: u32 = 0;
+_ = ib.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) }, .{} });
+_ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Keyboard, .data = intuition.KEYBOARD_NEVER }, .{} });
+```
+
+`C:SetPrefs` gives them all from `ENV:Sys` in one call: intuition.prefs,
+font.prefs, palette.prefs (the [screens' pens](styles.md#the-screens-pens))
+and style.prefs.
 
 The keyboard is a window opened with `WA_NoActivate`: a press on it
 reaches its gadgets and leaves the active window - and the field being

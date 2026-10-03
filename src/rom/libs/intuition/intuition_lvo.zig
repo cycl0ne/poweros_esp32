@@ -598,14 +598,14 @@ fn lvoSetSystemFonts(ib: *IntuitionBase, screen_font: ?*graphics.TextFont, defau
 fn lvoOpenSystemFont(ib: *IntuitionBase, which: u32) callconv(.c) ?*graphics.TextFont {
     return OpenSystemFont(ib, which);
 }
-fn lvoGetPrefs(ib: *IntuitionBase, prefs: *intuition.Preferences, size: u32) callconv(.c) *intuition.Preferences {
-    return GetPrefs(ib, prefs, size);
+fn lvoGetPrefs(ib: *IntuitionBase, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
+    return GetPrefs(ib, tags);
 }
-fn lvoGetDefPrefs(ib: *IntuitionBase, prefs: *intuition.Preferences, size: u32) callconv(.c) *intuition.Preferences {
-    return GetDefPrefs(ib, prefs, size);
+fn lvoGetDefPrefs(ib: *IntuitionBase, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
+    return GetDefPrefs(ib, tags);
 }
-fn lvoSetPrefs(ib: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) callconv(.c) *intuition.Preferences {
-    return SetPrefs(ib, prefs, size, announce);
+fn lvoSetPrefs(ib: *IntuitionBase, tags: ?[*]const utility.TagItem) callconv(.c) bool {
+    return SetPrefs(ib, tags);
 }
 fn lvoDrawPart(ib: *IntuitionBase, rp: ?*graphics.RastPort, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, state: u32, flags: u32, box: *const graphics.Rect, content: ?*graphics.Rect) callconv(.c) void {
     DrawPart(ib, rp, draw_info, own, part, state, flags, box, content);

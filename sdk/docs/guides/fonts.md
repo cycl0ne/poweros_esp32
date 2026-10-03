@@ -299,14 +299,19 @@ wants to match them. A screen takes the screen font unless given
 bar is always in its screen's font. Screens and windows already open keep
 the fonts they were made with.
 
-`C:FontPrefs` sets them from `ENV:Sys/font.prefs` at boot, and by hand:
+`C:SetPrefs` sets them at boot from `ENV:Sys/font.prefs`, one line - on
+the disk the Go faces at the height of the ROM's pospaz, so a window laid
+out for one fits in the other:
 
 ```
-SCREEN=go.font/10P DEFAULT=go.font/9P FIXED=go-mono.font/8P
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16
 ```
 
-A size is in rows, or in points with `P` after it. `FontPrefs SHOW` prints
-the three in use.
+A size is in rows, or in points with `P` after it. `SetPrefs SHOW` prints
+the three in use; a program reads and sets them with `GetPrefs` and
+`SetPrefs` (`IPREFS_ScreenFont`, `IPREFS_DefaultFont`,
+`IPREFS_FixedFont`). The boot shell's window opens after `C:SetPrefs`,
+so it is in the fonts the file names.
 
 ## Making a font yourself
 
@@ -349,7 +354,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF) and the Go faces (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts` |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
-| `C:FontPrefs` | sets and shows the system's fonts |
+| `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
 | `SYS:Programs/Prefs` | picks the system's fonts in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them; draw a size file |

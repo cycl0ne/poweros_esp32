@@ -120,7 +120,7 @@ pub fn write(line: *const Line, into: []u8) usize {
 
 /// The file's explanation, every line a comment.
 pub const header =
-    \\# ENVARC:Sys/font.prefs - the system's fonts, which C:FontPrefs hands to
+    \\# ENVARC:Sys/font.prefs - the system's fonts, which C:SetPrefs hands to
     \\# intuition.library at boot. SCREEN is screens' title bars and menus,
     \\# DEFAULT the text in windows and gadgets, FIXED the consoles' (it must be
     \\# fixed-width). Each is family/size, the size in rows, or in points with

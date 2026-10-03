@@ -401,7 +401,7 @@ pub fn write(line: *const Line, into: []u8) usize {
 /// The file's explanation and the default written out, every line a
 /// comment: what a program that writes the file puts before its lines.
 pub const header =
-    \\# ENVARC:Sys/style.prefs - the system's style, which C:StylePrefs hands to
+    \\# ENVARC:Sys/style.prefs - the system's style, which C:SetPrefs hands to
     \\# intuition.library at boot: how the parts of every gadget, window and
     \\# menu look, on every screen that has no style of its own.
     \\#

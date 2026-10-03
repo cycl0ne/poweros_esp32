@@ -37,17 +37,12 @@ Assign >NIL: CLIPS: RAM:Clipboards
 ; is in it.
 C:AddDataTypes >NIL: QUIET
 
-; The system's fonts, as ENV:Sys/font.prefs names them: every screen,
-; window and console opened from here on uses them.
-C:FontPrefs >NIL:
-
-; The system's style, as ENV:Sys/style.prefs gives it: every screen takes
-; it, those already open too.
-C:StylePrefs >NIL:
-
-; intuition's own settings, as ENV:Sys/intuition.prefs gives them: the
-; double-click time, the screens' font height, the keyboard on the screen.
-C:IPrefs >NIL:
+; The system's settings, from the files in ENV:Sys: intuition's own (the
+; double-click time, the screens' font height, the keyboard on the
+; screen), the fonts, the pens and the style. Every screen takes the pens
+; and the style, those already open too; the fonts reach every screen,
+; window and console opened from here on.
+C:SetPrefs >NIL:
 
 ; Where a command is looked for, before C:. C:test holds the programs that
 ; exercise a device or a library, C:net the network's tools, so they are

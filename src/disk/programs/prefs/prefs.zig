@@ -34,7 +34,7 @@
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
 //! hand them to the system as S:Startup-Sequence does at boot, running
-//! C:StylePrefs, C:FontPrefs and C:IPrefs: every window open takes the
+//! C:SetPrefs: every window open takes the
 //! style and the colours at once; fonts are taken by what opens from then
 //! on. The colours' file is written only when a colour was changed. **Cancel**
 //! leaves everything as it was. The files' forms are `sdk.prefs`'s, and
@@ -89,7 +89,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION_STRING = "\x00$VER: Prefs 1.2 (3.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Prefs 1.3 (3.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const MSG_NOLIBRARY = "No %s\n";
@@ -661,15 +661,13 @@ const Editor = struct {
     }
 
     /// intuition's settings as the page has them.
-    fn systemPrefs(e: *Editor) intuition.Preferences {
-        var p: intuition.Preferences = .{};
-        _ = e.ib.GetPrefs(&p, @sizeOf(intuition.Preferences));
+    fn systemPrefs(e: *Editor) intuition_file.Settings {
+        var p: intuition_file.Settings = .{};
         var value: usize = 0;
         _ = e.ib.GetAttr(ig.INTEGER_Number, e.double, &value);
-        const ms: u32 = @intCast(@max(@as(isize, @bitCast(value)), 1));
-        p.double_click = .{ .secs = ms / 1000, .micro = (ms % 1000) * 1000 };
+        p.double_click = @intCast(@max(@as(isize, @bitCast(value)), 1));
         _ = e.ib.GetAttr(ig.INTEGER_Number, e.height, &value);
-        p.screen_font_height = @intCast(@max(@as(isize, @bitCast(value)), 1));
+        p.screen_font = @intCast(@max(@as(isize, @bitCast(value)), 1));
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.keyboard, &value);
         p.keyboard = @intCast(@min(value, 2));
         return p;
@@ -714,9 +712,7 @@ const Editor = struct {
         }
 
         // Handed to the system as the boot does.
-        _ = e.dl.SystemTagList("C:StylePrefs >NIL:", null);
-        _ = e.dl.SystemTagList("C:FontPrefs >NIL:", null);
-        _ = e.dl.SystemTagList("C:IPrefs >NIL:", null);
+        _ = e.dl.SystemTagList("C:SetPrefs >NIL:", null);
         return ok;
     }
 
@@ -1152,21 +1148,26 @@ fn build(e: *Editor) ?*Object {
     pages[page_fonts] = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2] }, &.{ "Sc_reen", "_Windows", "Conso_les" }) orelse return null;
 
     // The system page.
-    var now: intuition.Preferences = .{};
-    _ = ib.GetPrefs(&now, @sizeOf(intuition.Preferences));
+    var now: intuition_file.Settings = .{};
+    _ = ib.GetPrefs(&[_]TagItem{
+        pair(intuition.IPREFS_DoubleClick, @intFromPtr(&now.double_click)),
+        pair(intuition.IPREFS_ScreenFontHeight, @intFromPtr(&now.screen_font)),
+        pair(intuition.IPREFS_Keyboard, @intFromPtr(&now.keyboard)),
+        .{},
+    });
     e.double = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_DOUBLE),
         pair(ig.INTEGER_Min, 100),
         pair(ig.INTEGER_Max, 5000),
         pair(ig.INTEGER_Step, 100),
-        pair(ig.INTEGER_Number, now.double_click.secs * 1000 + now.double_click.micro / 1000),
+        pair(ig.INTEGER_Number, now.double_click),
         .{},
     }) orelse return null;
     e.height = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_HEIGHT),
         pair(ig.INTEGER_Min, 6),
         pair(ig.INTEGER_Max, 64),
-        pair(ig.INTEGER_Number, now.screen_font_height),
+        pair(ig.INTEGER_Number, now.screen_font),
         .{},
     }) orelse return null;
     e.keyboard = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{

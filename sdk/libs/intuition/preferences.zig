@@ -1,52 +1,64 @@
 // SPDX-License-Identifier: MIT
-//! The settings intuition.library keeps: what a program may change while
-//! the system runs, read with `GetPrefs`, changed with `SetPrefs`, and
-//! set back to what the system started with from `GetDefPrefs`.
+//! The settings intuition.library keeps for the whole system: what a
+//! program may change while the system runs - set with `SetPrefs`, read
+//! with `GetPrefs`, and the ones the system starts with read from
+//! `GetDefPrefs` - each a tag (`IPREFS_`).
 //!
-//! The structure is this system's own. What a machine of another shape
-//! kept here - the pointer's sprite, the printer, the serial port's
-//! speed, the screen's size in a display mode that no longer exists -
-//! either belongs to the driver that has it or is not a thing here at
-//! all; what is left is what intuition itself acts on.
+//!   _ = ib.SetPrefs(&[_]TagItem{
+//!       .{ .tag = intuition.IPREFS_DoubleClick, .data = 400 },
+//!       .{ .tag = intuition.IPREFS_Keyboard, .data = intuition.KEYBOARD_NEVER },
+//!       .{},
+//!   });
 //!
-//! It is read and written with a size, so a program built against an
-//! older SDK than the library reads and writes the part it knows and the
-//! rest keeps its value. `struct_size` says which that was.
+//!   var ms: u32 = 0;
+//!   _ = ib.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) }, .{} });
 //!
-//!   var prefs: intuition.Preferences = undefined;
-//!   _ = ib.GetPrefs(&prefs, @sizeOf(@TypeOf(prefs)));
-//!   prefs.double_click = .{ .secs = 0, .micro = 300_000 };
-//!   _ = ib.SetPrefs(&prefs, @sizeOf(@TypeOf(prefs)), true);
+//! A setting left out keeps its value. To `SetPrefs` a tag's data is the
+//! value; to `GetPrefs` and `GetDefPrefs` it is where the value is
+//! written, and each tag says what it points to.
 //!
-//! The values a `Preferences` is born with here are what the library
-//! starts with, but `GetDefPrefs` is what answers for the library: a
-//! program that wants the system's own defaults asks it rather than
-//! writing the numbers down.
-//!
-//! A change told with `announce` reaches every window that asked for
-//! `IDCMP_NEWPREFS`, whichever screen it is on: a window that draws
-//! something the settings decide reads them again and draws it anew.
+//! These are the system's: what every screen and window takes unless it
+//! is given its own. A screen's own style and pens are `SetStyle` and
+//! `SetScreenPens` with that screen. A change reaches every window that
+//! asked for `IDCMP_NEWPREFS`, whichever screen it is on: a window that
+//! draws something the settings decide reads them again and draws it
+//! anew.
 
-const timer = @import("../../devices/timer.zig");
+const utility = @import("../utility/utility.zig");
 
-/// What intuition keeps. Anything added goes at the end, so that a
-/// program built against an older version still reads what it knew.
-pub const Preferences = extern struct {
-    /// How many bytes of this the caller knows about, which is what
-    /// `GetPrefs` filled in or `SetPrefs` read.
-    struct_size: u32 = @sizeOf(Preferences),
-    /// How far apart two presses may be and still be one double-click.
-    /// `DoubleClick` answers by this.
-    double_click: timer.TimeVal = .{ .secs = 1, .micro = 500_000 },
-    /// How tall the font a screen opens with is, when the screen is
-    /// given none. Rows.
-    screen_font_height: u32 = 16,
-    /// When a keyboard comes up on the screen while a field is typed into:
-    /// `KEYBOARD_AUTO`, `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
-    keyboard: u32 = KEYBOARD_AUTO,
-};
+pub const IPREFS_Dummy = utility.TAG_USER + 0x3D000;
 
-/// `Preferences.keyboard`: on a board with no keyboard of its own.
+/// How far apart two presses may be and still be one double-click, in
+/// milliseconds; `DoubleClick` answers by it. Got: a `*u32`.
+pub const IPREFS_DoubleClick = IPREFS_Dummy + 1;
+/// How tall the font a screen opens with is, in rows, when the screen is
+/// given none. Got: a `*u32`.
+pub const IPREFS_ScreenFontHeight = IPREFS_Dummy + 2;
+/// When a keyboard comes up on the screen while a field is typed into:
+/// `KEYBOARD_AUTO`, `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`. Got: a `*u32`.
+pub const IPREFS_Keyboard = IPREFS_Dummy + 3;
+/// The font of screens' title bars and menus: a `*graphics.TextFont`,
+/// which intuition opens once more for itself, so the caller closes its
+/// own; null for pospaz from the ROM. Got: a `*?*graphics.TextFont`,
+/// opened for the caller, who closes it.
+pub const IPREFS_ScreenFont = IPREFS_Dummy + 4;
+/// The font of text in windows and gadgets that name none; as
+/// `IPREFS_ScreenFont`.
+pub const IPREFS_DefaultFont = IPREFS_Dummy + 5;
+/// The font of consoles, which must be fixed-width; as
+/// `IPREFS_ScreenFont`.
+pub const IPREFS_FixedFont = IPREFS_Dummy + 6;
+/// The system's pens: `NUMDRIPENS` colours, a `[*]const graphics.Pen`
+/// read once; null for the built-in ones. Every screen opened without
+/// pens of its own takes them, those open too. Got: a
+/// `*[NUMDRIPENS]graphics.Pen`.
+pub const IPREFS_Pens = IPREFS_Dummy + 7;
+/// The system's style: a style tag list (`STYLE_`), read once; null for
+/// none, which leaves the default. Set only: a style once read is
+/// intuition's own, and there is nothing to give back.
+pub const IPREFS_Style = IPREFS_Dummy + 8;
+
+/// `IPREFS_Keyboard`: on a board with no keyboard of its own.
 pub const KEYBOARD_AUTO: u32 = 0;
 /// On every board.
 pub const KEYBOARD_ALWAYS: u32 = 1;

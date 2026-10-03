@@ -128,7 +128,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   carries for all its windows and a single gadget may override, so a
   screen can look different with no program changed (`C:test/Styles`).
   The system's own style comes from `ENV:Sys/style.prefs`, a line per
-  part and state, which `C:StylePrefs` hands over at boot and again
+  part and state, which `C:SetPrefs` hands over at boot and again
   whenever it is run: every open window is drawn again in it. See the
   [styles guide](sdk/docs/guides/styles.md).
   `SYS:Programs/Prefs` edits the system's settings in one window - a
@@ -140,8 +140,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   keyboard on the screen - and saves them to `ENVARC:Sys` (Save) or uses
   them until the next start (Use): every open window takes the new style
   and colours at once. The screens' pens are kept in
-  `ENVARC:Sys/palette.prefs`, which `C:IPrefs` hands to intuition at
-  boot (`SetScreenPens`).
+  `ENVARC:Sys/palette.prefs`. `C:SetPrefs` hands all four settings files
+  in `ENV:Sys` to intuition at boot, in one call; `SetPrefs SHOW` prints
+  what is in force.
   Things move on one clock, motion.library: a value going from one
   number to another over a time through a curve (easing in, out, past
   the end and back, bouncing, or a Bezier of one's own), timers that
@@ -167,7 +168,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   On a board with no keyboard, a keyboard comes up at the bottom of the
   screen while a field is typed into, laid out from the keymap in use,
   its keys going where a keyboard's would (`C:test/Keyboard`).
-  Settings a program can change while it runs (`SetPrefs`), and messages
+  Settings a program can change while it runs, a tag each - the
+  double-click time, the fonts, the pens, the style (`SetPrefs`,
+  `GetPrefs`) - and messages
   for a medium going in or out. `LIBS:asl.library` asks which file or
   which font, from a program or from the shell (`C:RequestFile`,
   `C:RequestChoice`).
@@ -221,7 +224,9 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 
 Without them the disk has everything but that part. On a board the serial
 console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
-comes up with a shell window.
+comes up with a shell window, opened once S:Startup-Sequence has set the
+system's fonts, pens and style - or as soon as the script prints
+something.
 
 More build steps and options:
 

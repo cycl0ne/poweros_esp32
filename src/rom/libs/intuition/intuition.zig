@@ -4662,13 +4662,14 @@ test "layoutgclass: in a window, its smallest size, and a button that reports by
     try tearDown(ib);
 }
 
-test "preferences: read, changed, told about, and set back to what the system starts with" {
+test "preferences: read, changed, told about, and set back to what the system starts with, a tag each" {
     const ib = try setUp();
     defer kexec.deinit();
     const wn = intuition.windows;
+    const sc = intuition.screens;
+    const style = intuition.style;
     const it = ib.iface();
     const display = try Display.up(ib);
-    const Preferences = intuition.Preferences;
 
     const listening = it.OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Width, .data = 40 },
@@ -4677,76 +4678,117 @@ test "preferences: read, changed, told about, and set back to what the system st
         .{},
     }).?;
 
-    // What the system starts with is what it has before anything is set.
-    var prefs: Preferences = undefined;
-    var born: Preferences = undefined;
-    _ = it.GetPrefs(&prefs, @sizeOf(Preferences));
-    _ = it.GetDefPrefs(&born, @sizeOf(Preferences));
-    try testing.expectEqual(@as(u32, @sizeOf(Preferences)), prefs.struct_size);
-    try testing.expectEqual(@as(u32, 1), born.double_click.secs);
-    try testing.expectEqual(@as(u32, 16), born.screen_font_height);
-    // What it has now is what this rig set, which is not the default:
-    // the two are different questions.
-    try testing.expectEqual(@as(u32, 8), prefs.screen_font_height);
+    // What the system starts with, and what it has now: this rig set the
+    // font height, so the two are different questions.
+    var ms: u32 = 0;
+    var rows: u32 = 0;
+    var keys: u32 = 99;
+    const ask = [_]TagItem{
+        .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
+        .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
+        .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
+        .{ .tag = intuition.IPREFS_Style, .data = @intFromPtr(&ms) },
+        .{},
+    };
+    // The style is not read back: three of the four written.
+    try testing.expectEqual(@as(u32, 3), it.GetDefPrefs(&ask));
+    try testing.expectEqual(@as(u32, 1500), ms);
+    try testing.expectEqual(@as(u32, 16), rows);
+    try testing.expectEqual(intuition.KEYBOARD_AUTO, keys);
+    try testing.expectEqual(@as(u32, 3), it.GetPrefs(&ask));
+    try testing.expectEqual(@as(u32, 8), rows);
     try testing.expect(it.DoubleClick(10, 0, 11, 0));
 
-    // Changed: the double-click time is what the next press is measured
-    // by, and the window is told.
-    prefs.double_click = .{ .secs = 0, .micro = 100_000 };
-    prefs.screen_font_height = 11;
-    _ = it.SetPrefs(&prefs, @sizeOf(Preferences), true);
+    // Changed: the next press is measured by the new time, and the window
+    // is told.
+    try testing.expect(it.SetPrefs(&[_]TagItem{
+        .{ .tag = intuition.IPREFS_DoubleClick, .data = 100 },
+        .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = 11 },
+        .{ .tag = intuition.IPREFS_Keyboard, .data = intuition.KEYBOARD_ALWAYS },
+        .{},
+    }));
     try testing.expect(it.DoubleClick(10, 0, 10, 99_999));
     try testing.expect(!it.DoubleClick(10, 0, 10, 100_001));
     const told = it.GetIMsg(listening).?;
     try testing.expectEqual(wn.IDCMP_NEWPREFS, told.class);
     it.ReplyIMsg(told);
+    _ = it.GetPrefs(&ask);
+    try testing.expectEqual(@as(u32, 100), ms);
+    try testing.expectEqual(@as(u32, 11), rows);
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, keys);
 
-    var again: Preferences = undefined;
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(@as(u32, 100_000), again.double_click.micro);
-    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+    // A value that means nothing is refused and the rest are taken; the
+    // one left out keeps its value.
+    try testing.expect(!it.SetPrefs(&[_]TagItem{
+        .{ .tag = intuition.IPREFS_DoubleClick, .data = 0 },
+        .{ .tag = intuition.IPREFS_Keyboard, .data = 7 },
+        .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = 12 },
+        .{},
+    }));
+    _ = it.GetPrefs(&ask);
+    try testing.expectEqual(@as(u32, 100), ms);
+    try testing.expectEqual(@as(u32, 12), rows);
+    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, keys);
+    while (it.GetIMsg(listening)) |m| it.ReplyIMsg(m);
 
-    // A number that means nothing is left alone rather than taken.
-    var silly = again;
-    silly.double_click = .{};
-    silly.screen_font_height = 0;
-    _ = it.SetPrefs(&silly, @sizeOf(Preferences), false);
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(@as(u32, 100_000), again.double_click.micro);
-    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
-    // And that one was not announced.
-    try testing.expect(it.GetIMsg(listening) == null);
+    // The pens: set, read back, and the built-in ones from GetDefPrefs.
+    var pens = _kscreen.default_pens;
+    pens[sc.BACKGROUNDPEN] = graphics.penRGB(0x33, 0x66, 0x99);
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&pens) }, .{} }));
+    var now: [sc.NUMDRIPENS]graphics.Pen = undefined;
+    try testing.expectEqual(@as(u32, 1), it.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&now) }, .{} }));
+    try testing.expectEqual(pens[sc.BACKGROUNDPEN], now[sc.BACKGROUNDPEN]);
+    _ = it.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&now) }, .{} });
+    try testing.expectEqualSlices(graphics.Pen, &_kscreen.default_pens, &now);
 
-    // A caller that knows less of the structure writes only what it
-    // knows: the height sits past the double-click time, so a size that
-    // stops before it leaves the height where it was.
-    var short = again;
-    short.double_click = .{ .secs = 0, .micro = 250_000 };
-    short.screen_font_height = 99;
-    _ = it.SetPrefs(&short, @offsetOf(Preferences, "screen_font_height"), false);
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(@as(u32, 250_000), again.double_click.micro);
-    try testing.expectEqual(@as(u32, 11), again.screen_font_height);
+    // The style, as SetStyle with no screen sets it.
+    const dri = it.GetScreenDrawInfo(@ptrFromInt(windowAttr(ib, listening, wn.WA_Screen)));
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_Radius, .data = 4 }, .{} }) }, .{} }));
+    try testing.expectEqual(@as(usize, 4), it.GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Style, .data = 0 }, .{} }));
+    try testing.expectEqual(@as(usize, 0), it.GetStyleAttr(dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    it.FreeScreenDrawInfo(@ptrFromInt(windowAttr(ib, listening, wn.WA_Screen)), dri);
 
-    // The on-screen keyboard: up on its own, by the board, unless told;
-    // a setting it does not know is left alone.
-    try testing.expectEqual(intuition.KEYBOARD_AUTO, again.keyboard);
-    var keys = again;
-    keys.keyboard = intuition.KEYBOARD_ALWAYS;
-    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
-    keys.keyboard = 7;
-    _ = it.SetPrefs(&keys, @sizeOf(Preferences), false);
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(intuition.KEYBOARD_ALWAYS, again.keyboard);
+    // A font given alone: the others keep theirs. Read back, each is an
+    // open of the caller's.
+    var screen_font: ?*graphics.TextFont = null;
+    var fixed_font: ?*graphics.TextFont = null;
+    const fonts = [_]TagItem{
+        .{ .tag = intuition.IPREFS_ScreenFont, .data = @intFromPtr(&screen_font) },
+        .{ .tag = intuition.IPREFS_FixedFont, .data = @intFromPtr(&fixed_font) },
+        .{},
+    };
+    try testing.expectEqual(@as(u32, 2), it.GetPrefs(&fonts));
+    const fixed_before = fixed_font.?.image.height;
+    ib.graphics_base.CloseFont(screen_font);
+    ib.graphics_base.CloseFont(fixed_font);
+    const tall = ib.graphics_base.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 16 }).?;
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_ScreenFont, .data = @intFromPtr(tall) }, .{} }));
+    ib.graphics_base.CloseFont(tall);
+    _ = it.GetPrefs(&fonts);
+    try testing.expectEqual(@as(u16, 16), screen_font.?.image.height);
+    try testing.expectEqual(fixed_before, fixed_font.?.image.height);
+    ib.graphics_base.CloseFont(screen_font);
+    ib.graphics_base.CloseFont(fixed_font);
 
     // Back to what the system starts with.
-    _ = it.SetPrefs(it.GetDefPrefs(&prefs, @sizeOf(Preferences)), @sizeOf(Preferences), false);
-    _ = it.GetPrefs(&again, @sizeOf(Preferences));
-    try testing.expectEqual(born.double_click.secs, again.double_click.secs);
-    try testing.expectEqual(born.double_click.micro, again.double_click.micro);
-    try testing.expectEqual(born.screen_font_height, again.screen_font_height);
+    var born_ms: u32 = 0;
+    var born_rows: u32 = 0;
+    _ = it.GetDefPrefs(&[_]TagItem{
+        .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&born_ms) },
+        .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&born_rows) },
+        .{},
+    });
+    try testing.expect(it.SetPrefs(&[_]TagItem{
+        .{ .tag = intuition.IPREFS_DoubleClick, .data = born_ms },
+        .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = born_rows },
+        .{ .tag = intuition.IPREFS_Pens, .data = 0 },
+        .{ .tag = intuition.IPREFS_ScreenFont, .data = 0 },
+        .{},
+    }));
+    _ = it.GetPrefs(&ask);
+    try testing.expectEqual(@as(u32, 1500), ms);
+    try testing.expectEqual(@as(u32, 16), rows);
 
     const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, listening, wn.WA_Screen));
     it.CloseWindow(listening);

@@ -255,9 +255,9 @@ pub const Fn = struct {
     pub const SetWindowPointerA = *const fn (*IntuitionBase, *intuition.Window, ?[*]const utility.TagItem) callconv(.c) void;
     pub const SetSystemFonts = *const fn (*IntuitionBase, ?*graphics.TextFont, ?*graphics.TextFont, ?*graphics.TextFont) callconv(.c) bool;
     pub const OpenSystemFont = *const fn (*IntuitionBase, u32) callconv(.c) ?*graphics.TextFont;
-    pub const GetPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
-    pub const GetDefPrefs = *const fn (*IntuitionBase, *intuition.Preferences, u32) callconv(.c) *intuition.Preferences;
-    pub const SetPrefs = *const fn (*IntuitionBase, *const intuition.Preferences, u32, bool) callconv(.c) *intuition.Preferences;
+    pub const GetPrefs = *const fn (*IntuitionBase, ?[*]const utility.TagItem) callconv(.c) u32;
+    pub const GetDefPrefs = *const fn (*IntuitionBase, ?[*]const utility.TagItem) callconv(.c) u32;
+    pub const SetPrefs = *const fn (*IntuitionBase, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const DrawPart = *const fn (*IntuitionBase, ?*graphics.RastPort, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, u32, *const graphics.Rect, ?*graphics.Rect) callconv(.c) void;
     pub const GetStyleAttr = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, u32, utility.Tag) callconv(.c) usize;
     pub const StylePens = *const fn (*IntuitionBase, ?*const intuition.DrawInfo, ?*const intuition.Style, u32, [*]graphics.Pen) callconv(.c) void;
@@ -936,23 +936,23 @@ pub const IntuitionBase = opaque {
         return libraries.call(self, LVO.OpenSystemFont, Fn.OpenSystemFont, .{which});
     }
 
-    /// The settings as they are now, into `prefs`, of which `size` bytes are
-    /// written: a caller built against an older SDK gets the part it knows.
-    /// Answers `prefs`.
-    pub fn GetPrefs(self: *IntuitionBase, prefs: *intuition.Preferences, size: u32) *intuition.Preferences {
-        return libraries.call(self, LVO.GetPrefs, Fn.GetPrefs, .{ prefs, size });
+    /// The system's settings as they are now: each tag's data is where its
+    /// value is written (IPREFS_). Answers how many were written.
+    pub fn GetPrefs(self: *IntuitionBase, tags: ?[*]const utility.TagItem) u32 {
+        return libraries.call(self, LVO.GetPrefs, Fn.GetPrefs, .{tags});
     }
 
-    /// The settings the system starts with, into `prefs`. Answers `prefs`.
-    pub fn GetDefPrefs(self: *IntuitionBase, prefs: *intuition.Preferences, size: u32) *intuition.Preferences {
-        return libraries.call(self, LVO.GetDefPrefs, Fn.GetDefPrefs, .{ prefs, size });
+    /// The settings the system starts with, written as GetPrefs writes them.
+    /// Answers how many were written.
+    pub fn GetDefPrefs(self: *IntuitionBase, tags: ?[*]const utility.TagItem) u32 {
+        return libraries.call(self, LVO.GetDefPrefs, Fn.GetDefPrefs, .{tags});
     }
 
-    /// The settings taken from `prefs`, of which `size` bytes are read; what
-    /// is not there keeps the value it had. With `announce`, every window
-    /// that listens is told IDCMP_NEWPREFS. Answers what was taken.
-    pub fn SetPrefs(self: *IntuitionBase, prefs: *const intuition.Preferences, size: u32, announce: bool) *intuition.Preferences {
-        return libraries.call(self, LVO.SetPrefs, Fn.SetPrefs, .{ prefs, size, announce });
+    /// The system's settings changed: each tag's data is the value
+    /// (IPREFS_); one left out keeps its value. Every window that listens is
+    /// told IDCMP_NEWPREFS. False when one could not be taken.
+    pub fn SetPrefs(self: *IntuitionBase, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.SetPrefs, Fn.SetPrefs, .{tags});
     }
 
     /// Draw a part of a gadget in a state, from its style, into `box`: the

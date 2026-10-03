@@ -78,8 +78,10 @@ pub const LIBRARY_VERSION = 0;
 /// (Preferences.keyboard); STYLE_BorderGap; ImpDraw.style. 26:
 /// SetScreenPens - a screen's pens, or the system's, changed while open.
 /// 27: STYLE_Alone, a style that stands on the default alone; a gadget
-/// drawn for being hovered is drawn with GREDRAW_STATE.
-pub const LIBRARY_REVISION = 27;
+/// drawn for being hovered is drawn with GREDRAW_STATE. 28: GetPrefs,
+/// GetDefPrefs and SetPrefs take tag lists (IPREFS_), the fonts, the
+/// pens and the style among them.
+pub const LIBRARY_REVISION = 28;
 const BUILD_DATE = "03.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

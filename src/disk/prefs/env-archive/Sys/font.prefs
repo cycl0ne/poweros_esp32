@@ -1,4 +1,4 @@
-# ENVARC:Sys/font.prefs - the system's fonts, which C:FontPrefs hands to
+# ENVARC:Sys/font.prefs - the system's fonts, which C:SetPrefs hands to
 # intuition.library at boot. SCREEN is screens' title bars and menus,
 # DEFAULT the text in windows and gadgets, FIXED the consoles' (it must be
 # fixed-width). Each is family/size, the size in rows, or in points with
@@ -7,4 +7,4 @@
 # is read; take the # off the one below to use it.
 #
 # SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
-SCREEN=go.font/10P DEFAULT=go.font/9P FIXED=go-mono.font/9P
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16

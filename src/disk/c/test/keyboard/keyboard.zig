@@ -75,12 +75,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(int_lib);
     const ib: *IntuitionBase = @ptrCast(int_lib);
 
-    var was: intuition.Preferences = .{};
-    _ = ib.GetPrefs(&was, @sizeOf(intuition.Preferences));
-    var prefs = was;
-    prefs.keyboard = mode;
-    _ = ib.SetPrefs(&prefs, @sizeOf(intuition.Preferences), false);
-    defer _ = ib.SetPrefs(&was, @sizeOf(intuition.Preferences), false);
+    var was: u32 = intuition.KEYBOARD_AUTO;
+    _ = ib.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&was) }, .{} });
+    _ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Keyboard, .data = mode }, .{} });
+    defer _ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Keyboard, .data = was }, .{} });
 
     var buffer: [80]u8 = @splat(0);
     const field = ib.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{

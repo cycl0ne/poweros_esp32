@@ -61,7 +61,8 @@ const Screen = _screen.Screen;
 /// The pens stay the caller's; the screen keeps a copy.
 ///
 /// NOTES:
-/// - What `C:IPrefs` calls, with no screen, from `ENV:Sys/palette.prefs`.
+/// - With no screen, what `SetPrefs` does with `IPREFS_Pens` - which
+///   `C:SetPrefs` gives from `ENV:Sys/palette.prefs`.
 /// - A style that gives colours of its own (`STYLE_BackgroundRGB` and the
 ///   rest) keeps them: only what is drawn in pens changes.
 ///
@@ -71,7 +72,7 @@ const Screen = _screen.Screen;
 ///   draws again.
 ///
 /// SEE ALSO:
-/// `SA_Pens`, `GetScreenDrawInfo`, `SetStyle`
+/// `SA_Pens`, `GetScreenDrawInfo`, `SetStyle`, `SetPrefs`
 ///
 /// EXAMPLES:
 /// ```zig

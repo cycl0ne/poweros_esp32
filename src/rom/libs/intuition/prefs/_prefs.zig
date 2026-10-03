@@ -1,73 +1,79 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The settings intuition keeps, and what reading and writing them does.
+//! The settings intuition keeps for the whole system, read and changed a
+//! tag at a time (`IPREFS_`).
 //!
-//! The library holds them one field at a time where it uses them - the
-//! double-click time is two numbers the input code reads on every press,
-//! the screen font height is what a screen opens with - rather than as a
-//! structure of its own. These gather them into one and scatter them
-//! back, so that a `Preferences` a program hands in or takes away is a
-//! copy and never a window onto the library's own state.
-//!
-//! A caller's `size` says how much of the structure it knows: fewer
-//! bytes than the library has means a program built against an older
-//! SDK, and the fields past that are left as they were.
+//! The library holds each where it uses it - the double-click time is two
+//! numbers the input code reads on every press, the screen font height is
+//! what a screen opens with, the fonts, the pens and the style each in a
+//! place of their own - rather than in a structure. `answer` writes the
+//! ones a list asks for, as they are now or as the system starts; the
+//! three calls in this folder are each a walk over a list.
 
 const sdk = @import("sdk");
+const utility = sdk.utility;
+const graphics = sdk.graphics;
 const intuition = sdk.intuition;
-const Preferences = intuition.Preferences;
+const sc = intuition.screens;
+const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
-
-/// What the library starts with, which `GetDefPrefs` answers. The
-/// numbers are the init's own, so that the two cannot drift apart.
-pub const defaults = Preferences{
-    .double_click = .{ .secs = default_double_seconds, .micro = default_double_micros },
-    .screen_font_height = @import("../screen/_screen.zig").default_font_height,
-};
+const _screen = @import("../screen/_screen.zig");
 
 /// How far apart two presses may be and still be one double-click, as
 /// the library is born.
 pub const default_double_seconds: u32 = 1;
 pub const default_double_micros: u32 = 500_000;
 
-/// The settings as the library holds them, gathered into one structure.
-pub fn gather(ib: *IntuitionBase) Preferences {
-    return .{
-        .double_click = .{ .secs = ib.double_seconds, .micro = ib.double_micros },
-        .screen_font_height = ib.font_height,
-        .keyboard = ib.keyboard_mode,
-    };
+/// The double-click time as one number of milliseconds.
+pub fn milliseconds(seconds: u32, micros: u32) u32 {
+    return seconds * 1000 + micros / 1000;
 }
 
-/// `bytes` of `from` copied into `into`, and no more than either holds.
-/// The rest of `into` is left as it was, which is what lets a program
-/// that knows less of the structure read and write the part it does.
-pub fn copyIn(into: *Preferences, from: *const Preferences, bytes: u32) void {
-    const room: usize = @min(bytes, @sizeOf(Preferences));
-    const dst: [*]u8 = @ptrCast(into);
-    const src: [*]const u8 = @ptrCast(from);
-    var i: usize = 0;
-    while (i < room) : (i += 1) dst[i] = src[i];
-    // Whatever the caller thought the size was, what it now holds is
-    // what this library wrote.
-    into.struct_size = @intCast(room);
-}
-
-/// The settings taken from a structure, each to the field the library
-/// keeps it in. A number that makes no sense is left alone rather than
-/// taken: a double-click time of nothing would make every second press
-/// one, and a screen font of no height would open a screen that cannot
-/// draw a line of text.
-pub fn scatter(ib: *IntuitionBase, prefs: *const Preferences, bytes: u32) void {
-    if (bytes >= @offsetOf(Preferences, "double_click") + @sizeOf(@TypeOf(prefs.double_click))) {
-        if (prefs.double_click.secs != 0 or prefs.double_click.micro != 0) {
-            ib.double_seconds = prefs.double_click.secs;
-            ib.double_micros = prefs.double_click.micro;
+/// Each tag of `tags` that asks for a setting answered: its data is where
+/// the value goes. `born` answers what the system starts with instead of
+/// what it has now. How many were written; a tag that is not a setting,
+/// or one that cannot be read back (`IPREFS_Style`), is passed over.
+pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
+    const it = ib.iface();
+    var count: u32 = 0;
+    var walk: ?[*]const TagItem = tags;
+    while (ib.utility_base.NextTagItem(&walk)) |item| {
+        if (item.data == 0) continue;
+        switch (item.tag) {
+            intuition.IPREFS_DoubleClick => @as(*u32, @ptrFromInt(item.data)).* = if (born)
+                milliseconds(default_double_seconds, default_double_micros)
+            else
+                milliseconds(ib.double_seconds, ib.double_micros),
+            intuition.IPREFS_ScreenFontHeight => @as(*u32, @ptrFromInt(item.data)).* = if (born) _screen.default_font_height else ib.font_height,
+            intuition.IPREFS_Keyboard => @as(*u32, @ptrFromInt(item.data)).* = if (born) intuition.KEYBOARD_AUTO else ib.keyboard_mode,
+            intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {
+                const into: *?*graphics.TextFont = @ptrFromInt(item.data);
+                into.* = if (born)
+                    ib.graphics_base.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = _screen.default_font_height })
+                else
+                    it.OpenSystemFont(whichFont(item.tag));
+            },
+            intuition.IPREFS_Pens => {
+                const into: *[sc.NUMDRIPENS]graphics.Pen = @ptrFromInt(item.data);
+                if (born) {
+                    into.* = _screen.default_pens;
+                } else {
+                    ib.sys_base.Forbid();
+                    into.* = ib.system_pens;
+                    ib.sys_base.Permit();
+                }
+            },
+            else => continue,
         }
+        count += 1;
     }
-    if (bytes >= @offsetOf(Preferences, "screen_font_height") + @sizeOf(u32)) {
-        if (prefs.screen_font_height != 0) ib.font_height = prefs.screen_font_height;
-    }
-    if (bytes >= @offsetOf(Preferences, "keyboard") + @sizeOf(u32)) {
-        if (prefs.keyboard <= intuition.KEYBOARD_NEVER) ib.keyboard_mode = prefs.keyboard;
-    }
+    return count;
+}
+
+/// The system font a font tag names (`SYSFONT_`).
+pub fn whichFont(tag: utility.Tag) u32 {
+    return switch (tag) {
+        intuition.IPREFS_ScreenFont => sc.SYSFONT_SCREEN,
+        intuition.IPREFS_FixedFont => sc.SYSFONT_FIXED,
+        else => sc.SYSFONT_DEFAULT,
+    };
 }

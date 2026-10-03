@@ -187,9 +187,13 @@ fn initBase(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) call
 
 /// The console the machine comes up on, and the script its first shell
 /// reads: a window that covers the display, and the script that sets the
-/// machine up once. No close gadget - the machine's own shell is not a
-/// thing to be able to put away by accident.
-const boot_console: [*:0]const u8 = "CON:///-1/PowerOS Shell";
+/// machine up once. The window opens only when something is said on it
+/// (`AUTO`) - a command in the script that prints, or the shell's prompt
+/// once the script ends - so it is made after `C:SetPrefs` has set the
+/// fonts, the pens and the style, and a script that ends with `EndCLI`
+/// never shows it at all. No close gadget - the machine's own shell is not
+/// a thing to be able to put away by accident.
+const boot_console: [*:0]const u8 = "CON:///-1/PowerOS Shell/AUTO/NOCLOSE";
 const boot_script: [*:0]const u8 = "S:Startup-Sequence";
 
 /// The machine's first shell, on the display. dos starts it at the end of

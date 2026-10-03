@@ -1,4 +1,4 @@
-# ENVARC:Sys/style.prefs - the system's style, which C:StylePrefs hands to
+# ENVARC:Sys/style.prefs - the system's style, which C:SetPrefs hands to
 # intuition.library at boot: how the parts of every gadget, window and
 # menu look, on every screen that has no style of its own.
 #

@@ -7,7 +7,7 @@
 //! font for consoles, which is always fixed-width. Each is a font held
 //! open in the base, or null for pospaz from the ROM at intuition's
 //! height (`font_height`), which is also what stands in when a font set
-//! cannot be opened again. A program that sets them (C:FontPrefs) opens
+//! cannot be opened again. A program that sets them (C:SetPrefs) opens
 //! them first - intuition, in the ROM, cannot reach diskfont.library -
 //! and hands them over with `SetSystemFonts`.
 

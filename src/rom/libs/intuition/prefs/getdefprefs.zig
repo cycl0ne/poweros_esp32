@@ -2,8 +2,8 @@
 //! GetDefPrefs: the settings the system starts with.
 
 const sdk = @import("sdk");
-const intuition = sdk.intuition;
-const Preferences = intuition.Preferences;
+const utility = sdk.utility;
+const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _prefs = @import("_prefs.zig");
 
@@ -11,23 +11,25 @@ const _prefs = @import("_prefs.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn GetDefPrefs(ib: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences
+/// fn GetDefPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 /// ```
 ///
 /// SINCE: 1.0. LVO -468.
 ///
 /// INPUTS:
 /// - `ib` - intuition.library's base.
-/// - `prefs` - where to write them.
-/// - `size` - how many bytes of `prefs` there are.
+/// - `tags` - the settings wanted, as `GetPrefs` takes them.
 ///
 /// RESULT:
-/// `prefs`.
+/// How many were written.
 ///
 /// BEHAVIOR:
-/// What the library was born with, whatever has been set since: this is
-/// what a settings editor's "use the defaults" hands to `SetPrefs`. As
-/// with `GetPrefs`, only as much as the caller knows is written.
+/// What the system is born with, whatever has been set since: a
+/// double-click of 1500 milliseconds, a screen font 16 rows tall, the
+/// keyboard on the screen on a board with none, pospaz from the ROM for
+/// all three fonts, the built-in pens. Written as `GetPrefs` writes them;
+/// what a settings editor's "use the defaults" hands to `SetPrefs`. The
+/// style is the default when none is set: `IPREFS_Style` with null.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -36,18 +38,20 @@ const _prefs = @import("_prefs.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The storage is the caller's.
+/// The storage is the caller's; a font written is the caller's to close.
+///
+/// BUGS:
+/// None known.
 ///
 /// SEE ALSO:
 /// `GetPrefs`, `SetPrefs`
 ///
 /// EXAMPLES:
 /// ```zig
-/// var prefs: intuition.Preferences = undefined;
-/// _ = ib.SetPrefs(ib.GetDefPrefs(&prefs, @sizeOf(@TypeOf(prefs))), @sizeOf(@TypeOf(prefs)), true);
+/// var ms: u32 = 0;
+/// _ = ib.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) }, .{} });
+/// _ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_DoubleClick, .data = ms }, .{} });
 /// ```
-pub fn GetDefPrefs(_: *IntuitionBase, prefs: *Preferences, size: u32) *Preferences {
-    var born = _prefs.defaults;
-    _prefs.copyIn(prefs, &born, size);
-    return prefs;
+pub fn GetDefPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32 {
+    return _prefs.answer(ib, tags, true);
 }
