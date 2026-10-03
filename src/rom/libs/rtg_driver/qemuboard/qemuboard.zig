@@ -197,7 +197,11 @@ fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i3
 /// shown buffer.
 fn restore(screen: *Screen) void {
     const image = screen.pointer orelse return;
-    const clip = clipOf(screen, image, screen.pointer_left, screen.pointer_top) orelse return;
+    // Where the pointer is, read once: the input task may move it while
+    // this runs.
+    const left = screen.pointer_left;
+    const top = screen.pointer_top;
+    const clip = clipOf(screen, image, left, top) orelse return;
     const shown = screen.showing orelse return;
     const composed = screen.composed orelse return;
     const pitch = screen.width * bytes_per_pixel;
@@ -212,18 +216,22 @@ fn restore(screen: *Screen) void {
 /// cut to the picture.
 fn lay(screen: *Screen) void {
     const image = screen.pointer orelse return;
-    const clip = clipOf(screen, image, screen.pointer_left, screen.pointer_top) orelse return;
+    // Where the pointer is, read once: the input task may move it while
+    // this runs, and the rows below are worked out from these.
+    const left = screen.pointer_left;
+    const top = screen.pointer_top;
+    const clip = clipOf(screen, image, left, top) orelse return;
     const composed = screen.composed orelse return;
     if (image.format != .rgb565) return;
     const pitch = screen.width * bytes_per_pixel;
     var y = clip.y0;
     while (y < clip.y1) : (y += 1) {
-        const image_y: u32 = @intCast(@as(i32, @intCast(y)) - screen.pointer_top);
+        const image_y: u32 = @intCast(@as(i32, @intCast(y)) - top);
         const from: [*]const u16 = @ptrCast(@alignCast(image.pixels + image_y * image.pitch));
         const into: [*]u16 = @ptrCast(@alignCast(composed + y * pitch));
         var x = clip.x0;
         while (x < clip.x1) : (x += 1) {
-            const image_x: u32 = @intCast(@as(i32, @intCast(x)) - screen.pointer_left);
+            const image_x: u32 = @intCast(@as(i32, @intCast(x)) - left);
             if (image.opaqueAt(image_x, image_y)) into[x] = from[image_x];
         }
     }
