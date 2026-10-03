@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [displays](sdk/docs/guides/rtg.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -62,7 +62,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
   PSRAM as memory with attributes. A system log (`C:Log`), and a Guru
   that names the failed check and offers a ROM debugger - registers,
-  memory, backtrace, breakpoints, single step - on the serial ports.
+  memory, backtrace, breakpoints, single step - on the serial ports. A
+  program that fails is held and asked about on the display - Software
+  Failure, Suspend or Reboot - while the system runs on.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
   255 characters; a log-structured flash file system (`DH0:`), FAT32 and
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
@@ -80,8 +82,9 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Graphics and windows:** rtg.library for the displays;
   graphics.library with smooth curves and lines, rounded rectangles,
   gradients, shadows and scaled pictures; layers.library; and
-  intuition.library - screens, windows, menus, requesters, and gadget
-  classes in layouts that fit any display. Everything is drawn from a
+  intuition.library - screens, pulled down by their title bar to show
+  the ones behind, windows, menus, requesters, and gadget classes in
+  layouts that fit any display. Everything is drawn from a
   style a screen carries, so the look changes with no program changed
   (the [styles guide](sdk/docs/guides/styles.md)). More gadget classes
   in `SYS:classes/gadgets/`: tabs, number fields, pop-up lists, progress

@@ -17,7 +17,7 @@
 //!
 //! Everything it prints comes from GetBoardInfo and GetBoardStats, which
 //! answer with the bytes they wrote, so a command older or newer than the
-//! ROM prints what the answer reached and no more. See docs/rtg.md.
+//! ROM prints what the answer reached and no more. See sdk/docs/guides/rtg.md.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;

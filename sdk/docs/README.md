@@ -55,6 +55,10 @@ tags and constants, each with its doc comment.
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
   the bus in QEMU.
+- [Displays](guides/rtg.md) - rtg.library: drivers and boards, modes,
+  buffers, handing on what was drawn, showing a buffer, several at once
+  in bands, the engine, turning the picture, the pointer, events,
+  asking a board, writing a driver, and the boards of this machine.
 
 ## Libraries
 
