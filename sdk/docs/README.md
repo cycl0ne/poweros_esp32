@@ -203,8 +203,9 @@ of its own besides. How a class is written is in
 Each a library of its own in `SYS:classes/datatypes/`, opened by
 datatypes.library for a file it recognises - a program asks
 datatypes.library for an object and never opens these itself. Every
-picture is a `picture.datatype` object and every piece of text a
-`text.datatype` object, whatever format it came out of; see the
+picture is a `picture.datatype` object, every piece of text a
+`text.datatype` object and every animation an `animation.datatype`
+object, whatever format it came out of; see the
 [datatypes guide](guides/datatypes.md).
 
 | Class | What | Reference |
@@ -215,6 +216,9 @@ picture is a `picture.datatype` object and every piece of text a
 | png.datatype | PNG | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | gif.datatype | GIF | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | jpeg.datatype | baseline JPEG | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
+| animation.datatype | every animation: frames drawn ahead on a process of its own, played in time | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
+| gifanim.datatype | GIF with more than one picture | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
+| lottie.datatype | Lottie vector animations | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
 | text.datatype | every piece of text: runs in fonts, styles and pens, wrapped, marked and copied | [`textclass.zig`](../libs/datatypes/textclass.zig) |
 | ascii.datatype | plain text and IFF FTXT | [`textclass.zig`](../libs/datatypes/textclass.zig) |
 | markdown.datatype | Markdown | [`textclass.zig`](../libs/datatypes/textclass.zig) |

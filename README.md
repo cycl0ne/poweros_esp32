@@ -101,7 +101,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   pens, wrapped to the window, marked with the pointer and copied to the
   clipboard - and `ascii.datatype` reads a plain file or an IFF `FTXT`,
   `markdown.datatype` a Markdown document with its headings, emphasis,
-  listings, lists and links.
+  listings, lists and links. Every animation is an `animation.datatype`
+  object, its frames drawn ahead on a process of its own and put up in
+  time, paused with a click: `gifanim.datatype` plays a GIF with more
+  than one picture, and `lottie.datatype` a Lottie vector animation -
+  its shapes, fills, strokes, transforms and eased keyframes drawn with
+  smooth edges.
   A small file of each
   format is in
   `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them

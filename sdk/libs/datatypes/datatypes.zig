@@ -223,6 +223,7 @@ pub const DTERROR_TOO_LARGE: i32 = 2009;
 pub const datatypesclass = @import("datatypesclass.zig");
 /// picture.datatype's, which every still picture is one of.
 pub const pictureclass = @import("pictureclass.zig");
+pub const animationclass = @import("animationclass.zig");
 /// text.datatype's, which every piece of text is one of.
 pub const textclass = @import("textclass.zig");
 /// What every format's class does that is not format work.

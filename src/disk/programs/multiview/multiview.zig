@@ -362,6 +362,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{ .tag = if (argv[arg_scale] != 0) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
+        // An animation plays as soon as it is shown; anything else
+        // passes this by.
+        .{ .tag = dtc.DTA_Immediate, .data = 1 },
         .{},
     }) orelse {
         var why: [128]u8 = @splat(0);

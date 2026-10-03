@@ -159,6 +159,46 @@ emphasis in italic, a listing in the fixed font, a list item under its
 mark and indented, a link underlined with the name it leads to kept for
 the program to follow.
 
+## Animations
+
+Every animation is an `animation.datatype` object, whatever file it came
+out of. The class plays it: a process of the object's own draws the
+frames ahead, three at a time, into buffers the class holds, and a
+motion.library timer puts each one up when its time has come and asks
+for the object to be drawn again. A frame that is ready late is shown
+late rather than skipped, and the timer catches up from there.
+
+`DTA_Immediate` set at `OM_NEW` plays it as soon as it is laid out;
+otherwise the program starts it:
+
+```zig
+const object = dt.NewDTObjectA("SYS:Tests/datatypes/Bounce.gif", &.{
+    .{ .tag = dtc.DTA_Immediate, .data = 1 },
+    .{},
+}) orelse return;
+```
+
+`DTM_TRIGGER` with `STM_PLAY`, `STM_PAUSE`, `STM_STOP`, `STM_LOCATE`,
+`STM_FASTFORWARD` and `STM_REWIND` drives it, and so do the class's own
+`ADTM_START`, `ADTM_PAUSE`, `ADTM_STOP` and `ADTM_LOCATE`; a click on
+the object pauses it and a second goes on. `ADTA_Frames`,
+`ADTA_FramesPerSecond`, `ADTA_Width` and `ADTA_Height` say what it is,
+`ADTA_Frame` which frame is up and `ADTA_Playing` whether it plays.
+
+`gifanim.datatype` plays a GIF with more than one picture - each one
+laid on what the last left, disposed of as the file says, up for its
+own delay. A GIF with one picture is a still picture and goes to
+`gif.datatype`.
+
+`lottie.datatype` plays a Lottie file, the JSON a design tool writes a
+vector animation as. It draws shape, solid and precomposition layers;
+groups, rectangles, ellipses and paths; fills and strokes of one colour;
+transforms, parents and keyframes with their easing - and passes over
+gradients, masks, mattes, text, images, expressions, trims and 3D,
+drawing the rest of the file without them. A frame is drawn in software
+at the file's size, made smaller to fit in 360 pixels each way, and at
+the file's rate up to 30 frames a second.
+
 ## Showing one
 
 `SYS:Programs/MultiView` is a window round any object:
@@ -168,6 +208,7 @@ MultiView SYS:Tests/datatypes/Colours.png
 MultiView                       asks with a file requester
 MultiView CLIP 0                what is on the clipboard
 MultiView <file> SCALE          a picture at the size of the window
+MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
 ```
 
 It knows no formats. It opens the file through the library, puts the
@@ -213,6 +254,16 @@ A picture class has less to do than that: it sets
 and its memory, and then hands each row over with
 `PDTM_WRITEPIXELARRAY`. Drawing, scrolling and scaling are the
 superclass's, so a format class holds no pixels and has no `GM_RENDER`.
+
+An animation class, in `anim`, is a subclass of `animation.datatype`.
+It reads its file in `OM_NEW` and tells the superclass `ADTA_Width`,
+`ADTA_Height`, `ADTA_Frames` and `ADTA_FramesPerSecond`; then it answers
+`ADTM_LOADFRAME`, which hands it an `AdtFrame` - the frame wanted and a
+cleared buffer of pens to draw it into - and takes back how long that
+frame stays up. The message comes on the object's own player process,
+one frame at a time, so the class keeps whatever it builds frames from
+without a lock; in `OM_DISPOSE` it passes the message on first, which
+stops that process, and frees what it kept after.
 
 A format whose files cannot be told apart by name, mask or form type
 says `RECOGNISE` in its descriptor and exports one function at the first

@@ -95,11 +95,38 @@ pub fn readScreen(file: []const u8) Error!Screen {
     return screen;
 }
 
+/// One picture of the file and what its graphic control block said
+/// about it: how long it stays, and what becomes of it before the next.
+pub const Frame = struct {
+    picture: Picture,
+    /// Hundredths of a second it is shown for; 0 when the file says
+    /// nothing.
+    delay: u32 = 0,
+    /// What is done with its area before the next picture: 0 or 1 leave
+    /// it, 2 clears it to nothing, 3 puts back what was there before.
+    disposal: u3 = 0,
+    /// Where the block after it starts.
+    next_at: usize = 0,
+};
+
+/// The disposals.
+pub const dispose_background: u3 = 2;
+pub const dispose_previous: u3 = 3;
+
 /// The first picture in the file, with whatever the extensions before it
 /// said about it. Null when the file holds none.
 pub fn readFirst(file: []const u8, screen: Screen) Error!?Picture {
-    var at = screen.at;
+    const frame = (try readNext(file, screen, screen.at)) orelse return null;
+    return frame.picture;
+}
+
+/// The next picture from `from` on, with what the extensions before it
+/// said, and where the one after it starts. Null at the file's end.
+pub fn readNext(file: []const u8, screen: Screen, from: usize) Error!?Frame {
+    var at = from;
     var transparent: ?u8 = null;
+    var delay: u32 = 0;
+    var disposal: u3 = 0;
     while (at < file.len) {
         switch (file[at]) {
             block_end => return null,
@@ -107,12 +134,15 @@ pub fn readFirst(file: []const u8, screen: Screen) Error!?Picture {
                 if (at + 2 > file.len) return Error.Corrupt;
                 const kind = file[at + 1];
                 const walk = at + 2;
-                // A graphic control block says whether one of the
-                // colours stands for nothing; it applies to the picture
-                // that follows it.
+                // A graphic control block says how long the picture after
+                // it stays, what becomes of it, and whether one of the
+                // colours stands for nothing.
                 if (kind == ext_graphic_control and walk < file.len and file[walk] >= 4) {
                     if (walk + 5 > file.len) return Error.Corrupt;
-                    if (file[walk + 1] & 1 != 0) transparent = file[walk + 4];
+                    const flags = file[walk + 1];
+                    disposal = @truncate((flags >> 2) & 7);
+                    delay = half(file[walk + 2 ..]);
+                    if (flags & 1 != 0) transparent = file[walk + 4];
                 }
                 at = try skipBlocks(file, walk);
             },
@@ -139,12 +169,28 @@ pub fn readFirst(file: []const u8, screen: Screen) Error!?Picture {
                 picture.data_at = walk + 1;
                 if (picture.width == 0 or picture.height == 0) return Error.Corrupt;
                 if (picture.palette.len == 0) return Error.Corrupt;
-                return picture;
+                // A file cut short in this picture's pixels still has the
+                // picture - half of one is worth more than none - and
+                // nothing after it.
+                const next_at = skipBlocks(file, picture.data_at) catch file.len;
+                return .{ .picture = picture, .delay = delay, .disposal = disposal, .next_at = next_at };
             },
             else => return Error.Corrupt,
         }
     }
     return Error.Corrupt;
+}
+
+/// How many pictures the file holds, counting no further than `most`.
+pub fn countPictures(file: []const u8, screen: Screen, most: u32) Error!u32 {
+    var count: u32 = 0;
+    var at = screen.at;
+    while (count < most) {
+        const frame = (try readNext(file, screen, at)) orelse break;
+        count += 1;
+        at = frame.next_at;
+    }
+    return count;
 }
 
 /// Past a run of blocks, each a length byte and that many bytes, ending
@@ -248,4 +294,21 @@ test "the four passes of an interlaced picture cover every row once" {
     var seen: [9]bool = @splat(false);
     for (0..9) |n| seen[rowOf(picture, @intCast(n))] = true;
     for (seen) |row| try testing.expect(row);
+}
+
+test "an animation's pictures, one after the other" {
+    const file = @embedFile("../../../tests/datatypes/Bounce.gif");
+    const screen = try readScreen(file);
+    try testing.expectEqual(@as(u32, 96), screen.width);
+    try testing.expectEqual(@as(u32, 12), try countPictures(file, screen, 100));
+    try testing.expectEqual(@as(u32, 2), try countPictures(file, screen, 2));
+    var at = screen.at;
+    var seen: u32 = 0;
+    while (try readNext(file, screen, at)) |frame| {
+        try testing.expectEqual(@as(u32, 8), frame.delay);
+        try testing.expect(frame.next_at > at);
+        at = frame.next_at;
+        seen += 1;
+    }
+    try testing.expectEqual(@as(u32, 12), seen);
 }
