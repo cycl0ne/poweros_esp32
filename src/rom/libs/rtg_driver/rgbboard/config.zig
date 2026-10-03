@@ -26,7 +26,7 @@ pub const Config = struct {
     /// How long reset is held, and how long the panel is then given.
     reset_ms: u32 = 10,
     settle_ms: u32 = 20,
-    /// How many lines one of the two buffers the panel is really fed from
+    /// How many lines one of the buffers the panel is really fed from
     /// holds. The height has to divide by it.
     bounce_lines: u32 = 10,
     /// How many pictures the board may have at once (`RTGA_Buffers`),

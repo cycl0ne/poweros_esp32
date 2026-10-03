@@ -68,20 +68,20 @@ pub const Panel = struct {
     held_count: u32 = 0,
 
     dma: ?*dmares.DmaBase = null,
-    /// The panel's channel and the ring it runs round the two buffers.
+    /// The panel's channel and the ring it runs round the buffers.
     channel: u32 = 0,
     chain: ?*dmares.DMADescriptor = null,
     /// The channel the copy runs on.
     copy_channel: u32 = 0,
     has_channels: bool = false,
 
-    /// The two buffers the panel is really fed from, in internal memory.
+    /// The buffers the panel is really fed from, in internal memory.
     bounce: ?[*]u8 = null,
     bounce_bytes: u32 = 0,
     /// How many bufferfuls a frame is.
     stretches: u32 = 0,
-    bounce_chain: [2]?*dmares.DMADescriptor = .{ null, null },
-    fill_into: [2]?*dmares.DMADescriptor = .{ null, null },
+    bounce_chain: [bounce_count]?*dmares.DMADescriptor = @splat(null),
+    fill_into: [bounce_count]?*dmares.DMADescriptor = @splat(null),
     /// The copy's chain out of each stretch of the picture being shown, one
     /// per stretch: the copy's interrupt has no time to build one.
     fill_from: ?[*]?*dmares.DMADescriptor = null,
@@ -140,6 +140,15 @@ pub const Panel = struct {
 /// How many pictures' chains are kept: every frame there is, and one over
 /// for a buffer that lives outside the display memory.
 const max_cached = 4;
+
+/// How many buffers the panel is fed from. The copy into a buffer starts
+/// when the panel has finished with it, from the panel's interrupt, and
+/// must be done before the panel comes round to it again: with three the
+/// interrupt may come two stretches' time late - about 920 microseconds,
+/// less the copy - where two left it one. The interrupt runs out of
+/// flash, through exec's dispatch, and a burst of cache misses there -
+/// while a host reads the USB console, say - took longer than one.
+const bounce_count = 3;
 
 /// One picture's chains, and where its pixels start.
 pub const Cached = struct {
@@ -267,20 +276,19 @@ pub fn bringUp(panel: *Panel) i32 {
     _ = db.SetDMAPriority(copy_ch, dmares.DMA_OUT, under);
     _ = db.SetDMAPriority(copy_ch, dmares.DMA_IN, under);
 
-    // The two buffers, and the ring the panel's channel runs round them
-    // for ever.
-    const b = sys.AllocMem(2 * panel.bounce_bytes, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse
+    // The buffers, and the ring the panel's channel runs round them for
+    // ever.
+    const b = sys.AllocMem(bounce_count * panel.bounce_bytes, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse
         return giveBack(panel, err.RTGERR_NO_MEMORY);
     panel.bounce = @ptrCast(b);
-    for (0..2) |i| {
+    for (0..bounce_count) |i| {
         const at: *anyopaque = @ptrFromInt(@intFromPtr(b) + i * panel.bounce_bytes);
         panel.bounce_chain[i] = db.AllocDMAChain(dmares.DMA_OUT, at, panel.bounce_bytes, 0) orelse
             return giveBack(panel, err.RTGERR_NO_MEMORY);
         panel.fill_into[i] = db.AllocDMAChain(dmares.DMA_IN, at, panel.bounce_bytes, 0) orelse
             return giveBack(panel, err.RTGERR_NO_MEMORY);
     }
-    lastOf(panel.bounce_chain[0].?).next = panel.bounce_chain[1];
-    lastOf(panel.bounce_chain[1].?).next = panel.bounce_chain[0];
+    for (0..bounce_count) |i| lastOf(panel.bounce_chain[i].?).next = panel.bounce_chain[(i + 1) % bounce_count];
     panel.chain = panel.bounce_chain[0];
 
     // The chains over a picture are made when it is first shown.
@@ -475,7 +483,7 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
     }
     panel.chain = null;
     if (panel.bounce) |b| {
-        sys.FreeMem(@ptrCast(b), 2 * panel.bounce_bytes);
+        sys.FreeMem(@ptrCast(b), bounce_count * panel.bounce_bytes);
         panel.bounce = null;
     }
     // The panel itself goes dark and back into reset, while its lines are
@@ -544,7 +552,7 @@ fn lastOf(head: *dmares.DMADescriptor) *dmares.DMADescriptor {
 pub fn startCopy(panel: *Panel, into: u32, from: u32) void {
     const db = panel.dma orelse return;
     const chains = panel.fill_from orelse return;
-    // The one before it had a buffer's worth of time - 460 microseconds
+    // The one before it had at least a buffer's worth of time - 460 microseconds
     // for ten lines - and takes about half that. Under a CPU working PSRAM
     // hard it can still be running, and a channel must not be started
     // again while it is: the rest of it is waited for here, since the
@@ -581,19 +589,19 @@ pub fn waitCopy(panel: *Panel) void {
     }
 }
 
-/// Both buffers filled with the top of the picture, and the counters set
+/// Every buffer filled with the top of the picture, and the counters set
 /// to match: the panel is about to be started on the first of them.
 pub fn primeBuffers(panel: *Panel) void {
-    startCopy(panel, 0, 0);
-    waitCopy(panel);
-    startCopy(panel, 1, 1);
-    waitCopy(panel);
+    for (0..bounce_count) |i| {
+        startCopy(panel, @intCast(i), @intCast(i % panel.stretches));
+        waitCopy(panel);
+    }
     panel.next_buffer = 0;
-    panel.next_stretch = 2 % panel.stretches;
+    panel.next_stretch = bounce_count % panel.stretches;
 }
 
 /// The panel has finished with a buffer: fill it with the next stretch of
-/// the picture while it reads the other one.
+/// the picture while it reads the others.
 fn bufferServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
     const db = panel.dma orelse return 0;
@@ -603,7 +611,7 @@ fn bufferServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     // without the frame showing any of the old one.
     if (panel.next_stretch == 0) takePending(panel);
     startCopy(panel, panel.next_buffer, panel.next_stretch);
-    panel.next_buffer ^= 1;
+    panel.next_buffer = (panel.next_buffer + 1) % bounce_count;
     panel.next_stretch += 1;
     if (panel.next_stretch == panel.stretches) panel.next_stretch = 0;
     return 1;
