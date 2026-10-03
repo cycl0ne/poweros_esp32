@@ -31,9 +31,10 @@ tags and constants, each with its doc comment.
 
 - [Writing programs](guides/programs.md) - a window drawn into, and a
   window of gadgets laid out by a layout and a window object.
-- [Fonts](guides/fonts.md) - the font image, drawing text, choosing a
-  font, sizes in points, font files and `FONTS:`, diskfont.library,
-  outline fonts, the system's fonts, and the tools.
+- [Fonts](guides/fonts.md) - the font image, drawing text, text from a
+  description (IntuiText), choosing a font, sizes in points, font files
+  and `FONTS:`, diskfont.library, outline fonts, the system's fonts, and
+  the tools.
 - [Styles](guides/styles.md) - what a style is, parts, states and
   properties, where a style comes from and how a property is found,
   `style.prefs`, drawing a part in a class, hover and focus.

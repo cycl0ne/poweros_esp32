@@ -30,7 +30,8 @@
 //! (WindowLimits).
 //!
 //! TEXT opens a window and draws in it from descriptions: two runs of text
-//! with PrintIText, the second in a colour and a place of its own, a box
+//! with PrintIText, the second in a colour, a place and a style - bold -
+//! of its own, a box
 //! that fits the first - measured with IntuiTextLength - with DrawBorder,
 //! and a row of imageclass images with DrawImage, each the same one-bit
 //! arrow in a different pair of the screen's own pens, which is the whole
@@ -101,7 +102,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.10 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.11 (04.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S";
@@ -242,27 +243,29 @@ fn textDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scre
 
     const dri = ib.GetScreenDrawInfo(s);
     defer ib.FreeScreenDrawInfo(s, dri);
-    var second = intuition.IntuiText{
-        .front_pen = dri.pens[sc.HIGHLIGHTTEXTPEN],
-        .back_pen = dri.pens[sc.FILLPEN],
-        .draw_mode = graphics.DRMD_JAM2,
-        .left = 0,
-        .top = 20,
-        .font = dri.font,
-        .text = "second run, in the fill pen",
+    const second = [_]TagItem{
+        .{ .tag = intuition.IT_FrontPen, .data = dri.pens[sc.HIGHLIGHTTEXTPEN] },
+        .{ .tag = intuition.IT_BackPen, .data = dri.pens[sc.FILLPEN] },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Top, .data = 20 },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(dri.font) },
+        .{ .tag = intuition.IT_Style, .data = graphics.FSF_BOLD },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr("second run, bold, in the fill pen") },
+        .{},
     };
-    var first = intuition.IntuiText{
-        .front_pen = dri.pens[sc.TEXTPEN],
-        .font = dri.font,
-        .text = label,
-        .next = &second,
+    const first = [_]TagItem{
+        .{ .tag = intuition.IT_FrontPen, .data = dri.pens[sc.TEXTPEN] },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(dri.font) },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(label) },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&second) },
+        .{},
     };
     const wide = ib.IntuiTextLength(&first);
 
-    // Two pixels clear of the letters all round, in the screen's font,
-    // which is eight rows tall.
+    // Two pixels clear of the letters all round, in the screen's font.
     const right = wide + 3;
-    const bottom = 8 + 3;
+    const rows: i32 = if (dri.font) |font| font.image.height else 8;
+    const bottom = rows + 3;
     const corners = [_]i32{ 0, 0, right, 0, right, bottom, 0, bottom, 0, 0 };
     const box = intuition.Border{
         .left = -2,
@@ -490,7 +493,7 @@ const MSG_AUTO = "  AutoRequestTagList answered %s\n";
 /// An image that is a frame with words in it: the frame first, the words
 /// chained behind it. Null without memory; dispose of the frame and the
 /// words both.
-fn framedWords(ib: *IntuitionBase, dri: *sc.DrawInfo, words: *const intuition.IntuiText, width: usize, height: usize) ?[2]*intuition.Object {
+fn framedWords(ib: *IntuitionBase, dri: *sc.DrawInfo, words: [*]const TagItem, width: usize, height: usize) ?[2]*intuition.Object {
     const text = ib.NewObjectTagList(null, intuition.classusr.ITEXTICLASS, &[_]TagItem{
         .{ .tag = ic.IA_Left, .data = 10 },
         .{ .tag = ic.IA_Top, .data = 8 },
@@ -530,7 +533,7 @@ fn requesterDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     defer ib.DisposeObject(auto_button);
 
     // The requester Ask puts up: 240 by 90, in the middle of the window.
-    const prompt = intuition.IntuiText{ .text = "Your name, please:", .font = dri.font };
+    const prompt = intuition.text.plainRun("Your name, please:", dri.font);
     const ask_face = framedWords(ib, dri, &prompt, 240, 90) orelse return dos.RETURN_FAIL;
     defer for (ask_face) |o| ib.DisposeObject(o);
     const name = ib.NewObjectTagList(null, intuition.classusr.STRGCLASS, &[_]TagItem{
@@ -556,7 +559,7 @@ fn requesterDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
     ask.image = ask_face[0];
 
     // The double-click requester: small, under the pointer.
-    const quick_words = intuition.IntuiText{ .text = "Double-clicked", .font = dri.font };
+    const quick_words = intuition.text.plainRun("Double-clicked", dri.font);
     const quick_face = framedWords(ib, dri, &quick_words, 160, 60) orelse return dos.RETURN_FAIL;
     defer for (quick_face) |o| ib.DisposeObject(o);
     const close = endButton(ib, null, 20, "Close", 40, 30) orelse return dos.RETURN_FAIL;
@@ -622,9 +625,9 @@ fn requesterDemo(dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
                             _ = Printf(dl, MSG_NOWINDOWS, .{});
                         },
                         2 => {
-                            const body = intuition.IntuiText{ .text = "Keep what was typed?" };
-                            const keep = intuition.IntuiText{ .text = "Keep" };
-                            const drop = intuition.IntuiText{ .text = "Drop" };
+                            const body = intuition.text.plainRun("Keep what was typed?", null);
+                            const keep = intuition.text.plainRun("Keep", null);
+                            const drop = intuition.text.plainRun("Drop", null);
                             const answer = ib.AutoRequestTagList(w, &[_]TagItem{
                                 .{ .tag = rq.SYSREQ_Body, .data = @intFromPtr(&body) },
                                 .{ .tag = rq.SYSREQ_Positive, .data = @intFromPtr(&keep) },

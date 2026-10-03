@@ -234,7 +234,7 @@ pub const Measure = struct {
     /// How wide `text` is in the font; 0 without one.
     pub fn width(m: Measure, ib: *IntuitionBase, text: [*:0]const u8) i32 {
         const font = m.font orelse return 0;
-        const run = intuition.IntuiText{ .font = font, .text = text };
+        const run = intuition.text.plainRun(text, font);
         return ib.IntuiTextLength(&run);
     }
 

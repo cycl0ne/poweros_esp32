@@ -75,8 +75,8 @@ pub const MenuItem = extern struct {
     /// MutualExclude: the other items of the panel this one unchecks when
     /// it is picked, a bit for each by its place - bit 0 the first.
     mutual_exclude: u32 = 0,
-    /// ItemFill: what it shows - an `IntuiText` with `ITEMTEXT`, an image
-    /// object without.
+    /// ItemFill: what it shows - an IntuiText (a tag list of `IT_` tags)
+    /// with `ITEMTEXT`, an image object without.
     item_fill: ?*anyopaque = null,
     /// SelectFill: what it shows while the pointer is over it, for
     /// `HIGHIMAGE`: the same kind of thing as `item_fill`.
@@ -106,8 +106,11 @@ pub const MIDRAWN: u32 = 0x0100;
 /// It is checked and unchecked: picking it sets `CHECKED`, and a checked
 /// one shows the window's checkmark at its left.
 pub const CHECKIT: u32 = 0x0001;
-/// Its `item_fill` and `select_fill` are IntuiTexts; without it, image
-/// objects.
+/// Its `item_fill` and `select_fill` are IntuiTexts, tag lists of `IT_`
+/// tags; without it, image objects. `LayoutMenusA` writes the place, the
+/// pen and the font into the runs' `IT_Left`, `IT_FrontPen` and `IT_Font`,
+/// so runs it lays out are writable and have those tags, as the ones
+/// `CreateMenusA` makes do.
 pub const ITEMTEXT: u32 = 0x0002;
 /// Right-Amiga and `command` picks it, and the panel shows both at its
 /// right.

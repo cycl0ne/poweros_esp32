@@ -8,6 +8,7 @@ The calls themselves are in the reference: [graphics](../autodocs/graphics.md),
 
 - [The font image](#the-font-image)
 - [Drawing text](#drawing-text)
+- [Text from a description](#text-from-a-description)
 - [Choosing and opening a font](#choosing-and-opening-a-font)
 - [Sizes in points](#sizes-in-points)
 - [Fonts on the disk](#fonts-on-the-disk)
@@ -119,6 +120,76 @@ gb.Text(rp, "Hello", 5);
 - `GetRPAttrs` with `RPTAG_FontHeight`, `RPTAG_FontBaseline`,
   `RPTAG_FontWidth` (the nominal width) and `RPTAG_FontProportional`
   answers what a layout needs without touching the font.
+
+## Text from a description
+
+Where a program hands words to something else to draw - a gadget's label,
+a menu item, a requester's message, an image - it hands an **IntuiText**:
+a tag list that says what the words are and how they look, so whoever
+draws them needs nothing else. intuition.library's `PrintIText` draws
+one, and `IntuiTextLength` measures it.
+
+```zig
+const intuition = sdk.intuition;
+const TagItem = sdk.utility.TagItem;
+
+const advice = [_]TagItem{
+    .{ .tag = intuition.IT_Text, .data = @intFromPtr("Check that it is on and has paper.") },
+    .{ .tag = intuition.IT_Top, .data = 20 },
+    .{},
+};
+const heading = [_]TagItem{
+    .{ .tag = intuition.IT_Text, .data = @intFromPtr("The printer is not answering.") },
+    .{ .tag = intuition.IT_Style, .data = sdk.graphics.FSF_BOLD },
+    .{ .tag = intuition.IT_Next, .data = @intFromPtr(&advice) },
+    .{},
+};
+ib.PrintIText(rp, &heading, 10, 20);
+```
+
+| Tag | Data |
+|---|---|
+| `IT_Text` | the words, `[*:0]const u8` |
+| `IT_FrontPen`, `IT_BackPen` | the pens, 0xAARRGGBB |
+| `IT_DrawMode` | `DRMD_JAM1` or `DRMD_JAM2` |
+| `IT_Left`, `IT_Top` | where the run goes, from the corner it is drawn at |
+| `IT_Font` | an open `TextFont`; null names none |
+| `IT_Style` | `FSF_BOLD`, `FSF_ITALIC`, `FSF_UNDERLINED` |
+| `IT_Next` | the next run, another IntuiText |
+
+- **A run is placed by its top left corner,** not by its baseline: (`left`
+  + `IT_Left`, `top` + `IT_Top`) is the top of the letters whatever the
+  font, so runs in two fonts line up by their tops.
+- **What a run does not name is the RastPort's own.** A run without
+  `IT_FrontPen` is drawn in the pen the caller set, one without `IT_Font`
+  in the RastPort's font. Each run starts from the RastPort as the caller
+  gave it - nothing one run names carries over to the next - and the
+  RastPort gets its pens, mode, font and style back when the call ends.
+- **Runs chain with `IT_Next`.** Several lines, or a word in another
+  colour or style, are one IntuiText drawn by one call. A run with no
+  words is passed over and the runs after it are still drawn.
+- **`IntuiTextLength` measures one run,** in its `IT_Font` and `IT_Style`,
+  or in the font a screen opens with when it names none. The runs after
+  it are not added: each goes where it says. `intuition.text.plainRun(words,
+  font)` makes the run to measure a word with.
+- **The font stays the caller's,** and open, for as long as the run is
+  used.
+
+Where intuition takes an IntuiText:
+
+- **A gadget's label**, `GA_IntuiText` in place of `GA_Text`: centred in
+  the gadget, in what its runs name.
+- **itexticlass**, `IA_Data`: an image whose shape is the words, all its
+  runs drawn in the image's `IA_FGPen` in JAM1, so a label takes its
+  colour from where it is shown.
+- **A menu item's words**, its `item_fill` with `ITEMTEXT`. `CreateMenusA`
+  makes them, and `LayoutMenusA` writes each run's place, pen and font
+  into its `IT_Left`, `IT_FrontPen` and `IT_Font` - a strip built by hand
+  and laid out that way needs writable runs with those tags.
+- **A requester's message and buttons**, `SYSREQ_Body`, `SYSREQ_Positive`
+  and `SYSREQ_Negative` for `AutoRequestTagList` and
+  `BuildSysRequestTagList`: each body run is a line, and only the words
+  are taken - the requester has its own look.
 
 ## Choosing and opening a font
 

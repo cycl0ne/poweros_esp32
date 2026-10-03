@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: MIT
-//! intuition.library's functions. So far the object system: classes made
-//! and freed, objects made from them, and messages sent to those objects.
-//! Every object's class is a Hook that is handed each message; a class
-//! passes what it does not handle on to the class it was made from, up to
-//! rootclass. Open it with OpenLibrary("intuition.library", 0).
+//! intuition.library's functions: screens, the windows on them, and what a
+//! program shows in a window. A screen is a display's picture, with a
+//! title bar and a style that says how everything on it looks; one may be
+//! pulled down by its bar to show the screens behind it. A window is a
+//! layer on a screen with its border, its gadgets, and an IDCMP port its
+//! program hears from. Gadgets and images are objects: every class is a
+//! Hook handed each message, and passes what it does not handle on to the
+//! class it was made from, up to rootclass. Around them: menus made from
+//! a table, requesters in a window or of their own, text and lines drawn
+//! from a description (an IntuiText is a tag list of IT_ tags), the mouse
+//! pointer, the system's fonts and preferences, DisplayBeep and
+//! DisplayAlert. Open it with OpenLibrary("intuition.library", 0).
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -145,18 +152,19 @@ usize SetGadgetAttrsTagList(*intuition.Object gadget, ?*intuition.Window window,
 ?*graphics.RastPort ObtainGIRPort(?*intuition.GadgetInfo gadget_info)
 /// Give back what ObtainGIRPort lent.
 void ReleaseGIRPort(?*graphics.RastPort rp)
-/// Draw a run of text and every run linked after it, at (left, top) added
-/// to each run's own place, in its pens, draw mode and font. The
-/// RastPort keeps its own pens, mode and font. Null does nothing.
-void PrintIText(*graphics.RastPort rp, ?*const intuition.IntuiText itext, i32 left, i32 top)
+/// Draw an IntuiText - a run of text as IT_ tags - and every run linked
+/// after it, at (left, top) added to each run's own place, in what each
+/// run names and the RastPort's own for the rest. The RastPort keeps its
+/// pens, mode, font and style. Null does nothing.
+void PrintIText(*graphics.RastPort rp, ?[*]const utility.TagItem itext, i32 left, i32 top)
 /// Draw a line through a Border's points and every Border linked after
 /// it, at (left, top) added to each one's own place, in its pens and draw
 /// mode. The RastPort keeps its own. Null does nothing.
 void DrawBorder(*graphics.RastPort rp, ?*const intuition.Border border, i32 left, i32 top)
-/// How wide one run of text is in pixels, in its own font or, without
-/// one, in the font a screen has when it is given none. The runs linked
-/// after it are not counted.
-i32 IntuiTextLength(*const intuition.IntuiText itext)
+/// How wide one run of an IntuiText is in pixels, in its IT_Font and
+/// IT_Style or, without a font, in the font a screen has when it is given
+/// none. The runs linked after it are not counted; null is 0.
+i32 IntuiTextLength(?[*]const utility.TagItem itext)
 /// Hold the screens, their windows and which one is active, so that
 /// several reads of them agree. Answers what to hand to UnlockIBase.
 u32 LockIBase(u32 lock_number)

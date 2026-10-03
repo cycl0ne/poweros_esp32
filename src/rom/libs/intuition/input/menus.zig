@@ -51,13 +51,13 @@ const sc = intuition.screens;
 const ic = intuition.imageclass;
 const Menu = mn.Menu;
 const MenuItem = mn.MenuItem;
-const IntuiText = intuition.IntuiText;
 const TagItem = utility.TagItem;
 const InputEvent = ie.InputEvent;
 const Pen = graphics.Pen;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
+const _render = @import("../render/_render.zig");
 const Window = _window.Window;
 const _screen = @import("../screen/_screen.zig");
 const Screen = _screen.Screen;
@@ -641,14 +641,7 @@ fn paintStrip(ib: *IntuitionBase, w: *Window) void {
     var menu = w.menu_strip;
     while (menu) |m| : (menu = m.next_menu) {
         const name = m.name orelse continue;
-        var title = IntuiText{
-            .front_pen = look.writing,
-            .draw_mode = graphics.DRMD_JAM1,
-            .left = _screen.bar_left,
-            .top = _screen.bar_border,
-            .font = s.font,
-            .text = name,
-        };
+        const title = _render.makeRun(name, look.writing, _screen.bar_left, _screen.bar_border, s.font, null);
         ib.iface().PrintIText(rp, &title, m.left, 0);
         if (m.flags & mn.MENUENABLED == 0) d.ghost(gb, rp, _screen.bar_left + m.left, 0, m.width, s.bar_height - 1, look.ground);
     }
@@ -725,8 +718,8 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
     var item = first;
     while (item) |entry| : (item = entry.next_item) {
         if (entry.item_fill == null or entry.flags & mn.COMMSEQ == 0) continue;
-        const chars = [2]u8{ entry.command, 0 };
-        const key = keyRun(&chars, fontOf(entry));
+        const chars = [2:0]u8{ entry.command, 0 };
+        const key = intuition.text.plainRun(&chars, fontOf(ib, entry));
         indent = @max(indent, _menu.textWidth(ib, w, &key));
     }
 
@@ -737,9 +730,9 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
         var fill_top = top;
         if (entry.item_fill) |fill| {
             if (entry.flags & mn.ITEMTEXT != 0) {
-                const run: *const IntuiText = @ptrCast(@alignCast(fill));
-                fill_top = top + run.top;
-                it.PrintIText(rp, run, left, top);
+                const tags: [*]const TagItem = @ptrCast(@alignCast(fill));
+                fill_top = top + _render.runOf(ib.utility_base, tags).top;
+                it.PrintIText(rp, tags, left, top);
             } else {
                 fill_top = top + _menu.imageBox(ib, @ptrCast(fill)).min_y;
                 it.DrawImage(rp, @ptrCast(fill), left, top);
@@ -747,16 +740,13 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
         }
         if (entry.flags & mn.CHECKIT != 0 and entry.flags & mn.CHECKED != 0) it.DrawImage(rp, w.check_mark, left, fill_top);
         if (entry.flags & mn.COMMSEQ != 0) {
-            const font = fontOf(entry);
-            const chars = [2]u8{ entry.command, 0 };
-            var key = keyRun(&chars, font);
+            const font = fontOf(ib, entry);
+            const chars = [2:0]u8{ entry.command, 0 };
             const at = left + entry.width - indent - 2;
             const baseline = _menu.metric(ib, w, font).baseline;
             const key_height = _menu.imageHeight(ib, w.amiga_key);
             it.DrawImage(rp, w.amiga_key, at - _menu.imageWidth(ib, w.amiga_key) - 2, fill_top + @max(0, baseline - (key_height - 1)));
-            key.front_pen = detail;
-            key.left = at;
-            key.top = fill_top;
+            const key = _render.makeRun(&chars, detail, at, fill_top, font, null);
             it.PrintIText(rp, &key, 0, 0);
         }
         if (disabled or entry.flags & mn.ITEMENABLED == 0) d.ghost(gb, rp, left, top, entry.width, entry.height, block);
@@ -765,15 +755,9 @@ fn paint(ib: *IntuitionBase, w: *Window, panel: *const Panel, first: ?*MenuItem,
 
 /// The font an item's text is in, which its shortcut is shown in too; null
 /// for the screen's.
-fn fontOf(item: *const MenuItem) ?*graphics.TextFont {
+fn fontOf(ib: *IntuitionBase, item: *const MenuItem) ?*graphics.TextFont {
     if (item.flags & mn.ITEMTEXT == 0) return null;
-    const run: *const IntuiText = @ptrCast(@alignCast(item.item_fill orelse return null));
-    return run.font;
-}
-
-/// An item's shortcut character as a run of its own.
-fn keyRun(chars: *const [2]u8, font: ?*graphics.TextFont) IntuiText {
-    return .{ .draw_mode = graphics.DRMD_JAM1, .font = font, .text = @ptrCast(chars) };
+    return _render.runOf(ib.utility_base, @ptrCast(@alignCast(item.item_fill orelse return null))).font;
 }
 
 /// The panel of the menu a number names, opened just under the bar at its

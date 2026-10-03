@@ -5,7 +5,6 @@ const sdk = @import("sdk");
 const utility = sdk.utility;
 const intuition = sdk.intuition;
 const Menu = intuition.Menu;
-const IntuiText = intuition.IntuiText;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("../screen/_screen.zig");
@@ -52,8 +51,10 @@ const _menu = @import("_menu.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The strip is still the caller's; its places and the texts' fonts and
-/// colours are written.
+/// The strip is still the caller's. Its places are written, and into each
+/// item text's runs their `IT_Left`, `IT_FrontPen` and `IT_Font`: the
+/// runs CreateMenusA makes are writable and have all three, and a run
+/// without one of them keeps what it says.
 ///
 /// NOTES:
 /// Laid out again after a window's font or screen changes, before the
@@ -78,8 +79,10 @@ pub fn LayoutMenusA(ib: *IntuitionBase, menu: *Menu, screen: *intuition.Screen, 
     var each: ?*Menu = menu;
     while (each) |m| : (each = m.next_menu) {
         m.left = start;
-        const run = IntuiText{ .font = s.font, .text = m.name };
-        const words: i32 = if (m.name != null) ib.iface().IntuiTextLength(&run) else 0;
+        const words: i32 = if (m.name) |name| measured: {
+            const run = intuition.text.plainRun(name, s.font);
+            break :measured ib.iface().IntuiTextLength(&run);
+        } else 0;
         // The title's highlight reaches the bar's trim either side of it.
         m.width = words + 2 * (_screen.bar_left - _screen.bar_border);
         _menu.sizeItems(&layout, m.first_item);

@@ -42,7 +42,6 @@ const screens = @import("screens.zig");
 const style = @import("style.zig");
 const windows = @import("windows.zig");
 const requesters = @import("requesters.zig");
-const text_ = @import("text.zig");
 const GadgetInfo = classusr.GadgetInfo;
 
 // --- attributes -------------------------------------------------------------
@@ -92,8 +91,8 @@ pub const GA_SysGadget = GA_Dummy + 0x1D;
 pub const GA_SysGType = GA_Dummy + 0x1E;
 /// The gadget that comes after this one in its list.
 pub const GA_Next = GA_Dummy + 0x20;
-/// The label as a chain of `IntuiText`s, in place of `GA_Text`, drawn in
-/// the middle of the gadget.
+/// The label as an IntuiText - a tag list of `IT_` tags, and the runs it
+/// links - in place of `GA_Text`, drawn in the middle of the gadget.
 pub const GA_IntuiText = GA_Dummy + 0x22;
 /// The label as an image, in place of `GA_Text`, drawn in the middle of
 /// the gadget in the gadget's state.
@@ -221,7 +220,7 @@ pub const Gadget = extern struct {
     select_render: ?*classusr.Object = null,
     /// Its label: one of the three at a time.
     text: ?[*:0]const u8 = null,
-    itext: ?*const text_.IntuiText = null,
+    itext: ?[*]const utility.TagItem = null,
     label_image: ?*classusr.Object = null,
     /// `GA_Key`: the character that works it from the keyboard, in lower
     /// case; 0 for none.

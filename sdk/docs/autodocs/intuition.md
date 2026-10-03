@@ -1,10 +1,17 @@
 # intuition.library
 
-intuition.library's functions. So far the object system: classes made
-and freed, objects made from them, and messages sent to those objects.
-Every object's class is a Hook that is handed each message; a class
-passes what it does not handle on to the class it was made from, up to
-rootclass. Open it with OpenLibrary("intuition.library", 0).
+intuition.library's functions: screens, the windows on them, and what a
+program shows in a window. A screen is a display's picture, with a
+title bar and a style that says how everything on it looks; one may be
+pulled down by its bar to show the screens behind it. A window is a
+layer on a screen with its border, its gadgets, and an IDCMP port its
+program hears from. Gadgets and images are objects: every class is a
+Hook handed each message, and passes what it does not handle on to the
+class it was made from, up to rootclass. Around them: menus made from
+a table, requesters in a window or of their own, text and lines drawn
+from a description (an IntuiText is a tag list of IT_ tags), the mouse
+pointer, the system's fonts and preferences, DisplayBeep and
+DisplayAlert. Open it with OpenLibrary("intuition.library", 0).
 
 Generated from the source by `./zig build autodoc`.
 
@@ -59,7 +66,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
 - [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
-- [IntuiTextLength](#intuitextlength) - How wide one run of text is, in pixels.
+- [IntuiTextLength](#intuitextlength) - How wide one run of an IntuiText is, in pixels.
 - [ItemAddress](#itemaddress) - The item a menu number names.
 - [LayoutMenuItemsA](#layoutmenuitemsa) - Places the items of one panel, and their subitems, that CreateMenusA made from a table of items.
 - [LayoutMenusA](#layoutmenusa) - Places every title, item and subitem of a strip CreateMenusA made, for a screen.
@@ -85,7 +92,7 @@ Generated from the source by `./zig build autodoc`.
 - [OpenSystemFont](#opensystemfont) - One of the system's fonts, opened.
 - [OpenWindowTagList](#openwindowtaglist) - Opens a window.
 - [PointInImage](#pointinimage) - Whether a point is inside an image.
-- [PrintIText](#printitext) - Draws a run of text and the runs linked after it.
+- [PrintIText](#printitext) - Draws an IntuiText and the runs linked after it.
 - [PubScreenStatus](#pubscreenstatus) - Opens a public screen to visitors, or closes it to them.
 - [QueueGadgetRefresh](#queuegadgetrefresh) - A gadget drawn again by intuition soon, with whatever it holds then.
 - [RefreshGList](#refreshglist) - Draws gadgets of a window.
@@ -523,6 +530,9 @@ None known.
 **EXAMPLES**
 
 ```zig
+const body = intuition.text.plainRun("Save the changes?", null);
+const yes = intuition.text.plainRun("Save", null);
+const no = intuition.text.plainRun("Discard", null);
 const save = ib.AutoRequestTagList(window, &[_]TagItem{
     .{ .tag = SYSREQ_Body, .data = @intFromPtr(&body) },
     .{ .tag = SYSREQ_Positive, .data = @intFromPtr(&yes) },
@@ -697,9 +707,10 @@ fn BuildSysRequestTagList(ib: *IntuitionBase, window: ?*Window, tags: ?[*]const 
 
 - `window` - the reference window: the requester opens on its screen,
   with its title. Null for the default public screen.
-- `tags` - `SYSREQ_Body`, what it says, each run of the chain a line;
-  `SYSREQ_Positive`, the left button's text - yes, retry, go on - or
-  none; `SYSREQ_Negative`, the right button's text - no, cancel;
+- `tags` - `SYSREQ_Body`, what it says, an IntuiText whose every run is
+  a line; `SYSREQ_Positive`, the left button's text - yes, retry, go
+  on - or none; `SYSREQ_Negative`, the right button's text - no,
+  cancel;
   `SYSREQ_IDCMPFlags`, IDCMP classes of the caller's own that answer it too.
   The body and the right button are required.
 
@@ -714,9 +725,9 @@ body or the right button is missing.
 
 The same requester `BuildEasyRequestArgs` makes: a frame with the lines
 in it and the buttons under them, the left Amiga key with V and B
-answering for the left and the right one. The texts' words are taken as
-they are - no format is read in them - and their pens, fonts and places
-give way to the requester's own look.
+answering for the left and the right one. The runs' `IT_Text` is taken
+as it is - no format is read in it - and their pens, fonts, styles and
+places give way to the requester's own look.
 
 **CONTEXT**
 
@@ -747,6 +758,14 @@ None known.
 **EXAMPLES**
 
 ```zig
+const second = intuition.text.plainRun("is not answering.", null);
+const body = [_]TagItem{
+    .{ .tag = intuition.IT_Text, .data = @intFromPtr("The printer") },
+    .{ .tag = intuition.IT_Next, .data = @intFromPtr(&second) },
+    .{},
+};
+const retry = intuition.text.plainRun("Retry", null);
+const cancel = intuition.text.plainRun("Cancel", null);
 const req = ib.BuildSysRequestTagList(null, &[_]TagItem{
     .{ .tag = SYSREQ_Body, .data = @intFromPtr(&body) },
     .{ .tag = SYSREQ_Positive, .data = @intFromPtr(&retry) },
@@ -1222,11 +1241,13 @@ without them - or 0.
 
 **BEHAVIOR**
 
-An item's words are an IntuiText of their own, one row down. A key in
-`comm_key` makes it `COMMSEQ`; with `NM_COMMANDSTRING` the words in
-`comm_key` are a second IntuiText, put at the item's right by the
-layout. The first subitem of a text item gives that item a second
-IntuiText, "»", at its right. `NM_BARLABEL` is a separator: a
+An item's words are an IntuiText of their own, one row down: a tag
+list with every `IT_` tag the layout fills in - `IT_Left`,
+`IT_FrontPen`, `IT_Font` - in it, and writable. A key in `comm_key`
+makes it `COMMSEQ`; with `NM_COMMANDSTRING` the words in `comm_key`
+are a second run, linked by `IT_Next` and put at the item's right by
+the layout. The first subitem of a text item gives that item a second
+run, "»", at its right. `NM_BARLABEL` is a separator: a
 fillrectclass rule two rows high, neither picked nor highlighted.
 `IM_ITEM`'s image object is the item's, moved down a row; it is not
 copied. `NM_MENUDISABLED` and `NM_ITEMDISABLED` make it disabled; the
@@ -1608,8 +1629,10 @@ True when the second is within the double-click time of the first.
 
 **BEHAVIOR**
 
-The difference is compared with the double-click time, a second and a
-half. A second moment before the first is not a double-click.
+The difference is compared with the double-click time: the
+preference `IPREFS_DoubleClick`, which `SetPrefs` sets and `GetPrefs`
+reads, a second and a half until it is set. A second moment before
+the first is not a double-click.
 
 **CONTEXT**
 
@@ -1629,11 +1652,12 @@ window's double-click requester.
 
 **BUGS**
 
-The time cannot be changed yet: there is no preference for it.
+None known.
 
 **SEE ALSO**
 
-`SetDMRequest`, `sdk.intuition.windows.IntuiMessage`
+`SetPrefs`, `GetPrefs`, `SetDMRequest`,
+`sdk.intuition.windows.IntuiMessage`
 
 **EXAMPLES**
 
@@ -3317,12 +3341,12 @@ ib.InitRequester(&box);
 
 ## IntuiTextLength
 
-How wide one run of text is, in pixels.
+How wide one run of an IntuiText is, in pixels.
 
 **SYNOPSIS**
 
 ```zig
-fn IntuiTextLength(ib: *IntuitionBase, itext: *const IntuiText) i32
+fn IntuiTextLength(ib: *IntuitionBase, itext: ?[*]const TagItem) i32
 ```
 
 **SINCE**
@@ -3331,14 +3355,15 @@ fn IntuiTextLength(ib: *IntuitionBase, itext: *const IntuiText) i32
 
 **INPUTS**
 
-- `itext` - the run. Only its `text` and `font` are read.
+- `itext` - the run, a tag list. Only its `IT_Text`, `IT_Font` and
+  `IT_Style` are read.
 
 **RESULT**
 
 How far graphics' `Text` would move along drawing it, in the run's own
-font or, when it names none, in the ROM's font at the height a screen
-opens with when it is given no font. 0 for no text, or when there is
-no memory to measure in.
+font and style or, when it names no font, in the ROM's font at the
+height a screen opens with when it is given no font. 0 for null, no
+text, or when there is no memory to measure in.
 
 **BEHAVIOR**
 
@@ -3363,7 +3388,8 @@ freed before it returns.
 - A run drawn with `PrintIText` in a RastPort whose font is not the
   default, and naming no font of its own, comes out in that font, so
   this measure is not its width. Name the font in the run to measure
-  what will be drawn.
+  what will be drawn; `intuition.text.plainRun` makes a run of a word
+  and a font to measure.
 
 **BUGS**
 
@@ -3376,7 +3402,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-const width = ib.IntuiTextLength(&label);
+const word = intuition.text.plainRun("Cancel", font);
+const width = ib.IntuiTextLength(&word);
 ```
 
 ## ItemAddress
@@ -3486,8 +3513,9 @@ is taken to start at the bar's left and may be as narrow as its items.
 
 **OWNERSHIP**
 
-The items are still the caller's; their places and the texts' fonts
-and colours are written.
+The items are still the caller's. Their places are written, and into
+each text's runs their `IT_Left`, `IT_FrontPen` and `IT_Font`, as
+`LayoutMenusA` does.
 
 **BUGS**
 
@@ -3556,8 +3584,10 @@ still to fit on the screen.
 
 **OWNERSHIP**
 
-The strip is still the caller's; its places and the texts' fonts and
-colours are written.
+The strip is still the caller's. Its places are written, and into each
+item text's runs their `IT_Left`, `IT_FrontPen` and `IT_Font`: the
+runs CreateMenusA makes are writable and have all three, and a run
+without one of them keeps what it says.
 
 **NOTES**
 
@@ -5005,13 +5035,13 @@ if (ib.PointInImage(mouse_x, mouse_y, button_face)) press();
 
 ## PrintIText
 
-Draws a run of text and the runs linked after it.
+Draws an IntuiText and the runs linked after it.
 
 **SYNOPSIS**
 
 ```zig
 fn PrintIText(ib: *IntuitionBase, rp: *graphics.RastPort,
-    itext: ?*const IntuiText, left: i32, top: i32) void
+    itext: ?[*]const TagItem, left: i32, top: i32) void
 ```
 
 **SINCE**
@@ -5021,8 +5051,11 @@ fn PrintIText(ib: *IntuitionBase, rp: *graphics.RastPort,
 **INPUTS**
 
 - `rp` - where to draw.
-- `itext` - the first run, or null, which draws nothing.
-- `left`, `top` - added to each run's own `left` and `top`.
+- `itext` - the first run, a tag list: `IT_Text`, the words;
+  `IT_FrontPen`, `IT_BackPen` and `IT_DrawMode`, how they are drawn;
+  `IT_Left` and `IT_Top`, where; `IT_Font` and `IT_Style`, in what;
+  `IT_Next`, the next run. Null draws nothing.
+- `left`, `top` - added to each run's own `IT_Left` and `IT_Top`.
 
 **RESULT**
 
@@ -5030,11 +5063,14 @@ Nothing.
 
 **BEHAVIOR**
 
-Each run in turn: its front and back pen and its draw mode are set,
-and its font when it names one - a run without one is drawn in the
-RastPort's own. The text's top is at (`left + run.left`,
-`top + run.top`), so a run's place is its top left corner, whatever its
-font's baseline. A run with no text, or an empty one, is passed over.
+Each run in turn starts from the RastPort as it was given and takes
+what it names: its pens, its draw mode, its font, its style. What it
+does not name is the RastPort's own, so a run without `IT_FrontPen` is
+drawn in the caller's pen and one without `IT_Font` in the RastPort's
+font; nothing one run names carries over to the next. The text's top
+is at (`left` + `IT_Left`, `top` + `IT_Top`), so a run's place is its
+top left corner, whatever its font's baseline. A run with no text, or
+an empty one, is passed over and the runs after it are drawn.
 
 **CONTEXT**
 
@@ -5046,9 +5082,9 @@ font's baseline. A run with no text, or an empty one, is passed over.
 
 **OWNERSHIP**
 
-Nothing changes hands. The RastPort gets its pens, draw mode and font
-back as they were; its current point is left at the end of the last
-run drawn, as `Text` leaves it.
+Nothing changes hands. The RastPort gets its pens, draw mode, font and
+style back as they were; its current point is left at the end of the
+last run drawn, as `Text` leaves it.
 
 **NOTES**
 
@@ -5066,9 +5102,11 @@ None known.
 **EXAMPLES**
 
 ```zig
-var label = intuition.IntuiText{
-    .front_pen = graphics.penRGB(0, 0, 0),
-    .text = "Name:",
+const label = [_]TagItem{
+    .{ .tag = intuition.IT_Text, .data = @intFromPtr("Name:") },
+    .{ .tag = intuition.IT_FrontPen, .data = graphics.penRGB(0, 0, 0) },
+    .{ .tag = intuition.IT_Style, .data = graphics.FSF_BOLD },
+    .{},
 };
 ib.PrintIText(rp, &label, 10, 20);
 ```

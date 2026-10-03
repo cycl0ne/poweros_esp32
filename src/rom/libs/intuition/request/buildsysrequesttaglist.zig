@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
-//! BuildSysRequestTagList: a two-button requester from IntuiTexts, handed
-//! back.
+//! BuildSysRequestTagList: a two-button requester from IntuiTexts - tag
+//! lists of `IT_` tags - handed back.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const intuition = sdk.intuition;
-const IntuiText = intuition.IntuiText;
 const EasyStruct = intuition.EasyStruct;
 const rq = intuition.requesters;
 const TagItem = sdk.utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const Window = @import("../window/_window.zig").Window;
+const runOf = @import("../render/_render.zig").runOf;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// A two-button requester from IntuiTexts, handed back.
 ///
@@ -24,9 +25,10 @@ const Window = @import("../window/_window.zig").Window;
 /// INPUTS:
 /// - `window` - the reference window: the requester opens on its screen,
 ///   with its title. Null for the default public screen.
-/// - `tags` - `SYSREQ_Body`, what it says, each run of the chain a line;
-///   `SYSREQ_Positive`, the left button's text - yes, retry, go on - or
-///   none; `SYSREQ_Negative`, the right button's text - no, cancel;
+/// - `tags` - `SYSREQ_Body`, what it says, an IntuiText whose every run is
+///   a line; `SYSREQ_Positive`, the left button's text - yes, retry, go
+///   on - or none; `SYSREQ_Negative`, the right button's text - no,
+///   cancel;
 ///   `SYSREQ_IDCMPFlags`, IDCMP classes of the caller's own that answer it too.
 ///   The body and the right button are required.
 ///
@@ -39,9 +41,9 @@ const Window = @import("../window/_window.zig").Window;
 /// BEHAVIOR:
 /// The same requester `BuildEasyRequestArgs` makes: a frame with the lines
 /// in it and the buttons under them, the left Amiga key with V and B
-/// answering for the left and the right one. The texts' words are taken as
-/// they are - no format is read in them - and their pens, fonts and places
-/// give way to the requester's own look.
+/// answering for the left and the right one. The runs' `IT_Text` is taken
+/// as it is - no format is read in it - and their pens, fonts, styles and
+/// places give way to the requester's own look.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore and the layers' locks.
@@ -66,6 +68,14 @@ const Window = @import("../window/_window.zig").Window;
 ///
 /// EXAMPLES:
 /// ```zig
+/// const second = intuition.text.plainRun("is not answering.", null);
+/// const body = [_]TagItem{
+///     .{ .tag = intuition.IT_Text, .data = @intFromPtr("The printer") },
+///     .{ .tag = intuition.IT_Next, .data = @intFromPtr(&second) },
+///     .{},
+/// };
+/// const retry = intuition.text.plainRun("Retry", null);
+/// const cancel = intuition.text.plainRun("Cancel", null);
 /// const req = ib.BuildSysRequestTagList(null, &[_]TagItem{
 ///     .{ .tag = SYSREQ_Body, .data = @intFromPtr(&body) },
 ///     .{ .tag = SYSREQ_Positive, .data = @intFromPtr(&retry) },
@@ -86,8 +96,8 @@ pub fn BuildSysRequestTagList(ib: *IntuitionBase, window: ?*Window, tags: ?[*]co
     // each - the words as they are, handed through "%s" so none of them is
     // read as a format.
     var body_length: usize = 0;
-    var run: ?*const IntuiText = body;
-    while (run) |r| : (run = r.next) body_length += textLength(ub, r) + 1;
+    var run: ?[*]const TagItem = body;
+    while (run) |r| : (run = runOf(ub, r).next) body_length += textLength(ub, r) + 1;
     const labels_length = textLength(ub, negative) + 1 + if (positive) |p| textLength(ub, p) + 1 else 0;
     const memory = sys.AllocVec(body_length + 1 + labels_length, exec.MEMF_CLEAR) orelse return null;
     defer sys.FreeVec(memory);
@@ -95,7 +105,7 @@ pub fn BuildSysRequestTagList(ib: *IntuitionBase, window: ?*Window, tags: ?[*]co
 
     var at: usize = 0;
     run = body;
-    while (run) |r| : (run = r.next) {
+    while (run) |r| : (run = runOf(ub, r).next) {
         if (at != 0) {
             text[at] = '\n';
             at += 1;
@@ -120,18 +130,18 @@ pub fn BuildSysRequestTagList(ib: *IntuitionBase, window: ?*Window, tags: ?[*]co
     return @ptrCast(@alignCast(made));
 }
 
-fn textTag(ub: *sdk.interface.utility.UtilityBase, tag: sdk.utility.Tag, tags: ?[*]const TagItem) ?*const IntuiText {
+fn textTag(ub: *UtilityBase, tag: sdk.utility.Tag, tags: ?[*]const TagItem) ?[*]const TagItem {
     return @ptrFromInt(ub.GetTagData(tag, 0, tags));
 }
 
-fn textLength(ub: *sdk.interface.utility.UtilityBase, run: *const IntuiText) usize {
-    const words = run.text orelse return 0;
+fn textLength(ub: *UtilityBase, run: [*]const TagItem) usize {
+    const words = runOf(ub, run).text orelse return 0;
     return ub.Strlen(words);
 }
 
 /// A run's words into `out` at `at`; where they end.
-fn copy(ub: *sdk.interface.utility.UtilityBase, out: [*]u8, at: usize, run: *const IntuiText) usize {
-    const words = run.text orelse return at;
+fn copy(ub: *UtilityBase, out: [*]u8, at: usize, run: [*]const TagItem) usize {
+    const words = runOf(ub, run).text orelse return at;
     const n = ub.Strlen(words);
     for (0..n) |i| out[at + i] = words[i];
     return at + n;

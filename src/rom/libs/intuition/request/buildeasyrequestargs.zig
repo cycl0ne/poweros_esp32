@@ -13,7 +13,6 @@ const sc = intuition.screens;
 const ic = intuition.imageclass;
 const gc = intuition.gadgetclass;
 const Object = intuition.Object;
-const IntuiText = intuition.IntuiText;
 const EasyStruct = intuition.EasyStruct;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
@@ -22,6 +21,8 @@ const Window = _window.Window;
 const Screen = @import("../screen/_screen.zig").Screen;
 const _request = @import("_request.zig");
 const Request = _request.Request;
+const _render = @import("../render/_render.zig");
+const RunTags = _render.RunTags;
 
 /// Around the frame and the buttons, and between the two.
 const margin = 4;
@@ -125,8 +126,8 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
 
     // One block: the Request, the lines, the buttons, the words.
     const ub = ib.utility_base;
-    const lines_at = ub.AlignUp(@sizeOf(Request), @alignOf(IntuiText));
-    const buttons_at = ub.AlignUp(lines_at + line_count * @sizeOf(IntuiText), @alignOf(?*Object));
+    const lines_at = ub.AlignUp(@sizeOf(Request), @alignOf(RunTags));
+    const buttons_at = ub.AlignUp(lines_at + line_count * @sizeOf(RunTags), @alignOf(?*Object));
     const text_at = buttons_at + button_count * @sizeOf(?*Object);
     const size = text_at + body.chars + 1 + labels.chars + 1;
     const memory = sys.AllocVec(size, exec.MEMF_CLEAR) orelse return failed(ib);
@@ -168,14 +169,14 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
             const c = request.text[at];
             if (c != '\n' and c != 0) continue;
             request.text[at] = 0;
-            request.lines[line] = .{
-                .front_pen = requesterColour(ib, screen, sdk.intuition.style.STYLE_TextPen),
-                .draw_mode = graphics.DRMD_JAM1,
-                .top = @as(i32, @intCast(line)) * pitch,
-                .font = screen.font,
-                .text = @ptrCast(request.text + begin),
-                .next = if (line + 1 < line_count) &request.lines[line + 1] else null,
-            };
+            request.lines[line] = _render.makeRun(
+                @ptrCast(request.text + begin),
+                requesterColour(ib, screen, sdk.intuition.style.STYLE_TextPen),
+                0,
+                @as(i32, @intCast(line)) * pitch,
+                screen.font,
+                if (line + 1 < line_count) &request.lines[line + 1] else null,
+            );
             text_width = @max(text_width, it.IntuiTextLength(&request.lines[line]));
             line += 1;
             begin = at + 1;
@@ -371,7 +372,7 @@ fn fontOf(ib: *IntuitionBase, screen: *Screen) Font {
 }
 
 fn labelWidth(ib: *IntuitionBase, screen: *Screen, label: [*]u8) i32 {
-    const run = IntuiText{ .font = screen.font, .text = @ptrCast(label) };
+    const run = intuition.text.plainRun(@ptrCast(label), screen.font);
     return ib.iface().IntuiTextLength(&run);
 }
 

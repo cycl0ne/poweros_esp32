@@ -17,9 +17,10 @@ const default_pens = @import("../screen/_screen.zig").default_pens;
 
 /// What a RastPort was set to before an image borrowed it.
 ///
-/// The font is in here because an image whose shape is words sets one, and
-/// an image is only passing through: the caller's next line of text would
-/// otherwise come out in a font it never asked for. The fill style for the
+/// The font and the text style are in here because an image whose shape
+/// is words sets them, and an image is only passing through: the caller's
+/// next line of text would otherwise come out in a font it never asked
+/// for. The fill style for the
 /// same reason, and as a copy: the RastPort answers a pointer to its own,
 /// which setting another overwrites.
 pub const Saved = struct {
@@ -31,6 +32,7 @@ pub const Saved = struct {
     filling: bool = false,
     line_width: u32 = 1,
     smooth: u32 = 0,
+    style: u32 = 0,
 };
 
 pub fn save(gb: *GraphicsBase, rp: *graphics.RastPort) Saved {
@@ -44,6 +46,7 @@ pub fn save(gb: *GraphicsBase, rp: *graphics.RastPort) Saved {
         .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) },
         .{ .tag = graphics.RPTAG_LineWidth, .data = @intFromPtr(&s.line_width) },
         .{ .tag = graphics.RPTAG_Smooth, .data = @intFromPtr(&s.smooth) },
+        .{ .tag = graphics.RPTAG_TextStyle, .data = @intFromPtr(&s.style) },
         .{},
     };
     gb.GetRPAttrs(rp, &ask);
@@ -63,6 +66,7 @@ pub fn restore(gb: *GraphicsBase, rp: *graphics.RastPort, s: Saved) void {
         .{ .tag = graphics.RPTAG_FillStyle, .data = if (s.filling) @intFromPtr(&s.fill) else 0 },
         .{ .tag = graphics.RPTAG_LineWidth, .data = s.line_width },
         .{ .tag = graphics.RPTAG_Smooth, .data = s.smooth },
+        .{ .tag = graphics.RPTAG_TextStyle, .data = s.style },
         .{},
     };
     gb.SetRPAttrs(rp, &put);

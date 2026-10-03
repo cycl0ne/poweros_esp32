@@ -58,6 +58,9 @@ const Window = @import("../window/_window.zig").Window;
 ///
 /// EXAMPLES:
 /// ```zig
+/// const body = intuition.text.plainRun("Save the changes?", null);
+/// const yes = intuition.text.plainRun("Save", null);
+/// const no = intuition.text.plainRun("Discard", null);
 /// const save = ib.AutoRequestTagList(window, &[_]TagItem{
 ///     .{ .tag = SYSREQ_Body, .data = @intFromPtr(&body) },
 ///     .{ .tag = SYSREQ_Positive, .data = @intFromPtr(&yes) },

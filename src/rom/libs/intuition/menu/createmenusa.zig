@@ -16,12 +16,13 @@ const ic = intuition.imageclass;
 const Menu = mn.Menu;
 const MenuItem = mn.MenuItem;
 const NewMenu = mn.NewMenu;
-const IntuiText = intuition.IntuiText;
 const Object = intuition.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _menu = @import("_menu.zig");
 const Extra = _menu.Extra;
+const _render = @import("../render/_render.zig");
+const RunTags = _render.RunTags;
 
 /// Right in front of the first title or item: where the allocation starts
 /// and the separators' images, which FreeMenus disposes of.
@@ -69,14 +70,14 @@ fn tally(table: [*]const NewMenu, full: bool) ?Tally {
             if (isBarLabel(nm)) {
                 bars += 1;
             } else if (nm.type & mn.MENU_IMAGE == 0) {
-                bytes += @sizeOf(IntuiText);
-                if (nm.flags & mn.NM_COMMANDSTRING != 0) bytes += @sizeOf(IntuiText);
+                bytes += @sizeOf(RunTags);
+                if (nm.flags & mn.NM_COMMANDSTRING != 0) bytes += @sizeOf(RunTags);
             }
             if (kind == mn.NM_SUB) {
                 // Subitems follow an item or each other, never a title.
                 if (previous == mn.NM_TITLE) return null;
                 // The first of them: room for the mark on its item.
-                if (previous == mn.NM_ITEM) bytes += @sizeOf(IntuiText);
+                if (previous == mn.NM_ITEM) bytes += @sizeOf(RunTags);
             }
         }
         previous = nm.type;
@@ -102,6 +103,7 @@ const Bump = struct {
 /// separator's image could not be made.
 fn fill(ib: *IntuitionBase, table: [*]const NewMenu, bump: *Bump, header: *Header, front_pen: graphics.Pen) ?u32 {
     const it = ib.iface();
+    const ub = ib.utility_base;
     var menu: ?*Menu = null;
     var item: ?*MenuItem = null;
     var sub: ?*MenuItem = null;
@@ -155,10 +157,9 @@ fn fill(ib: *IntuitionBase, table: [*]const NewMenu, bump: *Bump, header: *Heade
                 parent.sub_item = this;
                 // A text item says it has subitems at its right.
                 if (parent.flags & mn.ITEMTEXT != 0) {
-                    const mark = bump.take(IntuiText);
-                    mark.* = .{ .front_pen = front_pen, .draw_mode = graphics.DRMD_JAM1, .top = 1, .text = more_mark };
-                    const run: *IntuiText = @ptrCast(@alignCast(parent.item_fill.?));
-                    run.next = mark;
+                    const mark = bump.take(RunTags);
+                    mark.* = _render.makeRun(more_mark, front_pen, 0, 1, null, null);
+                    _ = _render.setTag(ub, @ptrCast(@alignCast(parent.item_fill.?)), intuition.IT_Next, @intFromPtr(mark));
                 }
             }
             sub = this;
@@ -198,15 +199,14 @@ fn fill(ib: *IntuitionBase, table: [*]const NewMenu, bump: *Bump, header: *Heade
             this.item_fill = image;
             this.flags |= mn.HIGHCOMP;
         } else {
-            const run = bump.take(IntuiText);
-            run.* = .{ .front_pen = front_pen, .draw_mode = graphics.DRMD_JAM1, .top = 1, .text = nm.label };
+            const run = bump.take(RunTags);
+            run.* = _render.makeRun(nm.label, front_pen, 0, 1, null, null);
             this.item_fill = run;
             this.flags |= mn.ITEMTEXT | mn.HIGHCOMP;
             if (words) {
-                const right = bump.take(IntuiText);
-                right.* = run.*;
-                right.text = nm.comm_key;
-                run.next = right;
+                const right = bump.take(RunTags);
+                right.* = _render.makeRun(nm.comm_key, front_pen, 0, 1, null, null);
+                _ = _render.setTag(ub, run, intuition.IT_Next, @intFromPtr(right));
             }
         }
     }
@@ -241,11 +241,13 @@ fn fill(ib: *IntuitionBase, table: [*]const NewMenu, bump: *Bump, header: *Heade
 /// without them - or 0.
 ///
 /// BEHAVIOR:
-/// An item's words are an IntuiText of their own, one row down. A key in
-/// `comm_key` makes it `COMMSEQ`; with `NM_COMMANDSTRING` the words in
-/// `comm_key` are a second IntuiText, put at the item's right by the
-/// layout. The first subitem of a text item gives that item a second
-/// IntuiText, "»", at its right. `NM_BARLABEL` is a separator: a
+/// An item's words are an IntuiText of their own, one row down: a tag
+/// list with every `IT_` tag the layout fills in - `IT_Left`,
+/// `IT_FrontPen`, `IT_Font` - in it, and writable. A key in `comm_key`
+/// makes it `COMMSEQ`; with `NM_COMMANDSTRING` the words in `comm_key`
+/// are a second run, linked by `IT_Next` and put at the item's right by
+/// the layout. The first subitem of a text item gives that item a second
+/// run, "»", at its right. `NM_BARLABEL` is a separator: a
 /// fillrectclass rule two rows high, neither picked nor highlighted.
 /// `IM_ITEM`'s image object is the item's, moved down a row; it is not
 /// copied. `NM_MENUDISABLED` and `NM_ITEMDISABLED` make it disabled; the
@@ -376,9 +378,12 @@ const TestScreen = struct {
     }
 };
 
-fn textOf(item: *const MenuItem) [*:0]const u8 {
-    const run: *const IntuiText = @ptrCast(@alignCast(item.item_fill.?));
-    return run.text.?;
+fn runOf(ib: *IntuitionBase, fill_or_next: ?*const anyopaque) _render.Run {
+    return _render.runOf(ib.utility_base, @ptrCast(@alignCast(fill_or_next.?)));
+}
+
+fn textOf(ib: *IntuitionBase, item: *const MenuItem) [*:0]const u8 {
+    return runOf(ib, item.item_fill).text.?;
 }
 
 var marker: u8 = 0;
@@ -415,29 +420,28 @@ test "CreateMenusA and LayoutMenusA: titles, items, subitems, separators, shortc
     try testing.expect(options.next_menu == null);
 
     const open = strip.first_item.?;
-    try testing.expectEqualStrings("Open...", std.mem.span(textOf(open)));
+    try testing.expectEqualStrings("Open...", std.mem.span(textOf(ib, open)));
     try testing.expect(open.flags & mn.COMMSEQ != 0 and open.flags & mn.ITEMENABLED != 0 and open.flags & mn.ITEMTEXT != 0);
     try testing.expectEqual(@as(u8, 'O'), open.command);
     try testing.expectEqual(@as(?*anyopaque, &marker), mn.GTMENUITEM_USERDATA(open));
     // An item with subitems shows the mark at its right.
     const export_item = open.next_item.?;
-    const export_run: *const IntuiText = @ptrCast(@alignCast(export_item.item_fill.?));
-    try testing.expectEqualStrings("\xbb", std.mem.span(export_run.next.?.text.?));
-    try testing.expectEqualStrings("Text", std.mem.span(textOf(export_item.sub_item.?)));
-    try testing.expectEqualStrings("Picture", std.mem.span(textOf(export_item.sub_item.?.next_item.?)));
+    const export_tags: [*]const TagItem = @ptrCast(@alignCast(export_item.item_fill.?));
+    try testing.expectEqualStrings("\xbb", std.mem.span(runOf(ib, runOf(ib, export_tags).next).text.?));
+    try testing.expectEqualStrings("Text", std.mem.span(textOf(ib, export_item.sub_item.?)));
+    try testing.expectEqualStrings("Picture", std.mem.span(textOf(ib, export_item.sub_item.?.next_item.?)));
     // A separator is an image, neither picked nor highlighted; the entry
     // marked to be skipped is not there.
     const bar = export_item.next_item.?;
     try testing.expect(bar.flags & mn.ITEMTEXT == 0 and bar.flags & mn.ITEMENABLED == 0);
     try testing.expectEqual(mn.HIGHNONE, bar.flags & mn.HIGHFLAGS);
-    try testing.expectEqualStrings("Quit", std.mem.span(textOf(bar.next_item.?)));
+    try testing.expectEqualStrings("Quit", std.mem.span(textOf(ib, bar.next_item.?)));
     // A check item as the table has it; words at the right, disabled.
     const grid = options.first_item.?;
     try testing.expect(grid.flags & (mn.CHECKIT | mn.CHECKED | mn.MENUTOGGLE) == mn.CHECKIT | mn.CHECKED | mn.MENUTOGGLE);
     const size = grid.next_item.?;
     try testing.expect(size.flags & mn.COMMSEQ == 0 and size.flags & mn.ITEMENABLED == 0);
-    const size_run: *const IntuiText = @ptrCast(@alignCast(size.item_fill.?));
-    try testing.expectEqualStrings("Ctrl-S", std.mem.span(size_run.next.?.text.?));
+    try testing.expectEqualStrings("Ctrl-S", std.mem.span(runOf(ib, runOf(ib, size.item_fill).next).text.?));
 
     // Laid out on a screen 640 by 200 with the 8-row font.
     var ts: TestScreen = undefined;
@@ -453,13 +457,15 @@ test "CreateMenusA and LayoutMenusA: titles, items, subitems, separators, shortc
     try testing.expectEqual(@as(i32, 24), bar.next_item.?.top);
     // One width for the column: room for the words and a shortcut.
     try testing.expectEqual(open.width, bar.next_item.?.width);
-    try testing.expect(open.width >= it.IntuiTextLength(export_run) + 23);
-    // The colour is the bar's; a check item's words start past the mark.
-    try testing.expectEqual(_screen.default_pens[sc.BARDETAILPEN], export_run.front_pen);
-    const grid_run: *const IntuiText = @ptrCast(@alignCast(grid.item_fill.?));
-    try testing.expectEqual(@as(i32, 2 + 15), grid_run.left);
+    try testing.expect(open.width >= it.IntuiTextLength(export_tags) + 23);
+    // The colour is the bar's, the font the screen's; a check item's
+    // words start past the mark.
+    const export_run = runOf(ib, export_tags);
+    try testing.expectEqual(_screen.default_pens[sc.BARDETAILPEN], export_run.front_pen.?);
+    try testing.expectEqual(ts.font, export_run.font.?);
+    try testing.expectEqual(@as(i32, 2 + 15), runOf(ib, grid.item_fill).left);
     // The mark at the item's right edge.
-    try testing.expect(export_run.next.?.left > export_run.left);
+    try testing.expect(runOf(ib, export_run.next).left > export_run.left);
     // Subitems three quarters across their item, a row above it.
     const text_item = export_item.sub_item.?;
     try testing.expectEqual(export_item.width - (export_item.width >> 2), text_item.left);
@@ -530,7 +536,7 @@ test "CreateMenusA: what is not a menu, and what is too long" {
     try testing.expectEqual(mn.GTMENU_INVALID, err);
     const fragment = it.CreateMenusA(&items, &tags).?;
     const only: *MenuItem = @ptrCast(@alignCast(fragment));
-    try testing.expectEqualStrings("Only", std.mem.span(textOf(only)));
+    try testing.expectEqualStrings("Only", std.mem.span(textOf(ib, only)));
     it.FreeMenus(fragment);
 
     // More titles than menu numbers name: made without the rest.

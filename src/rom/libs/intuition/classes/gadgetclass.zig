@@ -61,10 +61,10 @@ pub const Data = extern struct {
     image: ?*Object = null,
     /// What it shows while selected, for `GFLG_GADGHIMAGE`.
     select_render: ?*Object = null,
-    /// Its label: one of the three at a time - a string, a chain of
-    /// IntuiTexts, or an image.
+    /// Its label: one of the three at a time - a string, an IntuiText (a
+    /// tag list of `IT_` tags, and the runs it links), or an image.
     text: ?[*:0]const u8 = null,
-    itext: ?*const intuition.IntuiText = null,
+    itext: ?[*]const TagItem = null,
     label_image: ?*Object = null,
     /// `GA_Key`: the character that works it from the keyboard, in lower
     /// case; 0 for none.
@@ -171,7 +171,7 @@ pub fn drawHighlightBox(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPo
 }
 
 /// How big a gadget's label is: its string in the RastPort's font, its
-/// IntuiTexts, or its image; zero without one.
+/// IntuiText's first run, or its image; zero without one.
 pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, font: ?*graphics.TextFont) struct { width: i32, height: i32 } {
     const it = ib.iface();
     if (g.label_image) |image| {
@@ -194,8 +194,8 @@ pub fn labelSize(ib: *IntuitionBase, g: *const Data, rp: ?*graphics.RastPort, fo
     if (g.itext) |run| return .{ .width = it.IntuiTextLength(run), .height = @intCast(height) };
     if (g.text) |text| {
         // Measured as it is drawn: without the `_` that marks its key.
-        const run = intuition.IntuiText{ .font = font, .text = text };
-        const mark = intuition.IntuiText{ .font = font, .text = "_" };
+        const run = intuition.text.plainRun(text, font);
+        const mark = intuition.text.plainRun("_", font);
         const whole: i32 = if (rp) |port| gb.TextLength(port, text, textLen(text)) else it.IntuiTextLength(&run);
         const width = if (gc.labelMark(text) == null)
             whole
@@ -263,8 +263,8 @@ fn textLen(s: [*:0]const u8) u32 {
 }
 
 /// The label in the middle of the box: a string in the text pen - the
-/// fill-text pen while selected - IntuiTexts in their own pens, an image
-/// in the gadget's state.
+/// fill-text pen while selected - an IntuiText in what its runs name, an
+/// image in the gadget's state.
 pub fn drawLabel(ib: *IntuitionBase, g: *const Data, rp: *graphics.RastPort, left: i32, top: i32, width: i32, height: i32, dri: *intuition.DrawInfo, state: u32) void {
     const it = ib.iface();
     const gb = ib.graphics_base;

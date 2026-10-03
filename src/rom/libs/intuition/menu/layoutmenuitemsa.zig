@@ -43,8 +43,9 @@ const _menu = @import("_menu.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The items are still the caller's; their places and the texts' fonts
-/// and colours are written.
+/// The items are still the caller's. Their places are written, and into
+/// each text's runs their `IT_Left`, `IT_FrontPen` and `IT_Font`, as
+/// `LayoutMenusA` does.
 ///
 /// BUGS:
 /// None known.

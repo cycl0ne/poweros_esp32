@@ -82,9 +82,11 @@ pub const LIBRARY_VERSION = 0;
 /// GetDefPrefs and SetPrefs take tag lists (IPREFS_), the fonts, the
 /// pens and the style among them. 29: a screen's place on its display -
 /// MoveScreen, ScreenPositionTagList, SA_Top, SA_Draggable, SA_Exclusive -
-/// and screens dragged by their bar.
-pub const LIBRARY_REVISION = 29;
-const BUILD_DATE = "03.10.2026";
+/// and screens dragged by their bar. 30: an IntuiText is a tag list of
+/// IT_ tags - PrintIText, IntuiTextLength, itexticlass, GA_IntuiText,
+/// menu items, SYSREQ_ - with a style for each run (IT_Style).
+pub const LIBRARY_REVISION = 30;
+const BUILD_DATE = "04.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

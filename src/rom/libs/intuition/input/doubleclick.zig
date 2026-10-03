@@ -21,8 +21,10 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// True when the second is within the double-click time of the first.
 ///
 /// BEHAVIOR:
-/// The difference is compared with the double-click time, a second and a
-/// half. A second moment before the first is not a double-click.
+/// The difference is compared with the double-click time: the
+/// preference `IPREFS_DoubleClick`, which `SetPrefs` sets and `GetPrefs`
+/// reads, a second and a half until it is set. A second moment before
+/// the first is not a double-click.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -38,10 +40,11 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// window's double-click requester.
 ///
 /// BUGS:
-/// The time cannot be changed yet: there is no preference for it.
+/// None known.
 ///
 /// SEE ALSO:
-/// `SetDMRequest`, `sdk.intuition.windows.IntuiMessage`
+/// `SetPrefs`, `GetPrefs`, `SetDMRequest`,
+/// `sdk.intuition.windows.IntuiMessage`
 ///
 /// EXAMPLES:
 /// ```zig

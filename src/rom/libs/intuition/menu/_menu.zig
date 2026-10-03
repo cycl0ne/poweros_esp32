@@ -19,7 +19,6 @@ const mn = intuition.menus;
 const ic = intuition.imageclass;
 const Menu = mn.Menu;
 const MenuItem = mn.MenuItem;
-const IntuiText = intuition.IntuiText;
 const Object = intuition.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
@@ -27,6 +26,9 @@ const _window = @import("../window/_window.zig");
 const Window = _window.Window;
 const _screen = @import("../screen/_screen.zig");
 const sc = intuition.screens;
+const _render = @import("../render/_render.zig");
+const runOf = _render.runOf;
+const setTag = _render.setTag;
 
 /// A panel's trim: how far its edge is from what its items take up,
 /// across and down.
@@ -171,11 +173,15 @@ pub fn metric(ib: *IntuitionBase, w: *Window, font: ?*graphics.TextFont) Metric 
     return .{ .height = @intCast(height), .baseline = @intCast(baseline) };
 }
 
-/// How wide a run is, in its own font or the screen's.
-pub fn textWidth(ib: *IntuitionBase, w: *Window, run: *const IntuiText) i32 {
-    var measured = run.*;
-    measured.font = run.font orelse w.screen.font;
-    measured.next = null;
+/// How wide a run is, in its own font or the screen's, and its style.
+pub fn textWidth(ib: *IntuitionBase, w: *Window, tags: [*]const TagItem) i32 {
+    const run = runOf(ib.utility_base, tags);
+    const measured = [_]TagItem{
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(run.text) },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(run.font orelse w.screen.font) },
+        .{ .tag = intuition.IT_Style, .data = run.style orelse graphics.FS_NORMAL },
+        .{},
+    };
     return ib.iface().IntuiTextLength(&measured);
 }
 
@@ -217,8 +223,9 @@ fn itemExtent(ib: *IntuitionBase, w: *Window, item: *const MenuItem) Box {
         const given = fill orelse continue;
         var shown: Box = undefined;
         if (item.flags & mn.ITEMTEXT != 0) {
-            const run: *const IntuiText = @ptrCast(@alignCast(given));
-            shown = Box.of(run.left, run.top, textWidth(ib, w, run), metric(ib, w, run.font).height);
+            const tags: [*]const TagItem = @ptrCast(@alignCast(given));
+            const run = runOf(ib.utility_base, tags);
+            shown = Box.of(run.left, run.top, textWidth(ib, w, tags), metric(ib, w, run.font).height);
         } else {
             shown = imageBox(ib, @ptrCast(given));
         }
@@ -322,8 +329,8 @@ pub const Layout = struct {
         };
     }
 
-    fn textWidth(l: *const Layout, text: [*:0]const u8) i32 {
-        const run = IntuiText{ .font = l.font, .text = text };
+    fn textWidth(l: *const Layout, text: ?[*:0]const u8) i32 {
+        const run = intuition.text.plainRun(text orelse return 0, l.font);
         return l.ib.iface().IntuiTextLength(&run);
     }
 };
@@ -335,10 +342,11 @@ pub fn sizeItems(l: *const Layout, first: ?*MenuItem) void {
     while (item) |entry| : (item = entry.next_item) {
         if (entry.flags & mn.ITEMTEXT != 0) {
             entry.height = l.item_height;
-            var run: ?*IntuiText = @ptrCast(@alignCast(entry.item_fill));
-            while (run) |each| : (run = each.next) {
-                each.font = l.font;
-                each.front_pen = l.front_pen;
+            const ub = l.ib.utility_base;
+            var run: ?[*]const TagItem = @ptrCast(@alignCast(entry.item_fill));
+            while (run) |each| : (run = runOf(ub, each).next) {
+                _ = setTag(ub, each, intuition.IT_Font, @intFromPtr(l.font));
+                _ = setTag(ub, each, intuition.IT_FrontPen, l.front_pen);
             }
         } else if (isBar(entry)) {
             entry.height = 6;
@@ -386,14 +394,15 @@ fn aboutColumn(l: *const Layout, first: *MenuItem, max_height: i32) Column {
             const chars = [2:0]u8{ entry.command, 0 };
             right_trim = @max(right_trim, l.textWidth(&chars) + l.comm_width + l.font_x);
         } else if (entry.flags & mn.ITEMTEXT != 0) {
-            const run: *const IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
-            if (run.next) |more| right_trim = @max(right_trim, l.textWidth(more.text.?) + l.font_x);
+            const run = runOf(l.ib.utility_base, @ptrCast(@alignCast(entry.item_fill.?)));
+            if (run.next) |more| right_trim = @max(right_trim, l.textWidth(runOf(l.ib.utility_base, more).text) + l.font_x);
         }
         const check: i32 = if (entry.flags & mn.CHECKIT != 0) l.check_width else 0;
         if (entry.flags & mn.ITEMTEXT != 0) {
-            const run: *IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
-            run.left = 2 + check;
-            longest = @max(longest, run.left + l.textWidth(run.text.?));
+            const tags: [*]const TagItem = @ptrCast(@alignCast(entry.item_fill.?));
+            const left = 2 + check;
+            _ = setTag(l.ib.utility_base, tags, intuition.IT_Left, @bitCast(@as(isize, left)));
+            longest = @max(longest, left + l.textWidth(runOf(l.ib.utility_base, tags).text));
         } else if (!isBar(entry)) {
             const image: *Object = @ptrCast(entry.item_fill.?);
             const left: i32 = @as(i32, @intCast(extraOf(MenuItem, entry).image_left)) + 2 + check;
@@ -461,8 +470,12 @@ pub fn placeItems(l: *const Layout, first: ?*MenuItem, left_start: i32, top_star
         entry.left = left_offset;
         entry.width = column.width;
         if (entry.flags & mn.ITEMTEXT != 0) {
-            const run: *IntuiText = @ptrCast(@alignCast(entry.item_fill.?));
-            if (run.next) |more| more.left = column.width - 2 - l.textWidth(more.text.?);
+            const ub = l.ib.utility_base;
+            const run = runOf(ub, @ptrCast(@alignCast(entry.item_fill.?)));
+            if (run.next) |more| {
+                const left = column.width - 2 - l.textWidth(runOf(ub, more).text);
+                _ = setTag(ub, more, intuition.IT_Left, @bitCast(@as(isize, left)));
+            }
         } else if (isBar(entry)) {
             const size = [_]TagItem{ .{ .tag = ic.IA_Width, .data = @intCast(@max(column.width - 4, 1)) }, .{} };
             _ = l.ib.iface().SetAttrsTagList(@ptrCast(entry.item_fill), &size);

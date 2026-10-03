@@ -410,13 +410,13 @@ fn lvoObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*intuition.GadgetInfo) cal
 fn lvoReleaseGIRPort(ib: *IntuitionBase, rp: ?*graphics.RastPort) callconv(.c) void {
     ReleaseGIRPort(ib, rp);
 }
-fn lvoPrintIText(ib: *IntuitionBase, rp: *graphics.RastPort, itext: ?*const intuition.IntuiText, left: i32, top: i32) callconv(.c) void {
+fn lvoPrintIText(ib: *IntuitionBase, rp: *graphics.RastPort, itext: ?[*]const TagItem, left: i32, top: i32) callconv(.c) void {
     PrintIText(ib, rp, itext, left, top);
 }
 fn lvoDrawBorder(ib: *IntuitionBase, rp: *graphics.RastPort, border: ?*const intuition.Border, left: i32, top: i32) callconv(.c) void {
     DrawBorder(ib, rp, border, left, top);
 }
-fn lvoIntuiTextLength(ib: *IntuitionBase, itext: *const intuition.IntuiText) callconv(.c) i32 {
+fn lvoIntuiTextLength(ib: *IntuitionBase, itext: ?[*]const TagItem) callconv(.c) i32 {
     return IntuiTextLength(ib, itext);
 }
 fn lvoLockIBase(ib: *IntuitionBase, lock_number: u32) callconv(.c) u32 {

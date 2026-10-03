@@ -399,16 +399,16 @@ pub const Labels = struct {
 
     /// How wide a piece of text is in the layout's font.
     fn textWidth(labels: *const Labels, ib: *IntuitionBase, text: [*:0]const u8) i32 {
-        const run = intuition.IntuiText{ .font = labels.measure.font, .text = text };
+        const run = intuition.text.plainRun(text, labels.measure.font);
         return ib.iface().IntuiTextLength(&run);
     }
 
     pub fn width(labels: *const Labels, ib: *IntuitionBase, record: *const Child) i32 {
         const text = record.label orelse return 0;
-        const run = intuition.IntuiText{ .font = labels.measure.font, .text = text };
+        const run = intuition.text.plainRun(text, labels.measure.font);
         // Measured as it is drawn: without the `_` that marks its key.
         if (gc.labelMark(text) != null) {
-            const mark = intuition.IntuiText{ .font = labels.measure.font, .text = "_" };
+            const mark = intuition.text.plainRun("_", labels.measure.font);
             return ib.iface().IntuiTextLength(&run) - ib.iface().IntuiTextLength(&mark);
         }
         return ib.iface().IntuiTextLength(&run);

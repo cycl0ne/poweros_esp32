@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 //! itexticlass: an image whose shape is words.
 //!
-//! `IA_Data` is an `IntuiText`, and the image draws it: every run linked
-//! after it too, each at the image's corner plus the run's own offset and
-//! in its font when it names one, and all of them in the image's `IA_FGPen`
-//! in JAM1 - the runs' own pens and modes are passed over, so a label takes
-//! its colour from the image it is. So a label is an image like any other:
-//! a gadget's `GA_Image`, or drawn with `DrawImage` beside something else.
+//! `IA_Data` is an IntuiText - a tag list of `IT_` tags - and the image
+//! draws it: every run linked after it too, each at the image's corner
+//! plus the run's own offset, in its font and style when it names them,
+//! and all of them in the image's `IA_FGPen` in JAM1 - the runs' own pens
+//! and modes are passed over, so a label takes its colour from the image
+//! it is. So a label is an image like any other: a gadget's `GA_Image`, or
+//! drawn with `DrawImage` beside something else.
 //!
-//! Without an `IntuiText` it draws nothing. `IM_ERASE` puts `IA_BGPen`
+//! Without an IntuiText it draws nothing. `IM_ERASE` puts `IA_BGPen`
 //! over the box, since text has no shape to erase on its own.
 
 const sdk = @import("sdk");
@@ -21,7 +22,6 @@ const ic = intuition.imageclass;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
-const IntuiText = intuition.IntuiText;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const d = @import("draw.zig");
 const printRuns = @import("../render/_render.zig").printRuns;
@@ -42,7 +42,7 @@ pub fn make(ib: *IntuitionBase) ?*Class {
 
 fn draw(ib: *IntuitionBase, cl: *Class, o: *Object, msg: *ic.ImpDraw) void {
     const image = imageOf(cl, o);
-    const text: *const IntuiText = @ptrCast(@alignCast(image.data orelse return));
+    const text: [*]const TagItem = @ptrCast(@alignCast(image.data orelse return));
     printRuns(ib, msg.rast_port, text, msg.offset.x + image.left, msg.offset.y + image.top, image.fg_pen);
 }
 

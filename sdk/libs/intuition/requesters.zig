@@ -109,13 +109,14 @@ pub const REQACTIVE: u32 = 0x2000;
 
 /// The tags AutoRequestTagList and BuildSysRequestTagList take.
 pub const SYSREQ_Dummy = utility.TAG_USER + 0x3B000;
-/// `*const IntuiText`, required: what it says, each run of the chain a
-/// line.
+/// `[*]const TagItem`, an IntuiText, required: what it says, each run of
+/// the chain a line.
 pub const SYSREQ_Body = SYSREQ_Dummy + 0x01;
-/// `*const IntuiText`: the left button's text - yes, retry, go on. None
-/// without it.
+/// `[*]const TagItem`, an IntuiText: the left button's text - yes, retry,
+/// go on. None without it.
 pub const SYSREQ_Positive = SYSREQ_Dummy + 0x02;
-/// `*const IntuiText`, required: the right button's text - no, cancel.
+/// `[*]const TagItem`, an IntuiText, required: the right button's text -
+/// no, cancel.
 pub const SYSREQ_Negative = SYSREQ_Dummy + 0x03;
 /// BuildSysRequestTagList: IDCMP classes of the caller's own that answer
 /// it too, as SysReqHandler's SYSREQ_IDCMP.

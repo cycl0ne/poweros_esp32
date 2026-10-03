@@ -2912,9 +2912,10 @@ test "the rest of the classes: a box, words, a framed button and a group" {
     }).?;
     // itexticlass: the same, but its shape is words, in the image's pen:
     // the run's own is passed over.
-    var words = intuition.IntuiText{
-        .front_pen = graphics.penRGB(255, 0, 0),
-        .text = "Hi",
+    const words = [_]TagItem{
+        .{ .tag = intuition.IT_FrontPen, .data = graphics.penRGB(255, 0, 0) },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr("Hi") },
+        .{},
     };
     const label = it.NewObjectTagList(null, classusr.ITEXTICLASS, &[_]TagItem{
         .{ .tag = ic.IA_Width, .data = 20 },
@@ -6687,7 +6688,7 @@ fn rpAttr(ib: *IntuitionBase, rp: *graphics.RastPort, tag: utility.Tag) usize {
     return value;
 }
 
-test "PrintIText: each run in its own pens and place, and the RastPort left as it was" {
+test "PrintIText: each run in what it names and the RastPort's own for the rest, the RastPort left as it was" {
     const ib = try setUp();
     defer kexec.deinit();
     const gb = ib.graphics_base;
@@ -6703,20 +6704,22 @@ test "PrintIText: each run in its own pens and place, and the RastPort left as i
     // with its top left where the run says, whatever the baseline.
     const red = graphics.penRGB(255, 0, 0);
     const blue = graphics.penRGB(0, 0, 255);
-    var second = intuition.IntuiText{
-        .back_pen = blue,
-        .draw_mode = graphics.DRMD_JAM2,
-        .left = 20,
-        .top = 10,
-        .font = pospaz,
-        .text = " ",
+    const second = [_]TagItem{
+        .{ .tag = intuition.IT_BackPen, .data = blue },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Left, .data = 20 },
+        .{ .tag = intuition.IT_Top, .data = 10 },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(pospaz) },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") },
+        .{},
     };
-    var first = intuition.IntuiText{
-        .back_pen = red,
-        .draw_mode = graphics.DRMD_JAM2,
-        .font = pospaz,
-        .text = " ",
-        .next = &second,
+    const first = [_]TagItem{
+        .{ .tag = intuition.IT_BackPen, .data = red },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(pospaz) },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&second) },
+        .{},
     };
     it.PrintIText(rp, &first, 4, 2);
     try testing.expectEqual(red, canvas.px(4, 2));
@@ -6736,33 +6739,93 @@ test "PrintIText: each run in its own pens and place, and the RastPort left as i
     gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Cursor, .data = @intFromPtr(&cursor) }, .{} });
     try testing.expectEqual(@as(i32, 4 + 20 + 8), cursor.x);
 
-    // Null draws nothing, and neither does a run with no text.
+    // Null draws nothing, and neither does a run with no text; the run
+    // after it is still drawn.
     it.PrintIText(rp, null, 0, 0);
-    var empty = intuition.IntuiText{ .back_pen = red, .draw_mode = graphics.DRMD_JAM2, .font = pospaz };
-    it.PrintIText(rp, &empty, 40, 40);
-    try testing.expectEqual(@as(u32, 0), canvas.px(40, 40));
+    const after_empty = [_]TagItem{
+        .{ .tag = intuition.IT_BackPen, .data = blue },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(pospaz) },
+        .{ .tag = intuition.IT_Left, .data = 8 },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") },
+        .{},
+    };
+    const empty = [_]TagItem{
+        .{ .tag = intuition.IT_BackPen, .data = red },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Font, .data = @intFromPtr(pospaz) },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&after_empty) },
+        .{},
+    };
+    it.PrintIText(rp, &empty, 24, 24);
+    try testing.expectEqual(@as(u32, 0), canvas.px(24, 24));
+    try testing.expectEqual(blue, canvas.px(32, 24));
+
+    // What a run does not name is the RastPort's: a space in the caller's
+    // own back pen and mode. And nothing carries over from the run before:
+    // the first run is JAM2 in red, the second names no mode and is drawn
+    // in the caller's JAM1, so its space leaves the canvas alone.
+    gb.SetRPAttrs(rp, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_BPen, .data = green },
+        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM2 },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(pospaz) },
+        .{},
+    });
+    const own = [_]TagItem{ .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") }, .{} };
+    it.PrintIText(rp, &own, 4, 30);
+    try testing.expectEqual(green, canvas.px(4, 30));
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
+    const plain = [_]TagItem{
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") },
+        .{ .tag = intuition.IT_Left, .data = 16 },
+        .{},
+    };
+    const jammed = [_]TagItem{
+        .{ .tag = intuition.IT_BackPen, .data = red },
+        .{ .tag = intuition.IT_DrawMode, .data = graphics.DRMD_JAM2 },
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr(" ") },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&plain) },
+        .{},
+    };
+    it.PrintIText(rp, &jammed, 4, 40);
+    try testing.expectEqual(red, canvas.px(4, 40));
+    try testing.expectEqual(@as(u32, 0), canvas.px(20, 40));
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = 0 }, .{} });
 
     gb.CloseFont(pospaz);
     gb.FreeRastPort(rp);
     try tearDown(ib);
 }
 
-test "IntuiTextLength: one run, in its font or the screen's default" {
+test "IntuiTextLength: one run, in its font and style or the screen's default" {
     const ib = try setUp();
     defer kexec.deinit();
     const it = ib.iface();
 
-    var three = intuition.IntuiText{ .text = "abc" };
+    const three = intuition.text.plainRun("abc", null);
     try testing.expectEqual(@as(i32, 3 * 8), it.IntuiTextLength(&three));
 
     // The runs after it are not added: each is drawn where it says.
-    var after = intuition.IntuiText{ .text = "defgh" };
-    three.next = &after;
-    try testing.expectEqual(@as(i32, 3 * 8), it.IntuiTextLength(&three));
+    const after = intuition.text.plainRun("defgh", null);
+    const linked = [_]TagItem{
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr("abc") },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&after) },
+        .{},
+    };
+    try testing.expectEqual(@as(i32, 3 * 8), it.IntuiTextLength(&linked));
 
-    var none = intuition.IntuiText{};
+    // Bold takes a pixel more for every letter.
+    const bold = [_]TagItem{
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr("abc") },
+        .{ .tag = intuition.IT_Style, .data = graphics.FSF_BOLD },
+        .{},
+    };
+    try testing.expectEqual(@as(i32, 3 * 9), it.IntuiTextLength(&bold));
+
+    try testing.expectEqual(@as(i32, 0), it.IntuiTextLength(null));
+    const none = [_]TagItem{.{}};
     try testing.expectEqual(@as(i32, 0), it.IntuiTextLength(&none));
-    var empty = intuition.IntuiText{ .text = "" };
+    const empty = intuition.text.plainRun("", null);
     try testing.expectEqual(@as(i32, 0), it.IntuiTextLength(&empty));
 
     try tearDown(ib);
@@ -7078,7 +7141,7 @@ test "an easy requester: its buttons numbered and spread, answered by a button a
     const w: *_window.Window = @ptrCast(@alignCast(req));
     const request: *@import("request/_request.zig").Request = @ptrCast(@alignCast(w.request.?));
 
-    try testing.expectEqualStrings("a", std.mem.span(request.lines[0].text.?));
+    try testing.expectEqualStrings("a", std.mem.span(lineText(ib, request, 0)));
     try testing.expectEqual(@as(u32, 2), request.button_count);
     const yes = request.buttons[0].?;
     const no = request.buttons[1].?;
@@ -7140,9 +7203,9 @@ test "an easy requester: formatted and then split into lines, a single button ce
     const request: *@import("request/_request.zig").Request = @ptrCast(@alignCast(w.request.?));
 
     try testing.expectEqual(@as(u32, 2), request.line_count);
-    try testing.expectEqualStrings("a", std.mem.span(request.lines[0].text.?));
-    try testing.expectEqualStrings("b", std.mem.span(request.lines[1].text.?));
-    try testing.expectEqual(&request.lines[1], request.lines[0].next.?);
+    try testing.expectEqualStrings("a", std.mem.span(lineText(ib, request, 0)));
+    try testing.expectEqualStrings("b", std.mem.span(lineText(ib, request, 1)));
+    try testing.expectEqual(@as(?[*]const TagItem, &request.lines[1]), @import("render/_render.zig").runOf(ib.utility_base, &request.lines[0]).next);
     try testing.expectEqual(@as(u32, 1), request.button_count);
     const ok = request.buttons[0].?;
     try testing.expectEqual(@as(usize, 0), getAttr(ib, ok, gc.GA_ID));
@@ -7377,7 +7440,7 @@ test "input: the menu button is the window's with WA_RMBTrap, let go always; the
 /// - "Opts" at 30, 30 wide, its items from (35, 11): One (0, 0), toggling,
 ///   and Two (0, 10), each checkable and each ruling the other out.
 const TestMenus = struct {
-    texts: [7]intuition.IntuiText,
+    texts: [7][2]TagItem,
     items: [7]intuition.MenuItem,
     menus: [2]intuition.Menu,
 
@@ -7392,7 +7455,7 @@ const TestMenus = struct {
 
     fn make(self: *TestMenus) void {
         const words = [_][*:0]const u8{ "Open", "Save", "More", "A", "B", "One", "Two" };
-        for (&self.texts, words) |*text, word| text.* = .{ .text = word };
+        for (&self.texts, words) |*text, word| text.* = .{ .{ .tag = intuition.IT_Text, .data = @intFromPtr(word) }, .{} };
         const boxes = [_][4]i32{
             .{ 0, 0, 40, 10 },  .{ 0, 10, 40, 10 },  .{ 0, 20, 40, 10 },
             .{ 30, 0, 20, 10 }, .{ 30, 10, 20, 10 }, .{ 0, 0, 30, 10 },
@@ -8172,6 +8235,11 @@ test "requesters: a double-click of the menu button puts up the double-click req
 
 /// A system requester's lines and buttons, what BuildSysRequestTagList makes of
 /// the texts.
+/// A requester's line `line`, its words.
+fn lineText(ib: *IntuitionBase, request: *const @import("request/_request.zig").Request, line: usize) [*:0]const u8 {
+    return @import("render/_render.zig").runOf(ib.utility_base, &request.lines[line]).text.?;
+}
+
 fn sysRequestOf(req: *intuition.Window) *@import("request/_request.zig").Request {
     const w: *_window.Window = @ptrCast(@alignCast(req));
     return @ptrCast(@alignCast(w.request.?));
@@ -8184,9 +8252,13 @@ test "BuildSysRequestTagList: a line a run of the body" {
     // Tall enough for two lines and a button under them.
     const display = try Display.sized(ib, 96, 85, .rgb565);
 
-    var second = intuition.IntuiText{ .text = "b" };
-    const body = intuition.IntuiText{ .text = "a", .next = &second };
-    const no = intuition.IntuiText{ .text = "N" };
+    const second = intuition.text.plainRun("b", null);
+    const body = [_]TagItem{
+        .{ .tag = intuition.IT_Text, .data = @intFromPtr("a") },
+        .{ .tag = intuition.IT_Next, .data = @intFromPtr(&second) },
+        .{},
+    };
+    const no = intuition.text.plainRun("N", null);
     const req = it.BuildSysRequestTagList(null, &[_]TagItem{
         .{ .tag = intuition.requesters.SYSREQ_Body, .data = @intFromPtr(&body) },
         .{ .tag = intuition.requesters.SYSREQ_Negative, .data = @intFromPtr(&no) },
@@ -8194,8 +8266,8 @@ test "BuildSysRequestTagList: a line a run of the body" {
     }).?;
     const request = sysRequestOf(req);
     try testing.expectEqual(@as(u32, 2), request.line_count);
-    try testing.expectEqualStrings("a", std.mem.span(request.lines[0].text.?));
-    try testing.expectEqualStrings("b", std.mem.span(request.lines[1].text.?));
+    try testing.expectEqualStrings("a", std.mem.span(lineText(ib, request, 0)));
+    try testing.expectEqualStrings("b", std.mem.span(lineText(ib, request, 1)));
     try testing.expectEqual(@as(u32, 1), request.button_count);
     it.FreeSysRequest(req);
 
@@ -8215,9 +8287,9 @@ test "BuildSysRequestTagList: the left button 1, the right 0, the words taken as
     // for two buttons.
     const display = try Display.sized(ib, 128, 60, .rgb565);
 
-    const body = intuition.IntuiText{ .text = "b%s" };
-    const yes = intuition.IntuiText{ .text = "Y" };
-    const no = intuition.IntuiText{ .text = "N" };
+    const body = intuition.text.plainRun("b%s", null);
+    const yes = intuition.text.plainRun("Y", null);
+    const no = intuition.text.plainRun("N", null);
     const req = it.BuildSysRequestTagList(null, &[_]TagItem{
         .{ .tag = intuition.requesters.SYSREQ_Body, .data = @intFromPtr(&body) },
         .{ .tag = intuition.requesters.SYSREQ_Positive, .data = @intFromPtr(&yes) },
@@ -8230,7 +8302,7 @@ test "BuildSysRequestTagList: the left button 1, the right 0, the words taken as
         .{},
     }) == null);
     const request = sysRequestOf(req);
-    try testing.expectEqualStrings("b%s", std.mem.span(request.lines[0].text.?));
+    try testing.expectEqualStrings("b%s", std.mem.span(lineText(ib, request, 0)));
     try testing.expectEqual(@as(u32, 2), request.button_count);
     var id: usize = 9;
     _ = it.GetAttr(gc.GA_ID, request.buttons[0], &id);

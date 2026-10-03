@@ -9,13 +9,13 @@
 //! window covers it, and only the buttons are gadgets.
 //!
 //! Everything made for one requester is in one `Request`, allocated as one
-//! block with the words and the IntuiText after it, and hung on the window
-//! for FreeSysRequest.
+//! block with the words and the message's runs after it, and hung on the
+//! window for FreeSysRequest.
 
 const sdk = @import("sdk");
 const intuition = sdk.intuition;
 const Object = intuition.Object;
-const IntuiText = intuition.IntuiText;
+const RunTags = @import("../render/_render.zig").RunTags;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 
 /// One requester's own things.
@@ -23,7 +23,7 @@ pub const Request = struct {
     /// Bytes in the block this struct begins.
     size: usize,
     /// The message, one run a line, linked in order.
-    lines: [*]IntuiText,
+    lines: [*]RunTags,
     line_count: u32,
     /// The buttons from the left; the rightmost answers 0.
     buttons: [*]?*Object,
