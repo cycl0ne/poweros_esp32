@@ -21,7 +21,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Quick start](#quick-start) | boards, building, QEMU, flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
-| [Autodocs](sdk/docs/README.md) | every library, device and resource call, and every module by kind - libraries, devices, resources, handlers, classes |
+| [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
 | [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
@@ -60,149 +60,54 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Kernel (exec):** preemptive multitasking, signals, message ports,
   semaphores; libraries and devices opened by name, loaded from disk on
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
-  PSRAM as memory with attributes; a system log of everything written to
-  the serial console since the boot (`C:Log`), and a Guru that names the
-  failed check and the file and offset it is in, and offers a ROM
-  debugger - registers, memory, a backtrace, breakpoints, watchpoints
-  and single step - on both serial ports at once, reachable with
-  whichever cable is plugged in.
-- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; names of
-  255 characters and paths of 1024 throughout; `ErrorReport` asking
-  "Please insert volume ..." on the screen, or on the console where there
-  is none; a
-  log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards (`SD0:`),
-  `RAM:`, `PIPE:`, `NIL:`; consoles with line editing and copy and paste;
-  a shell with scripts and resident commands, 36 commands in `C:`, test
-  programs in `C:test` and network tools in `C:net`.
-  A disk's partitions are what its RigidDiskBlock says, and dos mounts
-  them at boot: `LIBS:rdb.library` reads that table from any block
-  device into memory, changes it there and writes it back, and `C:RDB`
-  shows it, starts it afresh, and adds or takes out a partition. See
-  the [disks guide](sdk/docs/guides/rdb.md).
-  `LIBS:iffparse.library` reads and writes IFF, the shape a picture, a
-  piece of text or a sound is kept in when one program hands it to
-  another, and `DEVS:clipboard.device` is where it is handed over: a
-  unit is a clip, kept as a file in `CLIPS:`.
-  `LIBS:datatypes.library` opens a file by what is in it: the kinds the
-  system knows are text descriptors in `DEVS:DataTypes`, and a program
-  gets an object it can put in a window without knowing the format. The
-  classes that read the formats are in `SYS:classes/datatypes/`: every
-  still picture is a `picture.datatype` object, kept as pens and drawn,
-  scrolled, scaled and written out by that class whatever file it came
-  out of - and one larger than the machine can hold is kept at half, a
-  quarter or an eighth of its size rather than refused, and `ilbm.datatype` reads IFF `ILBM` - packed rows, the
-  half-bright and hold-and-modify displays, and twenty-four planes -
-  `bmp.datatype` Windows bitmaps at every depth, packed or plain,
-  `png.datatype` PNG - every colour kind, every depth,
-  interlaced or not - `gif.datatype` GIF, with the see-through colour and
-  the picture placed on the screen the file names, and `jpeg.datatype`
-  baseline JPEG, its colour planes taken smoothly. Every piece of text is
-  a `text.datatype` object - runs of it in their own fonts, styles and
-  pens, wrapped to the window, marked with the pointer and copied to the
-  clipboard - and `ascii.datatype` reads a plain file or an IFF `FTXT`,
-  `markdown.datatype` a Markdown document with its headings, emphasis,
-  listings, lists and links. Every animation is an `animation.datatype`
-  object, its frames drawn ahead on a process of its own and put up in
-  time, paused with a click: `gifanim.datatype` plays a GIF with more
-  than one picture, and `lottie.datatype` a Lottie vector animation -
-  its shapes, fills, strokes, transforms and eased keyframes drawn with
-  smooth edges.
-  A small file of each
-  format is in
-  `SYS:Tests/datatypes/`, and `SYS:Programs/MultiView` shows any of them
-  in a window with scroll bars, knowing no formats itself. See the
-  [datatypes guide](sdk/docs/guides/datatypes.md).
-- **Graphics and windows:** rtg.library for the displays, graphics.library
-  for drawing - including a picture of one's own pixels put down as it
-  is, laid over what is there by its own coverage, or at another size;
-  rectangles with rounded corners and bevels round them in two colours,
-  pies and rings, outlines of any width
-  that grow inward so a shape keeps its size, curves and slanted lines
-  with smooth edges and pictures scaled smoothly, any filled shape in a
-  gradient (linear or radial, dithered on 16-bit displays) or a tile, a
-  surface laid down through a coverage that can be softened into a
-  shadow, and a string drawn to fit a width with dots where it was cut -
-  layers.library for overlapping windows, and
-  intuition.library - screens, windows, menus, requesters, a mouse
-  pointer, and an object system of gadget classes with layouts that fit
-  any display - a layout in a frame with a title in its edge groups the
-  settings of a window, a grid lines labelled fields up in columns, a row
-  too narrow for its gadgets wraps them onto the next line, and a child
-  sits at the start, the middle or the end of its room. Everything intuition draws - frames, buttons,
-  fields, scroll bars, check boxes, radio buttons, window borders and title
-  bars, the screen's bar, menus and requesters, and the disk's gadget
-  classes with them, down to a list's chosen line and a gauge's level - is
-  drawn from a style: the look of each
-  part of a gadget in each state - pressed, checked, disabled, under the
-  pointer, holding the keyboard - given as a tag list that a screen
-  carries for all its windows and a single gadget may override, so a
-  screen can look different with no program changed (`C:test/Styles`).
-  The system's own style comes from `ENV:Sys/style.prefs`, a line per
-  part and state, which `C:SetPrefs` hands over at boot and again
-  whenever it is run: every open window is drawn again in it. See the
-  [styles guide](sdk/docs/guides/styles.md).
-  `SYS:Programs/Prefs` edits the system's settings in one window - a
-  look picked from a list (classic, rounded, flat, soft, high contrast,
-  or any style file put in `SYS:Prefs/Presets/Styles`), or on its
-  advanced page every part in every state, its colours a screen pen or
-  one picked on a colour wheel; the screens' twelve pens; the system's
-  fonts, the double-click time, the screens' font height and the
-  keyboard on the screen - and saves them to `ENVARC:Sys` (Save) or uses
-  them until the next start (Use): every open window takes the new style
-  and colours at once. The screens' pens are kept in
-  `ENVARC:Sys/palette.prefs`. `C:SetPrefs` hands all four settings files
-  in `ENV:Sys` to intuition at boot, in one call; `SetPrefs SHOW` prints
-  what is in force.
-  Things move on one clock, motion.library: a value going from one
-  number to another over a time through a curve (easing in, out, past
-  the end and back, bouncing, or a Bezier of one's own), timers that
-  fire every so often without drifting, and timelines that play several
-  as one, forwards, backwards or scrubbed. A change of look fades over
-  the time a style gives it, a gauge fills to its new level, a list and
-  a scroller glide to a new top, a ring of dots turns while something
-  goes on, and so does the busy pointer - each step stored and drawn by
-  intuition, so the clock never waits for a window, and a screen can
-  turn it all off. See the [motion guide](sdk/docs/guides/motion.md).
-  More gadget classes on the disk in
-  `SYS:classes/gadgets/`, worked by the pointer or by the letter
-  underlined in each label: among them a row of tabs over pages of
-  gadgets, a number field with stepping arrows, a button that pops a list
-  up to pick from, a bar that shows how far along something is, a ring
-  of dots that turns while something goes on, a field with a button
-  that opens the file or font requester, a dial with a needle, a ring
-  that fills or is turned like a knob, a wheel of choices turned by
-  dragging, a month to pick a day from, a picture a program draws into,
-  values over time as lines or bars, text in runs of their own font,
-  style and colour - from a small markup, wrapped to the width - and a
-  text as a QR code, a Code 128 or an EAN-13 barcode (`C:test/Widgets`).
-  On a board with no keyboard, a keyboard comes up at the bottom of the
-  screen while a field is typed into, laid out from the keymap in use,
-  its keys going where a keyboard's would (`C:test/Keyboard`).
-  Settings a program can change while it runs, a tag each - the
-  double-click time, the fonts, the pens, the style (`SetPrefs`,
-  `GetPrefs`) - and messages
-  for a medium going in or out. `LIBS:asl.library` asks which file or
-  which font, from a program or from the shell (`C:RequestFile`,
-  `C:RequestChoice`).
-- **Fonts:** of any size, proportional, in ink, smooth or colour; bitmap
-  fonts and TrueType outlines in `FONTS:`, sizes in points, and the
-  system's fonts set in `ENVARC:Sys/font.prefs`. `SYS:Programs/FontView`
-  shows them all. See the [fonts guide](sdk/docs/guides/fonts.md).
-- **Network:** a TCP/IP stack written here (`LIBS:bsdsocket.library`:
-  TCP, UDP, IPv4 and IPv6, DHCP, DNS), network devices for QEMU's Ethernet
-  and the chip's Wi-Fi (WPA2), brought up at boot from
-  `DEVS:NetInterfaces/`, and a shell over Telnet (`C:net/ShellServer`).
-  `LIBS:tls.library` puts TLS 1.3 and 1.2 over a socket, the server's certificate
-  checked against Mozilla's roots and one's own, and `C:net/HTTPGet`
-  fetches `https://` with it.
-  See the [network guide](sdk/docs/guides/network.md).
+  PSRAM as memory with attributes. A system log (`C:Log`), and a Guru
+  that names the failed check and offers a ROM debugger - registers,
+  memory, backtrace, breakpoints, single step - on the serial ports.
+- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
+  255 characters; a log-structured flash file system (`DH0:`), FAT32 and
+  exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
+  the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
+  [disks guide](sdk/docs/guides/rdb.md)); consoles with line editing and
+  copy and paste; a shell with scripts and resident commands, 36
+  commands in `C:`, test programs in `C:test` and network tools in
+  `C:net`.
+- **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
+  and hands back an object a program puts in a window - pictures (ILBM,
+  BMP, PNG, GIF, JPEG), text (plain, FTXT, Markdown) and animations
+  (animated GIF, Lottie). `SYS:Programs/MultiView` shows any of them;
+  `LIBS:iffparse.library` and `DEVS:clipboard.device` carry IFF between
+  programs. See the [datatypes guide](sdk/docs/guides/datatypes.md).
+- **Graphics and windows:** rtg.library for the displays;
+  graphics.library with smooth curves and lines, rounded rectangles,
+  gradients, shadows and scaled pictures; layers.library; and
+  intuition.library - screens, windows, menus, requesters, and gadget
+  classes in layouts that fit any display. Everything is drawn from a
+  style a screen carries, so the look changes with no program changed
+  (the [styles guide](sdk/docs/guides/styles.md)). More gadget classes
+  in `SYS:classes/gadgets/`: tabs, number fields, pop-up lists, progress
+  bars, dials, knobs, a calendar, charts, rich text, QR codes and
+  barcodes, and a keyboard on the screen for a board with none
+  (`C:test/Widgets`). `LIBS:asl.library` asks for a file or a font.
+- **Motion:** motion.library, one clock for everything that moves -
+  eased values, timers that do not drift, timelines; a style change
+  fades, a gauge fills, a list glides. See the
+  [motion guide](sdk/docs/guides/motion.md).
+- **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts
+  and the input in one window, and every open window takes a change at
+  once; `C:SetPrefs` hands them over at boot.
+- **Fonts:** bitmap and TrueType, any size, smooth or in colour, shown
+  by `SYS:Programs/FontView`. See the
+  [fonts guide](sdk/docs/guides/fonts.md).
+- **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
+  UDP, IPv4 and IPv6, DHCP, DNS) on QEMU's Ethernet and the chip's Wi-Fi
+  (WPA2), and a shell over Telnet (`C:net/ShellServer`);
+  `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
+  `https://`. See the [network guide](sdk/docs/guides/network.md).
 - **Devices:** timer, serial, USB serial, flash, SD card, I2C, touch,
-  keyboard, mouse, input, console, four-channel audio; watchdog, DMA, GPIO
-  and platform resources; `LIBS:crypto.library` on the chip's SHA, AES and
-  RSA engines - hashes, HMAC, HKDF, AES-GCM - with key agreement on X25519,
-  P-256 and P-384 and signatures checked (RSA, ECDSA, Ed25519) and made
-  (Ed25519), `C:test/Crypto` its checks, timings and a test of the random
-  number generator.
+  keyboard, mouse, input, console, four-channel audio; watchdog, DMA,
+  GPIO and platform resources; `LIBS:crypto.library` on the chip's SHA,
+  AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
+  ECDSA and Ed25519 signatures.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 
