@@ -12,6 +12,7 @@
 
 const TimeVal = @import("../../devices/timer.zig").TimeVal;
 const TAG_USER = @import("../utility/tagitem.zig").TAG_USER;
+const TagItem = @import("../utility/tagitem.zig").TagItem;
 
 /// The library's name, for OpenLibrary.
 pub const SOCKETNAME = "bsdsocket.library";
@@ -321,6 +322,25 @@ pub const SBTC_ERRNO: u32 = 6;
 pub const SBTC_DTABLESIZE: u32 = 8;
 /// Every call that fails is logged with its errno, on the serial line.
 pub const SBTC_LOGSTAT: u32 = 10;
+/// GETREF only: what an error number means. ti_Data points to a usize
+/// that holds the number going in and the text's address (`[*:0]const
+/// u8`, the library's, never freed) coming out.
+pub const SBTC_ERRNOSTRPTR: u32 = 14;
+/// The same for an h_errno.
+pub const SBTC_HERRNOSTRPTR: u32 = 15;
+
+/// What `errno` means, in words, asked of the library `sb` (any
+/// SocketBase): "Network is unreachable - no route to it" for
+/// ENETUNREACH.
+pub fn errnoText(sb: anytype, errno: i32) [*:0]const u8 {
+    var value: usize = @bitCast(@as(isize, errno));
+    const tags = [_]TagItem{
+        .{ .tag = SBTM_GETREF(SBTC_ERRNOSTRPTR), .data = @intFromPtr(&value) },
+        .{},
+    };
+    if (sb.SocketBaseTagList(&tags) != 0) return "Unknown error";
+    return @ptrFromInt(value);
+}
 
 // --- errno ------------------------------------------------------------------
 

@@ -76,7 +76,10 @@ const got = sb.Recv(fd, &reply, reply.len, 0);
   `SIOCATMARK`).
 - **Errors:** a call that fails answers -1; `Errno()` gives the reason,
   or `SocketBaseTagList` with `SBTC_ERRNO` puts it where the program
-  wants it.
+  wants it. `sdk.bsdsocket.errnoText(sb, errno)` gives it in words, as
+  the library has them (`SBTC_ERRNOSTRPTR`, and `SBTC_HERRNOSTRPTR` for
+  a name lookup's h_errno): the network commands print
+  `Connect failed: Network is unreachable - no route to it (errno 51)`.
 - **Byte order:** addresses and ports inside a `sockaddr_in` are in
   network order; `htons`, `htonl`, `ntohs`, `ntohl` turn the chip's order
   into it and back. `Inet_PtoN` and `Inet_NtoP` turn text into addresses

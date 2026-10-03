@@ -423,3 +423,26 @@ test "every allocation that fails is answered, and leaves nothing behind" {
     _ = rig.sys.SetFunction(exec_lib, sdk.interface.exec.LVO.AllocMem, real_alloc.?);
     try rig.deinit();
 }
+
+test "an error number in words: SBTC_ERRNOSTRPTR and SBTC_HERRNOSTRPTR" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const sb = try rig.open();
+    defer rig.close(sb);
+    try testing.expectEqualStrings("Network is unreachable - no route to it", std.mem.span(bsd.errnoText(sb, bsd.ENETUNREACH)));
+    try testing.expectEqualStrings("Connection refused", std.mem.span(bsd.errnoText(sb, bsd.ECONNREFUSED)));
+    try testing.expectEqualStrings("Unknown error", std.mem.span(bsd.errnoText(sb, 9999)));
+    var value: usize = @intCast(bsd.HOST_NOT_FOUND);
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = bsd.SBTM_GETREF(bsd.SBTC_HERRNOSTRPTR), .data = @intFromPtr(&value) },
+        .{},
+    };
+    try testing.expectEqual(@as(i32, 0), sb.SocketBaseTagList(&tags));
+    try testing.expectEqualStrings("No such host", std.mem.span(@as([*:0]const u8, @ptrFromInt(value))));
+    // Only to be read: a SET of it is refused, at its place in the list.
+    const set = [_]sdk.utility.TagItem{
+        .{ .tag = bsd.SBTM_SETVAL(bsd.SBTC_ERRNOSTRPTR), .data = 1 },
+        .{},
+    };
+    try testing.expectEqual(@as(i32, 1), sb.SocketBaseTagList(&set));
+}

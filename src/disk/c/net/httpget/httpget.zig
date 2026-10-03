@@ -44,7 +44,7 @@ const Printf = dos.stdio.Printf;
 const http = @import("http.zig");
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.3 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.4 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -62,7 +62,7 @@ const MSG_TLS_ALERT = "%s: the server refused the TLS session (alert %u)\n";
 const MSG_TLS_HANDSHAKE = "%s: the TLS handshake failed\n";
 const MSG_TLS_FAILED = "%s: TLS failed (%d)\n";
 const MSG_NOHOST = "%s: %s: no such host\n";
-const MSG_FAILED = "%s: %s failed: errno %d\n";
+const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
 const MSG_STOPPED = "%s: stopped\n";
 const MSG_HEADLONG = "%s: the answer's head is longer than %u bytes\n";
 const MSG_NOTHTTP = "%s: the answer is not HTTP\n";
@@ -194,7 +194,7 @@ fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) Outcome {
         _ = Printf(dl, MSG_STOPPED, .{COMMAND_NAME});
         return .{ .failed = dos.RETURN_WARN };
     }
-    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, sb.Errno() });
+    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return .{ .failed = dos.RETURN_ERROR };
 }
 

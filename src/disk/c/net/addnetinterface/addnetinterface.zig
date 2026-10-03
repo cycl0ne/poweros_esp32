@@ -39,7 +39,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.2 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.3 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -64,7 +64,7 @@ const MSG_CONFIGURE = "%s: Configure is DHCP or FIXED, not '%s', in %s, line %u 
 const MSG_IPV6 = "%s: IPv6 is AUTO, FIXED or OFF, not '%s', in %s, line %u column %u\n";
 const MSG_INTERFACEID = "%s: InterfaceID is STABLE or EUI64, not '%s', in %s, line %u column %u\n";
 const MSG_MISSING = "%s: %s says nothing about its %s\n";
-const MSG_FAILED = "%s: %s could not be added: errno %d\n";
+const MSG_FAILED = "%s: %s could not be added: %s (errno %d)\n";
 const MSG_UP = "%s: %s/%u on %s\n";
 const MSG_ALREADY = "%s is up already\n";
 const MSG_WAITING = "%s: waiting for DHCP\n";
@@ -210,7 +210,7 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
             if (!options.quiet) _ = Printf(dl, MSG_ALREADY, .{interface});
             return dos.RETURN_OK;
         }
-        if (!options.quiet) _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, interface, sb.Errno() });
+        if (!options.quiet) _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, interface, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
         return dos.RETURN_WARN;
     }
     if (config.dhcp) {

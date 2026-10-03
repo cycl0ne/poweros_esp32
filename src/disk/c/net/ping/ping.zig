@@ -37,7 +37,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Ping";
-const VERSION_STRING = "\x00$VER: Ping 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Ping 1.2 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST/A,COUNT/K/N,SIZE/K/N,INTERVAL/K/N,TIMEOUT/K/N,INET6=-6/S";
@@ -50,7 +50,7 @@ const arg_inet6 = 5;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOHOST = "%s: %s: no such host\n";
-const MSG_FAILED = "%s: %s failed: errno %d\n";
+const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
 const MSG_START = "PING %s (%s): %u data bytes\n";
 const MSG_REPLY = "%u bytes from %s: seq=%u ttl=%u time=%u.%03u ms\n";
 const MSG_REPLY6 = "%u bytes from %s: seq=%u time=%u.%03u ms\n";
@@ -268,7 +268,7 @@ fn copyText(into: []u8, text: [*:0]const u8) void {
 }
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
-    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, sb.Errno() });
+    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return dos.RETURN_ERROR;
 }
 

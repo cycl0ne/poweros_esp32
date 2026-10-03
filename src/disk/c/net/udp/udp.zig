@@ -29,7 +29,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Udp";
-const VERSION_STRING = "\x00$VER: Udp 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Udp 1.2 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S";
@@ -45,7 +45,7 @@ const arg_ping = 7;
 const MSG_NOLIBRARY = "Can't open %s\n";
 const MSG_BADADDRESS = "%s is not an address\n";
 const MSG_PINGV4 = "PING is for IPv4; C:net/Ping -6 pings %s\n";
-const MSG_FAILED = "%s failed: errno %d\n";
+const MSG_FAILED = "%s failed: %s (errno %d)\n";
 const MSG_SENT = "Sent %d bytes to %s port %u\n";
 const MSG_ECHOED = "Echoed %d bytes from port %u\n";
 const MSG_ANSWER = "Answer from %s port %u: %s\n";
@@ -123,7 +123,7 @@ fn addInterface(sb: *SocketBase, argv: []const usize) i32 {
 }
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
-    _ = Printf(dl, MSG_FAILED, .{ what, sb.Errno() });
+    _ = Printf(dl, MSG_FAILED, .{ what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return dos.RETURN_ERROR;
 }
 

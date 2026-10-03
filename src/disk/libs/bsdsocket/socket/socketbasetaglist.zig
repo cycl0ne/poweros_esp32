@@ -10,6 +10,7 @@ const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const Socket = _socket.Socket;
+const errnotext = @import("errnotext.zig");
 
 /// The opener's settings, read and changed by a tag list.
 ///
@@ -32,7 +33,11 @@ const Socket = _socket.Socket;
 ///   - `SBTC_DTABLESIZE` - the size of the descriptor table, from 1 to
 ///     `FD_SETSIZE`; set only while no socket is open;
 ///   - `SBTC_LOGSTAT` - not 0 to have every call that fails logged, with
-///     its errno, on the serial line.
+///     its errno, on the serial line;
+///   - `SBTC_ERRNOSTRPTR`, `SBTC_HERRNOSTRPTR` - GETREF only, ti_Data
+///     pointing to a `usize`: an errno (or h_errno) going in, the address
+///     of its text coming out - `[*:0]const u8`, the library's, for as long
+///     as it is open. A number there is no text for gets "Unknown error".
 ///
 /// RESULT:
 /// 0 when every tag was taken, else the position of the first that was
@@ -52,7 +57,8 @@ const Socket = _socket.Socket;
 /// The tag list is read and not kept.
 ///
 /// NOTES:
-/// None.
+/// `sdk.bsdsocket.errnoText(sb, errno)` asks for an errno's text in one
+/// call.
 ///
 /// BUGS:
 /// None known.
@@ -85,6 +91,15 @@ pub fn SocketBaseTagList(sb: *SocketBase, tags: ?[*]const utility.TagItem) i32 {
 /// One setting read or changed; false if there is no such code, or the
 /// value cannot be taken.
 fn take(sb: *SocketBase, code: u32, set: bool, data: usize) bool {
+    if (code == bsd.SBTC_ERRNOSTRPTR or code == bsd.SBTC_HERRNOSTRPTR) {
+        // In and out through one usize: the number, then its text.
+        if (set or data == 0) return false;
+        const slot: *align(1) usize = @ptrFromInt(data);
+        const number: i32 = @truncate(@as(isize, @bitCast(slot.*)));
+        const text = if (code == bsd.SBTC_ERRNOSTRPTR) errnotext.errnoText(number) else errnotext.hErrnoText(number);
+        slot.* = @intFromPtr(text);
+        return true;
+    }
     if (set) return change(sb, code, @truncate(data));
     const value = read(sb, code) orelse return false;
     if (data == 0) return false;

@@ -3114,7 +3114,11 @@ fn SocketBaseTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
   - `SBTC_DTABLESIZE` - the size of the descriptor table, from 1 to
     `FD_SETSIZE`; set only while no socket is open;
   - `SBTC_LOGSTAT` - not 0 to have every call that fails logged, with
-    its errno, on the serial line.
+    its errno, on the serial line;
+  - `SBTC_ERRNOSTRPTR`, `SBTC_HERRNOSTRPTR` - GETREF only, ti_Data
+    pointing to a `usize`: an errno (or h_errno) going in, the address
+    of its text coming out - `[*:0]const u8`, the library's, for as long
+    as it is open. A number there is no text for gets "Unknown error".
 
 **RESULT**
 
@@ -3139,7 +3143,8 @@ The tag list is read and not kept.
 
 **NOTES**
 
-None.
+`sdk.bsdsocket.errnoText(sb, errno)` asks for an errno's text in one
+call.
 
 **BUGS**
 

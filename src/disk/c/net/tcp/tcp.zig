@@ -27,7 +27,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Tcp";
-const VERSION_STRING = "\x00$VER: Tcp 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Tcp 1.2 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/K,PORT/K/N,TEXT/K,GET/K,LISTEN/S";
@@ -38,7 +38,7 @@ const arg_get = 3;
 const arg_listen = 4;
 
 const MSG_NOLIBRARY = "Can't open %s\n";
-const MSG_FAILED = "%s failed: errno %d\n";
+const MSG_FAILED = "%s failed: %s (errno %d)\n";
 const MSG_CONNECTED = "Connected to %s port %u\n";
 const MSG_FIRST = "First line: %s\n";
 const MSG_DONE = "%lu bytes in %lu ms, %lu KB/s\n";
@@ -47,7 +47,7 @@ const MSG_ACCEPTED = "Connection from %s port %u\n";
 const MSG_CLOSED = "Closed after %lu bytes\n";
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
-    _ = Printf(dl, MSG_FAILED, .{ what, sb.Errno() });
+    _ = Printf(dl, MSG_FAILED, .{ what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return dos.RETURN_ERROR;
 }
 

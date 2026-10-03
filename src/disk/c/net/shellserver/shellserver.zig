@@ -37,7 +37,7 @@ const filehandler = dos.filehandler;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.2 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S";
@@ -51,7 +51,7 @@ const port_default: u16 = 23;
 const tries = 3;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
-const MSG_FAILED = "%s: %s failed: errno %d\n";
+const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
 const MSG_LISTENING = "%s: listening on port %u; Ctrl-C stops\n";
 const MSG_CONNECTED = "%s: %s from %s\n";
 const MSG_WAITING = "%s: waiting for %u shells to end\n";
@@ -163,7 +163,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 }
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
-    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, sb.Errno() });
+    _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return dos.RETURN_ERROR;
 }
 
