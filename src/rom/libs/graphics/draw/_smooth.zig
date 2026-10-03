@@ -53,12 +53,30 @@ pub const RoundBox = struct {
         return dx * dx + dy * dy <= r * r;
     }
 
+    pub fn ready(s: RoundBox) RoundBox {
+        return s;
+    }
+
+    /// Whether a whole pixel is surely in or out: not worked out here.
+    pub fn state(_: RoundBox, _: i32, _: i32) PixelState {
+        return .edge;
+    }
+
     pub fn span(s: RoundBox, y: i32) ?[2]i32 {
         if (y < s.box.min_y or y >= s.box.max_y) return null;
         const i = _round.rowInset(s.box, s.radius, y);
         return .{ s.box.min_x + i, s.box.max_x - i };
     }
 };
+
+/// Where a whole pixel is against a shape's edge: every sample point of
+/// it inside, every one outside, or some of each.
+pub const PixelState = enum { in, out, edge };
+
+/// How far from a pixel's middle its sample points lie, at most, in
+/// eighths: they are at 1, 3, 5 and 7 across and down, so 3 and 3 from
+/// the middle, which is under 4.25 - rounded up to whole eighths.
+const sample_reach: i64 = 5;
 
 /// An ellipse, or a circle with `rx` equal to `ry`: centred on the middle
 /// of pixel (`cx`, `cy`) and reaching the far side of the pixels `rx` and
@@ -68,14 +86,66 @@ pub const Oval = struct {
     cy: i32,
     rx: i32,
     ry: i32,
+    /// What `inside` asks with, worked out once by `ready`: the middle and
+    /// the squared half-axes in eighths, and their product.
+    mx: i64 = 0,
+    my: i64 = 0,
+    aa: i64 = 0,
+    bb: i64 = 0,
+    aabb: i64 = 0,
+    /// A circle's radius in eighths, and the squares of it less and more
+    /// the reach of a pixel's samples: the bounds `state` compares with.
+    a: i64 = 0,
+    surely_in: i64 = 0,
+    surely_out: i64 = 0,
 
-    pub fn inside(s: Oval, sx: i64, sy: i64) bool {
+    /// The oval with what every `inside` needs worked out.
+    pub fn ready(s: Oval) Oval {
+        var r = s;
         const a = unit * s.rx + unit / 2;
         const b = unit * s.ry + unit / 2;
-        const dx = sx - (unit * s.cx + unit / 2);
-        const dy = sy - (unit * s.cy + unit / 2);
-        return dx * dx * b * b + dy * dy * a * a <= a * a * b * b;
+        r.mx = unit * s.cx + unit / 2;
+        r.my = unit * s.cy + unit / 2;
+        r.aa = a * a;
+        r.bb = b * b;
+        r.aabb = r.aa * r.bb;
+        r.a = a;
+        if (a > sample_reach) r.surely_in = (a - sample_reach) * (a - sample_reach);
+        r.surely_out = (a + sample_reach) * (a + sample_reach);
+        return r;
     }
+
+    /// Whether every sample of pixel (`x`, `y`) is inside, every one
+    /// outside, or some of each - for a circle, by its middle's distance
+    /// alone: a middle that far in has all its samples in, one that far out
+    /// all of them out. An ellipse is always asked sample by sample.
+    pub fn state(s: Oval, x: i32, y: i32) PixelState {
+        if (s.rx != s.ry) return .edge;
+        const dx = unit * @as(i64, x) + unit / 2 - s.mx;
+        const dy = unit * @as(i64, y) + unit / 2 - s.my;
+        const d = dx * dx + dy * dy;
+        if (d <= s.surely_in) return .in;
+        if (d > s.surely_out) return .out;
+        return .edge;
+    }
+
+    /// Whether a point is inside; asked of a `ready` oval. A circle near
+    /// enough is asked in 32 bits - its squared distance against its
+    /// squared radius - which is the same question, cheaper.
+    pub fn inside(s: Oval, sx: i64, sy: i64) bool {
+        const dx = sx - s.mx;
+        const dy = sy - s.my;
+        if (s.rx == s.ry and @abs(dx) < near and @abs(dy) < near and s.aa < near * near) {
+            const x: u32 = @intCast(@abs(dx));
+            const y: u32 = @intCast(@abs(dy));
+            return x * x + y * y <= @as(u32, @intCast(s.aa));
+        }
+        return dx * dx * s.bb + dy * dy * s.aa <= s.aabb;
+    }
+
+    /// How far in eighths a circle's 32-bit question reaches: two squares
+    /// of this and a square radius under it fit in 32 bits.
+    const near: i64 = 1 << 15;
 
     pub fn span(s: Oval, y: i32) ?[2]i32 {
         const dy = y - s.cy;
@@ -134,17 +204,57 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         centre: [2]i64 = .{ 0, 0 },
         /// The side of a bevel it is cut to; null for both.
         side: ?Side = null,
+        /// The sweep's edges, worked out once by `ready`.
+        edges: _draw.Sweep = .{},
 
         const Self = @This();
 
-        fn inside(s: Self, sx: i64, sy: i64) bool {
-            if (!s.outer.inside(sx, sy)) return false;
-            if (s.hole) |h| if (h.inside(sx, sy)) return false;
+        /// The shape with what every `inside` needs worked out: its
+        /// shapes' and its sweep's.
+        pub fn ready(s: Self) Self {
+            var r = s;
+            r.outer = s.outer.ready();
+            if (s.hole) |h| r.hole = h.ready();
+            if (s.sweep) |sweep| r.edges = _draw.Sweep.of(sweep[0], sweep[1]);
+            return r;
+        }
+
+        /// How much of pixel (`x`, `y`) the shape covers, 0 to 16: each
+        /// edge is first asked about the whole pixel, and only an edge that
+        /// runs through it is asked about the sixteen points of it on a
+        /// four by four grid. Every point is asked what `inside` asks.
+        fn cover(s: Self, x: i32, y: i32) u32 {
+            const outer = s.outer.state(x, y);
+            if (outer == .out) return 0;
+            const hole: PixelState = if (s.hole) |h| h.state(x, y) else .out;
+            if (hole == .in) return 0;
+            const cut = s.cutState(x, y);
+            if (cut == .out) return 0;
+            const cut_in = cut == .in;
+            if (outer == .in and hole == .out and cut_in) return 16;
+            var count: u32 = 0;
+            var j: i64 = 0;
+            while (j < 4) : (j += 1) {
+                const sy = unit * @as(i64, y) + 2 * j + 1;
+                var i: i64 = 0;
+                while (i < 4) : (i += 1) {
+                    const sx = unit * @as(i64, x) + 2 * i + 1;
+                    if (outer == .edge and !s.outer.inside(sx, sy)) continue;
+                    if (hole == .edge and s.hole.?.inside(sx, sy)) continue;
+                    if (!cut_in and !s.cutInside(sx, sy)) continue;
+                    count += 1;
+                }
+            }
+            return count;
+        }
+
+        /// The cut's part of `inside`: on the side, and in the sweep.
+        fn cutInside(s: Self, sx: i64, sy: i64) bool {
             if (s.side) |side| if (!side.holds(@intCast(@divFloor(sx, unit)), @intCast(@divFloor(sy, unit)))) return false;
-            if (s.sweep) |sweep| {
+            if (s.sweep != null) {
                 const dx: i32 = @intCast(sx - s.centre[0]);
                 const dy: i32 = @intCast(s.centre[1] - sy);
-                if (!_draw.inSweep(dx, dy, sweep[0], sweep[1])) return false;
+                if (!s.edges.holds(dx, dy)) return false;
             }
             return true;
         }
@@ -153,30 +263,35 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         /// all four of its corners are in the sweep, and its middle is on
         /// the side.
         fn cutHolds(s: Self, x: i32, y: i32) bool {
-            if (s.side) |side| if (!side.holds(x, y)) return false;
-            const sweep = s.sweep orelse return true;
+            return s.cutState(x, y) == .in;
+        }
+
+        /// Where a whole pixel is against the cut. The side is decided by
+        /// the pixel's middle, so a pixel is wholly on it or off it. Against
+        /// the sweep: in when its four corners are; out when they all lie in
+        /// what a sweep of more than half a turn leaves out, which is a wedge
+        /// and holds the whole pixel when it holds its corners; else some of
+        /// each.
+        fn cutState(s: Self, x: i32, y: i32) PixelState {
+            if (s.side) |side| if (!side.holds(x, y)) return .out;
+            if (s.sweep == null) return .in;
             const corners = [_][2]i64{ .{ 0, 0 }, .{ unit, 0 }, .{ 0, unit }, .{ unit, unit } };
+            var held: u32 = 0;
             for (corners) |c| {
                 const dx: i32 = @intCast(unit * x + c[0] - s.centre[0]);
                 const dy: i32 = @intCast(s.centre[1] - (unit * y + c[1]));
-                if (!_draw.inSweep(dx, dy, sweep[0], sweep[1])) return false;
+                if (s.edges.holds(dx, dy)) held += 1;
             }
-            return true;
+            if (held == corners.len) return .in;
+            if (held == 0 and !s.edges.narrow) return .out;
+            return .edge;
         }
     };
 }
 
 /// How much of pixel (`x`, `y`) a shape covers, 0 to 16.
 fn coverage(shape: anytype, x: i32, y: i32) u32 {
-    var count: u32 = 0;
-    var j: i64 = 0;
-    while (j < 4) : (j += 1) {
-        var i: i64 = 0;
-        while (i < 4) : (i += 1) {
-            if (shape.inside(unit * x + 2 * i + 1, unit * y + 2 * j + 1)) count += 1;
-        }
-    }
-    return count;
+    return shape.cover(x, y);
 }
 
 /// The pixel's own colour - the fill style's for a fill that has one, the
@@ -232,7 +347,10 @@ const Band = struct {
 /// - `bottom` - the last.
 /// - `as_fill` - true for a fill, which takes the fill style; false for an
 ///   outline, which keeps the pen.
-pub fn fill(gb: *GraphicsBase, rp: *RastPort, shape: anytype, top: i32, bottom: i32, as_fill: bool) void {
+pub fn fill(gb: *GraphicsBase, rp: *RastPort, unready: anytype, top: i32, bottom: i32, as_fill: bool) void {
+    // Everything each of the many inside questions would work out again,
+    // worked out once.
+    const shape = unready.ready();
     const styled = as_fill and _draw.styled(rp);
     var bound = Rect{};
     var any = false;

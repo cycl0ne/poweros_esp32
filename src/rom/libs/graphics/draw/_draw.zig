@@ -768,16 +768,44 @@ pub fn cosDeg(degrees: i32) i32 {
 /// - `from` - where the sweep starts, in degrees.
 /// - `to` - where it ends.
 pub fn inSweep(dx: i32, dy: i32, from: i32, to: i32) bool {
-    const sweep = @mod(to - from, 360);
-    if (sweep == 0) return false;
-    const sx = cosDeg(from);
-    const sy = sinDeg(from);
-    const ex = cosDeg(to);
-    const ey = sinDeg(to);
-    const after_start = @as(i64, sx) * dy - @as(i64, sy) * dx >= 0;
-    const before_end = @as(i64, dx) * ey - @as(i64, dy) * ex >= 0;
-    return if (sweep < 180) after_start and before_end else after_start or before_end;
+    return Sweep.of(from, to).holds(dx, dy);
 }
+
+/// A sweep's two edges, worked out once for the many points a shape asks
+/// about: `inSweep` without the four table lookups each time.
+pub const Sweep = struct {
+    sx: i32 = 0,
+    sy: i32 = 0,
+    ex: i32 = 0,
+    ey: i32 = 0,
+    /// No degrees: nothing is in it.
+    empty: bool = true,
+    /// Less than half a turn: the two half-planes met, not joined.
+    narrow: bool = false,
+
+    pub fn of(from: i32, to: i32) Sweep {
+        const sweep = @mod(to - from, 360);
+        if (sweep == 0) return .{};
+        return .{ .sx = cosDeg(from), .sy = sinDeg(from), .ex = cosDeg(to), .ey = sinDeg(to), .empty = false, .narrow = sweep < 180 };
+    }
+
+    /// Whether the point at (`dx`, `dy`) from the centre is in the sweep. A
+    /// sine is at most 1024, so a point nearer than `near` is asked in 32
+    /// bits: each product under 2^30, their difference under 2^31.
+    pub fn holds(s: Sweep, dx: i32, dy: i32) bool {
+        if (s.empty) return false;
+        const after_start, const before_end = if (@abs(dx) < near and @abs(dy) < near) .{
+            s.sx * dy - s.sy * dx >= 0,
+            dx * s.ey - dy * s.ex >= 0,
+        } else .{
+            @as(i64, s.sx) * dy - @as(i64, s.sy) * dx >= 0,
+            @as(i64, dx) * s.ey - @as(i64, dy) * s.ex >= 0,
+        };
+        return if (s.narrow) after_start and before_end else after_start or before_end;
+    }
+
+    const near: u32 = 1 << 19;
+};
 
 /// Give the rows that were written to the display.
 ///

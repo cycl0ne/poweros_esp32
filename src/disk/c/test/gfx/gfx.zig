@@ -3,7 +3,7 @@
 //! do it here. Built against the SDK only.
 //!
 //!   Gfx DISPLAY/S,MEMORY/S,FORMATS/S,FILL/S,BLIT/S,LINES/S,REGION/S,DRAW/S,
-//!       GURU/S,LAYERS/S,ALL/S
+//!       GURU/S,LAYERS/S,ALL/S,SPEED/S
 //!
 //! With nothing asked for it prints a line each: the library's release,
 //! whether a RastPort can be had on the display, whether one can be had on
@@ -21,6 +21,12 @@
 //! truth about the ROM it is running on, not about the one it was built
 //! against - which matters, because a pen has to be packed into the
 //! surface's format and three formats have no packing decided yet.
+//!
+//! SPEED times what a gadget is drawn with - a box filled, a smooth
+//! ring, smooth spokes, a few numbers, and all of them together, as a
+//! meter is redrawn - on the display and on surfaces of the same size in
+//! external and in internal memory, so a slow display shows whether it is
+//! the drawing or the memory it lands in.
 //!
 //! FILL is the drawing test: it puts a pattern on the display that cannot
 //! be misread - colour bars with a half-covering white across them, so
@@ -81,7 +87,7 @@ pub const COMMAND_NAME = "Gfx";
 const VERSION_STRING = "\x00$VER: Gfx 1.0 (17.9.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DISPLAY/S,MEMORY/S,FORMATS/S,FILL/S,BLIT/S,LINES/S,REGION/S,DRAW/S,GURU/S,LAYERS/S,ALL/S";
+const template = "DISPLAY/S,MEMORY/S,FORMATS/S,FILL/S,BLIT/S,LINES/S,REGION/S,DRAW/S,GURU/S,LAYERS/S,ALL/S,SPEED/S";
 const arg_display = 0;
 const arg_memory = 1;
 const arg_formats = 2;
@@ -93,6 +99,7 @@ const arg_draw = 7;
 const arg_guru = 8;
 const arg_layers = 9;
 const arg_all = 10;
+const arg_speed = 11;
 
 const MSG_NOLIBRARY = "No %s - this machine has no drawing layer\n";
 const MSG_RELEASE = "%s %d.%d\n";
@@ -1072,7 +1079,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [11]usize = @splat(0);
+    var argv: [12]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -1174,6 +1181,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_OK;
     }
 
+    if (argv[arg_speed] != 0) return speed(sys, dl, gb);
+
     if (argv[arg_guru] != 0) {
         if (drawGuru(gb)) {
             _ = Printf(dl, MSG_GURU, .{});
@@ -1208,5 +1217,126 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_FORMATS, .{ taken, @as(u32, formats.len) });
     }
 
+    return dos.RETURN_OK;
+}
+
+// --- SPEED ------------------------------------------------------------------
+
+const timer = sdk.devices.timer;
+const TimerBase = timer.TimerBase;
+
+/// The box SPEED draws in, as large as a gadget's: the size of a meter.
+const speed_width = 160;
+const speed_height = 120;
+/// How often each drawing is repeated for its time.
+const speed_rounds = 20;
+
+/// Where SPEED draws: the name it is printed under, and its RastPort.
+const SpeedTarget = struct { name: [*:0]const u8, rp: *graphics.RastPort };
+
+fn eclockNow(tb: *TimerBase, rate: *u32) u64 {
+    var ev: timer.EClockVal = .{};
+    rate.* = tb.ReadEClock(&ev);
+    return ev.toTicks();
+}
+
+fn speedSet(gb: *GraphicsBase, rp: *graphics.RastPort, tag: sdk.utility.Tag, value: usize) void {
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = tag, .data = value }, .{} });
+}
+
+/// One of the drawings SPEED times, at the box's top left.
+fn speedDraw(gb: *GraphicsBase, rp: *graphics.RastPort, which: u32, left: i32, top: i32) void {
+    const cx = left + speed_width / 2;
+    const cy = top + speed_height / 2;
+    switch (which) {
+        // The box filled.
+        0 => {
+            speedSet(gb, rp, graphics.RPTAG_APen, graphics.penRGB(170, 170, 170));
+            gb.RectFill(rp, &.{ .min_x = left, .min_y = top, .max_x = left + speed_width - 1, .max_y = top + speed_height - 1 });
+        },
+        // A smooth ring, as an arc gadget's.
+        1 => {
+            speedSet(gb, rp, graphics.RPTAG_Smooth, 1);
+            speedSet(gb, rp, graphics.RPTAG_APen, graphics.penRGB(90, 140, 210));
+            gb.FillArc(rp, &.{ .cx = cx, .cy = cy, .radius = 55, .inner = 43, .from = -45, .to = 225 });
+            speedSet(gb, rp, graphics.RPTAG_Smooth, 0);
+        },
+        // Twenty-one smooth spokes, as a meter's ticks.
+        2 => {
+            speedSet(gb, rp, graphics.RPTAG_Smooth, 1);
+            speedSet(gb, rp, graphics.RPTAG_APen, graphics.penRGB(0, 0, 0));
+            var i: i32 = 0;
+            while (i <= 20) : (i += 1) {
+                gb.Move(rp, cx - 50 + i * 5, cy - 40);
+                gb.Draw(rp, cx - 45 + i * 4, cy - 50);
+            }
+            speedSet(gb, rp, graphics.RPTAG_Smooth, 0);
+        },
+        // Five numbers, as a meter's scale.
+        3 => {
+            speedSet(gb, rp, graphics.RPTAG_APen, graphics.penRGB(0, 0, 0));
+            var i: i32 = 0;
+            while (i < 5) : (i += 1) {
+                gb.Move(rp, left + 4 + i * 30, top + 20);
+                gb.Text(rp, "-5000", 5);
+            }
+        },
+        // All of them, as a meter redrawn.
+        else => {
+            var part: u32 = 0;
+            while (part < 4) : (part += 1) speedDraw(gb, rp, part, left, top);
+        },
+    }
+}
+
+const speed_names = [_][*:0]const u8{ "fill", "ring", "spokes", "text", "meter" };
+
+/// SPEED: how long the drawings a gadget is made of take, on the display
+/// and on surfaces of the same size in external and internal memory, each
+/// the average of `speed_rounds`, in microseconds.
+fn speed(sys: *ExecBase, dl: *DosBase, gb: *GraphicsBase) i32 {
+    var timer_req: timer.TimeRequest = .{};
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &timer_req.node, 0) != 0) return dos.RETURN_FAIL;
+    defer sys.CloseDevice(&timer_req.node);
+    const tb: *TimerBase = @ptrCast(timer_req.node.device.?);
+
+    const display = gb.CreateRastPortTagList(null);
+    defer if (display) |rp| gb.FreeRastPort(rp);
+
+    const pitch = speed_width * 2;
+    const bytes = pitch * speed_height;
+    var surfaces: [2]rtg.Surface = undefined;
+    var memories: [2]?*anyopaque = .{ null, null };
+    var memory_rps: [2]?*graphics.RastPort = .{ null, null };
+    defer for (memory_rps) |rp| if (rp) |made| gb.FreeRastPort(made);
+    defer for (memories) |memory| sys.FreeVec(memory);
+    const kinds = [2]u32{ exec.MEMF_EXTERNAL, exec.MEMF_INTERNAL };
+    for (kinds, 0..) |kind, i| {
+        memories[i] = sys.AllocVec(bytes, kind | exec.MEMF_CLEAR);
+        const pixels = memories[i] orelse continue;
+        surfaces[i] = .{ .pixels = @ptrCast(pixels), .width = speed_width, .height = speed_height, .pitch = pitch, .size_bytes = bytes, .format = .rgb565 };
+        memory_rps[i] = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surfaces[i]) }, .{} });
+    }
+
+    var targets: [3]?SpeedTarget = .{ null, null, null };
+    if (display) |rp| targets[0] = .{ .name = "display", .rp = rp };
+    if (memory_rps[0]) |rp| targets[1] = .{ .name = "external", .rp = rp };
+    if (memory_rps[1]) |rp| targets[2] = .{ .name = "internal", .rp = rp };
+
+    _ = Printf(dl, "Speed      microseconds each, %ux%u, %u rounds\n", .{ @as(u32, speed_width), @as(u32, speed_height), @as(u32, speed_rounds) });
+    _ = Printf(dl, "%-10s %8s %8s %8s %8s %8s\n", .{ "", speed_names[0], speed_names[1], speed_names[2], speed_names[3], speed_names[4] });
+    for (targets) |entry| {
+        const target = entry orelse continue;
+        var times: [speed_names.len]u32 = @splat(0);
+        for (&times, 0..) |*time, which| {
+            var rate: u32 = 0;
+            const start = eclockNow(tb, &rate);
+            var round: u32 = 0;
+            while (round < speed_rounds) : (round += 1) speedDraw(gb, target.rp, @intCast(which), 0, 0);
+            const ticks = eclockNow(tb, &rate) - start;
+            time.* = if (rate == 0) 0 else @intCast(ticks * 1_000_000 / rate / speed_rounds);
+        }
+        _ = Printf(dl, "%-10s %8u %8u %8u %8u %8u\n", .{ target.name, times[0], times[1], times[2], times[3], times[4] });
+    }
     return dos.RETURN_OK;
 }
