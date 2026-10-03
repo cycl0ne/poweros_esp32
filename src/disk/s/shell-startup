@@ -3,4 +3,7 @@
 ; starts.
 
 Prompt "%N.%S> "
-Alias Clear "Echo *"*E[0;0H*E[J*" "
+
+; Clear: the cursor to the top left, and everything from there erased.
+; An alias is the shell's own, so S:Startup-Sequence makes it too.
+Alias Clear "Echo NOLINE *"*E[0;0H*E[J*""

@@ -8,6 +8,11 @@ C:Version >NIL:
 
 FailAt 21
 
+; Clear: the cursor to the top left, and everything from there erased.
+; An alias is the shell's own, so S:Shell-Startup makes it for every
+; shell after this one.
+Alias Clear "Echo NOLINE *"*E[0;0H*E[J*""
+
 C:MakeDir >NIL: RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys
 
 ; Kept in memory: loaded once and run from there until Resident takes it
