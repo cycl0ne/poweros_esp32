@@ -23,9 +23,10 @@ const _engine = @import("../engine/_engine.zig");
 ///
 /// BEHAVIOR:
 /// The bytes come straight from the chip's generator, which draws on the
-/// noise of the SAR ADCs the kernel keeps sampling from boot (and of the
-/// radio, when it runs). They are fit for keys, nonces and IVs as they
-/// are, with no generator of the library's own in between.
+/// noise of the SAR ADCs the kernel keeps sampling from boot to the end,
+/// whether or not the radio runs (and on the radio's as well when it
+/// does). They are fit for keys, nonces and IVs as they are, with no
+/// generator of the library's own in between.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -38,10 +39,13 @@ const _engine = @import("../engine/_engine.zig");
 ///
 /// NOTES:
 /// The generator refills between reads in a few cycles; the reads are
-/// spaced so that no word is read twice.
+/// spaced so that no word is read twice. `C:test/Crypto RANDOM` puts
+/// 20000 of its bits through FIPS 140-2's monobit, poker and long-run
+/// tests.
 ///
 /// BUGS:
-/// None known.
+/// A driver that takes the SAR ADCs over for readings must leave them
+/// sampling, or the generator is left with timing noise alone.
 ///
 /// SEE ALSO:
 /// `SealGcm`, `InitCipher`

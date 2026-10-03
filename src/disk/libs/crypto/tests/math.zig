@@ -109,3 +109,77 @@ test "Edwards25519: the base point's encoding, and multiples agree with std" {
     edwards.Scalar.toBytesLittle(&edwards.reduceWide(&wide), &ours);
     try testing.expectEqualSlices(u8, &std.crypto.ecc.Edwards25519.scalar.reduce64(wide), &ours);
 }
+
+const _bignum = @import("../bignum/_bignum.zig");
+
+fn rSquaredCase(comptime words: comptime_int, random: std.Random) !void {
+    const Big = std.meta.Int(.unsigned, 64 * words + 64);
+    var modulus: [words]u32 = undefined;
+    random.bytes(std.mem.asBytes(&modulus));
+    modulus[0] |= 1;
+    // Every height of the top word: a shift of 0 to 31 bits.
+    modulus[words - 1] >>= random.intRangeAtMost(u5, 0, 31);
+    if (modulus[words - 1] == 0) modulus[words - 1] = 1;
+    // ModExp takes an odd modulus of 3 or more.
+    if (words == 1 and modulus[0] < 3) modulus[0] = 3;
+    var m: Big = 0;
+    var index: usize = words;
+    while (index > 0) {
+        index -= 1;
+        m = m << 32 | modulus[index];
+    }
+    var out: [words]u32 = undefined;
+    _bignum.rSquared(&out, &modulus);
+    var got: Big = 0;
+    index = words;
+    while (index > 0) {
+        index -= 1;
+        got = got << 32 | out[index];
+    }
+    const r: Big = @as(Big, 1) << (32 * words);
+    try testing.expectEqual(r % m * (r % m) % m, got);
+}
+
+test "R^2 mod M a word at a time, against big integers" {
+    var random = std.Random.DefaultPrng.init(2048);
+    for (0..20) |_| {
+        try rSquaredCase(1, random.random());
+        try rSquaredCase(2, random.random());
+        try rSquaredCase(8, random.random());
+        try rSquaredCase(33, random.random());
+        try rSquaredCase(64, random.random());
+    }
+}
+
+test "Shamir's trick: k1 P + k2 Q the same as two multiplications" {
+    var random = std.Random.DefaultPrng.init(1960);
+    inline for (.{ weierstrass.P256, weierstrass.P384 }) |C| {
+        for (0..5) |_| {
+            var k1: [C.bytes]u8 = undefined;
+            var k2: [C.bytes]u8 = undefined;
+            var k3: [C.bytes]u8 = undefined;
+            random.random().bytes(&k1);
+            random.random().bytes(&k2);
+            random.random().bytes(&k3);
+            k1[0] &= 0x7F;
+            k2[0] &= 0x7F;
+            k3[0] &= 0x7F;
+            const q = C.multiply(&C.generator, &k3);
+            var joint: [C.point_bytes]u8 = undefined;
+            var apart: [C.point_bytes]u8 = undefined;
+            C.encode(&C.multiplyTwoPublic(&C.generator, &k1, &q, &k2), &joint);
+            C.encode(&C.add(&C.multiply(&C.generator, &k1), &C.multiply(&q, &k2)), &apart);
+            try testing.expectEqualSlices(u8, &apart, &joint);
+        }
+    }
+    for (0..5) |_| {
+        var k1: [32]u8 = undefined;
+        var k2: [32]u8 = undefined;
+        random.random().bytes(&k1);
+        random.random().bytes(&k2);
+        const b = edwards.multiply(&edwards.base, &k2);
+        const joint = edwards.multiplyTwoPublic(&edwards.base, &k1, &b, &k2);
+        const apart = edwards.add(&edwards.multiply(&edwards.base, &k1), &edwards.multiply(&b, &k2));
+        try testing.expect(edwards.equal(&joint, &apart));
+    }
+}

@@ -11,7 +11,8 @@
 //! ways, SP 800-38A's CBC and CTR, the GCM paper's test case 4 and a
 //! forged tag, modular exponentiation on 2048-bit numbers, RFC 5869's
 //! HKDF, RFC 7748's X25519, RFC 8032's Ed25519, key agreement on P-256
-//! and P-384, and an ECDSA and an RSA-PSS signature openssl made. On the
+//! and P-384, and ECDSA (P-256, P-384) and RSA-PSS signatures openssl
+//! made. On the
 //! chip the hashes, AES and the exponentiations go through the SHA, AES
 //! and RSA engines; the curves are software.
 //!
@@ -20,8 +21,9 @@
 //! any fails, 20 when the library cannot be opened.
 //!
 //! BENCH times each kind of work after the checks - a key pair, a shared
-//! secret, a signature checked, AES-GCM and SHA-256 in bulk - in
-//! milliseconds an operation or kilobytes a second, on dos's clock.
+//! secret, a signature checked and made, AES-GCM, AES-CTR alone (the
+//! engine's share of GCM) and SHA-256 in bulk - in milliseconds an
+//! operation or kilobytes a second, on dos's clock.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
@@ -34,7 +36,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.1 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.2 (03.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -317,6 +319,8 @@ fn signatures(run: *Run) void {
     var other = signed_digest;
     other[0] ^= 1;
     run.check("ECDSA P-256, another digest refused", cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&other), &Bytes.of(&ecdsa_signature)) == crypto.CRYPTOERR_SIGNATURE);
+    const ec384_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa384_point) };
+    run.check("ECDSA P-384 (openssl's)", cb.VerifySignature(crypto.SIG_ECDSA_P384, &ec384_key, &Bytes.of(&signed_digest384), &Bytes.of(&ecdsa384_signature)) == crypto.CRYPTOERR_OK);
 
     const rsa_key: crypto.PublicKey = .{ .modulus = Bytes.of(&rsa_modulus), .exponent = Bytes.of(&.{ 1, 0, 1 }) };
     run.check("RSA-PSS SHA-256, 2048 bits (openssl's)", cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature)) == crypto.CRYPTOERR_OK);
@@ -325,6 +329,17 @@ fn signatures(run: *Run) void {
 
 // "PowerOS signs this", its SHA-256, and what openssl signed it with.
 const signed_digest = hex("c78dcb0b4b4cfdb7fe948ceb1a8231a1e11a954c3a64309a4ec367757f8e5a63");
+const signed_digest384 = hex("6a10c53d12d6ae75a11761748db874b8dc24aa5b7e649175fbc583ca4cfe2d42e84a67b229228f0b4d3c8ff1c7d3db58");
+const ecdsa384_point = hex(
+    "04c02503658c437960927f2c0c1df74aa33c4ca4d78a63f5950cfdfa4708b0acb61c5f201e563fb683507ab2ab10690d" ++
+        "b246c27740402549247d87ae5404c3d9bd5ed6cbbc9d933118db766b44143d5b952627cd3482ee24c04864703f843387" ++
+        "19",
+);
+const ecdsa384_signature = hex(
+    "3064023038c8ace17d5391738a5ca1fe4dfafeaac0551125c8d3f55062f9c8bd4dde013011dd568924c046b778432874" ++
+        "c13c6b82023074686aad520c9c856e173fb845eb3d717610d7c904ea4044e00b12e0fc2a454b2f499382210d2ec39e97" ++
+        "ead5b7f517f1",
+);
 const ecdsa_point = hex(
     "042afcbb27c294ef111d07c96a8317c106ed7bf2660e1f687461fda0e3de5f7e6733c7e04fbb259155f6ec8cb9c1e446" ++
         "f88128d4e4893da099c36ef507ed3391dc",
@@ -423,6 +438,10 @@ fn bench(run: *Run) void {
     var started = millis(run.dl);
     for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&signed_digest), &Bytes.of(&ecdsa_signature));
     report(run, "ECDSA P-256 verify", started, 5);
+    const ec384_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa384_point) };
+    started = millis(run.dl);
+    for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ECDSA_P384, &ec384_key, &Bytes.of(&signed_digest384), &Bytes.of(&ecdsa384_signature));
+    report(run, "ECDSA P-384 verify", started, 5);
     const rsa_key: crypto.PublicKey = .{ .modulus = Bytes.of(&rsa_modulus), .exponent = Bytes.of(&.{ 1, 0, 1 }) };
     started = millis(run.dl);
     for (0..20) |_| _ = cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature));
@@ -432,6 +451,12 @@ fn bench(run: *Run) void {
     started = millis(run.dl);
     for (0..5) |_| _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of("message"), &signature);
     report(run, "Ed25519 sign", started, 5);
+    const ed_key: crypto.PublicKey = .{ .point = Bytes.of(&hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")) };
+    var ed_signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
+    _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of(""), &ed_signature);
+    started = millis(run.dl);
+    for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ED25519, &ed_key, &Bytes.of(""), &Bytes.of(&ed_signature));
+    report(run, "Ed25519 verify", started, 5);
 
     // Bulk: 16 KiB, a TLS record's worth.
     const Buffer = struct {
@@ -442,14 +467,24 @@ fn bench(run: *Run) void {
     var tag: [crypto.GCM_TAG]u8 = undefined;
     const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &nonce, .nonce_length = 12, .input = &Buffer.data, .output = &Buffer.data, .length = Buffer.data.len, .tag = &tag };
     started = millis(run.dl);
-    for (0..16) |_| _ = cb.SealGcm(&message);
-    var elapsed = millis(run.dl) - started;
-    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "AES-128-GCM seal", if (elapsed == 0) 0 else 256 * 1000 / elapsed, elapsed });
+    for (0..64) |_| _ = cb.SealGcm(&message);
+    throughput(run, "AES-128-GCM seal", started, 64);
+    var context: crypto.CipherContext = .{};
+    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, &([_]u8{3} ** 16));
+    started = millis(run.dl);
+    for (0..64) |_| _ = cb.UpdateCipher(&context, &Buffer.data, &Buffer.data, Buffer.data.len);
+    throughput(run, "AES-128-CTR (the engine alone)", started, 64);
     var digest: [crypto.DIGEST_MAX]u8 = undefined;
     started = millis(run.dl);
-    for (0..16) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
-    elapsed = millis(run.dl) - started;
-    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "SHA-256", if (elapsed == 0) 0 else 256 * 1000 / elapsed, elapsed });
+    for (0..256) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
+    throughput(run, "SHA-256", started, 256);
+}
+
+/// `rounds` of 16 KiB since `started`, in KiB a second.
+fn throughput(run: *Run, name: [*:0]const u8, started: u64, rounds: u32) void {
+    const elapsed = millis(run.dl) - started;
+    const kib: u64 = 16 * @as(u64, rounds);
+    _ = Printf(run.dl, "%-34s %ld KiB/s (%ld KiB in %ld ms)\n", .{ name, if (elapsed == 0) 0 else kib * 1000 / elapsed, kib, elapsed });
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {

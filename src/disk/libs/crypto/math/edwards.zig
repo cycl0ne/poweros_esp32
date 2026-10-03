@@ -118,6 +118,29 @@ pub fn multiply(a: *const Point, k: *const [32]u8) Point {
     return r0;
 }
 
+/// k1 * a + k2 * b for public numbers only, both 32 bytes least
+/// significant first: one pass over the bits of both (Shamir's trick).
+/// It branches on the bits, so no secret may go through it.
+pub fn multiplyTwoPublic(a: *const Point, k1: *const [32]u8, b: *const Point, k2: *const [32]u8) Point {
+    const both = add(a, b);
+    var r = identity;
+    var bit: usize = 256;
+    while (bit > 0) {
+        bit -= 1;
+        r = double(&r);
+        const first = (k1[bit / 8] >> @intCast(bit % 8)) & 1 != 0;
+        const second = (k2[bit / 8] >> @intCast(bit % 8)) & 1 != 0;
+        if (first and second) {
+            r = add(&r, &both);
+        } else if (first) {
+            r = add(&r, a);
+        } else if (second) {
+            r = add(&r, b);
+        }
+    }
+    return r;
+}
+
 /// Whether two points are the same: X1 Z2 = X2 Z1 and Y1 Z2 = Y2 Z1.
 pub fn equal(a: *const Point, b: *const Point) bool {
     const x1 = Fe25519.mul(&a.x, &b.z);

@@ -60,10 +60,10 @@ const rsa = @import("../engine/rsa.zig");
 /// exponent in the engine are cleared before the call returns.
 ///
 /// NOTES:
-/// The constants are worked out in software on every call, bit by bit:
-/// a 2048-bit modulus costs 4096 doubling steps before the engine
-/// starts. A caller who signs many times with one key pays that each
-/// time.
+/// The engine's constants are worked out in software on every call: R^2
+/// mod M a word at a time (a 2048-bit modulus, 128 steps of 64 words
+/// each), and a base not below the modulus reduced bit by bit. A base
+/// below it - a signature, a ciphertext - is taken as it is.
 ///
 /// BUGS:
 /// A private-key operation is not blinded: the engine's constant time is
@@ -100,10 +100,18 @@ pub fn ModExp(cb: *CryptoBase, result: *anyopaque, base_value: *const Number, ex
     const m = numbers.modulus[0..words];
     _bignum.load(m, modulus);
     _bignum.load(numbers.exponent[0..words], exponent);
-    // The base as it came, in `result` for now, then reduced.
-    const base_words = @max((base_bytes + 3) / 4, 1);
+    // The base as it came, in `result` for now, then reduced - unless it
+    // is below the modulus already, as a signature or a ciphertext is.
+    const base_words: u32 = @max((base_bytes + 3) / 4, 1);
     _bignum.load(numbers.result[0..base_words], base_value);
-    _bignum.reduce(numbers.base_value[0..words], numbers.result[0..base_words], m);
+    if (base_words <= words) {
+        for (numbers.result[base_words..words]) |*word| word.* = 0;
+    }
+    if (base_words <= words and _bignum.below(numbers.result[0..words], m)) {
+        @memcpy(numbers.base_value[0..words], numbers.result[0..words]);
+    } else {
+        _bignum.reduce(numbers.base_value[0..words], numbers.result[0..base_words], m);
+    }
 
     const exponent_bits = _bignum.bitLength(numbers.exponent[0..words]);
     if (exponent_bits == 0) {

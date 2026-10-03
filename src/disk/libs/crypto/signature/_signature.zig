@@ -206,8 +206,8 @@ pub fn verifyEcdsa(comptime C: type, key: *const crypto.PublicKey, digest: []con
     var second_bytes: [C.bytes]u8 = undefined;
     S.toBytesBig(&first, &first_bytes);
     S.toBytesBig(&second, &second_bytes);
-    // u1 G + u2 Q
-    const point = C.add(&C.multiply(&C.generator, &first_bytes), &C.multiply(&q, &second_bytes));
+    // u1 G + u2 Q, in one pass: everything here is public.
+    const point = C.multiplyTwoPublic(&C.generator, &first_bytes, &q, &second_bytes);
     if (C.isInfinity(&point)) return crypto.CRYPTOERR_SIGNATURE;
 
     var x: C.Fe = undefined;
@@ -285,7 +285,8 @@ pub fn ed25519Verify(cb: *CryptoBase, key: *const crypto.PublicKey, message: []c
     var k_bytes: [32]u8 = undefined;
     edwards.Scalar.toBytesLittle(&k, &k_bytes);
 
-    const left = edwards.multiply(&edwards.base, signed[32..64]);
-    const right = edwards.add(&r, &edwards.multiply(&a, &k_bytes));
-    return if (edwards.equal(&left, &right)) crypto.CRYPTOERR_OK else crypto.CRYPTOERR_SIGNATURE;
+    // S B - k A = R, in one pass: everything here is public.
+    const minus_a = edwards.negate(&a);
+    const left = edwards.multiplyTwoPublic(&edwards.base, signed[32..64], &minus_a, &k_bytes);
+    return if (edwards.equal(&left, &r)) crypto.CRYPTOERR_OK else crypto.CRYPTOERR_SIGNATURE;
 }

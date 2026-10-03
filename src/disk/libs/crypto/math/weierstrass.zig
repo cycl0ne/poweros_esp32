@@ -162,6 +162,31 @@ pub fn Curve(
             return r0;
         }
 
+        /// k1 * p + k2 * q for public numbers only: one pass over the bits
+        /// of both, doubling once a bit and adding p, q or p + q where their
+        /// bits say (Shamir's trick) - about half the work of two
+        /// multiplications. It branches on the bits, so no secret may go
+        /// through it; verifying a signature is what it is for.
+        pub fn multiplyTwoPublic(p: *const Point, k1: *const [bytes]u8, q: *const Point, k2: *const [bytes]u8) Point {
+            const both = add(p, q);
+            var r = infinity;
+            var bit: usize = 8 * bytes;
+            while (bit > 0) {
+                bit -= 1;
+                r = double(&r);
+                const first = (k1[bytes - 1 - bit / 8] >> @intCast(bit % 8)) & 1 != 0;
+                const second = (k2[bytes - 1 - bit / 8] >> @intCast(bit % 8)) & 1 != 0;
+                if (first and second) {
+                    r = add(&r, &both);
+                } else if (first) {
+                    r = add(&r, p);
+                } else if (second) {
+                    r = add(&r, q);
+                }
+            }
+            return r;
+        }
+
         /// Whether a point is the point at infinity.
         pub fn isInfinity(p: *const Point) bool {
             return Fp.isZeroMask(&p.z) != 0;

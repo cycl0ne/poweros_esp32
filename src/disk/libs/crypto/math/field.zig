@@ -15,6 +15,11 @@
 //! Only an exponent known at compile time (`powPublic`) steers the work
 //! - it is the same for every caller.
 //!
+//! The operations every curve step is made of run without Zig's runtime
+//! checks: their arrays have one length, fixed when the field is made,
+//! and their sums are worked in 64 bits where they cannot overflow - the
+//! tests hold them to big-integer arithmetic.
+//!
 //! The constants - the modulus's words, -m^-1 mod 2^32, R mod m and
 //! R^2 mod m - are worked out at compile time from the modulus.
 
@@ -56,6 +61,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
 
         /// a * b, both in Montgomery form.
         pub fn mul(a: *const Number, b: *const Number) Number {
+            @setRuntimeSafety(false);
             var t: [words + 2]u32 = @splat(0);
             for (0..words) |i| {
                 var carry: u64 = 0;
@@ -88,6 +94,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
         }
 
         pub fn add(a: *const Number, b: *const Number) Number {
+            @setRuntimeSafety(false);
             var sum: Number = undefined;
             var carry: u32 = 0;
             for (0..words) |j| {
@@ -99,6 +106,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
         }
 
         pub fn sub(a: *const Number, b: *const Number) Number {
+            @setRuntimeSafety(false);
             var difference: Number = undefined;
             var borrow: u32 = 0;
             for (0..words) |j| {
@@ -124,6 +132,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
         /// `value` (and `high`, a word above it) less the modulus if it
         /// came to the modulus or more; `value` is below twice it.
         fn subtractOnce(value: Number, high: u32) Number {
+            @setRuntimeSafety(false);
             var less: Number = undefined;
             var borrow: u32 = 0;
             for (0..words) |j| {
@@ -185,6 +194,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
 
         /// `a` where `mask` is all ones, `b` where it is 0.
         pub fn select(mask: u32, a: *const Number, b: *const Number) Number {
+            @setRuntimeSafety(false);
             var out: Number = undefined;
             for (0..words) |j| out[j] = (a[j] & mask) | (b[j] & ~mask);
             return out;
@@ -192,6 +202,7 @@ pub fn Field(comptime words: comptime_int, comptime modulus: comptime_int) type 
 
         /// a and b exchanged where `mask` is all ones.
         pub fn swap(mask: u32, a: *Number, b: *Number) void {
+            @setRuntimeSafety(false);
             for (0..words) |j| {
                 const difference = (a[j] ^ b[j]) & mask;
                 a[j] ^= difference;

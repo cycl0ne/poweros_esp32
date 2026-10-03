@@ -636,10 +636,10 @@ exponent in the engine are cleared before the call returns.
 
 **NOTES**
 
-The constants are worked out in software on every call, bit by bit:
-a 2048-bit modulus costs 4096 doubling steps before the engine
-starts. A caller who signs many times with one key pays that each
-time.
+The engine's constants are worked out in software on every call: R^2
+mod M a word at a time (a 2048-bit modulus, 128 steps of 64 words
+each), and a base not below the modulus reduced bit by bit. A base
+below it - a signature, a ciphertext - is taken as it is.
 
 **BUGS**
 
@@ -757,9 +757,10 @@ None.
 **BEHAVIOR**
 
 The bytes come straight from the chip's generator, which draws on the
-noise of the SAR ADCs the kernel keeps sampling from boot (and of the
-radio, when it runs). They are fit for keys, nonces and IVs as they
-are, with no generator of the library's own in between.
+noise of the SAR ADCs the kernel keeps sampling from boot to the end,
+whether or not the radio runs (and on the radio's as well when it
+does). They are fit for keys, nonces and IVs as they are, with no
+generator of the library's own in between.
 
 **CONTEXT**
 
@@ -775,11 +776,14 @@ Nothing is allocated.
 **NOTES**
 
 The generator refills between reads in a few cycles; the reads are
-spaced so that no word is read twice.
+spaced so that no word is read twice. `C:test/Crypto RANDOM` puts
+20000 of its bits through FIPS 140-2's monobit, poker and long-run
+tests.
 
 **BUGS**
 
-None known.
+A driver that takes the SAR ADCs over for readings must leave them
+sampling, or the generator is left with timing noise alone.
 
 **SEE ALSO**
 
