@@ -132,6 +132,7 @@ pub const LVO = struct {
     pub const Debug = libraries.lvo(118);
     pub const AddTaskEndHook = libraries.lvo(119);
     pub const RemTaskEndHook = libraries.lvo(120);
+    pub const LogControl = libraries.lvo(121);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -254,6 +255,7 @@ pub const Fn = struct {
     pub const Debug = *const fn (*ExecBase, u32) callconv(.c) void;
     pub const AddTaskEndHook = *const fn (*ExecBase, ?*exec.Task, *exec.TaskEndHook) callconv(.c) void;
     pub const RemTaskEndHook = *const fn (*ExecBase, *exec.TaskEndHook) callconv(.c) void;
+    pub const LogControl = *const fn (*ExecBase, u32, isize) callconv(.c) isize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -755,7 +757,7 @@ pub const ExecBase = opaque {
     }
 
     /// Have `task` (null: the caller) sent `signal_mask` when the system log
-    /// grows, at most every ten ticks; 0 stops it. False when four tasks
+    /// grows, at most every ten ticks; 0 stops it. False when six tasks
     /// follow already.
     pub fn SetLogSignal(self: *ExecBase, task: ?*exec.Task, signal_mask: u32) bool {
         return libraries.call(self, LVO.SetLogSignal, Fn.SetLogSignal, .{ task, signal_mask });
@@ -778,5 +780,12 @@ pub const ExecBase = opaque {
     /// is on none, or has run.
     pub fn RemTaskEndHook(self: *ExecBase, hook: *exec.TaskEndHook) void {
         return libraries.call(self, LVO.RemTaskEndHook, Fn.RemTaskEndHook, .{hook});
+    }
+
+    /// One of the system log's settings (LOGCTRL_LEVEL, LOGCTRL_MIRROR,
+    /// LOGCTRL_USBPORT) set to `value`, or asked with LOGCTRL_ASK. Returns what
+    /// it was; -1 for a setting or value it does not know.
+    pub fn LogControl(self: *ExecBase, what: u32, value: isize) isize {
+        return libraries.call(self, LVO.LogControl, Fn.LogControl, .{ what, value });
     }
 };

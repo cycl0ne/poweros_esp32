@@ -12,12 +12,15 @@ const entropy = @import("arch/esp32s3/entropy.zig");
 const exec = @import("rom/libs/exec/exec.zig");
 const flashmap = @import("arch/esp32s3/flashmap.zig");
 const intmatrix = @import("arch/esp32s3/intmatrix.zig");
+const lastwords = @import("arch/esp32s3/lastwords.zig");
 const layout = @import("arch/esp32s3/layout.zig");
 const psram = @import("arch/esp32s3/psram.zig");
 const ram = @import("arch/esp32s3/ram.zig");
 const shell = @import("rom/libs/exec/_shell/shell.zig");
 const timer = @import("arch/esp32s3/timer.zig");
 const wdt = @import("arch/esp32s3/wdt.zig");
+const boards = @import("boards/boards.zig");
+const st = @import("sdk").expansion.systemtags;
 
 comptime {
     _ = @import("arch/esp32s3/trap.zig"); // exports xtensa_exception for start.S
@@ -79,14 +82,23 @@ export fn kernel_early() linksection(".iram.text") callconv(.c) void {
     flashmap.map();
 }
 
+/// The system log's ring, as large as the board says: exec keeps every
+/// line from the first one in it.
+var log_ring: [boards.fact(st.SYSTAG_LogSize, 16 * 1024)]u8 = undefined;
+
 /// Called from _start after kernel_early, with the stack set up and
-/// interrupts masked. Nothing is printed until exec's init has done
-/// RawIOInit (UART0, for kprintf).
+/// interrupts masked. Nothing goes out on UART0 until exec's init has done
+/// RawIOInit; the log keeps it all from the first line, and the USB
+/// console has it from there where the board says so.
 export fn kmain() callconv(.c) noreturn {
+    exec.log_ring.* = &log_ring;
+    exec.log_clock.* = timer.uptimeUs;
+    exec.log_mirror.* = boards.fact(st.SYSTAG_LogMirror, 0) != 0;
+    exec.setLogMirror();
+    lastwords.restore();
     exec.interrupt_hardware.* = intmatrix.hardware;
     exec.alert_hook.* = alert.show;
     exec.debug_hardware.* = &alert.debug_hardware;
-    exec.log_clock.* = timer.uptimeUs;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();
     entropy.init();
@@ -98,6 +110,7 @@ export fn kmain() callconv(.c) noreturn {
     _ = bootstrap.bootStrap(ram.regions(&regions)) catch |err| @panic(@errorName(err));
 
     exec.kprintf("PowerOS kernel for ESP32-S3, built with Zig %s (%s)\n", .{ builtin.zig_version_string, @tagName(builtin.mode) });
+    if (lastwords.restored) note("the boot before ended in an alert: its last words are at the head of the log (C:Log)", .{});
     note("vector table at 0x%08x", .{cpu.vecbase()});
     note("code in flash at 0x%08x: %d KiB from flash page %d", .{ layout.flashTextStart(), (layout.flashTextEnd() - layout.flashTextStart()) / 1024, flashmap.first_page });
     if (psram.init_error) |err| {

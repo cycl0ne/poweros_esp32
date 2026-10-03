@@ -13,6 +13,7 @@
 const std = @import("std");
 const native = @import("builtin").cpu.arch.endian();
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
+const log = @import("log.zig");
 
 /// RawDoFmt's output function: gets each character, then a final NUL, and
 /// the put_ch_data RawDoFmt was given.
@@ -156,6 +157,14 @@ pub fn kprintf(sys: *ExecBase, comptime format: [:0]const u8, args: anytype) voi
     comptime checkFormat(format, @TypeOf(args));
     const stream = fmtStream(args);
     _ = sys.RawDoFmt(format, &stream, &rawPut, sys);
+}
+
+/// kprintf at a level of the system log (`LOG_ERROR`, `LOG_WARNING`,
+/// `LOG_INFO`, `LOG_DEBUG`): the line is marked with it, and is not written
+/// at all while exec keeps a higher level. One line - `format` ends in
+/// "\n" - so that the mark is at its start.
+pub fn klog(sys: *ExecBase, comptime level: u32, comptime format: [:0]const u8, args: anytype) void {
+    kprintf(sys, log.levelMark(level) ++ format, args);
 }
 
 fn rawPut(c: u8, put_ch_data: ?*anyopaque) callconv(.c) void {

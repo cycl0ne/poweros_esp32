@@ -12,7 +12,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// fn ReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32
 /// ```
 ///
-/// SINCE: 1.0. LVO -472.
+/// SINCE: 1.0. LVO -468.
 ///
 /// INPUTS:
 /// - `position` - the running number of the first byte wanted: 0 for the

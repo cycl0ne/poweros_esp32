@@ -85,6 +85,7 @@ pub const RawIOInit = @import("rawio/rawioinit.zig").RawIOInit;
 const _log = @import("log/_log.zig");
 pub const ReadLog = @import("log/readlog.zig").ReadLog;
 pub const SetLogSignal = @import("log/setlogsignal.zig").SetLogSignal;
+pub const LogControl = @import("log/logcontrol.zig").LogControl;
 pub const Debug = @import("debug/debug.zig").Debug;
 pub const DebugHardware = @import("debug/_debug.zig").DebugHardware;
 /// The chip's part of the ROM debugger, which the kernel installs.
@@ -92,7 +93,11 @@ pub const debug_hardware = &@import("debug/_debug.zig").debug_hardware;
 pub const tickLog = _log.tickLog;
 /// The log's clock, microseconds since the boot; the kernel sets it.
 pub const log_clock = &_log.clock;
+pub const log_ring = &_log.ring;
+pub const log_mirror = &_log.mirror_wanted;
+pub const setLogMirror = _rawio.setMirror;
 pub const kprintf = _rawio.kprintf;
+pub const klog = _rawio.klog;
 pub const PutChProc = sdk.exec.PutChProc;
 pub const RawIOHardware = _rawio.RawIOHardware;
 /// The raw port's hardware: exec's own UART0 driver (rawio/_rawio.zig). Host
@@ -1467,10 +1472,10 @@ test "the system log: lines kept with a prefix, read by number, followers woken 
     // A reader that fell behind gets the oldest byte kept, and sees how
     // much it missed.
     var behind: u64 = 0;
-    for (0.._log.ring_size / 16 + 1) |_| kprintf("sixteen bytes..\n", .{});
+    for (0.._log.ring.len / 16 + 1) |_| kprintf("sixteen bytes..\n", .{});
     const got = sys.ReadLog(&behind, &buffer, buffer.len);
     try testing.expectEqual(@as(u32, buffer.len), got);
-    try testing.expectEqual(_log.end() - _log.ring_size, behind - got);
+    try testing.expectEqual(_log.end() - _log.ring.len, behind - got);
 
     // A follower gets its signal on the tenth tick after something new,
     // once.
@@ -1489,6 +1494,56 @@ test "the system log: lines kept with a prefix, read by number, followers woken 
     for (0..10) |_| tickLog(SysBase);
     try testing.expect(sys.SetSignal(0, mask) & mask == 0);
     sys.FreeSignal(bit);
+}
+
+test "the system log: levels kept and dropped, LogControl, the end from a line's start" {
+    try setUp();
+    defer deinit();
+    const sys = SysBase.iface();
+    var buffer: [512]u8 = undefined;
+
+    // Information is kept; a debug line is not at the level kept, a
+    // warning is, with its letter after the prefix.
+    var position = _log.end();
+    kprintf("\n", .{});
+    position = _log.end();
+    kprintf("plain\n", .{});
+    klog(sdk.exec.LOG_DEBUG, "not kept\n", .{});
+    klog(sdk.exec.LOG_WARNING, "careful\n", .{});
+    var text = buffer[0..sys.ReadLog(&position, &buffer, buffer.len)];
+    try testing.expect(std.mem.indexOf(u8, text, "] plain\n") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "not kept") == null);
+    try testing.expect(std.mem.indexOf(u8, text, "] W: careful\n") != null);
+
+    // The level set by LogControl: from warning up, plain lines go too;
+    // asking changes nothing, and what is not a level is refused.
+    try testing.expectEqual(@as(isize, sdk.exec.LOG_INFO), sys.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_WARNING));
+    try testing.expectEqual(@as(isize, sdk.exec.LOG_WARNING), sys.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOGCTRL_ASK));
+    try testing.expectEqual(@as(isize, -1), sys.LogControl(sdk.exec.LOGCTRL_LEVEL, 9));
+    try testing.expectEqual(@as(isize, -1), sys.LogControl(77, 1));
+    kprintf("gone\n", .{});
+    klog(sdk.exec.LOG_ERROR, "broken\n", .{});
+    text = buffer[0..sys.ReadLog(&position, &buffer, buffer.len)];
+    try testing.expect(std.mem.indexOf(u8, text, "gone") == null);
+    try testing.expect(std.mem.indexOf(u8, text, "] E: broken\n") != null);
+    // Debug lines kept once asked for.
+    _ = sys.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_DEBUG);
+    klog(sdk.exec.LOG_DEBUG, "detail\n", .{});
+    text = buffer[0..sys.ReadLog(&position, &buffer, buffer.len)];
+    try testing.expect(std.mem.indexOf(u8, text, "] D: detail\n") != null);
+    _ = sys.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_INFO);
+
+    // The mirror's two settings answer what they were.
+    try testing.expectEqual(@as(isize, 0), sys.LogControl(sdk.exec.LOGCTRL_MIRROR, 1));
+    try testing.expectEqual(@as(isize, 1), sys.LogControl(sdk.exec.LOGCTRL_MIRROR, 0));
+    try testing.expectEqual(@as(isize, -1), sys.LogControl(sdk.exec.LOGCTRL_MIRROR, 2));
+
+    // The end of the log, from the start of a line.
+    kprintf("the last line\n", .{});
+    var into: [40]u8 = undefined;
+    const tail = _log.tail(&into);
+    try testing.expect(std.mem.endsWith(u8, tail, "the last line\n"));
+    try testing.expectEqual(@as(u8, '['), tail[0]);
 }
 
 /// Alert hook for tests: records instead of halting.

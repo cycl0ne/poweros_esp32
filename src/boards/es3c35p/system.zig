@@ -270,6 +270,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_PsramSize, 8 * 1024 * 1024),
     .value(st.SYSTAG_PsramMode, st.PSRAM_OCTAL),
     .value(st.SYSTAG_Console, console),
+    // UART0 reaches no host here: the log goes to the USB console too.
+    .value(st.SYSTAG_LogMirror, 1),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     // 480 by 320 on a 3.5 inch diagonal.

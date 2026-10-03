@@ -48,6 +48,13 @@ pub const SYSTAG_DiskOffset = SYSTAG_Dummy + 9;
 /// font asked for in points is this many rows per 72 of them. Absent,
 /// 72, and a point is a pixel.
 pub const SYSTAG_ScreenDPI = SYSTAG_Dummy + 10;
+/// Bytes of internal memory the system log keeps (`ReadLog`). Absent,
+/// 16 KiB.
+pub const SYSTAG_LogSize = SYSTAG_Dummy + 11;
+/// 1: the log goes to the USB console from the boot on - for a board
+/// whose raw port (UART0) reaches no host, so that the USB port is the
+/// only way to read it. Absent, 0; `C:Log MIRROR` changes it.
+pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

@@ -15,7 +15,7 @@ const Task = sdk.exec.Task;
 /// fn SetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -478.
+/// SINCE: 1.0. LVO -472.
 ///
 /// INPUTS:
 /// - `task` - the task to signal; null for the caller.
@@ -31,7 +31,8 @@ const Task = sdk.exec.Task;
 /// reads with `ReadLog` what came in a batch. A task that asks again gets
 /// the new mask in place of the old one.
 ///
-/// Four tasks may follow the log at once.
+/// Six tasks may follow the log at once; usbserial.device is one of them,
+/// for the USB console's copy.
 ///
 /// CONTEXT:
 /// - Waits: no.

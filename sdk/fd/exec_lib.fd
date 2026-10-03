@@ -179,7 +179,7 @@ void AlertAt(u32 alert_num, usize where, ?[*:0]const u8 text)
 /// many bytes were copied.
 u32 ReadLog(*u64 position, [*]u8 buffer, u32 size)
 /// Have `task` (null: the caller) sent `signal_mask` when the system log
-/// grows, at most every ten ticks; 0 stops it. False when four tasks
+/// grows, at most every ten ticks; 0 stops it. False when six tasks
 /// follow already.
 bool SetLogSignal(?*exec.Task task, u32 signal_mask)
 /// Stop the machine and give the console to the ROM debugger, on both raw
@@ -192,4 +192,8 @@ void AddTaskEndHook(?*exec.Task task, *exec.TaskEndHook hook)
 /// Take `hook` off the task it is on, so it does not run; nothing when it
 /// is on none, or has run.
 void RemTaskEndHook(*exec.TaskEndHook hook)
+/// One of the system log's settings (LOGCTRL_LEVEL, LOGCTRL_MIRROR,
+/// LOGCTRL_USBPORT) set to `value`, or asked with LOGCTRL_ASK. Returns what
+/// it was; -1 for a setting or value it does not know.
+isize LogControl(u32 what, isize value)
 ##end

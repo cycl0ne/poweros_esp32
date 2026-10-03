@@ -431,20 +431,39 @@ the task's.
 
 Everything written to the serial console - `sdk.exec.kprintf`, which is
 `RawDoFmt` to `RawPutChar`, and the kernel's own lines - is kept by exec
-in a ring of 16 KiB from the first byte of the boot. Each line gets the
-time since the boot and its writer in front, the running task's name, or
-`int` in an interrupt:
+in a ring from the first byte of the boot: 16 KiB, unless the board says
+otherwise (`SYSTAG_LogSize`). Each line gets the time since the boot and
+its writer in front, the running task's name, or `int` in an interrupt:
 
 ```
 [   1.595693 Background CLI [2]] openeth.device: the Ethernet MAC does not answer
 ```
 
-`Log` shows it (`LINES 20` for the last twenty lines), follows it
-(`FOLLOW`, until Ctrl-C) and saves it (`SAVE` into `RAM:Log/system.log`,
-`TO <file>` anywhere else). A program reads it the same way: every byte
-has a running number, and `ReadLog` copies what follows a number and
-moves the number on; `SetLogSignal` has a task signalled when the log
-grows, at most every ten ticks.
+**Levels.** A line is an error, a warning, information or a debugging
+detail. `kprintf` writes information; `sdk.exec.klog` writes at the level
+it is given, and a line that is not information has its level's letter
+after the prefix:
+
+```zig
+sdk.exec.klog(sys, sdk.exec.LOG_WARNING, "sdcard.device: card %d not answering\n", .{unit});
+// [  12.345678 sdcard] W: sdcard.device: card 0 not answering
+```
+
+exec keeps information and up. A line below the level kept is not
+written at all - not to the port, which is polled and slow, not to the
+log - so a debug line costs nothing until it is asked for. `Log LEVEL
+debug` keeps everything from then on, `Log LEVEL warning` only errors and
+warnings; at boot the level is `ENV:Sys/loglevel`'s when it names one. A
+program changes it with `LogControl(LOGCTRL_LEVEL, level)`, which answers
+the level before. An alert's lines are written whatever the level.
+
+**Reading it.** `Log` shows it (`LINES 20` for the last twenty lines,
+`FROM 12.5` from 12.5 seconds after the boot on), follows it (`FOLLOW`,
+until Ctrl-C) and saves it (`SAVE` into `RAM:Log/system.log`, `TO <file>`
+anywhere else). A program reads it the same way: every byte has a
+running number, and `ReadLog` copies what follows a number and moves the
+number on; `SetLogSignal` has a task signalled when the log grows, at
+most every ten ticks.
 
 ```zig
 var position: u64 = 0; // the oldest byte the ring still holds
@@ -455,3 +474,25 @@ while (true) {
     _ = dl.Write(dl.Output(), &buffer, count);
 }
 ```
+
+**On the USB console.** Both boards' console is the chip's USB port,
+and the raw port is UART0 - a second cable on the 7B, not wired at all on
+the ES3C35P. Where the board says so (the ES3C35P) the log goes to the USB
+console too, from the first line of the boot: the raw port writes it
+there itself until usbserial.device starts, and from then on that
+device's own task copies it between the console's writes. `Log MIRROR ON`
+and `OFF` switch it on any board.
+
+**To a syslog server.** `Run >NIL: Log SYSLOG 10.0.0.2` sends what the
+log holds and then every line as it comes, a UDP datagram each, to port
+514 (or `host:port`). S:Network-Startup starts it when
+`ENVARC:Sys/net/syslog` names a server.
+
+**The last words.** A dead end that nobody answers - no debugger asked
+for within a few seconds - restarts the machine rather than halting it,
+and keeps the last 4 KiB of the log in RTC memory, which a software reset
+does not touch. The next boot puts them at the head of its log, between
+`---- the last words of the boot before ----` and `---- the end of them
+----`, and says so on its second line; `Log` shows them. Reboot in the
+Software Failure requester keeps them too. The reset button clears that
+memory: it powers the chip down.

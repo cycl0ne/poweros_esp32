@@ -37,6 +37,12 @@ Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T
 Assign >NIL: CLIPS: RAM:Clipboards
 
+; The level the system log keeps, when ENV:Sys/loglevel names one (error,
+; warning, info or debug); information and up without it.
+If EXISTS ENV:Sys/loglevel
+  C:Log >NIL: LEVEL ${Sys/loglevel}
+EndIf
+
 ; The kinds of file the system knows, from DEVS:DataTypes into the list
 ; datatypes.library works from. Without it nothing opens a file by what
 ; is in it.

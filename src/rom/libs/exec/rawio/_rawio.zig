@@ -44,6 +44,17 @@
 //! `kprintf` is RawDoFmt to RawPutChar, for kernel code, which may run
 //! before SysBase exists.
 //!
+//! **A line has a level** (sdk/libs/exec/log.zig): one that starts with
+//! `LOG_MARK` and a digit is at that level, any other is information. A
+//! line below the level the log keeps goes nowhere - not to the port, not
+//! to the log - and one that is not information gets its level's letter
+//! after the prefix (`E: `, `W: `, `D: `). While an alert is shown every
+//! line goes out (`unfiltered`).
+//!
+//! **The USB console** gets a copy of what goes out (`mirror`) while the
+//! log is wanted there and no driver has the port yet; usbserial.device
+//! copies it from the log once it has (`LOGCTRL_USBPORT`).
+//!
 //! The calls are a file each in this folder; this file is everything else.
 //! The formatter itself (`format`) and one character out on the raw port
 //! (`putChar`) take no base, because `kprintf` uses them: it is the
@@ -84,6 +95,13 @@ pub var raw_ready = false;
 /// The next character starts a line, and gets the time and the writer in
 /// front of it.
 var line_start = true;
+/// A `LOG_MARK` started the line: the next character is its level.
+var marked = false;
+/// The line being written is below the level kept, and goes nowhere.
+var dropping = false;
+/// Every line goes out, whatever its level: set while an alert is shown,
+/// which must reach the port.
+pub var unfiltered = false;
 
 /// No hardware (host tests): output is dropped, and there is no input.
 pub const no_raw_io: RawIOHardware = .{ .init = noInit, .put = noPut, .get = noGet };
@@ -115,12 +133,51 @@ fn noGet() ?u8 {
 /// - `character` - the byte to send.
 pub fn putChar(character: u8) void {
     if (character == 0) return;
-    if (line_start and character != '\n') {
-        line_start = false;
-        linePrefix();
+    if (marked) {
+        marked = false;
+        if (character >= '1' and character <= '4') return startLine(character - '0');
+        // No level after the mark: the mark goes, the line is information.
+        startLine(sdk.exec.LOG_INFO);
+    } else if (line_start and character == sdk.exec.log.LOG_MARK) {
+        marked = true;
+        return;
+    } else if (line_start and character != '\n') {
+        startLine(sdk.exec.LOG_INFO);
+    }
+    if (dropping) {
+        if (character == '\n') {
+            dropping = false;
+            line_start = true;
+        }
+        return;
     }
     emit(character);
     if (character == '\n') line_start = true;
+}
+
+/// A line at `level` begins: dropped when the log keeps less, else its
+/// prefix, and its level's letter when it is not information.
+fn startLine(level: u32) void {
+    line_start = false;
+    dropping = !unfiltered and level > _log.level;
+    if (dropping) return;
+    linePrefix();
+    const letter: u8 = switch (level) {
+        sdk.exec.LOG_ERROR => 'E',
+        sdk.exec.LOG_WARNING => 'W',
+        sdk.exec.LOG_DEBUG => 'D',
+        else => return,
+    };
+    emit(letter);
+    emit(':');
+    emit(' ');
+}
+
+/// The USB console's copy set as the log's settings say: the port itself
+/// while the log is wanted there and no driver has the port, else none.
+/// An alert that took the port for itself puts it back with this.
+pub fn setMirror() void {
+    mirror = if (_log.mirror_wanted and !_log.usb_taken and !builtin.is_test) &usb_jtag_raw_io else null;
 }
 
 /// A second port the raw output is copied to while this is set.
@@ -176,6 +233,17 @@ pub fn kprintf(comptime format_string: [:0]const u8, args: anytype) void {
     // and runs before SysBase exists and after the machine has broken,
     // where there is no table to call through (codex rule 1).
     _ = format(format_string, &stream, &rawPut, null);
+}
+
+/// kprintf at a level of the system log (sdk.exec.LOG_*): the line is
+/// marked with it, and goes nowhere while the log keeps a higher level.
+///
+/// INPUTS:
+/// - `level` - the line's level.
+/// - `format_string` - a RawDoFmt format, one line.
+/// - `args` - a tuple of the values.
+pub fn klog(comptime level: u32, comptime format_string: [:0]const u8, args: anytype) void {
+    kprintf(sdk.exec.log.levelMark(level) ++ format_string, args);
 }
 
 /// `kprintf`'s output function: the character to the raw port.

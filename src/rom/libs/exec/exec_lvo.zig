@@ -109,6 +109,10 @@ const contract_files = [_][]const u8{
     @embedFile("task/remtask.zig"),
     @embedFile("task/addtaskendhook.zig"),
     @embedFile("task/remtaskendhook.zig"),
+    @embedFile("log/readlog.zig"),
+    @embedFile("log/setlogsignal.zig"),
+    @embedFile("log/logcontrol.zig"),
+    @embedFile("debug/debug.zig"),
     @embedFile("task/findtask.zig"),
     @embedFile("task/settaskpri.zig"),
     @embedFile("task/signal.zig"),
@@ -304,6 +308,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoDebug),
     vec(lvoAddTaskEndHook),
     vec(lvoRemTaskEndHook),
+    vec(lvoLogControl),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -784,6 +789,10 @@ fn lvoAddTaskEndHook(base: *ExecBase, task: ?*Task, hook: *sdk.exec.TaskEndHook)
 }
 fn lvoRemTaskEndHook(base: *ExecBase, hook: *sdk.exec.TaskEndHook) callconv(.c) void {
     exec.RemTaskEndHook(base, hook);
+}
+
+fn lvoLogControl(base: *ExecBase, what: u32, value: isize) callconv(.c) isize {
+    return exec.LogControl(base, what, value);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

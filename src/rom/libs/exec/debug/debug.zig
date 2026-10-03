@@ -12,7 +12,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// fn Debug(base: *ExecBase, flags: u32) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -484.
+/// SINCE: 1.0. LVO -476.
 ///
 /// INPUTS:
 /// - `flags` - none are defined; 0.

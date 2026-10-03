@@ -60,11 +60,14 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Kernel (exec):** preemptive multitasking, signals, message ports,
   semaphores; libraries and devices opened by name, loaded from disk on
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
-  PSRAM as memory with attributes. A system log (`C:Log`), and a Guru
-  that names the failed check and offers a ROM debugger - registers,
-  memory, backtrace, breakpoints, single step - on the serial ports. A
-  program that fails is held and asked about on the display - Software
-  Failure, Suspend or Reboot - while the system runs on.
+  PSRAM as memory with attributes. A system log from the first byte of
+  the boot, with levels, on the USB console where UART0 is not wired, and
+  to a syslog server (`C:Log`). A Guru that names the failed check and
+  offers a ROM debugger - registers, memory, backtrace, breakpoints,
+  single step - on the serial ports, and unanswered restarts the machine,
+  whose next boot shows the last words before it. A program that fails is
+  held and asked about on the display - Software Failure, Suspend or
+  Reboot - while the system runs on.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
   255 characters; a log-structured flash file system (`DH0:`), FAT32 and
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from

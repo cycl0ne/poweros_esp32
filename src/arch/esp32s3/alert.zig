@@ -9,9 +9,13 @@
 //! frame. A dead-end alert of a task that may be held - not in an
 //! interrupt, nothing forbidden, none of the display's locks in its hands -
 //! holds that task and asks about it on the display (Software Failure:
-//! Suspend or Reboot), and the machine runs on. Any other dead end offers
-//! the ROM debugger for a few seconds and halts the core, as it always has,
-//! if nobody answers. A recoverable alert is shown on the display as well.
+//! Suspend or Reboot), and the machine runs on. Any other dead end keeps
+//! the end of the system log in RTC memory (lastwords.zig), offers the ROM
+//! debugger for a few seconds and, if nobody answers, restarts the
+//! machine, whose next boot shows those last words at the head of its
+//! log. A recoverable alert is shown on the display as well.
+//!
+//! Every line of an alert goes out, whatever level the log keeps.
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
@@ -26,6 +30,7 @@ const debug = @import("../../rom/libs/exec/debug/_debug.zig");
 const debugexc = @import("debugexc.zig");
 const _task = @import("../../rom/libs/exec/task/_task.zig");
 const IntuitionBase = @import("../../rom/libs/intuition/intuition.zig").IntuitionBase;
+const lastwords = @import("lastwords.zig");
 const Screen = @import("../../rom/libs/intuition/screen/_screen.zig").Screen;
 const LayerInfo = @import("../../rom/libs/layers/layerinfo/_layerinfo.zig").LayerInfo;
 
@@ -111,8 +116,10 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
 
     // An alert is copied to the chip's own USB port as well as the raw
     // one: both boards' console is that port, and what a Guru says is
-    // the one thing worth reading on a board with a single cable.
+    // the one thing worth reading on a board with a single cable. And it
+    // is written whatever level the log keeps.
     rawio.mirror = &rawio.usb_jtag_raw_io;
+    rawio.unfiltered = true;
 
     const title: [:0]const u8 = if (dead_end) "Software Failure." else "Recoverable Alert.";
     var buf: [40]u8 = undefined;
@@ -132,12 +139,12 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
     }
 
     if (!dead_end) {
-        rawio.mirror = null;
+        endAlertOutput();
         if (info == null) displayRecoverable(alert_num, guru, text);
         return;
     }
     if (asking) {
-        rawio.mirror = null;
+        endAlertOutput();
         keep(alert_num, guru, text, info);
         const base = exec.SysBase;
         exec.kprintf("*** task held, and asked about on the display\n", .{});
@@ -154,14 +161,33 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
         _ = base.iface().Wait(0);
         unreachable;
     }
-    // The debugger is offered before the machine is given up, and only
-    // once there is something to look at: an unattended board waits a
-    // few seconds and halts exactly as it always has.
+    // The log's end kept over the reset, then the debugger offered before
+    // the machine is given up: an unattended board waits a few seconds and
+    // restarts, and its next boot shows what this one ended with. Left
+    // from the debugger, it stays stopped.
+    lastwords.save();
     if (debug.offer()) {
         debug.enter(.dead_end, if (info) |i| @ptrCast(@alignCast(i.frame)) else null, 0);
+        exec.kprintf("*** system halted\n", .{});
+        cpu.halt();
     }
-    exec.kprintf("*** system halted\n", .{});
-    cpu.halt();
+    exec.kprintf("*** restarting\n", .{});
+    restart();
+}
+
+/// An alert's output over: the USB console's copy and the log's level as
+/// the log's settings say again.
+fn endAlertOutput() void {
+    rawio.unfiltered = false;
+    rawio.setMirror();
+}
+
+/// The software system reset, straight to the register: exec may be what
+/// broke. RTC memory, and the last words in it, survive it.
+fn restart() noreturn {
+    const hardware = sdk.hardware;
+    hardware.mmio.reg(hardware.rtc_cntl.OPTIONS0).* |= hardware.rtc_cntl.OPTIONS0_SW_SYS_RST;
+    while (true) {}
 }
 
 // --- a task that failed: Software Failure ------------------------------------
@@ -315,8 +341,12 @@ fn askAbout(sys: *sdk.interface.exec.ExecBase) void {
         .gadget_format = "Suspend|Reboot",
     };
     const args = sdk.exec.fmtStream(.{@as([*:0]const u8, @ptrCast(&message))});
-    // 1 is Suspend, 0 the rightmost, Reboot.
-    if (ib.EasyRequestArgs(null, &easy, null, &args) == 0) sys.ColdReboot();
+    // 1 is Suspend, 0 the rightmost, Reboot - with the log's end kept for
+    // the next boot to show.
+    if (ib.EasyRequestArgs(null, &easy, null, &args) == 0) {
+        lastwords.save();
+        sys.ColdReboot();
+    }
 }
 
 /// Whether an alert is on the display now: one raised while it is up is

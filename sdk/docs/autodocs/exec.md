@@ -76,6 +76,7 @@ Generated from the source by `./zig build autodoc`.
 - [InitSemaphore](#initsemaphore) - Prepares a semaphore for use.
 - [Insert](#insert) - Puts a node on a list after a given node.
 - [IntVector](#intvector) - Hands back one interrupt number's vector.
+- [LogControl](#logcontrol) - Changes one of the system log's settings, or asks what it is.
 - [MakeLibrary](#makelibrary) - Builds a library in memory and runs its init routine, without putting it on the library list.
 - [NewList](#newlist) - Makes a list empty and ready to use.
 - [NewStackRun](#newstackrun) - Runs a function on a stack of its own, and comes back.
@@ -2873,7 +2874,7 @@ fn Debug(base: *ExecBase, flags: u32) void
 
 **SINCE**
 
-1.0. LVO -484.
+1.0. LVO -476.
 
 **INPUTS**
 
@@ -4459,6 +4460,77 @@ const count = if (sys.IntVector(n)) |v| v.count else 0;
 sys.Enable();
 ```
 
+## LogControl
+
+Changes one of the system log's settings, or asks what it is.
+
+**SYNOPSIS**
+
+```zig
+fn LogControl(base: *ExecBase, what: u32, value: isize) isize
+```
+
+**SINCE**
+
+1.2. LVO -488.
+
+**INPUTS**
+
+- `what` - the setting:
+  - `LOGCTRL_LEVEL` - the level kept, `LOG_ERROR` to `LOG_DEBUG`. A
+    line below it is not written at all.
+  - `LOGCTRL_MIRROR` - 1 when the log is copied to the USB console, 0
+    when not.
+  - `LOGCTRL_USBPORT` - 1 when the USB port has a driver that copies
+    the log to it, which exec then no longer writes to: what
+    usbserial.device says as it starts.
+- `value` - what it is set to; `LOGCTRL_ASK` changes nothing.
+
+**RESULT**
+
+What the setting was before; -1, and nothing changed, for a setting
+that does not exist or a value it cannot take.
+
+**BEHAVIOR**
+
+A level takes effect with the next line. The mirror is written by the
+raw port itself, character by character, until the USB port has a
+driver; from then on usbserial.device copies the log, and turning the
+mirror on there starts with the lines that come after it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+The startup script sets the level from `ENV:Sys/loglevel`, with
+`C:Log LEVEL`. The mirror starts as the board says: on where the USB
+port is the only way to the machine.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadLog`, `SetLogSignal`, `RawPutChar`, sdk.exec.klog
+
+**EXAMPLES**
+
+```zig
+// Debug lines from now on, and the level before back afterwards.
+const before = sys.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_DEBUG);
+defer _ = sys.LogControl(sdk.exec.LOGCTRL_LEVEL, before);
+```
+
 ## MakeLibrary
 
 Builds a library in memory and runs its init routine, without putting it on the library list.
@@ -5636,7 +5708,7 @@ fn ReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32
 
 **SINCE**
 
-1.0. LVO -472.
+1.0. LVO -468.
 
 **INPUTS**
 
@@ -7011,7 +7083,7 @@ fn SetLogSignal(base: *ExecBase, task: ?*Task, signal_mask: u32) bool
 
 **SINCE**
 
-1.0. LVO -478.
+1.0. LVO -472.
 
 **INPUTS**
 
@@ -7030,7 +7102,8 @@ something was added since the last time - not for every line - so it
 reads with `ReadLog` what came in a batch. A task that asks again gets
 the new mask in place of the old one.
 
-Four tasks may follow the log at once.
+Six tasks may follow the log at once; usbserial.device is one of them,
+for the USB console's copy.
 
 **CONTEXT**
 

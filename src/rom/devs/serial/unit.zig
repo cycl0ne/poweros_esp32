@@ -139,6 +139,9 @@ const SerialUnit = extern struct {
     /// The CMD_WRITEs (and queued breaks) that CMD_STOP holds until
     /// CMD_START.
     write_queue: exec.List,
+    /// Held for each write to the port, so that one writer's bytes go out
+    /// together: a CMD_WRITE's, or the system log's copy (`writeAside`).
+    write_lock: exec.SignalSemaphore,
     /// The port's receive interrupt server.
     int: exec.Interrupt,
     /// The input buffer: io_RBufLen bytes while the unit is open, `count`
@@ -366,6 +369,7 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
         u.unit.msg_port.flags = exec.PA_IGNORE; // the device looks at it itself
         u.unit.msg_port.msg_list.init(.message);
         u.write_queue.init(.message);
+        sys_base.InitSemaphore(&u.write_lock);
         port.setUp();
         // Empty the port's FIFO (there is no buffer until the first open).
         // The receive interrupt stays off until its server is in place: one
@@ -545,8 +549,25 @@ fn write(u: *SerialUnit, req: *exec.IOStdReq) void {
         std.mem.span(@as([*:0]const u8, @ptrCast(data)))
     else
         data[0..@intCast(req.length)];
-    u.port.write(bytes);
+    writeLocked(u, bytes);
     req.actual = @intCast(bytes.len);
+}
+
+/// `bytes` to the port, with nobody else's in between.
+fn writeLocked(u: *SerialUnit, bytes: []const u8) void {
+    const sys = sysOf(u);
+    sys.ObtainSemaphore(&u.write_lock);
+    defer sys.ReleaseSemaphore(&u.write_lock);
+    u.port.write(bytes);
+}
+
+/// `bytes` to unit `unit_number`'s port beside its requests, not through
+/// one: how usbserial.device writes the system log's copy. The unit's
+/// writes and these go out whole, one after another. From a task.
+pub fn writeAside(dev: *exec.Device, unit_number: u32, bytes: []const u8) void {
+    const sb = serialBase(dev);
+    if (unit_number >= sb.unit_count) return;
+    writeLocked(&unitsOf(sb)[unit_number], bytes);
 }
 
 /// CMD_START: the held requests, in order and in the caller's time, then

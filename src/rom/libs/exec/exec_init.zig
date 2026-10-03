@@ -32,9 +32,10 @@ const vec = sdk.exec.vec;
 pub const LIBRARY_NAME = "exec.library";
 pub const LIBRARY_VERSION = 1;
 /// 1: end hooks in the TCB (AddTaskEndHook, RemTaskEndHook), run by
-/// RemTask.
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "02.10.2026";
+/// RemTask. 2: the system log's levels and settings (LogControl), its
+/// ring as large as the board says, six followers.
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "04.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

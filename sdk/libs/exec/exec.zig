@@ -14,6 +14,7 @@ pub const devices = @import("devices.zig");
 pub const resident = @import("resident.zig");
 pub const alerts = @import("alerts.zig");
 pub const fmt = @import("fmt.zig");
+pub const log = @import("log.zig");
 pub const cache = @import("cache.zig");
 
 /// SysBase: exec.library's base, with its functions.
@@ -191,6 +192,16 @@ pub const PutChProc = fmt.PutChProc;
 pub const fmtStream = fmt.fmtStream;
 pub const checkFormat = fmt.checkFormat;
 pub const kprintf = fmt.kprintf;
+pub const klog = fmt.klog;
+
+pub const LOG_ERROR = log.LOG_ERROR;
+pub const LOG_WARNING = log.LOG_WARNING;
+pub const LOG_INFO = log.LOG_INFO;
+pub const LOG_DEBUG = log.LOG_DEBUG;
+pub const LOGCTRL_LEVEL = log.LOGCTRL_LEVEL;
+pub const LOGCTRL_MIRROR = log.LOGCTRL_MIRROR;
+pub const LOGCTRL_USBPORT = log.LOGCTRL_USBPORT;
+pub const LOGCTRL_ASK = log.LOGCTRL_ASK;
 
 pub const AT_DeadEnd = alerts.AT_DeadEnd;
 pub const AT_Recovery = alerts.AT_Recovery;
