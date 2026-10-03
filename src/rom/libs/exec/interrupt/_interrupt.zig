@@ -230,7 +230,8 @@ fn nextSoftInt(base: *ExecBase) ?*Interrupt {
 /// It goes to the running task's trap code, and **returns only if that
 /// answered non-zero** - the trap code may have moved `info.pc` past the
 /// instruction that faulted. Anything else ends in a dead-end alert, which
-/// does not come back.
+/// comes back only when the alert display has held the task: it is never
+/// resumed, and the exception's exit switches to another.
 ///
 /// INPUTS:
 /// - `base` - exec: the running task.
@@ -248,7 +249,10 @@ pub fn dispatchTrap(base: *ExecBase, info: *TrapInfo) void {
 /// for a CPU exception and null otherwise, and `text` is a line saying
 /// what went wrong, or null.
 ///
-/// It **must not return** when `AT_DeadEnd` is set.
+/// It **must not return** when `AT_DeadEnd` is set - except for a CPU
+/// exception of a task it has held: the task never runs again, and the
+/// exception's exit switches to the next one, which is how a task that
+/// failed is taken aside and the machine kept running.
 pub const AlertFn = *const fn (alert_num: u32, where: usize, info: ?*const TrapInfo, text: ?[*:0]const u8) void;
 
 /// Where exec reaches the alert display. The kernel writes it before the

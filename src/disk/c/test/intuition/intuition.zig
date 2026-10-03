@@ -2,7 +2,8 @@
 //! Intuition: what intuition.library has made of the display. Built
 //! against the SDK only.
 //!
-//!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S
+//!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,
+//!             EXECALERT/S,PANIC/S,CRASH/S
 //!
 //! With nothing asked for it locks the default public screen - which opens
 //! it, the first time - prints its size, depth, title bar and pens, and
@@ -72,6 +73,16 @@
 //! ALERT puts up a recoverable alert (TimedDisplayAlert) and prints how it
 //! was answered: the left button or the left half of the display yes, the
 //! right ones no. Unanswered it comes down by itself after ten seconds.
+//!
+//! EXECALERT raises a recoverable alert through exec's own Alert, the way
+//! anything in the system reports a problem it can carry on from: it is
+//! printed on the console and shown on the display through intuition, and
+//! goes away with a press, a touch or ten seconds.
+//!
+//! PANIC fails a safety check in this program, and CRASH reads address
+//! 0x10, which nothing may read:
+//! each fails the program, which is asked about on the display - Suspend
+//! holds it and the system runs on, Reboot starts it again.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -90,10 +101,10 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.9 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.10 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S";
+const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S";
 const arg_windows = 0;
 const arg_gadgets = 1;
 const arg_sliders = 2;
@@ -104,6 +115,9 @@ const arg_requester = 6;
 const arg_close = 7;
 const arg_beep = 8;
 const arg_alert = 9;
+const arg_execalert = 10;
+const arg_panic = 11;
+const arg_crash = 12;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
@@ -1058,7 +1072,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [10]usize = @splat(0);
+    var argv: [13]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -1080,6 +1094,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_beep] != 0) {
         ib.UnlockPubScreen(null, s);
         ib.DisplayBeep(null);
+        return dos.RETURN_OK;
+    }
+    if (argv[arg_panic] != 0) {
+        ib.UnlockPubScreen(null, s);
+        var small: u8 = 0;
+        const wide: u32 = 1000 + @as(u32, @intFromBool(argv[arg_panic] != 0));
+        small = @intCast(wide); // fails: 1001 does not fit in a byte
+        return @as(i32, small);
+    }
+    if (argv[arg_crash] != 0) {
+        ib.UnlockPubScreen(null, s);
+        const nowhere: *volatile u32 = @ptrFromInt(argv[arg_panic] | 0x10);
+        return @bitCast(nowhere.*);
+    }
+    if (argv[arg_execalert] != 0) {
+        ib.UnlockPubScreen(null, s);
+        sys.Alert(exec.AT_Recovery | exec.AG_MakeLib);
         return dos.RETURN_OK;
     }
     if (argv[arg_alert] != 0) {

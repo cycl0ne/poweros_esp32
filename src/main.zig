@@ -116,6 +116,8 @@ export fn kmain() callconv(.c) noreturn {
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
+    // Who asks about a task that failed, so the machine need not stop.
+    alert.startHelper();
     timer.init(100);
     if (timer.cpu_hz != clock.cpu_hz) {
         note("cpu runs at %d MHz, not %d MHz (pll calibrated: %s); using the measured clock", .{

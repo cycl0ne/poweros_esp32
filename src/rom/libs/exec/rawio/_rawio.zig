@@ -382,17 +382,30 @@ const usj = sdk.hardware.usb_serial_jtag;
 
 fn usbJtagInit() void {}
 
+/// Whether a host took the last byte; cleared when a wait for room ran
+/// out.
+var usb_jtag_heard = true;
+
 /// One byte into the FIFO, and the packet sent at once: a debugger types
 /// a character at a time and a reply held back for a full packet would
 /// never appear.
 ///
 /// A host that is not listening fills the FIFO and never drains it, so
 /// the wait is bounded and the byte is dropped rather than stopping a
-/// machine that is already stopped.
+/// machine that is already stopped. After one wait that ran out the port
+/// counts as unheard: bytes are dropped at once, without waiting each one
+/// out, until the FIFO has room again.
 fn usbJtagPut(character: u8) void {
+    if (!usb_jtag_heard) {
+        if (reg(usj.EP1_CONF).* & usj.EP1_IN_EP_DATA_FREE == 0) return;
+        usb_jtag_heard = true;
+    }
     var spins: u32 = 0;
     while (reg(usj.EP1_CONF).* & usj.EP1_IN_EP_DATA_FREE == 0) : (spins += 1) {
-        if (spins > 200_000) return;
+        if (spins > 200_000) {
+            usb_jtag_heard = false;
+            return;
+        }
     }
     reg(usj.EP1).* = character;
     reg(usj.EP1_CONF).* = usj.EP1_WR_DONE;

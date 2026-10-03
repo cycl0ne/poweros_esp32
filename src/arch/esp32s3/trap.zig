@@ -122,7 +122,7 @@ fn handle(frame: *Frame) void {
                 .address = frame.excvaddr,
                 .frame = frame,
             };
-            exec.dispatchTrap(exec.SysBase, &info); // returns only if the trap code handled it
+            exec.dispatchTrap(exec.SysBase, &info); // returns if the trap code handled it, or the task was held
             frame.pc = @intCast(info.pc);
         },
     }
