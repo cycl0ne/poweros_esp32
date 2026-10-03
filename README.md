@@ -21,8 +21,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Quick start](#quick-start) | boards, building, QEMU, flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
-| [Autodocs](sdk/docs/README.md) | every library, device and resource call |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md) |
+| [Autodocs](sdk/docs/README.md) | every library, device and resource call, and every module by kind - libraries, devices, resources, handlers, classes |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
