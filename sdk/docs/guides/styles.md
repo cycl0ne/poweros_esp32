@@ -130,6 +130,13 @@ Four styles may be asked, in this order:
    gives from `ENV:Sys/style.prefs`;
 4. **the system's default** - in the ROM, the look with no style anywhere.
 
+A style with `STYLE_Alone` set stands on the default alone: after it
+comes the default and nothing else. A gadget's own then skips its
+screen's and the system's, a screen's skips the system's. That is a look
+shown as it is whatever style is in force - the preferences editor's
+previews are drawn so. A list with `STYLE_Alone` and nothing else is the
+default itself.
+
 ## How a property is found
 
 Each property is found on its own:
@@ -259,6 +266,15 @@ and padding leave, which is how a frame says how much bigger it is than
 what it holds. `DPF_EDGES_ONLY` draws the border alone, `DPF_INVERT`
 turns it the other way.
 
+**Which part.** A button, or anything pressed, is `PART_MAIN`; a box
+that holds content - a field, a list - is `PART_FIELD`, so a list is
+drawn as a field is; a frame round a group is `PART_GROUP`. What only
+stands on the window - a page, a row of tabs between the tabs, a text
+without a frame - is not a part at all: it is the window's ground,
+painted as the window paints it with `EraseRect` through the gadget's
+RastPort. A round part's corners are its own: what is drawn inside it
+keeps clear of them by the radius less the border.
+
 **A single property** - a label's colour, a mark's:
 
 ```zig
@@ -339,8 +355,10 @@ inner)`.
 
 A hovered gadget is drawn again as the pointer comes and goes only when
 a style it is drawn from names the hovered state at all; under the
-default nothing is drawn for it. A focused one is drawn by its class as
-it goes active and inactive, which it does anyway.
+default nothing is drawn for it. It is drawn with `GREDRAW_STATE`: a
+class whose look does not follow the mark - a list view, whose lines
+would all be drawn again - draws nothing for it. A focused one is drawn
+by its class as it goes active and inactive, which it does anyway.
 
 ## Tools
 

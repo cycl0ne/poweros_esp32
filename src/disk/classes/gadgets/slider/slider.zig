@@ -9,7 +9,8 @@
 //! gadget, which hears where the knob is as it moves.
 //!
 //! The levels are spread over the prop gadget's pot: with n levels the
-//! knob is a nth of the container, level i sits at pot `MAXPOT * i /
+//! knob is a nth of the container - at least as long as the container is
+//! across, so that it can be taken hold of - level i sits at pot `MAXPOT * i /
 //! (n - 1)`, and a pot is the level nearest it. Up and down, the pot is
 //! turned over, so the smallest level is at the bottom. When a press ends
 //! - the knob let go, or a press beside it that moved it a level - the
@@ -41,7 +42,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sl.SLIDER_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 1,
+    .date = "03.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -91,9 +93,16 @@ fn levels(own: *const Data) u32 {
     return @intCast(@as(i64, own.max) - own.min + 1);
 }
 
-/// The knob's size for n levels.
-fn bodyFor(n: u32) u32 {
-    return if (n > 0) pg.MAXBODY / n else pg.MAXBODY;
+/// The knob's size for n levels: a nth of the container, but never
+/// shorter along it than the container is across - a knob that can be
+/// taken hold of, and that a style can round.
+fn bodyFor(own: *const Data, n: u32) u32 {
+    const share: u32 = if (n > 0) pg.MAXBODY / n else pg.MAXBODY;
+    const inner = gc.gadget(own.inner orelse return share);
+    const along: u32 = @intCast(@max(if (own.vertical != 0) inner.height else inner.width, 1));
+    const across: u32 = @intCast(@max(if (own.vertical != 0) inner.width else inner.height, 0));
+    const least: u32 = @intCast(@min(@as(u64, pg.MAXBODY) * across / along, pg.MAXBODY));
+    return @max(share, least);
 }
 
 /// Where level `level` puts the knob.
@@ -127,7 +136,7 @@ fn putKnob(base: *gadgets.Base, own: *const Data, gi: ?*classusr.GadgetInfo) voi
     const body_tag: utility.Tag = if (own.vertical != 0) pg.PGA_VertBody else pg.PGA_HorizBody;
     const pot_tag: utility.Tag = if (own.vertical != 0) pg.PGA_VertPot else pg.PGA_HorizPot;
     const tags = [_]TagItem{
-        .{ .tag = body_tag, .data = bodyFor(levels(own)) },
+        .{ .tag = body_tag, .data = bodyFor(own, levels(own)) },
         .{ .tag = pot_tag, .data = potFor(own, own.level) },
         .{},
     };
@@ -217,6 +226,12 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
     const b = gc.boxFor(gc.gadget(o), gi);
     const at = partsOf(base, own, o, gi).inner;
     support.place(base.intuition_base, own.inner.?, .{ .left = b.left + at.left, .top = b.top + at.top, .width = at.width, .height = at.height });
+    // The knob's least size follows the room it now has; where it is
+    // stays - it may be being dragged - and nothing is drawn.
+    const body_tag: utility.Tag = if (own.vertical != 0) pg.PGA_VertBody else pg.PGA_HorizBody;
+    const body = [_]TagItem{ .{ .tag = body_tag, .data = bodyFor(own, levels(own)) }, .{} };
+    var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &body, .gadget_info = null };
+    _ = base.intuition_base.SendMessage(own.inner.?, @ptrCast(&set));
     return at;
 }
 
@@ -338,6 +353,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const inner_tags = [_]TagItem{
                 .{ .tag = pg.PGA_Freedom, .data = if (own.vertical != 0) pg.FREEVERT else pg.FREEHORIZ },
                 .{ .tag = pg.PGA_Borderless, .data = 1 },
+                .{ .tag = pg.PGA_NewLook, .data = 1 },
                 .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(obj) },
                 .{},
             };
@@ -450,9 +466,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_GOACTIVE, gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            const was = own.level;
             const at = placeInner(base, own, o.?, in.gadget_info);
             const result = support.handOnInput(ib, own.inner.?, in, at);
             if (result & gc.GMR_VERIFY != 0) {
+                // A press beside the knob, done as it is pressed: one level
+                // that way, however far the knob's own length took it.
+                const beside = msg.method_id == gc.GM_GOACTIVE and own.level != was and (own.level - was > 1 or was - own.level > 1);
+                if (beside) {
+                    own.level = if (own.level > was) was + 1 else was - 1;
+                    tell(base, own, o.?, in.gadget_info, 0);
+                }
                 // Done: the knob on its level, which is the code.
                 putKnob(base, own, in.gadget_info);
                 in.termination.* = own.level;

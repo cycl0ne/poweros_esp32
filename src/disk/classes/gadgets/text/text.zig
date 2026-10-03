@@ -44,7 +44,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .date = "02.10.2026",
+    .revision = 1,
+    .date = "03.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -234,6 +235,13 @@ fn inside(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.Dra
     return .{ .left = b.left + room.left, .top = b.top + room.top, .width = b.width - room.width, .height = b.height - room.height };
 }
 
+/// A box painted as the window paints its ground.
+fn eraseBox(gb: anytype, rp: *graphics.RastPort, box: gc.Box) void {
+    if (box.width <= 0 or box.height <= 0) return;
+    const rect = graphics.Rect{ .min_x = box.left, .min_y = box.top, .max_x = box.left + box.width, .max_y = box.top + box.height };
+    gb.EraseRect(rp, &rect);
+}
+
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const info = r.gadget_info orelse return;
     const ib = base.intuition_base;
@@ -260,9 +268,18 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     };
 
     const area = inside(base, own, b, info.draw_info);
-    // The ground, and whatever the last text left past the box.
-    support.fill(gb, rp, area, back);
-    if (own.overrun > 0) support.fill(gb, rp, .{ .left = b.left + b.width, .top = area.top, .width = own.overrun, .height = area.height }, back);
+    // The ground, and whatever the last text left past the box: its own
+    // back pen, a framed box's background, or else the window's ground as
+    // the window paints it - a text on its own is written on the window.
+    const plain = own.has_back == 0 and own.border == 0;
+    const past = gc.Box{ .left = b.left + b.width, .top = area.top, .width = own.overrun, .height = area.height };
+    if (plain) {
+        eraseBox(gb, rp, area);
+        if (own.overrun > 0) eraseBox(gb, rp, past);
+    } else {
+        support.fill(gb, rp, area, back);
+        if (own.overrun > 0) support.fill(gb, rp, past, back);
+    }
     own.overrun = 0;
     if (own.border != 0) if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
 

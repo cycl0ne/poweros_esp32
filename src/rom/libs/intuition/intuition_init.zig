@@ -77,8 +77,10 @@ pub const LIBRARY_VERSION = 0;
 /// the on-screen keyboard while a field is typed into
 /// (Preferences.keyboard); STYLE_BorderGap; ImpDraw.style. 26:
 /// SetScreenPens - a screen's pens, or the system's, changed while open.
-pub const LIBRARY_REVISION = 26;
-const BUILD_DATE = "02.10.2026";
+/// 27: STYLE_Alone, a style that stands on the default alone; a gadget
+/// drawn for being hovered is drawn with GREDRAW_STATE.
+pub const LIBRARY_REVISION = 27;
+const BUILD_DATE = "03.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

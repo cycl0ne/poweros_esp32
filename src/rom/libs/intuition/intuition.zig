@@ -5952,6 +5952,17 @@ test "styles: SetStyle gives the system a style under a screen's own, and replac
     try testing.expect(it.SetStyle(own, null));
     try testing.expectEqual(@as(usize, 3), radius(ib, own_dri));
 
+    // A gadget's style that stands alone asks neither the screen's nor the
+    // system's: the default's square corners, unless it says otherwise.
+    const kept_styles = @import("style/_style.zig");
+    const bare = kept_styles.keep(ib, &[_]TagItem{ .{ .tag = style.STYLE_Alone, .data = 1 }, .{} }).?;
+    const round = kept_styles.keep(ib, &[_]TagItem{ .{ .tag = style.STYLE_Alone, .data = 1 }, .{ .tag = style.STYLE_Radius, .data = 5 }, .{} }).?;
+    try testing.expectEqual(@as(usize, 3), it.GetStyleAttr(plain_dri, null, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    try testing.expectEqual(@as(usize, 0), it.GetStyleAttr(plain_dri, bare, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    try testing.expectEqual(@as(usize, 5), it.GetStyleAttr(plain_dri, round, style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    kept_styles.drop(ib, bare);
+    kept_styles.drop(ib, round);
+
     // No style at all: the default again, which has square corners.
     try testing.expect(it.SetStyle(null, null));
     try testing.expectEqual(@as(usize, 0), radius(ib, plain_dri));

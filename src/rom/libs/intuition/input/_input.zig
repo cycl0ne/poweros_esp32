@@ -1051,13 +1051,15 @@ fn unhover(ib: *IntuitionBase) void {
 
 /// A flag of a gadget's set or cleared, and the gadget drawn again when a
 /// style it is drawn from has anything to say about hovering: under the
-/// system's default alone it would draw the same pixels again.
+/// system's default alone it would draw the same pixels again. Drawn as
+/// `GREDRAW_STATE`, so a class whose look does not follow the mark - a
+/// list, whose every line would be drawn again - draws nothing.
 fn marked(ib: *IntuitionBase, w: *Window, o: *Object, flag: u32, on: bool) void {
     const g = gadgetclass.gadgetOf(ib, o);
     if (on) g.flags |= flag else g.flags &= ~flag;
     const gi = _gadget.infoFor(ib, w, o);
     if (_style.mentions(ib, g.style, gi.draw_info, sdk.intuition.style.STATE_HOVERED)) {
-        _gadget.render(ib, w, o, gc.GREDRAW_UPDATE);
+        _gadget.render(ib, w, o, gc.GREDRAW_STATE);
     }
 }
 

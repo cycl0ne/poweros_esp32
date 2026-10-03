@@ -19,10 +19,9 @@
 //! two arrows at the right end move it along a tab at a time; a tab that
 //! would not fit whole is not drawn at all, so no tab is ever cut.
 //!
-//! A press marks the tab under it; let go over the same tab, that tab is
-//! the one in front, its number is the code of the window's
-//! `IDCMP_GADGETUP`, and the target hears `CLICKTAB_Current`. Let go
-//! somewhere else, nothing changes.
+//! A press on a tab makes it the one in front at once - its page shows
+//! while the button is still down - its number is the code of the
+//! window's `IDCMP_GADGETUP`, and the target hears `CLICKTAB_Current`.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -46,7 +45,8 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = ct.CLICKTAB_CLASS,
     .version = 1,
-    .date = "28.09.2026",
+    .revision = 2,
+    .date = "03.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -81,11 +81,6 @@ pub const Data = extern struct {
     current: u32 = 0,
     /// The leftmost tab shown, when they do not all fit.
     first: u32 = 0,
-    /// The tab a press is being held on, `NONE` for none.
-    pressed: u32 = NONE,
-    /// The pointer is on the tab the press began on.
-    over: u8 = 0,
-    pad: [3]u8 = @splat(0),
     /// The tabs' and the arrows' frame.
     frame: ?*Object = null,
 };
@@ -248,10 +243,8 @@ fn drawTab(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *
     const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
     const pens: [*]const graphics.Pen = &styled;
     const front = which == own.current;
-    const held = own.pressed == which and own.over != 0;
     const edge = support.mixPens(pens[sc.SHADOWPEN], pens[sc.BACKGROUNDPEN], 9);
-    var ground = if (front) pens[sc.BACKGROUNDPEN] else support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], idle_ground_mix);
-    if (held) ground = support.mixPens(ground, pens[sc.SHINEPEN], 12);
+    const ground = if (front) pens[sc.BACKGROUNDPEN] else support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], idle_ground_mix);
     const ink = if (front) pens[sc.TEXTPEN] else support.mixPens(pens[sc.TEXTPEN], pens[sc.BACKGROUNDPEN], idle_ink_mix);
 
     support.fill(gb, rp, at, ground);
@@ -298,11 +291,14 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const pens: [*]const graphics.Pen = &styled;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
-    support.fill(gb, rp, b, pens[sc.BACKGROUNDPEN]);
+    // The row stands on the window's ground, as the window paints it; only
+    // the tabs are drawn in the style's look.
+    const row_ground = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height };
+    gb.EraseRect(rp, &row_ground);
 
     // The line along the bottom of the whole row. Every tab is drawn
     // over it, and the one in front covers its part of it.
-    const edge = support.mixPens(pens[sc.SHADOWPEN], pens[sc.BACKGROUNDPEN], 9);
+    const edge = support.mixPens(pens[sc.SHADOWPEN], info.draw_info.pens[sc.BACKGROUNDPEN], 9);
     support.setPen(gb, rp, edge);
     gb.DrawHLine(rp, b.left, b.top + b.height - 1, b.width);
 
@@ -347,8 +343,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
                 .width = arrows,
                 .height = b.height - tab_lift - 1,
             };
-            const held = own.pressed == which and own.over != 0;
-            support.fill(gb, rp, box, if (held) support.mixPens(ground, pens[sc.SHINEPEN], 12) else ground);
+            support.fill(gb, rp, box, ground);
             support.setPen(gb, rp, edge);
             gb.DrawVLine(rp, box.left, box.top, box.height);
             gb.DrawHLine(rp, box.left, box.top, box.width);
@@ -491,47 +486,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (own.first != was) support.redraw(ib, o.?, in.gadget_info);
                 return gc.GMR_NOREUSE;
             }
-            own.pressed = what;
-            own.over = 1;
+            take(base, own, o.?, in.gadget_info, what);
             support.redraw(ib, o.?, in.gadget_info);
-            return gc.GMR_MEACTIVE;
+            in.termination.* = @intCast(own.current);
+            return gc.GMR_NOREUSE | gc.GMR_VERIFY;
         },
-        gc.GM_HANDLEINPUT => {
-            const in: *gc.GpInput = @ptrCast(@alignCast(msg));
-            const own = classes.instData(Data, cl, o.?);
-            const e = in.event orelse return gc.GMR_MEACTIVE;
-            if (own.pressed == NONE) return gc.GMR_NOREUSE;
-            const what = hitAt(base, own, o.?, in.gadget_info, in.mouse.x, in.mouse.y);
-            const over: u8 = @intFromBool(what == own.pressed);
-            if (over != own.over) {
-                own.over = over;
-                support.redraw(ib, o.?, in.gadget_info);
-            }
-            if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
-                const which = own.pressed;
-                own.pressed = NONE;
-                own.over = 0;
-                if (over == 0) {
-                    support.redraw(ib, o.?, in.gadget_info);
-                    return gc.GMR_NOREUSE;
-                }
-                take(base, own, o.?, in.gadget_info, which);
-                support.redraw(ib, o.?, in.gadget_info);
-                in.termination.* = @intCast(own.current);
-                return gc.GMR_NOREUSE | gc.GMR_VERIFY;
-            }
-            return gc.GMR_MEACTIVE;
-        },
-        gc.GM_GOINACTIVE => {
-            const gone: *gc.GpGoInactive = @ptrCast(@alignCast(msg));
-            const own = classes.instData(Data, cl, o.?);
-            if (own.pressed != NONE) {
-                own.pressed = NONE;
-                own.over = 0;
-                support.redraw(ib, o.?, gone.gadget_info);
-            }
-            return 0;
-        },
+        // A press is done with as it is pressed: nothing is held.
+        gc.GM_HANDLEINPUT => return gc.GMR_NOREUSE,
+        gc.GM_GOINACTIVE => return 0,
         else => return ib.SendSuperMessage(cl, o, msg),
     }
 }

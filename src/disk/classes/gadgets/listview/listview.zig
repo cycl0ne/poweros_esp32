@@ -71,7 +71,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = lv.LISTVIEW_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 2,
+    .date = "03.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -240,6 +241,8 @@ pub const Parts = struct {
     /// How tall a line is, and how many whole lines fit.
     line_height: i32,
     visible: u32,
+    /// The gadget's own style, which its lines are drawn in.
+    style: ?*const sdk.intuition.Style,
 };
 
 fn lineHeight(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) i32 {
@@ -253,12 +256,21 @@ fn lineHeight(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*
 fn partsFor(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, size: gc.Box) Parts {
     const sw: i32 = @intCast(own.scroll_width);
     const frame = gc.Box{ .width = @max(size.width - sw, 0), .height = size.height };
-    const inset = support.frameInset(base.intuition_base, own.frame.?, if (gi) |info| info.draw_info else g.draw_info);
+    const dri = if (gi) |info| info.draw_info else g.draw_info;
+    const inset = support.frameInset(base.intuition_base, own.frame.?, dri);
+    // Lines that reach the frame's sides keep clear of its round corners:
+    // a line at the very top or bottom would cut across them.
+    const corner: i32 = if (dri) |d| corner: {
+        const ib = base.intuition_base;
+        const radius: i32 = @intCast(ib.GetStyleAttr(d, g.style, ic.PART_FIELD, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_Radius));
+        const edge: i32 = @intCast(ib.GetStyleAttr(d, g.style, ic.PART_FIELD, sdk.intuition.style.STATE_NORMAL, sdk.intuition.style.STYLE_BorderY));
+        break :corner @max(radius - edge, 0);
+    } else 0;
     const lines = gc.Box{
         .left = inset.left + text_margin,
-        .top = inset.top,
+        .top = inset.top + corner,
         .width = @max(frame.width - inset.width - 2 * text_margin, 0),
-        .height = @max(frame.height - inset.height, 0),
+        .height = @max(frame.height - inset.height - 2 * corner, 0),
     };
     const h = lineHeight(base, own, g, gi);
     return .{
@@ -267,6 +279,7 @@ fn partsFor(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*co
         .scroller = .{ .left = frame.width, .width = @min(sw, size.width), .height = size.height },
         .line_height = h,
         .visible = @intCast(@divTrunc(lines.height, h)),
+        .style = g.style,
     };
 }
 
@@ -316,7 +329,7 @@ fn isDisabled(base: *gadgets.Base, own: *const Data, node: *exec.Node, line: u32
 /// will, else its name; ghosted when disabled.
 fn drawLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, origin: gc.Box, parts: Parts, line: u32, node: ?*exec.Node) void {
     const gb = base.graphics_base;
-    const styled = support.pensFor(base.intuition_base, info.draw_info, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
+    const styled = support.pensFor(base.intuition_base, info.draw_info, parts.style, ic.PART_FIELD, sdk.intuition.style.PART_SELECTION);
     const pens: [*]const graphics.Pen = &styled;
     const row: i32 = @intCast(line - own.top);
     // The whole width inside the frame, margins included, so a selected
@@ -391,7 +404,7 @@ fn drawLines(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.Ra
         .top = b.top + parts.lines.top + used,
         .width = parts.lines.width + 2 * text_margin,
         .height = parts.lines.height - used,
-    }, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN));
+    }, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, ic.PART_FIELD));
 }
 
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
@@ -736,9 +749,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
             const change = setAttrs(base, own, new.attr_list, true);
+            // A box of lines is drawn as a field is: its border, its
+            // ground and its corners the field's.
             const frame_tags = [_]TagItem{
-                .{ .tag = ic.IA_FrameType, .data = ic.FRAME_BUTTON },
-                .{ .tag = ic.IA_Recessed, .data = 1 },
+                .{ .tag = ic.IA_StylePart, .data = ic.PART_FIELD },
                 .{},
             };
             own.frame = ib.NewObjectTagList(null, classusr.FRAMEICLASS, &frame_tags);
@@ -850,7 +864,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return if (support.inside(ht.mouse.x, ht.mouse.y, b.width, b.height)) gc.GMR_GADGETHIT else 0;
         },
         gc.GM_RENDER => {
-            render(base, cl, o.?, @ptrCast(@alignCast(msg)));
+            const r: *gc.GpRender = @ptrCast(@alignCast(msg));
+            // Its look does not follow hovering: nothing to draw for it,
+            // where all of it would be every line again.
+            if (r.redraw == gc.GREDRAW_STATE) return 0;
+            render(base, cl, o.?, r);
             return 0;
         },
         // The key moves the selection down a line, and up with a Shift

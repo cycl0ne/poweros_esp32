@@ -422,6 +422,10 @@ pub const GpRender = extern struct {
 pub const GREDRAW_REDRAW: u32 = 1;
 /// Draw what changed, such as the pressed state.
 pub const GREDRAW_UPDATE: u32 = 2;
+/// Only its marks changed - hovered as the pointer comes and goes: draw
+/// what shows them. A class whose look does not follow them draws
+/// nothing; one that does not know this draws all of it.
+pub const GREDRAW_STATE: u32 = 3;
 
 /// GM_GOACTIVE and GM_HANDLEINPUT.
 pub const GpInput = extern struct {

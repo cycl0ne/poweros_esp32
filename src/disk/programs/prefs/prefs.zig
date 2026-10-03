@@ -89,7 +89,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION_STRING = "\x00$VER: Prefs 1.1 (3.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Prefs 1.2 (3.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const MSG_NOLIBRARY = "No %s\n";
@@ -176,9 +176,11 @@ const Model = struct {
     }
 
     /// The whole style as tags, into `tags`, shaded backgrounds' fills
-    /// into `fills`.
+    /// into `fills`: standing alone on the default, as the file does once
+    /// it is the system's style - not on whatever style is in force now.
     fn toTags(m: *const Model, tags: []TagItem, fills: []graphics.FillStyle) void {
-        var n: usize = 0;
+        tags[0] = .{ .tag = looks.STYLE_Alone, .data = 1 };
+        var n: usize = 1;
         var f: usize = 0;
         for (m.lines[0..m.count]) |*line| {
             if (line.empty()) continue;
@@ -325,7 +327,7 @@ const Editor = struct {
     font_line: font_file.Line = .{},
     font_picked: [3]bool = @splat(false),
     /// The tags the preview is drawn with, and the fills they point to.
-    tags: [max_lines * style_file.tags_per_line + 1]TagItem = undefined,
+    tags: [max_lines * style_file.tags_per_line + 2]TagItem = undefined,
     fills: [max_lines]graphics.FillStyle = undefined,
     status_text: [80:0]u8 = @splat(0),
 

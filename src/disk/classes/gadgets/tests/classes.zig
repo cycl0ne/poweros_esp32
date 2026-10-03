@@ -2277,7 +2277,7 @@ test "page.gadget: the page that is shown answers for the gadget" {
     try rig.down();
 }
 
-test "clicktab.gadget: a press takes the tab it is let go over, and the key steps them" {
+test "clicktab.gadget: a press takes the tab under it at once, and the key steps them" {
     var heard = Heard{ .tag = ct.CLICKTAB_Current, .ib = undefined };
     var rig = try Rig.up(&clicktab.Library.resident_tag, &heard);
     const ib = rig.ib;
@@ -2296,34 +2296,30 @@ test "clicktab.gadget: a press takes the tab it is let go over, and the key step
     const width = gc.gadget(tabs).width;
     const tab = @divTrunc(width, 3);
 
-    // A press on the middle tab, let go over it, puts it in front.
+    // A press on the middle tab puts it in front as it is pressed, and is
+    // done with: nothing waits for the button to come up.
     var termination: i32 = -1;
     var down = input(gc.GM_GOACTIVE, &press, tab + 2, 2, &termination);
-    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(tabs, @ptrCast(&down)));
-    try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
-    var up = input(gc.GM_HANDLEINPUT, &release, tab + 2, 2, &termination);
-    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tabs, @ptrCast(&up)));
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tabs, @ptrCast(&down)));
     try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
     try testing.expectEqual(@as(i32, 1), termination);
     try testing.expectEqual(@as(?usize, 1), heard.value);
     try testing.expectEqual(@as(?usize, 7), heard.id);
 
-    // Let go somewhere else, nothing changes.
+    // The last one the same way.
     var again = input(gc.GM_GOACTIVE, &press, 2 * tab + 2, 2, &termination);
-    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(tabs, @ptrCast(&again)));
-    var away = input(gc.GM_HANDLEINPUT, &release, 2, 2, &termination);
-    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(tabs, @ptrCast(&away)));
-    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tabs, @ptrCast(&again)));
+    try testing.expectEqual(@as(usize, 2), attr(ib, tabs, ct.CLICKTAB_Current));
 
     // The key takes the next tab, and the one before with Shift held.
     var step_on = keyed('t', 0, &termination);
     try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_on)));
-    try testing.expectEqual(@as(usize, 2), attr(ib, tabs, ct.CLICKTAB_Current));
-    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_on)));
     try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_on)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
     var step_back = keyed('t', ie.IEQUALIFIER_LSHIFT, &termination);
     try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(tabs, @ptrCast(&step_back)));
-    try testing.expectEqual(@as(usize, 2), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
 
     // A point past the last tab is not the gadget's.
     var hit = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = width + 4, .y = 2 } };

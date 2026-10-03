@@ -17,6 +17,10 @@
 //!    then the default;
 //! 3. within each, the exact part, then the part it falls back to.
 //!
+//! A style given `STYLE_Alone` cuts the order short: after it comes the
+//! default and nothing else - a gadget's own skips its screen's and the
+//! system's, a screen's skips the system's.
+//!
 //! **A screen's style and the system's can be replaced while others draw**
 //! (`SetStyle`). So `look` reads them under Forbid, from the DrawInfo
 //! rather than from a pointer its caller took earlier, and copies out all
@@ -81,6 +85,8 @@ const Kept = extern struct {
     count: u32,
     /// Where the fill styles start, from the start of the block.
     fills_at: u32,
+    /// Whether it stands on the default alone (`STYLE_Alone`).
+    alone: u32,
     entries: [0]Entry,
 
     fn all(kept: *const Kept) []const Entry {
@@ -151,9 +157,12 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
     var bound: u32 = 0;
     var fill_bound: u32 = 0;
     var starts = true;
+    var alone = false;
     var walk: ?[*]const TagItem = tags;
     while (ub.NextTagItem(&walk)) |item| {
-        if (item.tag == style.STYLE_Part or item.tag == style.STYLE_State) {
+        if (item.tag == style.STYLE_Alone) {
+            alone = alone or item.data != 0;
+        } else if (item.tag == style.STYLE_Part or item.tag == style.STYLE_State) {
             starts = true;
         } else if (propsOf(item.tag) != null) {
             if (starts) bound += 1;
@@ -161,7 +170,8 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
         }
         if (item.tag == style.STYLE_BackgroundFill and item.data != 0) fill_bound += 1;
     }
-    if (bound == 0) return null;
+    // A style alone with no property is still one: the default by itself.
+    if (bound == 0 and !alone) return null;
 
     const align_fill = @alignOf(graphics.FillStyle);
     const fills_at = (@sizeOf(Kept) + bound * @sizeOf(Entry) + align_fill - 1) / align_fill * align_fill;
@@ -169,6 +179,7 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
     const memory = ib.sys_base.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const kept: *Kept = @ptrCast(@alignCast(memory));
     kept.fills_at = @intCast(fills_at);
+    kept.alone = @intFromBool(alone);
     const room: [*]Entry = @ptrCast(&kept.entries);
     const fill_room: [*]graphics.FillStyle = @ptrCast(@alignCast(@as([*]u8, @ptrCast(memory)) + fills_at));
     var fill_count: u32 = 0;
@@ -221,21 +232,36 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
             },
         }
     }
-    if (kept.count == 0) {
+    if (kept.count == 0 and !alone) {
         ib.sys_base.FreeVec(memory);
         return null;
     }
     return @ptrCast(kept);
 }
 
-/// Whether a list names any property at all: a list that does not is no
-/// style, and `keep` answers null for it as it does for no memory.
+/// Whether a list names any property at all, or stands alone: a list
+/// that does neither is no style, and `keep` answers null for it as it
+/// does for no memory.
 pub fn names(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
     var walk: ?[*]const TagItem = tags;
     while (ib.utility_base.NextTagItem(&walk)) |item| {
         if (propsOf(item.tag) != null) return true;
+        if (item.tag == style.STYLE_Alone and item.data != 0) return true;
     }
     return false;
+}
+
+fn isAlone(maybe: ?*const style.Style) bool {
+    const kept: *const Kept = @ptrCast(@alignCast(maybe orelse return false));
+    return kept.alone != 0;
+}
+
+/// The styles asked, in order: a gadget's own, its screen's, the system's,
+/// the default - cut short after one that stands alone.
+fn chain(ib: *const IntuitionBase, own: ?*const style.Style, screen: ?*const style.Style) [4]?*const style.Style {
+    if (isAlone(own)) return .{ own, null, null, ib.default_style };
+    if (isAlone(screen)) return .{ own, screen, null, ib.default_style };
+    return .{ own, screen, ib.system_style, ib.default_style };
 }
 
 /// Give back what `keep` made. Null is allowed.
@@ -297,7 +323,7 @@ pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*con
     ib.sys_base.Forbid();
     defer ib.sys_base.Permit();
     const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
-    var result = lookIn(.{ own, screen, ib.system_style, ib.default_style }, part, states);
+    var result = lookIn(chain(ib, own, screen), part, states);
     if (result.fill_source) |source| {
         result.fill = source.*;
         result.has_fill = true;
@@ -358,7 +384,7 @@ pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?
     ib.sys_base.Forbid();
     defer ib.sys_base.Permit();
     const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
-    const layers = [_]?*const style.Style{ own, screen, ib.system_style, ib.default_style };
+    const layers = chain(ib, own, screen);
     for (layers) |maybe| {
         const kept: *const Kept = @ptrCast(@alignCast(maybe orelse continue));
         for (kept.all()) |e| if (e.states & state != 0) return true;
@@ -491,8 +517,8 @@ const default_kept = blk: {
         }
     }
     // The same shape as a kept block: its count, then its entries.
-    const Block = extern struct { count: u32, fills_at: u32, entries: [count]Entry };
-    break :blk Block{ .count = count, .fills_at = 0, .entries = entries[0..count].* };
+    const Block = extern struct { count: u32, fills_at: u32, alone: u32, entries: [count]Entry };
+    break :blk Block{ .count = count, .fills_at = 0, .alone = 0, .entries = entries[0..count].* };
 };
 
 fn pair(t: utility.Tag, data: usize) TagItem {

@@ -136,6 +136,11 @@ pub const STYLE_Part = STYLE_Dummy + 0x01;
 /// Until the first, `STATE_NORMAL`. A new `STYLE_Part` starts again at
 /// `STATE_NORMAL`.
 pub const STYLE_State = STYLE_Dummy + 0x02;
+/// True: the style stands alone on the system's default - what it leaves
+/// out is the default's, never a screen's style or the system's. For a
+/// look shown as it is, whatever the system's style is: a preview. A list
+/// with this and nothing else is a style too, and looks like the default.
+pub const STYLE_Alone = STYLE_Dummy + 0x03;
 
 /// What fills the inside: a screen pen index.
 pub const STYLE_Background = STYLE_Dummy + 0x10;

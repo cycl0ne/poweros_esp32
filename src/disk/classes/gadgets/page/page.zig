@@ -38,7 +38,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = pg.PAGE_CLASS,
     .version = 1,
-    .date = "29.09.2026",
+    .revision = 1,
+    .date = "03.10.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -171,7 +172,10 @@ fn turn(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Gadget
     defer ib.ReleaseGIRPort(rp);
     const saved = support.Saved.of(base.graphics_base, rp);
     defer saved.restore(base.graphics_base, rp);
-    support.fill(base.graphics_base, rp, box, support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN));
+    // The window's ground under the page, as the window paints it: a page
+    // is a stretch of the window, not a part with a look of its own.
+    const ground = graphics.Rect{ .min_x = box.left, .min_y = box.top, .max_x = box.left + box.width, .max_y = box.top + box.height };
+    base.graphics_base.EraseRect(rp, &ground);
     const page = own.member orelse return;
     var msg = gc.GpRender{ .gadget_info = info, .rast_port = rp, .redraw = gc.GREDRAW_REDRAW };
     _ = ib.SendMessage(page, @ptrCast(&msg));
