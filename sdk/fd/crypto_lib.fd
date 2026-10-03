@@ -1,7 +1,8 @@
-//! crypto.library's functions: random bytes, hashes, HMAC, AES and
-//! modular exponentiation, on the chip's own engines. A hash, an HMAC or
-//! a cipher under way is a context the caller keeps (sdk.crypto); a call
-//! that can fail answers 0 or a CRYPTOERR_* code.
+//! crypto.library's functions: random bytes, hashes, HMAC, HKDF, AES and
+//! modular exponentiation on the chip's own engines; key agreement and
+//! signatures on X25519, Ed25519, P-256 and P-384, and RSA signatures.
+//! A hash, an HMAC or a cipher under way is a context the caller keeps
+//! (sdk.crypto); a call that can fail answers 0 or a CRYPTOERR_* code.
 ##include libs/crypto/crypto as crypto
 ##basetype CryptoBase
 ##name crypto.library
@@ -33,4 +34,22 @@ i32 OpenGcm(*const crypto.GcmMessage message)
 /// `base_value` to the power of `exponent`, modulo `modulus`, into
 /// `result`: as many bytes as the modulus has.
 i32 ModExp(*anyopaque result, *const crypto.Number base_value, *const crypto.Number exponent, *const crypto.Number modulus)
+/// HKDF-Extract (RFC 5869) with `algorithm` (HASH_*): a pseudorandom key
+/// from `salt` and the input keying material, into `prk` - as many bytes
+/// as the digest.
+i32 HkdfExtract(u32 algorithm, *const crypto.Bytes salt, *const crypto.Bytes material, *anyopaque prk)
+/// HKDF-Expand: `length` bytes of keying material from `prk` and `info`.
+i32 HkdfExpand(u32 algorithm, *const crypto.Bytes prk, *const crypto.Bytes info, *anyopaque output, u32 length)
+/// A key pair on `curve` (CURVE_*): a random private key and its public
+/// key, whose length goes where `public_length` points.
+i32 MakeKeyPair(u32 curve, *anyopaque private_key, *anyopaque public_key, *u32 public_length)
+/// The secret `private_key` shares with the owner of the public key
+/// `peer`, on `curve`.
+i32 SharedSecret(u32 curve, *const anyopaque private_key, *const crypto.Bytes peer, *anyopaque secret)
+/// Whether `signature` is `key`'s over `digest`, with `algorithm`
+/// (SIG_*): CRYPTOERR_OK or CRYPTOERR_SIGNATURE.
+i32 VerifySignature(u32 algorithm, *const crypto.PublicKey key, *const crypto.Bytes digest, *const crypto.Bytes signature)
+/// `message` signed with `private_key`, with `algorithm` (SIG_ED25519):
+/// the signature into `signature`.
+i32 Sign(u32 algorithm, *const anyopaque private_key, *const crypto.Bytes message, *anyopaque signature)
 ##end

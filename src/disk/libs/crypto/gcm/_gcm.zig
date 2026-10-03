@@ -6,8 +6,17 @@
 //! counter of 1 when the nonce is 12 bytes, and the GHASH of the nonce
 //! otherwise. The data is CTR-encrypted from the block after J0. GHASH,
 //! multiplication by H in GF(2^128) over the header, the ciphertext and
-//! their lengths, is software: bit by bit with masks, so its time
-//! depends on the lengths only, never on H or the data.
+//! their lengths, is software - the S3's AES engine has no GCM of its
+//! own - and takes the same steps whatever H and the data are.
+//!
+//! A block is multiplied without carries by H with ordinary integer
+//! multiplications: each 32-bit operand split into four with three empty
+//! bits between their bits, so that a carry never reaches a bit that
+//! counts (`multiply32`), and Karatsuba on top - 128 by 128 bits in nine
+//! such products. GCM numbers its bits from the most significant end, so
+//! the 256-bit product of the blocks as they are loaded is the reversed
+//! product shifted by one; it is shifted back and reduced modulo
+//! x^128 + x^7 + x^2 + x + 1 in that reversed order (`block`).
 //!
 //! Opening checks the tag over the ciphertext before anything is
 //! decrypted, so a forged message never reaches the output.
@@ -20,38 +29,69 @@ const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("../cipher/_cipher.zig");
 const aes = @import("../engine/aes.zig");
 
-/// GHASH under way: the key H and the running value Y, each as two
-/// 64-bit halves, most significant first.
+/// x * y without carries, 32 by 32 bits into 64.
+fn multiply32(x: u32, y: u32) u64 {
+    const x0: u64 = x & 0x1111_1111;
+    const x1: u64 = x & 0x2222_2222;
+    const x2: u64 = x & 0x4444_4444;
+    const x3: u64 = x & 0x8888_8888;
+    const y0: u64 = y & 0x1111_1111;
+    const y1: u64 = y & 0x2222_2222;
+    const y2: u64 = y & 0x4444_4444;
+    const y3: u64 = y & 0x8888_8888;
+    // Each product's bits fall in one class of four; a column holds eight
+    // at the most, so its carries stay inside the three bits above it.
+    const z0 = (x0 * y0) ^ (x1 * y3) ^ (x2 * y2) ^ (x3 * y1);
+    const z1 = (x0 * y1) ^ (x1 * y0) ^ (x2 * y3) ^ (x3 * y2);
+    const z2 = (x0 * y2) ^ (x1 * y1) ^ (x2 * y0) ^ (x3 * y3);
+    const z3 = (x0 * y3) ^ (x1 * y2) ^ (x2 * y1) ^ (x3 * y0);
+    return (z0 & 0x1111_1111_1111_1111) | (z1 & 0x2222_2222_2222_2222) |
+        (z2 & 0x4444_4444_4444_4444) | (z3 & 0x8888_8888_8888_8888);
+}
+
+/// x * y without carries, 64 by 64 bits into 128: Karatsuba over halves.
+fn multiply64(x: u64, y: u64) u128 {
+    const x_low: u32 = @truncate(x);
+    const x_high: u32 = @truncate(x >> 32);
+    const y_low: u32 = @truncate(y);
+    const y_high: u32 = @truncate(y >> 32);
+    const low = multiply32(x_low, y_low);
+    const high = multiply32(x_high, y_high);
+    const middle = multiply32(x_low ^ x_high, y_low ^ y_high) ^ low ^ high;
+    return @as(u128, low) ^ (@as(u128, middle) << 32) ^ (@as(u128, high) << 64);
+}
+
+/// GHASH under way: the key H and the running value Y, each 128 bits as
+/// the block's bytes read most significant first.
 const Ghash = struct {
-    h_high: u64,
-    h_low: u64,
-    y_high: u64 = 0,
-    y_low: u64 = 0,
+    h: u128,
+    y: u128 = 0,
 
     fn init(key: *const [AES_BLOCK]u8) Ghash {
-        return .{ .h_high = load64(key[0..8]), .h_low = load64(key[8..16]) };
+        return .{ .h = load128(key) };
     }
 
     /// Y = (Y ^ block) * H.
     fn block(ghash: *Ghash, bytes: *const [AES_BLOCK]u8) void {
-        const x_high = ghash.y_high ^ load64(bytes[0..8]);
-        const x_low = ghash.y_low ^ load64(bytes[8..16]);
-        var z_high: u64 = 0;
-        var z_low: u64 = 0;
-        var v_high = ghash.h_high;
-        var v_low = ghash.h_low;
-        for (0..128) |index| {
-            const word = if (index < 64) x_high else x_low;
-            const bit = (word >> @intCast(63 - index % 64)) & 1;
-            const take = 0 -% bit;
-            z_high ^= v_high & take;
-            z_low ^= v_low & take;
-            const carry = 0 -% (v_low & 1);
-            v_low = v_low >> 1 | v_high << 63;
-            v_high = (v_high >> 1) ^ (carry & 0xE100_0000_0000_0000);
-        }
-        ghash.y_high = z_high;
-        ghash.y_low = z_low;
+        const x = ghash.y ^ load128(bytes);
+        const x_low: u64 = @truncate(x);
+        const x_high: u64 = @truncate(x >> 64);
+        const h_low: u64 = @truncate(ghash.h);
+        const h_high: u64 = @truncate(ghash.h >> 64);
+        const low = multiply64(x_low, h_low);
+        const high = multiply64(x_high, h_high);
+        const middle = multiply64(x_low ^ x_high, h_low ^ h_high) ^ low ^ high;
+        // The 255-bit product, as high and low 128 bits, shifted up one.
+        var product_high = high ^ (middle >> 64);
+        var product_low = low ^ (middle << 64);
+        product_high = product_high << 1 | product_low >> 127;
+        product_low <<= 1;
+        // Reversed, the high half is the product's low 128 coefficients and
+        // the low half its high ones (u), which come down by x^128 =
+        // x^7 + x^2 + x + 1; what that pushes past x^127 comes down again.
+        const u = product_low;
+        const w = (u << 127) ^ (u << 126) ^ (u << 121);
+        ghash.y = product_high ^ u ^ (u >> 1) ^ (u >> 2) ^ (u >> 7) ^ w ^ (w >> 1) ^ (w >> 2) ^ (w >> 7);
     }
 
     /// `length` bytes, the last block padded with zeroes.
@@ -67,11 +107,15 @@ const Ghash = struct {
 
     fn result(ghash: *const Ghash) [AES_BLOCK]u8 {
         var out: [AES_BLOCK]u8 = undefined;
-        store64(out[0..8], ghash.y_high);
-        store64(out[8..16], ghash.y_low);
+        store64(out[0..8], @truncate(ghash.y >> 64));
+        store64(out[8..16], @truncate(ghash.y));
         return out;
     }
 };
+
+fn load128(bytes: *const [AES_BLOCK]u8) u128 {
+    return @as(u128, load64(bytes[0..8])) << 64 | load64(bytes[8..16]);
+}
 
 fn load64(bytes: *const [8]u8) u64 {
     var value: u64 = 0;
@@ -111,8 +155,7 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
         j0[15] = 1;
     } else {
         var nonce_hash = ghash;
-        nonce_hash.y_high = 0;
-        nonce_hash.y_low = 0;
+        nonce_hash.y = 0;
         nonce_hash.update(message.nonce, message.nonce_length);
         lengthsBlock(&nonce_hash, 0, message.nonce_length);
         j0 = nonce_hash.result();

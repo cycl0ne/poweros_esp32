@@ -27,6 +27,7 @@ test {
     _ = @import("libs/bsdsocket/tests/nd.zig");
     _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
+    _ = @import("libs/crypto/tests/keys.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");

@@ -191,7 +191,10 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Devices:** timer, serial, USB serial, flash, SD card, I2C, touch,
   keyboard, mouse, input, console, four-channel audio; watchdog, DMA, GPIO
   and platform resources; `LIBS:crypto.library` on the chip's SHA, AES and
-  RSA engines.
+  RSA engines - hashes, HMAC, HKDF, AES-GCM - with key agreement on X25519,
+  P-256 and P-384 and signatures checked (RSA, ECDSA, Ed25519) and made
+  (Ed25519), `C:test/Crypto` its checks, timings and a test of the random
+  number generator.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 

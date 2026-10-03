@@ -73,7 +73,7 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file and font requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
-| crypto.library | `LIBS:` | random bytes, SHA, HMAC, AES, modular exponentiation on the chip's engines | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
+| crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |

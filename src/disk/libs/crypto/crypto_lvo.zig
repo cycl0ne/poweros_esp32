@@ -24,6 +24,12 @@ const UpdateCipher = @import("cipher/updatecipher.zig").UpdateCipher;
 const SealGcm = @import("gcm/sealgcm.zig").SealGcm;
 const OpenGcm = @import("gcm/opengcm.zig").OpenGcm;
 const ModExp = @import("bignum/modexp.zig").ModExp;
+const HkdfExtract = @import("kdf/hkdfextract.zig").HkdfExtract;
+const HkdfExpand = @import("kdf/hkdfexpand.zig").HkdfExpand;
+const MakeKeyPair = @import("curve/makekeypair.zig").MakeKeyPair;
+const SharedSecret = @import("curve/sharedsecret.zig").SharedSecret;
+const VerifySignature = @import("signature/verifysignature.zig").VerifySignature;
+const Sign = @import("signature/sign.zig").Sign;
 
 /// crypto.library's interface, as the SDK generates it from
 /// sdk/fd/crypto_lib.fd.
@@ -61,6 +67,12 @@ const contract_files = [_][]const u8{
     @embedFile("gcm/sealgcm.zig"),
     @embedFile("gcm/opengcm.zig"),
     @embedFile("bignum/modexp.zig"),
+    @embedFile("kdf/hkdfextract.zig"),
+    @embedFile("kdf/hkdfexpand.zig"),
+    @embedFile("curve/makekeypair.zig"),
+    @embedFile("curve/sharedsecret.zig"),
+    @embedFile("signature/verifysignature.zig"),
+    @embedFile("signature/sign.zig"),
 };
 
 fn lvoRandomBytes(cb: *CryptoBase, buffer: *anyopaque, length: u32) callconv(.c) void {
@@ -99,6 +111,24 @@ fn lvoOpenGcm(cb: *CryptoBase, message: *const crypto.GcmMessage) callconv(.c) i
 fn lvoModExp(cb: *CryptoBase, result: *anyopaque, base_value: *const crypto.Number, exponent: *const crypto.Number, modulus: *const crypto.Number) callconv(.c) i32 {
     return ModExp(cb, result, base_value, exponent, modulus);
 }
+fn lvoHkdfExtract(cb: *CryptoBase, algorithm: u32, salt: *const crypto.Bytes, material: *const crypto.Bytes, prk: *anyopaque) callconv(.c) i32 {
+    return HkdfExtract(cb, algorithm, salt, material, prk);
+}
+fn lvoHkdfExpand(cb: *CryptoBase, algorithm: u32, prk: *const crypto.Bytes, info: *const crypto.Bytes, output: *anyopaque, length: u32) callconv(.c) i32 {
+    return HkdfExpand(cb, algorithm, prk, info, output, length);
+}
+fn lvoMakeKeyPair(cb: *CryptoBase, curve: u32, private_key: *anyopaque, public_key: *anyopaque, public_length: *u32) callconv(.c) i32 {
+    return MakeKeyPair(cb, curve, private_key, public_key, public_length);
+}
+fn lvoSharedSecret(cb: *CryptoBase, curve: u32, private_key: *const anyopaque, peer: *const crypto.Bytes, secret: *anyopaque) callconv(.c) i32 {
+    return SharedSecret(cb, curve, private_key, peer, secret);
+}
+fn lvoVerifySignature(cb: *CryptoBase, algorithm: u32, key: *const crypto.PublicKey, digest: *const crypto.Bytes, signature: *const crypto.Bytes) callconv(.c) i32 {
+    return VerifySignature(cb, algorithm, key, digest, signature);
+}
+fn lvoSign(cb: *CryptoBase, algorithm: u32, private_key: *const anyopaque, message: *const crypto.Bytes, signature: *anyopaque) callconv(.c) i32 {
+    return Sign(cb, algorithm, private_key, message, signature);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -119,6 +149,12 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSealGcm),
     vec(lvoOpenGcm),
     vec(lvoModExp),
+    vec(lvoHkdfExtract),
+    vec(lvoHkdfExpand),
+    vec(lvoMakeKeyPair),
+    vec(lvoSharedSecret),
+    vec(lvoVerifySignature),
+    vec(lvoSign),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

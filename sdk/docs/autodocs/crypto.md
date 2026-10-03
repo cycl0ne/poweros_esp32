@@ -1,9 +1,10 @@
 # crypto.library
 
-crypto.library's functions: random bytes, hashes, HMAC, AES and
-modular exponentiation, on the chip's own engines. A hash, an HMAC or
-a cipher under way is a context the caller keeps (sdk.crypto); a call
-that can fail answers 0 or a CRYPTOERR_* code.
+crypto.library's functions: random bytes, hashes, HMAC, HKDF, AES and
+modular exponentiation on the chip's own engines; key agreement and
+signatures on X25519, Ed25519, P-256 and P-384, and RSA signatures.
+A hash, an HMAC or a cipher under way is a context the caller keeps
+(sdk.crypto); a call that can fail answers 0 or a CRYPTOERR_* code.
 
 Generated from the source by `./zig build autodoc`.
 
@@ -11,16 +12,22 @@ Generated from the source by `./zig build autodoc`.
 
 - [FinishHash](#finishhash) - Ends a hash and writes its digest.
 - [FinishHmac](#finishhmac) - Ends an HMAC and writes the MAC.
+- [HkdfExpand](#hkdfexpand) - Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
+- [HkdfExtract](#hkdfextract) - Extracts a pseudorandom key from input keying material and a salt (HKDF-Extract, RFC 5869).
 - [InitCipher](#initcipher) - Sets up a context for AES in one mode, with a key and an IV.
 - [InitHash](#inithash) - Sets up a context for a new hash of one algorithm.
 - [InitHmac](#inithmac) - Sets up a context for a new HMAC with one hash algorithm and a key.
+- [MakeKeyPair](#makekeypair) - Makes a key pair on a curve: a private key from the chip's random number generator, and the public key that goes with it.
 - [ModExp](#modexp) - Raises a number to a power modulo another.
 - [OpenGcm](#opengcm) - Checks a message's AES-GCM tag and, if it is right, decrypts it.
 - [RandomBytes](#randombytes) - Fills a buffer with random bytes.
 - [SealGcm](#sealgcm) - Encrypts a message with AES-GCM and writes its tag.
+- [SharedSecret](#sharedsecret) - Works out the secret one's own private key shares with the owner of a public key: Diffie-Hellman on a curve.
+- [Sign](#sign) - Signs a message with a private key: Ed25519.
 - [UpdateCipher](#updatecipher) - Encrypts or decrypts data with the context's cipher.
 - [UpdateHash](#updatehash) - Adds bytes to a hash under way.
 - [UpdateHmac](#updatehmac) - Adds bytes to an HMAC under way.
+- [VerifySignature](#verifysignature) - Checks a signature with a public key: RSA in both its encodings, ECDSA on P-256 and P-384, and Ed25519.
 
 ## FinishHash
 
@@ -148,6 +155,134 @@ const length = cb.FinishHmac(&context, &mac);
 var differ: u8 = 0;
 for (mac[0..length], received[0..length]) |a, b| differ |= a ^ b;
 if (differ != 0) return error.Forged;
+```
+
+## HkdfExpand
+
+Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
+
+**SYNOPSIS**
+
+```zig
+fn HkdfExpand(cb: *CryptoBase, algorithm: u32, prk: *const Bytes, info: *const Bytes, output: *anyopaque, length: u32) i32
+```
+
+**SINCE**
+
+1.1. LVO -72.
+
+**INPUTS**
+
+- `algorithm`: the hash, HASH_SHA1 to HASH_SHA512.
+- `prk`: the pseudorandom key, from HkdfExtract or a protocol's own
+  secret; at least the digest's length, as the RFC asks.
+- `info`: what the material is for; any length, none included.
+- `output`: room for `length` bytes; it may not overlap `prk` or
+  `info`.
+- `length`: at most 255 times the digest's length.
+
+**RESULT**
+
+CRYPTOERR_OK, with the material in `output`; CRYPTOERR_ALGORITHM for
+a hash there is not; CRYPTOERR_LENGTH for a `length` past 255 digests
+or a `prk` shorter than one. Nothing is written on a failure.
+
+**BEHAVIOR**
+
+T(1) = HMAC(prk, info | 1), T(n) = HMAC(prk, T(n-1) | info | n), and
+the output is T(1) | T(2) | ... cut to `length`.
+
+**CONTEXT**
+
+- Waits: for the SHA engine, while another task has it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept: the last block's copy on the stack is wiped.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HkdfExtract`, `InitHmac`
+
+**EXAMPLES**
+
+```zig
+var key: [16]u8 = undefined;
+_ = cb.HkdfExpand(crypto.HASH_SHA256, &crypto.Bytes.of(&prk), &crypto.Bytes.of(label), &key, key.len);
+```
+
+## HkdfExtract
+
+Extracts a pseudorandom key from input keying material and a salt (HKDF-Extract, RFC 5869).
+
+**SYNOPSIS**
+
+```zig
+fn HkdfExtract(cb: *CryptoBase, algorithm: u32, salt: *const Bytes, material: *const Bytes, prk: *anyopaque) i32
+```
+
+**SINCE**
+
+1.1. LVO -68.
+
+**INPUTS**
+
+- `algorithm`: the hash, HASH_SHA1 to HASH_SHA512.
+- `salt`: any length, none at all included.
+- `material`: the input keying material - a shared secret, say.
+- `prk`: room for the digest's length (`digestLength(algorithm)`).
+
+**RESULT**
+
+CRYPTOERR_OK, with the key in `prk`; CRYPTOERR_ALGORITHM for a hash
+there is not, with nothing written.
+
+**BEHAVIOR**
+
+The key is HMAC(salt, material). A salt of no bytes is a salt of the
+digest's length in zeroes, as the RFC has it - for HMAC the two are
+the same key.
+
+**CONTEXT**
+
+- Waits: for the SHA engine, while another task has it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept; the HMAC context used is wiped by FinishHmac.
+
+**NOTES**
+
+TLS 1.3's key schedule is this and HkdfExpand, the latter with the
+protocol's own labels in `info`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HkdfExpand`, `InitHmac`
+
+**EXAMPLES**
+
+```zig
+var prk: [32]u8 = undefined;
+_ = cb.HkdfExtract(crypto.HASH_SHA256, &crypto.Bytes.of(&salt), &crypto.Bytes.of(&secret), &prk);
 ```
 
 ## InitCipher
@@ -365,6 +500,79 @@ var mac: [crypto.DIGEST_MAX]u8 = undefined;
 _ = cb.InitHmac(&context, crypto.HASH_SHA256, key.ptr, key.len);
 cb.UpdateHmac(&context, message.ptr, message.len);
 const length = cb.FinishHmac(&context, &mac);
+```
+
+## MakeKeyPair
+
+Makes a key pair on a curve: a private key from the chip's random number generator, and the public key that goes with it.
+
+**SYNOPSIS**
+
+```zig
+fn MakeKeyPair(cb: *CryptoBase, curve: u32, private_key: *anyopaque, public_key: *anyopaque, public_length: *u32) i32
+```
+
+**SINCE**
+
+1.1. LVO -76.
+
+**INPUTS**
+
+- `curve`: CURVE_X25519, CURVE_P256, CURVE_P384 or CURVE_ED25519.
+- `private_key`: room for `privateLength(curve)` bytes.
+- `public_key`: room for `publicLength(curve)` bytes
+  (CURVE_PUBLIC_MAX takes any).
+- `public_length`: where the public key's length goes.
+
+**RESULT**
+
+CRYPTOERR_OK, with both keys written; CRYPTOERR_ALGORITHM for a curve
+there is not, with nothing written.
+
+**BEHAVIOR**
+
+Each key is in the form its standard gives it (`sdk.crypto`'s
+CURVE_*). X25519's private key is 32 random bytes, clamped when it is
+used; a P-curve's is a random number from 1 to the order less one,
+drawn again until it is one; Ed25519's is a random seed, from which
+the signing key is derived by SHA-512 as RFC 8032 has it. The public
+key is the private key times the curve's base point, worked out in the
+same steps for every private key.
+
+**CONTEXT**
+
+- Waits: for the SHA engine (Ed25519 only), while another task has it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The private key is the caller's, to use and then to overwrite; the
+library keeps no copy.
+
+**NOTES**
+
+A key for one handshake is made, used once with SharedSecret and
+wiped: what TLS 1.3 calls an ephemeral key. A P-256 key pair takes
+one scalar multiplication, X25519 one, Ed25519 one and a hash.
+
+**BUGS**
+
+The keys are as good as `RandomBytes`, which is only random while the
+chip's generator has a noise source running.
+
+**SEE ALSO**
+
+`SharedSecret`, `Sign`, `RandomBytes`
+
+**EXAMPLES**
+
+```zig
+var private_key: [32]u8 = undefined;
+var public_key: [crypto.CURVE_PUBLIC_MAX]u8 = undefined;
+var length: u32 = 0;
+_ = cb.MakeKeyPair(crypto.CURVE_X25519, &private_key, &public_key, &length);
 ```
 
 ## ModExp
@@ -661,6 +869,141 @@ const message: crypto.GcmMessage = .{
 if (cb.SealGcm(&message) != crypto.CRYPTOERR_OK) return error.Seal;
 ```
 
+## SharedSecret
+
+Works out the secret one's own private key shares with the owner of a public key: Diffie-Hellman on a curve.
+
+**SYNOPSIS**
+
+```zig
+fn SharedSecret(cb: *CryptoBase, curve: u32, private_key: *const anyopaque, peer: *const Bytes, secret: *anyopaque) i32
+```
+
+**SINCE**
+
+1.1. LVO -80.
+
+**INPUTS**
+
+- `curve`: CURVE_X25519, CURVE_P256 or CURVE_P384.
+- `private_key`: one's own, `privateLength(curve)` bytes, from
+  MakeKeyPair.
+- `peer`: the other side's public key, as it came - 32 bytes for
+  X25519, an uncompressed point for a P-curve.
+- `secret`: room for `secretLength(curve)` bytes.
+
+**RESULT**
+
+CRYPTOERR_OK, with the secret written; CRYPTOERR_ALGORITHM for a
+curve with no key agreement (CURVE_ED25519) or none at all;
+CRYPTOERR_KEY for a public key of the wrong length, a point not on
+the curve, a private key out of range, or a result that is no secret
+(X25519's all zeroes, a P-curve's point at infinity) - `secret` is
+then zeroes.
+
+**BEHAVIOR**
+
+The secret is the private key times the peer's point: for X25519 its
+u-coordinate (RFC 7748), for a P-curve its x-coordinate (SEC 1), each
+as its standard writes it. A peer's point is checked to be on the
+curve before anything is multiplied by it, which is what stops a key
+from being drawn out of a reply to a point that is not.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Forbid: not needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The secret is the caller's: feed it to HkdfExtract, then overwrite it.
+
+**NOTES**
+
+The work takes the same steps whatever the private key.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MakeKeyPair`, `HkdfExtract`
+
+**EXAMPLES**
+
+```zig
+var secret: [32]u8 = undefined;
+if (cb.SharedSecret(crypto.CURVE_X25519, &private_key, &crypto.Bytes.of(server_share), &secret) != crypto.CRYPTOERR_OK) return error.Handshake;
+```
+
+## Sign
+
+Signs a message with a private key: Ed25519.
+
+**SYNOPSIS**
+
+```zig
+fn Sign(cb: *CryptoBase, algorithm: u32, private_key: *const anyopaque, message: *const Bytes, signature: *anyopaque) i32
+```
+
+**SINCE**
+
+1.1. LVO -88.
+
+**INPUTS**
+
+- `algorithm`: SIG_ED25519.
+- `private_key`: the 32-byte seed, from MakeKeyPair(CURVE_ED25519).
+- `message`: the whole message, any length.
+- `signature`: room for SIGNATURE_ED25519 (64) bytes.
+
+**RESULT**
+
+CRYPTOERR_OK, with the signature written; CRYPTOERR_ALGORITHM for any
+other algorithm, with nothing written.
+
+**BEHAVIOR**
+
+RFC 8032, 5.1.6: the seed hashed with SHA-512 into the secret scalar
+and a prefix, the nonce r from the prefix and the message - so the
+same message signed twice gives the same signature, and no random
+number can give the key away - and S = r + k a modulo the group
+order. The multiplications take the same steps whatever the key.
+
+**CONTEXT**
+
+- Waits: for the SHA engine, while another task has it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The key stays the caller's; what was derived from it is wiped before
+the call returns.
+
+**NOTES**
+
+The message is hashed twice, so it must be in memory whole.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`VerifySignature`, `MakeKeyPair`
+
+**EXAMPLES**
+
+```zig
+var signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
+_ = cb.Sign(crypto.SIG_ED25519, &seed, &crypto.Bytes.of(message), &signature);
+```
+
 ## UpdateCipher
 
 Encrypts or decrypts data with the context's cipher.
@@ -851,4 +1194,88 @@ None known.
 ```zig
 cb.UpdateHmac(&context, header.ptr, header.len);
 cb.UpdateHmac(&context, body.ptr, body.len);
+```
+
+## VerifySignature
+
+Checks a signature with a public key: RSA in both its encodings, ECDSA on P-256 and P-384, and Ed25519.
+
+**SYNOPSIS**
+
+```zig
+fn VerifySignature(cb: *CryptoBase, algorithm: u32, key: *const PublicKey, digest: *const Bytes, signature: *const Bytes) i32
+```
+
+**SINCE**
+
+1.1. LVO -84.
+
+**INPUTS**
+
+- `algorithm`: a SIG_* - SIG_RSA_PKCS1_SHA256/384/512,
+  SIG_RSA_PSS_SHA256/384/512, SIG_ECDSA_P256, SIG_ECDSA_P384,
+  SIG_ED25519.
+- `key`: for RSA its `modulus` and `exponent`, for the curves its
+  `point` (an uncompressed point, or Ed25519's 32 bytes).
+- `digest`: the hash of what was signed, made by the caller - of the
+  algorithm's hash for RSA, of any hash for ECDSA. For SIG_ED25519 it
+  is the whole message, which Ed25519 hashes itself.
+- `signature`: as it came - RSA's as long as its modulus, ECDSA's
+  DER-encoded, Ed25519's 64 bytes.
+
+**RESULT**
+
+CRYPTOERR_OK when the signature is good. CRYPTOERR_SIGNATURE when it
+is not, or is not a signature at all (the wrong length, broken DER, a
+number out of range). CRYPTOERR_KEY for a key that is none - an even
+or empty modulus, a point not on the curve. CRYPTOERR_LENGTH for an
+RSA digest whose length is not its hash's. CRYPTOERR_ALGORITHM for an
+algorithm there is not.
+
+**BEHAVIOR**
+
+RSA raises the signature to the exponent with ModExp, through the
+jump table, and checks the encoding: PKCS #1 v1.5's by building the
+one the digest must have and comparing every byte; PSS's by undoing
+the mask with MGF1 and checking the hash over its salt, of any
+length. ECDSA takes the DER strictly (positive, minimal, nothing
+after it), holds r and s to 1 to n - 1, cuts a digest longer than the
+curve to the curve's size, and compares the x of u1 G + u2 Q with r
+modulo n. Ed25519 refuses an S not below the group order, and checks
+S B = R + k A with k = SHA-512(R, A, message).
+
+SHA-1 is offered by none of them: it no longer stands for anything
+signed.
+
+**CONTEXT**
+
+- Waits: for the RSA or SHA engine, while another task has it.
+- Interrupts: no.
+- Forbid: must not be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+Everything here is public, so it is not made to take the same time
+for every input: a bad signature fails as soon as it is seen to be
+bad. An RSA-2048 check is one short exponentiation on the engine; an
+ECDSA check two scalar multiplications in software.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Sign`, `ModExp`, `InitHash`
+
+**EXAMPLES**
+
+```zig
+const key: crypto.PublicKey = .{ .point = crypto.Bytes.of(&server_point) };
+const good = cb.VerifySignature(crypto.SIG_ECDSA_P256, &key, &crypto.Bytes.of(&digest), &crypto.Bytes.of(der)) == crypto.CRYPTOERR_OK;
 ```

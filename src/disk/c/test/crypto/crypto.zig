@@ -2,19 +2,28 @@
 //! Crypto: crypto.library checked on the machine, against the standards'
 //! own test vectors. Built against the SDK only.
 //!
-//!   Crypto VERBOSE/S
+//!   Crypto VERBOSE/S,BENCH/S,RANDOM/S
 //!
 //! Each check runs a known input through the library and compares the
 //! answer with the published one: the SHA digests of FIPS 180, a
 //! message of several blocks, two hashes interleaved (the engine taking
 //! turns between them), RFC 4231's HMAC, FIPS 197's AES blocks both
 //! ways, SP 800-38A's CBC and CTR, the GCM paper's test case 4 and a
-//! forged tag, and modular exponentiation on 2048-bit numbers. On the
-//! chip every one of them goes through the SHA, AES and RSA engines.
+//! forged tag, modular exponentiation on 2048-bit numbers, RFC 5869's
+//! HKDF, RFC 7748's X25519, RFC 8032's Ed25519, key agreement on P-256
+//! and P-384, and an ECDSA and an RSA-PSS signature openssl made. On the
+//! chip the hashes, AES and the exponentiations go through the SHA, AES
+//! and RSA engines; the curves are software.
 //!
 //! It prints one line per check that fails (every check, with VERBOSE)
 //! and a count at the end; the return code is 0 when all pass, 10 when
 //! any fails, 20 when the library cannot be opened.
+//!
+//! BENCH times each kind of work after the checks - a key pair, a shared
+//! secret, a signature checked, AES-GCM and SHA-256 in bulk - in
+//! milliseconds an operation or kilobytes a second, on dos's clock.
+//! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
+//! poker and long-run tests.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -25,10 +34,12 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.0 (26.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.1 (03.10.2026)\r\n";
 
-const template = "VERBOSE/S";
+const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
+const arg_bench = 1;
+const arg_random = 2;
 
 /// A hex string into its bytes, at compile time.
 fn hex(comptime text: []const u8) [text.len / 2]u8 {
@@ -250,6 +261,197 @@ const x_to_e = hex(
         "84f0f79413e81d69a9fa571dde9ed822",
 );
 
+// --- 1.1: key derivation, agreement and signatures -----------------------------
+
+fn keys(run: *Run) void {
+    const cb = run.cb;
+    const Bytes = crypto.Bytes;
+    const ikm: [22]u8 = @splat(0x0b);
+    var prk: [32]u8 = undefined;
+    _ = cb.HkdfExtract(crypto.HASH_SHA256, &Bytes.of(&hex("000102030405060708090a0b0c")), &Bytes.of(&ikm), &prk);
+    var okm: [42]u8 = undefined;
+    _ = cb.HkdfExpand(crypto.HASH_SHA256, &Bytes.of(&prk), &Bytes.of(&hex("f0f1f2f3f4f5f6f7f8f9")), &okm, okm.len);
+    run.check("HKDF-SHA256 (RFC 5869, case 1)", same(&prk, &hex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")) and
+        same(&okm, &hex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")));
+
+    var secret: [crypto.CURVE_SECRET_MAX]u8 = undefined;
+    const x_ok = cb.SharedSecret(crypto.CURVE_X25519, &hex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"), &Bytes.of(&hex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")), &secret);
+    run.check("X25519 (RFC 7748)", x_ok == crypto.CRYPTOERR_OK and same(secret[0..32], &hex("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")));
+
+    for ([_]u32{ crypto.CURVE_X25519, crypto.CURVE_P256, crypto.CURVE_P384 }) |curve| {
+        var a_private: [crypto.CURVE_PRIVATE_MAX]u8 = undefined;
+        var b_private: [crypto.CURVE_PRIVATE_MAX]u8 = undefined;
+        var a_public: [crypto.CURVE_PUBLIC_MAX]u8 = undefined;
+        var b_public: [crypto.CURVE_PUBLIC_MAX]u8 = undefined;
+        var a_length: u32 = 0;
+        var b_length: u32 = 0;
+        _ = cb.MakeKeyPair(curve, &a_private, &a_public, &a_length);
+        _ = cb.MakeKeyPair(curve, &b_private, &b_public, &b_length);
+        var other: [crypto.CURVE_SECRET_MAX]u8 = undefined;
+        const one = cb.SharedSecret(curve, &a_private, &Bytes.of(b_public[0..b_length]), &secret);
+        const two = cb.SharedSecret(curve, &b_private, &Bytes.of(a_public[0..a_length]), &other);
+        const length = crypto.secretLength(curve);
+        const name: [*:0]const u8 = switch (curve) {
+            crypto.CURVE_X25519 => "X25519, two key pairs agree",
+            crypto.CURVE_P256 => "P-256, two key pairs agree",
+            else => "P-384, two key pairs agree",
+        };
+        run.check(name, one == crypto.CRYPTOERR_OK and two == crypto.CRYPTOERR_OK and same(secret[0..length], other[0..length]));
+    }
+}
+
+fn signatures(run: *Run) void {
+    const cb = run.cb;
+    const Bytes = crypto.Bytes;
+    const seed = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    const ed_key: crypto.PublicKey = .{ .point = Bytes.of(&hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")) };
+    var signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
+    _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of(""), &signature);
+    run.check("Ed25519 sign (RFC 8032, test 1)", same(&signature, &hex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")));
+    run.check("Ed25519 verify", cb.VerifySignature(crypto.SIG_ED25519, &ed_key, &Bytes.of(""), &Bytes.of(&signature)) == crypto.CRYPTOERR_OK);
+    signature[10] ^= 1;
+    run.check("Ed25519, a changed signature refused", cb.VerifySignature(crypto.SIG_ED25519, &ed_key, &Bytes.of(""), &Bytes.of(&signature)) == crypto.CRYPTOERR_SIGNATURE);
+
+    const ec_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa_point) };
+    run.check("ECDSA P-256 (openssl's)", cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&signed_digest), &Bytes.of(&ecdsa_signature)) == crypto.CRYPTOERR_OK);
+    var other = signed_digest;
+    other[0] ^= 1;
+    run.check("ECDSA P-256, another digest refused", cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&other), &Bytes.of(&ecdsa_signature)) == crypto.CRYPTOERR_SIGNATURE);
+
+    const rsa_key: crypto.PublicKey = .{ .modulus = Bytes.of(&rsa_modulus), .exponent = Bytes.of(&.{ 1, 0, 1 }) };
+    run.check("RSA-PSS SHA-256, 2048 bits (openssl's)", cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature)) == crypto.CRYPTOERR_OK);
+    run.check("RSA-PSS, another digest refused", cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&other), &Bytes.of(&pss_signature)) == crypto.CRYPTOERR_SIGNATURE);
+}
+
+// "PowerOS signs this", its SHA-256, and what openssl signed it with.
+const signed_digest = hex("c78dcb0b4b4cfdb7fe948ceb1a8231a1e11a954c3a64309a4ec367757f8e5a63");
+const ecdsa_point = hex(
+    "042afcbb27c294ef111d07c96a8317c106ed7bf2660e1f687461fda0e3de5f7e6733c7e04fbb259155f6ec8cb9c1e446" ++
+        "f88128d4e4893da099c36ef507ed3391dc",
+);
+const ecdsa_signature = hex(
+    "30460221008ee163fb85c2969dde4ac4ad7f2e40d2f2e96ee5f003d028c613dbfd9d7aa56d022100e4405bfaa20cdcab" ++
+        "e7b69a2f9d1b918fe5e81c22dee50cdc715ce3404aa47724",
+);
+const rsa_modulus = hex(
+    "b12d6146163f0d87843905ed07b3bf4469e76ebd22b537f6b9e3c667324ad8dcb91f810d78256f846dcb22b46b2241d2" ++
+        "64f335676044435cb8a2b81c5854673b48b606c622ef4c095ff2362adc128cec4750e0b2f09a6ca974f9f11aeee29213" ++
+        "52bcf7126fb46c6b9f9bc551637efc327cd1ebc9e7b8b18724afc8d7172793e5e9732822a38437288438c3a6d771fe47" ++
+        "f97e01be2fbdf6bf4eb114e36545a5db11470deefcac8ed29dbff9ff5fb496eaa124f9a03de9558894b467b2d6954fc4" ++
+        "ada915e07d579bdc494cc77e920ede82f0be04bc10b8154b00cb6bc1e2446d9b37b2f6640d9e8f8edfb5cd7797949b89" ++
+        "4995bfb85155bb57599f0f4ebe96037d",
+);
+const pss_signature = hex(
+    "831c2e1fd54a20ad3b853b1b0e81e698d14733dc2bc2e69980d2a37e9ea522c476ecc859b6765e23e29cac43a9554cef" ++
+        "519ad955d855e3ec74768d6b3c567f701f748793017133399a046b5b90ea9ad937759d2c858a118dacc727fc0fd5311e" ++
+        "36b12d7e595a27377f56a399d8884d51f0798d4eb886f916cf3f7cf679fb749e394bf1e999e296a191570913fdff4043" ++
+        "51eabecfe650bef972e8ae719d02e1974bad0d87e7fc7dffd15e85c170713c9a326a852a6876e46a2e6d825eeb1a9173" ++
+        "f706fce6419c5cfce91e51813c0c2879028b8a1a72e9c9a17e1ea358e0736a77c05b26177f3f86734f6dc7bdbcd801ce" ++
+        "4a22d7afbb608f895ec1e79a35459ee5",
+);
+
+// --- RANDOM: the generator's bits --------------------------------------------
+
+/// FIPS 140-2's tests over 20000 bits: monobit (9725 to 10275 ones),
+/// poker (2.16 < X < 46.17 over 4-bit nibbles) and long runs (none of 26
+/// or more).
+fn random(run: *Run) void {
+    var bits: [2500]u8 = undefined;
+    run.cb.RandomBytes(&bits, bits.len);
+    var ones: u32 = 0;
+    var nibbles: [16]u32 = @splat(0);
+    var longest: u32 = 0;
+    var current: u32 = 0;
+    var last: u8 = 2;
+    for (bits) |byte| {
+        ones += @popCount(byte);
+        nibbles[byte >> 4] += 1;
+        nibbles[byte & 15] += 1;
+        for (0..8) |index| {
+            const bit: u8 = (byte >> @intCast(7 - index)) & 1;
+            current = if (bit == last) current + 1 else 1;
+            last = bit;
+            longest = @max(longest, current);
+        }
+    }
+    var squares: u64 = 0;
+    for (nibbles) |count| squares += @as(u64, count) * count;
+    // 16/5000 * squares - 5000 between 2.16 and 46.17, in integers.
+    const poker = 16 * squares;
+    _ = Printf(run.dl, "RandomBytes: %u ones in 20000 bits, nibble squares %ld, longest run %u\n", .{ ones, squares, longest });
+    run.check("RNG monobit (FIPS 140-2)", ones > 9725 and ones < 10275);
+    run.check("RNG poker (FIPS 140-2)", poker > 25_010_800 and poker < 25_230_850);
+    run.check("RNG long runs (FIPS 140-2)", longest < 26);
+}
+
+// --- BENCH: how long the work takes -------------------------------------------
+
+/// Milliseconds on dos's clock, to a fiftieth of a second.
+fn millis(dl: *DosBase) u64 {
+    var stamp: dos.DateStamp = .{};
+    _ = dl.DateStamp(&stamp);
+    const minutes: u64 = @as(u64, @intCast(stamp.days)) * 1440 + @as(u64, @intCast(stamp.minute));
+    return minutes * 60_000 + @as(u64, @intCast(stamp.tick)) * 20;
+}
+
+fn report(run: *Run, name: [*:0]const u8, started: u64, count: u32) void {
+    const elapsed = millis(run.dl) - started;
+    _ = Printf(run.dl, "%-34s %ld ms each (%u in %ld ms)\n", .{ name, elapsed / count, count, elapsed });
+}
+
+fn bench(run: *Run) void {
+    const cb = run.cb;
+    const Bytes = crypto.Bytes;
+    var private_key: [crypto.CURVE_PRIVATE_MAX]u8 = undefined;
+    var public_key: [crypto.CURVE_PUBLIC_MAX]u8 = undefined;
+    var length: u32 = 0;
+    var secret: [crypto.CURVE_SECRET_MAX]u8 = undefined;
+    const curves = [_]struct { curve: u32, pair: [*:0]const u8, agree: [*:0]const u8 }{
+        .{ .curve = crypto.CURVE_X25519, .pair = "X25519 key pair", .agree = "X25519 shared secret" },
+        .{ .curve = crypto.CURVE_P256, .pair = "P-256 key pair", .agree = "P-256 shared secret" },
+        .{ .curve = crypto.CURVE_P384, .pair = "P-384 key pair", .agree = "P-384 shared secret" },
+    };
+    for (curves) |entry| {
+        var started = millis(run.dl);
+        for (0..5) |_| _ = cb.MakeKeyPair(entry.curve, &private_key, &public_key, &length);
+        report(run, entry.pair, started, 5);
+        started = millis(run.dl);
+        for (0..5) |_| _ = cb.SharedSecret(entry.curve, &private_key, &Bytes.of(public_key[0..length]), &secret);
+        report(run, entry.agree, started, 5);
+    }
+    const ec_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa_point) };
+    var started = millis(run.dl);
+    for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&signed_digest), &Bytes.of(&ecdsa_signature));
+    report(run, "ECDSA P-256 verify", started, 5);
+    const rsa_key: crypto.PublicKey = .{ .modulus = Bytes.of(&rsa_modulus), .exponent = Bytes.of(&.{ 1, 0, 1 }) };
+    started = millis(run.dl);
+    for (0..20) |_| _ = cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature));
+    report(run, "RSA-2048 PSS verify", started, 20);
+    const seed = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    var signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
+    started = millis(run.dl);
+    for (0..5) |_| _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of("message"), &signature);
+    report(run, "Ed25519 sign", started, 5);
+
+    // Bulk: 16 KiB, a TLS record's worth.
+    const Buffer = struct {
+        var data: [16384]u8 = @splat(0x5A);
+    };
+    const key: [16]u8 = @splat(1);
+    const nonce: [12]u8 = @splat(2);
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &nonce, .nonce_length = 12, .input = &Buffer.data, .output = &Buffer.data, .length = Buffer.data.len, .tag = &tag };
+    started = millis(run.dl);
+    for (0..16) |_| _ = cb.SealGcm(&message);
+    var elapsed = millis(run.dl) - started;
+    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "AES-128-GCM seal", if (elapsed == 0) 0 else 256 * 1000 / elapsed, elapsed });
+    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+    started = millis(run.dl);
+    for (0..16) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
+    elapsed = millis(run.dl) - started;
+    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "SHA-256", if (elapsed == 0) 0 else 256 * 1000 / elapsed, elapsed });
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -257,7 +459,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [1]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -276,7 +478,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     aes(&run);
     gcm(&run);
     modexp(&run);
+    keys(&run);
+    signatures(&run);
     _ = Printf(dl, "%s: %u passed, %u failed\n", .{ COMMAND_NAME, run.passed, run.failed });
+    if (argv[arg_random] != 0) random(&run);
+    if (argv[arg_bench] != 0) bench(&run);
     return if (run.failed == 0) dos.RETURN_OK else dos.RETURN_ERROR;
 }
 
