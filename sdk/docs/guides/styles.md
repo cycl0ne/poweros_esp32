@@ -113,7 +113,7 @@ that a style may name exactly.
 | `STYLE_TextPen` / `RGB` | the colour of text on it |
 | `STYLE_Padding`, `PaddingX`, `PaddingY` | room between the border and what is inside |
 | `STYLE_Opacity` | 255 opaque down to 0: how much lands over what is behind |
-| `STYLE_Transition` | milliseconds a change into the state takes: the part fades from its old look to the new one (see the [animation guide](animation.md)) |
+| `STYLE_Transition` | milliseconds a change into the state takes: the part fades from its old look to the new one (see the [motion guide](motion.md)) |
 
 A colour given as a pen is the screen's pen, looked up when the part is
 drawn, so a style in pens follows the screen's colours. A colour given as
