@@ -3,7 +3,7 @@
 How the machine talks to a network: the TCP/IP stack a program uses, the
 interfaces it runs on, the devices that carry its frames, and what it
 takes to write one. The calls are in the reference:
-[bsdsocket](../autodocs/bsdsocket.md); the device requests are described
+[bsdsocket](../autodocs/bsdsocket.md) and [tls](../autodocs/tls.md); the device requests are described
 in `sdk/devices/network.zig`, `sdk/devices/wireless.zig` and
 `sdk/devices/telnet.zig`.
 
@@ -11,6 +11,7 @@ in `sdk/devices/network.zig`, `sdk/devices/wireless.zig` and
 - [Using sockets](#using-sockets)
 - [Waiting: WaitSelect and signals](#waiting-waitselect-and-signals)
 - [Names and addresses](#names-and-addresses)
+- [TLS: a secure connection](#tls-a-secure-connection)
 - [Interfaces](#interfaces)
 - [Configuration files](#configuration-files)
 - [The network device API](#the-network-device-api)
@@ -132,6 +133,71 @@ added or the name is asked for, unless `SetHostName` came first. Every
 DHCP request carries it (option 12), so a router can show the machine by
 name. `C:net/HostName` shows it, sets it, and with `SAVE` writes the
 file.
+
+## TLS: a secure connection
+
+`LIBS:tls.library` puts TLS 1.3 over a stream socket a program has
+connected - the program's own socket, in its own bsdsocket base, which
+it keeps: it waits on it, and it closes it after the session.
+
+```zig
+const tls = sdk.tls;
+const TLSBase = sdk.interface.tls.TLSBase;
+
+const tls_lib = sys.OpenLibrary(tls.TLSNAME, 1) orelse return;
+defer sys.CloseLibrary(tls_lib);
+const tb: *TLSBase = @ptrCast(tls_lib);
+
+// socket: connected to example.com, port 443.
+var err: i32 = 0;
+var verdict: u32 = 0;
+const session = tb.OpenSession(sb, socket, &[_]utility.TagItem{
+    .{ .tag = tls.TLS_Host, .data = @intFromPtr("example.com") },
+    .{ .tag = tls.TLS_Protocol, .data = @intFromPtr("http/1.1") },
+    .{ .tag = tls.TLS_GetVerdict, .data = @intFromPtr(&verdict) },
+    .{},
+}, &err) orelse return; // err: TLSERR_*, verdict: TLSV_* when it was the certificate
+defer tb.CloseSession(session);
+
+_ = tb.WriteSession(session, request.ptr, @intCast(request.len));
+var buffer: [4096]u8 = undefined;
+while (true) {
+    const got = tb.ReadSession(session, &buffer, buffer.len);
+    if (got <= 0) break; // 0: the server closed; below 0: a TLSERR_*
+    // ... use buffer[0..got]
+}
+```
+
+`OpenSession` does the whole handshake before it returns: an X25519 key
+share (P-256 or P-384 when the server asks for one), AES-128-GCM or
+AES-256-GCM, and the server's signature by ECDSA, RSA-PSS or Ed25519 -
+all of it on crypto.library, the hashes and AES on the chip's engines.
+
+**The server's certificates** are checked as the session opens: a chain
+from the server's certificate to a trusted root, each signature, each
+certificate's dates, and the host - `TLS_Host` against the names (or
+addresses) the certificate lists. The trusted roots are
+`SYS:Certificates/Roots`, the build's trust store made from Mozilla's
+roots (`scripts/fetch-certs.sh`), and any PEM file in
+`ENVARC:Sys/net/certificates/` - the place for a home server's own CA.
+Both are read by the first session and kept. `TLS_GetVerdict` says what
+was wrong when the check fails; `TLS_Verify` false skips it, for a test
+server of one's own and nothing else. Certificates are not checked for
+revocation.
+
+**The clock** must be right for any date to be checked, so a session
+refuses to open (`TLSERR_CLOCK`) while the clock is still where a cold
+boot leaves it: `C:net/TimeSync`, which the boot runs, sets it. The
+clock keeps local time; the session works the UTC out by
+`ENVARC:Sys/timezone`.
+
+**Waiting.** A record is decrypted whole, and what a read does not take
+waits in the session, where `WaitSelect` does not see it: ask
+`SessionPending` before waiting on the socket.
+
+A session takes some 75 KiB, from the memory a program's own data goes
+to. It belongs to the task that opened it. TLS 1.2 is not spoken yet,
+so a server that offers nothing newer is refused.
 
 ## Interfaces
 
@@ -351,7 +417,7 @@ connection to port 23.
 | `C:net/Ping`, `Resolve` | echo requests; the addresses of a name |
 | `C:net/HostName` | the machine's name, shown or set; `SAVE` keeps it |
 | `C:net/TimeSync` | the clock from a time server |
-| `C:net/HTTPGet` | a file over HTTP |
+| `C:net/HTTPGet` | a file over HTTP or HTTPS; `NOVERIFY` leaves a test server's certificate unchecked |
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand |
 | `C:net/PacketCapture` | an interface's frames into a pcap file |
 | `C:net/ShellServer` | a shell for each connection to a TCP port |

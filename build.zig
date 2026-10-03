@@ -216,6 +216,30 @@ pub fn build(b: *std.Build) void {
         make_disk.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
         make_disk.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
     }
+    // SYS:Certificates/Roots - Mozilla's roots, which
+    // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
+    // makes of them with the TLS library's own certificate code.
+    if (certsFile(b)) |bundle| {
+        const x509 = b.createModule(.{
+            .root_source_file = b.path("src/disk/libs/tls/x509/x509.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        });
+        const anchors = b.addExecutable(.{
+            .name = "anchors",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/anchors/anchors.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseSafe,
+            }),
+        });
+        anchors.root_module.addImport("x509", x509);
+        const run = b.addRunArtifact(anchors);
+        run.addFileArg(.{ .cwd_relative = bundle });
+        const store = run.addOutputFileArg("roots");
+        make_disk.addArg("certificates");
+        make_disk.addPrefixedFileArg("certificates/roots=", store);
+    }
     // The `disk/` tree, and then -Dextra last, so that either may
     // replace a file the tree above put there.
     for (tree.files) |file| {
@@ -554,6 +578,17 @@ fn fontsDir(b: *std.Build) ?[]const u8 {
         return null;
     };
     dir.close(io);
+    return path;
+}
+
+/// The PEM bundle scripts/fetch-certs.sh fetched, or null without it.
+fn certsFile(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/certs/cacert-2026-09-25.pem");
+    std.Io.Dir.cwd().access(io, path, .{}) catch {
+        std.log.info("no root certificates (scripts/fetch-certs.sh): the disk has no SYS:Certificates/Roots", .{});
+        return null;
+    };
     return path;
 }
 

@@ -187,6 +187,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   TCP, UDP, IPv4 and IPv6, DHCP, DNS), network devices for QEMU's Ethernet
   and the chip's Wi-Fi (WPA2), brought up at boot from
   `DEVS:NetInterfaces/`, and a shell over Telnet (`C:net/ShellServer`).
+  `LIBS:tls.library` puts TLS 1.3 over a socket, the server's certificate
+  checked against Mozilla's roots and one's own, and `C:net/HTTPGet`
+  fetches `https://` with it.
   See the [network guide](sdk/docs/guides/network.md).
 - **Devices:** timer, serial, USB serial, flash, SD card, I2C, touch,
   keyboard, mouse, input, console, four-channel audio; watchdog, DMA, GPIO
@@ -229,6 +232,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard and mouse, at 240 MHz (an older QEMU runs too, without the mouse pointer) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/wifi.device` |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
+| `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 
 Without them the disk has everything but that part. On a board the serial
 console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display

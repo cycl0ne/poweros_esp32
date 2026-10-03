@@ -45,7 +45,7 @@ tags and constants, each with its doc comment.
 - [Datatypes](guides/datatypes.md) - what a file is to datatypes.library,
   working an object, pictures, text, showing one in a window, and
   writing a class.
-- [Network](guides/network.md) - sockets, waiting on them, names,
+- [Network](guides/network.md) - sockets, waiting on them, names, TLS,
   interfaces and their files, the network device API, wireless devices,
   writing a network driver, telnet.device, and the commands.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
@@ -78,6 +78,7 @@ first time something opens it.
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |
+| tls.library | `LIBS:` | TLS 1.3 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
 | truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
 
 ## Devices

@@ -1,0 +1,30 @@
+//! tls.library's functions: TLS 1.3 sessions over stream sockets a
+//! program connected - the handshake, the server's certificates checked
+//! against the trusted roots, then plain bytes read and written. Open it
+//! with OpenLibrary("tls.library", 1); the structures are in sdk.tls.
+##include libs/tls/tls as tls
+##include libs/utility/utility as utility
+##include interface/bsdsocket as bsdsocket
+##basetype TLSBase
+##name tls.library
+##bias 4
+##public
+/// A session over `socket`, a connected stream socket of the program's
+/// `socket_base`: the handshake done and the server checked. Null, and
+/// why in `err` (TLSERR_*), when it failed.
+?*tls.Session OpenSession(*bsdsocket.SocketBase socket_base, i32 socket, ?[*]const utility.TagItem tags, ?*i32 err)
+/// The session ended - close_notify sent - and freed. The socket stays
+/// the program's, to close.
+void CloseSession(?*tls.Session session)
+/// Up to `length` bytes from the server into `buffer`: how many, 0 when
+/// it closed the session, a TLSERR_* below 0.
+i32 ReadSession(*tls.Session session, *anyopaque buffer, u32 length)
+/// `length` bytes to the server: `length`, or a TLSERR_* below 0.
+i32 WriteSession(*tls.Session session, *const anyopaque data, u32 length)
+/// How many bytes ReadSession has decrypted and waiting: WaitSelect sees
+/// only the socket, not these.
+u32 SessionPending(*tls.Session session)
+/// One of the session's attributes (TLS_Version, TLS_Suite, TLS_Verdict,
+/// TLS_Alert, TLS_Error, TLS_Protocol); 0 for one it does not know.
+usize GetSessionAttr(*tls.Session session, utility.Tag attr)
+##end

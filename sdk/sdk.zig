@@ -39,6 +39,8 @@ pub const datatypes = @import("libs/datatypes/datatypes.zig");
 pub const motion = @import("libs/motion/motion.zig");
 /// A disk's RigidDiskBlock and partitions, through rdb.library.
 pub const rdb = @import("libs/rdb/rdb.zig");
+/// TLS sessions over sockets, through tls.library.
+pub const tls = @import("libs/tls/tls.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

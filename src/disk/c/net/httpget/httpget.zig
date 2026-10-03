@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! HTTPGet: a file fetched over HTTP. Built against the SDK only.
+//! HTTPGet: a file fetched over HTTP or HTTPS. Built against the SDK
+//! only.
 //!
-//!   HTTPGet URL/A,TO/K,QUIET/S
+//!   HTTPGet URL/A,TO/K,QUIET/S,NOVERIFY/S
 //!
-//! URL is `http://host[:port]/path`, the host a name, an IPv4 address,
+//! URL is `http://` or `https://host[:port]/path`, the host a name, an IPv4 address,
 //! or an IPv6 one in brackets (`http://[fec0::2]:8080/`); a name's
 //! addresses are tried in the order GetAddrInfo gives them, IPv6 and
 //! IPv4, until one connects. The body goes to TO, or to standard
@@ -16,8 +17,15 @@
 //!
 //! The request is HTTP/1.1 with `Connection: close`: one request per
 //! connection, so the body ends where its length says, where its last
-//! chunk does, or where the server closes. `https:` is refused until
-//! there is TLS. The protocol's parts are in http.zig.
+//! chunk does, or where the server closes. The protocol's parts are in
+//! http.zig.
+//!
+//! `https:` goes over TLS 1.3 (LIBS:tls.library), port 443 unless the
+//! URL says otherwise: the server's certificate is checked against the
+//! system's trusted roots and must name the host; what was wrong with it
+//! is said when it fails. NOVERIFY leaves the certificate unchecked - for
+//! a test server of one's own, never for anything that matters. The
+//! clock must be set (TimeSync) for any certificate to be checked.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -27,23 +35,31 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
+const TLSBase = sdk.interface.tls.TLSBase;
+const tls = sdk.tls;
+const utility = sdk.utility;
 const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 const http = @import("http.zig");
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.2 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "URL/A,TO/K,QUIET/S";
+const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
 const arg_url = 0;
 const arg_to = 1;
 const arg_quiet = 2;
+const arg_noverify = 3;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOMEMORY = "%s: no memory\n";
 const MSG_BADURL = "%s: %s is no http:// URL\n";
-const MSG_NOTLS = "%s: https needs TLS, which there is none of yet\n";
+const MSG_TLS_CERTIFICATE = "%s: the server's certificate is not trusted: %s\n";
+const MSG_TLS_CLOCK = "%s: the clock is not set, so no certificate can be checked (TimeSync)\n";
+const MSG_TLS_ALERT = "%s: the server refused the TLS session (alert %u)\n";
+const MSG_TLS_HANDSHAKE = "%s: the TLS handshake failed\n";
+const MSG_TLS_FAILED = "%s: TLS failed (%d)\n";
 const MSG_NOHOST = "%s: %s: no such host\n";
 const MSG_FAILED = "%s: %s failed: errno %d\n";
 const MSG_STOPPED = "%s: stopped\n";
@@ -83,7 +99,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -92,6 +108,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const url_arg: [*:0]const u8 = @ptrFromInt(argv[arg_url]);
     const to: ?[*:0]const u8 = if (argv[arg_to] != 0) @ptrFromInt(argv[arg_to]) else null;
     const quiet = argv[arg_quiet] != 0;
+    const verify = argv[arg_noverify] == 0;
 
     const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, bsd.SOCKETNAME });
@@ -119,6 +136,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     while (url_arg[work.url_length] != 0 and work.url_length < url_most) : (work.url_length += 1) work.url[work.url_length] = url_arg[work.url_length];
 
+    // tls.library, opened the first time a URL is https.
+    var tb: ?*TLSBase = null;
+    defer if (tb) |library| sys.CloseLibrary(library.lib());
+
     const started = eclock(timer_base);
     var redirects: u32 = 0;
     while (true) {
@@ -126,12 +147,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = Printf(dl, MSG_BADURL, .{ COMMAND_NAME, url_arg });
             return dos.RETURN_ERROR;
         };
-        if (url.secure) {
-            _ = Printf(dl, MSG_NOTLS, .{COMMAND_NAME});
-            return dos.RETURN_ERROR;
+        if (url.secure and tb == null) {
+            tb = @ptrCast(sys.OpenLibrary(tls.TLSNAME, 1) orelse {
+                _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, tls.TLSNAME });
+                return dos.RETURN_FAIL;
+            });
         }
         var total: u64 = 0;
-        switch (fetch(dl, sb, &work, url, to, &total)) {
+        const security: Security = .{ .tb = if (url.secure) tb else null, .verify = verify };
+        switch (fetch(dl, sb, &work, url, to, security, &total)) {
             .failed => |result| return result,
             .redirect => |length| {
                 redirects += 1;
@@ -186,20 +210,80 @@ fn append(into: []u8, at: *usize, text: []const u8) bool {
     return true;
 }
 
-/// Every byte of `data` sent.
-fn sendAll(sb: *SocketBase, socket: i32, data: []const u8) bool {
-    var at: usize = 0;
-    while (at < data.len) {
-        const sent = sb.Send(socket, data.ptr + at, @intCast(data.len - at), 0);
-        if (sent <= 0) return false;
-        at += @intCast(sent);
+/// Whether a request goes over TLS, and how.
+const Security = struct {
+    tb: ?*TLSBase,
+    verify: bool,
+};
+
+/// What a request goes over: the socket alone, or a TLS session on it.
+const Connection = struct {
+    sb: *SocketBase,
+    socket: i32,
+    tb: ?*TLSBase = null,
+    session: ?*tls.Session = null,
+
+    /// Every byte of `data` sent.
+    fn send(connection: *Connection, data: []const u8) bool {
+        if (connection.session) |session| {
+            return connection.tb.?.WriteSession(session, data.ptr, @intCast(data.len)) == @as(i32, @intCast(data.len));
+        }
+        var at: usize = 0;
+        while (at < data.len) {
+            const sent = connection.sb.Send(connection.socket, data.ptr + at, @intCast(data.len - at), 0);
+            if (sent <= 0) return false;
+            at += @intCast(sent);
+        }
+        return true;
     }
-    return true;
+
+    /// Bytes into `buffer`: how many, 0 at the end, below 0 a failure -
+    /// for a session, a TLSERR_*.
+    fn receive(connection: *Connection, buffer: []u8) i32 {
+        if (connection.session) |session| return connection.tb.?.ReadSession(session, buffer.ptr, @intCast(buffer.len));
+        return connection.sb.Recv(connection.socket, buffer.ptr, @intCast(buffer.len), 0);
+    }
+
+    /// A failed send or receive said.
+    fn failure(connection: *Connection, dl: *DosBase, what: [*:0]const u8, code: i32) Outcome {
+        if (connection.session == null or code == tls.TLSERR_IO) return failed(dl, connection.sb, what);
+        return tlsFailed(dl, code, tls.TLSV_TRUSTED, 0);
+    }
+};
+
+/// What the certificate check said, in words.
+fn verdictText(verdict: u32) [*:0]const u8 {
+    return switch (verdict) {
+        tls.TLSV_MALFORMED => "one of its certificates cannot be read",
+        tls.TLSV_UNKNOWN_ISSUER => "no trusted root signed it",
+        tls.TLSV_BAD_SIGNATURE => "a signature in its chain is wrong",
+        tls.TLSV_UNSUPPORTED => "it is signed in a way that cannot be checked",
+        tls.TLSV_EXPIRED => "it has expired",
+        tls.TLSV_NOT_YET_VALID => "it is not valid yet",
+        tls.TLSV_NOT_CA => "it was issued by a certificate that may not issue",
+        tls.TLSV_PATH_LENGTH => "its chain is longer than its CAs allow",
+        tls.TLSV_NAME_CONSTRAINTS => "a CA in its chain has name constraints",
+        tls.TLSV_WRONG_USAGE => "it is not for a server",
+        tls.TLSV_WRONG_NAME => "it is for another host",
+        tls.TLSV_TOO_LONG => "its chain is too long",
+        else => "for no reason given",
+    };
+}
+
+fn tlsFailed(dl: *DosBase, code: i32, verdict: u32, alert: u32) Outcome {
+    switch (code) {
+        tls.TLSERR_CERTIFICATE => _ = Printf(dl, MSG_TLS_CERTIFICATE, .{ COMMAND_NAME, verdictText(verdict) }),
+        tls.TLSERR_CLOCK => _ = Printf(dl, MSG_TLS_CLOCK, .{COMMAND_NAME}),
+        tls.TLSERR_ALERT => _ = Printf(dl, MSG_TLS_ALERT, .{ COMMAND_NAME, alert }),
+        tls.TLSERR_HANDSHAKE => _ = Printf(dl, MSG_TLS_HANDSHAKE, .{COMMAND_NAME}),
+        else => _ = Printf(dl, MSG_TLS_FAILED, .{ COMMAND_NAME, code }),
+    }
+    return .{ .failed = dos.RETURN_ERROR };
 }
 
 /// One request for `url`, and its answer: the body written out, or where
 /// a redirect leads (in `work.next`).
-fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]const u8, total: *u64) Outcome {
+fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]const u8, security: Security, total: *u64) Outcome {
     var host: [256:0]u8 = @splat(0);
     const host_name = url.hostName();
     if (host_name.len >= host.len) return say(dl, MSG_NOHOST, .{@as([*:0]const u8, "(too long)")});
@@ -225,11 +309,33 @@ fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]co
     if (socket < 0) return failed(dl, sb, "Connect");
     defer _ = sb.CloseSocket(socket);
 
+    var connection: Connection = .{ .sb = sb, .socket = socket, .tb = security.tb };
+    if (security.tb) |tb| {
+        var code: i32 = 0;
+        var verdict: u32 = 0;
+        var alert: u32 = 0;
+        const tags = [_]utility.TagItem{
+            .{ .tag = tls.TLS_Host, .data = @intFromPtr(&host) },
+            .{ .tag = tls.TLS_Verify, .data = @intFromBool(security.verify) },
+            .{ .tag = tls.TLS_Protocol, .data = @intFromPtr("http/1.1") },
+            .{ .tag = tls.TLS_GetVerdict, .data = @intFromPtr(&verdict) },
+            .{ .tag = tls.TLS_GetAlert, .data = @intFromPtr(&alert) },
+            .{},
+        };
+        connection.session = tb.OpenSession(sb, socket, &tags, &code) orelse {
+            if (code == tls.TLSERR_IO) return failed(dl, sb, "TLS");
+            return tlsFailed(dl, code, verdict, alert);
+        };
+    }
+    // Before the socket: the session says goodbye over it.
+    defer if (connection.session) |session| security.tb.?.CloseSession(session);
+
     // The request, built in the buffer the answer comes into afterwards.
     const buffer = work.buffer;
     var length: usize = 0;
     var port_text: [8]u8 = undefined;
-    const port_part = if (url.port == 80) "" else portText(url.port, &port_text);
+    const default_port: u16 = if (url.secure) 443 else 80;
+    const port_part = if (url.port == default_port) "" else portText(url.port, &port_text);
     const parts = [_][]const u8{
         "GET ",                                         if (url.path[0] == '?') "/" else "", url.path,           " HTTP/1.1\r\nHost: ",
         url.host,                                       port_part,                           "\r\nUser-Agent: ", user_agent,
@@ -238,15 +344,15 @@ fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]co
     for (parts) |part| {
         if (!append(buffer, &length, part)) return say(dl, MSG_BADURL, .{@as([*:0]const u8, "the URL")});
     }
-    if (!sendAll(sb, socket, buffer[0..length])) return failed(dl, sb, "Send");
+    if (!connection.send(buffer[0..length])) return connection.failure(dl, "Send", tls.TLSERR_IO);
 
     // The head, whole.
     var filled: usize = 0;
     const head_end = while (true) {
         if (http.headEnd(buffer[0..filled])) |end| break end;
         if (filled == buffer.len) return say(dl, MSG_HEADLONG, .{@as(u32, buffer_bytes)});
-        const got = sb.Recv(socket, buffer.ptr + filled, @intCast(buffer.len - filled), 0);
-        if (got < 0) return failed(dl, sb, "Recv");
+        const got = connection.receive(buffer[filled..]);
+        if (got < 0) return connection.failure(dl, "Recv", got);
         if (got == 0) return say(dl, MSG_NOTHTTP, .{});
         filled += @intCast(got);
     };
@@ -282,8 +388,8 @@ fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]co
     // What came with the head, then the rest.
     if (!body.take(dl, file, buffer[head.body_at..filled])) return body.outcome(dl);
     while (!body.finished()) {
-        const got = sb.Recv(socket, buffer.ptr, @intCast(buffer.len), 0);
-        if (got < 0) return failed(dl, sb, "Recv");
+        const got = connection.receive(buffer);
+        if (got < 0) return connection.failure(dl, "Recv", got);
         if (got == 0) {
             if (head.chunked or head.content_length != null) return say(dl, MSG_EARLY, .{});
             break;
