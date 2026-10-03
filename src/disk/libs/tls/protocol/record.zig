@@ -3,7 +3,8 @@
 //! records - a type, the version 03 03, a length and that many bytes.
 //!
 //! Before the keys are agreed a record's bytes are the plain handshake
-//! message. After, every record is TLS 1.3's: type 23 outside, and
+//! message. After, every record is protected - TLS 1.2's form at the end
+//! of this file, and TLS 1.3's: type 23 outside, and
 //! inside, AES-GCM over the content, its real type and any zero padding;
 //! the record's five header bytes are the GCM header, and the nonce is
 //! the IV with the record's sequence number laid over its last eight
@@ -128,4 +129,83 @@ pub fn open(cb: *CryptoBase, keys: *TrafficKeys, record: []u8) ?Opened {
     while (end > 0 and body[end - 1] == 0) end -= 1;
     if (end == 0) return null;
     return .{ .content_type = body[end - 1], .content = body[0 .. end - 1] };
+}
+
+// --- TLS 1.2 -------------------------------------------------------------------
+//
+// AES-GCM as RFC 5288 has it: the record's type shows, the nonce is the
+// key's four bytes of salt and eight explicit ones sent at the front of
+// the record (the sequence number), and the header GCM authenticates is
+// the sequence number, the type, the version and the plain length.
+
+fn header12(keys: *const TrafficKeys, content_type: u8, length: usize) [13]u8 {
+    var aad: [13]u8 = undefined;
+    for (0..8) |index| aad[index] = @truncate(keys.sequence >> @intCast(56 - 8 * index));
+    aad[8] = content_type;
+    aad[9] = 3;
+    aad[10] = 3;
+    aad[11] = @truncate(length >> 8);
+    aad[12] = @truncate(length);
+    return aad;
+}
+
+/// `content` of `content_type` protected into a TLS 1.2 record in `out`;
+/// the record's length.
+pub fn seal12(cb: *CryptoBase, keys: *TrafficKeys, content_type: u8, content: []const u8, out: []u8) usize {
+    const total = 8 + content.len + crypto.GCM_TAG;
+    out[0] = content_type;
+    out[1] = 3;
+    out[2] = 3;
+    out[3] = @truncate(total >> 8);
+    out[4] = @truncate(total);
+    const body = out[header_length..];
+    // The explicit nonce: the sequence number, which never repeats.
+    for (0..8) |index| body[index] = @truncate(keys.sequence >> @intCast(56 - 8 * index));
+    var nonce: [12]u8 = undefined;
+    @memcpy(nonce[0..4], keys.iv[0..4]);
+    @memcpy(nonce[4..12], body[0..8]);
+    const aad = header12(keys, content_type, content.len);
+    @memcpy(body[8..][0..content.len], content);
+    const message: crypto.GcmMessage = .{
+        .key = &keys.key,
+        .key_length = keys.key_length,
+        .nonce = &nonce,
+        .nonce_length = 12,
+        .aad = &aad,
+        .aad_length = aad.len,
+        .input = body[8..].ptr,
+        .output = body[8..].ptr,
+        .length = @intCast(content.len),
+        .tag = body[8 + content.len ..][0..crypto.GCM_TAG],
+    };
+    _ = cb.SealGcm(&message);
+    keys.sequence += 1;
+    return header_length + total;
+}
+
+/// A TLS 1.2 record opened in place; null when its tag does not match.
+pub fn open12(cb: *CryptoBase, keys: *TrafficKeys, received: []u8) ?Opened {
+    if (received.len < header_length + 8 + crypto.GCM_TAG) return null;
+    const content_type = received[0];
+    const body = received[header_length..];
+    const length = body.len - 8 - crypto.GCM_TAG;
+    var nonce: [12]u8 = undefined;
+    @memcpy(nonce[0..4], keys.iv[0..4]);
+    @memcpy(nonce[4..12], body[0..8]);
+    const aad = header12(keys, content_type, length);
+    const message: crypto.GcmMessage = .{
+        .key = &keys.key,
+        .key_length = keys.key_length,
+        .nonce = &nonce,
+        .nonce_length = 12,
+        .aad = &aad,
+        .aad_length = aad.len,
+        .input = body[8..].ptr,
+        .output = body[8..].ptr,
+        .length = @intCast(length),
+        .tag = body[8 + length ..][0..crypto.GCM_TAG],
+    };
+    if (cb.OpenGcm(&message) != crypto.CRYPTOERR_OK) return null;
+    keys.sequence += 1;
+    return .{ .content_type = content_type, .content = body[8..][0..length] };
 }

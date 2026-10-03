@@ -20,21 +20,38 @@ const crypto = sdk.crypto;
 const Bytes = crypto.Bytes;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 
-/// A cipher suite: its number, its hash, its key's length.
+/// A cipher suite: its number, its hash, its key's length; for TLS 1.2,
+/// the kind of certificate key it signs its key exchange with.
 pub const Suite = struct {
     id: u16,
     hash: u32,
     hash_length: u32,
     key_length: u32,
+    tls12: bool = false,
+    /// TLS 1.2's: the server's key is ECDSA's (or else RSA's).
+    ecdsa: bool = false,
 };
 
 pub const TLS_AES_128_GCM_SHA256: Suite = .{ .id = 0x1301, .hash = crypto.HASH_SHA256, .hash_length = 32, .key_length = 16 };
 pub const TLS_AES_256_GCM_SHA384: Suite = .{ .id = 0x1302, .hash = crypto.HASH_SHA384, .hash_length = 48, .key_length = 32 };
+pub const TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: Suite = .{ .id = 0xC02B, .hash = crypto.HASH_SHA256, .hash_length = 32, .key_length = 16, .tls12 = true, .ecdsa = true };
+pub const TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256: Suite = .{ .id = 0xC02F, .hash = crypto.HASH_SHA256, .hash_length = 32, .key_length = 16, .tls12 = true };
+pub const TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: Suite = .{ .id = 0xC02C, .hash = crypto.HASH_SHA384, .hash_length = 48, .key_length = 32, .tls12 = true, .ecdsa = true };
+pub const TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: Suite = .{ .id = 0xC030, .hash = crypto.HASH_SHA384, .hash_length = 48, .key_length = 32, .tls12 = true };
+
+/// Every suite offered, in the order a ClientHello lists them.
+pub const offered = [_]Suite{
+    TLS_AES_128_GCM_SHA256,
+    TLS_AES_256_GCM_SHA384,
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+    TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+};
 
 /// The suite of that number, if it is one of ours.
 pub fn suiteOf(id: u16) ?Suite {
-    if (id == TLS_AES_128_GCM_SHA256.id) return TLS_AES_128_GCM_SHA256;
-    if (id == TLS_AES_256_GCM_SHA384.id) return TLS_AES_256_GCM_SHA384;
+    for (offered) |suite| if (suite.id == id) return suite;
     return null;
 }
 

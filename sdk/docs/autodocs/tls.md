@@ -1,6 +1,6 @@
 # tls.library
 
-tls.library's functions: TLS 1.3 sessions over stream sockets a
+tls.library's functions: TLS 1.3 (and 1.2) sessions over stream sockets a
 program connected - the handshake, the server's certificates checked
 against the trusted roots, then plain bytes read and written. Open it
 with OpenLibrary("tls.library", 1); the structures are in sdk.tls.
@@ -93,9 +93,10 @@ fn GetSessionAttr(base: *TLSBase, session: *tls.Session, attr: utility.Tag) usiz
 
 - `session`: from OpenSession.
 - `attr`:
-  - TLS_Version: 0x0304, TLS 1.3.
+  - TLS_Version: 0x0304 for TLS 1.3, 0x0303 for TLS 1.2.
   - TLS_Suite: the cipher suite's number - 0x1301 AES-128-GCM-SHA256,
-    0x1302 AES-256-GCM-SHA384.
+    0x1302 AES-256-GCM-SHA384; TLS 1.2's 0xC02B, 0xC02F (ECDHE with
+    ECDSA or RSA, AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM).
   - TLS_Verdict: the certificate check's TLSV_*.
   - TLS_Alert: the alert the server ended with, 0 for none.
   - TLS_Error: the session's last TLSERR_*.
@@ -186,7 +187,11 @@ failed or closed; TLSERR_NOMEM, TLSERR_CRYPTO.
 
 TLS 1.3 with AES-128-GCM or AES-256-GCM, an X25519 key share (P-256
 or P-384 when the server asks), and ECDSA, RSA-PSS or Ed25519 for
-the server's signature. The certificates are checked against
+the server's signature. A server that speaks nothing newer gets TLS
+1.2: ECDHE on the same curves with AES-GCM, signed with ECDSA or RSA,
+the extended master secret when it agrees, and no renegotiation. A
+server that could have spoken 1.3 and answers 1.2 is refused - the
+version was taken away on the way. The certificates are checked against
 `SYS:Certificates/Roots` and the PEM files in
 `ENVARC:Sys/net/certificates/`, read once by the first session, for
 the host and at the time now in UTC - the clock keeps local time by
@@ -218,7 +223,7 @@ handshake's messages. Certificates are not checked for revocation.
 
 **BUGS**
 
-TLS 1.2 is not offered yet.
+None known.
 
 **SEE ALSO**
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! tls.library: TLS 1.3 over stream sockets a program connected, on the
-//! disk in LIBS:.
+//! tls.library: TLS 1.3 and 1.2 over stream sockets a program connected,
+//! on the disk in LIBS:.
 //!
 //! A session is the program's: made by OpenSession over its socket, in
 //! its own bsdsocket.library base, and used from its task. The handshake

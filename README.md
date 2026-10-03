@@ -187,7 +187,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   TCP, UDP, IPv4 and IPv6, DHCP, DNS), network devices for QEMU's Ethernet
   and the chip's Wi-Fi (WPA2), brought up at boot from
   `DEVS:NetInterfaces/`, and a shell over Telnet (`C:net/ShellServer`).
-  `LIBS:tls.library` puts TLS 1.3 over a socket, the server's certificate
+  `LIBS:tls.library` puts TLS 1.3 and 1.2 over a socket, the server's certificate
   checked against Mozilla's roots and one's own, and `C:net/HTTPGet`
   fetches `https://` with it.
   See the [network guide](sdk/docs/guides/network.md).

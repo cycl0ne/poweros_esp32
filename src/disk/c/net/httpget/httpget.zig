@@ -20,7 +20,8 @@
 //! chunk does, or where the server closes. The protocol's parts are in
 //! http.zig.
 //!
-//! `https:` goes over TLS 1.3 (LIBS:tls.library), port 443 unless the
+//! `https:` goes over TLS 1.3, or 1.2 with a server that speaks nothing
+//! newer (LIBS:tls.library), port 443 unless the
 //! URL says otherwise: the server's certificate is checked against the
 //! system's trusted roots and must name the host; what was wrong with it
 //! is said when it fails. NOVERIFY leaves the certificate unchecked - for
@@ -43,7 +44,7 @@ const Printf = dos.stdio.Printf;
 const http = @import("http.zig");
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.3 (03.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";

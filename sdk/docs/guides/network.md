@@ -136,8 +136,8 @@ file.
 
 ## TLS: a secure connection
 
-`LIBS:tls.library` puts TLS 1.3 over a stream socket a program has
-connected - the program's own socket, in its own bsdsocket base, which
+`LIBS:tls.library` puts TLS - 1.3, and 1.2 for a server that speaks
+nothing newer - over a stream socket a program has connected - the program's own socket, in its own bsdsocket base, which
 it keeps: it waits on it, and it closes it after the session.
 
 ```zig
@@ -168,10 +168,22 @@ while (true) {
 }
 ```
 
-`OpenSession` does the whole handshake before it returns: an X25519 key
-share (P-256 or P-384 when the server asks for one), AES-128-GCM or
-AES-256-GCM, and the server's signature by ECDSA, RSA-PSS or Ed25519 -
-all of it on crypto.library, the hashes and AES on the chip's engines.
+`OpenSession` does the whole handshake before it returns, and one
+ClientHello offers both versions:
+
+- **TLS 1.3**: an X25519 key share (P-256 or P-384 when the server asks
+  for one), AES-128-GCM or AES-256-GCM, the server's signature by ECDSA,
+  RSA-PSS or Ed25519.
+- **TLS 1.2**, with a server that answers nothing newer: ECDHE on the
+  same curves with AES-GCM, the server signing its key exchange with
+  ECDSA or RSA (PKCS #1 or PSS); the extended master secret when the
+  server agrees, and no renegotiation. A server that could have spoken
+  1.3 and still answers 1.2 is refused - its random gives it away, and
+  the newer version was taken off the connection on the way.
+
+TLS 1.1 and older, CBC, RC4 and RSA key exchange are never offered. All
+of it runs on crypto.library, the hashes and AES on the chip's engines.
+`GetSessionAttr(TLS_Version)` and `TLS_Suite` say what a session came to.
 
 **The server's certificates** are checked as the session opens: a chain
 from the server's certificate to a trusted root, each signature, each
@@ -196,8 +208,12 @@ waits in the session, where `WaitSelect` does not see it: ask
 `SessionPending` before waiting on the socket.
 
 A session takes some 75 KiB, from the memory a program's own data goes
-to. It belongs to the task that opened it. TLS 1.2 is not spoken yet,
-so a server that offers nothing newer is refused.
+to. It belongs to the task that opened it.
+
+**Trying it**: `C:net/HTTPGet https://example.com/` (TLS 1.3),
+`https://tls-v1-2.badssl.com:1012/` (TLS 1.2), and badssl.com's broken
+ones - `expired.`, `wrong.host.`, `self-signed.`, `untrusted-root.`,
+`incomplete-chain.badssl.com` - each refused for its own reason.
 
 ## Interfaces
 

@@ -50,7 +50,11 @@ const client_module = @import("../protocol/client.zig");
 /// BEHAVIOR:
 /// TLS 1.3 with AES-128-GCM or AES-256-GCM, an X25519 key share (P-256
 /// or P-384 when the server asks), and ECDSA, RSA-PSS or Ed25519 for
-/// the server's signature. The certificates are checked against
+/// the server's signature. A server that speaks nothing newer gets TLS
+/// 1.2: ECDHE on the same curves with AES-GCM, signed with ECDSA or RSA,
+/// the extended master secret when it agrees, and no renegotiation. A
+/// server that could have spoken 1.3 and answers 1.2 is refused - the
+/// version was taken away on the way. The certificates are checked against
 /// `SYS:Certificates/Roots` and the PEM files in
 /// `ENVARC:Sys/net/certificates/`, read once by the first session, for
 /// the host and at the time now in UTC - the clock keeps local time by
@@ -78,7 +82,7 @@ const client_module = @import("../protocol/client.zig");
 /// handshake's messages. Certificates are not checked for revocation.
 ///
 /// BUGS:
-/// TLS 1.2 is not offered yet.
+/// None known.
 ///
 /// SEE ALSO:
 /// `ReadSession`, `WriteSession`, `CloseSession`, `GetSessionAttr`

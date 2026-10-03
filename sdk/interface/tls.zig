@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! tls.library's functions: TLS 1.3 sessions over stream sockets a
+//! tls.library's functions: TLS 1.3 (and 1.2) sessions over stream sockets a
 //! program connected - the handshake, the server's certificates checked
 //! against the trusted roots, then plain bytes read and written. Open it
 //! with OpenLibrary("tls.library", 1); the structures are in sdk.tls.

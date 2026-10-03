@@ -19,9 +19,10 @@ const _session = @import("_session.zig");
 /// INPUTS:
 /// - `session`: from OpenSession.
 /// - `attr`:
-///   - TLS_Version: 0x0304, TLS 1.3.
+///   - TLS_Version: 0x0304 for TLS 1.3, 0x0303 for TLS 1.2.
 ///   - TLS_Suite: the cipher suite's number - 0x1301 AES-128-GCM-SHA256,
-///     0x1302 AES-256-GCM-SHA384.
+///     0x1302 AES-256-GCM-SHA384; TLS 1.2's 0xC02B, 0xC02F (ECDHE with
+///     ECDSA or RSA, AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM).
 ///   - TLS_Verdict: the certificate check's TLSV_*.
 ///   - TLS_Alert: the alert the server ended with, 0 for none.
 ///   - TLS_Error: the session's last TLSERR_*.
@@ -62,7 +63,7 @@ const _session = @import("_session.zig");
 pub fn GetSessionAttr(_: *TLSBase, session: *tls.Session, attr: utility.Tag) usize {
     const own = _session.sessionOf(session);
     return switch (attr) {
-        tls.TLS_Version => 0x0304,
+        tls.TLS_Version => own.client.version,
         tls.TLS_Suite => own.client.suite.id,
         tls.TLS_Verdict => @intFromEnum(own.client.verdict),
         tls.TLS_Alert => own.client.peer_alert,

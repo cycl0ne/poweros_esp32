@@ -236,3 +236,67 @@ test "KeyUpdate: the server's next keys taken, and ours updated when it asks" {
     const ours = record.open(cb, &client_next, output.buffer[0..output.length]) orelse return error.NotOpened;
     try testing.expectEqualSlices(u8, "ours too", ours.content);
 }
+
+// --- TLS 1.2 -------------------------------------------------------------------
+
+const prf = @import("../protocol/prf.zig");
+
+fn hexBytes(comptime text: []const u8) [text.len / 2]u8 {
+    var out: [text.len / 2]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, text) catch unreachable;
+    return out;
+}
+
+test "TLS 1.2's PRF: the published SHA-256 vector, and SHA-384 against Python's hmac" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var out: [100]u8 = undefined;
+    prf.prf(cb, crypto.HASH_SHA256, &hexBytes("9bbe436ba940f017b17652849a71db35"), "test label", &.{&hexBytes("a0ba9f936cda311827a6f796ffd5198c")}, &out);
+    try testing.expectEqualSlices(u8, &hexBytes("e3f229ba727be17b8d122620557cd453c2aab21d07c3d495329b52d4e61edb5a6b301791e90d35c9c9a46b4e14baf9af0fa022f7077def17abfd3797c0564bab4fbc91666e9def9b97fce34f796789baa48082d122ee42c5a72e5a5110fff70187347b66"), &out);
+    var secret: [48]u8 = undefined;
+    var seed: [64]u8 = undefined;
+    for (&secret, 0..) |*byte, index| byte.* = @intCast(index);
+    for (&seed, 0..) |*byte, index| byte.* = @intCast(index);
+    var master: [48]u8 = undefined;
+    prf.prf(cb, crypto.HASH_SHA384, &secret, "master secret", &.{ seed[0..32], seed[32..64] }, &master);
+    try testing.expectEqualSlices(u8, &hexBytes("c3e5ef7d93496e7ae5d17c26eec119de636b637b6bfc8634c61f384921e594ed89a57cff6f23beccc8af5d02d2e8ea2a"), &master);
+}
+
+test "TLS 1.2's records: AES-GCM with the explicit nonce and the sequence in the header, as std has it" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var keys: schedule.TrafficKeys = .{ .key_length = 16, .sequence = 5 };
+    for (keys.key[0..16], 0..) |*byte, index| byte.* = @intCast(index + 1);
+    keys.iv[0..4].* = .{ 0xa0, 0xa1, 0xa2, 0xa3 };
+    const content = "a record's worth of application data";
+    var sealed: [128]u8 = undefined;
+    const length = record.seal12(cb, &keys, record.APPLICATION_DATA, content, &sealed);
+    try testing.expectEqual(@as(usize, 5 + 8 + content.len + 16), length);
+
+    // The same by std: nonce = salt | sequence, header = sequence | type |
+    // version | plain length.
+    const Gcm = std.crypto.aead.aes_gcm.Aes128Gcm;
+    var nonce: [12]u8 = .{ 0xa0, 0xa1, 0xa2, 0xa3, 0, 0, 0, 0, 0, 0, 0, 5 };
+    const aad = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 5, 23, 3, 3, 0, content.len };
+    var expected: [content.len]u8 = undefined;
+    var tag: [16]u8 = undefined;
+    Gcm.encrypt(&expected, &tag, content, &aad, nonce, keys.key[0..16].*);
+    try testing.expectEqualSlices(u8, nonce[4..12], sealed[5..13]);
+    try testing.expectEqualSlices(u8, &expected, sealed[13..][0..content.len]);
+    try testing.expectEqualSlices(u8, &tag, sealed[13 + content.len ..][0..16]);
+
+    // Opened again by a reader at the same sequence.
+    var reader: schedule.TrafficKeys = keys;
+    reader.sequence = 5;
+    const opened = record.open12(cb, &reader, sealed[0..length]) orelse return error.NotOpened;
+    try testing.expectEqualSlices(u8, content, opened.content);
+    try testing.expectEqual(@as(u64, 6), reader.sequence);
+    // At another sequence the header differs, and it does not open.
+    var wrong: [128]u8 = undefined;
+    _ = record.seal12(cb, &keys, record.APPLICATION_DATA, content, &wrong);
+    reader.sequence = 9;
+    try testing.expect(record.open12(cb, &reader, wrong[0..length]) == null);
+    _ = &nonce;
+}
