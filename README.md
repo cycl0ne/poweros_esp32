@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -68,7 +68,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
   the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
   [disks guide](sdk/docs/guides/rdb.md)); consoles with line editing and
-  copy and paste; a shell with scripts and resident commands, 36
+  copy and paste; a shell with scripts and resident commands, 37
   commands in `C:`, test programs in `C:test` and network tools in
   `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
@@ -103,8 +103,12 @@ Espressif's QEMU. The ESP32-P4 is next.
   (WPA2), and a shell over Telnet (`C:net/ShellServer`);
   `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
   `https://`. See the [network guide](sdk/docs/guides/network.md).
-- **Devices:** timer, serial, USB serial, flash, SD card, I2C, touch,
-  keyboard, mouse, input, console, four-channel audio; watchdog, DMA,
+- **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
+  over RTU on the RS-485 bus and over TCP; `C:Modbus` reads and writes
+  a device from the shell, and `SYS:Programs/Battery` shows a battery a
+  Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
+- **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
+  card, I2C, touch, keyboard, mouse, input, console, four-channel audio; watchdog, DMA,
   GPIO and platform resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures.
@@ -117,9 +121,9 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 and CAN described but not driven |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and mouse | runs |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and mouse, and an RS-485 port on its second serial port | runs |
 
 `C:ShowConfig` lists what the running board has.
 
@@ -164,6 +168,7 @@ More build steps and options:
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
+| `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
 
 ## Repository layout
 

@@ -3,7 +3,8 @@
 //! UART0 on the emulator's terminal, and its virtual RGB display, which
 //! gives its window's pointer and the keys typed into it as well
 //! (scripts/qemu/esp_rgb_input.patch), and an OpenCores Ethernet MAC with
-//! the emulator's network behind it. It has no I2C parts, no touch panel,
+//! the emulator's network behind it, and UART1 on the emulator's second
+//! serial port as an RS-485 port. It has no I2C parts, no touch panel,
 //! no codec and no card slot, so its list has none.
 //!
 //! What is true of the board is written down here once, as the system tag
@@ -17,6 +18,7 @@ const rtg = sdk.rtg;
 const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const pins = sdk.expansion.boardpin;
 
 /// The machine, as the emulator names it.
 const name = "Espressif QEMU";
@@ -91,6 +93,21 @@ const ethernet = [_]Tag{
     .done,
 };
 
+// --- the RS-485 port ----------------------------------------------------------
+
+/// UART1, on QEMU's second serial port (`-Drs485=`), standing in for a
+/// transceiver: what rs485.device sends goes to that backend and what it
+/// gives comes in. The pads are any two the machine has free; QEMU joins
+/// the UART to its backend whatever pads are routed.
+const rs485 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RS485),
+    .pointer(st.PART_ChipName, "qemu serial port"),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_PinDataOut, pins.gpio(17)),
+    .value(st.PART_PinDataIn, pins.gpio(18)),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -108,6 +125,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &keyboard),
     .pointer(st.SYSTAG_Part, &mouse),
     .pointer(st.SYSTAG_Part, &ethernet),
+    .pointer(st.SYSTAG_Part, &rs485),
     .done,
 };
 

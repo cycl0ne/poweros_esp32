@@ -30,3 +30,4 @@ pub const datatypes = @import("datatypes.zig");
 pub const motion = @import("motion.zig");
 pub const rdb = @import("rdb.zig");
 pub const tls = @import("tls.zig");
+pub const modbus = @import("modbus.zig");

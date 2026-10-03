@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! serial.device: the chip's UARTs, raw, one unit per UART (uart.zig).
+//! serial.device: the chip's UARTs, raw, one unit per UART (sdk/hardware/uart.zig).
 //! Its API is IOExtSer requests, their commands, parameters and errors
 //! (sdk/devices/serial.zig). The USB-Serial-JTAG port is usbserial.device.
 //!
@@ -25,7 +25,7 @@
 //!   SDCMD_SETPARAMS  the IOExtSer's parameters, checked (unit.zig).
 //!
 //! The device sets its UARTs up itself: bus clock, reset, the crystal as
-//! their clock, 115200 8N1 (uart.setUp). UART0 may be up already: exec's
+//! their clock, 115200 8N1 (sdk.hardware.uart.setUp). UART0 may be up already: exec's
 //! RawIOInit sets it up for kprintf.
 //!
 //! - A unit is exclusive: a second OpenDevice fails with SerErr_DevBusy,

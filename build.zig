@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
     const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet);
+    const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
     // The display is the one a person sits at: `telnet localhost 2323`
     // reaches a ShellServer in it without asking for the port.
     const display_network = qemuNetwork(b, net, net_dump, telnet orelse display_telnet_port);
@@ -271,10 +272,10 @@ pub fn build(b: *std.Build) void {
     const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
-    const run_qemu = qemuRun(b, qemu, flash_image, network, &.{"-nographic"});
+    const run_qemu = qemuRun(b, qemu, flash_image, network, qemuConsole(b, &.{"-nographic"}, rs485));
     b.step("qemu", "Boot the kernel in Espressif QEMU (quit with Ctrl-A X)").dependOn(&run_qemu.step);
 
-    const run_display = qemuRun(b, qemu, flash_image, display_network, &.{ "-display", "sdl,show-cursor=off", "-serial", "mon:stdio" });
+    const run_display = qemuRun(b, qemu, flash_image, display_network, qemuConsole(b, &.{ "-display", "sdl,show-cursor=off" }, rs485));
     b.step("qemu-display", "Boot in QEMU with its virtual display in an SDL window").dependOn(&run_display.step);
 
     // The same, but on a flash image that keeps what the kernel writes:
@@ -294,7 +295,7 @@ pub fn build(b: *std.Build) void {
     keep.addFileArg(emulated.image);
     keep.addFileArg(disk_bin);
     keep.has_side_effects = true;
-    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, &.{"-nographic"});
+    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, qemuConsole(b, &.{"-nographic"}, rs485));
     run_disk.step.dependOn(&keep.step);
     b.step("qemu-disk", "Boot in QEMU on a flash image that keeps what is written to the disk").dependOn(&run_disk.step);
     // Target-independent code, tested on the host.
@@ -770,6 +771,20 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16)
     const nic = b.fmt("{s},id=net0,model=open_eth{s}", .{ net orelse "user", if (net == null) forward else "" });
     const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
+}
+
+/// The display arguments, then the serial ports: UART0, the console, on
+/// the terminal QEMU runs in, and UART1, the RS-485 port, on `rs485`'s
+/// backend when one is given. `-nographic` alone puts UART0 on the
+/// terminal; naming a second port means naming the first as well.
+fn qemuConsole(b: *std.Build, display: []const []const u8, rs485: ?[]const u8) []const []const u8 {
+    const graphic = !(display.len == 1 and std.mem.eql(u8, display[0], "-nographic"));
+    if (rs485 == null and !graphic) return display;
+    var args: std.ArrayList([]const u8) = .empty;
+    args.appendSlice(b.allocator, display) catch @panic("OOM");
+    args.appendSlice(b.allocator, &.{ "-serial", "mon:stdio" }) catch @panic("OOM");
+    if (rs485) |backend| args.appendSlice(b.allocator, &.{ "-serial", backend }) catch @panic("OOM");
+    return args.items;
 }
 
 /// `snapshot` false lets the kernel write the image, so a disk on it keeps

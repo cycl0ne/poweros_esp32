@@ -1,0 +1,46 @@
+//! modbus.library's functions: Modbus over RTU (an RS-485 bus, through
+//! rs485.device) and TCP, as a client asking devices and as a server
+//! answering from a program's tables. Open it with
+//! OpenLibrary("modbus.library", 1); the structures are in sdk.modbus.
+##include libs/modbus/modbus as modbus
+##include libs/utility/utility as utility
+##include interface/bsdsocket as bsdsocket
+##basetype ModbusBase
+##name modbus.library
+##bias 4
+##public
+/// A client on an RTU bus: its device opened and the line set. Null,
+/// and why in `err` (MBERR_*), when it failed.
+?*modbus.ModbusContext OpenModbusRTU(?[*]const utility.TagItem tags, ?*i32 err)
+/// A client on a TCP connection, made with the program's `socket_base`.
+?*modbus.ModbusContext OpenModbusTCP(*bsdsocket.SocketBase socket_base, ?[*]const utility.TagItem tags, ?*i32 err)
+/// The context closed and freed: its device, or its connection unless the
+/// program gave the socket.
+void CloseModbus(?*modbus.ModbusContext context)
+/// `count` coils from `address` of `unit`, a byte each into `values`.
+i32 ReadCoils(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]u8 values)
+/// `count` discrete inputs from `address`, a byte each into `values`.
+i32 ReadDiscreteInputs(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]u8 values)
+/// `count` holding registers from `address` into `values`.
+i32 ReadHoldingRegisters(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]u16 values)
+/// `count` input registers from `address` into `values`.
+i32 ReadInputRegisters(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]u16 values)
+/// The coil at `address` set (`value` not 0) or cleared.
+i32 WriteCoil(*modbus.ModbusContext context, u32 unit, u32 address, u32 value)
+/// The holding register at `address` set to `value`.
+i32 WriteRegister(*modbus.ModbusContext context, u32 unit, u32 address, u32 value)
+/// `count` coils from `address` set from `values`, a byte each.
+i32 WriteCoils(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]const u8 values)
+/// `count` holding registers from `address` set from `values`.
+i32 WriteRegisters(*modbus.ModbusContext context, u32 unit, u32 address, u32 count, [*]const u16 values)
+/// Holding registers written, then others read, in one exchange.
+i32 ReadWriteRegisters(*modbus.ModbusContext context, u32 unit, *const modbus.ModbusReadWrite transfer)
+/// Any question, as its PDU, and the answer's PDU.
+i32 ModbusTransaction(*modbus.ModbusContext context, u32 unit, *const modbus.ModbusPdu question, *modbus.ModbusPdu answer)
+/// A server answering from the program's tables, on a process of its own.
+?*modbus.ModbusServer StartModbusServer(?[*]const utility.TagItem tags, ?*i32 err)
+/// The server stopped, waited for, and freed.
+void StopModbusServer(?*modbus.ModbusServer server)
+/// What an error or exception code means, in words.
+[*:0]const u8 ModbusErrorText(i32 code)
+##end

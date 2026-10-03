@@ -41,6 +41,8 @@ pub const motion = @import("libs/motion/motion.zig");
 pub const rdb = @import("libs/rdb/rdb.zig");
 /// TLS sessions over sockets, through tls.library.
 pub const tls = @import("libs/tls/tls.zig");
+/// Modbus over RTU and TCP, client and server, through modbus.library.
+pub const modbus = @import("libs/modbus/modbus.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

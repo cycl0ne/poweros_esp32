@@ -51,6 +51,10 @@ tags and constants, each with its doc comment.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
   one, errors, when a change is seen, and `C:RDB`.
+- [Modbus](guides/modbus.md) - a device's tables, the RS-485 bus
+  (rs485.device), modbus.library as a client over RTU and TCP, what a
+  call answers, a server from a program's tables, the commands, and
+  the bus in QEMU.
 
 ## Libraries
 
@@ -78,6 +82,7 @@ first time something opens it.
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |
+| modbus.library | `LIBS:` | Modbus over RTU and TCP, as a client and as a server | [md](autodocs/modbus.md) · [doc](autodocs/modbus.doc) |
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
 | truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
 
@@ -103,6 +108,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | i2c.device | ROM | the two I2C controllers | [`i2c.zig`](../devices/i2c.zig) |
 | audio.device | ROM | four channels of sound | [`audio.zig`](../devices/audio.zig) |
 | sdcard.device | `DEVS:` | the card slot as a block device | [`trackdisk.zig`](../devices/trackdisk.zig) |
+| rs485.device | `DEVS:` | the RS-485 port, in frames | [`rs485.zig`](../devices/rs485.zig) |
 | clipboard.device | `DEVS:` | what is cut, copied and pasted, a unit a clip | [`clipboard.zig`](../devices/clipboard.zig) |
 | telnet.device | `DEVS:` | a TCP connection as a stream, for a console | [`telnet.zig`](../devices/telnet.zig) |
 | openeth.device | `DEVS:networks/` | QEMU's Ethernet | [`network.zig`](../devices/network.zig) |

@@ -32,6 +32,7 @@ test {
     _ = @import("libs/tls/tests/tls13.zig");
     _ = @import("libs/tls/tls_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
+    _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("libs/asl/tests/asl.zig");
@@ -67,6 +68,9 @@ test {
     _ = @import("classes/datatypes/png/decode.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");
+    _ = @import("libs/modbus/protocol/pdu.zig");
+    _ = @import("libs/modbus/protocol/rtu.zig");
+    _ = @import("libs/modbus/protocol/mbap.zig");
     _ = @import("classes/datatypes/lottie/json.zig");
     _ = @import("classes/datatypes/lottie/property.zig");
     _ = @import("classes/datatypes/lottie/raster.zig");

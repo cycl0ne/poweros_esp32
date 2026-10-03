@@ -33,16 +33,17 @@ const commands = [_][]const u8{
     "backlight",    "rtg",       "showinfo", "setmap",        "mount",
     "showconfig",   "date",      "setdate",  "setprefs",      "fixfonts",
     "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",
+    "diskchange",   "modbus",
 };
 const tests = [_][]const u8{
-    "hello",       "echoargs",   "testlib",  "gfx",     "anim",
-    "intuition",   "console",    "keyboard", "touch",   "input",
-    "lines",       "nyan",       "plasma",   "audio",   "fonts",
-    "screens",     "layout",     "classes",  "gadgets", "listview",
-    "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
-    "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",      "styles",     "motion",   "widgets", "keyboard",
+    "hello",        "echoargs",   "testlib",  "gfx",     "anim",
+    "intuition",    "console",    "keyboard", "touch",   "input",
+    "lines",        "nyan",       "plasma",   "audio",   "fonts",
+    "screens",      "layout",     "classes",  "gadgets", "listview",
+    "diskfont",     "colorwheel", "tapedeck", "pointer", "crypto",
+    "bsdsocktest",  "asl",        "settings", "iff",     "datatypes",
+    "shapes",       "styles",     "motion",   "widgets", "keyboard",
+    "modbusserver",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -51,6 +52,7 @@ const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnet
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
+    .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
 };
 
@@ -65,6 +67,7 @@ const modules = [_]Program{
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
+    .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
@@ -114,6 +117,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype" },
     .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype" },
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
+    .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
