@@ -29,7 +29,7 @@ const DataTypesBase = _base.DataTypesBase;
 /// CONTEXT:
 /// - Waits: on the list's lock, briefly.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

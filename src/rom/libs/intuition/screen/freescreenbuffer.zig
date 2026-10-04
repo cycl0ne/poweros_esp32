@@ -35,7 +35,7 @@ const unlock = _screen.unlock;
 /// - Waits: for the screen list's semaphore, and for the display's next
 ///   frame when the buffer was shown.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

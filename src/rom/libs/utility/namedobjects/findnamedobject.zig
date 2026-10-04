@@ -33,15 +33,14 @@ const Object = _namedobjects.Object;
 /// Names compare without case unless the name space has `NSF_CASE`. With a
 /// null name, going on from each result visits the whole name space by
 /// priority. The semaphore is held shared, so any number of searches run at
-/// once; the use count is raised under Forbid, since the others holding the
-/// semaphore may raise it too.
+/// once; the use count is raised under utility's object lock, since the
+/// others holding the semaphore may raise it too.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the name space's semaphore
 ///   exclusively.
 /// - Interrupts: no. It may wait.
-/// - Forbid: must not be relied on across it: waiting for the semaphore
-///   breaks it.
+/// - Locks: takes the name space's semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -76,8 +75,8 @@ pub fn FindNamedObject(ub: *UtilityBase, name_space: ?*NamedObject, name: ?[*:0]
     const found = _namedobjects.search(ub, space, start, name) orelse return null;
     // Other finders hold the semaphore too, and a load and a store are not
     // atomic.
-    ub.sys_base.Forbid();
+    ub.sys_base.AcquireLock(&ub.object_lock);
     found.use_count += 1;
-    ub.sys_base.Permit();
+    ub.sys_base.ReleaseLock(&ub.object_lock);
     return &found.public;
 }

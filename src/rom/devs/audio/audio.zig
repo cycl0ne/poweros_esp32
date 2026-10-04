@@ -88,6 +88,10 @@ const ChannelRequests = extern struct {
 const AudioBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// The voices, the channels' owners and the requests waiting, shared by
+    /// the task's mixer and every caller's BeginIO: a semaphore, since the
+    /// mixer holds it for a whole buffer.
+    lock: exec.SignalSemaphore = .{},
     /// One unit a channel combination: `io_Unit` is the unit of the mask
     /// the allocation got, and `ioa.channels` says which channels those
     /// are.
@@ -450,9 +454,9 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
 
     while (true) {
         _ = sys.Wait(ab.int_mask);
-        sys.Forbid();
+        sys.ObtainSemaphore(&ab.lock);
         mixBuffer(ab);
-        sys.Permit();
+        sys.ReleaseSemaphore(&ab.lock);
     }
 }
 
@@ -665,8 +669,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     io.err = 0;
     io.flags &= ~exec.IOF_DONE;
 
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
 
     switch (io.command) {
         audio.ADCMD_ALLOCATE => {
@@ -837,8 +841,8 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
     const sys = ab.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
     var found = false;
     for (&ab.owners, 0..) |*owner, i| {
         if (owner.playing == ioa) {
@@ -887,9 +891,9 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     // Channels a program forgot are given back when it closes: a silent
     // channel nobody owns is worse than a noisy one.
     if (ioa.channels != 0 and owns(ab, ioa)) {
-        ab.sys_base.Forbid();
+        ab.sys_base.ObtainSemaphore(&ab.lock);
         free(ab, ioa);
-        ab.sys_base.Permit();
+        ab.sys_base.ReleaseSemaphore(&ab.lock);
     }
     dev.open_cnt -= 1;
     return null;
@@ -906,6 +910,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     dev.revision = DEVICE_REVISION;
     const ab = audioBase(dev);
     ab.sys_base = sys_base;
+    sys_base.InitSemaphore(&ab.lock);
     ab.waiting.init(.message);
     for (&ab.units) |*unit| unit.msg_port.msg_list.init(.message);
     ab.int = .{

@@ -228,7 +228,6 @@ pub fn shutdown(stack: *StackBase, socket: *Socket, how: i32) i32 {
 /// own, an orphan holding the library; SO_LINGER with a time of 0 resets
 /// it instead. A listener takes the connections in its queue with it.
 pub fn close(stack: *StackBase, socket: *Socket) void {
-    const sys = stack.sys_base;
     const tcb = _tcp.of(socket);
     if (socket.owner) |owner| {
         if (socket.descriptor >= 0) owner.table.?[@intCast(socket.descriptor)] = null;
@@ -254,9 +253,7 @@ pub fn close(stack: *StackBase, socket: *Socket) void {
     socket.owner = null;
     socket.events = 0;
     socket.event_mask = 0;
-    sys.Forbid();
-    stack.lib.open_cnt += 1;
-    sys.Permit();
+    @import("../task/_task.zig").holdLibrary(stack, 1);
     tcb.flags |= _tcp.fin_wanted | _tcp.read_shut;
     tcb.receive.drop(tcb.receive.count);
     output.output(stack, tcb);

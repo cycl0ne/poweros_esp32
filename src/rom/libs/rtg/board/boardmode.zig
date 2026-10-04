@@ -32,7 +32,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads one field.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

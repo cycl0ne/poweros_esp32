@@ -82,7 +82,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task holds the driver list.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -125,7 +125,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It takes Disable.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -176,7 +176,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -220,7 +220,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -263,7 +263,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -303,7 +303,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -342,7 +342,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -384,7 +384,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -422,7 +422,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads one field.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -459,7 +459,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads one field.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -499,7 +499,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -547,7 +547,7 @@ rtg.library/WaitVBlank
 	- Waits: yes, while another task holds the board list, and if the
 	  driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -592,7 +592,7 @@ rtg.library/WaitVBlank
 	- Waits: yes, while another task holds the board list, and if the
 	  driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -636,7 +636,7 @@ rtg.library/WaitVBlank
 	- Waits: yes, while another task holds the board list, and if the
 	  driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -677,7 +677,7 @@ rtg.library/WaitVBlank
 	- Waits: yes, while another task holds the board list, and if the
 	  driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -721,7 +721,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -758,7 +758,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task is changing the board list.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -801,7 +801,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It calls through the jump table.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -840,7 +840,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task holds the driver list.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -881,7 +881,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe in itself: it reads the list.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -921,7 +921,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It frees memory.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -965,7 +965,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver's brightness read does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1008,7 +1008,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1049,7 +1049,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe in itself: it reads the list.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1087,7 +1087,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1125,7 +1125,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task holds the driver list.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1167,7 +1167,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1211,10 +1211,13 @@ rtg.library/WaitVBlank
 	into the picture's own order on its way out, before the turn.
 
    CONTEXT
-	- Waits: no. Made for an input handler, on every pointer event.
+	- Waits: for the pointer's lock while another task changes the pointer,
+	  and on a board that sends the rows the pointer left over a bus, for
+	  that. Made for an input handler, on every pointer event.
 	- Interrupts: no. A driver may send the rows the pointer left over a
 	  bus.
-	- Forbid: taken for the moment it takes the driver to move it.
+	- Locks: takes rtg's pointer lock, a semaphore, for the moment it takes the
+	  driver to move it; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1251,7 +1254,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task is changing the board list.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1292,7 +1295,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe: the modes do not change after the board is made.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1331,7 +1334,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed; the caller holds the list.
+	- Locks: none taken; the caller holds the list.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1376,7 +1379,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It works on its arguments alone.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1420,7 +1423,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1459,7 +1462,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while another task holds the driver list.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1499,7 +1502,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It takes Disable.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1537,7 +1540,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1576,7 +1579,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads one field.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1621,7 +1624,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1660,7 +1663,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1699,7 +1702,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1738,7 +1741,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1783,7 +1786,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1834,10 +1837,11 @@ rtg.library/WaitVBlank
 	Whether it is seen is ShowBoardPointer's business.
 
    CONTEXT
-	- Waits: no. A driver's pointer ops never wait.
+	- Waits: for rtg's pointer lock while another task moves the pointer,
+	  and for a driver that sends the pointer's rows over a bus.
 	- Interrupts: no. It allocates.
-	- Forbid: taken while the driver changes images, so a move cannot come
-	  between.
+	- Locks: takes rtg's pointer lock while the driver changes images, so a move
+	  cannot come between; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1895,7 +1899,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: for the display's next frame, where the board streams one.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1956,7 +1960,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: for the display's next frame, where the board streams one.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2006,9 +2010,11 @@ rtg.library/WaitVBlank
 	`RTGBF_POINTER` in `RtgBoardInfo.flags` says which it is.
 
    CONTEXT
-	- Waits: no.
+	- Waits: for rtg's pointer lock while another task changes the pointer,
+	  and for a driver that sends the pointer's rows over a bus.
 	- Interrupts: no. A driver may send the pointer's rows over a bus.
-	- Forbid: taken while the driver changes it.
+	- Locks: takes rtg's pointer lock while the driver changes it; no spinlock
+	  may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2049,7 +2055,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: yes: this is what a driver's interrupt calls.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: any, or none.
 
    OWNERSHIP
@@ -2090,7 +2096,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2133,7 +2139,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2174,7 +2180,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: only if the driver does.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2211,7 +2217,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that took it.
 
    OWNERSHIP
@@ -2252,7 +2258,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It works on its arguments alone.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2291,7 +2297,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes, while the engine works.
 	- Interrupts: no. The driver may wait on its bus.
-	- Forbid: must not be held: a driver may wait.
+	- Locks: no spinlock may be held: a driver may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2334,7 +2340,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: yes.
 	- Interrupts: no. It waits.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP

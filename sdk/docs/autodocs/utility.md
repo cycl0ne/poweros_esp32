@@ -98,8 +98,7 @@ it half in.
 
 - Waits: yes, while another task holds the name space's semaphore.
 - Interrupts: no. It may wait.
-- Forbid: must not be relied on across it: waiting for the semaphore
-  breaks it.
+- Locks: takes the name space's semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -159,7 +158,7 @@ operation, with no division. It cannot overflow.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -219,7 +218,7 @@ bits rounds up in two operations, with no division.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -287,8 +286,8 @@ space until `AddNamedObject` puts it into one.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -343,8 +342,8 @@ lets `FreeTagItems` give it back by its address alone.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -400,7 +399,7 @@ time zone and there are no leap seconds - a day is 86400 seconds.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -457,7 +456,7 @@ leaves the change list as it is.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -511,7 +510,7 @@ The non-waiting form of `RemNamedObject`: it succeeds only where
 
 - Waits: yes, while another task holds the name space's semaphore.
 - Interrupts: no. It may wait.
-- Forbid: taken here, and broken while waiting for the semaphore.
+- Locks: takes the name space's semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -568,7 +567,7 @@ the way.
 
 - Waits: only if the hook's function does.
 - Interrupts: as far as the hook's function allows.
-- Forbid: not taken; the hook's function decides what it needs.
+- Locks: none taken; the hook's function decides what it needs.
 - Process: whatever the hook's function needs.
 
 **OWNERSHIP**
@@ -630,7 +629,7 @@ hours, minutes, seconds and the ends of the range.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -692,8 +691,8 @@ points to is not. Later changes to the original are not seen;
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -749,7 +748,7 @@ the next: 31 April is 1 May, and hour 24 is the next day's midnight.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -814,7 +813,7 @@ bits and so stops in 2114; this reaches any year a `ClockData` holds.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
 **OWNERSHIP**
 
@@ -883,7 +882,7 @@ is, rather than with a year that has wrapped.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
 **OWNERSHIP**
 
@@ -954,7 +953,7 @@ order to tell others about an update and stay quiet about the rest.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1013,7 +1012,7 @@ length and every `TAG_MORE` stays where it is.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1072,16 +1071,15 @@ The object, with one more use for the caller, or null.
 Names compare without case unless the name space has `NSF_CASE`. With a
 null name, going on from each result visits the whole name space by
 priority. The semaphore is held shared, so any number of searches run at
-once; the use count is raised under Forbid, since the others holding the
-semaphore may raise it too.
+once; the use count is raised under utility's object lock, since the
+others holding the semaphore may raise it too.
 
 **CONTEXT**
 
 - Waits: yes, while another task holds the name space's semaphore
   exclusively.
 - Interrupts: no. It may wait.
-- Forbid: must not be relied on across it: waiting for the semaphore
-  breaks it.
+- Locks: takes the name space's semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1149,7 +1147,7 @@ that gives the same tag twice means the earlier one.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1206,8 +1204,8 @@ a list in freed memory.
 **CONTEXT**
 
 - Waits: yes, while another task holds the object's own name space.
-- Interrupts: no. `FreeMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. `FreeMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1258,8 +1256,8 @@ array goes; whatever its items point to is left alone.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. `FreeMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. `FreeMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1320,7 +1318,7 @@ missing one; `FindTagItem` tells them apart.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1372,7 +1370,7 @@ may all take numbers from it and never get the same one.
 
 - Waits: no.
 - Interrupts: safe. It takes Disable.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1427,7 +1425,7 @@ every item goes.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1492,7 +1490,7 @@ characters always fits.
 
 - Waits: no.
 - Interrupts: no. It may allocate.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do; only a process gets the IoErr.
 
 **OWNERSHIP**
@@ -1556,7 +1554,7 @@ characters always fits.
 
 - Waits: no.
 - Interrupts: no. It may allocate.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do; only a process gets the IoErr.
 
 **OWNERSHIP**
@@ -1608,7 +1606,7 @@ The object's own copy of the name, made by `AllocNamedObjectA`.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1673,7 +1671,7 @@ list anywhere, and what lies behind it in the array is not the list's.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1743,7 +1741,7 @@ map does not have changes nothing.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1812,7 +1810,7 @@ found with `FindTagItem`, so the first item with it wins.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1898,7 +1896,7 @@ A pattern that parses leaves IoErr as it was.
 - Waits: no.
 - Interrupts: no. A failure is reported in the IoErr of whichever
   process was interrupted.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do; only a process gets the IoErr.
 
 **OWNERSHIP**
@@ -1976,7 +1974,7 @@ A pattern that parses leaves IoErr as it was.
 - Waits: no.
 - Interrupts: no. A failure is reported in the IoErr of whichever
   process was interrupted.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do; only a process gets the IoErr.
 
 **OWNERSHIP**
@@ -2035,7 +2033,7 @@ allocation.
 - Waits: no.
 - Interrupts: safe in itself; it allocates nothing. The lists are the
   caller's, and so is keeping others off them.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2085,15 +2083,16 @@ Nothing.
 
 **BEHAVIOR**
 
-The use count goes down under Forbid. When it reaches zero and a
+The use count goes down under utility's object lock. When it reaches
+zero and a
 `RemNamedObject` is waiting, its message is replied now. A count already
 at zero stays there.
 
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here.
+- Interrupts: no. It takes utility's object lock.
+- Locks: takes utility's object lock, a spinlock, for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2154,7 +2153,7 @@ there are none. After the reply nobody holds the object, and
 - Waits: yes, while another task holds the name space's semaphore. It
   does not wait for the reply; that is the caller's to do.
 - Interrupts: no. It may wait.
-- Forbid: taken here, and broken while waiting for the semaphore.
+- Locks: takes the name space's semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2218,7 +2217,7 @@ in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
 - Waits: no.
 - Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
   too.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2271,7 +2270,7 @@ signs; `SMult64` gives the whole product.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2324,7 +2323,7 @@ call for the low 32 bits alone.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2377,7 +2376,7 @@ when the system starts.
 
 - Waits: no.
 - Interrupts: safe. It is one store.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2438,7 +2437,7 @@ the result is then never null.
 
 - Waits: no.
 - Interrupts: safe. It only reads its inputs.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2495,7 +2494,7 @@ that is the start of the other sorts first.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2552,7 +2551,7 @@ upper case and compares as itself.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2609,7 +2608,7 @@ a caller can tell a cut copy from a whole one and make room.
 
 - Waits: no.
 - Interrupts: safe. It reads its inputs and writes the caller's buffer.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2662,7 +2661,7 @@ which in Latin-1 is the same thing.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2723,7 +2722,7 @@ either string.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2778,7 +2777,7 @@ the result is then never null.
 
 - Waits: no.
 - Interrupts: safe. It only reads its inputs.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2832,7 +2831,7 @@ itself cannot be looked for, since it ends the array.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2886,7 +2885,7 @@ as it is.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2939,7 +2938,7 @@ matching without case and the string compares use the same mapping.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2994,7 +2993,7 @@ in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
 - Waits: no.
 - Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
   too.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3047,7 +3046,7 @@ signs; `UMult64` gives the whole product.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3100,7 +3099,7 @@ call for the low 32 bits alone.
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3161,7 +3160,7 @@ Every entry whose tag the list has, and that is not marked pack-only
 
 - Waits: no.
 - Interrupts: safe. It reads only its inputs and allocates nothing.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

@@ -36,7 +36,7 @@ const RastPort = _rastport.RastPort;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It is a lookup in the ROM and touches nothing.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

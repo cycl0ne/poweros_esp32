@@ -69,7 +69,8 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
         lib.flags |= exec.LIBF_DELEXP;
         return null;
     }
-    // Under Forbid when exec flushes; nothing here waits.
+    // Inside AllocMem when exec flushes, whose caller may hold anything:
+    // nothing here waits.
     if (!sys.AttemptSemaphore(&dfb.load_lock)) {
         lib.flags |= exec.LIBF_DELEXP;
         return null;
@@ -87,7 +88,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     sys.CloseLibrary(dfb.dos_base.lib());
     sys.CloseLibrary(dfb.utility_base.lib());
     const seg_list = dfb.seg_list;
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

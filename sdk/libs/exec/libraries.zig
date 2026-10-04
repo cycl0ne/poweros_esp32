@@ -20,6 +20,7 @@
 
 const std = @import("std");
 const Node = @import("nodes.zig").Node;
+const SignalSemaphore = @import("semaphores.zig").SignalSemaphore;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// Bytes per jump-table entry: one function pointer (6 bytes of JMP on 68k).
@@ -44,6 +45,9 @@ pub const LIBF_SUMMING: u8 = 1 << 0;
 pub const LIBF_CHANGED: u8 = 1 << 1;
 pub const LIBF_SUMUSED: u8 = 1 << 2;
 pub const LIBF_DELEXP: u8 = 1 << 3;
+/// Being expunged: exec's own mark, from when it has decided until the
+/// Expunge vector has answered. Not opened, nor expunged again, meanwhile.
+pub const LIBF_GOING: u8 = 1 << 4;
 
 /// struct Library.
 pub const Library = extern struct {
@@ -61,6 +65,13 @@ pub const Library = extern struct {
     /// Checksum of the jump table, see SumLibrary.
     sum: u32 = 0,
     open_cnt: u16 = 0,
+    /// Openers between finding the library and its Open vector: a library
+    /// pinned is not expunged. exec's own, changed under its library list.
+    pins: u16 = 0,
+    /// Held around the library's Open, Close and Expunge, so that two cores
+    /// never run them on one library at once - the open count is a plain
+    /// field. exec takes it; the vectors run inside it.
+    lock: SignalSemaphore = .{},
 
     pub fn name(lib: *const Library) [:0]const u8 {
         return std.mem.span(lib.node.name orelse return "");
@@ -468,12 +479,10 @@ pub fn libOpen(lib: *Library, version: u32) callconv(.c) ?*Library {
     return lib;
 }
 
-/// Standard Close: the last close carries out a delayed expunge.
+/// Standard Close: one opener fewer. A delayed expunge is exec's to carry
+/// out once the last Close has answered, not the Close's.
 pub fn libClose(lib: *Library) callconv(.c) ?*anyopaque {
     lib.open_cnt -= 1;
-    if (lib.open_cnt == 0 and lib.flags & LIBF_DELEXP != 0) {
-        return lib.vector(ExpungeFn, LIB_EXPUNGE)(lib);
-    }
     return null;
 }
 

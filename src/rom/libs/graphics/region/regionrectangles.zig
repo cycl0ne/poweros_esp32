@@ -39,7 +39,7 @@ const before = _region.before;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe in itself: it only reads the region.
-/// - Forbid: not needed; the region is the caller's to keep others off.
+/// - Locks: none taken; keeping others off the region is the caller's.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

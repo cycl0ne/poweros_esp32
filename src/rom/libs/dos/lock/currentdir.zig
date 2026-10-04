@@ -32,7 +32,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed.
+/// - Locks: none needed.
 /// - Process: needed; a plain task changes nothing and gets null.
 ///
 /// OWNERSHIP:

@@ -35,7 +35,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const tb = _base.trueTypeBase(lib);
     const sys = tb.sys_base;
     const seg_list = tb.seg_list;
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

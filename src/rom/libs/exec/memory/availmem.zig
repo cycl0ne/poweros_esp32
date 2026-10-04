@@ -37,7 +37,7 @@ const MemHeader = sdk.exec.MemHeader;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It takes exec's memory lock, around the walk.
-/// - Forbid: may be held.
+/// - Locks: takes exec's memory lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -45,7 +45,7 @@ const MemHeader = sdk.exec.MemHeader;
 ///
 /// NOTES:
 /// The answer is out of date as soon as it is given, on a machine where
-/// another task may allocate the moment Forbid is let go. It is worth
+/// another task - on either core - may allocate the moment it is. It is worth
 /// having as a measurement and not as a decision: allocate and test the
 /// result instead.
 ///

@@ -114,22 +114,22 @@ fn serveReads(base: *RS485Base) void {
     const sys = base.sys_base;
     const work = base.work.?;
     while (true) {
-        sys.Forbid();
+        sys.AcquireLock(&base.lock);
         const head = base.reads.first();
         if (head == null or work.kept == 0) {
-            sys.Permit();
+            sys.ReleaseLock(&base.lock);
             break;
         }
         sys.Remove(head.?);
-        sys.Permit();
+        sys.ReleaseLock(&base.lock);
         const io = _rs485.requestOfNode(head.?);
         if (base.timed == io) disarm(base);
         deliver(base, io);
         sys.ReplyIO(io);
     }
-    sys.Forbid();
+    sys.AcquireLock(&base.lock);
     const head: ?*exec.IORequest = if (base.reads.first()) |node| _rs485.requestOfNode(node) else null;
-    sys.Permit();
+    sys.ReleaseLock(&base.lock);
     if (base.timed != null and base.timed != head) disarm(base);
     const io = head orelse return;
     if (base.timed != null) return;
@@ -148,11 +148,11 @@ fn timedOut(base: *RS485Base) void {
     _ = sys.WaitIO(&base.timer_io.node);
     const io = base.timed orelse return;
     base.timed = null;
-    sys.Forbid();
+    sys.AcquireLock(&base.lock);
     const head = base.reads.first();
     const still = head != null and _rs485.requestOfNode(head.?) == io;
     if (still) sys.Remove(head.?);
-    sys.Permit();
+    sys.ReleaseLock(&base.lock);
     if (!still) return;
     _rs485.stdReq(io).actual = 0;
     io.err = rs485.RS485ERR_TIMEOUT;
@@ -163,9 +163,9 @@ fn timedOut(base: *RS485Base) void {
 fn serveWrites(base: *RS485Base) void {
     const sys = base.sys_base;
     while (base.sending == null) {
-        sys.Forbid();
+        sys.AcquireLock(&base.lock);
         const node = sys.RemHead(&base.writes);
-        sys.Permit();
+        sys.ReleaseLock(&base.lock);
         const io = _rs485.requestOfNode(node orelse return);
         if (io.command == rs485.RS485CMD_SETPARAMS) {
             setParams(base, io);
@@ -219,9 +219,9 @@ fn rs485Task(sys: *ExecBase) callconv(.c) void {
         const got = sys.Wait(queue_port.sigMask() | base.int_mask | timer_mask);
         while (sys.GetMsg(queue_port)) |msg| {
             const io = _rs485.requestOf(msg);
-            sys.Forbid();
+            sys.AcquireLock(&base.lock);
             if (io.command == exec.CMD_READ) sys.AddTail(&base.reads, &io.message.node) else sys.AddTail(&base.writes, &io.message.node);
-            sys.Permit();
+            sys.ReleaseLock(&base.lock);
         }
         if (got & base.int_mask != 0) {
             const events = takeEvents(base);
@@ -259,9 +259,9 @@ fn queue(base: *RS485Base, io: *exec.IORequest) void {
 fn flushReads(base: *RS485Base) void {
     const sys = base.sys_base;
     while (true) {
-        sys.Forbid();
+        sys.AcquireLock(&base.lock);
         const node = sys.RemHead(&base.reads);
-        sys.Permit();
+        sys.ReleaseLock(&base.lock);
         const io = _rs485.requestOfNode(node orelse return);
         io.err = exec.IOERR_ABORTED;
         sys.ReplyIO(io);
@@ -319,19 +319,30 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const base = _rs485.rs485Base(dev);
     const sys = base.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
-    for ([_]*exec.List{ &base.unit.msg_port.msg_list, &base.reads, &base.writes }) |list| {
+    // Still on the task's port - put there by any caller, from either
+    // core - it is taken back under the port's own lock; on the task's
+    // lists, under the device's.
+    if (!sys.RemoveMsg(&base.unit.msg_port, &io.message) and !takeFromLists(base, io)) return -1;
+    io.err = exec.IOERR_ABORTED;
+    sys.ReplyIO(io);
+    return 0;
+}
+
+/// `io` off the reads or the writes waiting, under the device's lock;
+/// false when it is on neither.
+fn takeFromLists(base: *RS485Base, io: *exec.IORequest) bool {
+    const sys = base.sys_base;
+    sys.AcquireLock(&base.lock);
+    defer sys.ReleaseLock(&base.lock);
+    for ([_]*exec.List{ &base.reads, &base.writes }) |list| {
         var it = list.iterator();
         while (it.next()) |node| {
             if (_rs485.requestOfNode(node) != io) continue;
             sys.Remove(node);
-            io.err = exec.IOERR_ABORTED;
-            sys.ReplyIO(io);
-            return 0;
+            return true;
         }
     }
-    return -1;
+    return false;
 }
 
 fn fillParams(base: *RS485Base, io: *exec.IORequest) void {
@@ -435,6 +446,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.work = work;
     base.reads.init(.message);
     base.writes.init(.message);
+    sys_base.InitLock(&base.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     // PA_IGNORE until the task has a signal for it.
     base.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     base.unit.msg_port.msg_list.init(.message);

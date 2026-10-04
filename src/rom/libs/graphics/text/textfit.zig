@@ -53,7 +53,7 @@ const softStyles = _text.softStyles;
 /// - Waits: no.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

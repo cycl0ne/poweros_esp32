@@ -51,6 +51,10 @@ const TagItem = sdk.utility.TagItem;
 ///   NP_UserData (tc_UserData, there before the process first runs),
 ///   NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
 ///   any),
+///   NP_EndMsg (a message replied to its reply port once the process is
+///   gone and nothing runs on its stack; default none),
+///   NP_HoldLibrary (a library whose code it runs, its open count handed
+///   over and closed by dos once that code has returned; default none),
 ///   NP_CopyVars (default true: the caller's local variables are copied),
 ///   NP_Cli (a CLI of its own) with NP_CommandName and NP_Path.
 ///
@@ -80,7 +84,7 @@ const TagItem = sdk.utility.TagItem;
 /// CONTEXT:
 /// - Waits: yes: DupLock sends packets, and the CLI table is a semaphore.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; it then passes nothing on and there is
 ///   nothing to copy.
 ///
@@ -160,12 +164,14 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
             .mem_size = total,
             .user_data = @ptrFromInt(ub.GetTagData(dos.NP_UserData, 0, tags)),
             .flags = @as(u8, @truncate(ub.GetTagData(dos.NP_Affinity, 0, tags))) & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1),
+            .end_msg = @ptrFromInt(ub.GetTagData(dos.NP_EndMsg, 0, tags)),
         },
         .stack_size = @intCast(stack),
         .stack_base = @intFromPtr(bytes + total),
     };
     initMsgPort(proc);
     proc.local_vars.init();
+    proc.held_library = @ptrFromInt(ub.GetTagData(dos.NP_HoldLibrary, 0, tags));
 
     if (parent) |p| {
         proc.console_task = p.console_task;

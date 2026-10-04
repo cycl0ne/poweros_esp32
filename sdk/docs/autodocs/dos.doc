@@ -161,7 +161,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -204,7 +204,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the device list's semaphores.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -252,7 +252,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it sets IoErr.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do; IoErr is then not set.
 
    OWNERSHIP
@@ -299,7 +299,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the segment list's semaphore.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Task will do. Not while holding LockSegmentList, which
 	  it takes exclusive.
 
@@ -346,7 +346,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -391,7 +391,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes. It takes the device list's lock for writing.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -439,7 +439,7 @@ dos.library/WriteChars
 	- Waits: yes. It takes the device list's lock for writing, and unlocking
 	  a replaced assign's locks sends packets.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -484,7 +484,7 @@ dos.library/WriteChars
 	- Waits: yes. It takes the device list's lock for writing, and unlocking
 	  a replaced assign's locks sends packets.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -533,7 +533,7 @@ dos.library/WriteChars
 	- Waits: yes. It takes the device list's lock for writing, and unlocking
 	  a replaced assign's locks sends packets.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -573,7 +573,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do; this is the form for a handler, which must
 	  not wait for the list.
 
@@ -620,7 +620,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -659,7 +659,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -703,7 +703,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process for an answer; a plain Task gets null.
 
    OWNERSHIP
@@ -749,7 +749,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -795,7 +795,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It only reads its inputs.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -836,7 +836,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -877,6 +877,10 @@ dos.library/WriteChars
 	  NP_UserData (tc_UserData, there before the process first runs),
 	  NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
 	  any),
+	  NP_EndMsg (a message replied to its reply port once the process is
+	  gone and nothing runs on its stack; default none),
+	  NP_HoldLibrary (a library whose code it runs, its open count handed
+	  over and closed by dos once that code has returned; default none),
 	  NP_CopyVars (default true: the caller's local variables are copied),
 	  NP_Cli (a CLI of its own) with NP_CommandName and NP_Path.
 
@@ -906,7 +910,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: DupLock sends packets, and the CLI table is a semaphore.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; it then passes nothing on and there is
 	  nothing to copy.
 
@@ -956,7 +960,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: needed; a plain task changes nothing and gets null.
 
    OWNERSHIP
@@ -999,7 +1003,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1047,7 +1051,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1096,7 +1100,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1137,7 +1141,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -1180,7 +1184,7 @@ dos.library/WriteChars
 	- Waits: yes, for a global variable (file system packets); not for a
 	  local one.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do for a global variable; only a process has
 	  local ones and gets IoErr.
 
@@ -1226,7 +1230,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, until the handler replies.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1272,7 +1276,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -1313,7 +1317,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -1352,7 +1356,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -1412,7 +1416,7 @@ dos.library/WriteChars
 	- Waits: for the answer, which is as long as the user takes; and for
 	  intuition.library to open the first time a question goes on screen.
 	- Interrupts: no.
-	- Forbid: not held and not to be held.
+	- Locks: no spinlock may be held.
 	- Process: a Process, not a bare Task: it reads `pr_WindowPtr` and
 	  the process's console.
 
@@ -1469,7 +1473,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process, for IoErr.
 
    OWNERSHIP
@@ -1526,7 +1530,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process.
 
    OWNERSHIP
@@ -1569,7 +1573,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process, for IoErr.
 
    OWNERSHIP
@@ -1613,7 +1617,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process, for IoErr and the current directory.
 
    OWNERSHIP
@@ -1656,7 +1660,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process, for IoErr.
 
    OWNERSHIP
@@ -1702,7 +1706,7 @@ dos.library/WriteChars
 	- Waits: yes. It sends packets, and a synchronous start waits for the
 	  shell to end.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process's CLI and current directory are
 	  passed on, and only a process gets IoErr.
 
@@ -1750,7 +1754,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -1800,7 +1804,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -1849,7 +1853,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -1890,7 +1894,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -1939,7 +1943,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -1990,7 +1994,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -2043,7 +2047,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: safe. It only reads its inputs and writes the caller's
 	  buffer.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2083,7 +2087,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It only reads `name`.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2122,7 +2126,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2159,12 +2163,14 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the CLI table's semaphore.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
-	The process is not the caller's. It can end at any time after the call;
-	a caller that looks into it holds Forbid meanwhile.
+	The process is not the caller's. It can end at any time after the call,
+	on either core; a caller that changes it first makes sure, under
+	Disable, that it is still on exec's task lists or running (as
+	`C:ChangeTaskPri` does).
 
    BUGS
 	None known.
@@ -2203,7 +2209,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do. The caller holds the list (LockDosList).
 
    OWNERSHIP
@@ -2249,7 +2255,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe.
-	- Forbid: not needed; the list must be locked with LockSegmentList.
+	- Locks: none taken; the list must be locked with LockSegmentList.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2293,7 +2299,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not callable.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: required for a result; a plain task gets null.
 
    OWNERSHIP
@@ -2340,7 +2346,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -2381,7 +2387,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2427,7 +2433,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, when it unlocks a lock (a packet to its handler).
 	- Interrupts: not safe.
-	- Forbid: not to be held; it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2465,7 +2471,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2505,7 +2511,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it frees memory.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2542,7 +2548,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a process; a plain task gets null.
 
    OWNERSHIP
@@ -2581,7 +2587,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -2628,7 +2634,7 @@ dos.library/WriteChars
 	- Waits: yes, when there is no CLI: NameFromLock sends packets to
 	  the directory's handler.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Process; a plain Task gets an empty buffer and false.
 
    OWNERSHIP
@@ -2683,7 +2689,7 @@ dos.library/WriteChars
 	- Waits: yes: for the device list's locks, and for a starting
 	  handler's answer.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it waits.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do for a name with a device; a name without
 	  one, CONSOLE: and PROGDIR: need a Process.
 
@@ -2731,7 +2737,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -2772,7 +2778,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -2817,7 +2823,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a CLI process for an answer; any other caller gets an
 	  empty buffer and false.
 
@@ -2863,7 +2869,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe; it reads the running task's Process.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a CLI process for an answer; any other caller gets an
 	  empty buffer and false.
 
@@ -2916,7 +2922,7 @@ dos.library/WriteChars
 	- Waits: yes, for a global variable (file system packets); not for a
 	  local one.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do for a global variable; only a process has
 	  local ones and gets IoErr.
 
@@ -2960,7 +2966,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -2999,7 +3005,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It reads the running task.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process; from a plain Task the answer is null and nothing
 	  changes.
 
@@ -3042,7 +3048,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a process; a plain task gets ERROR_NO_PROCESS.
 
    OWNERSHIP
@@ -3087,7 +3093,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -3126,7 +3132,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe: it reads one field.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3173,7 +3179,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the file system.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -3223,7 +3229,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -3271,7 +3277,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the device list's semaphores.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3318,7 +3324,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the segment list's semaphore.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3362,7 +3368,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3403,7 +3409,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, unlocking sends packets.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3453,7 +3459,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handlers' answers.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do for a pattern with a device; without one the
 	  search starts in the current directory, which only a process has.
 
@@ -3505,7 +3511,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handlers' answers.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do for a pattern with a device; without one the
 	  search starts in the current directory, which only a process has.
 
@@ -3547,7 +3553,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the CLI table's semaphore.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3595,7 +3601,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answers.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it waits.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3649,7 +3655,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answers.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it waits.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do; a null lock needs a Process (its
 	  pr_FileSystemTask).
 
@@ -3690,7 +3696,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do. The caller holds the list (LockDosList).
 
    OWNERSHIP
@@ -3748,7 +3754,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -3790,7 +3796,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -3835,7 +3841,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It reads the running task.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process; from a plain Task the answer is null and nothing
 	  changes.
 
@@ -3876,7 +3882,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 	  With a null lock, a plain task has no file system and gets
 	ERROR_DEVICE_NOT_MOUNTED.
@@ -3920,7 +3926,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -3965,7 +3971,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it sets IoErr.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do; IoErr is then not set.
 
    OWNERSHIP
@@ -4009,7 +4015,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It only reads `name`.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4051,7 +4057,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the output's handler.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: required for output; a plain task has no Output() and gets
 	  false.
 
@@ -4094,7 +4100,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -4143,7 +4149,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -4201,7 +4207,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, when it reads Input().
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process for Input(); a Task will do with a CSource.
 
    OWNERSHIP
@@ -4254,7 +4260,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, when it reads Input().
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process for Input(); a Task will do with a CSource.
 
    OWNERSHIP
@@ -4303,7 +4309,7 @@ dos.library/WriteChars
 	- Waits: yes. It takes the device list's lock for writing, and SameLock
 	  and UnLock send packets.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -4344,7 +4350,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the entry and delete locks.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do. The caller holds the list with LDF_WRITE.
 
    OWNERSHIP
@@ -4389,7 +4395,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the segment list's semaphore.
 	- Interrupts: not safe.
-	- Forbid: not to be held; it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Task will do. Not while holding LockSegmentList, which
 	  it takes exclusive.
 
@@ -4440,7 +4446,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -4484,7 +4490,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4532,7 +4538,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: whatever the command does.
 	- Interrupts: not safe.
-	- Forbid: not to be held; the command may wait.
+	- Locks: no spinlock may be held: the command may wait.
 	- Process: a Process.
 
    OWNERSHIP
@@ -4579,7 +4585,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the device list (LockDosList, LDF_READ).
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4623,7 +4629,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -4668,7 +4674,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -4711,8 +4717,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -4753,7 +4758,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It reads the running task.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process; from a plain Task the answer is null and nothing
 	  changes.
 
@@ -4794,7 +4799,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It reads the running task.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Process; from a plain Task the answer is null and nothing
 	  changes.
 
@@ -4839,7 +4844,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4881,7 +4886,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a process; a plain task changes nothing.
 
    OWNERSHIP
@@ -4930,7 +4935,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -4973,8 +4978,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -5021,8 +5025,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a CLI process; any other caller gets false.
 
    OWNERSHIP
@@ -5068,7 +5071,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -5112,7 +5115,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -5154,8 +5157,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -5194,7 +5196,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a process; a plain task changes nothing.
 
    OWNERSHIP
@@ -5241,7 +5243,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -5294,7 +5296,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -5336,8 +5338,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a Process for an answer; from a plain Task it does
 	  nothing and answers null.
 
@@ -5383,8 +5384,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a CLI process; any other caller gets false.
 
    OWNERSHIP
@@ -5426,8 +5426,7 @@ dos.library/WriteChars
 	- Waits: no.
 	- Interrupts: not safe; it reads and changes the running task's
 	  Process.
-	- Forbid: not needed, and not taken; only the running process
-	  touches these fields.
+	- Locks: none taken; only the running process touches these fields.
 	- Process: a CLI process; any other caller gets false.
 
    OWNERSHIP
@@ -5474,7 +5473,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; only a process gets IoErr.
 
    OWNERSHIP
@@ -5526,7 +5525,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -5585,7 +5584,7 @@ dos.library/WriteChars
 	- Waits: yes, for a global variable (file system packets); not for a
 	  local one.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do for a global variable; only a process has
 	  local ones and gets IoErr.
 
@@ -5632,7 +5631,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads `name` and writes `buf`.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5684,7 +5683,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5725,7 +5724,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads `string` and writes `value`.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5781,7 +5780,7 @@ dos.library/WriteChars
 	- Waits: yes. It sends packets, and a synchronous start waits for the
 	  shell to end.
 	- Interrupts: not callable.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process's CLI and current directory are
 	  passed on, and only a process gets IoErr.
 
@@ -5830,7 +5829,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -5870,7 +5869,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not callable.
-	- Forbid: not needed, and not taken.
+	- Locks: takes dos's code lock around the list of loaded files.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5911,7 +5910,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes, for the handler's answer to a packet.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; a process gets IoErr().
 
    OWNERSHIP
@@ -5949,7 +5948,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed.
+	- Locks: none needed.
 	- Process: a Task will do; the task that locked the list.
 
    OWNERSHIP
@@ -5987,7 +5986,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: no.
 	- Interrupts: not safe.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the Task that locked it.
 
    OWNERSHIP
@@ -6034,7 +6033,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -6077,7 +6076,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 
@@ -6122,7 +6121,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: up to `timeout`, for the handler's answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -6168,7 +6167,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes.
 	- Interrupts: no.
-	- Forbid: never under Forbid.
+	- Locks: no spinlock may be held.
 	- Process: a Process; a Task gets null.
 
    OWNERSHIP
@@ -6217,7 +6216,7 @@ dos.library/WriteChars
    CONTEXT
 	- Waits: yes: it sends the handler a packet and waits for the answer.
 	- Interrupts: no. It waits.
-	- Forbid: not taken, and never to be held around it: it waits.
+	- Locks: none taken; no spinlock may be held around it: it waits.
 	- Process: a Task will do; the answer comes back on a port of its own.
 
    OWNERSHIP
@@ -6258,7 +6257,7 @@ dos.library/WriteChars
 	- Waits: only when the buffer has to go to or come from the handler;
 	  then it sends a packet and waits for the answer.
 	- Interrupts: no. It may wait.
-	- Forbid: not taken, and never to be held around it: it may wait.
+	- Locks: none taken; no spinlock may be held around it: it may wait.
 	- Process: a Task will do. One handle is one caller's: two tasks sharing
 	  a handle take turns themselves.
 

@@ -48,7 +48,7 @@ const _font = @import("_font.zig");
 /// CONTEXT:
 /// - Waits: yes: for the disk, and for graphics' font list.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process, since it reads files.
 ///
 /// OWNERSHIP:

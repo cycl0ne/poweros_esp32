@@ -41,9 +41,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: whatever the modules do. Cold start runs on the exec task after
 ///   `Permit`, so a module may wait, allocate and open other modules.
 /// - Interrupts: no.
-/// - Forbid: **not held.** A module that needs the machine to itself takes
-///   Forbid for itself - which is what the display driver does, since the
-///   panel is held in reset for tens of milliseconds.
+/// - Locks: **none held.** A module's init runs as its task's code, and takes
+///   what it needs itself.
 /// - Process: a Task. There is no Process until dos.library is up, which is
 ///   itself a cold-start module.
 ///

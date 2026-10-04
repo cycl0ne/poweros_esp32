@@ -38,7 +38,7 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

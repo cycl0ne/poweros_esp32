@@ -27,7 +27,7 @@ const ModbusBase = @import("../modbus_base.zig").ModbusBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes.
-/// - Forbid: may be held.
+/// - Locks: none needed.
 /// - Process: any.
 ///
 /// OWNERSHIP:

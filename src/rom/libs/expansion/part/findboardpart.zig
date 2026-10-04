@@ -30,8 +30,8 @@ const ExpansionBase = @import("../expansion_base.zig").ExpansionBase;
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: yes; nothing is locked.
-/// - Forbid: not needed: the parts are made once, at the library's init,
-///   and never change.
+/// - Locks: none needed: the parts are made once, at the library's init, and
+///   never change.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

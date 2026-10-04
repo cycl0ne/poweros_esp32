@@ -271,7 +271,7 @@ void LockFonts()
 /// Let the font list go again.
 void UnlockFonts()
 /// RemFont that never waits: false when the font is open or the list is
-/// busy. What a low-memory handler, under Forbid, calls.
+/// busy. What a low-memory handler, which may not wait, calls.
 bool AttemptRemFont(*graphics.TextFont font)
 /// How many rows `text_attr` asks for: its y_size, or with FPF_POINTS
 /// that many points at the screen's DPI.

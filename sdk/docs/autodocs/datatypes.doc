@@ -46,7 +46,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: for the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -88,7 +88,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: for the object's layout to finish.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: needed - closing a file is dos's.
 
    OWNERSHIP
@@ -133,7 +133,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: for memory and for the object's lock, briefly.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do; the work itself needs a Process, which is
 	  why there is one.
 
@@ -178,7 +178,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: whatever the method waits for.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do, unless the method needs more.
 
    OWNERSHIP
@@ -222,7 +222,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: whatever the class waits for.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -262,7 +262,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -306,7 +306,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -342,7 +342,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -384,7 +384,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -437,7 +437,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: on the file, for memory, and for the class library to load.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: needed - the file is reached through dos.
 
    OWNERSHIP
@@ -489,7 +489,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: whatever the class waits for; a picture waits for memory.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -543,7 +543,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: on the file, and on the list's lock.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: needed - the file is reached through dos.
 
    OWNERSHIP
@@ -593,7 +593,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: for the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -629,7 +629,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -665,7 +665,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: on the list's lock, briefly.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -709,7 +709,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: for the window's layer, and for whatever the object stops.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -748,7 +748,7 @@ datatypes.library/SetDTAttrsA
    CONTEXT
 	- Waits: whatever the object waits for.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP

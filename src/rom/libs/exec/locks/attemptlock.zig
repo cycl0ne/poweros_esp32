@@ -33,7 +33,8 @@ const Lock = sdk.exec.Lock;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: a `LOCKF_INTERRUPT` lock only.
-/// - Forbid: may be held.
+/// - Locks: takes `lock` if it is free; the lock order is not checked, since a
+///   try never waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

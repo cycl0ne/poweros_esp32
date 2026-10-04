@@ -46,7 +46,7 @@ const _context = @import("_context.zig");
 /// CONTEXT:
 /// - Waits: yes, for the name and the connection.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process, the one `socket_base` belongs to; every call
 ///   with the context must come from it.
 ///

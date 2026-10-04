@@ -46,6 +46,8 @@ const Device = struct {
     holding: [size]u16 = @splat(0),
     input: [size]u16 = undefined,
     lock: exec.SignalSemaphore = .{},
+    /// `last`, written on the server's process and read by the program.
+    last_lock: exec.Lock = .{},
     hook: utility.Hook = .{},
     sys: *ExecBase,
     program: *exec.Task,
@@ -58,9 +60,9 @@ fn wrote(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callcon
     _ = object;
     const device: *Device = @ptrCast(@alignCast(hook.data.?));
     const write: *const modbus.ModbusWrite = @ptrCast(@alignCast(message.?));
-    device.sys.Forbid();
+    device.sys.AcquireLock(&device.last_lock);
     device.last = write.*;
-    device.sys.Permit();
+    device.sys.ReleaseLock(&device.last_lock);
     device.sys.Signal(device.program, exec.SIGBREAKF_CTRL_F);
     return 0;
 }
@@ -97,6 +99,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         device.input[i] = @intCast(100 + i);
     }
     sys.InitSemaphore(&device.lock);
+    sys.InitLock(&device.last_lock, "ModbusServer write", exec.LOCKORDER_DRIVER, 0);
     device.hook = .{ .entry = &wrote, .data = &device };
 
     const tcp = argv[0] != 0;
@@ -149,9 +152,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const came = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C | exec.SIGBREAKF_CTRL_F);
         if (came & exec.SIGBREAKF_CTRL_C != 0) break;
         if (came & exec.SIGBREAKF_CTRL_F != 0) {
-            sys.Forbid();
+            sys.AcquireLock(&device.last_lock);
             const last = device.last;
-            sys.Permit();
+            sys.ReleaseLock(&device.last_lock);
             _ = Printf(dl, MSG_WROTE, .{ COMMAND_NAME, last.function, last.count, last.address });
         }
         fifths += 1;

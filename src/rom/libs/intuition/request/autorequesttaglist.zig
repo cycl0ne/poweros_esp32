@@ -41,7 +41,7 @@ const Window = @import("../window/_window.zig").Window;
 /// CONTEXT:
 /// - Waits: for the answer, and for the screen list's semaphore.
 /// - Interrupts: no.
-/// - Forbid: must not be held: it waits.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

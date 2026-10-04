@@ -46,7 +46,7 @@ const _text = @import("_text.zig");
 /// - Waits: no.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

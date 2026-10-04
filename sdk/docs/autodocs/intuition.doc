@@ -162,7 +162,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -210,7 +210,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -252,7 +252,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the class list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -303,7 +303,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -354,7 +354,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -408,7 +408,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the answer, and for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: must not be held: it waits.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -459,7 +459,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -526,7 +526,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do. A process has its IoErr set: 0 when the
 	  requester opened, `ERROR_NO_FREE_STORE` when it did not.
 
@@ -588,7 +588,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -652,7 +652,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display's next
 	  frame - which paces a program drawing a frame at a time to the display.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -705,7 +705,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -748,7 +748,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -792,7 +792,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -838,7 +838,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no; it frees memory.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -883,7 +883,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -929,7 +929,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the class does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -994,7 +994,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no; it allocates.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1045,7 +1045,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1092,7 +1092,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the answer, and for an alert already up.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; not intuition's input task.
 
    OWNERSHIP
@@ -1139,7 +1139,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and a tenth of a second.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1180,7 +1180,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever its classes do.
 	- Interrupts: no; it frees memory.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1236,7 +1236,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and whatever the method
 	  waits for - a drawing one for the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1284,7 +1284,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: yes: it reads two numbers of the base.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1336,7 +1336,7 @@ intuition.library/ZipWindow
 	- Waits: no, beyond what the RastPort's layer asks of a caller - hold
 	  it, as for any drawing in a window.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1388,7 +1388,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the image's class does; imageclass does not.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1439,7 +1439,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the image's class does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1522,7 +1522,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1583,7 +1583,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: until it is answered.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1629,7 +1629,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1676,7 +1676,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1721,7 +1721,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the image's class does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1761,7 +1761,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the class list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1808,7 +1808,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the class list's semaphore.
 	- Interrupts: no; it frees memory.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1852,7 +1852,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1894,7 +1894,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display's next
 	  frame when the buffer was shown.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1936,7 +1936,7 @@ intuition.library/ZipWindow
 	caller changing.
 
    CONTEXT
-	- Waits: no. - Interrupts: no. - Forbid: not needed.
+	- Waits: no. - Interrupts: no. - Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1979,7 +1979,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2028,7 +2028,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do; a class calls it from its dispatcher.
 
    OWNERSHIP
@@ -2075,7 +2075,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever its classes do.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2123,7 +2123,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2165,7 +2165,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2210,8 +2210,8 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed; only the window's own program
-	  changes its port, through `ModifyIDCMP` and `CloseWindow`.
+	- Locks: none needed; only the window's own program changes its port,
+	  through `ModifyIDCMP` and `CloseWindow`.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2266,7 +2266,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for a font asked for, while another task sets the fonts.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2323,7 +2323,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2365,7 +2365,7 @@ intuition.library/ZipWindow
 	The screen's own, not a copy: every caller sees the same pens.
 
    CONTEXT
-	- Waits: no. - Interrupts: no. - Forbid: not needed.
+	- Waits: no. - Interrupts: no. - Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2428,7 +2428,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2478,7 +2478,7 @@ intuition.library/ZipWindow
 	inside the border widths of its RastPort.
 
    CONTEXT
-	- Waits: no. - Interrupts: no. - Forbid: not needed.
+	- Waits: no. - Interrupts: no. - Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2528,7 +2528,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2572,7 +2572,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2619,7 +2619,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no: it allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2670,7 +2670,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no: the strip is the caller's, and a task's.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2722,7 +2722,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2779,7 +2779,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2831,7 +2831,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2875,7 +2875,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes, for another task that holds it.
 	- Interrupts: no.
-	- Forbid: must not be held - it may wait.
+	- Locks: no spinlock may be held - it may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2922,7 +2922,7 @@ intuition.library/ZipWindow
 	- Waits: yes, for whoever holds the screens - another program, or
 	  intuition's own input task.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2976,7 +2976,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3020,7 +3020,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; while it holds the list it must not wait for
 	  anything that opens, closes or draws on a screen.
 
@@ -3085,7 +3085,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the class list's semaphore.
 	- Interrupts: no; it allocates.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3130,7 +3130,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3181,7 +3181,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display to take
 	  the new picture up at its next frame.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3225,7 +3225,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3272,7 +3272,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3324,7 +3324,7 @@ intuition.library/ZipWindow
 	- Waits: for the class list's semaphore when finding by name; beyond
 	  that, whatever the classes do.
 	- Interrupts: no; it allocates.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do, unless a class says otherwise.
 
    OWNERSHIP
@@ -3372,7 +3372,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; the list is the caller's to guard.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3416,7 +3416,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3464,7 +3464,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3518,7 +3518,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3561,7 +3561,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3612,7 +3612,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3655,7 +3655,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3708,7 +3708,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no; it allocates.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3762,7 +3762,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes, while the fonts are being changed.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3825,7 +3825,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3878,7 +3878,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the image's class does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3933,7 +3933,7 @@ intuition.library/ZipWindow
 	- Waits: no, beyond what the RastPort's layer asks of a caller - hold
 	  it, as for any drawing in a window.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3986,7 +3986,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4037,7 +4037,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: may be held; it takes Forbid for a moment itself.
+	- Locks: takes intuition's mark lock, a spinlock, for a moment.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4095,7 +4095,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4137,7 +4137,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4177,7 +4177,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4218,7 +4218,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the class list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4264,7 +4264,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4307,7 +4307,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4352,7 +4352,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4410,7 +4410,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4465,7 +4465,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4512,7 +4512,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display to take
 	  the new picture up at the next frame.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4565,7 +4565,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display to take
 	  the new picture up at its next frame.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4614,7 +4614,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display to take
 	  the new picture up at the next frame.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4658,7 +4658,7 @@ intuition.library/ZipWindow
 	- Waits: for the screen list's semaphore, and for the display to take
 	  the new picture up at the next frame.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4708,7 +4708,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4752,7 +4752,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the class does.
 	- Interrupts: no, unless a class says a method is safe there.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do, unless a class says otherwise.
 
    OWNERSHIP
@@ -4800,7 +4800,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever the superclass does.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4845,7 +4845,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: whatever its classes do.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4896,7 +4896,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4941,7 +4941,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4988,7 +4988,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do. The hook is called on intuition's input
 	  task: it must not wait, nor draw.
 
@@ -5038,7 +5038,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore and the window's layer.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5092,7 +5092,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5141,7 +5141,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5207,7 +5207,7 @@ intuition.library/ZipWindow
 	- Waits: yes - for the fonts, the screen list and the layers it draws
 	  in.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5255,7 +5255,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5313,7 +5313,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes - for intuition's lock, and for the layers it draws in.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5376,8 +5376,8 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes - for intuition's lock, and for the layers it draws in.
 	- Interrupts: no.
-	- Forbid: must not be held. The style is changed under a Forbid of the
-	  call's own.
+	- Locks: no spinlock may be held. The style is put in place under
+	  intuition's look lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5451,7 +5451,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes, while another task reads the fonts.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5512,7 +5512,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5567,7 +5567,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5614,7 +5614,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5658,7 +5658,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5717,7 +5717,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5773,7 +5773,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: with `wait_input`, until the window has a message.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -5833,7 +5833,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the answer or the time, and for an alert already up.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; not intuition's input task, whose events
 	  answer it.
 
@@ -5876,7 +5876,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do; the task that took it.
 
    OWNERSHIP
@@ -5918,7 +5918,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that called `LockIBase`.
 
    OWNERSHIP
@@ -5963,7 +5963,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -6005,7 +6005,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do; the one that locked the list.
 
    OWNERSHIP
@@ -6052,7 +6052,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: yes, unless a message is already there.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; it must be the task the window's port
 	  signals, the one that opened the window or last gave it a port.
 
@@ -6112,7 +6112,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -6153,7 +6153,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -6195,7 +6195,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -6244,7 +6244,7 @@ intuition.library/ZipWindow
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP

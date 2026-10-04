@@ -36,7 +36,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It calls through the jump table.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

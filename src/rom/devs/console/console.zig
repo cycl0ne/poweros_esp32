@@ -138,6 +138,12 @@ const Unit = struct {
 pub const ConsoleBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// What the input handler, the console's task and its callers share:
+    /// each unit's input ring, its reads waiting on the unit's list, its
+    /// tokens and whether it is stopped, and the snip. A spinlock - the
+    /// handler runs on input.device's task, where nothing may wait - held
+    /// a few lines at a time, never across an allocation.
+    lock: exec.Lock = .{},
     graphics_base: *GraphicsBase,
     intuition_base: *IntuitionBase,
     layers_base: *LayersBase,
@@ -342,7 +348,8 @@ fn take(u: *Unit, into: []u8) usize {
     return n;
 }
 
-/// Reads that were waiting, given what is in the ring now. Under Forbid.
+/// Reads that were waiting, given what is in the ring now. Under the
+/// console's lock.
 fn serveReads(u: *Unit) void {
     if (u.stopped != 0) return;
     const sys = u.base.sys_base;
@@ -454,19 +461,19 @@ fn setSnip(cb: *ConsoleBase, bytes: []const u8) void {
         to[bytes.len] = 0;
         break :blk @ptrCast(to);
     };
-    sys.Forbid();
+    sys.AcquireLock(&cb.lock);
     const old = cb.snip;
     cb.snip = fresh;
     cb.snip_len = @intCast(bytes.len);
-    sys.Permit();
+    sys.ReleaseLock(&cb.lock);
     if (old) |o| sys.FreeVec(o);
 }
 
 /// The snip into the unit's ring, as though it had been typed.
 fn paste(cb: *ConsoleBase, u: *Unit) void {
     const sys = cb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&cb.lock);
+    defer sys.ReleaseLock(&cb.lock);
     const snip = cb.snip orelse return;
     var i: u32 = 0;
     while (i < cb.snip_len) : (i += 1) push(u, &[1]u8{snip[i]});
@@ -586,10 +593,10 @@ fn reportPointer(cb: *ConsoleBase, p: Pointed) bool {
     unlockDrawing(u);
     if (n == 0) return true;
     const sys = cb.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&cb.lock);
     push(u, reply[0..n]);
     serveReads(u);
-    sys.Permit();
+    sys.ReleaseLock(&cb.lock);
     return true;
 }
 
@@ -701,7 +708,7 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                             continue;
                         },
                         'c', 'C' => {
-                            u.tokens |= TOKEN_COPY;
+                            addTokens(cb, u, TOKEN_COPY);
                             sys.Signal(&cb.task, cb.mask);
                             continue;
                         },
@@ -709,10 +716,10 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                     }
                 }
                 if (n == 0) continue;
-                sys.Forbid();
+                sys.AcquireLock(&cb.lock);
                 push(u, buf[0..n]);
                 serveReads(u);
-                sys.Permit();
+                sys.ReleaseLock(&cb.lock);
             },
             // Where the pointer is and what its button does, written down
             // for the task: this runs on input.device's, which may not wait
@@ -732,17 +739,18 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
             },
             ie.IECLASS_EVENT => {
                 const u = unitOfWindow(cb, e.address) orelse continue;
-                u.tokens |= switch (e.code) {
+                const token: u32 = switch (e.code) {
                     ie.IECODE_NEWSIZE => TOKEN_RESIZE,
                     ie.IECODE_REFRESHWINDOW => TOKEN_REFRESH,
                     else => continue,
                 };
+                addTokens(cb, u, token);
                 signal = true;
             },
             ie.IECLASS_ACTIVEWINDOW, ie.IECLASS_INACTIVEWINDOW => {
                 const u = unitOfWindow(cb, e.address) orelse continue;
                 u.focus = if (e.class == ie.IECLASS_ACTIVEWINDOW) 1 else 0;
-                u.tokens |= if (e.class == ie.IECLASS_ACTIVEWINDOW) TOKEN_ACTIVE else TOKEN_INACTIVE;
+                addTokens(cb, u, if (e.class == ie.IECLASS_ACTIVEWINDOW) TOKEN_ACTIVE else TOKEN_INACTIVE);
                 signal = true;
             },
             else => {},
@@ -809,12 +817,21 @@ fn resized(u: *Unit) bool {
     return true;
 }
 
+/// Work for the console's task, added under the console's lock: the task
+/// takes them all at once (`serveTokens`), on the other core perhaps.
+fn addTokens(cb: *ConsoleBase, u: *Unit, tokens: u32) void {
+    const sys = cb.sys_base;
+    sys.AcquireLock(&cb.lock);
+    u.tokens |= tokens;
+    sys.ReleaseLock(&cb.lock);
+}
+
 fn serveTokens(cb: *ConsoleBase, u: *Unit) void {
     const sys = cb.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&cb.lock);
     const tokens = u.tokens;
     u.tokens = 0;
-    sys.Permit();
+    sys.ReleaseLock(&cb.lock);
     if (tokens == 0) return;
 
     lockDrawing(u);
@@ -986,10 +1003,10 @@ fn write(u: *Unit, bytes: []const u8) void {
     var reply: [32]u8 = undefined;
     const n = u.grid.takeReply(&reply);
     if (n > 0) {
-        cb.sys_base.Forbid();
+        cb.sys_base.AcquireLock(&cb.lock);
         push(u, reply[0..n]);
         serveReads(u);
-        cb.sys_base.Permit();
+        cb.sys_base.ReleaseLock(&cb.lock);
     }
     // A write is the only thing that turns mouse reporting on or off.
     countReporting(u);
@@ -1002,8 +1019,8 @@ fn read(u: *Unit, io: *exec.IORequest) bool {
         return true;
     }
     const sys = u.base.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&u.base.lock);
+    defer sys.ReleaseLock(&u.base.lock);
     // A stopped unit queues whatever it is given, however much is waiting
     // in the ring: that is what stopping it is for.
     if (u.stopped == 0 and u.tail != u.head) {
@@ -1023,8 +1040,8 @@ fn read(u: *Unit, io: *exec.IORequest) bool {
 
 fn flush(u: *Unit) void {
     const sys = u.base.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&u.base.lock);
+    defer sys.ReleaseLock(&u.base.lock);
     const list = &u.pub_unit.msg_port.msg_list;
     while (list.head) |node| {
         if (node.succ == null) break;
@@ -1076,19 +1093,19 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             io.err = exec.IOERR_OPENFAIL;
         },
         exec.CMD_CLEAR => if (unit) |u| {
-            sys.Forbid();
+            sys.AcquireLock(&cb.lock);
             u.tail = u.head;
-            sys.Permit();
+            sys.ReleaseLock(&cb.lock);
         },
         // Both halves: the I/O reset every device here does - the waiting
         // reads given back and the typed-in input dropped - and the
         // terminal put back as it was when the console opened.
         exec.CMD_RESET => if (unit) |u| {
             flush(u);
-            sys.Forbid();
+            sys.AcquireLock(&cb.lock);
             u.tail = u.head;
             u.stopped = 0;
-            sys.Permit();
+            sys.ReleaseLock(&cb.lock);
             lockDrawing(u);
             u.grid.reset();
             showAll(u);
@@ -1098,11 +1115,11 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             u.stopped = 1;
         },
         exec.CMD_START => if (unit) |u| {
-            sys.Forbid();
+            sys.AcquireLock(&cb.lock);
             u.stopped = 0;
             // Whatever queued while it was stopped is owed an answer now.
             serveReads(u);
-            sys.Permit();
+            sys.ReleaseLock(&cb.lock);
         },
         exec.CMD_FLUSH => if (unit) |u| flush(u),
         con.CD_ASKKEYMAP, con.CD_ASKDEFAULTKEYMAP => {
@@ -1137,8 +1154,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const cb = consoleBase(dev);
     const sys = cb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&cb.lock);
+    defer sys.ReleaseLock(&cb.lock);
     if (io.flags & exec.IOF_QUEUED == 0) return -1;
     sys.Remove(&io.message.node);
     io.flags &= ~exec.IOF_QUEUED;
@@ -1156,15 +1173,30 @@ fn lvoCDInputHandler(cb: *ConsoleBase, events: ?*ie.InputEvent) callconv(.c) ?*i
 
 fn lvoGetConSnip(cb: *ConsoleBase) callconv(.c) ?[*:0]u8 {
     const sys = cb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
-    const snip = cb.snip orelse return null;
-    const memory = sys.AllocVec(cb.snip_len + 1, exec.MEMF_ANY) orelse return null;
-    const to: [*]u8 = @ptrCast(memory);
-    var i: u32 = 0;
-    while (i < cb.snip_len) : (i += 1) to[i] = snip[i];
-    to[cb.snip_len] = 0;
-    return @ptrCast(to);
+    // Measured under the lock, allocated outside it, copied under it again:
+    // nothing allocates under a spinlock. A snip changed in between is
+    // measured again.
+    while (true) {
+        sys.AcquireLock(&cb.lock);
+        const length = cb.snip_len;
+        const there = cb.snip != null;
+        sys.ReleaseLock(&cb.lock);
+        if (!there) return null;
+        const memory = sys.AllocVec(length + 1, exec.MEMF_ANY) orelse return null;
+        const to: [*]u8 = @ptrCast(memory);
+        sys.AcquireLock(&cb.lock);
+        if (cb.snip) |snip| {
+            if (cb.snip_len == length) {
+                var i: u32 = 0;
+                while (i < length) : (i += 1) to[i] = snip[i];
+                to[length] = 0;
+                sys.ReleaseLock(&cb.lock);
+                return @ptrCast(to);
+            }
+        }
+        sys.ReleaseLock(&cb.lock);
+        sys.FreeVec(memory);
+    }
 }
 
 fn lvoSetConSnip(cb: *ConsoleBase, snip: ?[*:0]const u8) callconv(.c) bool {
@@ -1308,6 +1340,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     dev.revision = DEVICE_REVISION;
     const cb = consoleBase(dev);
     cb.sys_base = sys_base;
+    sys_base.InitLock(&cb.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     const gfx = sys_base.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse return null;
     const int = sys_base.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse {
         sys_base.CloseLibrary(gfx);

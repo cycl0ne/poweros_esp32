@@ -48,7 +48,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore and the layers' locks.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

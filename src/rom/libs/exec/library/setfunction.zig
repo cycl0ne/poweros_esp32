@@ -46,10 +46,10 @@ const Library = sdk.exec.Library;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the write and the checksum. That stops
-///   another task being switched to mid-patch; it does not stop one that is
-///   already inside the old function.
+/// - Interrupts: no. It takes exec's library list, a semaphore.
+/// - Locks: takes exec's library list, a semaphore, so two patches never cross;
+///   no spinlock may be held. A caller already inside the old function goes on
+///   in it.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -86,8 +86,8 @@ pub fn SetFunction(base: *ExecBase, lib: *Library, offset: isize, new: *const an
     // patches a vector, not when anything calls one.
     if (offset >= 0 or -offset > lib.neg_size) @panic("SetFunction: offset outside the jump table");
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
     const slot = lib.slot(offset);
     const old = slot.*;
     slot.* = new;

@@ -27,7 +27,7 @@ const GpioBase = @import("../gpio_base.zig").GpioBase;
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no.
-/// - Forbid: taken here.
+/// - Locks: takes the resource's spinlock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -49,7 +49,7 @@ const GpioBase = @import("../gpio_base.zig").GpioBase;
 pub fn FreeGPIO(gb: *GpioBase, pad: u32) void {
     if (!types.padExists(pad)) return;
     const sys = gb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&gb.lock);
+    defer sys.ReleaseLock(&gb.lock);
     gb.owner[pad] = null;
 }

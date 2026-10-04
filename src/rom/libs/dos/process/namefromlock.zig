@@ -48,7 +48,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: yes, for the handler's answers.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it waits.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do; a null lock needs a Process (its
 ///   pr_FileSystemTask).
 ///

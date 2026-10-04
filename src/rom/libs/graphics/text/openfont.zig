@@ -46,7 +46,7 @@ const TextFont = _text.TextFont;
 /// CONTEXT:
 /// - Waits: yes, while another task holds the font list.
 /// - Interrupts: no.
-/// - Forbid: must not be held: it waits on the font list's semaphore.
+/// - Locks: no spinlock may be held: it waits for the font list's semaphore.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

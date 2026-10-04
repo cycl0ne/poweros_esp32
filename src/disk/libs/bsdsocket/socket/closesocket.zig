@@ -40,7 +40,7 @@ const _tcp_output = @import("../tcp/output.zig");
 /// CONTEXT:
 /// - Waits: only for the stack's lock, unless SO_LINGER has a time.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

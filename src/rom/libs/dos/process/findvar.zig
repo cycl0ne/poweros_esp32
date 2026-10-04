@@ -31,7 +31,7 @@ const findIn = _process.findIn;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not callable.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: required for a result; a plain task gets null.
 ///
 /// OWNERSHIP:

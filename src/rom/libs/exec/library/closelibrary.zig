@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! CloseLibrary: hands an opener back to the library's own Close, which
-//! counts it and, at the last close, finishes an expunge that was asked
+//! counts it; at the last close, exec finishes an expunge that was asked
 //! for while it was open.
 
 const sdk = @import("sdk");
+const _library = @import("_library.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Library = sdk.exec.Library;
@@ -25,18 +26,28 @@ const Library = sdk.exec.Library;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The standard Close (`libClose`) drops `open_cnt` and, when that reaches
-/// zero and `LIBF_DELEXP` is set, expunges the library there and then - so
-/// a library marked for expunging while it was open goes on its last close.
+/// The Close vector runs inside the library's own lock, as its Open does.
+/// The standard Close (`libClose`) drops `open_cnt`. When that has reached
+/// zero and `LIBF_DELEXP` is set, exec expunges the library there and
+/// then, still holding its lock - so a library marked for expunging while
+/// it was open goes on its last close. A Close vector does not expunge its
+/// library itself.
 ///
-/// A non-null result from the Close vector is the seglist of a library that
-/// expunged, and exec drops it: nothing here loads a module, so nothing
-/// here unloads one. Whatever has replaced this slot is what takes that up.
+/// The seglist of a library that went is dropped: nothing here loads a
+/// module, so nothing here unloads one.
+///
+/// A library whose Open hands each opener a base of its own (bsdsocket's
+/// does) gets that base back here. It is on no list - its node has no
+/// predecessor - so its Close runs with nothing of exec's held: it frees
+/// the base, and keeps the library it came from under that library's own
+/// lock, `RemLibrary` doing a delayed expunge.
 ///
 /// CONTEXT:
-/// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the vector.
+/// - Waits: for the library's lock while another task holds it, and for
+///   exec's library list at an expunge.
+/// - Interrupts: no. It takes semaphores.
+/// - Locks: takes the library's own lock, and exec's library list at an
+///   expunge, both semaphores; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -57,9 +68,18 @@ const Library = sdk.exec.Library;
 pub fn CloseLibrary(base: *ExecBase, library: ?*Library) void {
     const lib = library orelse return;
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-    // A non-null result is the seglist of an expunged disk-based library;
-    // there is no loader yet, so nothing to unload.
+    if (lib.node.pred == null) {
+        // An opener's own base: its Close frees it, so nothing here may
+        // touch it after.
+        _ = lib.vector(sdk.exec.CloseFn, sdk.exec.LIB_CLOSE)(lib);
+        return;
+    }
+    sys.ObtainSemaphore(&lib.lock);
     _ = lib.vector(sdk.exec.CloseFn, sdk.exec.LIB_CLOSE)(lib);
+    if (lib.open_cnt == 0 and lib.flags & sdk.exec.LIBF_DELEXP != 0) {
+        // Gives the lock back, or takes it with the library.
+        _ = _library.expungeHeld(base, lib, &base.lib_list);
+        return;
+    }
+    sys.ReleaseSemaphore(&lib.lock);
 }

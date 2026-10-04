@@ -33,8 +33,8 @@ const Device = sdk.exec.Device;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's library list, a semaphore.
+/// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -58,8 +58,13 @@ const Device = sdk.exec.Device;
 /// ```
 pub fn AddDevice(base: *ExecBase, dev: *Device) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    // Nobody can open it before it is on the list: its lock and marks are
+    // set up first.
+    sys.InitSemaphore(&dev.lock);
+    dev.pins = 0;
+    dev.flags &= ~sdk.exec.LIBF_GOING;
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
     dev.node.type = .device;
     dev.flags |= sdk.exec.LIBF_CHANGED;
     _library.SumLibrary(dev);

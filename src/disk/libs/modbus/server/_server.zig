@@ -4,8 +4,10 @@
 //! The process is made by StartModbusServer and lives until
 //! StopModbusServer: it holds `alive` from its first moment to its last,
 //! so stopping it is a CTRL_C and then waiting for that semaphore. It
-//! lets go of it under Forbid, so the stopper - which may close the
-//! library next - runs only once the process is gone.
+//! holds the library open too - StartModbusServer hands it an open count,
+//! which dos closes once the process's code has returned (NP_HoldLibrary)
+//! - so the stopper may close the library next and the library still
+//! cannot go under code that runs.
 //!
 //! **RTU.** The process opens the bus's device itself and keeps a read
 //! waiting on it. A frame for its unit, or for unit 0, the broadcast, is
@@ -135,7 +137,6 @@ pub fn serverMain(sys: *ExecBase) callconv(.c) void {
         modbus.MBT_TCP => runTcp(server),
         else => runRtu(server),
     }
-    sys.Forbid();
     sys.ReleaseSemaphore(&server.alive);
 }
 

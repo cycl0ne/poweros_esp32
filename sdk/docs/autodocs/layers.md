@@ -74,7 +74,7 @@ of memory just when there is none.
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait, and it allocates.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -132,7 +132,7 @@ for a smart or super one.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it allocates.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -209,7 +209,7 @@ keeps it in the program's own bitmap.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it allocates.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -276,7 +276,7 @@ damage, a smart or super one gets them back from its keeping.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it frees memory.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -330,7 +330,7 @@ in one call. Nothing has to have been taken away first.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it frees memory.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -394,7 +394,7 @@ belongs to, and a caller that has one already knows.
 
 - Waits: only if the hook does.
 - Interrupts: no. It may allocate.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -449,7 +449,7 @@ is freed.
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -507,7 +507,7 @@ know is ignored, so a program built against a later SDK still works.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -567,7 +567,7 @@ at `EndUpdate`.
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -625,7 +625,7 @@ the ground the same way.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -680,7 +680,7 @@ A table of the codes the library returns.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -734,7 +734,7 @@ and must let it go as often.
 
 - Waits: yes, while another task holds it.
 - Interrupts: no. It waits.
-- Forbid: must not be held: waiting would break it.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -799,7 +799,7 @@ It nests.
 
 - Waits: yes, while another task holds it.
 - Interrupts: no. It waits.
-- Forbid: must not be held: waiting would break it.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -854,7 +854,7 @@ they are held is held as well. It nests.
 
 - Waits: yes, while another task holds the list or a layer.
 - Interrupts: no. It waits.
-- Forbid: must not be held: waiting would break it.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -911,7 +911,7 @@ nothing.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, it allocates, and it draws.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -967,7 +967,7 @@ for a smart or super one.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it allocates.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1031,7 +1031,7 @@ backfill.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, it allocates, and it draws.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1089,7 +1089,7 @@ retile makes by the hundred.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1151,7 +1151,7 @@ on to is copied out of the bitmap.
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait, it allocates, and it draws.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1208,7 +1208,7 @@ and a smart one has it painted.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, it allocates, and it draws.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1259,7 +1259,7 @@ One `LockLayer` given back; the layer is free when every one has been.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that took it.
 
 **OWNERSHIP**
@@ -1310,7 +1310,7 @@ One `LockLayerInfo` given back.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that took it.
 
 **OWNERSHIP**
@@ -1361,7 +1361,7 @@ The layers first, then the list: the reverse of `LockLayers`.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that took them.
 
 **OWNERSHIP**
@@ -1416,7 +1416,7 @@ for a smart or super one. A backdrop layer stays behind every ordinary one.
 
 - Waits: yes, while another task holds the display's layers.
 - Interrupts: no. It may wait, and it allocates.
-- Forbid: must not be held: waiting for the locks would break it.
+- Locks: no spinlock may be held: it waits for locks.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1472,7 +1472,7 @@ the rectangles' answer for a layer hanging off the display.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed, though the list must not change meanwhile:
+- Locks: none taken, though the list must not change meanwhile:
   `LockLayerInfo` is how to be sure.
 - Process: a Task will do.
 

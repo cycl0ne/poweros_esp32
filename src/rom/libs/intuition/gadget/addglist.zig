@@ -43,7 +43,7 @@ const layoutRange = _gadget.layoutRange;
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

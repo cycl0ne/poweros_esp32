@@ -51,7 +51,7 @@ const pixelBytes = _blit.pixelBytes;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

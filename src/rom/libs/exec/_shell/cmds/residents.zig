@@ -69,14 +69,14 @@ fn residentVectors(shell: *Shell, tag: *const sdk.exec.Resident) ?u32 {
         const init_table: *const sdk.exec.InitTable = @ptrCast(@alignCast(tag.init orelse return null));
         return init_table.vector_count;
     }
-    const list: *sdk.exec.List = switch (tag.type) {
-        .library => &shell.base.lib_list,
-        .device => &shell.base.device_list,
+    const which: u32 = switch (tag.type) {
+        .library => sdk.exec.EXECLIST_LIBRARIES,
+        .device => sdk.exec.EXECLIST_DEVICES,
         else => return null,
     };
     const sys = shell.base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    const list = sys.LockExecList(which).?;
+    defer sys.UnlockExecList(which);
     const node = sys.FindName(list, tag.name) orelse return null;
     const lib: *sdk.exec.Library = @fieldParentPtr("node", node);
     return lib.neg_size / sdk.exec.slot_size;

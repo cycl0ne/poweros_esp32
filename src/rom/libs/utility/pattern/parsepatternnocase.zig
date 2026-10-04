@@ -51,7 +51,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// - Waits: no.
 /// - Interrupts: no. A failure is reported in the IoErr of whichever
 ///   process was interrupted.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do; only a process gets the IoErr.
 ///
 /// OWNERSHIP:

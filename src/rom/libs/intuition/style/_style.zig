@@ -22,10 +22,11 @@
 //! system's, a screen's skips the system's.
 //!
 //! **A screen's style and the system's can be replaced while others draw**
-//! (`SetStyle`). So `look` reads them under Forbid, from the DrawInfo
-//! rather than from a pointer its caller took earlier, and copies out all
-//! it found - a fill style too - before it lets go; the old style is freed
-//! after the new one is in place, under the same Forbid.
+//! (`SetStyle`), on either core. So `look` reads them under the look's
+//! lock (`look_lock`), from the DrawInfo rather than from a pointer its
+//! caller took earlier, and copies out all it found - a fill style too -
+//! before it lets go; the old style is freed after the new one is put in
+//! place under the same lock.
 //!
 //! Every property is found on its own, so a list that gives a pressed
 //! button a colour and nothing else leaves its border to whatever the
@@ -320,8 +321,9 @@ fn entryOf(kept: *const Kept, part: u32, states: u32) ?*const Entry {
 /// - `part` - the part.
 /// - `states` - the states it is in.
 pub fn look(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, part: u32, states: u32) Look {
-    ib.sys_base.Forbid();
-    defer ib.sys_base.Permit();
+    const lock = @constCast(&ib.look_lock);
+    ib.sys_base.AcquireLock(lock);
+    defer ib.sys_base.ReleaseLock(lock);
     const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
     var result = lookIn(chain(ib, own, screen), part, states);
     if (result.fill_source) |source| {
@@ -381,8 +383,9 @@ fn lookIn(layers: [4]?*const style.Style, part: u32, states: u32) Look {
 /// can look different in it at all. Under the system's default alone no
 /// gadget is drawn again for being hovered, since nothing would change.
 pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, state: u32) bool {
-    ib.sys_base.Forbid();
-    defer ib.sys_base.Permit();
+    const lock = @constCast(&ib.look_lock);
+    ib.sys_base.AcquireLock(lock);
+    defer ib.sys_base.ReleaseLock(lock);
     const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
     const layers = chain(ib, own, screen);
     for (layers) |maybe| {

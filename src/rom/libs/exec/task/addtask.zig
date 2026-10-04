@@ -51,9 +51,8 @@ const TaskFn = sdk.exec.TaskFn;
 /// - Waits: no, but it may switch, so the caller may lose the processor
 ///   here.
 /// - Interrupts: no. It takes Disable and touches the scheduler's lists.
-/// - Forbid: not needed. Under Forbid the switch is postponed to the
-///   matching `Permit`, which is a way to add several tasks before any of
-///   them runs.
+/// - Locks: takes Disable. Tasks that must not start before one another are
+///   made to wait for a signal before they start their work.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -85,7 +84,6 @@ pub fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn, final_pc: ?TaskFn)
     task.init_pc = init_pc;
     task.final_pc = final_pc;
     task.sig_alloc |= sdk.exec.tasks.system_signals;
-    task.td_nest_cnt = -1;
     task.id_nest_cnt = -1;
     _task.guardStack(task);
     task.sp_reg = _task.task_hardware.init_context(task.sp_upper, vec(_task.taskEntry), task);

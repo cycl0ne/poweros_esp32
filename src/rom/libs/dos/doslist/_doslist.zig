@@ -14,8 +14,7 @@
 //! started (the entry lock) or a node is being removed (the delete lock),
 //! without one long lock around everything. They are always taken in one
 //! order - list, entry, delete - which is what keeps two callers from each
-//! holding one the other wants. LockDosList takes no Forbid: the
-//! semaphores are the whole protection. It returns the head node, a
+//! holding one the other wants. The semaphores are the whole protection. It returns the head node, a
 //! private node FindDosEntry never finds, so a walk starts at a real
 //! address. Names are C strings without the colon, compared without case
 //! through utility.library. MakeDosEntry makes node and name in one block,
@@ -290,9 +289,9 @@ pub fn startHandler(db: *DosBase, node: *DosList, name: [*:0]const u8) ?*MsgPort
     // last one to end can give it back.
     const from_file = h.seg_list != null;
     if (from_file) {
-        sys.Forbid();
+        sys.AcquireLock(&db.code_lock);
         h.users += 1;
-        sys.Permit();
+        sys.ReleaseLock(&db.code_lock);
     }
     const proc = dos_lib.CreateNewProc(&tags) orelse {
         if (from_file) releaseHandlerCode(db, node);
@@ -364,7 +363,7 @@ fn findHandler(db: *DosBase, h: *dos.DosListHandler) ?exec.TaskFn {
 pub fn releaseHandlerCode(db: *DosBase, node: *DosList) void {
     const sys = db.sys_base;
     const h = &node.misc.handler;
-    sys.Forbid();
+    sys.AcquireLock(&db.code_lock);
     if (h.users > 0) h.users -= 1;
     const done = h.users == 0;
     const seg_list = if (done) h.seg_list else null;
@@ -372,7 +371,7 @@ pub fn releaseHandlerCode(db: *DosBase, node: *DosList) void {
         h.seg_list = null;
         h.entry = null;
     }
-    sys.Permit();
+    sys.ReleaseLock(&db.code_lock);
     if (seg_list) |code| db.iface().UnLoadSeg(@ptrCast(@alignCast(code)));
 }
 
@@ -420,14 +419,14 @@ fn loadHandler(db: *DosBase, h: *dos.DosListHandler, name: [*:0]const u8) ?exec.
         return null;
     };
     // Someone else may have loaded it meanwhile: theirs is kept.
-    sys.Forbid();
+    sys.AcquireLock(&db.code_lock);
     const first = h.seg_list == null;
     if (first) {
         h.seg_list = seg_list;
         h.entry = tag.handler;
     }
     const entry = h.entry;
-    sys.Permit();
+    sys.ReleaseLock(&db.code_lock);
     if (!first) dos_lib.UnLoadSeg(seg_list);
     return entry;
 }

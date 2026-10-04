@@ -26,7 +26,7 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// It is a pointer store: the keymap is not copied or checked.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed; a word is written
+/// - Waits: no. - Interrupts: no. - Locks: none needed; a word is written
 ///   whole. - Process: a Task will do.
 ///
 /// OWNERSHIP:

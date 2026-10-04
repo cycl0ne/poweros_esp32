@@ -30,8 +30,7 @@ const _process = @import("_process.zig");
 /// - Waits: no.
 /// - Interrupts: not safe; it reads and changes the running task's
 ///   Process.
-/// - Forbid: not needed, and not taken; only the running process
-///   touches these fields.
+/// - Locks: none taken; only the running process touches these fields.
 /// - Process: a CLI process; any other caller gets false.
 ///
 /// OWNERSHIP:

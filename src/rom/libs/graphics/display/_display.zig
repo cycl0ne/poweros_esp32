@@ -178,7 +178,7 @@ fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
 /// - Waits: yes. A panel is held in reset for tens of milliseconds, and
 ///   its driver waits that out.
 /// - Interrupts: no.
-/// - Forbid: not held, and it must not be, because of the wait.
+/// - Locks: no spinlock may be held, because of the wait.
 /// - Process: a Task will do. The exec task runs it at cold start.
 pub fn openDisplay(gb: *GraphicsBase) void {
     const machine = readMachine(gb);

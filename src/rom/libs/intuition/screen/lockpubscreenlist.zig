@@ -33,7 +33,7 @@ const unlock = _screen.unlock;
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; while it holds the list it must not wait for
 ///   anything that opens, closes or draws on a screen.
 ///

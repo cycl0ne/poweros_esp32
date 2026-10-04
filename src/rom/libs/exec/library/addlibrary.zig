@@ -33,8 +33,8 @@ const Library = sdk.exec.Library;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid, which an interrupt must not.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's library list, a semaphore.
+/// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -63,8 +63,13 @@ const Library = sdk.exec.Library;
 /// ```
 pub fn AddLibrary(base: *ExecBase, lib: *Library) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    // Nobody can open it before it is on the list: its lock and marks are
+    // set up first.
+    sys.InitSemaphore(&lib.lock);
+    lib.pins = 0;
+    lib.flags &= ~sdk.exec.LIBF_GOING;
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
     lib.node.type = .library;
     lib.flags |= sdk.exec.LIBF_CHANGED;
     _library.SumLibrary(lib);

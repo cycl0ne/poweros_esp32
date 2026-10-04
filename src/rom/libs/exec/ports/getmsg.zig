@@ -31,7 +31,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// - Waits: no.
 /// - Interrupts: safe. It takes exec's port lock, which masks the core's
 ///   interrupts - which is how a port with `PA_SOFTINT` is drained.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -47,8 +47,7 @@ fn rtgBase(lib: *exec.Library) *RtgBase {
 /// The library, or null if utility.library could not be opened.
 ///
 /// CONTEXT:
-/// Runs on the exec task at cold start, with multitasking live and no
-/// Forbid held.
+/// Runs on the exec task at cold start, with multitasking started.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const rb = rtgBase(lib);
@@ -62,6 +61,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.NewList(&rb.transports);
     sys_base.InitSemaphore(&rb.driver_lock);
     sys_base.InitSemaphore(&rb.board_lock);
+    sys_base.InitSemaphore(&rb.pointer_lock);
     return lib;
 }
 

@@ -68,7 +68,7 @@ partition with Format, once it is mounted.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -127,7 +127,7 @@ dropped, and the disk keeps the one it has. Null does nothing.
 
 - Waits: yes, CloseDevice may.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the handle.
 
 **OWNERSHIP**
@@ -186,7 +186,7 @@ names.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -253,7 +253,7 @@ it on the disk, and until then the disk keeps what it had.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -314,7 +314,7 @@ AddPartition added, which is the order WriteRDB writes the chain in.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -393,7 +393,7 @@ a PartitionBlock over them.
 
 - Waits: yes, on the device.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do. The handle's reply port is the caller's,
   so every call with it must come from the same task.
 
@@ -459,7 +459,7 @@ touched, by this or by WriteRDB.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -539,7 +539,7 @@ cylinders stays, whatever the table now says of them.
 
 - Waits: yes, on the device.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the handle.
 
 **OWNERSHIP**

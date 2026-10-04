@@ -43,7 +43,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: only if `code` does.
 /// - Interrupts: no. It allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: whatever `code` needs. It stays the same task, so a Process
 ///   is still a Process inside it.
 ///

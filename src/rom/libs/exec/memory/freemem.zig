@@ -38,7 +38,7 @@ const MemHeader = sdk.exec.MemHeader;
 /// - Waits: no.
 /// - Interrupts: no. It takes exec's memory lock, around the search and
 ///   the free.
-/// - Forbid: may be held.
+/// - Locks: takes exec's memory lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

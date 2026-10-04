@@ -41,31 +41,33 @@ const Task = sdk.exec.Task;
 /// - Waits: no, but the caller may switch - to the other core, when it
 ///   pinned itself away from this one.
 /// - Interrupts: no. It takes Disable.
-/// - Forbid: not needed. Inside it the move waits for the Permit, as every
-///   switch does.
+/// - Locks: takes Disable. With a spinlock held the move waits for the
+///   `ReleaseLock`, as every switch does.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// A task that is to be pinned from its first instruction is made inside
-/// Forbid and pinned before the Permit: while one core holds Forbid
-/// neither switches to a new task. dos's `NP_Affinity` does it for a
-/// process.
+/// A task that is to be pinned from its first instruction has its
+/// `TF_CORE0` or `TF_CORE1` set in the `Task` handed to `AddTask`; dos's
+/// `NP_Affinity` does it for a process.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `SetTaskPri`, `CreateTask`, `Forbid`
+/// `SetTaskPri`, `CreateTask`, `AddTask`
 ///
 /// EXAMPLES:
 /// ```zig
-/// sys.Forbid();
-/// const task = sys.CreateTask("radio", 5, &radioCode, 8192) orelse return error.NoMemory;
+/// // A task made already, moved to core 0.
 /// _ = sys.SetTaskAffinity(task, sdk.exec.TF_CORE0);
-/// sys.Permit();
+///
+/// // One pinned from its first instruction: its flags are set before
+/// // AddTask.
+/// radio.task = .{ .node = .{ .name = "radio", .pri = 5 }, .flags = sdk.exec.TF_CORE0, .sp_lower = lower, .sp_upper = upper };
+/// _ = sys.AddTask(&radio.task, &radioCode, null);
 /// ```
 pub fn SetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) u32 {
     const sys = base.iface();

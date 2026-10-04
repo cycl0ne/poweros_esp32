@@ -37,8 +37,8 @@ const NewList = @import("newlist.zig").NewList;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe in itself; the caller's locking is what decides.
-/// - Forbid: not taken here. Needed by the caller on any list another task
-///   may be walking.
+/// - Locks: none taken here; the caller holds whatever guards the list, on any
+///   list another task may be walking.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

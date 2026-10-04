@@ -30,7 +30,7 @@ const TAB = _text.TAB;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads `string` and writes `value`.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

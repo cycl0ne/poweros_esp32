@@ -111,20 +111,34 @@ pub fn search(ub: *UtilityBase, space: *NameSpace, start: *exec.Node, name: ?[*:
 /// True if the object was taken out.
 ///
 /// CONTEXT:
-/// Takes Forbid, and then the name space's semaphore, which may wait.
+/// Claims the object under utility's object lock - its name space taken
+/// from it, so a second removal finds none - and then takes it out under
+/// the name space's semaphore, which may wait. The caller's own use keeps
+/// the count above zero until the end, so no release in between can miss
+/// the message.
 pub fn remNamedObject(ub: *UtilityBase, object: ?*NamedObject, message: ?*exec.Message) bool {
     const utility = ub.iface();
-    ub.sys_base.Forbid();
-    defer ub.sys_base.Permit();
+    const sys = ub.sys_base;
     const obj = Object.of(object orelse return notRemoved(ub, message));
-    const space = obj.parent orelse return notRemoved(ub, message);
-    if (message == null and obj.use_count != 1) return false;
+    sys.AcquireLock(&ub.object_lock);
+    const space = obj.parent orelse {
+        sys.ReleaseLock(&ub.object_lock);
+        return notRemoved(ub, message);
+    };
+    if (message == null and obj.use_count != 1) {
+        sys.ReleaseLock(&ub.object_lock);
+        return false;
+    }
     obj.parent = null;
-    ub.sys_base.ObtainSemaphore(&space.lock);
-    ub.sys_base.Remove(&obj.node);
-    obj.remove_msg = message;
+    sys.ReleaseLock(&ub.object_lock);
+
+    sys.ObtainSemaphore(&space.lock);
+    sys.Remove(&obj.node);
     if (message) |msg| msg.node.name = @ptrFromInt(@intFromPtr(&obj.public));
-    ub.sys_base.ReleaseSemaphore(&space.lock);
+    sys.AcquireLock(&ub.object_lock);
+    obj.remove_msg = message;
+    sys.ReleaseLock(&ub.object_lock);
+    sys.ReleaseSemaphore(&space.lock);
     utility.ReleaseNamedObject(object);
     return true;
 }

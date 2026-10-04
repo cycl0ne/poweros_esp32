@@ -9,7 +9,8 @@
 //! `Allocate` and `Deallocate` take no lock: the region is the caller's and
 //! so is keeping others away from it, which is what lets a pool cut up a
 //! puddle with the same code. `AllocMem` and `FreeMem` are those two over
-//! the system list, with Forbid around them.
+//! the system list, under exec's memory lock; a pool's are under the
+//! pool's own lock.
 //!
 //!   base ────► ┌──────────────────────┐
 //!              │ MemHeader            │  mh_Node (NT_MEMORY), mh_Attributes
@@ -201,6 +202,9 @@ pub const Puddle = struct {
 
 /// What CreatePool hands back, seen from the inside.
 pub const Pool = struct {
+    /// Held around everything done to the pool, so one pool may be used
+    /// from more than one task. A semaphore: a new puddle is an AllocMem.
+    lock: sdk.exec.SignalSemaphore = .{},
     /// Every puddle, newest first: the one most likely to have room is the
     /// one tried first.
     puddles: List = .{},

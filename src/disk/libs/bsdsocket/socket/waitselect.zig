@@ -54,7 +54,7 @@ const _lock = @import("../lock/_lock.zig");
 /// CONTEXT:
 /// - Waits: yes, unless something is ready or the timeout is zero.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; the one that opened the base.
 ///
 /// OWNERSHIP:

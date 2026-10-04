@@ -53,7 +53,7 @@ const ResidentInitFn = sdk.exec.ResidentInitFn;
 /// CONTEXT:
 /// - Waits: whatever the module does.
 /// - Interrupts: no. It allocates.
-/// - Forbid: not taken, and not needed.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do, unless the module wants more.
 ///
 /// OWNERSHIP:

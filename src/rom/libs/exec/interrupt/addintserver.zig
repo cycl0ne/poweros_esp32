@@ -41,7 +41,7 @@ const Interrupt = sdk.exec.Interrupt;
 /// - Waits: no. **The server itself must not wait**, allocate, or call
 ///   anything that reaches a handler process.
 /// - Interrupts: safe. It takes Disable.
-/// - Forbid: not needed; Disable is what guards the chains.
+/// - Locks: takes Disable, which guards the chains.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

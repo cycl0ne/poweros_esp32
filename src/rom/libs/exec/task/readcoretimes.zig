@@ -48,8 +48,7 @@ const CoreTimes = sdk.exec.CoreTimes;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes.
-/// - Forbid: not needed. It takes Disable to read a core's figures
-///   whole.
+/// - Locks: takes Disable to read a core's figures whole.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

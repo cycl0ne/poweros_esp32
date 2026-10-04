@@ -46,7 +46,7 @@ pub const no_date: i32 = -1;
 /// bits and so stops in 2114; this reaches any year a `ClockData` holds.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. `date` is the caller's and is not written.

@@ -1014,9 +1014,9 @@ fn moved(ib: *IntuitionBase) void {
 pub fn queueRefresh(ib: *IntuitionBase, o: *Object) void {
     const st = stateOf(ib);
     const sys = ib.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&ib.mark_lock);
     gadgetclass.gadgetOf(ib, o).flags |= gadgetclass.GFLG_REFRESH;
-    sys.Permit();
+    sys.ReleaseLock(&ib.mark_lock);
     if (st.started == 1 and st.refresh_mask != 0) sys.Signal(&st.task, st.refresh_mask);
 }
 
@@ -1043,10 +1043,10 @@ const Owed = struct {
     fn each(owed: *const Owed, o: *Object) void {
         const g = gadgetclass.gadgetOf(owed.ib, o);
         const sys = owed.ib.sys_base;
-        sys.Forbid();
+        sys.AcquireLock(&owed.ib.mark_lock);
         const waiting = g.flags & gadgetclass.GFLG_REFRESH != 0;
         g.flags &= ~gadgetclass.GFLG_REFRESH;
-        sys.Permit();
+        sys.ReleaseLock(&owed.ib.mark_lock);
         if (waiting) _gadget.render(owed.ib, owed.w, o, gc.GREDRAW_UPDATE);
     }
 };

@@ -46,7 +46,7 @@ same. No saturation is a grey as bright as the brightness.
 
 - Waits: no.
 - Interrupts: callable; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -105,7 +105,7 @@ as `ConvertHSBToRGB`.
 
 - Waits: no.
 - Interrupts: callable; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

@@ -38,7 +38,7 @@ const Address = @import("../ip6/address.zig").Address;
 /// CONTEXT:
 /// - Waits: yes, for the name servers.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a process, to read the hosts file.
 ///
 /// OWNERSHIP:

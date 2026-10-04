@@ -35,7 +35,7 @@ const IFFParseBase = _base.IFFParseBase;
 /// CONTEXT:
 /// - Waits: whatever the stream hook waits for.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do unless the stream needs a Process.
 ///
 /// OWNERSHIP:

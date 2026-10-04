@@ -39,8 +39,8 @@ const Message = sdk.exec.Message;
 /// - Waits: no.
 /// - Interrupts: safe. It takes exec's port lock, which masks the core's
 ///   interrupts.
-/// - Forbid: not needed. The reply port belongs to the sender, which is
-///   waiting for this and so cannot have gone away.
+/// - Locks: takes exec's port lock. The reply port belongs to the sender, which
+///   is waiting for this and so cannot have gone away.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

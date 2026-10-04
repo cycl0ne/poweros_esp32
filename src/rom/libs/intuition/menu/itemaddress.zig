@@ -33,7 +33,7 @@ const _menu = @import("_menu.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no: the strip is the caller's, and a task's.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

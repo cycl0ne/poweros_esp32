@@ -35,7 +35,7 @@ const draw = @import("_draw.zig");
 /// last one closes. Without a `BeginDraw` to match, it does nothing.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
@@ -63,18 +63,18 @@ pub fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void {
     rp.draw_depth -= 1;
     const bm = rp.draw_held orelse return;
     if (rp.draw_depth == 0) rp.draw_held = null;
-    // Counted and taken with nothing else running: every task drawing on
-    // the buffer shares the count and the span, and a count lost to a
-    // task switch would leave the buffer gathering for ever.
+    // Counted and taken under the batches' lock: every task drawing on
+    // the buffer shares the count and the span, and a count lost to the
+    // other core would leave the buffer gathering for ever.
     const span = taken: {
-        gb.sys_base.Forbid();
-        defer gb.sys_base.Permit();
+        gb.sys_base.AcquireLock(&gb.draw_lock);
+        defer gb.sys_base.ReleaseLock(&gb.draw_lock);
         if (bm.held == 0) return;
         bm.held -= 1;
         if (bm.held != 0) return;
         break :taken draw.takeSpan(bm) orelse return;
     };
-    // Sent with the scheduler free again: a driver may wait on its bus.
+    // Sent with the lock let go: a driver may wait on its bus.
     _ = gb.rtg_base.RefreshBitMap(bm, span.top, span.end - span.top);
 }
 

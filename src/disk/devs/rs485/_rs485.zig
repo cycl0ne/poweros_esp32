@@ -73,6 +73,9 @@ pub const Line = extern struct {
 pub const RS485Base = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// The reads and the writes the task keeps, which AbortIO and a flush
+    /// take from too: a spinlock, held a few lines at a time.
+    lock: exec.Lock = .{},
     seg_list: ?*anyopaque = null,
     /// The one unit; its port is the task's queue.
     unit: exec.Unit = .{},

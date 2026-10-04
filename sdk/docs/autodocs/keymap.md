@@ -41,7 +41,7 @@ The keymap every call given null uses.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed. - Process: a Task
+- Waits: no. - Interrupts: no. - Locks: none needed. - Process: a Task
   will do.
 
 **OWNERSHIP**
@@ -90,7 +90,8 @@ The names are compared exactly.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: taken while the list is read.
+- Waits: no. - Interrupts: no. - Locks: none needed: the list is made
+  at init, from the ROM's keymaps, and never changes.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -150,7 +151,7 @@ IEQUALIFIER_LALT) or IEQUALIFIER_CONTROL.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed. - Process: a Task
+- Waits: no. - Interrupts: no. - Locks: none needed. - Process: a Task
   will do.
 
 **OWNERSHIP**
@@ -214,7 +215,7 @@ string, the cursor keys CSI sequences.
 **CONTEXT**
 
 - Waits: no. - Interrupts: no, but only because nothing has been checked
-  for it. - Forbid: not needed. - Process: a Task will do - it is called
+  for it. - Locks: none needed. - Process: a Task will do - it is called
   from input handlers.
 
 **OWNERSHIP**
@@ -268,7 +269,7 @@ It is a pointer store: the keymap is not copied or checked.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed; a word is written
+- Waits: no. - Interrupts: no. - Locks: none needed; a word is written
   whole. - Process: a Task will do.
 
 **OWNERSHIP**

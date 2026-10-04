@@ -60,20 +60,24 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const sys = _telnet.telnetBase(dev).sys_base;
     const unit = _telnet.unitOf(io);
-    sys.Forbid();
-    for ([_]*exec.List{ &unit.unit.msg_port.msg_list, &unit.reads }) |list| {
-        var it = list.iterator();
-        while (it.next()) |node| {
-            const msg: *exec.Message = @fieldParentPtr("node", node);
-            if (&_telnet.requestOf(msg).req != io) continue;
-            sys.Remove(node);
-            sys.Permit();
-            io.err = exec.IOERR_ABORTED;
-            sys.ReplyIO(io);
-            return 0;
-        }
+    // Not taken by the task yet: off its port, under the port's own lock.
+    if (sys.RemoveMsg(&unit.unit.msg_port, &io.message)) {
+        io.err = exec.IOERR_ABORTED;
+        sys.ReplyIO(io);
+        return 0;
     }
-    sys.Permit();
+    sys.AcquireLock(&unit.lock);
+    var it = unit.reads.iterator();
+    while (it.next()) |node| {
+        const msg: *exec.Message = @fieldParentPtr("node", node);
+        if (&_telnet.requestOf(msg).req != io) continue;
+        sys.Remove(node);
+        sys.ReleaseLock(&unit.lock);
+        io.err = exec.IOERR_ABORTED;
+        sys.ReplyIO(io);
+        return 0;
+    }
+    sys.ReleaseLock(&unit.lock);
     return -1;
 }
 
@@ -89,6 +93,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     unit.unit.msg_port = .{ .flags = exec.PA_IGNORE };
     unit.unit.msg_port.msg_list.init(.message);
     unit.reads.init(.message);
+    sys.InitLock(&unit.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     const stack = sys.AllocVec(stack_size, exec.MEMF_CLEAR) orelse {
         sys.FreeVec(memory);
         return exec.IOERR_OPENFAIL;
@@ -112,19 +117,33 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
 }
 
 /// The task started, or told to quit, and waited for: until it has the
-/// socket, or until it is gone.
+/// socket, or until it is gone. Gone is exec's to say (SetTaskEndMsg): it
+/// replies a message once nothing runs on the task's stack any more, so
+/// the stack and the unit may be freed at once.
 fn runTask(sys: *ExecBase, unit: *Unit, quit: ?u32) bool {
-    const signal = sys.AllocSignal(-1);
-    if (signal < 0) return false;
-    defer sys.FreeSignal(signal);
-    unit.wait_signal = signal;
+    const port = sys.CreateMsgPort() orelse return false;
+    defer sys.DeleteMsgPort(port);
+    var ended: exec.Message = .{ .reply_port = port };
+    // The task's word that it is ready comes on the port's signal too.
+    unit.wait_signal = @intCast(port.sig_bit);
     unit.waiter = sys.FindTask(null);
-    if (quit) |mask| {
-        sys.Signal(&unit.task, mask);
-    } else {
-        _ = sys.AddTask(&unit.task, &unit_file.unitTask, null);
+    if (quit) |quit_mask| {
+        sys.SetTaskEndMsg(&unit.task, &ended);
+        sys.Signal(&unit.task, quit_mask);
+        while (sys.GetMsg(port) == null) _ = sys.Wait(port.sigMask());
+        return true;
     }
-    _ = sys.Wait(@as(u32, 1) << @intCast(signal));
+    // Told when it has the socket - or, should it fail, once it is gone:
+    // set before it runs, so its end cannot come first.
+    unit.task.end_msg = &ended;
+    _ = sys.AddTask(&unit.task, &unit_file.unitTask, null);
+    while (true) {
+        _ = sys.Wait(port.sigMask());
+        if (sys.GetMsg(port) != null) return true; // gone, without a socket
+        if (unit.socket >= 0) break;
+    }
+    // Running: its end is Close's to hear, with a message of Close's own.
+    sys.SetTaskEndMsg(&unit.task, null);
     return true;
 }
 

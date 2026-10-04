@@ -36,7 +36,7 @@ const TextFont = _text.TextFont;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads the font and nothing else.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

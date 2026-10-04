@@ -35,11 +35,13 @@ const Interrupt = sdk.exec.Interrupt;
 /// than emptying the machine on the first failed allocation.
 ///
 /// CONTEXT:
-/// - Waits: no. **The handler itself must not wait either**: it runs inside
-///   `AllocMem`'s Forbid, where waiting stops the machine.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here for the list. The handler is later *called* under
-///   Forbid, which is the constraint that matters.
+/// - Waits: for the memory handlers' semaphore while another task runs
+///   them. **The handler itself must not wait**: it runs inside an
+///   `AllocMem`, whose caller may hold anything - a library's lock in its
+///   Open vector, say. It tries what it needs and passes over what is
+///   busy.
+/// - Interrupts: no. It takes a semaphore.
+/// - Locks: takes the memory handlers' semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -67,7 +69,7 @@ const Interrupt = sdk.exec.Interrupt;
 /// ```
 pub fn AddMemHandler(base: *ExecBase, handler: *Interrupt) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_memhandlers);
+    defer sys.ReleaseSemaphore(&base.sem_memhandlers);
     sys.Enqueue(&base.mem_handlers, &handler.node);
 }

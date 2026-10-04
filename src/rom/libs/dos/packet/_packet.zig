@@ -111,7 +111,7 @@ pub const Result = struct { res1: isize, res2: i32, args: [7]isize };
 /// back.
 ///
 /// CONTEXT:
-/// - Waits: yes. Never under Forbid.
+/// - Waits: yes. Never with a spinlock held.
 pub fn exchange(sys: *ExecBase, port: *MsgPort, action: i32, args: [5]isize) ?Result {
     const proc = process.currentProcess(sys);
     const reply_port = if (proc) |p| &p.msg_port else sys.CreateMsgPort() orelse return null;

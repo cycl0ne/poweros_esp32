@@ -29,7 +29,7 @@ const FileHandle = dos.FileHandle;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It reads the running task.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Process; from a plain Task the answer is null and nothing
 ///   changes.
 ///

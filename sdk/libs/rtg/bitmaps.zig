@@ -129,8 +129,8 @@ pub const RtgBitMap = extern struct {
     /// past the last. `dirty_end` 0 means none. They are gathered here
     /// only while `held` is not 0; otherwise a row is handed on as it is
     /// written and these stay empty. graphics.library's alone: every task
-    /// drawing on the buffer shares them, so it changes them under Forbid
-    /// and clears them as it takes them to hand on.
+    /// drawing on the buffer shares them, so it changes them under its
+    /// batches' lock and clears them as it takes them to hand on.
     dirty_top: u32 = 0,
     dirty_end: u32 = 0,
     /// How many batches are open on this buffer (graphics.library's

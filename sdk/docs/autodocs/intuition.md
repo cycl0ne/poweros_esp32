@@ -187,7 +187,7 @@ be given the input, since the window's own do not take any.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -250,7 +250,7 @@ a screen the active window leaves shows its own title again.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -307,7 +307,7 @@ already on the list are left as they are.
 
 - Waits: for the class list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -373,7 +373,7 @@ that.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -439,7 +439,7 @@ and shown in turn with `ChangeScreenBuffer`, are double buffering.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -508,7 +508,7 @@ and with B as the right one.
 
 - Waits: for the answer, and for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: must not be held: it waits.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -574,7 +574,7 @@ with nothing to redraw it does nothing, and so does its EndRefresh.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -656,7 +656,7 @@ which is where a cancel goes.
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do. A process has its IoErr set: 0 when the
   requester opened, `ERROR_NO_FREE_STORE` when it did not.
 
@@ -733,7 +733,7 @@ places give way to the requester's own look.
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -812,7 +812,7 @@ shows the buffer when it is brought forward.
 - Waits: for the screen list's semaphore, and for the display's next
   frame - which paces a program drawing a frame at a time to the display.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -880,7 +880,7 @@ Whatever the change uncovered is repaired.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -938,7 +938,7 @@ the menu button is two presses of it, as for any window.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -997,7 +997,7 @@ with no strip is left as it is.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1058,7 +1058,7 @@ memory for another screen.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no; it frees memory.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1118,7 +1118,7 @@ may be the last the screen's owner is waiting for.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1179,7 +1179,7 @@ ends here.
 
 - Waits: whatever the class does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1259,7 +1259,7 @@ Nothing is placed: `LayoutMenusA` does that.
 
 - Waits: no; it allocates.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1324,7 +1324,7 @@ second behind; before any event it is 0.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1386,7 +1386,7 @@ it is answered.
 
 - Waits: for the answer, and for an alert already up.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; not intuition's input task.
 
 **OWNERSHIP**
@@ -1448,7 +1448,7 @@ bar flashes.
 
 - Waits: for the screen list's semaphore, and a tenth of a second.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1504,7 +1504,7 @@ it had the object hold and passes it up; rootclass frees the memory.
 
 - Waits: whatever its classes do.
 - Interrupts: no; it frees memory.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1575,7 +1575,7 @@ while intuition's input task is sending the same gadget one.
 - Waits: for the screen list's semaphore, and whatever the method
   waits for - a drawing one for the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1638,7 +1638,7 @@ the first is not a double-click.
 
 - Waits: no.
 - Interrupts: yes: it reads two numbers of the base.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1705,7 +1705,7 @@ one, draws nothing.
 - Waits: no, beyond what the RastPort's layer asks of a caller - hold
   it, as for any drawing in a window.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1772,7 +1772,7 @@ the image's own class.
 
 - Waits: whatever the image's class does; imageclass does not.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1838,7 +1838,7 @@ is the one that answers.
 
 - Waits: whatever the image's class does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1936,7 +1936,7 @@ The RastPort's pens, draw mode and font are put back as they were.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2012,7 +2012,7 @@ returns.
 
 - Waits: until it is answered.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2073,7 +2073,7 @@ Drawing reaches the whole window again.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2135,7 +2135,7 @@ not up in this window is left alone.
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2195,7 +2195,7 @@ the RastPort's own background pen.
 
 - Waits: whatever the image's class does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2250,7 +2250,7 @@ It looks only at the public list; a private class is never found.
 
 - Waits: for the class list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2312,7 +2312,7 @@ count comes down.
 
 - Waits: for the class list's semaphore.
 - Interrupts: no; it frees memory.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2371,7 +2371,7 @@ never copied.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2427,7 +2427,7 @@ screen shows its bar and windows again. A buffer made with
 - Waits: for the screen list's semaphore, and for the display's next
   frame when the buffer was shown.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2484,7 +2484,7 @@ caller changing.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed.
+- Waits: no. - Interrupts: no. - Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2542,7 +2542,7 @@ window `BuildEasyRequestArgs` did not open is left alone.
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2606,7 +2606,7 @@ worked out against that room.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do; a class calls it from its dispatcher.
 
 **OWNERSHIP**
@@ -2668,7 +2668,7 @@ when none did.
 
 - Waits: whatever its classes do.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2731,7 +2731,7 @@ style is the default when none is set: `IPREFS_Style` with null.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2787,7 +2787,7 @@ holds, to tell whether that one is the default.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2847,8 +2847,8 @@ one with `ModifyIDCMP`, and loses it with `ModifyIDCMP(window, 0)`.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed; only the window's own program
-  changes its port, through `ModifyIDCMP` and `CloseWindow`.
+- Locks: none needed; only the window's own program changes its port,
+  through `ModifyIDCMP` and `CloseWindow`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2918,7 +2918,7 @@ as `OpenSystemFont` opens it.
 
 - Waits: for a font asked for, while another task sets the fonts.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2989,7 +2989,7 @@ and where to draw.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3046,7 +3046,7 @@ The screen's own, not a copy: every caller sees the same pens.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed.
+- Waits: no. - Interrupts: no. - Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3124,7 +3124,7 @@ not laid on it.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3189,7 +3189,7 @@ inside the border widths of its RastPort.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: not needed.
+- Waits: no. - Interrupts: no. - Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3254,7 +3254,7 @@ IDCMP asks for IDCMP_GADGETHELP hears it.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3313,7 +3313,7 @@ fields intuition.library keeps in it set.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3375,7 +3375,7 @@ nothing in particular.
 
 - Waits: no.
 - Interrupts: no: it allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3441,7 +3441,7 @@ strip walked to that menu, item and subitem. Nothing is changed.
 
 - Waits: no.
 - Interrupts: no: the strip is the caller's, and a task's.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3508,7 +3508,7 @@ is taken to start at the bar's left and may be as narrow as its items.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3579,7 +3579,7 @@ still to fit on the screen.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3646,7 +3646,7 @@ ends.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3705,7 +3705,7 @@ The same task may take it again inside; each take needs its release.
 
 - Waits: yes, for another task that holds it.
 - Interrupts: no.
-- Forbid: must not be held - it may wait.
+- Locks: no spinlock may be held - it may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3767,7 +3767,7 @@ handled under the same semaphore.
 - Waits: yes, for whoever holds the screens - another program, or
   intuition's own input task.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3836,7 +3836,7 @@ nothing. A screen its owner has not yet opened to visitors with
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3895,7 +3895,7 @@ and how many visitors it has.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; while it holds the list it must not wait for
   anything that opens, closes or draws on a screen.
 
@@ -3975,7 +3975,7 @@ while this class exists.
 
 - Waits: for the class list's semaphore.
 - Interrupts: no; it allocates.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4035,7 +4035,7 @@ to anything, the window gets a port, made for the calling task.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4101,7 +4101,7 @@ false}` does not move, nor does an exclusive one.
 - Waits: for the screen list's semaphore, and for the display to take
   the new picture up at its next frame.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4160,7 +4160,7 @@ Nothing.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4222,7 +4222,7 @@ other window, and an ordinary one in front of every backdrop window.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4289,7 +4289,7 @@ from being freed while that runs.
 - Waits: for the class list's semaphore when finding by name; beyond
   that, whatever the classes do.
 - Interrupts: no; it allocates.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do, unless a class says otherwise.
 
 **OWNERSHIP**
@@ -4352,7 +4352,7 @@ call. This is the only way to read a list objects were put on with
 
 - Waits: no.
 - Interrupts: no; the list is the caller's to guard.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4411,7 +4411,7 @@ first. Private screens are named too.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4474,7 +4474,7 @@ window's own RastPort: its backfill hook comes with it.
 
 - Waits: for the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4543,7 +4543,7 @@ Only this gadget is drawn.
 
 - Waits: for the screen list's semaphore and the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4601,7 +4601,7 @@ window with no strip, changes nothing.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4667,7 +4667,7 @@ Only this gadget is drawn.
 
 - Waits: for the screen list's semaphore and the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4725,7 +4725,7 @@ window with no strip, changes nothing.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4793,7 +4793,7 @@ way they cover each other. Nothing else is drawn.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no; it allocates.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4862,7 +4862,7 @@ them asks for the same.
 
 - Waits: yes, while the fonts are being changed.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4939,7 +4939,7 @@ calling task. With `WA_Activate` it becomes the active window.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5007,7 +5007,7 @@ box; a class with a shape that is not a box can answer by the shape.
 
 - Waits: whatever the image's class does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5077,7 +5077,7 @@ an empty one, is passed over and the runs after it are drawn.
 - Waits: no, beyond what the RastPort's layer asks of a caller - hold
   it, as for any drawing in a window.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5145,7 +5145,7 @@ the default public screen.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5211,7 +5211,7 @@ It never waits: it neither takes intuition's lock nor locks a layer.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: may be held; it takes Forbid for a moment itself.
+- Locks: takes intuition's mark lock, a spinlock, for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5284,7 +5284,7 @@ RastPort, its layer held.
 
 - Waits: for the screen list's semaphore and the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5341,7 +5341,7 @@ whether it is active - after a program has drawn over them.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5396,7 +5396,7 @@ The layer of the window whose RastPort it is is let go.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5450,7 +5450,7 @@ no longer be found by name.
 
 - Waits: for the class list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5511,7 +5511,7 @@ window until the program draws over it.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5569,7 +5569,7 @@ again.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5629,7 +5629,7 @@ too; how many may wait is `SetMouseQueue`'s.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5702,7 +5702,7 @@ with the window and stays in front of it.
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5772,7 +5772,7 @@ are checked or enabled.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5834,7 +5834,7 @@ a key that flips between the two.
 - Waits: for the screen list's semaphore, and for the display to take
   the new picture up at the next frame.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5902,7 +5902,7 @@ exclusive one stays at the top.
 - Waits: for the screen list's semaphore, and for the display to take
   the new picture up at its next frame.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5966,7 +5966,7 @@ brought forward again.
 - Waits: for the screen list's semaphore, and for the display to take
   the new picture up at the next frame.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6025,7 +6025,7 @@ whatever they had; the active window stays the one it was.
 - Waits: for the screen list's semaphore, and for the display to take
   the new picture up at the next frame.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6090,7 +6090,7 @@ the background pen.
 
 - Waits: for the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6149,7 +6149,7 @@ of, which passes on to its superclass what it does not handle.
 
 - Waits: whatever the class does.
 - Interrupts: no, unless a class says a method is safe there.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do, unless a class says otherwise.
 
 **OWNERSHIP**
@@ -6212,7 +6212,7 @@ lets the classes above it do their part first.
 
 - Waits: whatever the superclass does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6272,7 +6272,7 @@ drawing again, as its class decides.
 
 - Waits: whatever its classes do.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6338,7 +6338,7 @@ the double-click time, or moved away, is the menus as usual.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6398,7 +6398,7 @@ being the default when it closes or goes private.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6460,7 +6460,7 @@ leaves alone, with the same object and message, through
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do. The hook is called on intuition's input
   task: it must not wait, nor draw.
 
@@ -6525,7 +6525,7 @@ without it showing.
 
 - Waits: for the screen list's semaphore and the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6594,7 +6594,7 @@ IDCMP_MENUPICK `MENUNULL`.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6658,7 +6658,7 @@ stay. It is what `WA_MouseQueue` sets when the window opens.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6739,7 +6739,7 @@ reads them again and draws it anew.
 - Waits: yes - for the fonts, the screen list and the layers it draws
   in.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6802,7 +6802,7 @@ the default one, brings that screen to the front.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6875,7 +6875,7 @@ program draws itself, which the paint has cleared.
 
 - Waits: yes - for intuition's lock, and for the layers it draws in.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6953,8 +6953,8 @@ that listens for `IDCMP_NEWPREFS` hears it, for what it draws itself.
 
 - Waits: yes - for intuition's lock, and for the layers it draws in.
 - Interrupts: no.
-- Forbid: must not be held. The style is changed under a Forbid of the
-  call's own.
+- Locks: no spinlock may be held. The style is put in place under
+  intuition's look lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7043,7 +7043,7 @@ to draw again. A screen already open keeps the font it opened with.
 
 - Waits: yes, while another task reads the fonts.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7118,7 +7118,7 @@ no mouse the call changes what a mouse would show, and nothing else.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7188,7 +7188,7 @@ the next time it is activated.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7250,7 +7250,7 @@ front of one that is not. A screen without a bar is left as it is.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7309,7 +7309,7 @@ and its screen.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7383,7 +7383,7 @@ as it did - and follows whatever style its screen or the gadget has.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7454,7 +7454,7 @@ rightmost. Any other key is passed over.
 
 - Waits: with `wait_input`, until the window has a message.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7529,7 +7529,7 @@ first.
 
 - Waits: for the answer or the time, and for an alert already up.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; not intuition's input task, whose events
   answer it.
 
@@ -7587,7 +7587,7 @@ One release for each `LockClassList`.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do; the task that took it.
 
 **OWNERSHIP**
@@ -7644,7 +7644,7 @@ twice unlocks twice.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that called `LockIBase`.
 
 **OWNERSHIP**
@@ -7704,7 +7704,7 @@ One lock fewer. A screen with none can close, and its owner is sent
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7761,7 +7761,7 @@ one of these.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do; the one that locked the list.
 
 **OWNERSHIP**
@@ -7823,7 +7823,7 @@ it answers. A window without a port waits for `others` alone.
 
 - Waits: yes, unless a message is already there.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; it must be the task the window's port
   signals, the one that opened the window or last gave it a port.
 
@@ -7898,7 +7898,7 @@ within its screen whatever the maximum says.
 
 - Waits: for the screen list's semaphore.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7954,7 +7954,7 @@ uncovers of the others is repaired.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8011,7 +8011,7 @@ repaired if it is a simple-refresh window.
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8075,7 +8075,7 @@ window's limits and its screen, and the window is told
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

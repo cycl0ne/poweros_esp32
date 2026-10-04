@@ -35,7 +35,7 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no, but only because nothing has been checked
-///   for it. - Forbid: not needed. - Process: a Task will do - it is called
+///   for it. - Locks: none needed. - Process: a Task will do - it is called
 ///   from input handlers.
 ///
 /// OWNERSHIP:

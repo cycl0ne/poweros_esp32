@@ -30,7 +30,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe - it turns them off itself.
-/// - Forbid: not needed. Nothing that follows cares.
+/// - Locks: none needed. Nothing that follows cares.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

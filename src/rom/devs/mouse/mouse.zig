@@ -54,6 +54,10 @@ const poll_us = 10_000;
 const MouseBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// What the device's task and its callers share - the events queued,
+    /// the state, the reads waiting on the unit's list - kept under this:
+    /// a spinlock, held a few lines at a time and never across a wait.
+    lock: exec.Lock = .{},
     /// Reads waiting for the mouse are on its port's list.
     unit: exec.Unit,
     task: exec.Task = .{},
@@ -146,7 +150,8 @@ fn nowOf(p: qemu_rgb.Pointer) events.Now {
     return .{ .x = @intCast(p.x), .y = @intCast(p.y), .left = p.left, .right = p.right, .middle = p.middle };
 }
 
-/// Reads that were waiting, given what is queued now. Under Forbid.
+/// Reads that were waiting, given what is queued now. Under the device's
+/// lock.
 fn serveReads(mb: *MouseBase) void {
     const sys = mb.sys_base;
     const list = &mb.unit.msg_port.msg_list;
@@ -172,8 +177,8 @@ fn poll(mb: *MouseBase) void {
     mb.pointer_seq = p.seq;
     const time = now(mb);
     const sys = mb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&mb.lock);
+    defer sys.ReleaseLock(&mb.lock);
     var out: [4]InputEvent = undefined;
     const n = mb.mouse.change(nowOf(p), &out);
     for (out[0..n]) |*e| {
@@ -239,8 +244,8 @@ fn readEvent(mb: *MouseBase, io: *exec.IORequest) bool {
         return true;
     }
     const sys = mb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&mb.lock);
+    defer sys.ReleaseLock(&mb.lock);
     if (mb.queue.count > 0) {
         const into: [*]InputEvent = @ptrCast(@alignCast(std_io.data.?));
         const n = mb.queue.take(into[0..@intCast(std_io.length / each)]);
@@ -265,9 +270,9 @@ fn readState(mb: *MouseBase, io: *exec.IORequest) void {
         return;
     }
     const sys = mb.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&mb.lock);
     const state = mouse.MouseState{ .x = mb.mouse.x, .y = mb.mouse.y, .qualifier = mb.mouse.qualifier };
-    sys.Permit();
+    sys.ReleaseLock(&mb.lock);
     const into: *mouse.MouseState = @ptrCast(@alignCast(std_io.data.?));
     into.* = state;
     std_io.actual = @sizeOf(mouse.MouseState);
@@ -283,9 +288,9 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         mouse.MOUSE_READEVENT => if (!readEvent(mb, io)) return,
         mouse.MOUSE_READSTATE => readState(mb, io),
         exec.CMD_CLEAR => {
-            sys.Forbid();
+            sys.AcquireLock(&mb.lock);
             mb.queue.clear();
-            sys.Permit();
+            sys.ReleaseLock(&mb.lock);
         },
         exec.CMD_FLUSH => flush(mb),
         else => io.err = exec.IOERR_NOCMD,
@@ -296,8 +301,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 /// Every waiting read back, aborted.
 fn flush(mb: *MouseBase) void {
     const sys = mb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&mb.lock);
+    defer sys.ReleaseLock(&mb.lock);
     const list = &mb.unit.msg_port.msg_list;
     while (list.head) |node| {
         if (node.succ == null) break;
@@ -312,8 +317,8 @@ fn flush(mb: *MouseBase) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const mb = mouseBase(dev);
     const sys = mb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&mb.lock);
+    defer sys.ReleaseLock(&mb.lock);
     if (io.flags & exec.IOF_QUEUED == 0) return -1;
     sys.Remove(&io.message.node);
     io.flags &= ~exec.IOF_QUEUED;
@@ -355,6 +360,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     dev.revision = DEVICE_REVISION;
     const mb = mouseBase(dev);
     mb.sys_base = sys_base;
+    sys_base.InitLock(&mb.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     mb.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     mb.unit.msg_port.msg_list.init(.message);
     mb.mouse = .{};

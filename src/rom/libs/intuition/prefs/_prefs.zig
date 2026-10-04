@@ -57,9 +57,9 @@ pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
                 if (born) {
                     into.* = _screen.default_pens;
                 } else {
-                    ib.sys_base.Forbid();
+                    ib.sys_base.AcquireLock(&ib.look_lock);
                     into.* = ib.system_pens;
-                    ib.sys_base.Permit();
+                    ib.sys_base.ReleaseLock(&ib.look_lock);
                 }
             },
             else => continue,

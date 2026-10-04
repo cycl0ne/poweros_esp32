@@ -33,7 +33,7 @@ const Window = @import("_window.zig").Window;
 /// CONTEXT:
 /// - Waits: yes, unless a message is already there.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; it must be the task the window's port
 ///   signals, the one that opened the window or last gave it a port.
 ///

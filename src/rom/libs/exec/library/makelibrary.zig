@@ -56,7 +56,7 @@ const InitFn = sdk.exec.InitFn;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It allocates, and `init_fn` may do anything.
-/// - Forbid: not needed, and not taken here.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do, unless `init_fn` needs more.
 ///
 /// OWNERSHIP:

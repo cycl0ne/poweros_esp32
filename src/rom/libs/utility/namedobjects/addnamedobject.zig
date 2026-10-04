@@ -37,8 +37,7 @@ const Object = _namedobjects.Object;
 /// CONTEXT:
 /// - Waits: yes, while another task holds the name space's semaphore.
 /// - Interrupts: no. It may wait.
-/// - Forbid: must not be relied on across it: waiting for the semaphore
-///   breaks it.
+/// - Locks: takes the name space's semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

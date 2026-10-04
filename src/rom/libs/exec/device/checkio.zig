@@ -31,7 +31,7 @@ const IORequest = sdk.exec.IORequest;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads two fields.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

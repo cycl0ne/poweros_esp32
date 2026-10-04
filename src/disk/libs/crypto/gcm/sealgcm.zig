@@ -39,7 +39,7 @@ const _gcm = @import("_gcm.zig");
 /// - Waits: yes, for the AES engine while another task has it; the
 ///   engine is held for the whole message.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

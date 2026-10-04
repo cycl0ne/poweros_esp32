@@ -92,6 +92,10 @@ const panel_poll_us: u32 = 10_000;
 const TouchBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// What the device's task and its callers share - the events queued,
+    /// the state, the reads waiting on the unit's list - kept under this:
+    /// a spinlock, held a few lines at a time and never across a wait.
+    lock: exec.Lock = .{},
     /// What the board's touch part says, read at init: which controller,
     /// on which I2C unit and at which address, its interrupt pad, its
     /// reset line, and how the screen is turned from its glass.
@@ -531,7 +535,8 @@ fn giveBack(tb: *TouchBase) void {
     tb.port = null;
 }
 
-/// Reads that were waiting, given what is queued now. Under Forbid.
+/// Reads that were waiting, given what is queued now. Under the device's
+/// lock.
 fn serveReads(tb: *TouchBase) void {
     const sys = tb.sys_base;
     const list = &tb.unit.msg_port.msg_list;
@@ -614,8 +619,8 @@ fn report(tb: *TouchBase, contacts: []const touch.TouchContact) void {
     const time = now(tb);
 
     const sys = tb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&tb.lock);
+    defer sys.ReleaseLock(&tb.lock);
     const old = tb.state.contacts[0..tb.state.count];
     const changed = _touch.diff(old, contacts, &events);
     for (events[0..changed]) |*e| {
@@ -711,8 +716,8 @@ fn readEvent(tb: *TouchBase, io: *exec.IORequest) bool {
         return true;
     }
     const sys = tb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&tb.lock);
+    defer sys.ReleaseLock(&tb.lock);
     if (tb.queue.count > 0) {
         const into: [*]touch.TouchEvent = @ptrCast(@alignCast(std_io.data.?));
         const n = tb.queue.take(into[0..@intCast(std_io.length / each)]);
@@ -744,9 +749,9 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             } else if (std_io.length < @sizeOf(touch.TouchState)) {
                 io.err = exec.IOERR_BADLENGTH;
             } else {
-                sys.Forbid();
+                sys.AcquireLock(&tb.lock);
                 @as(*touch.TouchState, @ptrCast(@alignCast(std_io.data.?))).* = tb.state;
-                sys.Permit();
+                sys.ReleaseLock(&tb.lock);
                 std_io.actual = @sizeOf(touch.TouchState);
             }
         },
@@ -762,9 +767,9 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             }
         },
         exec.CMD_CLEAR => {
-            sys.Forbid();
+            sys.AcquireLock(&tb.lock);
             tb.queue.clear();
-            sys.Permit();
+            sys.ReleaseLock(&tb.lock);
         },
         exec.CMD_FLUSH => flush(tb),
         else => io.err = exec.IOERR_NOCMD,
@@ -775,8 +780,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 /// Every waiting read back, aborted.
 fn flush(tb: *TouchBase) void {
     const sys = tb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&tb.lock);
+    defer sys.ReleaseLock(&tb.lock);
     const list = &tb.unit.msg_port.msg_list;
     while (list.head) |node| {
         if (node.succ == null) break;
@@ -791,8 +796,8 @@ fn flush(tb: *TouchBase) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const tb = touchBase(dev);
     const sys = tb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&tb.lock);
+    defer sys.ReleaseLock(&tb.lock);
     if (io.flags & exec.IOF_QUEUED == 0) return -1;
     sys.Remove(&io.message.node);
     io.flags &= ~exec.IOF_QUEUED;
@@ -835,6 +840,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     dev.revision = DEVICE_REVISION;
     const tb = touchBase(dev);
     tb.sys_base = sys_base;
+    sys_base.InitLock(&tb.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     tb.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     tb.unit.msg_port.msg_list.init(.message);
     tb.int = .{

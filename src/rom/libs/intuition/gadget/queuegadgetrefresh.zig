@@ -36,7 +36,7 @@ const _input = @import("../input/_input.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: may be held; it takes Forbid for a moment itself.
+/// - Locks: takes intuition's mark lock, a spinlock, for a moment.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

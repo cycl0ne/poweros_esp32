@@ -34,7 +34,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; a process gets IoErr().
 ///   With a null lock, a plain task has no file system and gets
 /// ERROR_DEVICE_NOT_MOUNTED.

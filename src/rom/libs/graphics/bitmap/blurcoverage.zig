@@ -49,7 +49,7 @@ pub const radius_max: u32 = 64;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. A large area is a great deal of work.
-/// - Forbid: not held and not wanted.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

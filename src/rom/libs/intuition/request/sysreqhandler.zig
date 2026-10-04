@@ -49,7 +49,7 @@ const false_key = 'B';
 /// CONTEXT:
 /// - Waits: with `wait_input`, until the window has a message.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

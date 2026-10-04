@@ -23,8 +23,8 @@ const Deallocate = @import("deallocate.zig").Deallocate;
 /// SINCE: 1.0. LVO -100.
 ///
 /// INPUTS:
-/// - `mh` - the region to take from. The caller's, or one on the system
-///   list with the caller holding Forbid.
+/// - `mh` - the region to take from. The caller's own; one on the system
+///   list is AllocMem's.
 /// - `byte_size` - bytes wanted. Rounded up to `MEM_BLOCKSIZE`, so the
 ///   block that is actually spent may be larger than what was asked for.
 ///
@@ -36,17 +36,17 @@ const Deallocate = @import("deallocate.zig").Deallocate;
 /// First fit: the first free chunk that is big enough, and the block comes
 /// off its start. What is left over stays a chunk in the chain.
 ///
-/// It takes no Forbid, on purpose. Keeping others away from `mh` is the
+/// It takes no lock, on purpose. Keeping others away from `mh` is the
 /// caller's job, which is what lets a pool use the same code on a puddle
-/// nobody else can see - and what makes it the wrong call to reach for on a
-/// system region.
+/// under the pool's lock - and what makes it the wrong call to reach for on
+/// a system region, whose lock is exec's own.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: only on a region the interrupt owns outright. On anything
 ///   a task may be allocating from, no.
-/// - Forbid: not taken here. The caller's, and needed for any region on the
-///   system list.
+/// - Locks: none taken; keeping others away from the region is the caller's own
+///   lock's job.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

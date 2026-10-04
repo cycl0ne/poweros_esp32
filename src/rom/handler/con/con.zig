@@ -823,9 +823,17 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         // no Open reaches this process from here on.
         if (h.dying != null) {
             if (node) |n| {
-                sb.Forbid();
+                // Under the DosList's lock, only tried: its holder may be
+                // waiting for an answer from this very handler - Info asks
+                // every one - so a try that fails is made again a tick
+                // later, after the packets that came meanwhile.
+                const flags = dos.LDF_DEVICES | dos.LDF_WRITE;
+                if (dl.AttemptLockDosList(flags) == null) {
+                    dl.Delay(1);
+                    continue;
+                }
                 if (n.task == &me.msg_port) n.task = null;
-                sb.Permit();
+                dl.UnLockDosList(flags);
             }
             break;
         }

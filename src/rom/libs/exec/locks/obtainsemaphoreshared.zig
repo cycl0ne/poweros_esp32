@@ -40,8 +40,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: yes, whenever someone holds it exclusively.
 /// - Interrupts: no. It waits.
-/// - Forbid: may be held, and is broken by the waiting, as with
-///   `ObtainSemaphore`.
+/// - Locks: takes exec's semaphore lock while it looks; no spinlock may be
+///   held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

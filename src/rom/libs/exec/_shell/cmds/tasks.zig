@@ -4,8 +4,7 @@
 //! dispatched and idled.
 //!
 //! The lists are copied out under Disable - it keeps them still on both
-//! cores, which Forbid does not - and printed after, so the output never
-//! holds them.
+//! cores - and printed after, so the output never holds them.
 
 const sdk = @import("sdk");
 const exec = @import("../../exec.zig");

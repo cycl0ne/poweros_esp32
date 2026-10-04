@@ -34,7 +34,7 @@ const Hook = sdk.utility.Hook;
 /// CONTEXT:
 /// - Waits: only if the hook's function does.
 /// - Interrupts: as far as the hook's function allows.
-/// - Forbid: not taken; the hook's function decides what it needs.
+/// - Locks: none taken; the hook's function decides what it needs.
 /// - Process: whatever the hook's function needs.
 ///
 /// OWNERSHIP:

@@ -29,7 +29,7 @@ const _handle = @import("_handle.zig");
 /// CONTEXT:
 /// - Waits: yes, CloseDevice may.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: the task that opened the handle.
 ///
 /// OWNERSHIP:

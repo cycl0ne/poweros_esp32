@@ -37,8 +37,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///   being reported.
 /// - Interrupts: safe, and it is reached from one - a CPU exception ends
 ///   here when no trap code takes it.
-/// - Forbid: not needed, and not taken. It cannot be, since what is broken
-///   may be the scheduler.
+/// - Locks: none taken. It cannot take any, since what is broken may be the
+///   scheduler.
 /// - Process: a Task will do. It must work with no task at all, since it is
 ///   reached before there are any.
 ///

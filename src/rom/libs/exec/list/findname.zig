@@ -24,8 +24,8 @@ const NewList = @import("newlist.zig").NewList;
 /// SINCE: 1.0. LVO -48.
 ///
 /// INPUTS:
-/// - `list` - the list to walk. Any exec list; the system's own are reached
-///   with `ExecList`.
+/// - `list` - the list to walk. Any exec list; the system's own are reached,
+///   locked, with `LockExecList`.
 /// - `name` - what to match. Compared exactly, case included.
 ///
 /// RESULT:
@@ -45,8 +45,8 @@ const NewList = @import("newlist.zig").NewList;
 /// - Waits: no.
 /// - Interrupts: safe in itself. On a system list, only if the caller can
 ///   be sure nothing is changing it, which from an interrupt it cannot.
-/// - Forbid: not taken here, and needed by the caller for any list another
-///   task may change - which is every list exec owns.
+/// - Locks: none taken here; the caller holds whatever guards the list - for
+///   exec's own, `LockExecList` takes it.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -61,13 +61,13 @@ const NewList = @import("newlist.zig").NewList;
 /// None known.
 ///
 /// SEE ALSO:
-/// `Enqueue`, `ExecList`, `FindPort`, `FindSemaphore`
+/// `Enqueue`, `LockExecList`, `FindPort`, `FindSemaphore`
 ///
 /// EXAMPLES:
 /// ```zig
-/// sys.Forbid();
-/// defer sys.Permit();
-/// const node = sys.FindName(sys.ExecList(EXECLIST_DEVICE).?, "timer.device");
+/// const devices = sys.LockExecList(EXECLIST_DEVICES).?;
+/// const found = sys.FindName(devices, "timer.device") != null;
+/// sys.UnlockExecList(EXECLIST_DEVICES);
 /// ```
 pub fn FindName(_: *ExecBase, list: *List, name: [*:0]const u8) ?*Node {
     var it = list.iterator();
@@ -82,7 +82,7 @@ pub fn FindName(_: *ExecBase, list: *List, name: [*:0]const u8) ?*Node {
 ///
 /// INPUTS:
 /// - `left`, `right` - the names to compare.
-fn sameName(left: [*:0]const u8, right: [*:0]const u8) bool {
+pub fn sameName(left: [*:0]const u8, right: [*:0]const u8) bool {
     var index: usize = 0;
     while (left[index] == right[index]) : (index += 1) {
         if (left[index] == 0) return true;

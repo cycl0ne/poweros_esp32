@@ -35,8 +35,8 @@ const Task = sdk.exec.Task;
 /// - Waits: no.
 /// - Interrupts: the null case only, and even then the answer is whichever
 ///   task was interrupted. A named search takes Disable.
-/// - Forbid: not needed; Disable is taken here, since the task lists are
-///   what an interrupt's switch touches.
+/// - Locks: takes Disable, since the task lists are what an interrupt's switch
+///   touches.
 /// - Process: a Task will do. `FindTask(null)` is also how code finds out
 ///   whether it is a task or a process, from the node's type.
 ///

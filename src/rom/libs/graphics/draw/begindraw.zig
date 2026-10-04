@@ -45,7 +45,7 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 /// this does nothing for it.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
@@ -55,9 +55,8 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 ///
 /// BUGS:
 /// A `BeginDraw` whose `EndDraw` never comes leaves the buffer gathering
-/// for ever and nothing more reaches the display from it, as a `Forbid`
-/// with no `Permit` stops the machine scheduling. Pair them on every
-/// path out, an error return included.
+/// for ever and nothing more reaches the display from it. Pair them on
+/// every path out, an error return included.
 ///
 /// SEE ALSO:
 /// `EndDraw`, `rtg.RefreshBitMap`
@@ -91,10 +90,10 @@ pub fn BeginDraw(gb: *GraphicsBase, rp: *RastPort) void {
     }
     const bm = rp.draw_held orelse return;
     rp.draw_depth += 1;
-    // Every task drawing on the buffer counts here, so the count is
-    // raised with nothing else running.
-    gb.sys_base.Forbid();
-    defer gb.sys_base.Permit();
+    // Every task drawing on the buffer counts here, on either core: the
+    // count is raised under the batches' lock.
+    gb.sys_base.AcquireLock(&gb.draw_lock);
+    defer gb.sys_base.ReleaseLock(&gb.draw_lock);
     bm.held += 1;
 }
 

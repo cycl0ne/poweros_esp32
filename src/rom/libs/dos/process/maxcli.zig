@@ -25,7 +25,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// CONTEXT:
 /// - Waits: yes, for the CLI table's semaphore.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

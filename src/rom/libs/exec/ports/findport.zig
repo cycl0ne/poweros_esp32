@@ -23,15 +23,17 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// BEHAVIOR:
 /// **The port may go away as soon as the search is over**: this call
-/// looks under exec's port lock and lets it go. So the pointer is only
-/// trustworthy while the caller holds Forbid *across* both this and the
-/// `PutMsg` that follows - which is the usual shape and the reason the
-/// two are almost always written together.
+/// looks under exec's port lock and lets it go. So the pointer is only as
+/// good as the protocol of the program that made the port: one that takes
+/// it off the list first and answers what is on it before it goes is one
+/// a caller may find and then send to.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It takes exec's port lock for the search.
-/// - Forbid: needed by the caller around the call and the send.
+/// - Locks: takes exec's port lock for the search. The port may be removed the
+///   moment it is let go: the protocol of the program that made it is what
+///   keeps it there.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -45,8 +47,7 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// EXAMPLES:
 /// ```zig
-/// sys.Forbid();
-/// defer sys.Permit();
+/// // The server that made "my.port" keeps it there while it runs.
 /// const port = sys.FindPort("my.port") orelse return;
 /// sys.PutMsg(port, &msg);
 /// ```

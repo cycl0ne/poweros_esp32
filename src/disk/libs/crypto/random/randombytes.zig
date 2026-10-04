@@ -31,7 +31,7 @@ const _engine = @import("../engine/_engine.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

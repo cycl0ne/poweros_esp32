@@ -18,8 +18,8 @@ void CloseLibrary(?*exec.Library library)
 ?*exec.Library CreateLibrary(*const exec.LibraryInit desc)
 // Lists, task switching
 ?*exec.Node FindName(*exec.List list, [*:0]const u8 name)
-void Forbid()
-void Permit()
+// Two slots kept free, so the slots after them stay where they are.
+##reserve 2
 void Insert(*exec.List list, *exec.Node node, ?*exec.Node pred)
 void AddHead(*exec.List list, *exec.Node node)
 void AddTail(*exec.List list, *exec.Node node)
@@ -133,12 +133,13 @@ i32 NewStackRun(exec.StackFn code, ?*anyopaque arg, u32 stack_size)
 /// data bus needs CacheClearU before it is run.
 ?*anyopaque CodeAddress(*anyopaque address, u32 length)
 // Looking at exec
-/// One of exec's own lists (EXECLIST_*), or null for a number it has not
-/// got. It is exec's list, not a copy: hold Forbid while walking it - or
-/// Disable for the two task queues, which the scheduler moves from
-/// interrupts - and write nothing into it. The header itself never moves,
-/// so the answer stays good for as long as exec does.
-?*exec.List ExecList(u32 which)
+/// One of exec's own lists (EXECLIST_*) with its lock taken, or null (and
+/// nothing taken) for a number it has not got. It is exec's list, not a
+/// copy: read it, write nothing, and give it back with UnlockExecList. The
+/// libraries, devices, resources and memory handlers are under a semaphore,
+/// held shared; memory, ports and semaphores under a spinlock and the task
+/// queues under Disable, where nothing may wait - copy, then print.
+?*exec.List LockExecList(u32 which)
 /// What exec does when one interrupt number fires: the handler, the server
 /// chain and how often it has been dispatched. Null for a number this chip
 /// has not got. Read under Disable; the vector itself never moves.
@@ -225,4 +226,16 @@ u32 SetTaskAffinity(?*exec.Task task, u32 cores)
 /// clock: in tasks, idle and in interrupts. False for a core that is not
 /// running. A program reads twice and divides the differences.
 bool ReadCoreTimes(u32 core, *exec.CoreTimes times)
+/// Give back the lock LockExecList took on list `which`.
+void UnlockExecList(u32 which)
+/// Take a library or device off exec's list, from its own Expunge, with
+/// exec's library list locked around it. One not on it is left alone.
+void DetachLibrary(*exec.Library library)
+/// Have `msg` replied to its reply port once `task` (null: the caller)
+/// has ended and nothing runs on its stack any more - when its code may
+/// be unloaded. Null takes it back. Set before the task can end.
+void SetTaskEndMsg(?*exec.Task task, ?*exec.Message msg)
+/// Take `msg` off `port`, under the port's lock: false when it is not on
+/// it (taken by GetMsg already, or never put). What an AbortIO uses.
+bool RemoveMsg(*exec.MsgPort port, *exec.Message msg)
 ##end

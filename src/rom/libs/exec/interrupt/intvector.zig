@@ -24,9 +24,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// has fired - or null if the number is out of range.
 ///
 /// BEHAVIOR:
-/// The live vector, as `ExecList` hands back a live list. **Hold Disable**
-/// while reading it: this is state an interrupt itself changes, so Forbid
-/// is not enough.
+/// The live vector, as `LockExecList` hands back a live list. **Hold
+/// Disable** while reading it: this is state an interrupt itself changes,
+/// and Disable is the lock it is kept under.
 ///
 /// The count is raised whether or not anything is listening, so a source
 /// that fires while its driver is not being woken still shows here - which
@@ -35,7 +35,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not enough. Disable is what guards the vectors.
+/// - Locks: Disable is what guards the vectors.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -45,7 +45,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `SetIntVector`, `AddIntServer`, `ExecList`
+/// `SetIntVector`, `AddIntServer`, `LockExecList`
 ///
 /// EXAMPLES:
 /// ```zig

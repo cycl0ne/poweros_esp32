@@ -37,7 +37,7 @@ const _engine = @import("_engine.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It works on its arguments alone.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

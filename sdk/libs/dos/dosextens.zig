@@ -21,6 +21,7 @@ const FileInfoBlock = @import("dos.zig").FileInfoBlock;
 const InfoData = @import("dos.zig").InfoData;
 const ExAllControl = @import("exall.zig").ExAllControl;
 const Resident = @import("../exec/resident.zig").Resident;
+const Library = @import("../exec/libraries.zig").Library;
 
 const Message = ports.Message;
 const MsgPort = ports.MsgPort;
@@ -501,6 +502,9 @@ pub const Process = extern struct {
     /// that handler's code was loaded from a file. dos counts the
     /// processes running it, and the last one to end gives the code back.
     handler_node: ?*DosList = null,
+    /// NP_HoldLibrary: a library whose code the process runs, closed by
+    /// dos once that code has returned.
+    held_library: ?*Library = null,
 };
 
 /// dol_Type: what a DosList node is.

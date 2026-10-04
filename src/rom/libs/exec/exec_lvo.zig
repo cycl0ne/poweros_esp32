@@ -65,7 +65,11 @@ comptime {
 /// The files whose call carries its contract, above `pub fn <Name>`: every
 /// call of the table.
 const contract_files = [_][]const u8{
-    @embedFile("list/execlist.zig"),
+    @embedFile("list/lockexeclist.zig"),
+    @embedFile("list/unlockexeclist.zig"),
+    @embedFile("library/detachlibrary.zig"),
+    @embedFile("task/settaskendmsg.zig"),
+    @embedFile("ports/removemsg.zig"),
     @embedFile("interrupt/intvector.zig"),
     @embedFile("resident/resmodules.zig"),
     @embedFile("library/setramlib.zig"),
@@ -78,8 +82,6 @@ const contract_files = [_][]const u8{
     @embedFile("library/setfunction.zig"),
     @embedFile("library/createlibrary.zig"),
     @embedFile("list/findname.zig"),
-    @embedFile("task/forbid.zig"),
-    @embedFile("task/permit.zig"),
     @embedFile("list/insert.zig"),
     @embedFile("list/addhead.zig"),
     @embedFile("list/addtail.zig"),
@@ -193,6 +195,9 @@ const contract_files = [_][]const u8{
     @embedFile("memory/freepooled.zig"),
 };
 
+/// How many slots of the table are kept free.
+const reserved_slots = 2;
+
 /// exec.library's jump table, in slot order: the four standard vectors,
 /// then every call of the SDK's LVO.
 pub const exec_vectors = [_]*const anyopaque{
@@ -208,8 +213,8 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoSetFunction),
     vec(lvoCreateLibrary),
     vec(lvoFindName),
-    vec(lvoForbid),
-    vec(lvoPermit),
+    vec(reserved),
+    vec(reserved),
     vec(lvoInsert),
     vec(lvoAddHead),
     vec(lvoAddTail),
@@ -302,7 +307,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoCachePostDMA),
     vec(lvoNewStackRun),
     vec(lvoCodeAddress),
-    vec(lvoExecList),
+    vec(lvoLockExecList),
     vec(lvoIntVector),
     vec(lvoResModules),
     vec(lvoSetRamLib),
@@ -327,6 +332,10 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoSetTaskAffinity),
     vec(lvoCoreTask),
     vec(lvoReadCoreTimes),
+    vec(lvoUnlockExecList),
+    vec(lvoDetachLibrary),
+    vec(lvoSetTaskEndMsg),
+    vec(lvoRemoveMsg),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -364,13 +373,12 @@ fn lvoFindName(base: *ExecBase, list: *List, name: [*:0]const u8) callconv(.c) ?
     return exec.FindName(base, list, name);
 }
 
-fn lvoForbid(base: *ExecBase) callconv(.c) void {
-    exec.Forbid(base);
-}
-
-fn lvoPermit(base: *ExecBase) callconv(.c) void {
-    exec.Permit(base);
-}
+/// The slots kept free (`##reserve` in the `.fd`), so the slots after them
+/// stay where they are: each does nothing.
+///
+/// INPUTS:
+/// - `_` - exec's base, unused.
+fn reserved(_: *ExecBase) callconv(.c) void {}
 
 fn lvoInsert(base: *ExecBase, list: *List, node: *Node, pred: ?*Node) callconv(.c) void {
     exec.Insert(base, list, node, pred);
@@ -749,8 +757,12 @@ fn lvoCodeAddress(base: *ExecBase, address: *anyopaque, length: u32) callconv(.c
 
 // --- looking at the system --------------------------------------------------
 
-fn lvoExecList(base: *ExecBase, which: u32) callconv(.c) ?*List {
-    return exec.ExecList(base, which);
+fn lvoLockExecList(base: *ExecBase, which: u32) callconv(.c) ?*List {
+    return exec.LockExecList(base, which);
+}
+
+fn lvoUnlockExecList(base: *ExecBase, which: u32) callconv(.c) void {
+    exec.UnlockExecList(base, which);
 }
 
 fn lvoIntVector(base: *ExecBase, int_number: u32) callconv(.c) ?*IntVector {
@@ -849,32 +861,55 @@ fn lvoReadCoreTimes(base: *ExecBase, core: u32, times: *sdk.exec.CoreTimes) call
     return exec.ReadCoreTimes(base, core, times);
 }
 
+fn lvoDetachLibrary(base: *ExecBase, library: *Library) callconv(.c) void {
+    exec.DetachLibrary(base, library);
+}
+
+fn lvoSetTaskEndMsg(base: *ExecBase, task: ?*Task, msg: ?*Message) callconv(.c) void {
+    exec.SetTaskEndMsg(base, task, msg);
+}
+
+fn lvoRemoveMsg(base: *ExecBase, port: *MsgPort, msg: *Message) callconv(.c) bool {
+    return exec.RemoveMsg(base, port, msg);
+}
+
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = std.testing;
 
-test "ExecList hands back exec's own lists, and IntVector its own vectors" {
+test "LockExecList hands back exec's own lists, and IntVector its own vectors" {
     try exec.setUp();
     defer exec.deinit();
     const base = exec.SysBase;
 
     // Each number is the list it says it is, and it is exec's list, not a
     // copy: the addresses are the ones in the base.
-    try testing.expectEqual(&base.lib_list, lvoExecListFor(sdk.exec.EXECLIST_LIBRARIES).?);
-    try testing.expectEqual(&base.device_list, lvoExecListFor(sdk.exec.EXECLIST_DEVICES).?);
-    try testing.expectEqual(&base.resource_list, lvoExecListFor(sdk.exec.EXECLIST_RESOURCES).?);
-    try testing.expectEqual(&base.port_list, lvoExecListFor(sdk.exec.EXECLIST_PORTS).?);
-    try testing.expectEqual(&base.sem_list, lvoExecListFor(sdk.exec.EXECLIST_SEMAPHORES).?);
-    try testing.expectEqual(&base.mem_list, lvoExecListFor(sdk.exec.EXECLIST_MEMORY).?);
-    try testing.expectEqual(&base.task_ready, lvoExecListFor(sdk.exec.EXECLIST_TASK_READY).?);
-    try testing.expectEqual(&base.task_wait, lvoExecListFor(sdk.exec.EXECLIST_TASK_WAIT).?);
-    try testing.expectEqual(&base.mem_handlers, lvoExecListFor(sdk.exec.EXECLIST_MEM_HANDLERS).?);
+    try testing.expectEqual(&base.lib_list, lvoLockExecListFor(sdk.exec.EXECLIST_LIBRARIES).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_LIBRARIES);
+    try testing.expectEqual(&base.device_list, lvoLockExecListFor(sdk.exec.EXECLIST_DEVICES).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_DEVICES);
+    try testing.expectEqual(&base.resource_list, lvoLockExecListFor(sdk.exec.EXECLIST_RESOURCES).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_RESOURCES);
+    try testing.expectEqual(&base.port_list, lvoLockExecListFor(sdk.exec.EXECLIST_PORTS).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_PORTS);
+    try testing.expectEqual(&base.sem_list, lvoLockExecListFor(sdk.exec.EXECLIST_SEMAPHORES).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_SEMAPHORES);
+    try testing.expectEqual(&base.mem_list, lvoLockExecListFor(sdk.exec.EXECLIST_MEMORY).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_MEMORY);
+    try testing.expectEqual(&base.task_ready, lvoLockExecListFor(sdk.exec.EXECLIST_TASK_READY).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_TASK_READY);
+    try testing.expectEqual(&base.task_wait, lvoLockExecListFor(sdk.exec.EXECLIST_TASK_WAIT).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_TASK_WAIT);
+    try testing.expectEqual(&base.mem_handlers, lvoLockExecListFor(sdk.exec.EXECLIST_MEM_HANDLERS).?);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_MEM_HANDLERS);
     // A number it has not got is no list at all.
-    try testing.expect(lvoExecListFor(9999) == null);
+    try testing.expect(lvoLockExecListFor(9999) == null);
+    lvoUnlockExecList(base, 9999);
 
     // exec.library is on the list this call hands back, which is the whole
     // point of handing it back.
-    try testing.expect(exec.FindName(exec.SysBase, lvoExecListFor(sdk.exec.EXECLIST_LIBRARIES).?, exec.LIBRARY_NAME) != null);
+    try testing.expect(exec.FindName(exec.SysBase, lvoLockExecListFor(sdk.exec.EXECLIST_LIBRARIES).?, exec.LIBRARY_NAME) != null);
+    lvoUnlockExecList(base, sdk.exec.EXECLIST_LIBRARIES);
 
     // A vector per source, and nothing past the last.
     try testing.expect(lvoIntVector(base, 0) != null);
@@ -884,8 +919,8 @@ test "ExecList hands back exec's own lists, and IntVector its own vectors" {
 }
 
 /// The call as a program makes it, without a jump table to go through.
-fn lvoExecListFor(which: u32) ?*List {
-    return lvoExecList(exec.SysBase, which);
+fn lvoLockExecListFor(which: u32) ?*List {
+    return lvoLockExecList(exec.SysBase, which);
 }
 
 test "every wrapper hands its parameters on, in order, to the call it is named after" {
@@ -895,7 +930,8 @@ test "every wrapper hands its parameters on, in order, to the call it is named a
 }
 
 test "the vector table: every function of the SDK's LVO at its slot" {
-    try testing.expectEqual(sdk.exec.libraries.standard_vectors + @typeInfo(exec.LVO).@"struct".decls.len, exec_vectors.len);
+    // The two reserved slots are in the table but not in the LVO.
+    try testing.expectEqual(sdk.exec.libraries.standard_vectors + @typeInfo(exec.LVO).@"struct".decls.len + reserved_slots, exec_vectors.len);
     inline for (@typeInfo(exec.LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(exec.LVO, d.name), sdk.exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), exec_vectors[index]);

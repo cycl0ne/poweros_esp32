@@ -50,7 +50,7 @@ const RastPort = _draw.RastPort;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not wanted.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -43,10 +43,11 @@ const _board = @import("../board/_board.zig");
 /// Whether it is seen is ShowBoardPointer's business.
 ///
 /// CONTEXT:
-/// - Waits: no. A driver's pointer ops never wait.
+/// - Waits: for rtg's pointer lock while another task moves the pointer,
+///   and for a driver that sends the pointer's rows over a bus.
 /// - Interrupts: no. It allocates.
-/// - Forbid: taken while the driver changes images, so a move cannot come
-///   between.
+/// - Locks: takes rtg's pointer lock while the driver changes images, so a move
+///   cannot come between; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -84,17 +85,17 @@ pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
         break :blk converted.image;
     } else null;
 
-    sys.Forbid();
+    sys.ObtainSemaphore(&rb.pointer_lock);
     const code = set_pointer(board, made);
     if (code != err.RTGERR_OK) {
-        sys.Permit();
+        sys.ReleaseSemaphore(&rb.pointer_lock);
         if (made) |gone| sys.FreeVec(gone);
         return code;
     }
     const old = board.pointer;
     board.pointer = made;
     if (made) |now| move_pointer(board, board.pointer_x - @as(i32, @intCast(now.hot_x)), board.pointer_y - @as(i32, @intCast(now.hot_y)));
-    sys.Permit();
+    sys.ReleaseSemaphore(&rb.pointer_lock);
     // The driver has let go of the old one: set_pointer returned.
     if (old) |gone| sys.FreeVec(gone);
     return err.RTGERR_OK;

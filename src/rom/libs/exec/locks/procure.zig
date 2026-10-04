@@ -47,7 +47,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// - Waits: no. Not waiting is the whole point.
 /// - Interrupts: no. It takes exec's semaphore lock, and may reply a
 ///   message.
-/// - Forbid: may be held.
+/// - Locks: takes exec's semaphore lock for a moment.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -201,7 +201,7 @@ pub fn over(src: Pen, dst: Pen) Pen {
 /// - Waits: no.
 /// - Interrupts: it only writes the caller's buffer, but it is unbounded
 ///   work and has no business in one.
-/// - Forbid: not held. Nothing here is shared.
+/// - Locks: none needed. Nothing here is shared.
 /// - Process: a Task will do.
 ///
 /// INPUTS:
@@ -851,11 +851,11 @@ fn tell(gb: *GraphicsBase, bm: *RtgBitMap, y: u32, count: u32) void {
     const end = y + count;
     // The batch is the buffer's, so every task drawing on it changes these
     // fields, each under a layer lock of its own. Read, merged and written
-    // back with nothing else running, or a task set aside half way would
+    // back under the batches' lock, or a task on the other core would
     // write back a span that lost another's rows.
     const flushed: ?Span = gathered: {
-        gb.sys_base.Forbid();
-        defer gb.sys_base.Permit();
+        gb.sys_base.AcquireLock(&gb.draw_lock);
+        defer gb.sys_base.ReleaseLock(&gb.draw_lock);
         if (bm.held == 0) break :gathered .{ .top = y, .end = end };
         if (bm.dirty_end <= bm.dirty_top) {
             bm.dirty_top = y;
@@ -884,7 +884,7 @@ fn tell(gb: *GraphicsBase, bm: *RtgBitMap, y: u32, count: u32) void {
         bm.dirty_end = @max(bm.dirty_end, end);
         break :gathered null;
     };
-    // Sent with the scheduler free again: a driver may wait on its bus.
+    // Sent with the lock let go: a driver may wait on its bus.
     if (flushed) |gathered| _ = gb.rtg_base.RefreshBitMap(bm, gathered.top, gathered.end - gathered.top);
 }
 
@@ -893,7 +893,8 @@ pub const Span = struct { top: u32, end: u32 };
 
 /// The rows gathered on `bm`, taken out of it: read and cleared as one
 /// step, so rows another task gathers after this are left for it rather
-/// than wiped. Null when nothing is gathered. The caller holds Forbid.
+/// than wiped. Null when nothing is gathered. The caller holds the
+/// batches' lock (`GraphicsBase.draw_lock`).
 pub fn takeSpan(bm: *RtgBitMap) ?Span {
     if (bm.dirty_end <= bm.dirty_top) return null;
     const taken: Span = .{ .top = bm.dirty_top, .end = bm.dirty_end };

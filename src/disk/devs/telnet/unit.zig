@@ -10,9 +10,10 @@
 //! the peer back.
 //!
 //! **Its end.** CloseDevice signals it to quit. It answers what still
-//! waits as aborted, closes the socket and its library, and signals
-//! back under Forbid, which lasts until it is gone - so the unit and the
-//! stack it runs on can be freed at once.
+//! waits as aborted, closes the socket and its library, and ends; exec
+//! tells CloseDevice once it is gone (SetTaskEndSignal), so the unit and
+//! the stack it ran on can be freed at once. An Open that fails is told
+//! the same way.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -31,7 +32,7 @@ pub fn unitTask(sys: *ExecBase) callconv(.c) void {
     const port = &unit.unit.msg_port;
     const port_signal = sys.AllocSignal(-1);
     const quit_signal = sys.AllocSignal(-1);
-    if (port_signal < 0 or quit_signal < 0) return finish(sys, unit);
+    if (port_signal < 0 or quit_signal < 0) return;
     unit.quit_mask = @as(u32, 1) << @intCast(quit_signal);
     sys.Disable();
     port.sig_bit = @intCast(port_signal);
@@ -39,14 +40,14 @@ pub fn unitTask(sys: *ExecBase) callconv(.c) void {
     port.flags = exec.PA_SIGNAL;
     sys.Enable();
 
-    const lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return finish(sys, unit);
+    const lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return;
     const sb: *SocketBase = @ptrCast(lib);
     unit.socket_base = sb;
     unit.socket = sb.ObtainSocket(unit.id, bsd.PF_UNSPEC, bsd.SOCK_STREAM, 0);
     if (unit.socket < 0) {
         sys.CloseLibrary(lib);
         unit.socket_base = null;
-        return finish(sys, unit);
+        return;
     }
     var offer: filter_file.Reply = .{};
     unit.filter.offer(&offer);
@@ -78,21 +79,14 @@ pub fn unitTask(sys: *ExecBase) callconv(.c) void {
     unit.socket = -1;
     sys.CloseLibrary(lib);
     unit.socket_base = null;
-    finish(sys, unit);
 }
 
-/// Open is told the task is ready - or, with no socket, that it is not.
+/// Open is told the task is ready. A task that fails before it is ends,
+/// and Open hears of that from exec.
 fn started(sys: *ExecBase, unit: *Unit) void {
     const waiter = unit.waiter orelse return;
     unit.waiter = null;
     sys.Signal(waiter, @as(u32, 1) << @intCast(unit.wait_signal));
-}
-
-/// The end of the task: whoever waits for it told, under a Forbid that
-/// lasts until the task is gone.
-fn finish(sys: *ExecBase, unit: *Unit) void {
-    sys.Forbid();
-    started(sys, unit);
 }
 
 fn answer(sys: *ExecBase, io: *exec.IOStdReq, err: i8) void {
@@ -105,9 +99,9 @@ fn answer(sys: *ExecBase, io: *exec.IOStdReq, err: i8) void {
 fn take(sys: *ExecBase, unit: *Unit, io: *exec.IOStdReq) void {
     switch (io.req.command) {
         exec.CMD_READ => {
-            sys.Forbid();
+            sys.AcquireLock(&unit.lock);
             sys.AddTail(&unit.reads, &io.req.message.node);
-            sys.Permit();
+            sys.ReleaseLock(&unit.lock);
         },
         exec.CMD_WRITE => write(sys, unit, io),
         exec.CMD_FLUSH => {
@@ -120,9 +114,9 @@ fn take(sys: *ExecBase, unit: *Unit, io: *exec.IOStdReq) void {
 
 fn abortReads(sys: *ExecBase, unit: *Unit) void {
     while (true) {
-        sys.Forbid();
+        sys.AcquireLock(&unit.lock);
         const node = sys.RemHead(&unit.reads);
-        sys.Permit();
+        sys.ReleaseLock(&unit.lock);
         const waiting = node orelse return;
         const msg: *exec.Message = @fieldParentPtr("node", waiting);
         answer(sys, _telnet.requestOf(msg), exec.IOERR_ABORTED);
@@ -133,9 +127,9 @@ fn abortReads(sys: *ExecBase, unit: *Unit) void {
 /// connection has ended, with the end.
 fn serveReads(sys: *ExecBase, unit: *Unit) void {
     while (unit.data_length > 0 or unit.ended) {
-        sys.Forbid();
+        sys.AcquireLock(&unit.lock);
         const node = sys.RemHead(&unit.reads);
-        sys.Permit();
+        sys.ReleaseLock(&unit.lock);
         const waiting = node orelse return;
         const io = _telnet.requestOf(@fieldParentPtr("node", waiting));
         if (unit.data_length == 0) {

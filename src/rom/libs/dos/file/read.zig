@@ -41,7 +41,7 @@ const FileHandle = dos.FileHandle;
 /// CONTEXT:
 /// - Waits: yes: it sends the handler a packet and waits for the answer.
 /// - Interrupts: no. It waits.
-/// - Forbid: not taken, and never to be held around it: it waits.
+/// - Locks: none taken; no spinlock may be held around it: it waits.
 /// - Process: a Task will do; the answer comes back on a port of its own.
 ///
 /// OWNERSHIP:

@@ -19,9 +19,9 @@ pub const AN_KernelPanic: u32 = 0x0100_0100;
 /// (the SDK's panic handler, `sdk.exec.panic`).
 pub const AN_ProgramPanic: u32 = 0x0100_0101;
 /// A spinlock's rule broken (sdk/libs/exec/locks.zig): taken out of the
-/// lock order, a plain one taken in an interrupt, Wait called while one
-/// is held, or one released that the core does not hold. The text names
-/// the locks.
+/// lock order, a plain one taken in an interrupt, or one released that the
+/// core does not hold. The text names the locks. Wait called while one is
+/// held comes with `AT_DeadEnd`: the machine cannot go on from it.
 pub const AN_LockRule: u32 = 0x0100_0102;
 /// A spinlock taken again on the core that holds it: it would spin for
 /// good.

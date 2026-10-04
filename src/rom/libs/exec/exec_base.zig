@@ -47,8 +47,7 @@ pub inline fn coreId() u32 {
     return (prid >> 13) & 1;
 }
 
-/// What each core has of its own: the task it runs, its Forbid and
-/// Disable state, its scheduling flags and time slice, how deep it is in
+/// What each core has of its own: the task it runs, its Disable state, its scheduling flags and time slice, how deep it is in
 /// exceptions, its counts, and the spinlocks it holds. A task reads its
 /// core's state with the core's interrupts masked or in an exception, so
 /// that it is not moved to the other core between finding the state and
@@ -56,8 +55,6 @@ pub inline fn coreId() u32 {
 pub const CpuState = extern struct {
     /// ThisTask: the task running on this core.
     this_task: *Task = undefined,
-    /// TDNestCnt: Forbid() nesting, -1 when task switching is allowed.
-    tdn_nest_cnt: i8 = -1,
     /// IDNestCnt: Disable() nesting, -1 when interrupts are enabled.
     id_nest_cnt: i8 = -1,
     /// Exception nesting: the dispatcher runs only at the outermost
@@ -97,15 +94,13 @@ pub const CpuState = extern struct {
     /// How the system's interrupt lock fares on this core, in cycles, kept
     /// as the worst seen until `s3> cores reset`: the longest the core held
     /// it and the longest it waited for it, each with the code that took
-    /// it (1 for an exception); and the longest a task of it waited inside
-    /// Disable for Forbid. These are what make an interrupt late.
+    /// it (1 for an exception). These are what make an interrupt late.
     lock_held_max: u32 = 0,
     lock_held_where: usize = 0,
     lock_wait_max: u32 = 0,
     lock_wait_where: usize = 0,
     lock_taken_at: u32 = 0,
     lock_taker: usize = 0,
-    forbid_spin_max: u32 = 0,
     /// The core's task another core's RemTask is taking away, switched out
     /// at its next switch point; once it is, `stopped` until the next exit,
     /// which signals `stop_waiter`, the task taking it away.
@@ -164,18 +159,20 @@ pub const ExecBase = extern struct {
     /// ... and the ports: every port's message list and the public list;
     /// a LOCKF_INTERRUPT lock, since interrupts send and reply.
     lock_ports: sdk.exec.Lock = .{},
-    /// The system's two big locks, each the holding core and one or 0.
-    /// `disable_lock` is Disable's and the interrupt dispatch's: a core
-    /// holds it while one of its tasks is inside Disable or while it is in
-    /// an exception, so a Disable on one core holds off what interrupts do
-    /// on the other. `forbid_lock` is Forbid's: a core holds it while its
-    /// task is inside Forbid, so two Forbid sections never run at once.
+    /// exec's semaphores, for the lists whose holder runs other code: the
+    /// libraries, devices and resources (library/_library.zig) - each
+    /// library has a lock of its own besides, for its vectors - and the
+    /// memory handlers, which AllocMem runs when memory runs short.
+    sem_libraries: sdk.exec.SignalSemaphore = .{},
+    sem_memhandlers: sdk.exec.SignalSemaphore = .{},
+    /// The system's interrupt lock, the holding core and one or 0: Disable's
+    /// and the interrupt dispatch's. A core holds it while one of its tasks
+    /// is inside Disable or while it is in an exception, so a Disable on one
+    /// core holds off what interrupts do on the other.
     disable_lock: u32 = 0,
-    forbid_lock: u32 = 0,
-    /// A bit per core that waits for `forbid_lock`: a task of it in
-    /// Forbid, or a dispatcher that passed over a task inside Forbid. The
-    /// Permit that lets the lock go pokes each of them.
-    forbid_waiters: u32 = 0,
+    /// 0 until the kernel lets multitasking start (`startMultitasking`):
+    /// until then no core switches away from a running task.
+    multitasking: u32 = 0,
     /// How many cores are taking tasks, and whether core 1 takes any task
     /// rather than only those pinned to it. The kernel lets the second
     /// core share once the system has started.
@@ -190,7 +187,7 @@ pub const ExecBase = extern struct {
     cpus: [max_cores]CpuState = @splat(.{}),
 
     /// This core's own state. A task reads it with its interrupts masked,
-    /// or inside Forbid: otherwise it may be moved to the other core
+    /// or holding a spinlock: otherwise it may be moved to the other core
     /// between asking which core it is on and reading.
     pub inline fn cpu(base: *ExecBase) *CpuState {
         return &base.cpus[coreId()];
@@ -217,8 +214,9 @@ pub const ExecBase = extern struct {
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no; `OpenLibrary` calls it under Forbid.
-/// - Forbid: held by the caller.
+/// - Interrupts: no; `OpenLibrary` calls it inside the library's lock.
+/// - Locks: called inside the library's own lock, which keeps every other Open
+///   and Close of it out.
 /// - Process: a Task will do.
 pub fn libOpen(lib: *Library, version: u32) callconv(.c) ?*Library {
     _ = version;
@@ -227,32 +225,31 @@ pub fn libOpen(lib: *Library, version: u32) callconv(.c) ?*Library {
     return lib;
 }
 
-/// Standard Close: drops the open count, and the last close carries out an
-/// expunge that was asked for while the library was open - through the
-/// library's own Expunge vector, so a library that replaced it is asked.
+/// Standard Close: drops the open count. An expunge asked for while the
+/// library was open is `CloseLibrary`'s to carry out once this has
+/// answered - through the library's own Expunge vector, so a library that
+/// replaced it is asked.
 ///
 /// INPUTS:
 /// - `lib` - the library, as every library vector gets it.
 ///
 /// RESULT:
-/// What the Expunge answered when it ran - a seglist to unload - or null.
+/// Null.
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no; `CloseLibrary` calls it under Forbid.
-/// - Forbid: held by the caller.
+/// - Interrupts: no; `CloseLibrary` calls it inside the library's lock.
+/// - Locks: called inside the library's own lock, which keeps every other Open
+///   and Close of it out.
 /// - Process: a Task will do.
 pub fn libClose(lib: *Library) callconv(.c) ?*anyopaque {
     lib.open_cnt -= 1;
-    if (lib.open_cnt == 0 and lib.flags & sdk.exec.LIBF_DELEXP != 0) {
-        return lib.vector(sdk.exec.ExpungeFn, sdk.exec.LIB_EXPUNGE)(lib);
-    }
     return null;
 }
 
 /// Standard Expunge: while open, only mark it for later (`LIBF_DELEXP`),
 /// so the last `CloseLibrary` finishes the job; otherwise take it off the
-/// library list and free it.
+/// library list (`DetachLibrary`) and free it.
 ///
 /// INPUTS:
 /// - `lib` - the library, as every library vector gets it.
@@ -261,10 +258,10 @@ pub fn libClose(lib: *Library) callconv(.c) ?*anyopaque {
 /// Null: a library in the ROM has no seglist to hand back.
 ///
 /// CONTEXT:
-/// - Waits: no, and it must not: `flushLibraries` reaches it from inside
-///   `AllocMem`, where a low-memory handler may not wait.
-/// - Interrupts: safe in itself, but it frees memory.
-/// - Forbid: every caller holds it already; it does not take it.
+/// - Waits: for exec's library list, at the detach; nothing else.
+/// - Interrupts: no.
+/// - Locks: called inside the library's own lock while it is open, and with
+///   nothing held once it is marked going.
 /// - Process: a Task will do.
 ///
 /// BUGS:
@@ -276,7 +273,7 @@ pub fn libExpunge(lib: *Library) callconv(.c) ?*anyopaque {
         return null;
     }
     const base = exec.SysBase;
-    base.iface().Remove(&lib.node);
+    base.iface().DetachLibrary(lib);
     _library.freeLibraryMemory(base, lib);
     return null;
 }
@@ -299,7 +296,7 @@ pub fn libExpunge(lib: *Library) callconv(.c) ?*anyopaque {
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe; it touches nothing.
-/// - Forbid: every caller holds it already; it does not take it.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 pub fn execExpunge(lib: *Library) callconv(.c) ?*anyopaque {
     _ = lib;
@@ -317,7 +314,7 @@ pub fn execExpunge(lib: *Library) callconv(.c) ?*anyopaque {
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe; it touches nothing.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 pub fn libExtFunc(lib: *Library) callconv(.c) ?*anyopaque {
     _ = lib;

@@ -57,7 +57,7 @@ const line_max = 128;
 /// - Waits: for the answer, which is as long as the user takes; and for
 ///   intuition.library to open the first time a question goes on screen.
 /// - Interrupts: no.
-/// - Forbid: not held and not to be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process, not a bare Task: it reads `pr_WindowPtr` and
 ///   the process's console.
 ///

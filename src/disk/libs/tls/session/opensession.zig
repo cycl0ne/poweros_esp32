@@ -68,7 +68,7 @@ const client_module = @import("../protocol/client.zig");
 /// - Waits: yes, for the server, as long as the socket's own timeouts
 ///   allow.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: yes - the stores are files.
 ///
 /// OWNERSHIP:

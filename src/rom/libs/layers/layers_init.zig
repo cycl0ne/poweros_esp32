@@ -64,8 +64,7 @@ fn layersBase(lib: *exec.Library) *LayersBase {
 /// be opened.
 ///
 /// CONTEXT:
-/// Runs on the exec task at cold start, with multitasking live and no
-/// Forbid held.
+/// Runs on the exec task at cold start, with multitasking started.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const lb = layersBase(lib);

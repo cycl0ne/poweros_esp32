@@ -38,7 +38,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// - Waits: no, but handing the semaphore on signals a task, which may
 ///   switch.
 /// - Interrupts: no. It takes exec's semaphore lock, and may signal.
-/// - Forbid: may be held.
+/// - Locks: takes exec's semaphore lock for a moment.
 /// - Process: a Task will do, and it must be **the task that obtained
 ///   it**.
 ///

@@ -39,7 +39,7 @@ const _ease = @import("_ease.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes; it touches nothing but its arguments.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

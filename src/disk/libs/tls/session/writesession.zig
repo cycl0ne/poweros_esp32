@@ -34,7 +34,7 @@ const record = @import("../protocol/record.zig");
 /// CONTEXT:
 /// - Waits: yes, while the socket sends.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: the task that opened the session.
 ///
 /// OWNERSHIP:

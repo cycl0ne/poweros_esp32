@@ -34,7 +34,7 @@ const _event = @import("_event.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It takes Disable.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

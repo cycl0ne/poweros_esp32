@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! FindResident: a resident module by name, from the table the boot scan
-//! made. The table does not change after the scan, so this needs no
-//! Forbid.
+//! made. The table does not change after the scan, so this needs no lock.
 
 const sdk = @import("sdk");
 const _resident = @import("_resident.zig");
@@ -32,7 +31,7 @@ const Resident = sdk.exec.Resident;
 /// - Waits: no.
 /// - Interrupts: safe. **The list does not change after the boot scan**,
 ///   which is why this needs no lock at all.
-/// - Forbid: not needed, for the same reason.
+/// - Locks: none needed, for the same reason.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

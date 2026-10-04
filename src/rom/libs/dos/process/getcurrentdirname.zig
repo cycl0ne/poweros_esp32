@@ -38,7 +38,7 @@ const noCli = _process.noCli;
 /// - Waits: yes, when there is no CLI: NameFromLock sends packets to
 ///   the directory's handler.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it may wait.
+/// - Locks: no spinlock may be held: it may wait.
 /// - Process: a Process; a plain Task gets an empty buffer and false.
 ///
 /// OWNERSHIP:

@@ -35,8 +35,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// - Waits: no.
 /// - Interrupts: not safe; it reads and changes the running task's
 ///   Process.
-/// - Forbid: not needed, and not taken; only the running process
-///   touches these fields.
+/// - Locks: none taken; only the running process touches these fields.
 /// - Process: a Process for an answer; from a plain Task it does
 ///   nothing and answers null.
 ///

@@ -34,7 +34,7 @@ const _task = @import("_task.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed; it takes Forbid for the list itself.
+/// - Locks: takes Disable, which the hooks are kept under.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -68,8 +68,8 @@ const _task = @import("_task.zig");
 pub fn AddTaskEndHook(base: *ExecBase, task: ?*Task, hook: *TaskEndHook) void {
     const sys = base.iface();
     const owner = task orelse sys.FindTask(null).?;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.Disable();
+    defer sys.Enable();
     _task.endHooks(owner);
     hook.task = owner;
     sys.AddTail(@ptrCast(&owner.end_hooks), @ptrCast(&hook.node));

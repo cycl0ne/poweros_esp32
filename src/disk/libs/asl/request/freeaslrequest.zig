@@ -30,7 +30,8 @@ const _request = @import("_request.zig");
 /// CONTEXT:
 /// - Waits: for memory to be given back.
 /// - Interrupts: no.
-/// - Forbid: held for as long as the requester is taken off the list.
+/// - Locks: takes asl's requester lock, a spinlock, while the requester is
+///   taken off the list.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -49,8 +50,8 @@ pub fn FreeAslRequest(ab: *AslBase, requester: ?*anyopaque) void {
     const r = _request.requesterOf(handle);
     const sys = ab.sys_base;
     _request.dropArgs(r);
-    sys.Forbid();
+    sys.AcquireLock(&ab.requester_lock);
     sys.Remove(@ptrCast(&r.node));
-    sys.Permit();
+    sys.ReleaseLock(&ab.requester_lock);
     sys.FreeVec(@ptrCast(r));
 }

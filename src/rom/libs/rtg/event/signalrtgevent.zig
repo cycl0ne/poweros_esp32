@@ -36,7 +36,7 @@ const _event = @import("_event.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes: this is what a driver's interrupt calls.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: any, or none.
 ///
 /// OWNERSHIP:

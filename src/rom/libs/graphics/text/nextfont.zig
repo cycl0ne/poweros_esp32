@@ -29,7 +29,7 @@ const TextFont = _text.TextFont;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do; it must hold `LockFonts`.
 ///
 /// OWNERSHIP:

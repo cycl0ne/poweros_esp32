@@ -48,7 +48,7 @@ const _bitmap = @import("_bitmap.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

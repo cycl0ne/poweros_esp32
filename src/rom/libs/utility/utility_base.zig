@@ -25,6 +25,10 @@ pub const UtilityBase = extern struct {
     sequence: u32,
     /// `*` is a wildcard for the patterns parsed from now on (SetWildStar).
     wild_star: bool,
+    /// Every named object's use count, the name space it is in and the
+    /// message a removal waits on: changed by finders that share the name
+    /// space's semaphore, so under this - a spinlock, a few lines.
+    object_lock: exec.Lock,
 
     /// This library as a caller sees it, to call its own functions through the
     /// jump table.

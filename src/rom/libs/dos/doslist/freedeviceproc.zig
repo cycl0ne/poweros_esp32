@@ -30,7 +30,7 @@ const DevProc = dos.DevProc;
 /// CONTEXT:
 /// - Waits: yes, when it unlocks a lock (a packet to its handler).
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it may wait.
+/// - Locks: no spinlock may be held: it may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

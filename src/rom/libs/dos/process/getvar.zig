@@ -45,7 +45,7 @@ const fail = _process.fail;
 /// - Waits: yes, for a global variable (file system packets); not for a
 ///   local one.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do for a global variable; only a process has
 ///   local ones and gets IoErr.
 ///

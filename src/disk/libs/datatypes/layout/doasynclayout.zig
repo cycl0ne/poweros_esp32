@@ -126,7 +126,7 @@ fn layoutProcess(sys: *ExecBase) callconv(.c) void {
 /// CONTEXT:
 /// - Waits: for memory and for the object's lock, briefly.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do; the work itself needs a Process, which is
 ///   why there is one.
 ///

@@ -47,8 +47,8 @@ const Task = sdk.exec.Task;
 /// - Interrupts: **safe, and this is the main way out of one.** An
 ///   interrupt cannot wait, allocate or reach a handler; what it can do is
 ///   signal the task that can.
-/// - Forbid: not needed; it takes Disable. Under Forbid the switch is
-///   postponed to the `Permit`.
+/// - Locks: takes Disable. With a spinlock held the switch is postponed to the
+///   `ReleaseLock`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -157,7 +157,7 @@ pub fn ClassLibrary(comptime spec: Spec) type {
             closeAll(base);
             const sys = base.sys_base;
             const seg_list = base.seg_list;
-            sys.Remove(&lib.node);
+            sys.DetachLibrary(lib);
             const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
             sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
             return seg_list;

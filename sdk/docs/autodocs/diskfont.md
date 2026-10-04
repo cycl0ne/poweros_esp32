@@ -60,7 +60,7 @@ assign of several is looked in.
 
 - Waits: yes: for the disk, and for graphics' font list.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Process, since it reads files.
 
 **OWNERSHIP**
@@ -118,7 +118,7 @@ The image goes back to the system; null does nothing.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -179,7 +179,7 @@ order of height. At most 64 sizes are listed.
 
 - Waits: yes, for the disk.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Process, since it reads files.
 
 **OWNERSHIP**
@@ -244,7 +244,7 @@ The new font has the old one's name, styles and palette, and is not
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -323,7 +323,7 @@ loaded one at a time, whoever asks.
 
 - Waits: yes: for the disk, and for another task loading.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Process, since it reads files.
 
 **OWNERSHIP**

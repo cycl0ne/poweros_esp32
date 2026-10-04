@@ -36,7 +36,7 @@ const IORequest = sdk.exec.IORequest;
 /// CONTEXT:
 /// - Waits: no. That is the point of it.
 /// - Interrupts: no.
-/// - Forbid: no; the device's BeginIO may do anything.
+/// - Locks: no spinlock may be held: the device's BeginIO may do anything.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

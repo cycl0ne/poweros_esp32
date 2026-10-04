@@ -55,7 +55,7 @@ const messages = [_]struct { id: u32, text: [*:0]const u8 }{
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

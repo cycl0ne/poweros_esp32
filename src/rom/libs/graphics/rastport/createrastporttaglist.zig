@@ -68,9 +68,9 @@ const surfaceFor = _rastport.surfaceFor;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It allocates, and finding the View takes Forbid.
-/// - Forbid: not held by the caller and not wanted; the View is read under
-///   a Forbid of its own.
+/// - Interrupts: no. It allocates, and finding the View takes rtg's board
+///   list.
+/// - Locks: none needed; the View is looked up under rtg's board list.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

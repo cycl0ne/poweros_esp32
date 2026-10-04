@@ -45,7 +45,7 @@ const max_path = dos.path_max;
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; only a process gets IoErr.
 ///
 /// OWNERSHIP:

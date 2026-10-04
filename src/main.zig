@@ -126,8 +126,8 @@ export fn kmain() callconv(.c) noreturn {
     var regions: [ram.max_regions]exec.MemRegion = undefined;
     // exec.library from its ROM tag; its init does RawIOInit, sets up the
     // rest, scans the ROM tags, creates the exec task and starts the
-    // RTF_SINGLETASK residents. Task switching stays off until the Permit
-    // below.
+    // RTF_SINGLETASK residents. Task switching stays off until
+    // startMultitasking below.
     _ = bootstrap.bootStrap(ram.regions(&regions)) catch |err| @panic(@errorName(err));
 
     exec.kprintf("PowerOS kernel for ESP32-S3, built with Zig %s (%s)\n", .{ builtin.zig_version_string, @tagName(builtin.mode) });
@@ -171,7 +171,7 @@ export fn kmain() callconv(.c) noreturn {
     // Multitasking starts. The exec task runs first: it starts the
     // RTF_COLDSTART residents (dos.library last, which starts the
     // RTF_AFTERDOS ones) and ends. This task goes on as the shell.
-    sys.Permit();
+    exec.startMultitasking(exec.SysBase);
     // Until here core 1 ran only its idle task, so the system came up as
     // on one core; from here it takes any task that is not pinned.
     if (cpu1.isUp()) {

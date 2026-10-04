@@ -32,7 +32,7 @@ const NamedObject = sdk.utility.NamedObject;
 /// CONTEXT:
 /// - Waits: yes, while another task holds the name space's semaphore.
 /// - Interrupts: no. It may wait.
-/// - Forbid: taken here, and broken while waiting for the semaphore.
+/// - Locks: takes the name space's semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

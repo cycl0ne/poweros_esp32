@@ -44,7 +44,7 @@ const kept_blocks = hardblocks.RDB_LOCATION_LIMIT;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

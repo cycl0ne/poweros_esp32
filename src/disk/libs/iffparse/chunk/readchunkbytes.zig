@@ -34,7 +34,7 @@ const ReadChunkRecords = @import("readchunkrecords.zig").ReadChunkRecords;
 /// CONTEXT:
 /// - Waits: whatever the stream hook waits for - a file read does.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do unless the stream needs a Process, which a
 ///   file does.
 ///

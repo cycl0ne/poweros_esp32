@@ -31,7 +31,7 @@ const timer = sdk.devices.timer;
 /// CONTEXT:
 /// - Waits: yes.
 /// - Interrupts: no.
-/// - Forbid: never under Forbid.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

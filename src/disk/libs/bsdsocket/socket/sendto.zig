@@ -66,7 +66,7 @@ const tcp_user = @import("../tcp/user.zig");
 /// CONTEXT:
 /// - Waits: for a stream socket, while its ring is full.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

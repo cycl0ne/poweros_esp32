@@ -59,7 +59,7 @@ put in the middle of the screen it opens on.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -142,7 +142,7 @@ the next call on that requester or until `FreeAslRequest`.
 
 - Waits: for input, for the screen, and for the drawer to be read.
 - Interrupts: no.
-- Forbid: not held and not to be held.
+- Locks: no spinlock may be held.
 - Process: a Process, not a bare Task: it opens a window and reads a
   drawer.
 
@@ -205,7 +205,8 @@ program that wants to keep an answer copies it first.
 
 - Waits: for memory to be given back.
 - Interrupts: no.
-- Forbid: held for as long as the requester is taken off the list.
+- Locks: takes asl's requester lock, a spinlock, while the requester is
+  taken off the list.
 - Process: a Task will do.
 
 **OWNERSHIP**

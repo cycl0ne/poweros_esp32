@@ -26,7 +26,8 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// The names are compared exactly.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: taken while the list is read.
+/// - Waits: no. - Interrupts: no. - Locks: none needed: the list is made
+///   at init, from the ROM's keymaps, and never changes.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -47,8 +48,6 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// ```
 pub fn FindKeyMap(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     const sys = kb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
     const node = sys.FindName(&kb.maps, name) orelse return null;
     const kn: *keymap.KeyMapNode = @fieldParentPtr("node", node);
     return &kn.key_map;

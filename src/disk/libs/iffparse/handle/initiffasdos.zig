@@ -62,7 +62,7 @@ fn fileStream(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
 /// - Waits: no, but everything done through the stream afterwards waits
 ///   on the file system.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do here; reading or writing the file needs a
 ///   Process, because dos does.
 ///

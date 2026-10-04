@@ -23,8 +23,6 @@ pub const LVO = struct {
     pub const SetFunction = libraries.lvo(9);
     pub const CreateLibrary = libraries.lvo(10);
     pub const FindName = libraries.lvo(11);
-    pub const Forbid = libraries.lvo(12);
-    pub const Permit = libraries.lvo(13);
     pub const Insert = libraries.lvo(14);
     pub const AddHead = libraries.lvo(15);
     pub const AddTail = libraries.lvo(16);
@@ -117,7 +115,7 @@ pub const LVO = struct {
     pub const CachePostDMA = libraries.lvo(103);
     pub const NewStackRun = libraries.lvo(104);
     pub const CodeAddress = libraries.lvo(105);
-    pub const ExecList = libraries.lvo(106);
+    pub const LockExecList = libraries.lvo(106);
     pub const IntVector = libraries.lvo(107);
     pub const ResModules = libraries.lvo(108);
     pub const SetRamLib = libraries.lvo(109);
@@ -142,6 +140,10 @@ pub const LVO = struct {
     pub const SetTaskAffinity = libraries.lvo(128);
     pub const CoreTask = libraries.lvo(129);
     pub const ReadCoreTimes = libraries.lvo(130);
+    pub const UnlockExecList = libraries.lvo(131);
+    pub const DetachLibrary = libraries.lvo(132);
+    pub const SetTaskEndMsg = libraries.lvo(133);
+    pub const RemoveMsg = libraries.lvo(134);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -155,8 +157,6 @@ pub const Fn = struct {
     pub const SetFunction = *const fn (*ExecBase, *exec.Library, isize, *const anyopaque) callconv(.c) *const anyopaque;
     pub const CreateLibrary = *const fn (*ExecBase, *const exec.LibraryInit) callconv(.c) ?*exec.Library;
     pub const FindName = *const fn (*ExecBase, *exec.List, [*:0]const u8) callconv(.c) ?*exec.Node;
-    pub const Forbid = *const fn (*ExecBase) callconv(.c) void;
-    pub const Permit = *const fn (*ExecBase) callconv(.c) void;
     pub const Insert = *const fn (*ExecBase, *exec.List, *exec.Node, ?*exec.Node) callconv(.c) void;
     pub const AddHead = *const fn (*ExecBase, *exec.List, *exec.Node) callconv(.c) void;
     pub const AddTail = *const fn (*ExecBase, *exec.List, *exec.Node) callconv(.c) void;
@@ -249,7 +249,7 @@ pub const Fn = struct {
     pub const CachePostDMA = *const fn (*ExecBase, *anyopaque, *u32, u32) callconv(.c) void;
     pub const NewStackRun = *const fn (*ExecBase, exec.StackFn, ?*anyopaque, u32) callconv(.c) i32;
     pub const CodeAddress = *const fn (*ExecBase, *anyopaque, u32) callconv(.c) ?*anyopaque;
-    pub const ExecList = *const fn (*ExecBase, u32) callconv(.c) ?*exec.List;
+    pub const LockExecList = *const fn (*ExecBase, u32) callconv(.c) ?*exec.List;
     pub const IntVector = *const fn (*ExecBase, u32) callconv(.c) ?*exec.IntVector;
     pub const ResModules = *const fn (*ExecBase) callconv(.c) ?[*]const ?*const exec.Resident;
     pub const SetRamLib = *const fn (*ExecBase, ?*anyopaque) callconv(.c) void;
@@ -274,6 +274,10 @@ pub const Fn = struct {
     pub const SetTaskAffinity = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) u32;
     pub const CoreTask = *const fn (*ExecBase, u32) callconv(.c) ?*exec.Task;
     pub const ReadCoreTimes = *const fn (*ExecBase, u32, *exec.CoreTimes) callconv(.c) bool;
+    pub const UnlockExecList = *const fn (*ExecBase, u32) callconv(.c) void;
+    pub const DetachLibrary = *const fn (*ExecBase, *exec.Library) callconv(.c) void;
+    pub const SetTaskEndMsg = *const fn (*ExecBase, ?*exec.Task, ?*exec.Message) callconv(.c) void;
+    pub const RemoveMsg = *const fn (*ExecBase, *exec.MsgPort, *exec.Message) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -314,14 +318,6 @@ pub const ExecBase = opaque {
 
     pub fn FindName(self: *ExecBase, list: *exec.List, name: [*:0]const u8) ?*exec.Node {
         return libraries.call(self, LVO.FindName, Fn.FindName, .{ list, name });
-    }
-
-    pub fn Forbid(self: *ExecBase) void {
-        return libraries.call(self, LVO.Forbid, Fn.Forbid, .{});
-    }
-
-    pub fn Permit(self: *ExecBase) void {
-        return libraries.call(self, LVO.Permit, Fn.Permit, .{});
     }
 
     pub fn Insert(self: *ExecBase, list: *exec.List, node: *exec.Node, pred: ?*exec.Node) void {
@@ -698,13 +694,14 @@ pub const ExecBase = opaque {
         return libraries.call(self, LVO.CodeAddress, Fn.CodeAddress, .{ address, length });
     }
 
-    /// One of exec's own lists (EXECLIST_*), or null for a number it has not
-    /// got. It is exec's list, not a copy: hold Forbid while walking it - or
-    /// Disable for the two task queues, which the scheduler moves from
-    /// interrupts - and write nothing into it. The header itself never moves,
-    /// so the answer stays good for as long as exec does.
-    pub fn ExecList(self: *ExecBase, which: u32) ?*exec.List {
-        return libraries.call(self, LVO.ExecList, Fn.ExecList, .{which});
+    /// One of exec's own lists (EXECLIST_*) with its lock taken, or null (and
+    /// nothing taken) for a number it has not got. It is exec's list, not a
+    /// copy: read it, write nothing, and give it back with UnlockExecList. The
+    /// libraries, devices, resources and memory handlers are under a semaphore,
+    /// held shared; memory, ports and semaphores under a spinlock and the task
+    /// queues under Disable, where nothing may wait - copy, then print.
+    pub fn LockExecList(self: *ExecBase, which: u32) ?*exec.List {
+        return libraries.call(self, LVO.LockExecList, Fn.LockExecList, .{which});
     }
 
     /// What exec does when one interrupt number fires: the handler, the server
@@ -861,5 +858,29 @@ pub const ExecBase = opaque {
     /// running. A program reads twice and divides the differences.
     pub fn ReadCoreTimes(self: *ExecBase, core: u32, times: *exec.CoreTimes) bool {
         return libraries.call(self, LVO.ReadCoreTimes, Fn.ReadCoreTimes, .{ core, times });
+    }
+
+    /// Give back the lock LockExecList took on list `which`.
+    pub fn UnlockExecList(self: *ExecBase, which: u32) void {
+        return libraries.call(self, LVO.UnlockExecList, Fn.UnlockExecList, .{which});
+    }
+
+    /// Take a library or device off exec's list, from its own Expunge, with
+    /// exec's library list locked around it. One not on it is left alone.
+    pub fn DetachLibrary(self: *ExecBase, library: *exec.Library) void {
+        return libraries.call(self, LVO.DetachLibrary, Fn.DetachLibrary, .{library});
+    }
+
+    /// Have `msg` replied to its reply port once `task` (null: the caller)
+    /// has ended and nothing runs on its stack any more - when its code may
+    /// be unloaded. Null takes it back. Set before the task can end.
+    pub fn SetTaskEndMsg(self: *ExecBase, task: ?*exec.Task, msg: ?*exec.Message) void {
+        return libraries.call(self, LVO.SetTaskEndMsg, Fn.SetTaskEndMsg, .{ task, msg });
+    }
+
+    /// Take `msg` off `port`, under the port's lock: false when it is not on
+    /// it (taken by GetMsg already, or never put). What an AbortIO uses.
+    pub fn RemoveMsg(self: *ExecBase, port: *exec.MsgPort, msg: *exec.Message) bool {
+        return libraries.call(self, LVO.RemoveMsg, Fn.RemoveMsg, .{ port, msg });
     }
 };

@@ -42,7 +42,7 @@ const lg = sdk.exec.log;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -144,10 +144,12 @@ pub const SetTaskPri = @import("task/settaskpri.zig").SetTaskPri;
 pub const SetTaskAffinity = @import("task/settaskaffinity.zig").SetTaskAffinity;
 pub const CoreTask = @import("task/coretask.zig").CoreTask;
 pub const ReadCoreTimes = @import("task/readcoretimes.zig").ReadCoreTimes;
+pub const DetachLibrary = @import("library/detachlibrary.zig").DetachLibrary;
+pub const SetTaskEndMsg = @import("task/settaskendmsg.zig").SetTaskEndMsg;
+pub const RemoveMsg = @import("ports/removemsg.zig").RemoveMsg;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
-pub const Forbid = @import("task/forbid.zig").Forbid;
-pub const Permit = @import("task/permit.zig").Permit;
+pub const startMultitasking = _task.startMultitasking;
 pub const interruptEnter = _task.interruptEnter;
 pub const interruptExit = _task.interruptExit;
 pub const tickQuantum = _task.tickQuantum;
@@ -194,7 +196,7 @@ pub const PA_SIGNAL = sdk.exec.PA_SIGNAL;
 pub const PA_SOFTINT = sdk.exec.PA_SOFTINT;
 pub const PA_IGNORE = sdk.exec.PA_IGNORE;
 
-/// Signal semaphores: the lock for anywhere Forbid will not do (locks/).
+/// Signal semaphores: the lock for a holder that may wait (locks/).
 const _locks = @import("locks/_locks.zig");
 pub const SignalSemaphore = sdk.exec.SignalSemaphore;
 pub const SemaphoreRequest = sdk.exec.SemaphoreRequest;
@@ -238,7 +240,8 @@ pub const RemHead = @import("list/remhead.zig").RemHead;
 pub const RemTail = @import("list/remtail.zig").RemTail;
 pub const Enqueue = @import("list/enqueue.zig").Enqueue;
 pub const FindName = @import("list/findname.zig").FindName;
-pub const ExecList = @import("list/execlist.zig").ExecList;
+pub const LockExecList = @import("list/lockexeclist.zig").LockExecList;
+pub const UnlockExecList = @import("list/unlockexeclist.zig").UnlockExecList;
 
 pub const MemHeader = sdk.exec.MemHeader;
 pub const MemChunk = sdk.exec.MemChunk;
@@ -373,6 +376,7 @@ pub const LIBF_SUMMING = sdk.exec.LIBF_SUMMING;
 pub const LIBF_CHANGED = sdk.exec.LIBF_CHANGED;
 pub const LIBF_SUMUSED = sdk.exec.LIBF_SUMUSED;
 pub const LIBF_DELEXP = sdk.exec.LIBF_DELEXP;
+pub const LIBF_GOING = sdk.exec.LIBF_GOING;
 
 /// What exec is on the library list as, and its version: the ROM tag's
 /// (exec_init.zig).
@@ -513,7 +517,11 @@ test {
     _ = @import("list/remtail.zig");
     _ = @import("list/enqueue.zig");
     _ = @import("list/findname.zig");
-    _ = @import("list/execlist.zig");
+    _ = @import("list/lockexeclist.zig");
+    _ = @import("list/unlockexeclist.zig");
+    _ = @import("library/detachlibrary.zig");
+    _ = @import("task/settaskendmsg.zig");
+    _ = @import("ports/removemsg.zig");
     _ = @import("interrupt/intvector.zig");
     _ = @import("resident/resmodules.zig");
     _ = @import("library/setramlib.zig");
@@ -577,8 +585,6 @@ test {
     _ = @import("task/allocsignal.zig");
     _ = @import("task/freesignal.zig");
     _ = @import("task/setexcept.zig");
-    _ = @import("task/forbid.zig");
-    _ = @import("task/permit.zig");
     _ = @import("cache/_cache.zig");
     _ = @import("cache/cacheclearu.zig");
     _ = @import("cache/cachecleare.zig");
@@ -673,6 +679,9 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     sys.mem_list.init(.memory);
     while (RemHead(sys, &pending)) |node| Enqueue(sys, &sys.mem_list, node);
     _ = table.init.?(lib, @constCast(boot), @ptrCast(sys)) orelse return error.OutOfMemory;
+    // The tests run as a running system does, multitasking started; the
+    // start's own test takes it back to before.
+    if (boot == null) sys.multitasking = 1;
 }
 
 fn testRam() *MemHeader {
@@ -734,7 +743,7 @@ test "OpenLibrary: by name and version, counts openers" {
 
     try testing.expect(RemLibrary(SysBase, lib) == null);
     try testing.expect(OpenLibrary(SysBase, "test.library", 0) == null);
-    try testing.expectEqual(@as(i8, -1), SysBase.cpu().tdn_nest_cnt);
+    try testing.expectEqual(@as(u8, 0), SysBase.cpu().hold_count);
     try expectNoLeaks();
 }
 
@@ -757,6 +766,147 @@ test "RemLibrary while open delays the expunge to the last close" {
     CloseLibrary(SysBase, lib); // last close: expunged and freed
     try testing.expect(FindName(SysBase, &SysBase.lib_list, "busy.library") == null);
     try expectNoLeaks();
+}
+
+test "a library an Open is on its way to is not expunged, and one going is not opened" {
+    try setUp();
+    defer deinit();
+
+    const lib = CreateLibrary(SysBase, &.{ .name = "pinned.library", .vectors = &test_vectors }).?;
+    // Found and pinned, its Open not run yet: RemLibrary leaves it.
+    lib.pins += 1;
+    _ = RemLibrary(SysBase, lib);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "pinned.library") != null);
+    try testing.expect(lib.flags & LIBF_DELEXP == 0);
+    lib.pins -= 1;
+
+    // Being expunged: no Open finds it.
+    lib.flags |= LIBF_GOING;
+    try testing.expect(OpenLibrary(SysBase, "pinned.library", 0) == null);
+    lib.flags &= ~LIBF_GOING;
+    try testing.expectEqual(lib, OpenLibrary(SysBase, "pinned.library", 0).?);
+    try testing.expectEqual(@as(u16, 0), lib.pins);
+    CloseLibrary(SysBase, lib);
+
+    _ = RemLibrary(SysBase, lib);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "pinned.library") == null);
+    // Every lock given back: the list's is free.
+    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+    try expectNoLeaks();
+}
+
+test "the low-memory flush expunges one idle library per call, and passes over a pinned one" {
+    try setUp();
+    defer deinit();
+
+    const lib = CreateLibrary(SysBase, &.{ .name = "idle.library", .vectors = &test_vectors }).?;
+    var data: MemHandlerData = .{ .request_size = 64, .request_flags = 0, .flags = 0 };
+    lib.pins = 1;
+    try testing.expectEqual(MEM_DID_NOTHING, _library.flushLibraries(&data, SysBase));
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "idle.library") != null);
+    lib.pins = 0;
+    const opened = OpenLibrary(SysBase, "idle.library", 0).?;
+    try testing.expectEqual(MEM_DID_NOTHING, _library.flushLibraries(&data, SysBase));
+    CloseLibrary(SysBase, opened);
+    // exec.library refuses and keeps its place; this one goes.
+    try testing.expectEqual(MEM_TRY_AGAIN, _library.flushLibraries(&data, SysBase));
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "idle.library") == null);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, LIBRARY_NAME) != null);
+    try testing.expect(SysBase.lib.flags & LIBF_GOING == 0);
+    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+    try expectNoLeaks();
+}
+
+/// A base made for one opener, as bsdsocket.library makes them: on no
+/// list, freed by its own Close, which counts the library it came from
+/// under that library's lock.
+const OwnBase = extern struct {
+    lib: Library,
+    of: *Library,
+};
+
+fn ownOpen(lib: *Library, _: u32) callconv(.c) ?*Library {
+    const copy = MakeLibrary(SysBase, &own_vectors, @sizeOf(OwnBase), null, null) orelse return null;
+    const own: *OwnBase = @fieldParentPtr("lib", copy);
+    own.of = lib;
+    lib.open_cnt += 1;
+    return copy;
+}
+
+fn ownClose(lib: *Library) callconv(.c) ?*anyopaque {
+    const own: *OwnBase = @fieldParentPtr("lib", lib);
+    const of = own.of;
+    _library.freeLibraryMemory(SysBase, lib);
+    ObtainSemaphore(SysBase, &of.lock);
+    of.open_cnt -= 1;
+    ReleaseSemaphore(SysBase, &of.lock);
+    return null;
+}
+
+const own_vectors = [_]*const anyopaque{
+    vec(ownOpen),
+    vec(ownClose),
+    vec(exec_base.libExpunge),
+    vec(exec_base.libExtFunc),
+};
+
+test "CloseLibrary leaves a base made for one opener to its own Close" {
+    try setUp();
+    defer deinit();
+
+    const lib = CreateLibrary(SysBase, &.{ .name = "own.library", .vectors = &own_vectors }).?;
+    const a = OpenLibrary(SysBase, "own.library", 0).?;
+    const b = OpenLibrary(SysBase, "own.library", 0).?;
+    try testing.expect(a != lib and b != lib and a != b);
+    try testing.expectEqual(@as(u16, 2), lib.open_cnt);
+    CloseLibrary(SysBase, a);
+    CloseLibrary(SysBase, b);
+    try testing.expectEqual(@as(u16, 0), lib.open_cnt);
+    _ = RemLibrary(SysBase, lib);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "own.library") == null);
+    try expectNoLeaks();
+}
+
+test "DetachLibrary takes a library off the list once, and leaves one never added alone" {
+    try setUp();
+    defer deinit();
+
+    const lib = CreateLibrary(SysBase, &.{ .name = "detach.library", .vectors = &test_vectors }).?;
+    DetachLibrary(SysBase, lib);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "detach.library") == null);
+    try testing.expect(lib.node.pred == null and lib.node.succ == null);
+    DetachLibrary(SysBase, lib); // twice: nothing
+    _library.freeLibraryMemory(SysBase, lib);
+
+    const loose = MakeLibrary(SysBase, &test_vectors, @sizeOf(Library), null, null).?;
+    DetachLibrary(SysBase, loose);
+    _library.freeLibraryMemory(SysBase, loose);
+    try expectNoLeaks();
+}
+
+test "LockExecList takes each list's own lock, and UnlockExecList gives it back" {
+    try setUp();
+    defer deinit();
+
+    _ = LockExecList(SysBase, sdk.exec.EXECLIST_LIBRARIES).?;
+    // Shared: held, by nobody in particular.
+    try testing.expect(SysBase.sem_libraries.queue_count >= 0 and SysBase.sem_libraries.owner == null);
+    UnlockExecList(SysBase, sdk.exec.EXECLIST_LIBRARIES);
+    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+
+    _ = LockExecList(SysBase, sdk.exec.EXECLIST_MEMORY).?;
+    try testing.expect(SysBase.lock_memory.state != 0);
+    UnlockExecList(SysBase, sdk.exec.EXECLIST_MEMORY);
+    try testing.expectEqual(@as(u32, 0), SysBase.lock_memory.state);
+
+    _ = LockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY).?;
+    try testing.expect(SysBase.cpu().id_nest_cnt >= 0);
+    UnlockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY);
+    try testing.expect(SysBase.cpu().id_nest_cnt < 0);
+
+    // No list, nothing taken - and nothing to give back.
+    try testing.expect(LockExecList(SysBase, 9999) == null);
+    UnlockExecList(SysBase, 9999);
 }
 
 const CounterBase = extern struct {
@@ -1894,7 +2044,7 @@ test "tasks: end hooks run when the task ends, in their order, once; one taken o
     try expectNoLeaks();
 }
 
-test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and RemTask, switch and launch" {
+test "tasks: preemption, their code, NT_TASK, time slices, a spinlock held, FindTask and RemTask, switch and launch" {
     // A higher priority task preempts at the next exception exit.
     {
         try setUp();
@@ -1986,18 +2136,20 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         RemTask(SysBase, other);
         try expectNoLeaks();
     }
-    // Forbid holds off the switch until Permit.
+    // A spinlock held holds off the switch until ReleaseLock.
     {
         try setUp();
         defer deinit();
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        Forbid(SysBase);
+        var lock: sdk.exec.Lock = .{};
+        InitLock(SysBase, &lock, "held", sdk.exec.LOCKORDER_DRIVER, 0);
+        AcquireLock(SysBase, &lock);
         const high = CreateTask(SysBase, "high", 10, &idleCode, 1024).?;
         try testing.expectEqual(@as(u32, 0), FakeTaskHardware.switches);
-        try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx)); // forbidden
-        Permit(SysBase);
+        try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx)); // held
+        ReleaseLock(SysBase, &lock);
         try testing.expectEqual(@as(u32, 1), FakeTaskHardware.switches);
         try testing.expectEqual(ctx(high), exceptionExit(boot_ctx));
 
@@ -2215,7 +2367,7 @@ const FakeExcept = struct {
     }
 };
 
-test "task exceptions: SetExcept, raised at the exception exit, after Forbid, in Wait" {
+test "task exceptions: SetExcept, raised at the exception exit, after a spinlock, in Wait" {
     try setUp();
     defer deinit();
     FakeTaskHardware.install();
@@ -2249,13 +2401,15 @@ test "task exceptions: SetExcept, raised at the exception exit, after Forbid, in
     try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
     try testing.expectEqual(ctrl_d, SetSignal(SysBase, 0, ctrl_d) & ctrl_d);
 
-    // Inside Forbid it waits for Permit.
+    // With a spinlock held it waits for ReleaseLock.
     FakeExcept.enable_again = ctrl_e;
-    Forbid(SysBase);
+    var lock: sdk.exec.Lock = .{};
+    InitLock(SysBase, &lock, "held", sdk.exec.LOCKORDER_DRIVER, 0);
+    AcquireLock(SysBase, &lock);
     Signal(SysBase, boot, ctrl_e);
     try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
     const switches = FakeTaskHardware.switches;
-    Permit(SysBase);
+    ReleaseLock(SysBase, &lock);
     try testing.expectEqual(switches + 1, FakeTaskHardware.switches);
     try testing.expectEqual(FakeTaskHardware.exception_ctx, exceptionExit(boot_ctx));
     _task.exceptionBody(SysBase);
@@ -2380,6 +2534,57 @@ test "messages: PutMsg, GetMsg, ReplyMsg, WaitPort and the port actions" {
     DeleteMsgPort(SysBase, reply);
     DeleteMsgPort(SysBase, port);
     try testing.expectEqual(sdk.exec.tasks.system_signals, boot.sig_alloc); // signals freed
+    try expectNoLeaks();
+}
+
+test "tasks: SetTaskEndMsg - replied once the task is gone, after its memory, one each" {
+    try setUp();
+    defer deinit();
+    const port = CreateMsgPort(SysBase).?;
+
+    // Removed by another task: replied after RemTask has freed it - and two
+    // ends are two messages, where two signals would have been one.
+    const first = CreateTask(SysBase, "first", -1, &idleCode, 1024).?;
+    const second = CreateTask(SysBase, "second", -1, &idleCode, 1024).?;
+    var first_ended: Message = .{ .reply_port = port };
+    var second_ended: Message = .{ .reply_port = port };
+    SetTaskEndMsg(SysBase, first, &first_ended);
+    SetTaskEndMsg(SysBase, second, &second_ended);
+    try testing.expectEqual(@as(?*Message, &first_ended), first.end_msg);
+    RemTask(SysBase, first);
+    RemTask(SysBase, second);
+    try testing.expectEqual(&first_ended, GetMsg(SysBase, port).?);
+    try testing.expectEqual(&second_ended, GetMsg(SysBase, port).?);
+    try testing.expectEqual(NodeType.replymsg, first_ended.node.type);
+
+    // Taken back: nothing comes.
+    const quiet = CreateTask(SysBase, "quiet", -1, &idleCode, 1024).?;
+    var never: Message = .{ .reply_port = port };
+    SetTaskEndMsg(SysBase, quiet, &never);
+    SetTaskEndMsg(SysBase, quiet, null);
+    RemTask(SysBase, quiet);
+    try testing.expect(GetMsg(SysBase, port) == null);
+    DeleteMsgPort(SysBase, port);
+    try expectNoLeaks();
+}
+
+test "ports: RemoveMsg takes a given message off a port, and says when it is not there" {
+    try setUp();
+    defer deinit();
+
+    const port = CreateMsgPort(SysBase).?;
+    var first: Message = .{};
+    var second: Message = .{};
+    var never: Message = .{};
+    PutMsg(SysBase, port, &first);
+    PutMsg(SysBase, port, &second);
+    try testing.expect(RemoveMsg(SysBase, port, &second));
+    try testing.expect(!RemoveMsg(SysBase, port, &second));
+    try testing.expect(!RemoveMsg(SysBase, port, &never));
+    try testing.expectEqual(&first, GetMsg(SysBase, port).?);
+    try testing.expect(GetMsg(SysBase, port) == null);
+    try testing.expect(!RemoveMsg(SysBase, port, &first));
+    DeleteMsgPort(SysBase, port);
     try expectNoLeaks();
 }
 
@@ -2564,14 +2769,12 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         // ObtainSemaphoreList's first half: a request queued on every
         // semaphore before any is waited for (locks/obtainsemaphorelist.zig).
         // The waiting half would need task switching the host has not got.
-        Forbid(SysBase);
         var queue_it = list.iterator();
         while (queue_it.next()) |node| {
             const sem: *SignalSemaphore = @fieldParentPtr("link", node);
             sem.multiple_link = .{ .waiter = boot };
             _ = _locks.enter(SysBase, sem, &sem.multiple_link);
         }
-        Permit(SysBase);
         try testing.expectEqual(boot, sems[0].owner.?);
         try testing.expectEqual(boot, sems[2].owner.?);
         try testing.expect(!sems[1].multiple_link.granted);
@@ -3314,14 +3517,14 @@ test "system start: ROM scan, single-task stage; the exec task runs cold start a
 
     // Single task: plain ran. Task switching stays off; the exec task waits.
     try testing.expectEqual(@as(u32, 1), TestRom.plain_inits);
-    try testing.expect(SysBase.cpu().tdn_nest_cnt >= 0);
+    try testing.expectEqual(@as(u32, 0), SysBase.multitasking);
     const exec_task = FindTask(SysBase, "exec").?;
     try testing.expectEqual(TaskState.ready, exec_task.state);
-    try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx)); // Forbid
+    try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx)); // not started
     try testing.expect(FindName(SysBase, &SysBase.device_list, "test.device") == null);
 
-    // Permit: multitasking, the exec task runs first and starts cold start.
-    Permit(SysBase);
+    // Multitasking started: the exec task runs first and starts cold start.
+    startMultitasking(SysBase);
     try testing.expectEqual(ctx(exec_task), exceptionExit(boot_ctx));
     exec_init.execTask(SysBase.iface());
     try testing.expect(FindName(SysBase, &SysBase.device_list, "test.device") != null);

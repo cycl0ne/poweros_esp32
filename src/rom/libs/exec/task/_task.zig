@@ -14,8 +14,8 @@
 //! in the middle of compiled code.
 //!
 //! A switch is never cancelled, only postponed. `SFF_SAR` says one is due;
-//! Forbid and Disable make `reschedule` leave it set, and the matching
-//! `Permit` or `Enable` takes it.
+//! Disable and a spinlock make `reschedule` leave it set, and the matching
+//! `Enable` or `ReleaseLock` takes it.
 //!
 //! `reschedule` and `switchIfPending` do not go through the jump table and
 //! must not: the scheduler cannot run on a vector something has replaced.
@@ -54,20 +54,18 @@
 //! **Two cores share one ready list.** Each core has its running task, its
 //! slice and its flags (`CpuState`), and its own dispatcher, which takes
 //! the best ready task that may run there: one pinned to it or to no
-//! core, and one inside Forbid only where the Forbid lock can be had. The
-//! lists and every core's flags are kept under the system's interrupt
+//! core. The lists and every core's flags are kept under the system's interrupt
 //! lock, which a core holds in every exception and while its task is
 //! inside Disable. A task made ready goes to the core it should run on
 //! now - this one's dispatcher asked to look, or the other core poked
 //! with its cross-core interrupt, whose exit runs its dispatcher. A core
 //! writes only its own flags: the other is poked, never written.
 //!
-//! **Forbid is one lock for the machine**, held by the core whose task is
-//! inside it: two Forbid sections never run at once, and a task that
-//! waits inside one lets it go until it runs again. While one core holds
-//! it the other keeps the task it runs but switches to no other - only to
-//! its idle task, should its own wait or end - so a task made ready inside
-//! a Forbid section runs after the Permit, as on one core. A task's own
+//! **What keeps a task on its core**: Disable, and a spinlock held
+//! (`hold_count`) - each for its own core only. Nothing stops the machine:
+//! what code must keep to itself is under a lock of its own. Until the
+//! kernel lets multitasking start (`startMultitasking`) no core switches
+//! away from the task it runs, unless that task waits. A task's own
 //! memory is freed by the core it ran on, at the exception exit after its
 //! last one: until then that core still writes its windows to its stack.
 
@@ -82,6 +80,7 @@ const Task = sdk.exec.Task;
 const Enqueue = @import("../list/enqueue.zig").Enqueue;
 const RemHead = @import("../list/remhead.zig").RemHead;
 const Remove = @import("../list/remove.zig").Remove;
+const AddTail = @import("../list/addtail.zig").AddTail;
 const Deallocate = @import("../memory/deallocate.zig").Deallocate;
 const _locks = @import("../locks/_locks.zig");
 
@@ -391,6 +390,35 @@ pub fn newTask(base: *ExecBase, name: [:0]const u8, pri: i8, stack_size: usize) 
     return task;
 }
 
+/// A task's end hooks made an empty list, the first time one is put on: a
+/// TCB laid out by hand has the list zeroed, which is not an empty list.
+/// Under Disable, which the hook lists are kept under: a few nodes, and
+/// the task they belong to may be ending on the other core.
+pub fn endHooks(task: *Task) void {
+    if (task.end_hooks.head == null) task.end_hooks.init();
+}
+
+/// Every end hook of `task` run, in the order they were put on, each taken
+/// off under Disable before it runs and nothing held while it does.
+pub fn runEndHooks(base: *ExecBase, task: *Task) void {
+    const sys = base.iface();
+    while (true) {
+        sys.Disable();
+        if (task.end_hooks.head == null) {
+            sys.Enable();
+            return;
+        }
+        const node = sys.RemHead(@ptrCast(&task.end_hooks)) orelse {
+            sys.Enable();
+            return;
+        };
+        const hook: *sdk.exec.TaskEndHook = @ptrCast(node);
+        hook.task = null;
+        sys.Enable();
+        hook.code(sys, task, hook);
+    }
+}
+
 /// Gives back what `newTask` allocated, and clears the pointer so that a
 /// second call does nothing. A task the caller laid out has no such block
 /// and is left alone.
@@ -398,34 +426,6 @@ pub fn newTask(base: *ExecBase, name: [:0]const u8, pri: i8, stack_size: usize) 
 /// INPUTS:
 /// - `base` - exec: the jump table `FreeMem` goes through.
 /// - `task` - the task, off every list and not running.
-/// A task's end hooks made an empty list, the first time one is put on: a
-/// TCB laid out by hand has the list zeroed, which is not an empty list.
-/// Under Forbid.
-pub fn endHooks(task: *Task) void {
-    if (task.end_hooks.head == null) task.end_hooks.init();
-}
-
-/// Every end hook of `task` run, in the order they were put on, each taken
-/// off before it runs and nothing held while it does.
-pub fn runEndHooks(base: *ExecBase, task: *Task) void {
-    const sys = base.iface();
-    while (true) {
-        sys.Forbid();
-        if (task.end_hooks.head == null) {
-            sys.Permit();
-            return;
-        }
-        const node = sys.RemHead(@ptrCast(&task.end_hooks)) orelse {
-            sys.Permit();
-            return;
-        };
-        const hook: *sdk.exec.TaskEndHook = @ptrCast(node);
-        hook.task = null;
-        sys.Permit();
-        hook.code(sys, task, hook);
-    }
-}
-
 pub fn freeTaskMemory(base: *ExecBase, task: *Task) void {
     const block = task.mem_block orelse return;
     task.mem_block = null;
@@ -443,9 +443,37 @@ pub fn freeTaskMemory(base: *ExecBase, task: *Task) void {
 /// through the table, as everything here: the dispatcher runs on a
 /// half-switched machine (codex rule 1).
 ///
+/// Once it is, the message whoever asked to be told left (`SetTaskEndMsg`)
+/// is replied - read before the memory goes, replied after: the task is
+/// not read again.
+///
 /// RESULT:
 /// True once the memory is given back (or there was none to give).
 fn freeRemovedTask(base: *ExecBase, task: *Task) bool {
+    const ended = task.end_msg;
+    if (!giveBackTaskMemory(base, task)) return false;
+    if (ended) |msg| replyEnded(base, msg);
+    return true;
+}
+
+/// A task's end message replied, from an exception exit. The port's list
+/// is exec's port lock's, and every holder of that lock holds the system's
+/// interrupt lock as well - which the exception holds - so the list is
+/// changed here without it, and directly, as everything in the dispatcher
+/// is. A port that signals has its task woken; one that causes a software
+/// interrupt is not served from here.
+fn replyEnded(base: *ExecBase, msg: *sdk.exec.Message) void {
+    const port = msg.reply_port orelse return;
+    msg.node.type = .replymsg;
+    AddTail(base, &port.msg_list, &msg.node);
+    if (port.flags & sdk.exec.PF_ACTION != sdk.exec.PA_SIGNAL) return;
+    const owner = port.sig_task orelse return;
+    wake(base, @ptrCast(@alignCast(owner)), port.sigMask());
+}
+
+/// The memory part of `freeRemovedTask`: false while the memory lock is
+/// held elsewhere.
+fn giveBackTaskMemory(base: *ExecBase, task: *Task) bool {
     const block = task.mem_block orelse return true;
     const here = _locks.heldHere(base);
     if (!_locks.compareAndSet(base, &base.lock_memory.state, 0, here)) return false;
@@ -639,9 +667,9 @@ pub fn tickQuantum(base: *ExecBase) void {
 }
 
 /// Takes a switch that is due, if it is allowed now: at task level, with
-/// no Forbid, no Disable and no spinlock outstanding. `Permit`, `Enable`
-/// and `ReleaseLock` call it, which is what makes each of them a point
-/// where the caller may lose the processor.
+/// no Disable and no spinlock outstanding. `Enable` and `ReleaseLock` call
+/// it, which is what makes each of them a point where the caller may lose
+/// the processor.
 ///
 /// INPUTS:
 /// - `base` - exec: this core's scheduling flags and nesting counts.
@@ -661,7 +689,24 @@ pub fn switchIfPending(base: *ExecBase) void {
 /// - `cpu` - this core's state.
 pub fn switchDue(cpu: *const exec_base.CpuState) bool {
     return cpu.sys_flags & SFF_SAR != 0 and cpu.int_depth == 0 and
-        cpu.tdn_nest_cnt < 0 and cpu.id_nest_cnt < 0 and cpu.hold_count == 0;
+        cpu.id_nest_cnt < 0 and cpu.hold_count == 0;
+}
+
+/// Multitasking started: from here on a core switches away from a running
+/// task as its priority and its slice say. The kernel's, once, when the
+/// system is up - before, the boot runs on as the one task that matters,
+/// and the exec task it made waits for this. A switch that came due
+/// meanwhile is taken here.
+///
+/// INPUTS:
+/// - `base` - exec: the flag, and this core's state.
+pub fn startMultitasking(base: *ExecBase) void {
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    @atomicStore(u32, &base.multitasking, 1, .release);
+    const due = switchDue(base.cpu());
+    hardware.restore(state);
+    if (due) task_hardware.switch_now();
 }
 
 /// The dispatcher: decides who runs next on this core and answers that
@@ -670,11 +715,11 @@ pub fn switchDue(cpu: *const exec_base.CpuState) bool {
 ///
 /// The running task keeps the processor unless it waited, was removed, a
 /// ready task that may run here has a higher priority, or one of equal
-/// priority is waiting and the time slice is up. Forbid, Disable and a
-/// spinlock make it keep the processor whatever else is true, and
-/// `SFF_SAR` is left set so that the matching `Permit`, `Enable` or
-/// `ReleaseLock` comes back here. A task that
-/// gives up the processor still able to run is offered to the other core.
+/// priority is waiting and the time slice is up. Disable and a spinlock
+/// make it keep the processor whatever else is true - as does the boot,
+/// until multitasking starts - and `SFF_SAR` is left set so that the
+/// matching `Enable` or `ReleaseLock` comes back here. A task that gives up
+/// the processor still able to run is offered to the other core.
 ///
 /// The task that loses the processor has its switch function called once
 /// its context is saved, and the task that gets it has its launch function
@@ -683,12 +728,6 @@ pub fn switchDue(cpu: *const exec_base.CpuState) bool {
 /// with one core, at the next exit with two. A task another core's
 /// RemTask is taking away (`stopping`) is switched out at its first switch
 /// point and goes nowhere; the next exit tells the taker.
-///
-/// A task that loses the processor inside Forbid - it waited, or ended -
-/// lets the Forbid lock go; one that gets it inside Forbid takes it, and
-/// is passed over while the other core has it. While the other core holds
-/// that lock this one switches to nothing but its idle task, and the
-/// Permit that lets it go pokes it.
 ///
 /// INPUTS:
 /// - `base` - exec: the task lists, the running task and the flags.
@@ -700,13 +739,13 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     const core = exec_base.coreId();
     const cpu = &base.cpus[core];
     const current = cpu.this_task;
-    const held = cpu.tdn_nest_cnt >= 0 or cpu.id_nest_cnt >= 0 or cpu.hold_count != 0;
+    const started = @atomicLoad(u32, &base.multitasking, .acquire) != 0;
+    const held = !started or cpu.id_nest_cnt >= 0 or cpu.hold_count != 0;
     const stopping = cpu.stopping == current;
     if (current.state == .run and held) return context;
-    const foreign = forbiddenElsewhere(base, core);
     if (current.state == .run and !stopping) {
         const time_up = cpu.sys_flags & SFF_TQE != 0;
-        var stays = runnableOn(base, current, core) or foreign;
+        var stays = runnableOn(base, current, core);
         if (stays) {
             if (bestReady(base, core)) |best| {
                 stays = best.node.pri < current.node.pri or (best.node.pri == current.node.pri and !time_up);
@@ -735,20 +774,19 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         // Nothing will run on its stack again once this core is off it:
         // at once with one core, at the next exit with two, as the other
         // core could have the memory before this one has left it.
-        if (base.cores_running > 1 or !freeRemovedTask(base, current)) reapLater(cpu, current);
+        // A task whose end someone waits to hear of is reaped at the next
+        // exit as well, where the signal goes out as an interrupt's would.
+        if (base.cores_running > 1 or current.end_msg != null or !freeRemovedTask(base, current)) reapLater(cpu, current);
     } else {
         checkStack(current, context);
         current.sp_reg = context;
-        current.td_nest_cnt = cpu.tdn_nest_cnt;
         current.id_nest_cnt = cpu.id_nest_cnt;
         current.id_saved = cpu.id_saved;
         if (current.flags & sdk.exec.TF_SWITCH != 0) {
             if (current.switch_code) |switch_code| switch_code(current, base.iface());
         }
     }
-    if (cpu.tdn_nest_cnt >= 0) releaseForbid(base);
-
-    const next = if (foreign) takeIdle(base, core) else takeReady(base, core);
+    const next = takeReady(base, core);
     // The task left stays this core's until the switch is done: the CPU
     // still writes to its stack on the way out.
     if (next != current and current.state != .removed and !stopping) markLeaving(core, current);
@@ -756,7 +794,6 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     cpu.this_task = next;
     cpu.elapsed = base.quantum;
     cpu.disp_count +%= 1;
-    cpu.tdn_nest_cnt = next.td_nest_cnt;
     cpu.id_nest_cnt = next.id_nest_cnt;
     cpu.id_saved = next.id_saved;
     if (next.flags & sdk.exec.TF_LAUNCH != 0) {
@@ -768,21 +805,6 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         if (bestReady(base, other)) |waiting| offerOther(base, waiting, core);
     }
     return raiseException(base, next, next.sp_reg.?);
-}
-
-/// Whether the other core holds Forbid, which keeps `core` from switching
-/// to any task but its idle one. The core is marked as waiting, so the
-/// Permit that lets the lock go pokes it.
-///
-/// INPUTS:
-/// - `base` - exec: the Forbid lock and its waiters.
-/// - `core` - the core asking.
-fn forbiddenElsewhere(base: *ExecBase, core: u32) bool {
-    const holder = @atomicLoad(u32, &base.forbid_lock, .monotonic);
-    if (holder == 0 or holder == core + 1) return false;
-    _ = @atomicRmw(u32, &base.forbid_waiters, .Or, @as(u32, 1) << @intCast(core), .seq_cst);
-    // Let go meanwhile: the mark may have come after the Permit looked.
-    return @atomicLoad(u32, &base.forbid_lock, .seq_cst) == holder;
 }
 
 /// `task` marked as the one `core` is switching away from.
@@ -804,14 +826,6 @@ fn waitLeft(task: *const Task, core: u32) void {
     }
 }
 
-/// `core`'s idle task off the ready list, for a core that may switch to
-/// nothing else.
-fn takeIdle(base: *ExecBase, core: u32) *Task {
-    const idle = idle_tasks[core].?;
-    Remove(base, &idle.node);
-    return idle;
-}
-
 // --- the cores --------------------------------------------------------------
 
 /// Whether `task` may run on `core`: pinned to it, or to neither core (or
@@ -831,52 +845,36 @@ pub fn runnableOn(base: *const ExecBase, task: *const Task, core: u32) bool {
 }
 
 /// The highest-priority ready task `core`'s dispatcher would take,
-/// without taking it: one that may run there and, inside Forbid, whose
-/// lock is free or the core's own. Null when there is none - which on a
-/// running core happens only while the other core holds Forbid, as the
-/// core then takes none.
+/// without taking it: one that may run there. Null when there is none.
 ///
 /// INPUTS:
 /// - `base` - exec: its ready list.
 /// - `core` - the core asking.
 pub fn bestReady(base: *ExecBase, core: u32) ?*Task {
-    if (forbiddenElsewhere(base, core)) return null;
     var it = base.task_ready.iterator();
     while (it.next()) |node| {
         const task: *Task = @fieldParentPtr("node", node);
-        if (!runnableOn(base, task, core)) continue;
-        if (task.td_nest_cnt >= 0) {
-            const holder = @atomicLoad(u32, &base.forbid_lock, .monotonic);
-            if (holder != 0 and holder != core + 1) continue;
-        }
-        return task;
+        if (runnableOn(base, task, core)) return task;
     }
     return null;
 }
 
 /// The task `core`'s dispatcher runs next, off the ready list: the first
-/// that may run there, taking the Forbid lock for one inside Forbid. One
-/// passed over for that lock marks the core as waiting for it, so the
-/// Permit that lets it go pokes the core.
+/// that may run there.
 ///
 /// INPUTS:
-/// - `base` - exec: the ready list and the Forbid lock.
+/// - `base` - exec: the ready list.
 /// - `core` - this core.
 fn takeReady(base: *ExecBase, core: u32) *Task {
     var it = base.task_ready.iterator();
     while (it.next()) |node| {
         const task: *Task = @fieldParentPtr("node", node);
         if (!runnableOn(base, task, core)) continue;
-        if (task.td_nest_cnt >= 0 and !takeForbid(base)) {
-            _ = @atomicRmw(u32, &base.forbid_waiters, .Or, @as(u32, 1) << @intCast(core), .seq_cst);
-            continue;
-        }
         waitLeft(task, core);
         Remove(base, node);
         return task;
     }
-    // The core's idle task is pinned to it, outside Forbid, and always
-    // ready or running.
+    // The core's idle task is pinned to it, and always ready or running.
     unreachable;
 }
 
@@ -958,9 +956,8 @@ pub fn crossCorePoke(base: *ExecBase) void {
 
 /// A task running on another core brought to its next switch point there
 /// and switched out for good, before `RemTask` takes it away; nothing for
-/// a task that is not running. The caller waits for it - with Wait, so
-/// that a Forbid it holds is let go meanwhile - and goes on once the
-/// other core has left the task's stack.
+/// a task that is not running. The caller waits for it with Wait, and goes
+/// on once the other core has left the task's stack.
 ///
 /// INPUTS:
 /// - `base` - exec: the cores' running tasks, and the jump table the calls
@@ -977,73 +974,6 @@ pub fn stopElsewhere(base: *ExecBase, task: *Task) void {
     cpu.stop_waiter = base.cpu().this_task;
     pokeCore(core);
     while (cpu.stopping == task or cpu.stopped == task) _ = sys.Wait(sdk.exec.SIGF_SINGLE);
-}
-
-// --- Forbid's lock ----------------------------------------------------------
-
-/// The Forbid lock taken for this core, if it is free. The caller has its
-/// interrupts masked, and sets the core's Forbid count with it.
-///
-/// INPUTS:
-/// - `base` - exec: the lock.
-pub fn takeForbid(base: *ExecBase) bool {
-    const own = exec_base.coreId() + 1;
-    return @cmpxchgStrong(u32, &base.forbid_lock, 0, own, .acquire, .monotonic) == null;
-}
-
-/// The Forbid lock let go by this core, and every core that waits for it
-/// poked - this one by its flags. The caller has its interrupts masked.
-///
-/// INPUTS:
-/// - `base` - exec: the lock and its waiters.
-pub fn releaseForbid(base: *ExecBase) void {
-    const core = exec_base.coreId();
-    if (@atomicLoad(u32, &base.forbid_lock, .monotonic) != core + 1) return;
-    @atomicStore(u32, &base.forbid_lock, 0, .seq_cst);
-    const waiting = @atomicRmw(u32, &base.forbid_waiters, .Xchg, 0, .seq_cst);
-    if (waiting == 0) return;
-    for (0..exec_base.max_cores) |other| {
-        if (waiting & (@as(u32, 1) << @intCast(other)) == 0) continue;
-        if (other == core) base.cpus[core].sys_flags |= SFF_SAR else pokeCore(@intCast(other));
-    }
-}
-
-/// A task at task level, outside Disable, waits for the Forbid lock the
-/// other core holds: asleep until an interrupt, with the core marked as
-/// waiting so that the Permit letting it go pokes it. Returns when it
-/// may be free; the caller tries again. The task may be switched out
-/// meanwhile - it holds nothing yet.
-///
-/// INPUTS:
-/// - `base` - exec: the lock and its waiters.
-pub fn waitForForbid(base: *ExecBase) void {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    const core = exec_base.coreId();
-    _ = @atomicRmw(u32, &base.forbid_waiters, .Or, @as(u32, 1) << @intCast(core), .seq_cst);
-    // Asleep with the interrupts let in at once, so a poke between the
-    // look and the sleep still wakes it.
-    if (@atomicLoad(u32, &base.forbid_lock, .seq_cst) != 0) task_hardware.idle();
-    hardware.restore(state);
-}
-
-/// A task inside Disable waits for the Forbid lock the other core holds:
-/// its interrupts stay masked, but the interrupt lock is let go while it
-/// waits - the other core's Forbid section may need it to end. So a
-/// Forbid inside Disable splits the Disable, as Wait inside it does.
-///
-/// INPUTS:
-/// - `base` - exec: both locks.
-pub fn waitForForbidInDisable(base: *ExecBase) void {
-    _interrupt.dropSystemInterrupts(base);
-    const before = exec_base.cycles();
-    while (@atomicLoad(u32, &base.forbid_lock, .acquire) != 0) {
-        _interrupt.interrupt_hardware.park_if_asked();
-    }
-    const spun = exec_base.cycles() -% before;
-    const cpu = base.cpu();
-    if (spun > cpu.forbid_spin_max) cpu.forbid_spin_max = spun;
-    _interrupt.takeSystemInterrupts(base, @returnAddress());
 }
 
 // --- task exceptions --------------------------------------------------------
@@ -1115,18 +1045,19 @@ pub fn exceptionBody(base: *ExecBase) void {
 }
 
 /// The dispatcher, on the way into `task`: if an exception is pending and
-/// the task is neither in Forbid nor in Disable, the exception code runs
-/// first. Tasks blocked in Wait are in Disable; Wait runs it itself.
+/// the task is neither in Disable nor holding a spinlock, the exception
+/// code runs first. Tasks blocked in Wait are in Disable; Wait runs it
+/// itself.
 ///
 /// INPUTS:
-/// - `base` - exec: the Forbid and Disable nesting.
+/// - `base` - exec: the Disable nesting and the spinlocks held.
 /// - `task` - the task about to run.
 /// - `context` - where it resumes.
 ///
 /// RESULT:
 /// The context to resume: `context`, or one that runs the exception first.
 pub fn raiseException(base: *ExecBase, task: *Task, context: *anyopaque) *anyopaque {
-    if (!exceptionPending(task) or base.cpu().tdn_nest_cnt >= 0 or base.cpu().id_nest_cnt >= 0) return context;
+    if (!exceptionPending(task) or base.cpu().id_nest_cnt >= 0 or base.cpu().hold_count != 0) return context;
     return task_hardware.push_exception(context, vec(exceptionEntry));
 }
 

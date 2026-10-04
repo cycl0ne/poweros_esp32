@@ -28,7 +28,7 @@ const Screen = _screen.Screen;
 /// The screen's own, not a copy: every caller sees the same pens.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed.
+/// - Waits: no. - Interrupts: no. - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

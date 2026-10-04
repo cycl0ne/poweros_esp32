@@ -80,7 +80,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, unless the listener does not wait.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; the one that opened the base.
 
    OWNERSHIP
@@ -124,7 +124,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -199,7 +199,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes: the device is opened and asked, and the task started.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a process, to load the device from DEVS:.
 
    OWNERSHIP
@@ -252,7 +252,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -304,7 +304,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -353,7 +353,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock, unless SO_LINGER has a time.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -409,7 +409,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: for the stack's lock, and for the device with `IFA_State`.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do; `IFA_State` makes a message port.
 
    OWNERSHIP
@@ -471,7 +471,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: for a stream socket, yes, unless it does not wait.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -514,7 +514,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -555,7 +555,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -596,7 +596,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -662,7 +662,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes: for the name servers, as GetHostByName.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a process, to read the hosts file; a Task will do for an
 	  address given as text.
 
@@ -714,7 +714,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -763,7 +763,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, for the name servers.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a process, to read the hosts file.
 
    OWNERSHIP
@@ -814,7 +814,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, for the name servers; the break signals end it.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a process, to read the hosts file; a task goes without it.
 
    OWNERSHIP
@@ -862,7 +862,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: for the stack's lock, and the first time for the file.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -916,7 +916,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, for the name servers, unless `NI_NUMERICHOST`.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a process, to read the hosts file.
 
    OWNERSHIP
@@ -973,7 +973,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1020,7 +1020,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1066,7 +1066,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1116,7 +1116,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1165,7 +1165,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1211,7 +1211,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1255,7 +1255,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1298,7 +1298,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1339,7 +1339,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1387,7 +1387,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1436,7 +1436,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1486,7 +1486,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1535,7 +1535,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1580,7 +1580,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1630,7 +1630,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1680,7 +1680,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1725,7 +1725,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, unless the socket does not wait.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; the one that opened the base.
 
    OWNERSHIP
@@ -1788,7 +1788,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, unless the socket does not wait.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; it must be the one that opened the base,
 	  whose signals the wait is on.
 
@@ -1832,7 +1832,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1879,7 +1879,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1921,7 +1921,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1966,7 +1966,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, until the task has done it.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2011,7 +2011,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2082,7 +2082,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: for a stream socket, while its ring is full.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2126,7 +2126,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2171,7 +2171,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2248,7 +2248,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2294,7 +2294,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2350,7 +2350,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do; it must be the one that opened the base.
 
    OWNERSHIP
@@ -2427,7 +2427,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: only for the stack's lock.
 	- Interrupts: no.
-	- Forbid: not held.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2494,7 +2494,7 @@ bsdsocket.library/WaitSelect
    CONTEXT
 	- Waits: yes, unless something is ready or the timeout is zero.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Task will do; the one that opened the base.
 
    OWNERSHIP

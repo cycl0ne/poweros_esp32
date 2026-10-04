@@ -50,8 +50,8 @@ const Screen = _screen.Screen;
 /// CONTEXT:
 /// - Waits: yes - for intuition's lock, and for the layers it draws in.
 /// - Interrupts: no.
-/// - Forbid: must not be held. The style is changed under a Forbid of the
-///   call's own.
+/// - Locks: no spinlock may be held. The style is put in place under
+///   intuition's look lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -94,14 +94,14 @@ pub fn SetStyle(ib: *IntuitionBase, screen: ?*Screen, tags: ?[*]const TagItem) b
     const kept = _style.keep(ib, tags);
     if (kept == null and _style.names(ib, tags)) return false;
 
-    // In place before the old one goes: a lookup holds Forbid for as long
-    // as it reads a style, so once this Forbid is let go nothing reads the
-    // old one any more.
-    ib.sys_base.Forbid();
+    // In place before the old one goes: a lookup holds the look's lock for
+    // as long as it reads a style, so once this has let it go nothing reads
+    // the old one any more.
+    ib.sys_base.AcquireLock(&ib.look_lock);
     const old = if (screen) |s| @constCast(s.draw_info.style) else ib.system_style;
     if (screen) |s| s.draw_info.style = kept else ib.system_style = kept;
     ib.style_serial +%= 1;
-    ib.sys_base.Permit();
+    ib.sys_base.ReleaseLock(&ib.look_lock);
     _style.drop(ib, old);
 
     _window.lock(ib);

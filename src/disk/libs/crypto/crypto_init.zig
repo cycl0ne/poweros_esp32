@@ -51,7 +51,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     sys.Disable();
     _engine.stop();
     sys.Enable();
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

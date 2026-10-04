@@ -27,7 +27,7 @@ truetype.library/RenderFontImage
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -70,7 +70,7 @@ truetype.library/RenderFontImage
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -125,7 +125,7 @@ truetype.library/RenderFontImage
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. The work is a few hundred glyphs.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP

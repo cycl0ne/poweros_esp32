@@ -29,7 +29,7 @@ const FileHandle = dos.FileHandle;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe: it reads one field.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

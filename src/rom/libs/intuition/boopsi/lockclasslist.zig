@@ -28,7 +28,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// CONTEXT:
 /// - Waits: yes, for another task that holds it.
 /// - Interrupts: no.
-/// - Forbid: must not be held - it may wait.
+/// - Locks: no spinlock may be held - it may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

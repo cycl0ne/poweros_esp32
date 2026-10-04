@@ -623,7 +623,7 @@ before motion.library is closed.
 | Call | Waits | |
 |---|---|---|
 | `Ease`, `EaseBezier`, `MixColour`, `MixRect` | no | touch nothing but their arguments: anywhere, an interrupt included |
-| every other call | for the clock's semaphore, while a step runs | never under Forbid |
+| every other call | for the clock's semaphore, while a step runs | never with a spinlock held |
 
 Every call is for a task; a process is not needed. A hook runs holding
 the clock: it stores and signals, and never deletes what it belongs to -

@@ -34,9 +34,9 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not enough. The other core switches on its own, so the answer
-///   holds only inside `Disable`: ask there, and copy what is wanted of the
-///   task before the `Enable` - the task may end once it is let go.
+/// - Locks: Disable, not a lock: the other core switches on its own, so the
+///   answer holds only inside `Disable`: ask there, and copy what is wanted of
+///   the task before the `Enable` - the task may end once it is let go.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -50,7 +50,7 @@ const Task = sdk.exec.Task;
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindTask`, `SetTaskAffinity`, `ExecList`, `Disable`
+/// `FindTask`, `SetTaskAffinity`, `LockExecList`, `Disable`
 ///
 /// EXAMPLES:
 /// ```zig

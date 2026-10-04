@@ -38,7 +38,7 @@ const gadgetOf = @import("../classes/gadgetclass.zig").gadgetOf;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do; a class calls it from its dispatcher.
 ///
 /// OWNERSHIP:

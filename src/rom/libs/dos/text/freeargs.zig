@@ -33,7 +33,7 @@ const internal_flags = RDAF_PROMPT_SHOWN | RDAF_OURBUFFER;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

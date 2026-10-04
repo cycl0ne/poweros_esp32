@@ -130,6 +130,21 @@ pub fn nodeName(node: *const Node) [*:0]const u8 {
     return node.name orelse "?";
 }
 
+/// How many rows a listing copies out of one of exec's lists while it
+/// holds the list's lock; the rest are counted.
+pub const max_rows = 32;
+
+/// A name copied into `into`, cut to fit and NUL-terminated: what a
+/// listing keeps of a node while it holds the list's lock, to print once it
+/// has let go - printing waits, and under a spinlock nothing may.
+pub fn copyName(into: []u8, from: ?[*:0]const u8) [*:0]const u8 {
+    const text = from orelse "?";
+    var length: usize = 0;
+    while (length + 1 < into.len and text[length] != 0) : (length += 1) into[length] = text[length];
+    into[length] = 0;
+    return @ptrCast(into.ptr);
+}
+
 /// The commands, in the order `help` lists them. Each is a file in
 /// `cmds/` that says what it is called, the usage it prints when its
 /// words are wrong, and its lines of `help`, beside its `run`; the table

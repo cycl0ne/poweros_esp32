@@ -43,7 +43,7 @@ rendered from it stay: each is a whole font of its own.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -100,7 +100,7 @@ glyphs themselves are read only when a size is rendered.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -169,7 +169,7 @@ differ.
 
 - Waits: no.
 - Interrupts: no. The work is a few hundred glyphs.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

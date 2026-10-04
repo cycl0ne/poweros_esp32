@@ -42,7 +42,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: yes, for the handler.
 /// - Interrupts: no.
-/// - Forbid: never under Forbid.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process.
 ///
 /// OWNERSHIP:

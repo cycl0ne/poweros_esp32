@@ -47,7 +47,7 @@ const Address = address_file.Address;
 /// CONTEXT:
 /// - Waits: yes, for the name servers, unless `NI_NUMERICHOST`.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a process, to read the hosts file.
 ///
 /// OWNERSHIP:

@@ -40,7 +40,7 @@ const TagItem = sdk.utility.TagItem;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not safe; it allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -2,9 +2,8 @@
 //! Wait: sleeps until one of a set of signals arrives, and answers and
 //! clears the ones that did. A task's exception code runs while it waits.
 //!
-//! It switches even inside Forbid, which is the one place the scheduler
-//! being held is overridden - and why waiting under Forbid stops the
-//! machine rather than failing an assertion.
+//! A task holding a spinlock may not wait: that is a dead end, since the
+//! core's count of locks held is the core's and not the task's.
 
 const _task = @import("_task.zig");
 
@@ -42,11 +41,8 @@ const _locks = @import("../locks/_locks.zig");
 ///   this system waits here in the end.
 /// - Interrupts: no, and it is fatal to try. An interrupt has no task to
 ///   suspend, so there would be nothing to wake.
-/// - Forbid: it switches even under Forbid, which is the one exception to
-///   the scheduler being held, and lets the Forbid lock go until the task
-///   runs again. That makes waiting under Forbid *work* mechanically while
-///   still being wrong: what the Forbid guarded is not guarded across the
-///   Wait.
+/// - Locks: no spinlock may be held: Wait with one held is a dead end, since
+///   the core's count of locks held is the core's and not the task's.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

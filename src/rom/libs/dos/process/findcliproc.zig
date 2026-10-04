@@ -27,12 +27,14 @@ const Process = dos.Process;
 /// CONTEXT:
 /// - Waits: yes, for the CLI table's semaphore.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The process is not the caller's. It can end at any time after the call;
-/// a caller that looks into it holds Forbid meanwhile.
+/// The process is not the caller's. It can end at any time after the call,
+/// on either core; a caller that changes it first makes sure, under
+/// Disable, that it is still on exec's task lists or running (as
+/// `C:ChangeTaskPri` does).
 ///
 /// BUGS:
 /// None known.

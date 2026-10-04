@@ -48,6 +48,15 @@ pub const NP_UserData = NP_Dummy + 26;
 /// The cores the new process runs on (exec's TF_CORE0, TF_CORE1, or 0 for
 /// any), set before it first runs.
 pub const NP_Affinity = NP_Dummy + 27;
+/// A message replied to its reply port once the new process has ended and
+/// nothing runs on its stack any more (exec's SetTaskEndMsg): when the code
+/// it ran may be unloaded. Null (the default): none.
+pub const NP_EndMsg = NP_Dummy + 28;
+/// A library whose code the new process runs, with an open count the
+/// caller hands over: dos closes it once the process's code has returned,
+/// so the library cannot go while its code still runs. Null (the
+/// default): none.
+pub const NP_HoldLibrary = NP_Dummy + 29;
 
 // SystemTagList's tags.
 pub const SYS_Dummy = TAG_USER + 32;

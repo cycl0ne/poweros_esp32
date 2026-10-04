@@ -44,7 +44,7 @@ const findFirst = _lock.findFirst;
 /// CONTEXT:
 /// - Waits: yes, for the handlers' answers.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do for a pattern with a device; without one the
 ///   search starts in the current directory, which only a process has.
 ///

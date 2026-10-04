@@ -36,7 +36,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// CONTEXT:
 /// - Waits: yes, until the handler replies.
 /// - Interrupts: no.
-/// - Forbid: never under Forbid.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

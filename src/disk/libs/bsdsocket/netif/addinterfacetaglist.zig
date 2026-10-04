@@ -76,7 +76,7 @@ const Address = @import("../ip6/address.zig").Address;
 /// CONTEXT:
 /// - Waits: yes: the device is opened and asked, and the task started.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a process, to load the device from DEVS:.
 ///
 /// OWNERSHIP:
@@ -198,9 +198,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     if (address != 0) _ = _route.add(stack, address, netmask, 0, slot);
     if (gateway != 0) _ = _route.setDefault(stack, gateway);
     // The interface keeps the library, so the task and the code stay.
-    sys.Forbid();
-    stack.lib.open_cnt += 1;
-    sys.Permit();
+    @import("../task/_task.zig").holdLibrary(stack, 1);
     device.start(stack, link, &stack.port);
     if (ipv6) {
         _ip6.start(stack, slot);

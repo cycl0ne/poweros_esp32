@@ -315,8 +315,9 @@ pub fn processEnd(sys: *ExecBase) callconv(.c) void {
 
 /// Frees what a process holds: its exit hook is called, then its CLI
 /// number, variables, streams (as its flags say), directories, command
-/// path and argument copy go, and a handler loaded from a file is given
-/// back when this was the last process running it.
+/// path and argument copy go, a handler loaded from a file is given back
+/// when this was the last process running it, and a library it held while
+/// it ran its code (NP_HoldLibrary) is closed.
 ///
 /// INPUTS:
 /// - `db` - dos.library's base.
@@ -353,6 +354,12 @@ pub fn endProcess(db: *DosBase, proc: *Process) void {
     if (proc.handler_node) |node| {
         proc.handler_node = null;
         doslist.releaseHandlerCode(db, node);
+    }
+    // The library whose code it ran, last of all: dos's own code is what
+    // runs from here on, so the library may go with this close.
+    if (proc.held_library) |held| {
+        proc.held_library = null;
+        db.sys_base.CloseLibrary(held);
     }
 }
 

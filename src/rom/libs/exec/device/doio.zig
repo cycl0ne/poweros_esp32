@@ -59,7 +59,8 @@ const IORequest = sdk.exec.IORequest;
 ///   comes back without waiting, and which those are is the device's to
 ///   say, not the caller's to rely on.
 /// - Interrupts: no. It may wait.
-/// - Forbid: no. It may wait, and a device's work may reach a handler.
+/// - Locks: no spinlock may be held: it may wait, and a device's work may reach
+///   a handler.
 /// - Process: a Task will do, unless the device wants more.
 ///
 /// OWNERSHIP:

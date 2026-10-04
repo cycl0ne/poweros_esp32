@@ -32,8 +32,8 @@ const Node = sdk.exec.Node;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's library list, a semaphore.
+/// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -53,8 +53,8 @@ const Node = sdk.exec.Node;
 pub fn AddResource(base: *ExecBase, resource: *anyopaque) void {
     const node: *Node = @ptrCast(@alignCast(resource));
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
     node.type = .resource;
     sys.Enqueue(&base.resource_list, node);
 }

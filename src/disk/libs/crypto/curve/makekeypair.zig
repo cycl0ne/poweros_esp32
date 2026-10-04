@@ -43,7 +43,7 @@ const _signature = @import("../signature/_signature.zig");
 /// CONTEXT:
 /// - Waits: for the SHA engine (Ed25519 only), while another task has it.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

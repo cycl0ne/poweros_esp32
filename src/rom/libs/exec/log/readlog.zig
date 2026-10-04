@@ -40,8 +40,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not needed. It holds this core's interrupts off, and the
-///   other core's writes out, while it copies.
+/// - Locks: none needed. It holds this core's interrupts off, and the other
+///   core's writes out, while it copies.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

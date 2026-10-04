@@ -37,7 +37,7 @@ const Task = sdk.exec.Task;
 /// **Removing another task** takes it off whichever list it is on and frees
 /// its memory there and then. One running on the other core is stopped
 /// first: that core switches it out at its next switch point - outside
-/// Forbid and Disable - and the caller waits for that, in `Wait`, before
+/// Disable and any spinlock - and the caller waits for that, in `Wait`, before
 /// the end hooks run.
 ///
 /// Either way, only what `CreateTask` allocated is freed. A task the caller
@@ -50,7 +50,7 @@ const Task = sdk.exec.Task;
 ///   is not the same thing.
 /// - Interrupts: no. It takes Disable, may free memory, and runs the
 ///   task's end hooks.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -92,5 +92,8 @@ pub fn RemTask(base: *ExecBase, task: ?*Task) void {
     if (ending.state == .ready or ending.state == .wait) sys.Remove(&ending.node);
     ending.state = .removed;
     sys.Enable();
+    // Read before the memory goes; whoever asked hears once it has.
+    const ended = ending.end_msg;
     _task.freeTaskMemory(base, ending);
+    if (ended) |msg| sys.ReplyMsg(msg);
 }

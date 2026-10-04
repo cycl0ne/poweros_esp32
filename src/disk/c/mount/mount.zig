@@ -375,9 +375,10 @@ fn unmount(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entr
             dl.UnLockDosList(flags);
             return;
         };
-        sys.Forbid();
+        // Two words, each read whole, under the DosList's lock: the
+        // handler's port is let go under it, and its users are counted
+        // down before.
         const running = node.task != null or node.misc.handler.users != 0;
-        sys.Permit();
         if (!running) {
             const removed = dl.RemDosEntry(node);
             dl.UnLockDosList(flags);

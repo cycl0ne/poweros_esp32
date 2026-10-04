@@ -38,7 +38,7 @@ const runOf = @import("_render.zig").runOf;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no: it allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

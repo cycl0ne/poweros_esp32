@@ -38,7 +38,7 @@ const unlock = _screen.unlock;
 /// - Waits: for the screen list's semaphore, and for the display's next
 ///   frame - which paces a program drawing a frame at a time to the display.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

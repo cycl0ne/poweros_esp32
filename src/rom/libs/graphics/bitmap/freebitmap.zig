@@ -34,7 +34,7 @@ const Surface = rtg.Surface;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no; it frees memory.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

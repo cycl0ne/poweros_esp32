@@ -38,7 +38,7 @@ const _task = @import("../task/_task.zig");
 /// CONTEXT:
 /// - Waits: yes, until the task has done it.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

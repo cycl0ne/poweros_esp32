@@ -47,7 +47,7 @@ const _render = @import("_render.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. The work is a few hundred glyphs.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

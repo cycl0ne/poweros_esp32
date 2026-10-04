@@ -33,7 +33,7 @@ const List = sdk.exec.List;
 /// CONTEXT:
 /// - Waits: no, but it may signal and so may switch.
 /// - Interrupts: no. It takes exec's semaphore lock.
-/// - Forbid: may be held.
+/// - Locks: takes exec's semaphore lock for a moment.
 /// - Process: a Task will do, and it must be the task that obtained them.
 ///
 /// OWNERSHIP:

@@ -39,8 +39,8 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: yes, until the last one is granted.
 /// - Interrupts: no. It waits.
-/// - Forbid: may be held, and is broken by the waiting, as with
-///   `ObtainSemaphore`.
+/// - Locks: takes exec's semaphore lock while it looks; no spinlock may be
+///   held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

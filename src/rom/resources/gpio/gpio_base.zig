@@ -11,4 +11,6 @@ pub const GpioBase = extern struct {
     sys_base: *ExecBase,
     /// Each pad's holder, the name it was taken for; null: free.
     owner: [types.GPIO_PADS]?[*:0]const u8,
+    /// The table above: a spinlock, held for the test and the take.
+    lock: exec.Lock,
 };

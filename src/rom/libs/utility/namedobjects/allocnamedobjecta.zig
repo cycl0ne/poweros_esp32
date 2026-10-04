@@ -49,8 +49,8 @@ const Object = _namedobjects.Object;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-/// - Forbid: not needed.
+/// - Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

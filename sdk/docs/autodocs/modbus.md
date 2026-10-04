@@ -57,7 +57,7 @@ closed if the library made it. The context is freed.
 
 - Waits: yes, on the device.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -114,7 +114,7 @@ The text is the library's, the same for every caller.
 
 - Waits: no.
 - Interrupts: yes.
-- Forbid: may be held.
+- Locks: none needed.
 - Process: any.
 
 **OWNERSHIP**
@@ -183,7 +183,7 @@ functions the library has no call for.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -260,7 +260,7 @@ quiet line of three and a half characters - or of 1750 µs above
 
 - Waits: yes, on the device.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do. The context's reply port is the caller's,
   so every call with it must come from the same task.
 
@@ -337,7 +337,7 @@ each with its own transaction number.
 
 - Waits: yes, for the name and the connection.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Process, the one `socket_base` belongs to; every call
   with the context must come from it.
 
@@ -408,7 +408,7 @@ left as it was unless the answer is MBERR_OK.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -475,7 +475,7 @@ left as it was unless the answer is MBERR_OK.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -540,7 +540,7 @@ left as it was unless the answer is MBERR_OK.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -608,7 +608,7 @@ left as it was unless the answer is MBERR_OK.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -673,7 +673,7 @@ after, so a run that overlaps reads what was just written.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -763,7 +763,7 @@ the lock let go.
 
 - Waits: yes, for the process to start.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -832,7 +832,7 @@ question it is answering is answered first. The server is freed.
 
 - Waits: yes, for the process.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; not the hook's, which runs on the server's
   own process.
 
@@ -898,7 +898,7 @@ One question, function 0x05: the coil as 0xFF00 for on, 0 for off.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -963,7 +963,7 @@ One question, function 0x0F, the coils packed eight to a byte.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -1028,7 +1028,7 @@ One question, function 0x06.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**
@@ -1093,7 +1093,7 @@ One question, function 0x10.
 
 - Waits: yes, for the answer.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the context.
 
 **OWNERSHIP**

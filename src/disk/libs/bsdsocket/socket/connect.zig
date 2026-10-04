@@ -53,7 +53,7 @@ const tcp_user = @import("../tcp/user.zig");
 /// CONTEXT:
 /// - Waits: for a stream socket, yes, unless it does not wait.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

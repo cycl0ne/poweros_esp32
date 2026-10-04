@@ -34,7 +34,7 @@ const Segment = dos.Segment;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not safe.
-/// - Forbid: not needed; the list must be locked with LockSegmentList.
+/// - Locks: none taken; the list must be locked with LockSegmentList.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

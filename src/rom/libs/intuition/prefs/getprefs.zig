@@ -36,7 +36,7 @@ const _prefs = @import("_prefs.zig");
 /// CONTEXT:
 /// - Waits: for a font asked for, while another task sets the fonts.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

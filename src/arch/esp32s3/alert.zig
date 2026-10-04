@@ -267,7 +267,9 @@ fn canAsk(exception: bool) bool {
     if (failing or !exec.initialized or helper.mask == 0) return false;
     const base = exec.SysBase;
     if (base.cpu().int_depth != @intFromBool(exception)) return false;
-    if (base.cpu().id_nest_cnt >= 0 or base.cpu().tdn_nest_cnt >= 0) return false;
+    // Waiting for the answer must be possible: switching on, nothing
+    // masked, no spinlock held.
+    if (base.multitasking == 0 or base.cpu().id_nest_cnt >= 0 or base.cpu().hold_count != 0) return false;
     const task = base.cpu().this_task;
     if (task == helper.task) return false;
     if (std.mem.eql(u8, task.name(), "intuition input")) return false;
@@ -378,14 +380,14 @@ const recoverable_frames = 600;
 /// TimedDisplayAlert: a box with the alert's title, its number and its
 /// text, answered by a press or a touch or by the time running out. Only
 /// where waiting for that is safe - a task raised it, not an interrupt;
-/// interrupts are on and nothing is forbidden; it is not intuition's input
+/// interrupts are on and no spinlock is held; it is not intuition's input
 /// task, whose events answer it - and only with intuition already in the
 /// system: it is opened by name, and never loaded for this.
 fn displayRecoverable(alert_num: u32, guru: []const u8, text: ?[*:0]const u8) void {
     if (displaying or !exec.initialized) return;
     const base = exec.SysBase;
     if (base.cpu().int_depth != 0) return;
-    if (base.cpu().id_nest_cnt >= 0 or base.cpu().tdn_nest_cnt >= 0 or base.cpu().hold_count != 0) return;
+    if (base.multitasking == 0 or base.cpu().id_nest_cnt >= 0 or base.cpu().hold_count != 0) return;
     const task = base.cpu().this_task;
     if (std.mem.eql(u8, task.name(), "intuition input")) return;
     if (!hasLibrary("intuition.library")) return;

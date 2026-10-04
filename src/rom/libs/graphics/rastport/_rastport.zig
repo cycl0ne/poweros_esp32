@@ -299,15 +299,12 @@ pub fn setFill(gb: *@import("../graphics.zig").GraphicsBase, rp: *RastPort, give
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the read of rtg's board list, as exec's
-///   contract for walking a list asks. The board outlives the Forbid, but
-///   only until someone deletes it, which is why it is asked for again
-///   each time rather than trusted.
+/// - Interrupts: no. `NextBoard` takes rtg's board list.
+/// - Locks: none taken here; `NextBoard` takes rtg's board list. The board
+///   outlives the call only until someone deletes it, which is why it is asked
+///   for again each time rather than trusted.
 /// - Process: a Task will do.
 pub fn view(gb: *GraphicsBase) ?*RtgBoard {
-    gb.sys_base.Forbid();
-    defer gb.sys_base.Permit();
     gb.view = gb.rtg_base.NextBoard(null);
     return gb.view;
 }

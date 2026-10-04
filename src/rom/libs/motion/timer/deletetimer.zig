@@ -29,7 +29,7 @@ const _timer = @import("_timer.zig");
 /// CONTEXT:
 /// - Waits: for the clock's semaphore, while a step of anything runs.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

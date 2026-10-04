@@ -8,6 +8,7 @@
 //! DEVS: is ramlib.library, which replaces the slot in front of it.
 
 const sdk = @import("sdk");
+const _library = @import("../library/_library.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Device = sdk.exec.Device;
@@ -47,12 +48,18 @@ const IORequest = sdk.exec.IORequest;
 /// then on the request carries both, which is why a request is what is
 /// opened rather than a handle being answered.
 ///
+/// As `OpenLibrary`: the device is found and pinned under exec's library
+/// list, which is let go, and its Open runs inside the device's own lock.
+/// An Open that starts the device's task and waits for it is free to: that
+/// task may open what it needs.
+///
 /// CONTEXT:
-/// - Waits: no as exec has it, though a device's own Open may. With
-///   ramlib.library in front of it, it may: the replacement loads the
-///   device from DEVS:.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the search and the vector.
+/// - Waits: for exec's library list and the device's lock while others
+///   hold them, and a device's own Open may. With ramlib.library in front
+///   of it, the replacement loads the device from DEVS:.
+/// - Interrupts: no. It takes semaphores.
+/// - Locks: takes exec's library list and the device's own lock, both
+///   semaphores; no spinlock may be held.
 /// - Process: a Task will do for exec's own. ramlib's replacement needs a
 ///   Process, and sends the work to its own when a Task calls it.
 ///
@@ -79,18 +86,26 @@ const IORequest = sdk.exec.IORequest;
 /// ```
 pub fn OpenDevice(base: *ExecBase, name: [*:0]const u8, unit: u32, io: *IORequest, flags: u32) i32 {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-    const node = sys.FindName(&base.device_list, name) orelse {
+    sys.ObtainSemaphore(&base.sem_libraries);
+    const dev = _library.findOpenable(&base.device_list, name) orelse {
+        sys.ReleaseSemaphore(&base.sem_libraries);
         io.device = null;
         io.err = sdk.exec.IOERR_OPENFAIL;
         return sdk.exec.IOERR_OPENFAIL;
     };
-    const dev: *Device = @fieldParentPtr("node", node);
+    dev.pins += 1;
+    sys.ReleaseSemaphore(&base.sem_libraries);
+
     io.device = dev;
     io.unit = null;
     io.err = 0;
+    sys.ObtainSemaphore(&dev.lock);
     const result = dev.vector(sdk.exec.DevOpenFn, sdk.exec.LIB_OPEN)(dev, io, unit, flags);
+    sys.ReleaseSemaphore(&dev.lock);
+
+    sys.ObtainSemaphore(&base.sem_libraries);
+    dev.pins -= 1;
+    sys.ReleaseSemaphore(&base.sem_libraries);
     if (result != 0) {
         io.device = null;
         io.err = @truncate(result); // the request's error field is a byte

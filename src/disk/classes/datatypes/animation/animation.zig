@@ -20,7 +20,8 @@
 //! frame is due and drawn, and if it is, makes it the one on show,
 //! gives the loader the buffer the last one was in, and asks intuition
 //! to draw the object again (`QueueGadgetRefresh`). The hook only moves
-//! numbers, under Forbid, and waits for nothing.
+//! numbers, under the object's lock (`Data.lock`, a spinlock), and waits
+//! for nothing; the loader and the gadget's callers take the same lock.
 //!
 //! **A frame late is shown late, not skipped.** A GIF's frames are built
 //! one on the other, so the loader goes through them in order; where it
@@ -101,6 +102,10 @@ const Slot = extern struct {
 
 /// animation.datatype's part of an object.
 pub const Data = extern struct {
+    /// The slots' states, the play state and the counters, shared by the
+    /// clock's hook, the loader and the callers: a spinlock, held while
+    /// numbers move.
+    lock: exec.Lock = .{},
     width: u32 = 0,
     height: u32 = 0,
     frames: u32 = 0,
@@ -167,14 +172,15 @@ fn now(own: *Data) u64 {
 // --- the clock --------------------------------------------------------------
 
 /// The timer's hook, on motion.library's task: the next frame shown if
-/// it is due and drawn. Moves numbers under Forbid, waits for nothing.
+/// it is due and drawn. Moves numbers under the object's lock, waits for
+/// nothing.
 fn tick(hook: *utility.Hook, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize {
     const own: *Data = @ptrCast(@alignCast(hook.data orelse return 0));
     const base = own.base orelse return 0;
     const sys = base.sys_base;
     const time = now(own);
     var changed = false;
-    sys.Forbid();
+    sys.AcquireLock(&own.lock);
     if ((own.playing or own.show_once) and own.frames != 0 and (own.shown < 0 or time >= own.due or own.show_once)) {
         for (&own.slots, 0..) |*slot, index| {
             if (slot.state != READY or slot.generation != own.generation or slot.frame != own.expected) continue;
@@ -192,7 +198,7 @@ fn tick(hook: *utility.Hook, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize 
         }
     }
     const loader = own.loader;
-    sys.Permit();
+    sys.ReleaseLock(&own.lock);
     if (changed) {
         if (loader) |task| sys.Signal(task, exec.SIGBREAKF_CTRL_F);
         if (own.object) |object| base.intuition_base.QueueGadgetRefresh(object);
@@ -227,7 +233,7 @@ fn loaderMain(sys: *ExecBase) callconv(.c) void {
         const got = sys.Wait(exec.SIGBREAKF_CTRL_F | exec.SIGBREAKF_CTRL_C);
         if (own.quitting or got & exec.SIGBREAKF_CTRL_C != 0) break;
         while (!own.quitting) {
-            sys.Forbid();
+            sys.AcquireLock(&own.lock);
             var chosen: ?*Slot = null;
             for (&own.slots) |*slot| {
                 // A frame of a generation gone by is room again.
@@ -235,7 +241,7 @@ fn loaderMain(sys: *ExecBase) callconv(.c) void {
                 if (chosen == null and slot.state == FREE) chosen = slot;
             }
             const slot = chosen orelse {
-                sys.Permit();
+                sys.ReleaseLock(&own.lock);
                 break;
             };
             const generation = own.generation;
@@ -243,7 +249,7 @@ fn loaderMain(sys: *ExecBase) callconv(.c) void {
             own.next_load = (frame + 1) % @max(own.frames, 1);
             slot.state = LOADING;
             slot.generation = generation;
-            sys.Permit();
+            sys.ReleaseLock(&own.lock);
 
             const pens = slot.pens.?;
             @memset(pens[0 .. own.height * own.width], 0);
@@ -255,7 +261,7 @@ fn loaderMain(sys: *ExecBase) callconv(.c) void {
             _ = ib.SendMessage(own.object, @ptrCast(&msg));
             const duration = if (msg.duration != 0) msg.duration else 1000 / @max(own.fps, 1);
 
-            sys.Forbid();
+            sys.AcquireLock(&own.lock);
             if (slot.generation == own.generation) {
                 slot.frame = frame;
                 slot.duration_ms = duration;
@@ -263,7 +269,7 @@ fn loaderMain(sys: *ExecBase) callconv(.c) void {
             } else {
                 slot.state = FREE;
             }
-            sys.Permit();
+            sys.ReleaseLock(&own.lock);
         }
     }
     if (own.timer) |it| mb.DeleteTimer(it);
@@ -341,17 +347,17 @@ fn end(base: *Base, own: *Data) void {
 fn play(base: *Base, own: *Data) void {
     if (!begin(base, own)) return;
     const sys = base.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&own.lock);
     own.playing = true;
     own.due = 0;
-    sys.Permit();
+    sys.ReleaseLock(&own.lock);
 }
 
 fn pause(base: *Base, own: *Data) void {
     const sys = base.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&own.lock);
     own.playing = false;
-    sys.Permit();
+    sys.ReleaseLock(&own.lock);
 }
 
 /// The animation taken to `frame`: what is drawn already is thrown
@@ -359,14 +365,14 @@ fn pause(base: *Base, own: *Data) void {
 fn locate(base: *Base, own: *Data, frame: u32) void {
     if (own.frames == 0) return;
     const sys = base.sys_base;
-    sys.Forbid();
+    sys.AcquireLock(&own.lock);
     own.generation +%= 1;
     own.next_load = frame % own.frames;
     own.expected = own.next_load;
     own.show_once = true;
     own.due = 0;
     const loader = own.loader;
-    sys.Permit();
+    sys.ReleaseLock(&own.lock);
     if (loader) |task| sys.Signal(task, exec.SIGBREAKF_CTRL_F);
 }
 
@@ -422,9 +428,9 @@ fn paint(base: *Base, own: *Data, rp: *graphics.RastPort, box: gc.Box, left: i32
     const sys = base.sys_base;
     if (box.width <= 0 or box.height <= 0) return;
     gadgets.support.fill(gb, rp, box, ground);
-    sys.Forbid();
+    sys.AcquireLock(&own.lock);
     const pens: ?[*]Pen = if (own.shown >= 0) own.slots[@intCast(own.shown)].pens else null;
-    sys.Permit();
+    sys.ReleaseLock(&own.lock);
     const shown = pens orelse return;
     const width: i32 = @intCast(own.width);
     const height: i32 = @intCast(own.height);
@@ -541,6 +547,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.start_signal = -1;
             own.object = obj;
             own.base = base;
+            base.sys_base.InitLock(&own.lock, "animation", exec.LOCKORDER_DRIVER, 0);
             own.clock = .{};
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
             if (setAttrs(base, own, new.attr_list)) tellSize(base, cl, obj, own);

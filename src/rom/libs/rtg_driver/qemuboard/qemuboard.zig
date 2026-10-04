@@ -164,7 +164,7 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. Four register writes and nothing else.
-/// - Forbid: not held, not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 fn present(screen: *Screen) void {
     const shown = screen.showing orelse return;
@@ -401,7 +401,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     }
     // A flip from one picture to another takes a frame, as on the glass.
     // The first picture shown is not waited for: it comes up at cold
-    // start, under the display module's Forbid.
+    // start.
     const flip = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
     screen.showing = bitmap;
     screen.band_count = 0;

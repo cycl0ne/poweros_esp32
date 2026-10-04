@@ -49,7 +49,7 @@ const PutChProc = sdk.exec.PutChProc;
 /// - Waits: no, though `put_ch_proc` may.
 /// - Interrupts: safe in itself; it depends entirely on what
 ///   `put_ch_proc` does.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

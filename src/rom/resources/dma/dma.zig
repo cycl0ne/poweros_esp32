@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! dma.resource: the chip's general DMA engine (GDMA, sdk/hardware/gdma.zig),
 //! its 5 channels handed out to one owner each. AllocDMAChannel claims a
-//! channel under Forbid and gives null, or the owner's name if it is taken;
+//! channel under the resource's lock and gives null, or the owner's name
+//! if it is taken;
 //! FreeDMAChannel gives it back, and also stops and disconnects the
 //! channel. The ROM tag is cold start at priority 70 and the functions
 //! start in the first slot (sdk/fd/dma_lib.fd).
@@ -60,6 +61,9 @@ const DmaBase = extern struct {
     owner: [gdma.channels]?[*:0]const u8,
     /// The peripheral ID each channel is connected to, or no_peripheral.
     peri: [gdma.channels]u8,
+    /// The two tables above, and the connections they say: a spinlock,
+    /// held for the test and the change.
+    lock: exec.Lock,
 };
 
 fn dmaBase(lib: *exec.Library) *DmaBase {
@@ -84,8 +88,8 @@ fn sideOf(side: u32) ?gdma.Side {
 
 fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
     if (channel >= gdma.channels) return "(no such channel)";
-    db.sys_base.Forbid();
-    defer db.sys_base.Permit();
+    db.sys_base.AcquireLock(&db.lock);
+    defer db.sys_base.ReleaseLock(&db.lock);
     if (db.owner[channel]) |owner| return owner;
     db.owner[channel] = name;
     return null;
@@ -93,8 +97,8 @@ fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(
 
 fn lvoFreeDMAChannel(db: *DmaBase, channel: u32) callconv(.c) void {
     if (channel >= gdma.channels) return;
-    db.sys_base.Forbid();
-    defer db.sys_base.Permit();
+    db.sys_base.AcquireLock(&db.lock);
+    defer db.sys_base.ReleaseLock(&db.lock);
     gdma.disconnect(channel);
     db.peri[channel] = gdma.no_peripheral;
     db.owner[channel] = null;
@@ -132,8 +136,8 @@ fn lvoConnectDMAChannel(db: *DmaBase, channel: u32, peripheral: u32, flags: u32)
     if (channel >= gdma.channels) return false;
     const mem_to_mem = peripheral == types.DMAPERI_MEMORY;
     if (!mem_to_mem and peripheral > max_peripheral) return false;
-    db.sys_base.Forbid();
-    defer db.sys_base.Permit();
+    db.sys_base.AcquireLock(&db.lock);
+    defer db.sys_base.ReleaseLock(&db.lock);
     const id: u8 = if (mem_to_mem) freePeripheral(db, channel) orelse return false else @intCast(peripheral);
     if (peripheralTaken(db, channel, id)) return false;
     gdma.connect(channel, id, mem_to_mem, flags & types.DMACF_BURST != 0, flags & types.DMACF_LOOP != 0, flags & types.DMACF_WIDE != 0);
@@ -237,6 +241,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const db = dmaBase(lib);
     lib.revision = RESOURCE_REVISION;
     db.sys_base = sys_base;
+    sys_base.InitLock(&db.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     db.owner = @splat(null);
     db.peri = @splat(gdma.no_peripheral);
     gdma.init();

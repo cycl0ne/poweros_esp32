@@ -30,7 +30,7 @@ const _server = @import("_server.zig");
 /// CONTEXT:
 /// - Waits: yes, for the process.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; not the hook's, which runs on the server's
 ///   own process.
 ///

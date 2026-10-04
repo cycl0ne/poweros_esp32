@@ -4,6 +4,7 @@
 //! otherwise marks itself to go at the last close.
 
 const sdk = @import("sdk");
+const _library = @import("_library.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Library = sdk.exec.Library;
@@ -27,20 +28,28 @@ const Library = sdk.exec.Library;
 ///
 /// BEHAVIOR:
 /// It asks rather than tells, and the library decides. The standard
-/// Expunge (`libExpunge`) takes the library off the list and frees it when
-/// nobody has it open, and otherwise only sets `LIBF_DELEXP` so that it
-/// goes on its last `CloseLibrary`. A library in the ROM keeps itself by
-/// answering without doing anything, and exec reads that from the library
-/// still being on its list when the vector returns.
+/// Expunge (`libExpunge`) takes the library off the list (`DetachLibrary`)
+/// and frees it when nobody has it open, and otherwise only sets
+/// `LIBF_DELEXP` so that it goes on its last `CloseLibrary`. A library in
+/// the ROM keeps itself by answering without doing anything, and exec reads
+/// that from the library still being on its list when the vector returns.
 ///
 /// So a caller cannot conclude from the result that the library went. What
 /// it went by is whether it is still on the list.
 ///
+/// It takes the library's own lock, so no Open or Close of it is running.
+/// One that is open has its vector run inside the lock, and is only
+/// marked. One nobody has open is marked going (`LIBF_GOING`) under exec's
+/// library list - from then on no Open finds it - and its vector runs with
+/// nothing held, since it may close what it opened. A library an Open is
+/// on its way to is left alone.
+///
 /// CONTEXT:
-/// - Waits: no, and the vector it calls must not either - the low-memory
-///   handler reaches this from inside `AllocMem`.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the vector.
+/// - Waits: for the library's lock and exec's library list while others
+///   hold them; and the vector may close other libraries.
+/// - Interrupts: no. It takes semaphores.
+/// - Locks: takes the library's own lock and exec's library list, both
+///   semaphores; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -66,8 +75,6 @@ const Library = sdk.exec.Library;
 /// }
 /// ```
 pub fn RemLibrary(base: *ExecBase, lib: *Library) ?*anyopaque {
-    const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-    return lib.vector(sdk.exec.ExpungeFn, sdk.exec.LIB_EXPUNGE)(lib);
+    base.iface().ObtainSemaphore(&lib.lock);
+    return _library.expungeHeld(base, lib, &base.lib_list).seg_list;
 }

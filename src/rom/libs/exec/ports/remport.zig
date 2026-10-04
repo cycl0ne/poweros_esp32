@@ -30,9 +30,8 @@ const MsgPort = sdk.exec.MsgPort;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It takes exec's port lock, around the list.
-/// - Forbid: may be held. It is taken here as well, around the change:
-///   a program walks the port list under Forbid, which must keep it
-///   still on both cores.
+/// - Locks: takes exec's port lock, around the change. A program walks the port
+///   list under the same lock, with `LockExecList`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -52,8 +51,6 @@ const MsgPort = sdk.exec.MsgPort;
 /// ```
 pub fn RemPort(base: *ExecBase, port: *MsgPort) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
     sys.AcquireLock(&base.lock_ports);
     defer sys.ReleaseLock(&base.lock_ports);
     sys.Remove(&port.node);

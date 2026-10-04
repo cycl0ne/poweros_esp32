@@ -32,12 +32,12 @@ const Task = sdk.exec.Task;
 ///
 /// A switch is asked for when the change made one right: the task lowered
 /// itself below a ready task, or another task was raised above the running
-/// one. It is taken at the `Enable` here, or postponed by a Forbid.
+/// one. It is taken at the `Enable` here, or postponed by a spinlock held.
 ///
 /// CONTEXT:
 /// - Waits: no, but it may switch.
 /// - Interrupts: no. It takes Disable.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

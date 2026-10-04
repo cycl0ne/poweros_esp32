@@ -23,9 +23,9 @@ pub const help =
     \\
     \\  Under each core: the longest it held the system's interrupt lock and the
     \\  longest it waited for it, each with the code that took it (1: an
-    \\  exception); the longest a task waited inside Disable for Forbid; the cache
-    \\  engine's longest wait and hold; and the longest it was parked. All of them
-    \\  hold the core's interrupts off, so they are what makes one late.
+    \\  exception); the cache engine's longest wait and hold; and the longest it was
+    \\  parked. All of them hold the core's interrupts off, so they are what makes
+    \\  one late.
     \\
 ;
 
@@ -46,7 +46,6 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             for (&base.cpus) |*cpu| {
                 cpu.lock_held_max = 0;
                 cpu.lock_wait_max = 0;
-                cpu.forbid_spin_max = 0;
             }
             _cache.engine_wait_max = @splat(0);
             trap.longest = @splat(0);
@@ -95,12 +94,11 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             intmatrix.cross_core_count[core],
         });
         const per_us = @max(timer.cpu_hz / 1_000_000, 1);
-        shell.print("  interrupt lock held up to %u us (0x%08x), waited up to %u us (0x%08x); Forbid in Disable %u us\n", .{
+        shell.print("  interrupt lock held up to %u us (0x%08x), waited up to %u us (0x%08x)\n", .{
             cpu.lock_held_max / per_us,
             @as(u32, @truncate(cpu.lock_held_where)),
             cpu.lock_wait_max / per_us,
             @as(u32, @truncate(cpu.lock_wait_where)),
-            cpu.forbid_spin_max / per_us,
         });
         shell.print("  cache engine waited up to %u us, held up to %u us; parked up to %u us\n", .{
             _cache.engine_wait_max[core] / per_us,

@@ -29,7 +29,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not safe; it frees memory.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

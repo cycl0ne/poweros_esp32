@@ -387,7 +387,7 @@ does it.
 
 - **One task does the work.** Every request that copies an opener's
   buffer runs on the device's own task; the openers' copy calls may wait,
-  so they never run under Forbid or in an interrupt.
+  so they never run under a spinlock or in an interrupt.
 - **Nothing polls.** A frame received, a frame sent and a change of the
   link are the hardware's interrupts, hooked with exec's `AddIntServer`
   (the numbers from `sdk.hardware.intbits`); the interrupt code only

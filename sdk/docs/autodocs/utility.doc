@@ -81,8 +81,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: yes, while another task holds the name space's semaphore.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be relied on across it: waiting for the semaphore
-	  breaks it.
+	- Locks: takes the name space's semaphore; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -128,7 +127,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -173,7 +172,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -226,8 +225,8 @@ utility.library/UnpackStructureTags
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-	- Forbid: not needed.
+	- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -268,8 +267,8 @@ utility.library/UnpackStructureTags
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-	- Forbid: not needed.
+	- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -311,7 +310,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -354,7 +353,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -394,7 +393,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: yes, while another task holds the name space's semaphore.
 	- Interrupts: no. It may wait.
-	- Forbid: taken here, and broken while waiting for the semaphore.
+	- Locks: takes the name space's semaphore; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -437,7 +436,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: only if the hook's function does.
 	- Interrupts: as far as the hook's function allows.
-	- Forbid: not taken; the hook's function decides what it needs.
+	- Locks: none taken; the hook's function decides what it needs.
 	- Process: whatever the hook's function needs.
 
    OWNERSHIP
@@ -485,7 +484,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -532,8 +531,8 @@ utility.library/UnpackStructureTags
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. It allocates, and `AllocMem` takes Forbid.
-	- Forbid: not needed.
+	- Interrupts: no. It allocates, and `AllocMem` takes exec's memory lock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -575,7 +574,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -626,7 +625,7 @@ utility.library/UnpackStructureTags
 	bits and so stops in 2114; this reaches any year a `ClockData` holds.
 
    CONTEXT
-	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+	Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
    OWNERSHIP
 	Nothing is allocated. `date` is the caller's and is not written.
@@ -680,7 +679,7 @@ utility.library/UnpackStructureTags
 	is, rather than with a year that has wrapped.
 
    CONTEXT
-	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+	Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
    OWNERSHIP
 	Nothing is allocated. `result` is the caller's.
@@ -736,7 +735,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -781,7 +780,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -826,15 +825,14 @@ utility.library/UnpackStructureTags
 	Names compare without case unless the name space has `NSF_CASE`. With a
 	null name, going on from each result visits the whole name space by
 	priority. The semaphore is held shared, so any number of searches run at
-	once; the use count is raised under Forbid, since the others holding the
-	semaphore may raise it too.
+	once; the use count is raised under utility's object lock, since the
+	others holding the semaphore may raise it too.
 
    CONTEXT
 	- Waits: yes, while another task holds the name space's semaphore
 	  exclusively.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be relied on across it: waiting for the semaphore
-	  breaks it.
+	- Locks: takes the name space's semaphore; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -887,7 +885,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -930,8 +928,8 @@ utility.library/UnpackStructureTags
 
    CONTEXT
 	- Waits: yes, while another task holds the object's own name space.
-	- Interrupts: no. `FreeMem` takes Forbid.
-	- Forbid: not needed.
+	- Interrupts: no. `FreeMem` takes exec's memory lock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -968,8 +966,8 @@ utility.library/UnpackStructureTags
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. `FreeMem` takes Forbid.
-	- Forbid: not needed.
+	- Interrupts: no. `FreeMem` takes exec's memory lock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1015,7 +1013,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1053,7 +1051,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It takes Disable.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1095,7 +1093,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1145,7 +1143,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It may allocate.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do; only a process gets the IoErr.
 
    OWNERSHIP
@@ -1195,7 +1193,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It may allocate.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do; only a process gets the IoErr.
 
    OWNERSHIP
@@ -1233,7 +1231,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1284,7 +1282,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1339,7 +1337,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1394,7 +1392,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1465,7 +1463,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: no. A failure is reported in the IoErr of whichever
 	  process was interrupted.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do; only a process gets the IoErr.
 
    OWNERSHIP
@@ -1529,7 +1527,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: no. A failure is reported in the IoErr of whichever
 	  process was interrupted.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do; only a process gets the IoErr.
 
    OWNERSHIP
@@ -1574,7 +1572,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe in itself; it allocates nothing. The lists are the
 	  caller's, and so is keeping others off them.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1610,14 +1608,15 @@ utility.library/UnpackStructureTags
 	Nothing.
 
    BEHAVIOR
-	The use count goes down under Forbid. When it reaches zero and a
+	The use count goes down under utility's object lock. When it reaches
+	zero and a
 	`RemNamedObject` is waiting, its message is replied now. A count already
 	at zero stays there.
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. It takes Forbid.
-	- Forbid: taken here.
+	- Interrupts: no. It takes utility's object lock.
+	- Locks: takes utility's object lock, a spinlock, for a moment.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1664,7 +1663,7 @@ utility.library/UnpackStructureTags
 	- Waits: yes, while another task holds the name space's semaphore. It
 	  does not wait for the reply; that is the caller's to do.
 	- Interrupts: no. It may wait.
-	- Forbid: taken here, and broken while waiting for the semaphore.
+	- Locks: takes the name space's semaphore; no spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1714,7 +1713,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
 	  too.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1753,7 +1752,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1792,7 +1791,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1831,7 +1830,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It is one store.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1877,7 +1876,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It only reads its inputs.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1920,7 +1919,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1963,7 +1962,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2006,7 +2005,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads its inputs and writes the caller's buffer.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2045,7 +2044,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2092,7 +2091,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2133,7 +2132,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It only reads its inputs.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2173,7 +2172,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2213,7 +2212,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2252,7 +2251,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2293,7 +2292,7 @@ utility.library/UnpackStructureTags
 	- Waits: no.
 	- Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
 	  too.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2332,7 +2331,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2371,7 +2370,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2418,7 +2417,7 @@ utility.library/UnpackStructureTags
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads only its inputs and allocates nothing.
-	- Forbid: not needed, and not taken.
+	- Locks: none taken, none needed.
 	- Process: a Task will do.
 
    OWNERSHIP

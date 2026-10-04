@@ -35,7 +35,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: no, but it spins on the transmitter.
 /// - Interrupts: safe, and that is why kernel output uses it: it needs no
 ///   task, no device and no memory.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do. It works with no task at all.
 ///
 /// OWNERSHIP:

@@ -34,7 +34,7 @@ const ClockData = sdk.utility.ClockData;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads only its inputs and allocates nothing.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

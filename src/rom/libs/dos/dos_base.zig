@@ -36,9 +36,13 @@ pub const DosBase = extern struct {
     segments: ?*Segment,
     seg_lock: exec.SignalSemaphore,
     /// The files LoadSeg loaded and UnLoadSeg has not freed yet: each
-    /// chain's first SegList, named after its file. Changed under Forbid,
-    /// read by a Guru without taking anything.
+    /// chain's first SegList, named after its file. Changed under
+    /// `code_lock`, read by a Guru without taking anything.
     loaded: exec.List,
+    /// The code dos loads: the list above, and each handler's code from a
+    /// file with the count of processes running it (`users`). A spinlock,
+    /// held for a few lines - never across a load or an unload.
+    code_lock: exec.Lock,
     /// dl_TimeReq: timer.device, opened for good for DateStamp; null
     /// without it.
     timer_io: ?*exec.IORequest,

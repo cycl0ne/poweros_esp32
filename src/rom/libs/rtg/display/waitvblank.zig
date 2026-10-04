@@ -39,7 +39,7 @@ const _event = @import("../event/_event.zig");
 /// CONTEXT:
 /// - Waits: yes.
 /// - Interrupts: no. It waits.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

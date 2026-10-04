@@ -30,7 +30,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It only reads its inputs.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -39,7 +39,7 @@ const FileHandle = dos.FileHandle;
 /// CONTEXT:
 /// - Waits: yes, for the handler's answers.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it waits.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

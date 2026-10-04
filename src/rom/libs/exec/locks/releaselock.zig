@@ -26,8 +26,8 @@ const Lock = sdk.exec.Lock;
 /// Everything written while the lock was held is visible before the lock
 /// is free. Then task switching on this core goes again once it holds no
 /// lock - and with `LOCKF_INTERRUPT` the `Enable` matching the taking's
-/// `Disable` is made: a Forbid or a Disable around it stays. Locks may be
-/// given back in any order.
+/// `Disable` is made: a Disable around it stays. Locks may be given back
+/// in any order.
 ///
 /// A lock this core does not hold is left as it is: a recoverable alert
 /// (`AN_LockRule`).
@@ -35,7 +35,7 @@ const Lock = sdk.exec.Lock;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: a `LOCKF_INTERRUPT` lock only.
-/// - Forbid: may be held.
+/// - Locks: gives `lock` back.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

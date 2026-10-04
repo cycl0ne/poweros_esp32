@@ -37,7 +37,7 @@ const IORequest = sdk.exec.IORequest;
 /// CONTEXT:
 /// - Waits: yes, unless the request is already finished.
 /// - Interrupts: no.
-/// - Forbid: no. It waits.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

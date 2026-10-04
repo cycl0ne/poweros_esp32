@@ -30,9 +30,11 @@ const err = rtg.errors;
 /// `RTGBF_POINTER` in `RtgBoardInfo.flags` says which it is.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for rtg's pointer lock while another task changes the pointer,
+///   and for a driver that sends the pointer's rows over a bus.
 /// - Interrupts: no. A driver may send the pointer's rows over a bus.
-/// - Forbid: taken while the driver changes it.
+/// - Locks: takes rtg's pointer lock while the driver changes it; no spinlock
+///   may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -54,8 +56,8 @@ pub fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
     if (board.info.caps & rtg.boards.RTGBC_POINTER == 0) return err.RTGERR_NOT_SUPPORTED;
     const shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
     if (shown == show) return err.RTGERR_OK;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&rb.pointer_lock);
+    defer sys.ReleaseSemaphore(&rb.pointer_lock);
     const code = ops.show_pointer.?(board, show);
     if (code != err.RTGERR_OK) return code;
     if (show) board.info.flags |= rtg.boards.RTGBF_POINTER else board.info.flags &= ~rtg.boards.RTGBF_POINTER;

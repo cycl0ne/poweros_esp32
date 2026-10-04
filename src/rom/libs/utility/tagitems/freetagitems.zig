@@ -28,8 +28,8 @@ const TagItem = sdk.utility.TagItem;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. `FreeMem` takes Forbid.
-/// - Forbid: not needed.
+/// - Interrupts: no. `FreeMem` takes exec's memory lock.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

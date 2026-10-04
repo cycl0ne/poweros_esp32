@@ -32,8 +32,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. `AllocMem` takes Forbid.
-/// - Forbid: not needed.
+/// - Interrupts: no. `AllocMem` takes exec's memory lock.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

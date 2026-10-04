@@ -30,7 +30,7 @@ const TimedDisplayAlert = @import("timeddisplayalert.zig").TimedDisplayAlert;
 /// CONTEXT:
 /// - Waits: for the answer, and for an alert already up.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; not intuition's input task.
 ///
 /// OWNERSHIP:

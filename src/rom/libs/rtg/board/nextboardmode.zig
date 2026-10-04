@@ -32,7 +32,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe: the modes do not change after the board is made.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

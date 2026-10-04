@@ -54,7 +54,7 @@ const device = @import("device.zig");
 /// CONTEXT:
 /// - Waits: for the stack's lock, and for the device with `IFA_State`.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do; `IFA_State` makes a message port.
 ///
 /// OWNERSHIP:

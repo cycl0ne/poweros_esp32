@@ -52,6 +52,10 @@ const poll_us = 10_000;
 const KeyboardBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// What the device's task and its callers share - the events queued,
+    /// the state, the reads waiting on the unit's list - kept under this:
+    /// a spinlock, held a few lines at a time and never across a wait.
+    lock: exec.Lock = .{},
     /// Reads waiting for a key are on its port's list.
     unit: exec.Unit,
     task: exec.Task = .{},
@@ -132,7 +136,8 @@ fn giveBack(kbb: *KeyboardBase) void {
     kbb.port = null;
 }
 
-/// Reads that were waiting, given what is queued now. Under Forbid.
+/// Reads that were waiting, given what is queued now. Under the device's
+/// lock.
 fn serveReads(kbb: *KeyboardBase) void {
     const sys = kbb.sys_base;
     const list = &kbb.unit.msg_port.msg_list;
@@ -156,8 +161,8 @@ fn poll(kbb: *KeyboardBase) void {
     const first = qemu_rgb.key() orelse return;
     const time = now(kbb);
     const sys = kbb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&kbb.lock);
+    defer sys.ReleaseLock(&kbb.lock);
     var k: ?qemu_rgb.Key = first;
     while (k) |key| : (k = qemu_rgb.key()) {
         const code = rawkey.fromLinux(key.code) orelse continue;
@@ -224,8 +229,8 @@ fn readEvent(kbb: *KeyboardBase, io: *exec.IORequest) bool {
         return true;
     }
     const sys = kbb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&kbb.lock);
+    defer sys.ReleaseLock(&kbb.lock);
     if (kbb.queue.count > 0) {
         const into: [*]InputEvent = @ptrCast(@alignCast(std_io.data.?));
         const n = kbb.queue.take(into[0..@intCast(std_io.length / each)]);
@@ -257,16 +262,16 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             } else {
                 const n: usize = @min(@as(usize, @intCast(std_io.length)), kb.MATRIX_BYTES);
                 const to: [*]u8 = @ptrCast(std_io.data.?);
-                sys.Forbid();
+                sys.AcquireLock(&kbb.lock);
                 for (0..n) |i| to[i] = kbb.keys.matrix[i];
-                sys.Permit();
+                sys.ReleaseLock(&kbb.lock);
                 std_io.actual = n;
             }
         },
         exec.CMD_CLEAR => {
-            sys.Forbid();
+            sys.AcquireLock(&kbb.lock);
             kbb.queue.clear();
-            sys.Permit();
+            sys.ReleaseLock(&kbb.lock);
         },
         exec.CMD_FLUSH => flush(kbb),
         else => io.err = exec.IOERR_NOCMD,
@@ -277,8 +282,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 /// Every waiting read back, aborted.
 fn flush(kbb: *KeyboardBase) void {
     const sys = kbb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&kbb.lock);
+    defer sys.ReleaseLock(&kbb.lock);
     const list = &kbb.unit.msg_port.msg_list;
     while (list.head) |node| {
         if (node.succ == null) break;
@@ -293,8 +298,8 @@ fn flush(kbb: *KeyboardBase) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const kbb = keyboardBase(dev);
     const sys = kbb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&kbb.lock);
+    defer sys.ReleaseLock(&kbb.lock);
     if (io.flags & exec.IOF_QUEUED == 0) return -1;
     sys.Remove(&io.message.node);
     io.flags &= ~exec.IOF_QUEUED;
@@ -336,6 +341,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     dev.revision = DEVICE_REVISION;
     const kbb = keyboardBase(dev);
     kbb.sys_base = sys_base;
+    sys_base.InitLock(&kbb.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     kbb.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     kbb.unit.msg_port.msg_list.init(.message);
     kbb.keys = .{};

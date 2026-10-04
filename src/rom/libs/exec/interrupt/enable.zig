@@ -37,7 +37,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no, but it may switch.
 /// - Interrupts: safe. Inside one, the nesting means it does not unmask.
-/// - Forbid: unrelated.
+/// - Locks: none.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

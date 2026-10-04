@@ -22,7 +22,7 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// INPUTS:
 /// - `port` - where it goes. It must still exist; for a public port that
-///   means holding Forbid from the `FindPort` to here.
+///   is the port's owner's protocol (`FindPort`).
 /// - `msg` - the message. Its `reply_port` should be set if a reply is
 ///   wanted, and its length if the receiver reads one.
 ///
@@ -42,8 +42,8 @@ const MsgPort = sdk.exec.MsgPort;
 ///   and flow control is something the two ends arrange between them.
 /// - Interrupts: safe. It takes exec's port lock, which masks the core's
 ///   interrupts, and it is how an interrupt hands work to a task.
-/// - Forbid: not needed for the send itself; needed by the caller around
-///   `FindPort` and this, so that a public port cannot go away in between.
+/// - Locks: takes exec's port lock, an interrupt lock; may be called holding
+///   any lock that comes before it in the lock order.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -59,9 +59,7 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// EXAMPLES:
 /// ```zig
-/// sys.Forbid();
 /// if (sys.FindPort("some.port")) |port| sys.PutMsg(port, &msg);
-/// sys.Permit();
 /// ```
 pub fn PutMsg(base: *ExecBase, port: *MsgPort, msg: *Message) void {
     _ports.put(base, port, msg, .message);

@@ -56,6 +56,7 @@ pub const LIBF_SUMMING = libraries.LIBF_SUMMING;
 pub const LIBF_CHANGED = libraries.LIBF_CHANGED;
 pub const LIBF_SUMUSED = libraries.LIBF_SUMUSED;
 pub const LIBF_DELEXP = libraries.LIBF_DELEXP;
+pub const LIBF_GOING = libraries.LIBF_GOING;
 
 pub const MemChunk = memory.MemChunk;
 pub const MemHeader = memory.MemHeader;
@@ -80,10 +81,10 @@ pub const MEM_TRY_AGAIN = memory.MEM_TRY_AGAIN;
 pub const Interrupt = interrupts.Interrupt;
 pub const IntVector = interrupts.IntVector;
 
-/// Which of exec's own lists ExecList is to hand back. They are exec's, so
-/// a caller reads them under Forbid - or Disable for the two task queues,
-/// which the scheduler moves from interrupts - and does not write into
-/// them. The list header itself never moves.
+/// Which of exec's own lists LockExecList is to hand back, with the lock
+/// exec keeps it under taken, until UnlockExecList. They are exec's, so a
+/// caller reads them and does not write into them. The list header itself
+/// never moves.
 pub const EXECLIST_MEMORY: u32 = 0;
 pub const EXECLIST_LIBRARIES: u32 = 1;
 pub const EXECLIST_DEVICES: u32 = 2;

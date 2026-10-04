@@ -28,8 +28,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the search.
+/// - Interrupts: no. It takes exec's library list, a semaphore.
+/// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -53,7 +53,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// ```
 pub fn OpenResource(base: *ExecBase, res_name: [*:0]const u8) ?*anyopaque {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
     return sys.FindName(&base.resource_list, res_name);
 }

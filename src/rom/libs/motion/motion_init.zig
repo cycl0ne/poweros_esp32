@@ -45,7 +45,7 @@ fn motionBase(lib: *exec.Library) *MotionBase {
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no; it runs on the exec task at cold start.
-/// - Forbid: not held. - Process: a Task will do.
+/// - Locks: none needed. - Process: a Task will do.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const mb = motionBase(lib);

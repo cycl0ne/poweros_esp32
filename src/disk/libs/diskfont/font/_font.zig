@@ -234,9 +234,9 @@ const max_contents_file = fontfile.contentsSize(1024);
 /// The low-memory handler: one font nobody holds taken off graphics'
 /// list and freed, per call.
 ///
-/// It runs under Forbid, in whichever task ran short, so it waits for
-/// nothing: a load under way (the load lock held) or graphics' list in
-/// use means it does nothing this time.
+/// It runs inside AllocMem, in whichever task ran short and whatever that
+/// task holds, so it waits for nothing: a load under way (the load lock
+/// held) or graphics' list in use means it does nothing this time.
 ///
 /// INPUTS:
 /// - `data` - what the allocation wanted; not looked at: a font is freed
@@ -256,7 +256,7 @@ pub fn flushFonts(data: *const exec.MemHandlerData, is_data: ?*anyopaque) callco
 }
 
 /// One of the library's fonts that nobody holds, freed. The caller holds
-/// the load lock or has Forbid.
+/// the load lock.
 ///
 /// RESULT:
 /// Whether one was.

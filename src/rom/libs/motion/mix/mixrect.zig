@@ -33,7 +33,7 @@ const MotionBase = @import("../motion_base.zig").MotionBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes; it touches nothing but its arguments.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -32,7 +32,7 @@ const DosPacket = dos.DosPacket;
 /// CONTEXT:
 /// - Waits: yes.
 /// - Interrupts: no.
-/// - Forbid: never under Forbid.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process; a Task gets null.
 ///
 /// OWNERSHIP:

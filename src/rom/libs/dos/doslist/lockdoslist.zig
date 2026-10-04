@@ -39,7 +39,7 @@ const DosList = dos.DosList;
 /// CONTEXT:
 /// - Waits: yes, for the device list's semaphores.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -36,7 +36,7 @@ const copyPath = _doslist.copyPath;
 /// - Waits: yes. It takes the device list's lock for writing, and unlocking
 ///   a replaced assign's locks sends packets.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; only a process gets IoErr.
 ///
 /// OWNERSHIP:

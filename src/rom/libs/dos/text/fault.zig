@@ -38,7 +38,7 @@ const Fill = _text.Fill;
 /// - Waits: no.
 /// - Interrupts: safe. It only reads its inputs and writes the caller's
 ///   buffer.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

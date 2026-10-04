@@ -46,8 +46,8 @@ found is unit 0. Passing each answer back as `old` walks every match.
 **CONTEXT**
 
 - Waits: no. - Interrupts: yes; nothing is locked.
-- Forbid: not needed: the parts are made once, at the library's init,
-  and never change.
+- Locks: none needed: the parts are made once, at the library's init, and
+  never change.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -105,7 +105,7 @@ ones FindBoardPart hands out as BoardParts.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: yes. - Forbid: not needed.
+- Waits: no. - Interrupts: yes. - Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

@@ -51,7 +51,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (base.crypto_base) |library| sys.CloseLibrary(library.lib());
     if (base.dos_base) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
     if (base.utility_base) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

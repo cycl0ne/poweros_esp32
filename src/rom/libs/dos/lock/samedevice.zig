@@ -34,7 +34,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: yes, for the device list (LockDosList, LDF_READ).
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

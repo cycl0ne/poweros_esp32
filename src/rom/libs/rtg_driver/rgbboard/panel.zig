@@ -220,8 +220,9 @@ pub fn setDisplayLine(panel: *Panel, on: bool) bool {
     return setLine(panel, panel.config.display_pin, on);
 }
 
-/// A wait that does not Wait: this runs at cold start, under the display
-/// module's Forbid, where giving the CPU away would break it.
+/// A wait that does not Wait: the panel is brought up in one go at cold
+/// start, and a few milliseconds of spinning there cost nothing a timer
+/// request would save.
 fn sleep(ms: u32) void {
     systimer.spinUs(@as(u64, ms) * 1000);
 }

@@ -61,8 +61,10 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Kernel (exec):** preemptive multitasking on one or both cores - a
   dispatcher per core, one ready list, tasks pinned to a core where they
   must be - signals, message ports, semaphores, spinlocks with checked
-  rules; libraries and devices opened by name, loaded from disk on
-  demand and expunged when memory runs short; internal SRAM and 8 MiB of
+  rules, and every system list under a lock of its own, so neither core
+  ever stops the other; libraries and devices opened by name, each under
+  its own lock, loaded from disk on demand and expunged when memory runs
+  short; internal SRAM and 8 MiB of
   PSRAM as memory with attributes. A system log from the first byte of
   the boot, with levels, on the USB console where UART0 is not wired, and
   to a syslog server (`C:Log`). A Guru that names the failed check and

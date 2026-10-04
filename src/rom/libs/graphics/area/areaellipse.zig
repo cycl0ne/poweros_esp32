@@ -42,7 +42,7 @@ const _area = @import("_area.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It changes the caller's RastPort.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

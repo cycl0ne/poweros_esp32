@@ -9,9 +9,10 @@
 //! first interface on a device, or the first stream socket, whose timers
 //! it runs. It ends when there is neither any more - no device
 //! interface, no TCP connection, not even one its program has closed and
-//! that is still saying goodbye. While it runs it holds the library open,
-//! and it lets go of that last, under Forbid, so the library cannot be
-//! expunged under code that is still running.
+//! that is still saying goodbye. While it runs it holds the library open:
+//! its starter hands it an open count, and dos closes it once the task's
+//! code has returned (NP_HoldLibrary), so the library cannot be expunged
+//! under code that is still running.
 //!
 //! Removing an interface is a command to it, since only the task can
 //! wait for the device's answers on its own port.
@@ -62,18 +63,33 @@ pub fn start(stack: *StackBase) bool {
     defer sys.FreeSignal(signal);
     stack.starter = sys.FindTask(null);
     stack.start_signal = signal;
+    // The open count the task holds, taken here and handed to dos with it.
+    holdLibrary(stack, 1);
     const tags = [_]sdk.utility.TagItem{
         .{ .tag = dos.NP_Entry, .data = @intFromPtr(&stackTask) },
         .{ .tag = dos.NP_Name, .data = @intFromPtr(task_name) },
         .{ .tag = dos.NP_StackSize, .data = stack_bytes },
         .{ .tag = dos.NP_Priority, .data = @as(usize, @bitCast(@as(isize, _base.stack_pri))) },
         .{ .tag = dos.NP_UserData, .data = @intFromPtr(stack) },
+        .{ .tag = dos.NP_HoldLibrary, .data = @intFromPtr(&stack.lib) },
         .{},
     };
-    if (dos_base.CreateNewProc(&tags) == null) return false;
+    if (dos_base.CreateNewProc(&tags) == null) {
+        holdLibrary(stack, -1);
+        return false;
+    }
     _ = sys.Wait(@as(u32, 1) << @intCast(signal));
     stack.starter = null;
     return stack.task != null;
+}
+
+/// The library's open count changed by `by`, under the library's own lock:
+/// what OpenLibrary and CloseLibrary change it under.
+pub fn holdLibrary(stack: *StackBase, by: i32) void {
+    const sys = stack.sys_base;
+    sys.ObtainSemaphore(&stack.lib.lock);
+    defer sys.ReleaseSemaphore(&stack.lib.lock);
+    if (by > 0) stack.lib.open_cnt += 1 else stack.lib.open_cnt -= 1;
 }
 
 /// The one who started the task told it is ready, or could not be.
@@ -126,10 +142,6 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
     claimPort(sys, &stack.port, me, port_signal);
     claimPort(sys, &stack.commands, me, command_signal);
     stack.rethink_mask = @as(u32, 1) << @intCast(rethink_signal);
-    // The library stays while the task runs.
-    sys.Forbid();
-    stack.lib.open_cnt += 1;
-    sys.Permit();
     stack.task = me;
     started(stack);
 
@@ -196,10 +208,8 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
         }
         sys.CloseDevice(&clock.node);
         sys.DeleteMsgPort(timer_port);
-        // The last thing, under Forbid: the library may go once this
-        // count is down, and nothing of the task runs after it.
-        sys.Forbid();
-        stack.lib.open_cnt -= 1;
+        // The library's count the task holds is dos's to give back, once
+        // this code has returned.
         return;
     }
 }
@@ -238,7 +248,5 @@ fn remove(stack: *StackBase, interface: *Interface) void {
         interface.* = .{};
     }
     sys.FreeMem(link, @sizeOf(device.Device));
-    sys.Forbid();
-    stack.lib.open_cnt -= 1;
-    sys.Permit();
+    holdLibrary(stack, -1);
 }

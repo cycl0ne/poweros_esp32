@@ -58,17 +58,16 @@ Generated from the source by `./zig build autodoc`.
 - [DeleteIORequest](#deleteiorequest) - Frees a request from `CreateIORequest`.
 - [DeleteMsgPort](#deletemsgport) - Frees a port from `CreateMsgPort`, and its signal bit.
 - [DeletePool](#deletepool) - Frees everything a pool holds, and the pool with it.
+- [DetachLibrary](#detachlibrary) - Takes a library or device off exec's list.
 - [Disable](#disable) - Masks every interrupt until the matching `Enable`.
 - [DoIO](#doio) - Does one I/O request and waits for it to finish.
 - [Enable](#enable) - Unmasks interrupts again, and takes any task switch that came due.
 - [Enqueue](#enqueue) - Puts a node on a list in priority order.
-- [ExecList](#execlist) - Hands back one of exec's own lists.
 - [FindName](#findname) - Finds the first node of a list with a given name.
 - [FindPort](#findport) - Finds a public port by name.
 - [FindResident](#findresident) - Finds a resident module by name.
 - [FindSemaphore](#findsemaphore) - Finds a public semaphore by name.
 - [FindTask](#findtask) - Finds a task by name, or answers the calling task.
-- [Forbid](#forbid) - Holds task switching until the matching `Permit`.
 - [FreeMem](#freemem) - Gives memory back to the system.
 - [FreePooled](#freepooled) - Gives a block from `AllocPooled` back to its pool.
 - [FreeSignal](#freesignal) - Gives a signal bit back.
@@ -81,6 +80,7 @@ Generated from the source by `./zig build autodoc`.
 - [InitSemaphore](#initsemaphore) - Prepares a semaphore for use.
 - [Insert](#insert) - Puts a node on a list after a given node.
 - [IntVector](#intvector) - Hands back one interrupt number's vector.
+- [LockExecList](#lockexeclist) - Hands back one of exec's own lists, its lock taken.
 - [LogControl](#logcontrol) - Changes one of the system log's settings, or asks what it is.
 - [MakeLibrary](#makelibrary) - Builds a library in memory and runs its init routine, without putting it on the library list.
 - [NewList](#newlist) - Makes a list empty and ready to use.
@@ -91,7 +91,6 @@ Generated from the source by `./zig build autodoc`.
 - [OpenDevice](#opendevice) - Opens a unit of a device, for a request to use.
 - [OpenLibrary](#openlibrary) - Opens a library by name at a version, through its own Open vector.
 - [OpenResource](#openresource) - Finds a resource by name.
-- [Permit](#permit) - Lets task switching happen again, and takes any switch that came due.
 - [Procure](#procure) - Bids for a semaphore with a message, instead of waiting for it.
 - [PutMsg](#putmsg) - Sends a message to a port, and does whatever that port asks for on arrival.
 - [RamLib](#ramlib) - The module loader's base, as `SetRamLib` left it.
@@ -117,6 +116,7 @@ Generated from the source by `./zig build autodoc`.
 - [RemTask](#remtask) - Ends a task, and frees what `CreateTask` allocated for it.
 - [RemTaskEndHook](#remtaskendhook) - Take a hook off the task it waits on, so it does not run.
 - [Remove](#remove) - Takes a node off whatever list it is on.
+- [RemoveMsg](#removemsg) - Takes `msg` off `port` if it is still on it.
 - [ReplyIO](#replyio) - For a device: finishes a request and sends it back.
 - [ReplyMsg](#replymsg) - Sends a message back to whoever sent it.
 - [ResModules](#resmodules) - Hands back the table of resident modules.
@@ -129,9 +129,11 @@ Generated from the source by `./zig build autodoc`.
 - [SetRamLib](#setramlib) - Tells exec where the module loader's base is.
 - [SetSignal](#setsignal) - Reads or changes the calling task's signals without waiting.
 - [SetTaskAffinity](#settaskaffinity) - Sets the cores a task may run on.
+- [SetTaskEndMsg](#settaskendmsg) - Has `msg` replied to its reply port once `task` is gone.
 - [SetTaskPri](#settaskpri) - Changes a task's priority, and reschedules if that changed who should run.
 - [SetTrapCode](#settrapcode) - Sets the running task's trap code, which takes its CPU exceptions.
 - [Signal](#signal) - Sends signals to a task, waking it if it was waiting for one of them.
+- [UnlockExecList](#unlockexeclist) - Gives back the lock `LockExecList` took on list `which`.
 - [Vacate](#vacate) - Withdraws a bid, or gives back the semaphore it won.
 - [Wait](#wait) - Sleeps until one of a set of signals arrives.
 - [WaitIO](#waitio) - Waits until a device is done with a request, and takes it back.
@@ -175,7 +177,7 @@ on a port whose owner has moved on.
 
 - Waits: no.
 - Interrupts: no; the device's AbortIO may do anything.
-- Forbid: no.
+- Locks: no spinlock may be held: the device's AbortIO takes what it needs.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -239,7 +241,8 @@ the lock order. A broken rule is a recoverable alert naming the locks
 
 - Waits: never - it spins, and only while another core holds the lock.
 - Interrupts: a `LOCKF_INTERRUPT` lock only.
-- Forbid: may be held.
+- Locks: takes `lock`. Every lock the core holds must come before it in the
+  lock order.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -260,7 +263,7 @@ None known.
 
 **SEE ALSO**
 
-`InitLock`, `AttemptLock`, `ReleaseLock`, `Forbid`, `Disable`
+`InitLock`, `AttemptLock`, `ReleaseLock`, `Disable`
 
 **EXAMPLES**
 
@@ -304,8 +307,8 @@ other.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the list.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -365,7 +368,7 @@ list kept in priority order must be added to with `Enqueue` instead.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -428,7 +431,7 @@ another peripheral's interrupt.
 - Waits: no. **The server itself must not wait**, allocate, or call
   anything that reaches a handler process.
 - Interrupts: safe. It takes Disable.
-- Forbid: not needed; Disable is what guards the chains.
+- Locks: takes Disable, which guards the chains.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -494,8 +497,8 @@ is the last legitimate change before anyone can call it.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid, which an interrupt must not.
-- Forbid: taken here, around the list.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -564,11 +567,13 @@ than emptying the machine on the first failed allocation.
 
 **CONTEXT**
 
-- Waits: no. **The handler itself must not wait either**: it runs inside
-  `AllocMem`'s Forbid, where waiting stops the machine.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here for the list. The handler is later *called* under
-  Forbid, which is the constraint that matters.
+- Waits: for the memory handlers' semaphore while another task runs
+  them. **The handler itself must not wait**: it runs inside an
+  `AllocMem`, whose caller may hold anything - a library's lock in its
+  Open vector, say. It tries what it needs and passes over what is
+  busy.
+- Interrupts: no. It takes a semaphore.
+- Locks: takes the memory handlers' semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -635,9 +640,8 @@ whose requirements it satisfies may take memory from it.
 
 - Waits: no.
 - Interrupts: no. It takes exec's memory lock, around the list.
-- Forbid: may be held. It is taken here as well, around the change:
-  a program walks the memory list under Forbid, which must keep it
-  still on both cores.
+- Locks: takes exec's memory lock, around the change. A program walks the
+  memory list under the same lock, with `LockExecList`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -702,9 +706,8 @@ is the one `FindPort` answers.
 
 - Waits: no.
 - Interrupts: no. It takes exec's port lock, around the list.
-- Forbid: may be held. It is taken here as well, around the change:
-  a program walks the port list under Forbid, which must keep it
-  still on both cores.
+- Locks: takes exec's port lock, around the change. A program walks the port
+  list under the same lock, with `LockExecList`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -766,8 +769,8 @@ resource in the image is added without anyone calling this.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the list.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -821,9 +824,8 @@ name is the one `FindSemaphore` answers.
 
 - Waits: no.
 - Interrupts: no. It takes exec's semaphore lock, around the list.
-- Forbid: may be held. It is taken here as well, around the change:
-  a program walks the semaphore list under Forbid, which must keep it
-  still on both cores.
+- Locks: takes exec's semaphore lock, around the change. A program walks the
+  semaphore list under the same lock, with `LockExecList`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -878,7 +880,7 @@ keeps its order, which is what a message port is.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -948,9 +950,8 @@ use.
 - Waits: no, but it may switch, so the caller may lose the processor
   here.
 - Interrupts: no. It takes Disable and touches the scheduler's lists.
-- Forbid: not needed. Under Forbid the switch is postponed to the
-  matching `Permit`, which is a way to add several tasks before any of
-  them runs.
+- Locks: takes Disable. Tasks that must not start before one another are
+  made to wait for a signal before they start their work.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1018,7 +1019,7 @@ A hook runs once; `hook.task` is null again before it runs.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed; it takes Forbid for the list itself.
+- Locks: takes Disable, which the hooks are kept under.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1092,8 +1093,8 @@ found. The wrapper takes that address itself rather than calling
   being reported.
 - Interrupts: safe, and it is reached from one - a CPU exception ends
   here when no trap code takes it.
-- Forbid: not needed, and not taken. It cannot be, since what is broken
-  may be the scheduler.
+- Locks: none taken. It cannot take any, since what is broken may be the
+  scheduler.
 - Process: a Task will do. It must work with no task at all, since it is
   reached before there are any.
 
@@ -1172,7 +1173,7 @@ check's, handed to the handler, and the text is the check's message.
 
 - Waits: no, and it must not.
 - Interrupts: safe.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1246,16 +1247,18 @@ handler is exec's own, which expunges libraries and devices nobody has
 open - one per call, so only as much goes as the allocation needed.
 
 The regions are searched under exec's memory lock, a few hundred
-cycles; the handlers run under Forbid, outside it, so that what they
-free goes straight back.
+cycles; the handlers run outside it, under the memory handlers'
+semaphore, so that what they free goes straight back.
 
 **CONTEXT**
 
-- Waits: no, and it must not - the handlers run inside its Forbid and
-  are forbidden to wait for the same reason.
+- Waits: only when memory runs short, for the memory handlers'
+  semaphore while another task runs them. A handler waits for nothing:
+  exec's own only tries the locks it needs.
 - Interrupts: no. It takes exec's memory lock, and an interrupt must
   not allocate.
-- Forbid: may be held; taken here around the handlers.
+- Locks: takes exec's memory lock, and the memory handlers' semaphore when
+  memory runs short; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1320,9 +1323,11 @@ memory is cleared only if the pool was made with MEMF_CLEAR.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no; it may allocate. - Forbid: taken here,
-  so one pool may be used from more than one task. - Process: a Task
-  will do.
+- Waits: for the pool's lock while another task uses the pool.
+- Interrupts: no; it may allocate.
+- Locks: takes the pool's own lock, so one pool may be used from more
+  than one task; no spinlock may be held.
+- Process: a Task will do.
 
 **OWNERSHIP**
 
@@ -1376,7 +1381,7 @@ from a previous owner is not delivered to the new one.
 
 - Waits: no.
 - Interrupts: no - it is the running task's bits.
-- Forbid: not needed. Only the task itself can allocate its own signals.
+- Locks: none needed. Only the task itself can allocate its own signals.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1442,8 +1447,8 @@ past the header, with the whole size in the word immediately below it.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. `AllocMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. `AllocMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1490,8 +1495,8 @@ fn Allocate(_: *ExecBase, mh: *MemHeader, byte_size: usize) ?*anyopaque
 
 **INPUTS**
 
-- `mh` - the region to take from. The caller's, or one on the system
-  list with the caller holding Forbid.
+- `mh` - the region to take from. The caller's own; one on the system
+  list is AllocMem's.
 - `byte_size` - bytes wanted. Rounded up to `MEM_BLOCKSIZE`, so the
   block that is actually spent may be larger than what was asked for.
 
@@ -1505,18 +1510,18 @@ is big enough. The memory is **not** cleared.
 First fit: the first free chunk that is big enough, and the block comes
 off its start. What is left over stays a chunk in the chain.
 
-It takes no Forbid, on purpose. Keeping others away from `mh` is the
+It takes no lock, on purpose. Keeping others away from `mh` is the
 caller's job, which is what lets a pool use the same code on a puddle
-nobody else can see - and what makes it the wrong call to reach for on a
-system region.
+under the pool's lock - and what makes it the wrong call to reach for on
+a system region, whose lock is exec's own.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: only on a region the interrupt owns outright. On anything
   a task may be allocating from, no.
-- Forbid: not taken here. The caller's, and needed for any region on the
-  system list.
+- Locks: none taken; keeping others away from the region is the caller's own
+  lock's job.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1583,7 +1588,8 @@ order cannot leave two cores waiting for each other.
 
 - Waits: no.
 - Interrupts: a `LOCKF_INTERRUPT` lock only.
-- Forbid: may be held.
+- Locks: takes `lock` if it is free; the lock order is not checked, since a
+  try never waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1647,7 +1653,7 @@ it nests like `ObtainSemaphore`.
   taken from somewhere that must not block - an interrupt's task, or
   code holding another lock.
 - Interrupts: no. It takes exec's semaphore lock.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1706,7 +1712,7 @@ It succeeds if the semaphore is free, held shared, or held by this task.
 
 - Waits: no.
 - Interrupts: no. It takes exec's semaphore lock.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1765,7 +1771,7 @@ the only measure of it the system offers.
 
 - Waits: no.
 - Interrupts: no. It takes exec's memory lock, around the walk.
-- Forbid: may be held.
+- Locks: takes exec's memory lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1775,7 +1781,7 @@ Nothing is allocated.
 **NOTES**
 
 The answer is out of date as soon as it is given, on a machine where
-another task may allocate the moment Forbid is let go. It is worth
+another task - on either core - may allocate the moment it is. It is worth
 having as a measurement and not as a decision: allocate and test the
 result instead.
 
@@ -1835,7 +1841,7 @@ known here.
 - Waits: no.
 - Interrupts: safe, though a partly covered line is handled with
   interrupts off.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1892,7 +1898,7 @@ which `CachePostDMA` covers.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1958,7 +1964,7 @@ stale to drop.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2020,7 +2026,7 @@ what the CPU last wrote.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2083,7 +2089,7 @@ caused again from inside its own run.
 - Waits: no. **The software interrupt itself must not wait** either: it
   runs on no task's time and has no task to be suspended.
 - Interrupts: safe, and this is its main caller.
-- Forbid: not needed; it takes Disable.
+- Locks: takes Disable.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2145,7 +2151,7 @@ with.
 
 - Waits: no.
 - Interrupts: safe. It reads two fields.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2200,11 +2206,17 @@ closed request cannot be sent by mistake - `DoIO` on one answers
 **Every request started must be finished first.** A device asked to
 close while it still holds a request has no way to give it back.
 
+As `CloseLibrary`: the Close vector runs inside the device's own lock,
+and a device whose last close leaves it marked to go is expunged by
+exec there and then.
+
 **CONTEXT**
 
-- Waits: no, though a device's own Close may.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the vector.
+- Waits: for the device's lock while another task holds it, and a
+  device's own Close may.
+- Interrupts: no. It takes semaphores.
+- Locks: takes the device's own lock, and exec's library list at an expunge,
+  both semaphores; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2251,19 +2263,29 @@ Nothing.
 
 **BEHAVIOR**
 
-The standard Close (`libClose`) drops `open_cnt` and, when that reaches
-zero and `LIBF_DELEXP` is set, expunges the library there and then - so
-a library marked for expunging while it was open goes on its last close.
+The Close vector runs inside the library's own lock, as its Open does.
+The standard Close (`libClose`) drops `open_cnt`. When that has reached
+zero and `LIBF_DELEXP` is set, exec expunges the library there and
+then, still holding its lock - so a library marked for expunging while
+it was open goes on its last close. A Close vector does not expunge its
+library itself.
 
-A non-null result from the Close vector is the seglist of a library that
-expunged, and exec drops it: nothing here loads a module, so nothing
-here unloads one. Whatever has replaced this slot is what takes that up.
+The seglist of a library that went is dropped: nothing here loads a
+module, so nothing here unloads one.
+
+A library whose Open hands each opener a base of its own (bsdsocket's
+does) gets that base back here. It is on no list - its node has no
+predecessor - so its Close runs with nothing of exec's held: it frees
+the base, and keeps the library it came from under that library's own
+lock, `RemLibrary` doing a delayed expunge.
 
 **CONTEXT**
 
-- Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the vector.
+- Waits: for the library's lock while another task holds it, and for
+  exec's library list at an expunge.
+- Interrupts: no. It takes semaphores.
+- Locks: takes the library's own lock, and exec's library list at an
+  expunge, both semaphores; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2325,7 +2347,7 @@ eight megabytes PSRAM's page table covers.
 
 - Waits: no.
 - Interrupts: safe. It is arithmetic on two constants.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2388,7 +2410,7 @@ medium before this is called.
 
 - Waits: no.
 - Interrupts: safe - it turns them off itself.
-- Forbid: not needed. Nothing that follows cares.
+- Locks: none needed. Nothing that follows cares.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2447,7 +2469,7 @@ Word-sized loads and stores are used where the alignment allows.
 
 - Waits: no.
 - Interrupts: safe. It touches nothing but the two blocks.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2502,7 +2524,7 @@ only sometimes faster. Overlap is handled, as there.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2559,9 +2581,9 @@ does.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not enough. The other core switches on its own, so the answer
-  holds only inside `Disable`: ask there, and copy what is wanted of the
-  task before the `Enable` - the task may end once it is let go.
+- Locks: Disable, not a lock: the other core switches on its own, so the
+  answer holds only inside `Disable`: ask there, and copy what is wanted of
+  the task before the `Enable` - the task may end once it is let go.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2579,7 +2601,7 @@ None known.
 
 **SEE ALSO**
 
-`FindTask`, `SetTaskAffinity`, `ExecList`, `Disable`
+`FindTask`, `SetTaskAffinity`, `LockExecList`, `Disable`
 
 **EXAMPLES**
 
@@ -2634,7 +2656,7 @@ free it without being told again.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2707,8 +2729,9 @@ nothing can open it half-built; it is added only if the init agrees.
 **CONTEXT**
 
 - Waits: no, unless `init` does.
-- Interrupts: no. It allocates and takes Forbid.
-- Forbid: not needed; `AddLibrary` takes it for the list.
+- Interrupts: no. It allocates, and `AddLibrary` takes exec's library
+  list.
+- Locks: none needed.
 - Process: a Task will do, unless `init` needs more.
 
 **OWNERSHIP**
@@ -2791,7 +2814,7 @@ up privately, which is what a pool's puddle is.
 
 - Waits: no.
 - Interrupts: safe. It touches only the caller's block.
-- Forbid: not needed. Nothing else knows about this memory yet.
+- Locks: none needed. Nothing else knows about this memory yet.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2856,7 +2879,7 @@ what every reply port is.
 
 - Waits: no.
 - Interrupts: no. It allocates and takes a signal.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2918,7 +2941,7 @@ first puddle.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no; it allocates. - Forbid: not needed.
+- Waits: no. - Interrupts: no; it allocates. - Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2988,7 +3011,7 @@ before this returns.
 
 - Waits: no, but it may switch.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do. This makes a Task and not a Process - dos's
   `CreateNewProc` is what makes one of those, and only a Process may
   reach a file system.
@@ -3064,7 +3087,7 @@ reaches into it, or the chunk above starts before its end.
 
 - Waits: no.
 - Interrupts: only on a region the interrupt owns outright.
-- Forbid: not taken here. The caller's, as with `Allocate`.
+- Locks: none taken. The region's lock is the caller's, as with `Allocate`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3134,7 +3157,7 @@ machine halts, rather than the debugger faulting in its turn.
 
 - Waits: never. It spins on the ports.
 - Interrupts: it may be called from one, and from a trap.
-- Forbid: not needed; nothing else runs while it has the machine.
+- Locks: none needed; nothing else runs while it has the machine.
 - Process: any task, or none at all.
 
 **NOTES**
@@ -3188,7 +3211,7 @@ that is now someone else's.
 
 - Waits: no.
 - Interrupts: no. It frees memory.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3243,7 +3266,7 @@ messages on it loses them, and their senders wait for ever.
 
 - Waits: no.
 - Interrupts: no. It frees memory and a signal.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do, and it must be **the task that created it**.
 
 **OWNERSHIP**
@@ -3293,7 +3316,9 @@ first, and no block in the pool may be touched afterwards.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no; it frees memory. - Forbid: taken here.
+- Waits: for the pool's lock while another task is in the pool.
+- Interrupts: no; it frees memory.
+- Locks: takes the pool's own lock; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3308,6 +3333,84 @@ None known.
 **SEE ALSO**
 
 `CreatePool`, `FreePooled`
+
+## DetachLibrary
+
+Takes a library or device off exec's list.
+
+**SYNOPSIS**
+
+```zig
+fn DetachLibrary(base: *ExecBase, library: *Library) void
+```
+
+**SINCE**
+
+1.6. LVO -532.
+
+**INPUTS**
+
+- `library` - the library or device going: its own base, from inside
+  its Expunge vector.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+It is the step an Expunge vector takes once it has decided to go, before
+it frees its memory. exec runs that vector with nothing of its own held
+(library/_library.zig), so the vector may close what it opened; the
+list is changed here, under exec's library list.
+
+One not on a list - never added, or detached already - is left alone,
+so an init that failed before `AddLibrary` may share the Expunge's code.
+A detached node's links are cleared, which is what says so.
+
+exec reads from the library being off its list afterwards that it went.
+
+**CONTEXT**
+
+- Waits: for exec's library list while another task holds it.
+- Interrupts: no. It takes a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The library is no longer the system's: nobody can find or open it, and
+its memory is the Expunge's to free.
+
+**NOTES**
+
+Only from the library's own Expunge vector, which exec has called. A
+library taken off its list any other way is still expected to be
+there by everyone who has it open.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemLibrary`, `RemDevice`, `AddLibrary`
+
+**EXAMPLES**
+
+```zig
+fn expunge(lib: *Library) callconv(.c) ?*anyopaque {
+    if (lib.open_cnt != 0) {
+        lib.flags |= LIBF_DELEXP;
+        return null;
+    }
+    const base: *MyBase = @fieldParentPtr("lib", lib);
+    const sys = base.sys_base;
+    sys.DetachLibrary(lib);
+    sys.FreeMem(@ptrFromInt(@intFromPtr(lib) - lib.neg_size), @as(usize, lib.neg_size) + lib.pos_size);
+    return null;
+}
+```
 
 ## Disable
 
@@ -3338,9 +3441,9 @@ the outermost Enable puts back - so a Disable/Enable pair inside an
 interrupt leaves interrupts masked, which is what they already were.
 
 It guards what interrupts themselves touch: the interrupt vectors, the
-server chains and the software interrupt queues. What only tasks touch -
-the library, device, memory, port and semaphore lists - is Forbid's, and
-Disable is the heavier of the two because it stops the machine
+server chains, the software interrupt queues and the task lists. What
+only tasks touch has locks of its own - exec's lists each theirs - and
+Disable is heavier than any of them because it stops the machine
 responding to its hardware.
 
 **Both cores.** The outermost Disable also takes the system's
@@ -3352,13 +3455,12 @@ all core 0's; core 1 has its tick and the cross-core interrupt.
 
 **CONTEXT**
 
-- Waits: no. Never `Wait` while holding it, for the same reason as
-  Forbid and more so.
+- Waits: no. Never `Wait` while holding it: what it guards is not
+  guarded across the wait.
 - Interrupts: safe, and the nesting is what makes it so.
-- Forbid: neither implies the other. Task switching is not stopped by
-  this, except that a switch cannot be delivered while interrupts are
-  masked. Forbid inside Disable, while the other core holds Forbid,
-  lets the interrupt lock go until it has its own (see `Forbid`).
+- Locks: none. Disable and a spinlock are separate: neither implies the
+  other. Task switching is not stopped by Disable itself, except that a
+  switch cannot be delivered while interrupts are masked.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3381,7 +3483,7 @@ None known.
 
 **SEE ALSO**
 
-`Enable`, `Forbid`, `Cause`
+`Enable`, `AcquireLock`, `Cause`
 
 **EXAMPLES**
 
@@ -3436,7 +3538,8 @@ setting it reports failure rather than a false success.
   comes back without waiting, and which those are is the device's to
   say, not the caller's to rely on.
 - Interrupts: no. It may wait.
-- Forbid: no. It may wait, and a device's work may reach a handler.
+- Locks: no spinlock may be held: it may wait, and a device's work may reach
+  a handler.
 - Process: a Task will do, unless the device wants more.
 
 **OWNERSHIP**
@@ -3507,7 +3610,7 @@ point at which the caller may lose the processor.
 
 - Waits: no, but it may switch.
 - Interrupts: safe. Inside one, the nesting means it does not unmask.
-- Forbid: unrelated.
+- Locks: none.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3567,7 +3670,7 @@ answers the best one.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3598,82 +3701,6 @@ node.pri = 10;
 sys.Enqueue(&list, &node);
 ```
 
-## ExecList
-
-Hands back one of exec's own lists.
-
-**SYNOPSIS**
-
-```zig
-fn ExecList(base: *ExecBase, which: u32) ?*List
-```
-
-**SINCE**
-
-1.0. LVO -428.
-
-**INPUTS**
-
-- `which` - `EXECLIST_MEMORY`, `_LIBRARIES`, `_DEVICES`, `_RESOURCES`,
-  `_PORTS`, `_SEMAPHORES`, `_TASK_READY`, `_TASK_WAIT` or
-  `_MEM_HANDLERS`.
-
-**RESULT**
-
-The list, or null for a number exec has no list for - which is how a
-program built against a later version degrades rather than faults.
-
-**BEHAVIOR**
-
-It is the live list. Nothing is copied and nothing is locked.
-
-**The caller's side of the bargain**: hold Forbid while walking, or
-Disable for the two task queues, since those are what a switch touches.
-Write nothing. Keep no node past the lock - copy out the fields wanted
-and let go before doing anything with them.
-
-That last rule is not advice. Printing reaches a file system, a file
-system is a process, and a process cannot run while the scheduler is
-held - so a listing that prints as it walks stops the machine. It is why
-every listing in this tree copies a node's fields out under the lock and
-prints them after.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe - it returns a pointer and reads nothing.
-- Forbid: not taken here. The caller's, and required for the walk.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated. Everything on the list belongs to whoever put it
-there.
-
-**NOTES**
-
-`C:ShowInfo` is what this was added for.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`FindName`, `IntVector`, `ResModules`, `Forbid`
-
-**EXAMPLES**
-
-```zig
-sys.Forbid();
-var it = sys.ExecList(EXECLIST_LIBRARIES).?.iterator();
-while (it.next()) |node| {
-    // ... copy out what is wanted ...
-}
-sys.Permit();
-// ... print it now ...
-```
-
 ## FindName
 
 Finds the first node of a list with a given name.
@@ -3690,8 +3717,8 @@ fn FindName(_: *ExecBase, list: *List, name: [*:0]const u8) ?*Node
 
 **INPUTS**
 
-- `list` - the list to walk. Any exec list; the system's own are reached
-  with `ExecList`.
+- `list` - the list to walk. Any exec list; the system's own are reached,
+  locked, with `LockExecList`.
 - `name` - what to match. Compared exactly, case included.
 
 **RESULT**
@@ -3714,8 +3741,8 @@ than calling again.
 - Waits: no.
 - Interrupts: safe in itself. On a system list, only if the caller can
   be sure nothing is changing it, which from an interrupt it cannot.
-- Forbid: not taken here, and needed by the caller for any list another
-  task may change - which is every list exec owns.
+- Locks: none taken here; the caller holds whatever guards the list - for
+  exec's own, `LockExecList` takes it.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3734,14 +3761,14 @@ None known.
 
 **SEE ALSO**
 
-`Enqueue`, `ExecList`, `FindPort`, `FindSemaphore`
+`Enqueue`, `LockExecList`, `FindPort`, `FindSemaphore`
 
 **EXAMPLES**
 
 ```zig
-sys.Forbid();
-defer sys.Permit();
-const node = sys.FindName(sys.ExecList(EXECLIST_DEVICE).?, "timer.device");
+const devices = sys.LockExecList(EXECLIST_DEVICES).?;
+const found = sys.FindName(devices, "timer.device") != null;
+sys.UnlockExecList(EXECLIST_DEVICES);
 ```
 
 ## FindPort
@@ -3769,16 +3796,18 @@ The port, or null if there is none of that name.
 **BEHAVIOR**
 
 **The port may go away as soon as the search is over**: this call
-looks under exec's port lock and lets it go. So the pointer is only
-trustworthy while the caller holds Forbid *across* both this and the
-`PutMsg` that follows - which is the usual shape and the reason the
-two are almost always written together.
+looks under exec's port lock and lets it go. So the pointer is only as
+good as the protocol of the program that made the port: one that takes
+it off the list first and answers what is on it before it goes is one
+a caller may find and then send to.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: no. It takes exec's port lock for the search.
-- Forbid: needed by the caller around the call and the send.
+- Locks: takes exec's port lock for the search. The port may be removed the
+  moment it is let go: the protocol of the program that made it is what
+  keeps it there.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3796,8 +3825,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-sys.Forbid();
-defer sys.Permit();
+// The server that made "my.port" keeps it there while it runs.
 const port = sys.FindPort("my.port") orelse return;
 sys.PutMsg(port, &msg);
 ```
@@ -3834,7 +3862,7 @@ so this answers that one and there is no second to find.
 - Waits: no.
 - Interrupts: safe. **The list does not change after the boot scan**,
   which is why this needs no lock at all.
-- Forbid: not needed, for the same reason.
+- Locks: none needed, for the same reason.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3885,16 +3913,18 @@ The semaphore, or null if there is none of that name.
 
 **BEHAVIOR**
 
-As with `FindPort`, the semaphore may go away as soon as Forbid is let
-go, so the caller holds Forbid from before this until it has obtained
-it. Obtaining breaks that Forbid, but by then the semaphore is held and
-cannot be removed from under the caller.
+As with `FindPort`, the semaphore may go away as soon as the search is
+over: what keeps it there until the caller has obtained it is the
+protocol of the program that made it - one that removes it only once
+it holds it itself, and nobody waits for it any more.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: no. It takes exec's semaphore lock for the search.
-- Forbid: needed by the caller across this and the obtain.
+- Locks: takes exec's semaphore lock for the search. The semaphore may be
+  removed the moment it is let go: the protocol of the program that made it
+  is what keeps it there until the caller has obtained it.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3912,10 +3942,10 @@ None known.
 **EXAMPLES**
 
 ```zig
-sys.Forbid();
-const sem = sys.FindSemaphore("my.lock");
-if (sem) |x| sys.ObtainSemaphore(x);
-sys.Permit();
+// The program that made "my.lock" keeps it there while it runs.
+const sem = sys.FindSemaphore("my.lock") orelse return;
+sys.ObtainSemaphore(sem);
+defer sys.ReleaseSemaphore(sem);
 ```
 
 ## FindTask
@@ -3953,8 +3983,8 @@ core too.
 - Waits: no.
 - Interrupts: the null case only, and even then the answer is whichever
   task was interrupted. A named search takes Disable.
-- Forbid: not needed; Disable is taken here, since the task lists are
-  what an interrupt's switch touches.
+- Locks: takes Disable, since the task lists are what an interrupt's switch
+  touches.
 - Process: a Task will do. `FindTask(null)` is also how code finds out
   whether it is a task or a process, from the node's type.
 
@@ -3983,105 +4013,6 @@ None known.
 ```zig
 const me = sys.FindTask(null).?;
 if (sys.FindTask("timer.device")) |t| sys.Signal(t, 1 << sig);
-```
-
-## Forbid
-
-Holds task switching until the matching `Permit`.
-
-**SYNOPSIS**
-
-```zig
-fn Forbid(base: *ExecBase) void
-```
-
-**SINCE**
-
-1.0. LVO -52.
-
-**INPUTS**
-
-None.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-It raises a nesting count, so Forbid and Permit pair and may be nested.
-While it is held the running task keeps the processor until it gives it
-up, and a switch that comes due in the meantime is taken at the `Permit`
-that lets the count go negative again.
-
-**It does not disable interrupts.** What it guards is what only tasks
-touch: the library list, the device list, the memory list and its
-handlers, the port and semaphore lists. Interrupt code must not touch
-any of those - no `AllocMem`, no `OpenLibrary` from an interrupt - and
-what interrupts *do* touch, the interrupt vectors and the software
-interrupt queues, is guarded by `Disable` instead.
-
-**Both cores.** The outermost Forbid takes the machine's Forbid lock,
-held by the core whose task is inside Forbid, so two Forbid sections
-never run at once. A task that asks while the other core holds it
-waits for it - asleep, and switched out if something better becomes
-ready, since it holds nothing yet.
-
-The other core keeps the task it is running, but switches to no other
-until the Permit - only to its idle task, should its own wait or end.
-So a task made ready inside a Forbid section runs after the Permit, as
-on one core: a task that signals the one waiting for it inside Forbid
-and ends is gone before that one runs. What Forbid does not do is stop
-the task already running on the other core: it guards what every task
-touches only inside Forbid, which the lists above are, and not what
-relies on no other task running at all.
-
-Inside `Disable`, a Forbid that has to wait for the other core lets
-the system's interrupt lock go meanwhile - that core's Forbid section
-may need it to end - with this core's interrupts still masked; the
-Disable is split there, as a `Wait` inside it splits it.
-
-**CONTEXT**
-
-- Waits: only for the lock, while the other core holds it. Never `Wait`
-  while holding it: a Wait lets the lock go until the task runs again,
-  so nothing it guards stays guarded across the Wait.
-- Interrupts: pointless rather than unsafe. An interrupt cannot be
-  switched away from, so it is already as forbidden as it can be; it
-  only counts, and takes no lock.
-- Forbid: this is it. Nesting is fine and is the normal case.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated. The caller owes a `Permit`, and an error path that
-returns without one stops the machine - which is why every use in this
-tree is `defer`red on the next line.
-
-**NOTES**
-
-Anything that reaches a file system cannot run under Forbid, because a
-handler is a process and a process cannot run while the scheduler is
-held. That is why a listing copies its fields out under the lock and
-prints them after letting it go.
-
-The count starts at -1, so one Forbid brings it to 0 and "held" is
-"not negative".
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`Permit`, `Disable`, `ObtainSemaphore`
-
-**EXAMPLES**
-
-```zig
-sys.Forbid();
-defer sys.Permit();
-// ... walk a system list, copying out what is wanted ...
 ```
 
 ## FreeMem
@@ -4122,7 +4053,7 @@ handed to someone else, and both are worth stopping for.
 - Waits: no.
 - Interrupts: no. It takes exec's memory lock, around the search and
   the free.
-- Forbid: may be held.
+- Locks: takes exec's memory lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4188,8 +4119,10 @@ how memory goes back to the system.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no. - Forbid: taken here. - Process: a Task
-  will do.
+- Waits: for the pool's lock while another task uses the pool.
+- Interrupts: no.
+- Locks: takes the pool's own lock; no spinlock may be held.
+- Process: a Task will do.
 
 **OWNERSHIP**
 
@@ -4249,7 +4182,7 @@ owner did not expect - which is why what signals it is taken down first.
 
 - Waits: no.
 - Interrupts: no - it is the running task's bits.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do, and it must be **the task that allocated
   it**.
 
@@ -4302,8 +4235,8 @@ header included, goes back.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. `FreeMem` takes Forbid.
-- Forbid: not needed.
+- Interrupts: no. `FreeMem` takes exec's memory lock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4362,7 +4295,7 @@ stand for any number of messages, so what follows a wakeup is `while
 - Waits: no.
 - Interrupts: safe. It takes exec's port lock, which masks the core's
   interrupts - which is how a port with `PA_SOFTINT` is drained.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4432,7 +4365,7 @@ With one core running, nothing is done.
 - Waits: no - it spins until the others are parked.
 - Interrupts: masked by the caller (Disable): an interrupt in between
   would run code the held cores' state may not allow.
-- Forbid: may be held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4503,9 +4436,8 @@ be built leaves everything above it with nothing to open.
 - Waits: whatever the modules do. Cold start runs on the exec task after
   `Permit`, so a module may wait, allocate and open other modules.
 - Interrupts: no.
-- Forbid: **not held.** A module that needs the machine to itself takes
-  Forbid for itself - which is what the display driver does, since the
-  panel is held in reset for tens of milliseconds.
+- Locks: **none held.** A module's init runs as its task's code, and takes
+  what it needs itself.
 - Process: a Task. There is no Process until dos.library is up, which is
   itself a cold-start module.
 
@@ -4564,7 +4496,7 @@ before anyone takes it.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4639,7 +4571,7 @@ there is anything to build it with.
 
 - Waits: whatever the module does.
 - Interrupts: no. It allocates.
-- Forbid: not taken, and not needed.
+- Locks: none taken, none needed.
 - Process: a Task will do, unless the module wants more.
 
 **OWNERSHIP**
@@ -4699,8 +4631,8 @@ queue is a list that must be made empty before anything is added to it.
 
 - Waits: no.
 - Interrupts: safe in itself, though nothing else about a semaphore is.
-- Forbid: not needed. Nothing can be holding a semaphore that does not
-  exist yet.
+- Locks: none needed. Nothing can be holding a semaphore that does not exist
+  yet.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4765,8 +4697,8 @@ are the same four writes.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here. Needed by the caller on any list another task
-  may be walking.
+- Locks: none taken here; the caller holds whatever guards the list, on any
+  list another task may be walking.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4819,9 +4751,9 @@ has fired - or null if the number is out of range.
 
 **BEHAVIOR**
 
-The live vector, as `ExecList` hands back a live list. **Hold Disable**
-while reading it: this is state an interrupt itself changes, so Forbid
-is not enough.
+The live vector, as `LockExecList` hands back a live list. **Hold
+Disable** while reading it: this is state an interrupt itself changes,
+and Disable is the lock it is kept under.
 
 The count is raised whether or not anything is listening, so a source
 that fires while its driver is not being woken still shows here - which
@@ -4831,7 +4763,7 @@ is what makes it worth reading when a device seems dead.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not enough. Disable is what guards the vectors.
+- Locks: Disable is what guards the vectors.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4844,7 +4776,7 @@ None known.
 
 **SEE ALSO**
 
-`SetIntVector`, `AddIntServer`, `ExecList`
+`SetIntVector`, `AddIntServer`, `LockExecList`
 
 **EXAMPLES**
 
@@ -4852,6 +4784,92 @@ None known.
 sys.Disable();
 const count = if (sys.IntVector(n)) |v| v.count else 0;
 sys.Enable();
+```
+
+## LockExecList
+
+Hands back one of exec's own lists, its lock taken.
+
+**SYNOPSIS**
+
+```zig
+fn LockExecList(base: *ExecBase, which: u32) ?*List
+```
+
+**SINCE**
+
+1.6. LVO -428.
+
+**INPUTS**
+
+- `which` - `EXECLIST_MEMORY`, `_LIBRARIES`, `_DEVICES`, `_RESOURCES`,
+  `_PORTS`, `_SEMAPHORES`, `_TASK_READY`, `_TASK_WAIT` or
+  `_MEM_HANDLERS`.
+
+**RESULT**
+
+The list, or null - with nothing taken - for a number exec has no list
+for, which is how a program built against a later version degrades
+rather than faults.
+
+**BEHAVIOR**
+
+It is the live list, held still by the lock exec keeps it under:
+
+- the libraries, devices and resources: exec's library list, a
+  semaphore, held shared - other walkers walk beside, nothing is added,
+  taken off or expunged until `UnlockExecList`;
+- the memory handlers: their semaphore, held shared;
+- the memory regions, the public ports and the public semaphores: a
+  spinlock each (exec's memory, port and semaphore locks). This core
+  switches no task while it is held, and the port lock masks its
+  interrupts;
+- the two task queues: Disable.
+
+**The caller's side of the bargain**: write nothing, and keep no node
+past `UnlockExecList` - copy out the fields wanted and give the list back
+before doing anything with them. Under a spinlock or Disable nothing may
+wait: no printing, no allocating, no file. That is why every listing in
+this tree copies a node's fields out under the lock and prints them
+after.
+
+**CONTEXT**
+
+- Waits: for the library list or the memory handlers' semaphore while
+  another task changes them. The others spin or mask.
+- Interrupts: no.
+- Locks: takes the list's own lock (BEHAVIOR). No spinlock may be held for
+  the lists under a semaphore; one held must come before the spinlock in the
+  lock order for the others.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The lock is held until `UnlockExecList(which)`.
+Everything on the list belongs to whoever put it there.
+
+**NOTES**
+
+`C:ShowInfo` is what this was added for.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnlockExecList`, `FindName`, `IntVector`, `ResModules`
+
+**EXAMPLES**
+
+```zig
+const list = sys.LockExecList(EXECLIST_LIBRARIES) orelse return;
+var it = list.iterator();
+while (it.next()) |node| {
+    // ... copy out what is wanted ...
+}
+sys.UnlockExecList(EXECLIST_LIBRARIES);
+// ... print it now ...
 ```
 
 ## LogControl
@@ -4896,7 +4914,7 @@ mirror on there starts with the lines that come after it.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4979,7 +4997,7 @@ one.
 
 - Waits: no.
 - Interrupts: no. It allocates, and `init_fn` may do anything.
-- Forbid: not needed, and not taken here.
+- Locks: none taken, none needed.
 - Process: a Task will do, unless `init_fn` needs more.
 
 **OWNERSHIP**
@@ -5051,8 +5069,7 @@ pointing at each other, and the first `AddTail` writes through one.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not needed. Nothing can be walking a list that does not exist
-  yet.
+- Locks: none needed. Nothing can be walking a list that does not exist yet.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5118,7 +5135,7 @@ written over below it.
 
 - Waits: only if `code` does.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: whatever `code` needs. It stays the same task, so a Process
   is still a Process inside it.
 
@@ -5187,10 +5204,8 @@ comes free, so it cannot be overtaken.
 
 - Waits: yes, whenever another task holds it.
 - Interrupts: no. It waits.
-- Forbid: may be held, but the `Wait` inside breaks it while waiting -
-  so a caller must **not** count on it being held throughout. The
-  semaphore is looked at under exec's semaphore lock, given back
-  before the wait.
+- Locks: takes exec's semaphore lock to look, and gives it back before it
+  waits; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5258,8 +5273,8 @@ doing it at once want another semaphore between them to arbitrate.
 
 - Waits: yes, until the last one is granted.
 - Interrupts: no. It waits.
-- Forbid: may be held, and is broken by the waiting, as with
-  `ObtainSemaphore`.
+- Locks: takes exec's semaphore lock while it looks; no spinlock may be
+  held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5327,8 +5342,8 @@ The exclusive owner asking for it shared simply nests.
 
 - Waits: yes, whenever someone holds it exclusively.
 - Interrupts: no. It waits.
-- Forbid: may be held, and is broken by the waiting, as with
-  `ObtainSemaphore`.
+- Locks: takes exec's semaphore lock while it looks; no spinlock may be
+  held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5398,13 +5413,19 @@ The device's Open picks the unit and writes it into the request. From
 then on the request carries both, which is why a request is what is
 opened rather than a handle being answered.
 
+As `OpenLibrary`: the device is found and pinned under exec's library
+list, which is let go, and its Open runs inside the device's own lock.
+An Open that starts the device's task and waits for it is free to: that
+task may open what it needs.
+
 **CONTEXT**
 
-- Waits: no as exec has it, though a device's own Open may. With
-  ramlib.library in front of it, it may: the replacement loads the
-  device from DEVS:.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the search and the vector.
+- Waits: for exec's library list and the device's lock while others
+  hold them, and a device's own Open may. With ramlib.library in front
+  of it, the replacement loads the device from DEVS:.
+- Interrupts: no. It takes semaphores.
+- Locks: takes exec's library list and the device's own lock, both
+  semaphores; no spinlock may be held.
 - Process: a Task will do for exec's own. ramlib's replacement needs a
   Process, and sends the work to its own when a Task calls it.
 
@@ -5474,12 +5495,23 @@ The Open vector is what counts the opener. The standard one
 (`libOpen`) raises `open_cnt` and clears `LIBF_DELEXP`, so a library
 marked for expunging is reprieved by being opened again.
 
+The library is found under exec's library list and *pinned* there, so
+that nothing expunges it before its Open has run; the list is let go,
+and the Open vector runs inside the library's own lock. Two opens of
+one library never run at once, on either core; opens of different
+libraries do. The vector holds nothing of exec's, so it may start a task
+and wait for it, and that task may open other libraries. A library
+being expunged is passed over, as if it were not there.
+
 **CONTEXT**
 
-- Waits: no as exec has it. With ramlib.library in front of it, it may:
-  the replacement loads the module from LIBS:, which reaches a handler.
-- Interrupts: no. It takes Forbid, and the Open vector may do anything.
-- Forbid: taken here, around the search and the vector.
+- Waits: for the library list and the library's lock, while another
+  task holds them; and with ramlib.library in front of it, the
+  replacement loads the module from LIBS:, which reaches a handler.
+- Interrupts: no. It takes semaphores, and the Open vector may do
+  anything.
+- Locks: takes exec's library list and the library's own lock, both
+  semaphores; no spinlock may be held.
 - Process: a Task will do for exec's own. ramlib's replacement needs a
   Process to load from a disk, and sends the work to its own when a bare
   Task calls it.
@@ -5544,8 +5576,8 @@ machine is running.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the search.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5571,77 +5603,6 @@ None known.
 
 ```zig
 const pb = sys.OpenResource("platform.resource") orelse return;
-```
-
-## Permit
-
-Lets task switching happen again, and takes any switch that came due.
-
-**SYNOPSIS**
-
-```zig
-fn Permit(base: *ExecBase) void
-```
-
-**SINCE**
-
-1.0. LVO -56.
-
-**INPUTS**
-
-None.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-It drops the nesting count, and when that takes it below zero - no
-Forbid outstanding - a switch that fell due while the scheduler was held
-is taken here. So `Permit` is a point at which the caller may lose the
-processor, which the call before it was not.
-
-The outermost Permit lets the machine's Forbid lock go, and pokes the
-other core if a task there waits for it.
-
-This is also what starts multitasking: the boot code holds Forbid from
-before there are any tasks, and the `Permit` that matches it is the
-moment the machine becomes preemptive.
-
-**CONTEXT**
-
-- Waits: no, but it may switch, which looks the same to the caller.
-- Interrupts: only to match a `Forbid` the same interrupt made; there it
-  only counts. An interrupt that let the scheduler go would switch tasks
-  from inside an interrupt.
-- Forbid: it is the release of it. One more `Permit` than `Forbid`
-  leaves the count wrong and the next Forbid holding nothing.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**NOTES**
-
-Because a switch may happen here, nothing may be held across it that a
-switch would invalidate - a pointer into a list that another task is now
-free to change has to be finished with before the Permit, not after.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`Forbid`, `Enable`
-
-**EXAMPLES**
-
-```zig
-sys.Forbid();
-defer sys.Permit();
 ```
 
 ## Procure
@@ -5689,7 +5650,7 @@ receives the reply.
 - Waits: no. Not waiting is the whole point.
 - Interrupts: no. It takes exec's semaphore lock, and may reply a
   message.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5738,7 +5699,7 @@ fn PutMsg(base: *ExecBase, port: *MsgPort, msg: *Message) void
 **INPUTS**
 
 - `port` - where it goes. It must still exist; for a public port that
-  means holding Forbid from the `FindPort` to here.
+  is the port's owner's protocol (`FindPort`).
 - `msg` - the message. Its `reply_port` should be set if a reply is
   wanted, and its length if the receiver reads one.
 
@@ -5761,8 +5722,8 @@ write it, and must not free it, until it comes back.
   and flow control is something the two ends arrange between them.
 - Interrupts: safe. It takes exec's port lock, which masks the core's
   interrupts, and it is how an interrupt hands work to a task.
-- Forbid: not needed for the send itself; needed by the caller around
-  `FindPort` and this, so that a public port cannot go away in between.
+- Locks: takes exec's port lock, an interrupt lock; may be called holding
+  any lock that comes before it in the lock order.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5782,9 +5743,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-sys.Forbid();
 if (sys.FindPort("some.port")) |port| sys.PutMsg(port, &msg);
-sys.Permit();
 ```
 
 ## RamLib
@@ -5819,7 +5778,7 @@ the whole purpose of the pair.
 
 - Waits: no.
 - Interrupts: safe. It is one load.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5887,7 +5846,7 @@ past the NUL.
 - Waits: no, though `put_ch_proc` may.
 - Interrupts: safe in itself; it depends entirely on what
   `put_ch_proc` does.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5950,7 +5909,7 @@ retimed, so its output and the kernel's do not run together.
 
 - Waits: no, but it waits for the port to drain.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do. It runs before there are any.
 
 **OWNERSHIP**
@@ -6010,7 +5969,7 @@ which buffers on an interrupt, is what a program uses.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do. It works with no task at all.
 
 **OWNERSHIP**
@@ -6069,7 +6028,7 @@ tight loop. Nothing before `RawIOInit` goes anywhere.
 - Waits: no, but it spins on the transmitter.
 - Interrupts: safe, and that is why kernel output uses it: it needs no
   task, no device and no memory.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do. It works with no task at all.
 
 **OWNERSHIP**
@@ -6145,8 +6104,7 @@ of its last exception, which is at most one of its ticks ago.
 
 - Waits: no.
 - Interrupts: yes.
-- Forbid: not needed. It takes Disable to read a core's figures
-  whole.
+- Locks: takes Disable to read a core's figures whole.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6223,8 +6181,8 @@ away.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed. It holds this core's interrupts off, and the
-  other core's writes out, while it copies.
+- Locks: none needed. It holds this core's interrupts off, and the other
+  core's writes out, while it copies.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6283,8 +6241,8 @@ Nothing.
 Everything written while the lock was held is visible before the lock
 is free. Then task switching on this core goes again once it holds no
 lock - and with `LOCKF_INTERRUPT` the `Enable` matching the taking's
-`Disable` is made: a Forbid or a Disable around it stays. Locks may be
-given back in any order.
+`Disable` is made: a Disable around it stays. Locks may be given back
+in any order.
 
 A lock this core does not hold is left as it is: a recoverable alert
 (`AN_LockRule`).
@@ -6293,7 +6251,7 @@ A lock this core does not hold is left as it is: a recoverable alert
 
 - Waits: no.
 - Interrupts: a `LOCKF_INTERRUPT` lock only.
-- Forbid: may be held.
+- Locks: gives `lock` back.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6350,7 +6308,7 @@ or a spin it parked from. With one core running, nothing is done.
 
 - Waits: no.
 - Interrupts: masked by the caller, as for `HoldOtherCores`.
-- Forbid: may be held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6415,7 +6373,7 @@ somewhere else.
 - Waits: no, but handing the semaphore on signals a task, which may
   switch.
 - Interrupts: no. It takes exec's semaphore lock, and may signal.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do, and it must be **the task that obtained
   it**.
 
@@ -6473,7 +6431,7 @@ itself known.
 
 - Waits: no, but it may signal and so may switch.
 - Interrupts: no. It takes exec's semaphore lock.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do, and it must be the task that obtained them.
 
 **OWNERSHIP**
@@ -6519,16 +6477,19 @@ module the caller should unload.
 
 **BEHAVIOR**
 
-As `RemLibrary`: it asks rather than tells. A device with anything open
-marks itself and goes on its last `CloseDevice`; a device in the ROM
-keeps itself, which is read from it still being on the list.
+As `RemLibrary`: it asks rather than tells, inside the device's own
+lock. A device with anything open marks itself and goes on its last
+`CloseDevice`; one nobody has open is marked going and its vector runs
+with nothing held. A device in the ROM keeps itself, which is read from
+it still being on the list.
 
 **CONTEXT**
 
-- Waits: no, and the vector must not either - the low-memory handler
-  reaches this from inside `AllocMem`.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the vector.
+- Waits: for the device's lock and exec's library list while others
+  hold them; and the vector may close what it opened.
+- Interrupts: no. It takes semaphores.
+- Locks: takes the device's own lock and exec's library list, both
+  semaphores; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6583,7 +6544,7 @@ one call, so nothing can change between them.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6639,7 +6600,7 @@ keeps the twelve from being spent on devices that are no longer open.
 
 - Waits: no.
 - Interrupts: safe. It takes Disable.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6689,21 +6650,29 @@ null, since it has no segments.
 **BEHAVIOR**
 
 It asks rather than tells, and the library decides. The standard
-Expunge (`libExpunge`) takes the library off the list and frees it when
-nobody has it open, and otherwise only sets `LIBF_DELEXP` so that it
-goes on its last `CloseLibrary`. A library in the ROM keeps itself by
-answering without doing anything, and exec reads that from the library
-still being on its list when the vector returns.
+Expunge (`libExpunge`) takes the library off the list (`DetachLibrary`)
+and frees it when nobody has it open, and otherwise only sets
+`LIBF_DELEXP` so that it goes on its last `CloseLibrary`. A library in
+the ROM keeps itself by answering without doing anything, and exec reads
+that from the library still being on its list when the vector returns.
 
 So a caller cannot conclude from the result that the library went. What
 it went by is whether it is still on the list.
 
+It takes the library's own lock, so no Open or Close of it is running.
+One that is open has its vector run inside the lock, and is only
+marked. One nobody has open is marked going (`LIBF_GOING`) under exec's
+library list - from then on no Open finds it - and its vector runs with
+nothing held, since it may close what it opened. A library an Open is
+on its way to is left alone.
+
 **CONTEXT**
 
-- Waits: no, and the vector it calls must not either - the low-memory
-  handler reaches this from inside `AllocMem`.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the vector.
+- Waits: for the library's lock and exec's library list while others
+  hold them; and the vector may close other libraries.
+- Interrupts: no. It takes semaphores.
+- Locks: takes the library's own lock and exec's library list, both
+  semaphores; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6763,8 +6732,9 @@ It comes off the list and is not asked again.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the list.
+- Interrupts: no. It takes the memory handlers' semaphore, so a handler
+  running is finished first.
+- Locks: takes the memory handlers' semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6818,9 +6788,8 @@ it, and anything already replied to will still arrive.
 
 - Waits: no.
 - Interrupts: no. It takes exec's port lock, around the list.
-- Forbid: may be held. It is taken here as well, around the change:
-  a program walks the port list under Forbid, which must keep it
-  still on both cores.
+- Locks: takes exec's port lock, around the change. A program walks the port
+  list under the same lock, with `LockExecList`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6875,8 +6844,8 @@ means that nobody is using it.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the list.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6929,9 +6898,8 @@ away from its holder.
 
 - Waits: no.
 - Interrupts: no. It takes exec's semaphore lock, around the list.
-- Forbid: may be held. It is taken here as well, around the change:
-  a program walks the semaphore list under Forbid, which must keep it
-  still on both cores.
+- Locks: takes exec's semaphore lock, around the change. A program walks the
+  semaphore list under the same lock, with `LockExecList`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6983,7 +6951,7 @@ With `AddTail` it makes a stack, as with `RemHead` it makes a queue.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7039,7 +7007,7 @@ scheduler frees the memory once nothing is running on it any more.
 **Removing another task** takes it off whichever list it is on and frees
 its memory there and then. One running on the other core is stopped
 first: that core switches it out at its next switch point - outside
-Forbid and Disable - and the caller waits for that, in `Wait`, before
+Disable and any spinlock - and the caller waits for that, in `Wait`, before
 the end hooks run.
 
 Either way, only what `CreateTask` allocated is freed. A task the caller
@@ -7053,7 +7021,7 @@ it.
   is not the same thing.
 - Interrupts: no. It takes Disable, may free memory, and runs the
   task's end hooks.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7116,7 +7084,7 @@ is left as it is, so a library may call this whatever has happened.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed; it takes Forbid for the list itself.
+- Locks: takes Disable, which the hooks are kept under.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7177,7 +7145,7 @@ not be removed twice.
 
 - Waits: no.
 - Interrupts: safe in itself; the caller's locking is what decides.
-- Forbid: not taken here, and the caller's to take.
+- Locks: none taken here; the caller holds whatever guards the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7202,6 +7170,74 @@ None known.
 
 ```zig
 sys.Remove(&node);
+```
+
+## RemoveMsg
+
+Takes `msg` off `port` if it is still on it.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveMsg(base: *ExecBase, port: *MsgPort, msg: *Message) bool
+```
+
+**SINCE**
+
+1.6. LVO -540.
+
+**INPUTS**
+
+- `port` - the port the message was put to.
+- `msg` - the message.
+
+**RESULT**
+
+True when it was on the port and is off it now; false when it was not
+there - taken by `GetMsg` already, or never put.
+
+**BEHAVIOR**
+
+The port's queue is walked and changed under exec's port lock, which is
+what `PutMsg`, `GetMsg` and `ReplyMsg` change it under. So it holds
+against a message put on the same port from the other core or from an
+interrupt meanwhile, which a list walked under any other lock does not.
+
+What a device's AbortIO needs: a request still queued on its unit's port
+is taken back here, and one that is not is somewhere else - in the
+device's own lists, or being worked on.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It takes exec's port lock, which masks the core's
+  interrupts.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+A message taken off is the caller's to reply or to put again.
+
+**NOTES**
+
+The walk is as long as the queue.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetMsg`, `PutMsg`, `AbortIO`
+
+**EXAMPLES**
+
+```zig
+if (sys.RemoveMsg(&unit.msg_port, &io.message)) {
+    io.err = IOERR_ABORTED;
+    sys.ReplyIO(io);
+}
 ```
 
 ## ReplyIO
@@ -7239,7 +7275,7 @@ That single test is what lets a device write one ending for both paths.
 - Waits: no.
 - Interrupts: **safe, and that is what it is for.** A device's interrupt
   finishes the request the task started.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do; an interrupt will do.
 
 **OWNERSHIP**
@@ -7306,8 +7342,8 @@ that what came back is a reply.
 - Waits: no.
 - Interrupts: safe. It takes exec's port lock, which masks the core's
   interrupts.
-- Forbid: not needed. The reply port belongs to the sender, which is
-  waiting for this and so cannot have gone away.
+- Locks: takes exec's port lock. The reply port belongs to the sender, which
+  is waiting for this and so cannot have gone away.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7366,7 +7402,7 @@ be walked freely.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7380,7 +7416,7 @@ None known.
 
 **SEE ALSO**
 
-`FindResident`, `InitCode`, `ExecList`
+`FindResident`, `InitCode`, `LockExecList`
 
 **EXAMPLES**
 
@@ -7427,7 +7463,7 @@ instead of waiting for a reply that will never come.
 
 - Waits: no. That is the point of it.
 - Interrupts: no.
-- Forbid: no; the device's BeginIO may do anything.
+- Locks: no spinlock may be held: the device's BeginIO may do anything.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7500,8 +7536,8 @@ straight away.
 
 - Waits: no.
 - Interrupts: no - it is the running task's.
-- Forbid: not needed; it takes Disable. Under Forbid the exception is
-  postponed to the `Permit`.
+- Locks: takes Disable. With a spinlock held the exception is postponed to
+  the `ReleaseLock`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7574,10 +7610,10 @@ calls one.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes Forbid.
-- Forbid: taken here, around the write and the checksum. That stops
-  another task being switched to mid-patch; it does not stop one that is
-  already inside the old function.
+- Interrupts: no. It takes exec's library list, a semaphore.
+- Locks: takes exec's library list, a semaphore, so two patches never cross;
+  no spinlock may be held. A caller already inside the old function goes on
+  in it.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7653,8 +7689,8 @@ is what changes whether it may share.
 
 - Waits: no.
 - Interrupts: safe. It takes Disable, which an interrupt may.
-- Forbid: not needed. Disable is what guards the vectors, since they are
-  what interrupts themselves touch.
+- Locks: takes Disable, which guards the vectors, since they are what
+  interrupts themselves touch.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7723,7 +7759,7 @@ for the USB console's copy.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed. It holds interrupts off while it changes the
+- Locks: none needed. It holds interrupts off while it changes the
   followers.
 - Process: a Task will do.
 
@@ -7786,7 +7822,7 @@ Word-sized stores where the alignment allows.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7850,7 +7886,7 @@ read only. So exec holds the word.
 
 - Waits: no.
 - Interrupts: safe. It is one store.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7909,7 +7945,7 @@ how one is consumed.
 - Waits: no. It is the call for when waiting is what you do not want.
 - Interrupts: no - it reads the running task, and an interrupt has none
   of its own.
-- Forbid: not needed; it takes Disable.
+- Locks: takes Disable.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7974,8 +8010,8 @@ With one core running, a task pinned to core 1 never runs.
 - Waits: no, but the caller may switch - to the other core, when it
   pinned itself away from this one.
 - Interrupts: no. It takes Disable.
-- Forbid: not needed. Inside it the move waits for the Permit, as every
-  switch does.
+- Locks: takes Disable. With a spinlock held the move waits for the
+  `ReleaseLock`, as every switch does.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7984,10 +8020,9 @@ Nothing is allocated.
 
 **NOTES**
 
-A task that is to be pinned from its first instruction is made inside
-Forbid and pinned before the Permit: while one core holds Forbid
-neither switches to a new task. dos's `NP_Affinity` does it for a
-process.
+A task that is to be pinned from its first instruction has its
+`TF_CORE0` or `TF_CORE1` set in the `Task` handed to `AddTask`; dos's
+`NP_Affinity` does it for a process.
 
 **BUGS**
 
@@ -7995,15 +8030,95 @@ None known.
 
 **SEE ALSO**
 
-`SetTaskPri`, `CreateTask`, `Forbid`
+`SetTaskPri`, `CreateTask`, `AddTask`
 
 **EXAMPLES**
 
 ```zig
-sys.Forbid();
-const task = sys.CreateTask("radio", 5, &radioCode, 8192) orelse return error.NoMemory;
+// A task made already, moved to core 0.
 _ = sys.SetTaskAffinity(task, sdk.exec.TF_CORE0);
-sys.Permit();
+
+// One pinned from its first instruction: its flags are set before
+// AddTask.
+radio.task = .{ .node = .{ .name = "radio", .pri = 5 }, .flags = sdk.exec.TF_CORE0, .sp_lower = lower, .sp_upper = upper };
+_ = sys.AddTask(&radio.task, &radioCode, null);
+```
+
+## SetTaskEndMsg
+
+Has `msg` replied to its reply port once `task` is gone.
+
+**SYNOPSIS**
+
+```zig
+fn SetTaskEndMsg(base: *ExecBase, task: ?*Task, msg: ?*Message) void
+```
+
+**SINCE**
+
+1.6. LVO -536.
+
+**INPUTS**
+
+- `task` - the task; null for the caller.
+- `msg` - the message, its reply port set; null takes one set before
+  back.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The message comes back once the task has ended - returned, or
+`RemTask` - and the core it ran on has switched away from it, so nothing
+runs on its stack any more; after its memory, if exec allocated it, has
+been given back. That is the moment the code it ran may be unloaded and
+the memory it ran in freed, which is what this is for: a server whose
+sessions run its code, a device whose unit task does, waits for the
+message before it lets that code go.
+
+A message rather than a signal, so that one task waiting for many
+counts every one: signals of the same bit run together, messages queue.
+
+It is replied from the core's next exception exit after the switch, as
+an interrupt would reply it - so the reply port signals its task or
+ignores; a port that causes a software interrupt is not served.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It takes Disable.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The message is exec's from now until it comes back; its reply port must
+still be there then.
+
+**NOTES**
+
+**Set it before the task can end**: in the `Task` handed to `AddTask`
+(`end_msg`), with dos's `NP_EndMsg` for a process, or from the task
+itself. A task that ended already is gone, and nothing comes back.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemTask`, `AddTaskEndHook`, `AddTask`, `ReplyMsg`
+
+**EXAMPLES**
+
+```zig
+var ended: Message = .{ .reply_port = port };
+sys.SetTaskEndMsg(worker, &ended);
+// ... once its code may go:
+_ = sys.WaitPort(port);
+_ = sys.GetMsg(port);
 ```
 
 ## SetTaskPri
@@ -8037,13 +8152,13 @@ task to a priority it already had moves it to the back of that group.
 
 A switch is asked for when the change made one right: the task lowered
 itself below a ready task, or another task was raised above the running
-one. It is taken at the `Enable` here, or postponed by a Forbid.
+one. It is taken at the `Enable` here, or postponed by a spinlock held.
 
 **CONTEXT**
 
 - Waits: no, but it may switch.
 - Interrupts: no. It takes Disable.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8113,8 +8228,7 @@ other answer, or no trap code at all, ends in a dead-end alert.
   exception, not on the task's own time.
 - Interrupts: no - it reads the running task, and an interrupt has none
   of its own.
-- Forbid: not needed. The field belongs to the one task that can write
-  it.
+- Locks: none needed. The field belongs to the one task that can write it.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8184,8 +8298,8 @@ that was already set.
 - Interrupts: **safe, and this is the main way out of one.** An
   interrupt cannot wait, allocate or reach a handler; what it can do is
   signal the task that can.
-- Forbid: not needed; it takes Disable. Under Forbid the switch is
-  postponed to the `Permit`.
+- Locks: takes Disable. With a spinlock held the switch is postponed to the
+  `ReleaseLock`.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8210,6 +8324,67 @@ None known.
 
 ```zig
 sys.Signal(waiting_task, @as(u32, 1) << @intCast(bit));
+```
+
+## UnlockExecList
+
+Gives back the lock `LockExecList` took on list `which`.
+
+**SYNOPSIS**
+
+```zig
+fn UnlockExecList(base: *ExecBase, which: u32) void
+```
+
+**SINCE**
+
+1.6. LVO -528.
+
+**INPUTS**
+
+- `which` - the number `LockExecList` was given.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The lock is the list's own (`LockExecList` lists them): its semaphore is
+released, its spinlock let go - and a switch that came due meanwhile
+taken - or the Disable ended. A number exec has no list for does
+nothing, as `LockExecList` took nothing for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: gives back the lock `LockExecList` took.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+No node of the list may be read after this.
+
+**NOTES**
+
+One `UnlockExecList` for every `LockExecList` that answered a list,
+with the same number.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockExecList`
+
+**EXAMPLES**
+
+```zig
+const list = sys.LockExecList(EXECLIST_PORTS) orelse return;
+const count = countNodes(list);
+sys.UnlockExecList(EXECLIST_PORTS);
 ```
 
 ## Vacate
@@ -8254,7 +8429,7 @@ A bid never made, or vacated twice, does nothing.
 
 - Waits: no, but releasing may signal and so may switch.
 - Interrupts: no. It takes exec's semaphore lock.
-- Forbid: may be held.
+- Locks: takes exec's semaphore lock for a moment.
 - Process: a Task will do. **Any task may vacate a bid**, though the
   lock belongs to whoever procured it.
 
@@ -8322,11 +8497,8 @@ arrived, before the wait is considered.
   this system waits here in the end.
 - Interrupts: no, and it is fatal to try. An interrupt has no task to
   suspend, so there would be nothing to wake.
-- Forbid: it switches even under Forbid, which is the one exception to
-  the scheduler being held, and lets the Forbid lock go until the task
-  runs again. That makes waiting under Forbid *work* mechanically while
-  still being wrong: what the Forbid guarded is not guarded across the
-  Wait.
+- Locks: no spinlock may be held: Wait with one held is a dead end, since
+  the core's count of locks held is the core's and not the task's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8393,7 +8565,7 @@ set, so the wait returns at once rather than missing it.
 
 - Waits: yes, unless the request is already finished.
 - Interrupts: no.
-- Forbid: no. It waits.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8461,7 +8633,7 @@ It returns at once if a message is already there.
 
 - Waits: yes, on the port's signal.
 - Interrupts: no. It waits.
-- Forbid: no - it waits, and waiting under Forbid stops the machine.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**

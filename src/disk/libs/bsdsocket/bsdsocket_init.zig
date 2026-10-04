@@ -61,8 +61,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
 
 /// A base of the opener's own: the same jump table, with its descriptor
 /// table, its error number and its readiness signal. It runs on the
-/// opener's task, under OpenLibrary's Forbid, so the signal is the
-/// opener's. Null when there is no memory or no signal free.
+/// opener's task, inside the stack library's lock, so the signal is the
+/// opener's. Null when there is no memory or no signal free. The base is
+/// on no list, which is how CloseLibrary knows to leave it to `close`.
 fn open(lib: *exec.Library, version: u32) callconv(.c) ?*exec.Library {
     _ = version;
     const stack = _base.stackBase(lib);
@@ -100,9 +101,18 @@ fn freeCopy(sb: *SocketBase) ?*exec.Library {
 }
 
 /// An opener's base taken down: its sockets closed, its signal, table and
-/// timer given back, and the base freed. The last close of a stack
-/// marked for expunging expunges it.
+/// timer given back, and the base freed. CloseLibrary holds nothing for
+/// it - the base is on no list - so the stack's count is changed under the
+/// stack library's own lock here, and the last close of a stack marked for
+/// expunging expunges it through RemLibrary.
 fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
+    // The library itself rather than an opener's base: an open count held
+    // without a base - the stack task's, given back by dos once its code
+    // has returned (NP_HoldLibrary). CloseLibrary holds the library's lock.
+    if (lib.node.pred != null) {
+        lib.open_cnt -= 1;
+        return null;
+    }
     const sb = _base.socketBase(lib);
     const stack = sb.stack;
     const sys = sb.sys_base;
@@ -111,8 +121,11 @@ fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
     sys.FreeSignal(sb.ready_signal);
     sys.FreeMem(@ptrCast(sb.table), sb.table_size * @sizeOf(?*Socket));
     _ = freeCopy(sb);
+    sys.ObtainSemaphore(&stack.lib.lock);
     stack.lib.open_cnt -= 1;
-    if (stack.lib.open_cnt == 0 and stack.lib.flags & exec.LIBF_DELEXP != 0) return expunge(&stack.lib);
+    const marked = stack.lib.open_cnt == 0 and stack.lib.flags & exec.LIBF_DELEXP != 0;
+    sys.ReleaseSemaphore(&stack.lib.lock);
+    if (marked) return sys.RemLibrary(&stack.lib);
     return null;
 }
 
@@ -137,7 +150,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (stack.utility) |utility| sys.CloseLibrary(utility.lib());
     // A stack made without being added - a second one, in the tests - is
     // on no list.
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

@@ -4,6 +4,7 @@
 //! otherwise marks itself to go at the last close.
 
 const sdk = @import("sdk");
+const _library = @import("../library/_library.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Device = sdk.exec.Device;
@@ -25,15 +26,18 @@ const Device = sdk.exec.Device;
 /// module the caller should unload.
 ///
 /// BEHAVIOR:
-/// As `RemLibrary`: it asks rather than tells. A device with anything open
-/// marks itself and goes on its last `CloseDevice`; a device in the ROM
-/// keeps itself, which is read from it still being on the list.
+/// As `RemLibrary`: it asks rather than tells, inside the device's own
+/// lock. A device with anything open marks itself and goes on its last
+/// `CloseDevice`; one nobody has open is marked going and its vector runs
+/// with nothing held. A device in the ROM keeps itself, which is read from
+/// it still being on the list.
 ///
 /// CONTEXT:
-/// - Waits: no, and the vector must not either - the low-memory handler
-///   reaches this from inside `AllocMem`.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the vector.
+/// - Waits: for the device's lock and exec's library list while others
+///   hold them; and the vector may close what it opened.
+/// - Interrupts: no. It takes semaphores.
+/// - Locks: takes the device's own lock and exec's library list, both
+///   semaphores; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -51,8 +55,6 @@ const Device = sdk.exec.Device;
 /// _ = sys.RemDevice(dev);
 /// ```
 pub fn RemDevice(base: *ExecBase, dev: *Device) ?*anyopaque {
-    const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-    return dev.vector(sdk.exec.ExpungeFn, sdk.exec.LIB_EXPUNGE)(dev);
+    base.iface().ObtainSemaphore(&dev.lock);
+    return _library.expungeHeld(base, dev, &base.device_list).seg_list;
 }

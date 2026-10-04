@@ -56,7 +56,7 @@ const _signature = @import("_signature.zig");
 /// CONTEXT:
 /// - Waits: for the RSA or SHA engine, while another task has it.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

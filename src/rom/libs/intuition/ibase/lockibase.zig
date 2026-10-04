@@ -32,7 +32,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// - Waits: yes, for whoever holds the screens - another program, or
 ///   intuition's own input task.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

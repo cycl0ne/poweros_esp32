@@ -43,7 +43,7 @@ const _date = @import("_date.zig");
 /// is, rather than with a year that has wrapped.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. `result` is the caller's.

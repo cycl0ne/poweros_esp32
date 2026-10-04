@@ -30,7 +30,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// - Waits: only when the buffer has to go to or come from the handler;
 ///   then it sends a packet and waits for the answer.
 /// - Interrupts: no. It may wait.
-/// - Forbid: not taken, and never to be held around it: it may wait.
+/// - Locks: none taken; no spinlock may be held around it: it may wait.
 /// - Process: a Task will do. One handle is one caller's: two tasks sharing
 ///   a handle take turns themselves.
 ///

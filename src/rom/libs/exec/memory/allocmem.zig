@@ -4,8 +4,8 @@
 //! none has, it asks the low-memory handlers to free something and tries
 //! again after each one that did.
 //!
-//! The regions are walked under Forbid, and the handlers run inside it,
-//! so none of them may wait.
+//! The regions are walked under exec's memory lock; the handlers run
+//! outside it, under their own semaphore.
 
 const sdk = @import("sdk");
 const _memory = @import("_memory.zig");
@@ -56,15 +56,17 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// open - one per call, so only as much goes as the allocation needed.
 ///
 /// The regions are searched under exec's memory lock, a few hundred
-/// cycles; the handlers run under Forbid, outside it, so that what they
-/// free goes straight back.
+/// cycles; the handlers run outside it, under the memory handlers'
+/// semaphore, so that what they free goes straight back.
 ///
 /// CONTEXT:
-/// - Waits: no, and it must not - the handlers run inside its Forbid and
-///   are forbidden to wait for the same reason.
+/// - Waits: only when memory runs short, for the memory handlers'
+///   semaphore while another task runs them. A handler waits for nothing:
+///   exec's own only tries the locks it needs.
 /// - Interrupts: no. It takes exec's memory lock, and an interrupt must
 ///   not allocate.
-/// - Forbid: may be held; taken here around the handlers.
+/// - Locks: takes exec's memory lock, and the memory handlers' semaphore when
+///   memory runs short; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -140,8 +142,10 @@ fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32, caller: u
 /// handler that frees one thing at a time is driven until the allocation
 /// succeeds.
 ///
-/// The handlers run under Forbid, which keeps their list still, and not
-/// under the memory lock: what they free goes back through FreeMem.
+/// The handlers run under their own semaphore, which keeps their list still
+/// and one task at a time in them, and not under the memory lock: what
+/// they free goes back through FreeMem. A handler that allocates comes
+/// back here and runs them again, as the semaphore's owner.
 ///
 /// INPUTS:
 /// - `base` - exec: its handler list and memory list.
@@ -153,8 +157,8 @@ fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32, caller: u
 /// The block, or null when every handler is spent.
 fn lowMemory(base: *ExecBase, byte_size: usize, requirements: u32, caller: usize) ?*anyopaque {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_memhandlers);
+    defer sys.ReleaseSemaphore(&base.sem_memhandlers);
     var data: sdk.exec.MemHandlerData = .{
         .request_size = _memory.fitsWord(byte_size) orelse ~@as(u32, 0),
         .request_flags = requirements,

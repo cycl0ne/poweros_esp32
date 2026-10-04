@@ -30,8 +30,8 @@ const IntuiMessage = sdk.intuition.IntuiMessage;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed; only the window's own program
-///   changes its port, through `ModifyIDCMP` and `CloseWindow`.
+/// - Locks: none needed; only the window's own program changes its port,
+///   through `ModifyIDCMP` and `CloseWindow`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

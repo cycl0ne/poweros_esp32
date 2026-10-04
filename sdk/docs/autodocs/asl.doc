@@ -40,7 +40,7 @@ asl.library/FreeAslRequest
    CONTEXT
 	- Waits: for memory.
 	- Interrupts: no.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -109,7 +109,7 @@ asl.library/FreeAslRequest
    CONTEXT
 	- Waits: for input, for the screen, and for the drawer to be read.
 	- Interrupts: no.
-	- Forbid: not held and not to be held.
+	- Locks: no spinlock may be held.
 	- Process: a Process, not a bare Task: it opens a window and reads a
 	  drawer.
 
@@ -158,7 +158,8 @@ asl.library/FreeAslRequest
    CONTEXT
 	- Waits: for memory to be given back.
 	- Interrupts: no.
-	- Forbid: held for as long as the requester is taken off the list.
+	- Locks: takes asl's requester lock, a spinlock, while the requester is
+	  taken off the list.
 	- Process: a Task will do.
 
    OWNERSHIP

@@ -95,7 +95,7 @@ fn clipStream(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
 /// - Waits: no, but everything done through the stream afterwards waits
 ///   on clipboard.device.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -28,7 +28,7 @@ const _context = @import("_context.zig");
 /// CONTEXT:
 /// - Waits: yes, on the device.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: the task that opened the context.
 ///
 /// OWNERSHIP:

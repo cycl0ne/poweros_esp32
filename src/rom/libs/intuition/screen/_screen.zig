@@ -312,7 +312,7 @@ pub fn dropBlank(ib: *IntuitionBase, s: *Screen) void {
 /// The display shows its screens: the frontmost, and above it, where it
 /// is pulled down, the ones behind - or its home when it has none.
 /// Showing waits for the frame it starts on, so this is called with the
-/// list held but never under Forbid. A board that shows one buffer only
+/// list held but never with a spinlock held. A board that shows one buffer only
 /// shows the frontmost screen.
 pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
     const rb = ib.rtg_base orelse return;

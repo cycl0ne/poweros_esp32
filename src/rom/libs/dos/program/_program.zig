@@ -15,8 +15,7 @@
 //! only takes a user segment whose count is 0, so a command that is
 //! running cannot be freed under it.
 //!
-//! A semaphore in the base guards the list, rather than Forbid:
-//! FindSegment is called with it held (shared is enough), and a caller
+//! A semaphore in the base guards the list: FindSegment is called with it held (shared is enough), and a caller
 //! that keeps a segment raises seg_UC before letting go. AddSegment and
 //! RemSegment take it exclusive themselves, so they must not be called
 //! with it held. dos's init adds the ROM's handlers and the shell as

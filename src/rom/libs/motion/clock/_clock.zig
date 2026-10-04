@@ -257,13 +257,15 @@ fn clockTask(sys: *ExecBase) callconv(.c) void {
 /// clock to run it on, and none is made.
 fn start(mb: *MotionBase) void {
     const sys = mb.sys_base;
-    sys.Forbid();
+    // Claimed under the library's lock: two tasks scheduling at once make
+    // one clock task.
+    sys.ObtainSemaphore(&mb.lock);
     if (mb.started != 0) {
-        sys.Permit();
+        sys.ReleaseSemaphore(&mb.lock);
         return;
     }
     mb.started = 2;
-    sys.Permit();
+    sys.ReleaseSemaphore(&mb.lock);
     if (mb.tick.node.device == null) return;
     const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
     const signal = sys.AllocSignal(-1);

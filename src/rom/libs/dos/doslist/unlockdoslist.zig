@@ -27,7 +27,7 @@ const semaphores = _doslist.semaphores;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed.
+/// - Locks: none needed.
 /// - Process: a Task will do; the task that locked the list.
 ///
 /// OWNERSHIP:

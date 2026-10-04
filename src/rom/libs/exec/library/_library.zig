@@ -22,6 +22,32 @@
 //! A resource starts with a Node, and in practice is a Library: its jump
 //! table in front of it, so callers reach it the ordinary way.
 //!
+//! **Locking.** The library, device and resource lists are under one
+//! semaphore, `sem_libraries`, and every library has a lock of its own
+//! (`Library.lock`) that its Open, Close and Expunge run inside. The list
+//! is held only for a moment - to find, add, take off, pin - and never
+//! while a library's vector runs, nor while anything waits for a
+//! library's lock: an Open vector may start a task and wait for it, and
+//! that task may open other libraries, or load one from disk and add it.
+//!
+//! - **Open**: the list held, the library found and *pinned* (`pins`); the
+//!   list let go; its lock taken around the Open vector; the pin dropped
+//!   under the list again. A pinned library is not expunged.
+//! - **Close**: its lock around the Close vector. A library whose last
+//!   Close leaves it marked to go (`LIBF_DELEXP`) is expunged by exec there
+//!   and then, its lock still held.
+//! - **Expunge** (`expungeHeld`): with its lock held, the list held for a
+//!   moment to check that it is neither pinned nor open and to mark it
+//!   going (`LIBF_GOING`: not found by an Open, not expunged again). Then
+//!   both let go, and its Expunge vector runs holding nothing - it may
+//!   close the libraries it opened, which takes theirs. A library that
+//!   goes takes itself off the list with `DetachLibrary` and frees itself;
+//!   one that stays is still on the list afterwards, and loses its mark.
+//!
+//! The order: a library's lock, then the list. Nothing waits for a
+//! library's lock while it holds the list; the low-memory path only tries
+//! one.
+//!
 //! The library and resource calls are a file each in this folder; this
 //! file is everything else: the low-memory handler that expunges what
 //! nobody has open; working out a library's size, laying it out and
@@ -33,6 +59,7 @@
 
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
+const _findname = @import("../list/findname.zig");
 
 const ExecBase = exec.ExecBase;
 const Library = sdk.exec.Library;
@@ -44,6 +71,12 @@ const Library = sdk.exec.Library;
 /// refuses to go (exec.library) is left where it is, which is read from it
 /// still being on the list rather than from what its vector answered.
 ///
+/// It runs inside AllocMem, whose caller may hold any library's lock - an
+/// Open vector allocating - or the list. So it waits for neither: it tries
+/// the list and each library's lock, and passes over what is busy. A
+/// library its caller holds is pinned (its Open is running) and passed over
+/// too.
+///
 /// INPUTS:
 /// - `data` - what the allocation wanted; not looked at, since what is
 ///   wanted is freed by whoever will free it.
@@ -52,17 +85,121 @@ const Library = sdk.exec.Library;
 pub fn flushLibraries(data: *const sdk.exec.MemHandlerData, is_data: ?*anyopaque) callconv(.c) i32 {
     _ = data;
     const base: *ExecBase = @ptrCast(@alignCast(is_data.?));
-    for ([_]*sdk.exec.List{ &base.lib_list, &base.device_list }) |list| {
-        var it = list.iterator();
-        while (it.next()) |node| {
-            const lib: *Library = @fieldParentPtr("node", node);
-            if (lib.open_cnt != 0) continue;
-            const address = @intFromPtr(lib);
-            _ = base.iface().RemLibrary(lib); // the Expunge vector, as RemDevice
-            if (!onList(list, address)) return sdk.exec.MEM_TRY_AGAIN;
-        }
+    const sys = base.iface();
+    // A library tried and kept is not tried again in this call; the walk
+    // starts over after each, since the list was let go meanwhile.
+    var tried: [16]usize = undefined;
+    var tried_count: usize = 0;
+    while (tried_count < tried.len) {
+        if (!sys.AttemptSemaphore(&base.sem_libraries)) return sdk.exec.MEM_DID_NOTHING;
+        const found = idleLibrary(base, tried[0..tried_count]) orelse {
+            sys.ReleaseSemaphore(&base.sem_libraries);
+            return sdk.exec.MEM_DID_NOTHING;
+        };
+        tried[tried_count] = @intFromPtr(found.lib);
+        tried_count += 1;
+        // Tried, never waited for: its holder may be the caller.
+        const held = sys.AttemptSemaphore(&found.lib.lock);
+        sys.ReleaseSemaphore(&base.sem_libraries);
+        if (!held) continue;
+        if (expungeHeld(base, found.lib, found.list).went) return sdk.exec.MEM_TRY_AGAIN;
     }
     return sdk.exec.MEM_DID_NOTHING;
+}
+
+/// A library or device nobody has open, pinned or is expunging, and not
+/// tried yet - with the list it is on. The caller holds the list.
+///
+/// INPUTS:
+/// - `base` - exec: its library and device lists.
+/// - `tried` - the addresses passed over already.
+fn idleLibrary(base: *ExecBase, tried: []const usize) ?struct { lib: *Library, list: *sdk.exec.List } {
+    for ([_]*sdk.exec.List{ &base.lib_list, &base.device_list }) |list| {
+        var it = list.iterator();
+        next: while (it.next()) |node| {
+            const lib: *Library = @fieldParentPtr("node", node);
+            if (lib.open_cnt != 0 or lib.pins != 0 or lib.flags & sdk.exec.LIBF_GOING != 0) continue;
+            for (tried) |address| {
+                if (address == @intFromPtr(lib)) continue :next;
+            }
+            return .{ .lib = lib, .list = list };
+        }
+    }
+    return null;
+}
+
+/// What an expunge came to: what the Expunge vector answered - a seglist
+/// to unload, or null - and whether the library went.
+pub const Expunged = struct {
+    seg_list: ?*anyopaque = null,
+    went: bool = false,
+};
+
+/// Expunges a library or device whose lock the caller holds, and gives the
+/// lock back - or lets it go with the library, which takes its lock with
+/// it.
+///
+/// A library pinned (an Open on its way), being expunged already, or not
+/// on the list is left alone. One that is open is only marked: its
+/// Expunge vector runs inside the lock and sets `LIBF_DELEXP`. Otherwise
+/// it is marked going under the list and its Expunge vector runs holding
+/// nothing (see the file's header): it may close what it opened. Whether
+/// it went is read from it being off the list afterwards - addresses only,
+/// since it may be freed.
+///
+/// INPUTS:
+/// - `base` - exec: the library list's semaphore, and the jump table.
+/// - `lib` - the library or device, its lock held by the caller.
+/// - `list` - the list it is on: exec's library or device list.
+///
+/// RESULT:
+/// What the Expunge vector answered, and whether the library went.
+pub fn expungeHeld(base: *ExecBase, lib: *Library, list: *sdk.exec.List) Expunged {
+    const sys = base.iface();
+    const address = @intFromPtr(lib);
+    sys.ObtainSemaphore(&base.sem_libraries);
+    if (!onList(list, address) or lib.pins != 0 or lib.flags & sdk.exec.LIBF_GOING != 0) {
+        sys.ReleaseSemaphore(&base.sem_libraries);
+        sys.ReleaseSemaphore(&lib.lock);
+        return .{};
+    }
+    if (lib.open_cnt != 0) {
+        // Open: the vector only marks it, and it stays with its lock.
+        sys.ReleaseSemaphore(&base.sem_libraries);
+        const seg_list = lib.vector(sdk.exec.ExpungeFn, sdk.exec.LIB_EXPUNGE)(lib);
+        sys.ReleaseSemaphore(&lib.lock);
+        return .{ .seg_list = seg_list };
+    }
+    lib.flags |= sdk.exec.LIBF_GOING;
+    sys.ReleaseSemaphore(&base.sem_libraries);
+    // Nobody can open it now, nor has it open: its lock is not needed
+    // around the vector, and must not be held there - the vector frees it.
+    sys.ReleaseSemaphore(&lib.lock);
+    const seg_list = lib.vector(sdk.exec.ExpungeFn, sdk.exec.LIB_EXPUNGE)(lib);
+    sys.ObtainSemaphore(&base.sem_libraries);
+    defer sys.ReleaseSemaphore(&base.sem_libraries);
+    if (!onList(list, address)) return .{ .seg_list = seg_list, .went = true };
+    // It stayed. (Or went, and a library made since landed at the same
+    // address - which has no mark to clear, so it is only read.)
+    if (lib.flags & sdk.exec.LIBF_GOING != 0) lib.flags &= ~sdk.exec.LIBF_GOING;
+    return .{ .seg_list = seg_list };
+}
+
+/// The library or device of that name that may be opened: the first one on
+/// the list not being expunged. The caller holds the list.
+///
+/// INPUTS:
+/// - `list` - exec's library or device list.
+/// - `name` - the name asked for.
+pub fn findOpenable(list: *sdk.exec.List, name: [*:0]const u8) ?*Library {
+    var it = list.iterator();
+    while (it.next()) |node| {
+        const node_name = node.name orelse continue;
+        if (!_findname.sameName(node_name, name)) continue;
+        const lib: *Library = @fieldParentPtr("node", node);
+        if (lib.flags & sdk.exec.LIBF_GOING == 0) return lib;
+    }
+    return null;
 }
 
 /// Whether a node of that address is still on the list. Addresses only:
@@ -139,6 +276,8 @@ pub fn buildLibrary(block: [*]u8, vectors: []const *const anyopaque, sizes: Libr
     for (vectors, 0..) |vector, index| table[vectors.len - 1 - index] = vector;
     const lib: *Library = @ptrCast(@alignCast(block + sizes.neg));
     lib.* = .{ .neg_size = @intCast(sizes.neg), .pos_size = @intCast(sizes.pos) };
+    // Its lock as InitSemaphore makes one: the bootstrap has no exec to ask.
+    lib.lock.wait_queue.init(.unknown);
     return lib;
 }
 

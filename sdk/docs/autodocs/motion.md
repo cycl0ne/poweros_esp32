@@ -66,7 +66,7 @@ From now on the timeline starts and stops it. Started on its own with
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -146,7 +146,7 @@ do not pile up.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -222,7 +222,7 @@ their steps come. It belongs to the calling task, and goes with it.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -296,7 +296,7 @@ while it starts or stops a timer.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -365,7 +365,7 @@ its hooks reach may go too.
 
 - Waits: for the clock's semaphore, while a step of any animation runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -422,7 +422,7 @@ are animations on their own again, the caller's to start or delete.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -482,7 +482,7 @@ its hook is not running and will not run again.
 
 - Waits: for the clock's semaphore, while a step of anything runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -550,7 +550,7 @@ All in fixed point: no floating point is used.
 
 - Waits: no.
 - Interrupts: yes; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -619,7 +619,7 @@ are linear.
 
 - Waits: no.
 - Interrupts: yes; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -681,7 +681,7 @@ the animation's signal draws.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -742,7 +742,7 @@ the red and green down while the blue comes up.
 
 - Waits: no.
 - Interrupts: yes; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -804,7 +804,7 @@ gadget that opened it.
 
 - Waits: no.
 - Interrupts: yes; it touches nothing but its arguments.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -868,7 +868,7 @@ step - a new curve or duration from the point the time has reached.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -931,7 +931,7 @@ forwards while it runs goes on backwards until it ends.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -996,7 +996,7 @@ stopped, its done hook untold; started again it runs from its start.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1057,7 +1057,7 @@ The first time anything is started, motion.library's task is made.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1117,7 +1117,7 @@ signal follow theirs. One that runs already starts again.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1174,7 +1174,7 @@ its times runs again.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1236,7 +1236,7 @@ is not running.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1296,7 +1296,7 @@ none of whose animations runs.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1354,7 +1354,7 @@ running.
 
 - Waits: for the clock's semaphore, while a step runs.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

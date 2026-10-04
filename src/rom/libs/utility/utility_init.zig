@@ -43,14 +43,14 @@ const LIBRARY_VERSION_STRING =
 /// The library, or null without memory for the root name space.
 ///
 /// CONTEXT:
-/// Runs on the exec task at cold start, with multitasking live and no
-/// Forbid held. The jump table exists already, so the root name space is
-/// made through it.
+/// Runs on the exec task at cold start, with multitasking started. The
+/// jump table exists already, so the root name space is made through it.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const ub: *UtilityBase = @fieldParentPtr("lib", lib);
     lib.revision = LIBRARY_REVISION;
     ub.sys_base = sys_base;
+    sys_base.InitLock(&ub.object_lock, "utility objects", exec.LOCKORDER_DRIVER, 0);
     ub.wild_star = false;
     const tags = [_]TagItem{ .{ .tag = ANO_NameSpace, .data = 1 }, .{} };
     ub.master_space = ub.iface().AllocNamedObjectA("", &tags) orelse return null;

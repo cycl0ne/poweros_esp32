@@ -17,7 +17,7 @@ pub const Interrupt = extern struct {
 };
 
 /// struct IntVector: what exec does when one interrupt number fires. Read
-/// it with the IntVector call, under Forbid, the way exec's lists are read.
+/// it with the IntVector call, under Disable, which is what guards it.
 pub const IntVector = extern struct {
     /// Set with SetIntVector: one function, instead of the chain.
     handler: ?*Interrupt = null,

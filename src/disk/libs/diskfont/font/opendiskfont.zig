@@ -60,7 +60,7 @@ const Contents = _font.Contents;
 /// CONTEXT:
 /// - Waits: yes: for the disk, and for another task loading.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process, since it reads files.
 ///
 /// OWNERSHIP:

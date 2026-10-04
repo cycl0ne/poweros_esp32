@@ -42,7 +42,7 @@ const _ip6 = @import("../ip6/_ip6.zig");
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

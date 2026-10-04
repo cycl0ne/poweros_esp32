@@ -40,7 +40,7 @@ const Interrupt = sdk.exec.Interrupt;
 /// - Waits: no. **The software interrupt itself must not wait** either: it
 ///   runs on no task's time and has no task to be suspended.
 /// - Interrupts: safe, and this is its main caller.
-/// - Forbid: not needed; it takes Disable.
+/// - Locks: takes Disable.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

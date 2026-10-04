@@ -78,7 +78,7 @@ fn busClose(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
 
 fn busExpunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     const sys = busOf(dev).sys;
-    if (dev.node.pred != null) sys.Remove(&dev.node);
+    sys.DetachLibrary(dev);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(dev) - dev.neg_size);
     sys.FreeMem(start, @as(usize, dev.neg_size) + dev.pos_size);
     return null;

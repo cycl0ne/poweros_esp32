@@ -34,7 +34,7 @@ const _window = @import("../window/_window.zig");
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do. The hook is called on intuition's input
 ///   task: it must not wait, nor draw.
 ///

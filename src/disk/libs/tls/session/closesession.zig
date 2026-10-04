@@ -31,7 +31,7 @@ const client_module = @import("../protocol/client.zig");
 /// CONTEXT:
 /// - Waits: yes, while the alert is sent.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: the task that opened the session.
 ///
 /// OWNERSHIP:

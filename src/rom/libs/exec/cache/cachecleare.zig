@@ -42,7 +42,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: no.
 /// - Interrupts: safe, though a partly covered line is handled with
 ///   interrupts off.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

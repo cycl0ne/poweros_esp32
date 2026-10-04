@@ -43,7 +43,7 @@ const flash_us = 100_000;
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and a tenth of a second.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

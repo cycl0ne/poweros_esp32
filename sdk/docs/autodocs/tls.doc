@@ -31,7 +31,7 @@ tls.library/WriteSession
    CONTEXT
 	- Waits: yes, while the alert is sent.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: the task that opened the session.
 
    OWNERSHIP
@@ -85,7 +85,7 @@ tls.library/WriteSession
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -159,7 +159,7 @@ tls.library/WriteSession
 	- Waits: yes, for the server, as long as the socket's own timeouts
 	  allow.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: yes - the stores are files.
 
    OWNERSHIP
@@ -219,7 +219,7 @@ tls.library/WriteSession
    CONTEXT
 	- Waits: yes, for the server, as long as the socket's timeouts allow.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: the task that opened the session.
 
    OWNERSHIP
@@ -268,7 +268,7 @@ tls.library/WriteSession
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that opened the session.
 
    OWNERSHIP
@@ -313,7 +313,7 @@ tls.library/WriteSession
    CONTEXT
 	- Waits: yes, while the socket sends.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: the task that opened the session.
 
    OWNERSHIP

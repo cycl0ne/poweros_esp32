@@ -23,6 +23,11 @@ pub const GraphicsBase = extern struct {
     /// library makes reaches exec through this and never through the
     /// kernel's own `exec.SysBase`.
     sys_base: *ExecBase,
+    /// Every buffer's drawing batch - how many are drawing on it (`held`)
+    /// and the rows gathered for its end (`dirty_top`, `dirty_end`), which
+    /// every task drawing on it changes: a spinlock, held for the count or
+    /// the merge and never across a send to the display.
+    draw_lock: exec.Lock,
     /// utility.library, opened by the init and kept: a RastPort is
     /// configured by tags, and the tag calls are utility's. A caller
     /// reaches them through this library and need open nothing itself.
@@ -101,13 +106,11 @@ pub const GraphicsBase = extern struct {
 /// it: an open library would be kept, and a closed one is kept too.
 ///
 /// CONTEXT:
-/// - Waits: no, and it must not. exec's `flushLibraries` reaches
-///   it from inside AllocMem, where a low-memory handler runs under Forbid
-///   and is forbidden to wait.
+/// - Waits: no. exec's `flushLibraries` reaches it from inside AllocMem,
+///   whose caller may hold anything.
 /// - Interrupts: safe. It takes nothing and touches nothing.
-/// - Forbid: every caller holds it already - `RemLibrary` and
-///   `CloseLibrary` take it around the vector, and the low-memory handler
-///   runs inside it. It does not take Forbid itself.
+/// - Locks: none held: exec calls it with the library's own lock let go once it
+///   is marked going, so it may close what it opened.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

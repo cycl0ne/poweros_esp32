@@ -38,7 +38,7 @@ const pdu = @import("../protocol/pdu.zig");
 /// CONTEXT:
 /// - Waits: yes, for the answer.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: the task that opened the context.
 ///
 /// OWNERSHIP:

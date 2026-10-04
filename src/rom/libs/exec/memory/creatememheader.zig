@@ -53,7 +53,7 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It touches only the caller's block.
-/// - Forbid: not needed. Nothing else knows about this memory yet.
+/// - Locks: none needed. Nothing else knows about this memory yet.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -29,7 +29,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// CONTEXT:
 /// - Waits: yes, for the output's handler.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: required for output; a plain task has no Output() and gets
 ///   false.
 ///

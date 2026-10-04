@@ -31,7 +31,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: yes, while another task is changing the board list.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

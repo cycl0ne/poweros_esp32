@@ -64,7 +64,7 @@ sent. The context is wiped: to hash again it needs InitHash.
 
 - Waits: yes, for the SHA engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -126,7 +126,7 @@ with the same key needs InitHmac again.
 
 - Waits: yes, for the SHA engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -196,7 +196,7 @@ the output is T(1) | T(2) | ... cut to `length`.
 
 - Waits: for the SHA engine, while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -258,7 +258,7 @@ the same key.
 
 - Waits: for the SHA engine, while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -329,7 +329,7 @@ CIPHERF_DECRYPT it decrypts. CTR does both alike and ignores the flag.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -400,7 +400,7 @@ context.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -473,7 +473,7 @@ states; the copies made on the way are wiped.
 
 - Waits: yes, for the SHA engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -543,7 +543,7 @@ same steps for every private key.
 
 - Waits: for the SHA engine (Ed25519 only), while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -626,7 +626,7 @@ takes 17 steps, a private one is as long as its modulus in any case.
 - Waits: yes, for the RSA engine while another task has it; the
   engine is held for the whole call.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -702,7 +702,7 @@ used by mistake.
 - Waits: yes, for the AES engine while another task has it; the
   engine is held for the whole message.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -766,7 +766,7 @@ generator of the library's own in between.
 
 - Waits: no.
 - Interrupts: yes.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -837,7 +837,7 @@ GCM's tag is over all of it.
 - Waits: yes, for the AES engine while another task has it; the
   engine is held for the whole message.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -917,7 +917,7 @@ from being drawn out of a reply to a point that is not.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -981,7 +981,7 @@ order. The multiplications take the same steps whatever the key.
 
 - Waits: for the SHA engine, while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1048,7 +1048,7 @@ number of pieces, and comes out as one call with all of it would.
 
 - Waits: yes, for the AES engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1111,7 +1111,7 @@ nothing.
 
 - Waits: yes, for the SHA engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1174,7 +1174,7 @@ context InitHmac did not set up takes nothing.
 
 - Waits: yes, for the SHA engine while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1255,7 +1255,7 @@ signed.
 
 - Waits: for the RSA or SHA engine, while another task has it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

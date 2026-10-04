@@ -67,7 +67,7 @@ const stack_size = 8192;
 /// CONTEXT:
 /// - Waits: yes, for the process to start.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -169,13 +169,18 @@ fn start(base: *ModbusBase, tags: ?[*]const utility.TagItem, reason: *i32) ?*mod
         server.start_signal = signal;
         server.starter = sys.FindTask(null);
         const dl: *DosBase = server.dos_base.?;
+        // The library the process runs the code of, held open for it: dos
+        // closes it once that code has returned.
+        holdLibrary(base, 1);
         const process = dl.CreateNewProc(&[_]utility.TagItem{
             .{ .tag = dos.NP_Entry, .data = @intFromPtr(&_server.serverMain) },
             .{ .tag = dos.NP_Name, .data = @intFromPtr(if (server.transport == modbus.MBT_TCP) "modbus tcp server" else "modbus rtu server") },
             .{ .tag = dos.NP_StackSize, .data = stack_size },
             .{ .tag = dos.NP_UserData, .data = @intFromPtr(server) },
+            .{ .tag = dos.NP_HoldLibrary, .data = @intFromPtr(&base.lib) },
             .{},
         }) orelse {
+            holdLibrary(base, -1);
             sys.FreeSignal(signal);
             break :fail modbus.MBERR_NOMEM;
         };
@@ -195,4 +200,13 @@ fn start(base: *ModbusBase, tags: ?[*]const utility.TagItem, reason: *i32) ?*mod
     sys.FreeVec(memory);
     reason.* = failed;
     return null;
+}
+
+/// The library's open count changed by `by`, under the library's own lock,
+/// which is what OpenLibrary and CloseLibrary change it under.
+fn holdLibrary(base: *ModbusBase, by: i32) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.lib.lock);
+    defer sys.ReleaseSemaphore(&base.lib.lock);
+    if (by > 0) base.lib.open_cnt += 1 else base.lib.open_cnt -= 1;
 }

@@ -89,6 +89,11 @@ const Panel = struct {
     sys: *ExecBase,
     rtg_base: *RtgBase,
     io: *rtg.RtgTransport,
+    /// The band and the bus between its fill and its transfer, and a
+    /// command's transaction: one task at a time (`oneBand`). A semaphore -
+    /// a band is about a millisecond, and a transport on a bus device
+    /// waits for it.
+    band_lock: exec.SignalSemaphore = .{},
     /// Upright, and on its side when the controller can be turned.
     modes: [2]rtg.RtgMode = @splat(.{}),
     madctl: [2]u8 = .{ 0, 0 },
@@ -171,6 +176,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .native_width = width,
         .native_height = height,
     };
+    sys.InitSemaphore(&panel.band_lock);
     panel.alignment = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_DCS_Align, 1, tag_list))), 1);
     if (width % panel.alignment != 0 or height % panel.alignment != 0) return err.RTGERR_BAD_TAGS;
     panel.madctl[0] = @truncate(rb.GetRtgTagData(tags.RTGA_DCS_Madctl, 0, tag_list));
@@ -437,11 +443,11 @@ fn sendUpright(panel: *Panel, y: u32, rows: u32) i32 {
     while (row < area.end) {
         const count = @min(panel.band_rows, area.end - row);
         const lines = windowBytes(row, row + count - 1);
-        // Filled and sent with nothing else running, for the reason
-        // `oneBand` gives: the band is the board's only one.
+        // Filled and sent by one task at a time, for the reason `oneBand`
+        // gives: the band is the board's only one.
         code = band_done: {
-            panel.sys.Forbid();
-            defer panel.sys.Permit();
+            panel.sys.ObtainSemaphore(&panel.band_lock);
+            defer panel.sys.ReleaseSemaphore(&panel.band_lock);
             for (0..count) |i| {
                 // Rows start on the region's alignment, a whole cache line.
                 const from: [*]align(4) const u8 = @alignCast(sequence.bandRow(shown, row + @as(u32, @intCast(i))));
@@ -504,7 +510,7 @@ fn sendTurned(panel: *Panel, y: u32, rows: u32) i32 {
     return err.RTGERR_OK;
 }
 
-/// One band filled and sent, with nothing else running.
+/// One band filled and sent, one task at a time.
 ///
 /// **The band is the board's only one, and filling it is not the bus's
 /// business.** A transfer holds the bus - the next one waits for it -
@@ -515,10 +521,11 @@ fn sendTurned(panel: *Panel, y: u32, rows: u32) i32 {
 /// still reading it out. What reached the glass would be the two
 /// mixed: a band of pixels belonging to neither picture.
 ///
-/// So the fill and the transfer are one thing, and nothing else runs
-/// while they happen. Nothing in here waits - a transfer is polled, not
-/// slept on - so this is a pause of about a millisecond and never a
-/// stall.
+/// So the fill and the transfer are one thing, under the band's lock
+/// (`band_lock`): another task that draws - on either core - waits for
+/// it. A transfer is polled on the SPI transports, about a millisecond; a
+/// transport on a bus device waits for its request, which is why the lock
+/// is a semaphore.
 ///
 /// The window is set per band rather than once per send, which is what
 /// lets the pause be one band instead of a whole picture: each band
@@ -537,8 +544,8 @@ fn oneBand(
     count_columns: u32,
     row_bytes: u32,
 ) i32 {
-    panel.sys.Forbid();
-    defer panel.sys.Permit();
+    panel.sys.ObtainSemaphore(&panel.band_lock);
+    defer panel.sys.ReleaseSemaphore(&panel.band_lock);
     sequence.turnedBand(band[0 .. count * row_bytes], picture, row, count, first_column, count_columns);
     // A turned picture's width is the panel's height.
     layPointer(panel, band[0 .. count * row_bytes], .{
@@ -618,7 +625,8 @@ const underrun_tries = 3;
 /// A filled band to the controller: its window, then its pixels. A
 /// transfer the DMA fell behind in is counted and sent again - the band
 /// is still in its buffer and says where it goes, so a second go lands
-/// on the same pixels. The caller holds Forbid, as filling it needs.
+/// on the same pixels. The caller holds the band's lock, as filling it
+/// needs.
 fn writeBand(
     panel: *Panel,
     rb: *RtgBase,
@@ -659,12 +667,12 @@ fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
     return command(panel, if (on) DISPON else DISPOFF, null, 0);
 }
 
-/// A command on its own, sent with nothing else running, as a band is: a
-/// transaction set up on the bus and then set aside would have its
-/// registers written over by another task's band before it started.
+/// A command on its own, under the band's lock as a band is: a transaction
+/// set up on the bus and then set aside would have its registers written
+/// over by another task's band before it started.
 fn command(panel: *Panel, cmd: i32, params: ?*const anyopaque, size: u32) i32 {
-    panel.sys.Forbid();
-    defer panel.sys.Permit();
+    panel.sys.ObtainSemaphore(&panel.band_lock);
+    defer panel.sys.ReleaseSemaphore(&panel.band_lock);
     return panel.rtg_base.TxParam(panel.io, cmd, params, size);
 }
 

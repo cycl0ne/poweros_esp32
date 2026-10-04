@@ -53,7 +53,7 @@ const _draw = @import("_draw.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded and it hands rows on at the end.
-/// - Forbid: not held and not wanted.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

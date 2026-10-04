@@ -42,7 +42,7 @@ const curveStep = _area.curveStep;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It changes the caller's RastPort.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

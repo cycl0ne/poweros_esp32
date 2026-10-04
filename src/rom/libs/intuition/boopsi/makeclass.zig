@@ -47,7 +47,7 @@ const instOffsetAfter = _boopsi.instOffsetAfter;
 /// CONTEXT:
 /// - Waits: for the class list's semaphore.
 /// - Interrupts: no; it allocates.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

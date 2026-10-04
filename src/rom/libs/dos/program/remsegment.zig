@@ -30,7 +30,7 @@ const Segment = dos.Segment;
 /// CONTEXT:
 /// - Waits: yes, for the segment list's semaphore.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it may wait.
+/// - Locks: no spinlock may be held: it may wait.
 /// - Process: a Task will do. Not while holding LockSegmentList, which
 ///   it takes exclusive.
 ///

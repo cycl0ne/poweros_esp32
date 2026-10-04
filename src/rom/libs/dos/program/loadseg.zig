@@ -45,7 +45,7 @@ const readValue = _program.readValue;
 /// CONTEXT:
 /// - Waits: yes, for the file system.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; only a process gets IoErr.
 ///
 /// OWNERSHIP:
@@ -103,9 +103,9 @@ pub fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList {
     first.?.entry = @ptrCast(entry_seg.run_address.? + header.entry_offset);
     db.sys_base.CacheClearU(); // the code was written through the data bus
     // On the list of loaded files, for a Guru to name.
-    db.sys_base.Forbid();
+    db.sys_base.AcquireLock(&db.code_lock);
     db.sys_base.AddTail(&db.loaded, &first.?.file);
-    db.sys_base.Permit();
+    db.sys_base.ReleaseLock(&db.code_lock);
     _ = dos_lib.SetIoErr(0);
     return first;
 }

@@ -40,6 +40,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         .utility_base = undefined,
     };
     ab.requesters.init();
+    sys_base.InitLock(&ab.requester_lock, "asl requesters", exec.LOCKORDER_DRIVER, 0);
     lib.revision = LIBRARY_REVISION;
     return lib;
 }
@@ -111,21 +112,24 @@ fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
     sys.CloseLibrary(@ptrCast(@alignCast(ab.graphics_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(ab.intuition_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(ab.dos_base)));
-    if (lib.flags & exec.LIBF_DELEXP == 0) return null;
-    return expunge(lib);
+    // A delayed expunge is CloseLibrary's, once this has answered.
+    return null;
 }
 
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     // A requester still out points at this base, so it holds the library
     // as surely as an opener does.
     const ab = _base.aslBase(lib);
-    if (lib.open_cnt != 0 or !ab.requesters.isEmpty()) {
+    ab.sys_base.AcquireLock(&ab.requester_lock);
+    const none_out = ab.requesters.isEmpty();
+    ab.sys_base.ReleaseLock(&ab.requester_lock);
+    if (lib.open_cnt != 0 or !none_out) {
         lib.flags |= exec.LIBF_DELEXP;
         return null;
     }
     const sys = ab.sys_base;
     const seg_list = ab.seg_list;
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

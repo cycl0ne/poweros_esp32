@@ -41,7 +41,7 @@ const DataTypesBase = _base.DataTypesBase;
 /// CONTEXT:
 /// - Waits: whatever the class waits for; a picture waits for memory.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

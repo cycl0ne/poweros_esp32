@@ -52,7 +52,7 @@ const CreateMemHeader = @import("creatememheader.zig").CreateMemHeader;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: only on a region the interrupt owns outright.
-/// - Forbid: not taken here. The caller's, as with `Allocate`.
+/// - Locks: none taken. The region's lock is the caller's, as with `Allocate`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

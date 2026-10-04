@@ -37,8 +37,7 @@ const List = sdk.exec.List;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe in itself; the caller's locking is what decides.
-/// - Forbid: not needed. Nothing can be walking a list that does not exist
-///   yet.
+/// - Locks: none needed. Nothing can be walking a list that does not exist yet.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

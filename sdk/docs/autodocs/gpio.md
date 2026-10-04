@@ -41,14 +41,14 @@ nothing has changed.
 
 **BEHAVIOR**
 
-The test and the take are one step under Forbid, so of two drivers
-asking at once exactly one gets the pad. Taking a pad sets nothing up:
+The test and the take are one step under the resource's lock, so of two
+drivers asking at once - on either core - exactly one gets the pad. Taking a pad sets nothing up:
 the caller routes it with `sdk.hardware.gpio` afterwards, as before.
 
 **CONTEXT**
 
 - Waits: no. - Interrupts: no.
-- Forbid: taken here, around the test and the take.
+- Locks: takes the resource's spinlock, around the test and the take.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -109,7 +109,7 @@ mid-level stays there until its next holder sets it.
 **CONTEXT**
 
 - Waits: no. - Interrupts: no.
-- Forbid: taken here.
+- Locks: takes the resource's spinlock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -166,7 +166,7 @@ else. To have a pad, take it.
 **CONTEXT**
 
 - Waits: no. - Interrupts: yes.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

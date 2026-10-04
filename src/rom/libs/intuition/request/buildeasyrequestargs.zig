@@ -84,7 +84,7 @@ const ground_tile = [_]u8{ 0x55, 0x55, 0xAA, 0xAA };
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore and the layers' locks.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do. A process has its IoErr set: 0 when the
 ///   requester opened, `ERROR_NO_FREE_STORE` when it did not.
 ///

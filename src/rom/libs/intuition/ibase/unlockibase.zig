@@ -26,7 +26,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: the task that called `LockIBase`.
 ///
 /// OWNERSHIP:

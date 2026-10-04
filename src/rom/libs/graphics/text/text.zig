@@ -70,7 +70,7 @@ const Piece = drawing.Piece;
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

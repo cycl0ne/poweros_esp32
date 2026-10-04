@@ -36,7 +36,7 @@ const FileHandle = dos.FileHandle;
 /// CONTEXT:
 /// - Waits: yes: up to `timeout`, for the handler's answer.
 /// - Interrupts: no. It waits.
-/// - Forbid: not taken, and never to be held around it: it waits.
+/// - Locks: none taken; no spinlock may be held around it: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -33,7 +33,7 @@ const _region = @import("_region.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It frees memory.
-/// - Forbid: not needed; the region is the caller's to keep others off.
+/// - Locks: none taken; keeping others off the region is the caller's.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

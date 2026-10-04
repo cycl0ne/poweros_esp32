@@ -8,9 +8,10 @@
 //! the shell running the command is the one that changes, which is what a
 //! script uses to put itself out of the way.
 //!
-//! It is Forbid()den across the lookup and the change: a
-//! process that ends between FindCliProc and SetTaskPri would leave a
-//! pointer to nothing behind.
+//! A process can end between FindCliProc and SetTaskPri, and leave a
+//! pointer to nothing behind. So the change is made under Disable, and
+//! only once the task is found there on one of exec's task lists or
+//! running on a core: one that has ended is on neither.
 //!
 //! The range is checked against MaxCli before FindCliProc is asked, although
 //! FindCliProc refuses a number past it itself: the check is what makes
@@ -18,6 +19,7 @@
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
+const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
@@ -54,8 +56,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    // Nothing may end between finding the process and changing it.
-    sys.Forbid();
     var task = sys.FindTask(null);
     var missing: i32 = 0;
     if (rdargs.number(argv[arg_process])) |number| {
@@ -67,16 +67,35 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             missing = number;
         }
     }
-    if (missing == 0) _ = sys.SetTaskPri(task.?, @intCast(pri));
-    sys.Permit();
+    if (missing == 0 and !setIfThere(sys, task.?, @intCast(pri))) missing = rdargs.number(argv[arg_process]).?;
 
     if (missing != 0) {
-        // Printing breaks the Forbid; by then there is nothing left to hold
-        // still.
         _ = Printf(dl, MSG_NOPROC, .{missing});
         return dos.RETURN_FAIL;
     }
     return dos.RETURN_OK;
+}
+
+/// `task`'s priority set, if it is still there: under Disable, running on
+/// a core or on one of exec's task queues. False when it has ended.
+fn setIfThere(sys: *ExecBase, task: *exec.Task, pri: i8) bool {
+    sys.Disable();
+    defer sys.Enable();
+    var there = false;
+    var core: u32 = 0;
+    while (sys.CoreTask(core)) |running| : (core += 1) {
+        if (running == task) there = true;
+    }
+    for ([_]u32{ exec.EXECLIST_TASK_READY, exec.EXECLIST_TASK_WAIT }) |which| {
+        const list = sys.LockExecList(which) orelse continue;
+        var it = list.iterator();
+        while (it.next()) |node| {
+            if (node == &task.node) there = true;
+        }
+        sys.UnlockExecList(which);
+    }
+    if (there) _ = sys.SetTaskPri(task, pri);
+    return there;
 }
 
 /// The "$VER:" string every PowerOS module carries, which `Version <file>`

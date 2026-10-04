@@ -269,14 +269,13 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit: u32, flags: u32) callconv(
 }
 
 /// A request that is still waiting is aborted first, so no closed request
-/// stays on a delay list. The last close of a device RemDevice marked
-/// LIBF_DELEXP expunges it.
+/// stays on a delay list. A device RemDevice marked LIBF_DELEXP is
+/// expunged by CloseDevice after its last close.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     const tb = timerBase(dev);
     _ = remTimer(tb, io);
     io.unit.?.open_cnt -= 1;
     dev.open_cnt -= 1;
-    if (dev.open_cnt == 0 and dev.flags & exec.LIBF_DELEXP != 0) return expunge(dev);
     return null;
 }
 
@@ -299,7 +298,7 @@ fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     sys.Enable();
     sys.RemIntServer(micro_source, &tb.micro_int);
     sys.RemIntServer(vblank_source, &tb.vblank_int);
-    sys.Remove(&dev.node);
+    sys.DetachLibrary(dev);
     // The jump table and the base, as MakeLibrary allocated them.
     const start: *anyopaque = @ptrFromInt(@intFromPtr(dev) - dev.neg_size);
     sys.FreeMem(start, @as(usize, dev.neg_size) + dev.pos_size);

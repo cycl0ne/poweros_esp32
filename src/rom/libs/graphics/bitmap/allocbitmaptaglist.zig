@@ -56,7 +56,7 @@ const pixel_alignment = _bitmap.pixel_alignment;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no; it allocates.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

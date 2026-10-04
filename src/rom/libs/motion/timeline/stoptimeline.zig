@@ -31,7 +31,7 @@ const _timeline = @import("_timeline.zig");
 /// CONTEXT:
 /// - Waits: for the clock's semaphore, while a step runs.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

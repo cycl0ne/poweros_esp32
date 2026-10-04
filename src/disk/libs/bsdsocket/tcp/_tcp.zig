@@ -370,15 +370,10 @@ pub fn close(stack: *StackBase, socket: *Socket, errno: i32) void {
 /// A socket nobody's table holds, freed with its connection. An orphan
 /// gives back the library it held.
 pub fn release(stack: *StackBase, socket: *Socket) void {
-    const sys = stack.sys_base;
     const was_orphan = socket.flags & _socket.orphan != 0;
     free(stack, socket);
     _socket.free(stack, socket);
-    if (was_orphan) {
-        sys.Forbid();
-        stack.lib.open_cnt -= 1;
-        sys.Permit();
-    }
+    if (was_orphan) @import("../task/_task.zig").holdLibrary(stack, -1);
 }
 
 fn cancelTimers(stack: *StackBase, tcb: *Tcb) void {

@@ -33,7 +33,7 @@ const FileLock = dos.FileLock;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not safe; it reads the running task's Process.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Process for an answer; from a plain Task it does
 ///   nothing and answers null.
 ///

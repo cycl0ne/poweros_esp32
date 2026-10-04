@@ -40,7 +40,7 @@ const _bitmap = @import("_bitmap.zig");
 /// CONTEXT:
 /// - Waits: only if the driver does.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Forbid: must not be held: a driver may wait.
+/// - Locks: no spinlock may be held: a driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

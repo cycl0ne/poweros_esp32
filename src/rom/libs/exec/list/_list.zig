@@ -12,7 +12,9 @@
 //! `Remove`.
 //!
 //! Nothing here locks anything. The list belongs to whoever made it and so
-//! does its locking; exec's own lists are walked and changed under Forbid.
+//! does its locking; exec's own lists are each under a lock of their own,
+//! which `LockExecList` takes for a program that walks one (`execList`
+//! below says which).
 //!
 //! **These are the one part of exec that calls itself directly** rather
 //! than through the jump table (codex rule 1). The bootstrap builds exec
@@ -23,8 +25,37 @@
 
 const sdk = @import("sdk");
 
+const ExecBase = @import("../exec.zig").ExecBase;
 const Node = sdk.exec.Node;
 const List = sdk.exec.List;
+
+// --- exec's own lists -------------------------------------------------------
+
+/// How one of exec's lists is locked: the semaphore for the lists whose
+/// holder runs other code, a spinlock for those taken on every call, and
+/// Disable for the task queues, which the scheduler moves in exceptions.
+pub const ListLock = enum { libraries, mem_handlers, memory, ports, semaphores, tasks };
+
+/// One of exec's lists by number (`EXECLIST_*`), and its lock; null for a
+/// number exec has no list for.
+///
+/// INPUTS:
+/// - `base` - exec: its lists.
+/// - `which` - the list's number.
+pub fn execList(base: *ExecBase, which: u32) ?struct { list: *List, lock: ListLock } {
+    return switch (which) {
+        sdk.exec.EXECLIST_MEMORY => .{ .list = &base.mem_list, .lock = .memory },
+        sdk.exec.EXECLIST_LIBRARIES => .{ .list = &base.lib_list, .lock = .libraries },
+        sdk.exec.EXECLIST_DEVICES => .{ .list = &base.device_list, .lock = .libraries },
+        sdk.exec.EXECLIST_RESOURCES => .{ .list = &base.resource_list, .lock = .libraries },
+        sdk.exec.EXECLIST_PORTS => .{ .list = &base.port_list, .lock = .ports },
+        sdk.exec.EXECLIST_SEMAPHORES => .{ .list = &base.sem_list, .lock = .semaphores },
+        sdk.exec.EXECLIST_TASK_READY => .{ .list = &base.task_ready, .lock = .tasks },
+        sdk.exec.EXECLIST_TASK_WAIT => .{ .list = &base.task_wait, .lock = .tasks },
+        sdk.exec.EXECLIST_MEM_HANDLERS => .{ .list = &base.mem_handlers, .lock = .mem_handlers },
+        else => null,
+    };
+}
 
 // --- tests (host: ./zig build test) -----------------------------------------
 

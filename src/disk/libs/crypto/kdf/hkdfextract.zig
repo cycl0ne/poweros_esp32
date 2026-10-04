@@ -36,7 +36,7 @@ const CryptoBase = _base.CryptoBase;
 /// CONTEXT:
 /// - Waits: for the SHA engine, while another task has it.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

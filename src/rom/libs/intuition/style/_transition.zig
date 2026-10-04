@@ -55,13 +55,13 @@ fn motionOf(ib: *IntuitionBase) ?*MotionBase {
     if (ib.motion_base) |mb| return mb;
     const sys = ib.sys_base;
     const opened = sys.OpenLibrary(motion.MOTIONNAME, 1) orelse return null;
-    sys.Forbid();
-    defer sys.Permit();
-    if (ib.motion_base == null) {
-        ib.motion_base = @ptrCast(opened);
-    } else {
-        sys.CloseLibrary(opened);
-    }
+    // Two tasks may get here at once: the first one's is kept, and the
+    // other closes its own once the lock is let go.
+    sys.AcquireLock(&ib.mark_lock);
+    const first = ib.motion_base == null;
+    if (first) ib.motion_base = @ptrCast(opened);
+    sys.ReleaseLock(&ib.mark_lock);
+    if (!first) sys.CloseLibrary(opened);
     return ib.motion_base;
 }
 

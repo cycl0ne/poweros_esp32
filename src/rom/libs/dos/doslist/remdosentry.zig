@@ -29,7 +29,7 @@ const DosList = dos.DosList;
 /// CONTEXT:
 /// - Waits: yes, for the entry and delete locks.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do. The caller holds the list with LDF_WRITE.
 ///
 /// OWNERSHIP:

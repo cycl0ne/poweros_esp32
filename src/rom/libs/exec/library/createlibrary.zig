@@ -43,8 +43,9 @@ const LibraryInit = sdk.exec.LibraryInit;
 ///
 /// CONTEXT:
 /// - Waits: no, unless `init` does.
-/// - Interrupts: no. It allocates and takes Forbid.
-/// - Forbid: not needed; `AddLibrary` takes it for the list.
+/// - Interrupts: no. It allocates, and `AddLibrary` takes exec's library
+///   list.
+/// - Locks: none needed.
 /// - Process: a Task will do, unless `init` needs more.
 ///
 /// OWNERSHIP:

@@ -41,7 +41,7 @@ const _font = @import("_font.zig");
 /// CONTEXT:
 /// - Waits: yes, while another task reads the fonts.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

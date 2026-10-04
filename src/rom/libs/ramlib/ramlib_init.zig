@@ -75,11 +75,13 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
 fn patch(rlb: *RamLibBase) void {
     const sys = rlb.sys_base;
     const base: *exec.Library = @ptrCast(@alignCast(sys));
-    sys.Forbid();
-    defer sys.Permit();
     sys.SetRamLib(@ptrCast(rlb));
-    rlb.old_open_library = sys.SetFunction(base, sdk.interface.exec.LVO.OpenLibrary, @ptrCast(&openLibrary));
-    rlb.old_open_device = sys.SetFunction(base, sdk.interface.exec.LVO.OpenDevice, @ptrCast(&openDevice));
+    // Each old vector kept before the new one goes in: an opener on the
+    // other core may call the new one the moment it is there.
+    rlb.old_open_library = base.vector(*const anyopaque, sdk.interface.exec.LVO.OpenLibrary);
+    _ = sys.SetFunction(base, sdk.interface.exec.LVO.OpenLibrary, @ptrCast(&openLibrary));
+    rlb.old_open_device = base.vector(*const anyopaque, sdk.interface.exec.LVO.OpenDevice);
+    _ = sys.SetFunction(base, sdk.interface.exec.LVO.OpenDevice, @ptrCast(&openDevice));
 }
 
 const init_table = exec.InitTable{

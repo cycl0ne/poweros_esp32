@@ -102,8 +102,8 @@ fn graphicsBase(lib: *exec.Library) *GraphicsBase {
 /// CONTEXT:
 /// - Waits: yes, while a panel is held in reset.
 /// - Interrupts: never called from one. exec calls it from `InitResident`.
-/// - Forbid: not held. `InitCode` takes no Forbid, and cold start runs on
-///   the exec task after `Permit`, with multitasking live.
+/// - Locks: none held. Cold start runs on the exec task, with multitasking
+///   started.
 /// - Process: a Task will do. The exec task runs it, and that is not a
 ///   process.
 /// How much memory the region pool takes at a time. A `RegionRect` is 24
@@ -125,13 +125,13 @@ const region_puddle = 4096;
 /// memory, with whatever was taken given back.
 ///
 /// CONTEXT:
-/// Runs on the exec task at cold start, with multitasking live and no
-/// Forbid held.
+/// Runs on the exec task at cold start, with multitasking started.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const gb = graphicsBase(lib);
     lib.revision = LIBRARY_REVISION;
     gb.sys_base = sys_base;
+    sys_base.InitLock(&gb.draw_lock, "graphics batches", exec.LOCKORDER_DRIVER, 0);
     gb.view = null;
 
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse

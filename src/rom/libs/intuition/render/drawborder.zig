@@ -41,7 +41,7 @@ const d = @import("../classes/draw.zig");
 /// - Waits: no, beyond what the RastPort's layer asks of a caller - hold
 ///   it, as for any drawing in a window.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

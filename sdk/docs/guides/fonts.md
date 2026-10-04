@@ -411,7 +411,7 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 - `RemFont` answers false while anything has the font open, and true once
   it is off the list - also when it was not on it - so true means it is
   safe to free.
-- Where waiting is not allowed (a low-memory handler, under Forbid),
+- Where waiting is not allowed (a low-memory handler),
   `AttemptRemFont` does the same without waiting, and answers false when
   the list is busy.
 - `LockFonts`, `NextFont` and `UnlockFonts` walk the list to read what is

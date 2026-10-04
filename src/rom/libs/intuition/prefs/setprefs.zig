@@ -58,7 +58,7 @@ const _input = @import("../input/_input.zig");
 /// - Waits: yes - for the fonts, the screen list and the layers it draws
 ///   in.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

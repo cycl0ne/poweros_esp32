@@ -25,13 +25,15 @@ const TextFont = _text.TextFont;
 ///
 /// BEHAVIOR:
 /// The one way to take a font off from where waiting is not allowed: a
-/// low-memory handler runs under Forbid, and a font loader freeing the
-/// fonts nobody holds there calls this, skipping any it cannot have.
+/// low-memory handler runs inside AllocMem, whose caller may hold
+/// anything, and a font loader freeing the fonts nobody holds there calls
+/// this, skipping any it cannot have.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed; this is what it is for.
+/// - Locks: any may be held: it only tries the font list's lock, which is what
+///   it is for.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

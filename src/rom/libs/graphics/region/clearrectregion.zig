@@ -44,7 +44,7 @@ const _region = @import("_region.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. Rectangles come from the region pool.
-/// - Forbid: not needed; the region is the caller's to keep others off.
+/// - Locks: none taken; keeping others off the region is the caller's.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

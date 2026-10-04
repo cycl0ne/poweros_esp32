@@ -25,14 +25,15 @@ const Object = _namedobjects.Object;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The use count goes down under Forbid. When it reaches zero and a
+/// The use count goes down under utility's object lock. When it reaches
+/// zero and a
 /// `RemNamedObject` is waiting, its message is replied now. A count already
 /// at zero stays there.
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here.
+/// - Interrupts: no. It takes utility's object lock.
+/// - Locks: takes utility's object lock, a spinlock, for a moment.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -50,12 +51,16 @@ const Object = _namedobjects.Object;
 /// ```
 pub fn ReleaseNamedObject(ub: *UtilityBase, object: ?*NamedObject) void {
     const obj = Object.of(object orelse return);
-    ub.sys_base.Forbid();
-    defer ub.sys_base.Permit();
-    if (obj.use_count == 0) return;
-    obj.use_count -= 1;
-    if (obj.use_count != 0) return;
-    const msg = obj.remove_msg orelse return;
-    obj.remove_msg = null;
-    ub.sys_base.ReplyMsg(msg);
+    const sys = ub.sys_base;
+    sys.AcquireLock(&ub.object_lock);
+    const msg: ?*sdk.exec.Message = taken: {
+        if (obj.use_count == 0) break :taken null;
+        obj.use_count -= 1;
+        if (obj.use_count != 0) break :taken null;
+        const waiting = obj.remove_msg;
+        obj.remove_msg = null;
+        break :taken waiting;
+    };
+    sys.ReleaseLock(&ub.object_lock);
+    if (msg) |removal| sys.ReplyMsg(removal);
 }

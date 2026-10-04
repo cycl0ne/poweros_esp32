@@ -52,7 +52,7 @@ const rsa = @import("../engine/rsa.zig");
 /// - Waits: yes, for the RSA engine while another task has it; the
 ///   engine is held for the whole call.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

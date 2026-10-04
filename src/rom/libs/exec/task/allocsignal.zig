@@ -30,7 +30,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no - it is the running task's bits.
-/// - Forbid: not needed. Only the task itself can allocate its own signals.
+/// - Locks: none needed. Only the task itself can allocate its own signals.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

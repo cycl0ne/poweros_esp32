@@ -37,8 +37,9 @@ pub const Unit = struct {
     /// The task's own bsdsocket.library base: a socket is its opener's.
     socket_base: ?*SocketBase = null,
     /// The reads waiting for data, oldest first. AbortIO takes from it on
-    /// another task, so it changes only under Forbid.
+    /// another task, so it changes only under `lock`, a spinlock.
     reads: exec.List = .{},
+    lock: exec.Lock = .{},
     /// What was read off the connection and not yet handed to a read.
     data: [receive_bytes]u8 = undefined,
     data_start: usize = 0,
@@ -46,7 +47,8 @@ pub const Unit = struct {
     filter: Filter = .{},
     /// The peer has closed, or the connection has failed.
     ended: bool = false,
-    /// Who waits for the task: at the start, and to see it go.
+    /// Who waits for the task to be ready: Open. Close hears of its end
+    /// from exec (SetTaskEndSignal).
     waiter: ?*exec.Task = null,
     wait_signal: i8 = -1,
     /// The signal that tells the task to finish.

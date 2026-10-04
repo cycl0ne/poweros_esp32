@@ -35,7 +35,7 @@ const Resident = sdk.exec.Resident;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -46,7 +46,7 @@ const Resident = sdk.exec.Resident;
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindResident`, `InitCode`, `ExecList`
+/// `FindResident`, `InitCode`, `LockExecList`
 ///
 /// EXAMPLES:
 /// ```zig

@@ -33,7 +33,7 @@ const _text = @import("_text.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads its argument and the DPI.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

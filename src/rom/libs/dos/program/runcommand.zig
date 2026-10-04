@@ -46,7 +46,7 @@ const failRun = _program.failRun;
 /// CONTEXT:
 /// - Waits: whatever the command does.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; the command may wait.
+/// - Locks: no spinlock may be held: the command may wait.
 /// - Process: a Process.
 ///
 /// OWNERSHIP:

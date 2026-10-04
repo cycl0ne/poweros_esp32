@@ -33,7 +33,7 @@ const _route = @import("_route.zig");
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

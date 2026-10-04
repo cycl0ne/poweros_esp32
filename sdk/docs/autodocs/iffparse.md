@@ -88,7 +88,7 @@ it than the three fields a program sees.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -150,7 +150,7 @@ Its bytes come back cleared.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -207,7 +207,7 @@ is what finishes the writing.
 
 - Waits: for clipboard.device to close.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do - the one that opened it.
 
 **OWNERSHIP**
@@ -267,7 +267,7 @@ handle is left clean even when the file is not.
 
 - Waits: whatever the stream hook waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process.
 
 **OWNERSHIP**
@@ -332,7 +332,7 @@ file - or inside a chunk it is to apply to and no further.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -389,7 +389,7 @@ given up either way, so nothing has to be taken back.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -449,7 +449,7 @@ it is still to read.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -519,7 +519,7 @@ apply to the next.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -582,7 +582,7 @@ anything stored inside it can be read. What it answers decides what
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -640,7 +640,7 @@ stood in the file walks the list and turns it round.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -698,7 +698,7 @@ may override.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -755,7 +755,7 @@ it, which is how a list gives its forms defaults they may override.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -814,7 +814,7 @@ form the one that form set.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -869,7 +869,7 @@ handle is gone.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -929,7 +929,7 @@ it when a stored item's chunk is left.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -986,7 +986,7 @@ builds an id from text and wants to know before it tries.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1041,7 +1041,7 @@ so that a type and a chunk name are told apart on sight.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1096,7 +1096,7 @@ printing an error about a file wants to see.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1160,7 +1160,7 @@ over its header.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1219,7 +1219,7 @@ which tells the device nobody wants more.
 - Waits: no, but everything done through the stream afterwards waits
   on clipboard.device.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1280,7 +1280,7 @@ uses, and a short read or write is a failure.
 - Waits: no, but everything done through the stream afterwards waits
   on the file system.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do here; reading or writing the file needs a
   Process, because dos does.
 
@@ -1341,7 +1341,7 @@ in.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1401,7 +1401,7 @@ opened it and no other.
 
 - Waits: for memory, and for clipboard.device to open.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1462,7 +1462,7 @@ same handle reads one file after another.
 
 - Waits: whatever the stream hook waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process.
 
 **OWNERSHIP**
@@ -1517,7 +1517,7 @@ which `LIST` that form is in.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1587,7 +1587,7 @@ Where it stops, the chunk is entered and nothing of it has been read:
 
 - Waits: whatever the stream hook waits for, and for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process, which a
   file does.
 
@@ -1658,7 +1658,7 @@ seek back is given everything that was held for it, in one go.
 
 - Waits: for whatever the stream hook waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process.
 
 **OWNERSHIP**
@@ -1720,7 +1720,7 @@ file - or inside a chunk it is to apply to and no further.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1777,7 +1777,7 @@ given up either way, so nothing has to be taken back.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1846,7 +1846,7 @@ starts with a `FORM`, a `LIST` or a `CAT `; a `PROP` sits only in a
 
 - Waits: for memory, and for whatever the stream hook waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process.
 
 **OWNERSHIP**
@@ -1911,7 +1911,7 @@ they lie in the file and count towards the chunk's `scan`.
 
 - Waits: whatever the stream hook waits for - a file read does.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process, which a
   file does.
 
@@ -1979,7 +1979,7 @@ walk when the chunk is used up.
 
 - Waits: whatever the stream hook waits for - a file read does.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process, which a
   file does.
 
@@ -2037,7 +2037,7 @@ its own bytes - a list of chunks it gathered - gives all of it back.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2099,7 +2099,7 @@ file - or inside a chunk it is to apply to and no further.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2156,7 +2156,7 @@ given up either way, so nothing has to be taken back.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2225,7 +2225,7 @@ file - or inside a chunk it is to apply to and no further.
 
 - Waits: for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2283,7 +2283,7 @@ leaves one stored property and not two.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2347,7 +2347,7 @@ An item already stored there saying the same thing is replaced.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2407,7 +2407,7 @@ As `WriteChunkRecords` with a record size of one.
 - Waits: whatever the stream hook waits for - a file write does - and
   for memory on a stream that cannot seek back.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process, which a
   file does.
 
@@ -2474,7 +2474,7 @@ numbers wider than a byte is the caller's to turn round first.
 - Waits: whatever the stream hook waits for - a file write does - and
   for memory on a stream that cannot seek back.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do unless the stream needs a Process, which a
   file does.
 

@@ -54,7 +54,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the layer.
 	- Interrupts: no. It may wait, and it allocates.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -98,7 +98,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it allocates.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -161,7 +161,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it allocates.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -213,7 +213,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it frees memory.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -253,7 +253,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it frees memory.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -303,7 +303,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: only if the hook does.
 	- Interrupts: no. It may allocate.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -344,7 +344,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the layer.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -388,7 +388,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -434,7 +434,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the layer.
 	- Interrupts: no. It may wait.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -478,7 +478,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -519,7 +519,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -559,7 +559,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds it.
 	- Interrupts: no. It waits.
-	- Forbid: must not be held: waiting would break it.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -609,7 +609,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds it.
 	- Interrupts: no. It waits.
-	- Forbid: must not be held: waiting would break it.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -650,7 +650,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the list or a layer.
 	- Interrupts: no. It waits.
-	- Forbid: must not be held: waiting would break it.
+	- Locks: no spinlock may be held: it waits.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -693,7 +693,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, it allocates, and it draws.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -735,7 +735,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it allocates.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -785,7 +785,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, it allocates, and it draws.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -829,7 +829,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -877,7 +877,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the layer.
 	- Interrupts: no. It may wait, it allocates, and it draws.
-	- Forbid: must not be held: waiting for the lock would break it.
+	- Locks: no spinlock may be held: it waits for a lock.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -920,7 +920,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, it allocates, and it draws.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -957,7 +957,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that took it.
 
    OWNERSHIP
@@ -994,7 +994,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that took it.
 
    OWNERSHIP
@@ -1031,7 +1031,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: the task that took them.
 
    OWNERSHIP
@@ -1072,7 +1072,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: yes, while another task holds the display's layers.
 	- Interrupts: no. It may wait, and it allocates.
-	- Forbid: must not be held: waiting for the locks would break it.
+	- Locks: no spinlock may be held: it waits for locks.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1114,7 +1114,7 @@ layers.library/WhichLayer
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed, though the list must not change meanwhile:
+	- Locks: none taken, though the list must not change meanwhile:
 	  `LockLayerInfo` is how to be sure.
 	- Process: a Task will do.
 

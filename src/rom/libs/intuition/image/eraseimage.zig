@@ -35,7 +35,7 @@ const nextOf = _image.nextOf;
 /// CONTEXT:
 /// - Waits: whatever the image's class does.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

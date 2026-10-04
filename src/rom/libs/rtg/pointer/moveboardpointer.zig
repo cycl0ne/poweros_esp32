@@ -33,10 +33,13 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// into the picture's own order on its way out, before the turn.
 ///
 /// CONTEXT:
-/// - Waits: no. Made for an input handler, on every pointer event.
+/// - Waits: for the pointer's lock while another task changes the pointer,
+///   and on a board that sends the rows the pointer left over a bus, for
+///   that. Made for an input handler, on every pointer event.
 /// - Interrupts: no. A driver may send the rows the pointer left over a
 ///   bus.
-/// - Forbid: taken for the moment it takes the driver to move it.
+/// - Locks: takes rtg's pointer lock, a semaphore, for the moment it takes the
+///   driver to move it; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -54,8 +57,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// ```
 pub fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
     const sys = rb.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&rb.pointer_lock);
+    defer sys.ReleaseSemaphore(&rb.pointer_lock);
     if (board.pointer_x == x and board.pointer_y == y) return;
     board.pointer_x = x;
     board.pointer_y = y;

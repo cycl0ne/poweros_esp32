@@ -33,7 +33,7 @@ const DosList = dos.DosList;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed.
+/// - Locks: none needed.
 /// - Process: a Task will do; this is the form for a handler, which must
 ///   not wait for the list.
 ///

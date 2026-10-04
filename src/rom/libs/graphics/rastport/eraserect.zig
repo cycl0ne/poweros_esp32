@@ -52,7 +52,7 @@ const RastPort = _rastport.RastPort;
 /// CONTEXT:
 /// - Waits: only if the hook does.
 /// - Interrupts: no. It draws, and it may call a hook.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

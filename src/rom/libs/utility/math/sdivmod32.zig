@@ -38,7 +38,7 @@ const SDivMod32Result = sdk.utility.SDivMod32Result;
 /// - Waits: no.
 /// - Interrupts: safe. A zero divisor ends in `Alert`, which is safe there
 ///   too.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

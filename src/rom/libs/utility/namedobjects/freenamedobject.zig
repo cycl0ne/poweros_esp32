@@ -32,8 +32,8 @@ const Object = _namedobjects.Object;
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the object's own name space.
-/// - Interrupts: no. `FreeMem` takes Forbid.
-/// - Forbid: not needed.
+/// - Interrupts: no. `FreeMem` takes exec's memory lock.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

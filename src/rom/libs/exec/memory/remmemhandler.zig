@@ -26,8 +26,9 @@ const Interrupt = sdk.exec.Interrupt;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes the memory handlers' semaphore, so a handler
+///   running is finished first.
+/// - Locks: takes the memory handlers' semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -46,7 +47,7 @@ const Interrupt = sdk.exec.Interrupt;
 /// ```
 pub fn RemMemHandler(base: *ExecBase, handler: *Interrupt) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&base.sem_memhandlers);
+    defer sys.ReleaseSemaphore(&base.sem_memhandlers);
     sys.Remove(&handler.node);
 }

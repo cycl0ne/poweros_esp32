@@ -132,7 +132,7 @@ libraries itself: each layer keeps to what it can do on its own.
 
 - Waits: yes, while another task holds the font list.
 - Interrupts: no.
-- Forbid: must not be held: it waits on the font list's semaphore.
+- Locks: no spinlock may be held: it waits for the font list's semaphore.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -206,7 +206,7 @@ saying who owns what.
 
 - Waits: no.
 - Interrupts: no; it allocates.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -279,7 +279,7 @@ it goes.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -333,7 +333,7 @@ no rectangle of `source` can undo what another added.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -391,7 +391,7 @@ and back - so what is filled is the slice a person means by one.
 
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -445,7 +445,7 @@ False, with the error in the RastPort, if the room ran out part way.
 
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -501,7 +501,7 @@ corner to the first is implied: `AreaEnd` closes every shape.
 
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -560,7 +560,7 @@ per kind of shape.
 
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -622,7 +622,7 @@ so a shape can be filled by inverting what is under it.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -685,7 +685,7 @@ the middle empty, and neither has to be wound any particular way.
 
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -745,7 +745,7 @@ close first.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt
   does not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -802,7 +802,7 @@ font drawn extended would be widened twice.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -850,14 +850,16 @@ list just now - where `RemFont` would wait for it.
 **BEHAVIOR**
 
 The one way to take a font off from where waiting is not allowed: a
-low-memory handler runs under Forbid, and a font loader freeing the
-fonts nobody holds there calls this, skipping any it cannot have.
+low-memory handler runs inside AllocMem, whose caller may hold
+anything, and a font loader freeing the fonts nobody holds there calls
+this, skipping any it cannot have.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed; this is what it is for.
+- Locks: any may be held: it only tries the font list's lock, which is what
+  it is for.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -924,7 +926,7 @@ this does nothing for it.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
 **OWNERSHIP**
 
@@ -937,9 +939,8 @@ None.
 **BUGS**
 
 A `BeginDraw` whose `EndDraw` never comes leaves the buffer gathering
-for ever and nothing more reaches the display from it, as a `Forbid`
-with no `Permit` stops the machine scheduling. Pair them on every
-path out, an error return included.
+for ever and nothing more reaches the display from it. Pair them on
+every path out, an error return included.
 
 **SEE ALSO**
 
@@ -998,7 +999,7 @@ picture rather than sliding.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1074,7 +1075,7 @@ further in, so a clipped picture is cut rather than slid.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it
   wrote on to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1148,7 +1149,7 @@ the end when moving down and bytes from the end when moving right.
 
 - Waits: no.
 - Interrupts: no. The work is unbounded.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1211,7 +1212,7 @@ the destination is a board's buffer and the engine can.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1292,7 +1293,7 @@ written, and not a read of what is under it.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1369,7 +1370,7 @@ a rectangle with holes in it.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1433,7 +1434,7 @@ holes in it.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1496,7 +1497,7 @@ Clear bits and the engine work as for a template.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1567,7 +1568,7 @@ it returns, as every drawing call does.
 
 - Waits: no.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1650,7 +1651,7 @@ in - otherwise a clipped shape would slide rather than be cut.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1717,7 +1718,7 @@ display, because a coverage is not something a display shows.
 
 - Waits: no.
 - Interrupts: no. A large area is a great deal of work.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1794,7 +1795,7 @@ memory leaves the region as it was.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1846,7 +1847,7 @@ the region can be filled again without a new one.
 
 - Waits: no.
 - Interrupts: no. It frees memory.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1897,7 +1898,7 @@ One open given back. A font in the ROM stays whatever the count says.
 
 - Waits: yes, while another task holds the font list.
 - Interrupts: no.
-- Forbid: must not be held: it waits on the font list's semaphore.
+- Locks: no spinlock may be held: it waits for the font list's semaphore.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1985,9 +1986,9 @@ wants: the RastPort is where the drawing goes, not where the eye is.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It allocates, and finding the View takes Forbid.
-- Forbid: not held by the caller and not wanted; the View is read under
-  a Forbid of its own.
+- Interrupts: no. It allocates, and finding the View takes rtg's board
+  list.
+- Locks: none needed; the View is looked up under rtg's board list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2070,7 +2071,7 @@ Every rectangle goes back to the region pool, then the region itself.
 
 - Waits: no.
 - Interrupts: no. It frees memory.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2144,7 +2145,7 @@ and this is neither. A pen that is not opaque composes under
 
 - Waits: no.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2221,7 +2222,7 @@ time.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2279,7 +2280,7 @@ rounding to drift and no arithmetic a small machine minds.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2339,7 +2340,7 @@ curve, and is drawn as one.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2397,7 +2398,7 @@ the clip is dotted as though it had not been.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2455,7 +2456,7 @@ corners rather than starting again at each.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2515,7 +2516,7 @@ corners would be holes.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2585,7 +2586,7 @@ and dark in its right one, so the two corners mirror each other.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2664,7 +2665,7 @@ as one walk, so a dashed outline keeps its rhythm through a corner.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2730,7 +2731,7 @@ counting from the start of the run.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2786,7 +2787,7 @@ last one closes. Without a `BeginDraw` to match, it does nothing.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
 **OWNERSHIP**
 
@@ -2863,7 +2864,7 @@ it. Whatever manages windows is what sets that hook.
 
 - Waits: only if the hook does.
 - Interrupts: no. It draws, and it may call a hook.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2931,7 +2932,7 @@ the sweep's edges cross are walked a pixel at a time.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3015,7 +3016,7 @@ returns, so drawing is immediate.
 - Waits: no.
 - Interrupts: no. The work is unbounded and it hands rows on to
   rtg.library at the end.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3082,7 +3083,7 @@ column of text fails to line up.
 
 - Waits: no.
 - Interrupts: safe. It reads the font and nothing else.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3140,7 +3141,7 @@ does too, so a size in points means one thing everywhere.
 
 - Waits: no.
 - Interrupts: safe. It reads its argument and the DPI.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3194,7 +3195,7 @@ both back.
 
 - Waits: no.
 - Interrupts: no; it frees memory.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3249,7 +3250,7 @@ nothing is refreshed.
 
 - Waits: no.
 - Interrupts: no; it frees memory.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3320,7 +3321,7 @@ and not set, because they are the buffer's rather than the RastPort's.
 
 - Waits: no.
 - Interrupts: no; it calls utility.library to walk the list.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3389,7 +3390,7 @@ prints something true about a code that arrived after it.
 
 - Waits: no.
 - Interrupts: safe. It is a lookup in the ROM and touches nothing.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3462,7 +3463,7 @@ so the call can be made again to grow the room.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3519,7 +3520,7 @@ last of them lets go. That includes the task holding it, so between
 
 - Waits: yes, while a task changes the list.
 - Interrupts: no.
-- Forbid: must not be held: it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3579,7 +3580,7 @@ saying so would clear what the call before it found.
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort, which an interrupt
   does not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3639,7 +3640,7 @@ until something is added.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3694,7 +3695,7 @@ and to be opened by what it says with `OpenFont` after.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do; it must hold `LockFonts`.
 
 **OWNERSHIP**
@@ -3753,7 +3754,7 @@ opaque, so that trade can be made again later without anything noticing.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3819,7 +3820,7 @@ laid out in one lines up in the other, only twice as tall.
 
 - Waits: yes, while another task holds the font list.
 - Interrupts: no.
-- Forbid: must not be held: it waits on the font list's semaphore.
+- Locks: no spinlock may be held: it waits for the font list's semaphore.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3884,7 +3885,7 @@ than one per piece.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3939,7 +3940,7 @@ Each rectangle of `source` is added as `OrRectRegion` would add it.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3995,7 +3996,7 @@ rectangle here does.
 
 - Waits: no.
 - Interrupts: safe in itself: it only reads the region.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4056,7 +4057,7 @@ unchanged.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4133,7 +4134,7 @@ memory has nobody to hand them to.
 - Waits: no.
 - Interrupts: no. The work is unbounded - a full-screen fill is a
   million pixels - and it hands rows on to rtg.library at the end.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4216,7 +4217,7 @@ through them in the order they lie in to read before it writes.
 
 - Waits: no.
 - Interrupts: safe in itself: it only reads the region.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4282,7 +4283,7 @@ test and the removal.
 
 - Waits: yes, while another task holds the font list.
 - Interrupts: no.
-- Forbid: must not be held: it waits on the font list's semaphore.
+- Locks: no spinlock may be held: it waits for the font list's semaphore.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4356,7 +4357,7 @@ same picture as one drawn in a single call.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it
   wrote on to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4434,7 +4435,7 @@ every drawing call does.
 
 - Waits: no.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4507,7 +4508,7 @@ is what double buffering wants anyway.
 
 - Waits: no.
 - Interrupts: no; it calls utility.library to walk the list.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4581,7 +4582,7 @@ and extended are applied as each character is drawn.
 - Waits: no.
 - Interrupts: no. It changes the caller's RastPort, which an interrupt
   does not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4634,7 +4635,7 @@ Each rectangle of `source` is taken out as `ClearRectRegion` would.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4718,7 +4719,7 @@ Bold and extended each widen a character by one.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4785,7 +4786,7 @@ and there is no `+ 1` anywhere.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4864,7 +4865,7 @@ much fits, draw that, and put an ellipsis after it.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4929,7 +4930,7 @@ other measuring call would give for the same string, font and style.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not wanted.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4998,7 +4999,7 @@ the ink goes.
 - Waits: no.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5051,7 +5052,7 @@ ended theirs.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5125,7 +5126,7 @@ rows it comes to.
 
 - Waits: no.
 - Interrupts: safe. It reads its arguments and nothing else.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5203,7 +5204,7 @@ in, so a clipped picture is cut rather than slid.
 - Waits: no, but it allocates.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote
   on to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5265,7 +5266,7 @@ caller that asked for a pixel meant a pixel.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5334,7 +5335,7 @@ in, so a clipped picture is cut rather than slid.
 - Waits: no.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote
   on to the display at the end.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5395,7 +5396,7 @@ it was.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5449,7 +5450,7 @@ failure leaves it as it was.
 
 - Waits: no.
 - Interrupts: no. Rectangles come from the region pool.
-- Forbid: not needed; the region is the caller's to keep others off.
+- Locks: none taken; keeping others off the region is the caller's.
 - Process: a Task will do.
 
 **OWNERSHIP**

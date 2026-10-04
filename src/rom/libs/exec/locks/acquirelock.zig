@@ -41,7 +41,8 @@ const Lock = sdk.exec.Lock;
 /// CONTEXT:
 /// - Waits: never - it spins, and only while another core holds the lock.
 /// - Interrupts: a `LOCKF_INTERRUPT` lock only.
-/// - Forbid: may be held.
+/// - Locks: takes `lock`. Every lock the core holds must come before it in the
+///   lock order.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -58,7 +59,7 @@ const Lock = sdk.exec.Lock;
 /// None known.
 ///
 /// SEE ALSO:
-/// `InitLock`, `AttemptLock`, `ReleaseLock`, `Forbid`, `Disable`
+/// `InitLock`, `AttemptLock`, `ReleaseLock`, `Disable`
 ///
 /// EXAMPLES:
 /// ```zig

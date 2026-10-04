@@ -89,6 +89,7 @@ fn initBase(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) call
     const db: *DosBase = @fieldParentPtr("lib", lib);
     const dos_lib = db.iface();
     db.sys_base = sys_base;
+    sys_base.InitLock(&db.code_lock, "dos code", exec.LOCKORDER_DRIVER, 0);
     db.utility_base = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null);
     doslist.init(db);
     sys_base.InitSemaphore(&db.cli_lock);

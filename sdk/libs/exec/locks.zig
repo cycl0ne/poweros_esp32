@@ -25,9 +25,10 @@
 //!   is never taken in an interrupt. Otherwise an interrupt could spin on
 //!   a lock the code it interrupted holds.
 //!
-//! A broken rule is a recoverable alert naming the locks (`AN_LockRule`);
-//! a lock taken again on the core that holds it, which would never end,
-//! is a dead end (`AN_LockDeadlock`).
+//! A broken rule is a recoverable alert naming the locks (`AN_LockRule`) -
+//! but `Wait` with a lock held is a dead end (`AN_LockRule` with
+//! `AT_DeadEnd`), as is a lock taken again on the core that holds it, which
+//! would never end (`AN_LockDeadlock`).
 //!
 //! A lock may live anywhere. In internal memory it is one S32C1I; in
 //! PSRAM, where this chip has no atomic store, exec takes it under one

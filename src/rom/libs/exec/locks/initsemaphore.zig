@@ -30,8 +30,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe in itself, though nothing else about a semaphore is.
-/// - Forbid: not needed. Nothing can be holding a semaphore that does not
-///   exist yet.
+/// - Locks: none needed. Nothing can be holding a semaphore that does not exist
+///   yet.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

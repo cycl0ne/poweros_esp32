@@ -2,10 +2,14 @@
 //! OpenLibrary: finds a library by name and version and hands the opener
 //! to the library's own Open, which counts it.
 //!
+//! The library is found and pinned under exec's library list, and its Open
+//! runs inside its own lock with the list let go (library/_library.zig).
+//!
 //! This searches the library list and nothing else. What loads a module
 //! from LIBS: is ramlib.library, which replaces the slot in front of it.
 
 const sdk = @import("sdk");
+const _library = @import("_library.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Library = sdk.exec.Library;
@@ -41,11 +45,22 @@ const Library = sdk.exec.Library;
 /// (`libOpen`) raises `open_cnt` and clears `LIBF_DELEXP`, so a library
 /// marked for expunging is reprieved by being opened again.
 ///
+/// The library is found under exec's library list and *pinned* there, so
+/// that nothing expunges it before its Open has run; the list is let go,
+/// and the Open vector runs inside the library's own lock. Two opens of
+/// one library never run at once, on either core; opens of different
+/// libraries do. The vector holds nothing of exec's, so it may start a task
+/// and wait for it, and that task may open other libraries. A library
+/// being expunged is passed over, as if it were not there.
+///
 /// CONTEXT:
-/// - Waits: no as exec has it. With ramlib.library in front of it, it may:
-///   the replacement loads the module from LIBS:, which reaches a handler.
-/// - Interrupts: no. It takes Forbid, and the Open vector may do anything.
-/// - Forbid: taken here, around the search and the vector.
+/// - Waits: for the library list and the library's lock, while another
+///   task holds them; and with ramlib.library in front of it, the
+///   replacement loads the module from LIBS:, which reaches a handler.
+/// - Interrupts: no. It takes semaphores, and the Open vector may do
+///   anything.
+/// - Locks: takes exec's library list and the library's own lock, both
+///   semaphores; no spinlock may be held.
 /// - Process: a Task will do for exec's own. ramlib's replacement needs a
 ///   Process to load from a disk, and sends the work to its own when a bare
 ///   Task calls it.
@@ -73,10 +88,24 @@ const Library = sdk.exec.Library;
 /// ```
 pub fn OpenLibrary(base: *ExecBase, name: [*:0]const u8, version: u32) ?*Library {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-    const node = sys.FindName(&base.lib_list, name) orelse return null;
-    const lib: *Library = @fieldParentPtr("node", node);
-    if (lib.version < version) return null;
-    return lib.vector(sdk.exec.OpenFn, sdk.exec.LIB_OPEN)(lib, version);
+    sys.ObtainSemaphore(&base.sem_libraries);
+    const lib = _library.findOpenable(&base.lib_list, name) orelse {
+        sys.ReleaseSemaphore(&base.sem_libraries);
+        return null;
+    };
+    if (lib.version < version) {
+        sys.ReleaseSemaphore(&base.sem_libraries);
+        return null;
+    }
+    lib.pins += 1;
+    sys.ReleaseSemaphore(&base.sem_libraries);
+
+    sys.ObtainSemaphore(&lib.lock);
+    const opened = lib.vector(sdk.exec.OpenFn, sdk.exec.LIB_OPEN)(lib, version);
+    sys.ReleaseSemaphore(&lib.lock);
+
+    sys.ObtainSemaphore(&base.sem_libraries);
+    lib.pins -= 1;
+    sys.ReleaseSemaphore(&base.sem_libraries);
+    return opened;
 }

@@ -48,7 +48,7 @@ const _gadget = @import("_gadget.zig");
 /// - Waits: for the screen list's semaphore, and whatever the method
 ///   waits for - a drawing one for the window's layer.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

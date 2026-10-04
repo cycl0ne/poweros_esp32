@@ -56,7 +56,7 @@ var saved_intenable: u32 = 0;
 var masked_for_step = false;
 
 /// Counting happens at every level the code being stepped might be at.
-/// `Disable` and `Forbid` raise the level themselves, so a step through
+/// `Disable` and a spinlock raise the level themselves, so a step through
 /// them must still count; what keeps the step from wandering into an
 /// interrupt is that none can be taken, not that the level is high.
 const count_level: u32 = 5;

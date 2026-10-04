@@ -28,7 +28,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 /// CONTEXT:
 /// - Waits: yes, while a task changes the list.
 /// - Interrupts: no.
-/// - Forbid: must not be held: it may wait.
+/// - Locks: no spinlock may be held: it may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

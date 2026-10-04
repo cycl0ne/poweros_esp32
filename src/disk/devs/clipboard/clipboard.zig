@@ -72,18 +72,12 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const sys = _clip.clipBase(dev).sys_base;
     const base = _clip.clipBase(dev);
-    sys.Forbid();
-    defer sys.Permit();
-    var it = base.port.msg_list.iterator();
-    while (it.next()) |node| {
-        const msg: *exec.Message = @fieldParentPtr("node", node);
-        if (&_clip.requestOf(msg).io.req != io) continue;
-        sys.Remove(node);
-        io.err = exec.IOERR_ABORTED;
-        sys.ReplyIO(io);
-        return 0;
-    }
-    return -1;
+    // Taken back off the server's port under the port's own lock: a
+    // request is put there from any task, on either core.
+    if (!sys.RemoveMsg(&base.port, &io.message)) return -1;
+    io.err = exec.IOERR_ABORTED;
+    sys.ReplyIO(io);
+    return 0;
 }
 
 /// The server started and waited for, so that the first request finds a

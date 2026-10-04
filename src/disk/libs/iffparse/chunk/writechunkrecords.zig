@@ -40,7 +40,7 @@ const IFFParseBase = _base.IFFParseBase;
 /// - Waits: whatever the stream hook waits for - a file write does - and
 ///   for memory on a stream that cannot seek back.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do unless the stream needs a Process, which a
 ///   file does.
 ///

@@ -66,12 +66,13 @@ fn psramOf(sys: *ExecBase) Psram {
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no; it runs on the exec task at cold start.
-/// - Forbid: not held. - Process: a Task will do.
+/// - Locks: none needed. - Process: a Task will do.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const gb = gpioBase(lib);
     lib.revision = RESOURCE_REVISION;
     gb.sys_base = sys_base;
+    sys_base.InitLock(&gb.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     gb.owner = @splat(null);
     hold(gb, &flash_pads, "flash");
     const psram = psramOf(sys_base);

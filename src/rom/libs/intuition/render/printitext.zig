@@ -45,7 +45,7 @@ const printRuns = @import("_render.zig").printRuns;
 /// - Waits: no, beyond what the RastPort's layer asks of a caller - hold
 ///   it, as for any drawing in a window.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

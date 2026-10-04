@@ -663,7 +663,7 @@ pub const GraphicsBase = opaque {
     }
 
     /// RemFont that never waits: false when the font is open or the list is
-    /// busy. What a low-memory handler, under Forbid, calls.
+    /// busy. What a low-memory handler, which may not wait, calls.
     pub fn AttemptRemFont(self: *GraphicsBase, font: *graphics.TextFont) bool {
         return libraries.call(self, LVO.AttemptRemFont, Fn.AttemptRemFont, .{font});
     }

@@ -41,7 +41,7 @@ const TAGFILTER_NOT = sdk.utility.TAGFILTER_NOT;
 /// - Waits: no.
 /// - Interrupts: safe in itself; it allocates nothing. The lists are the
 ///   caller's, and so is keeping others off them.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

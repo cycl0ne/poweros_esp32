@@ -45,7 +45,7 @@ const interior = _window.interior;
 /// inside the border widths of its RastPort.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed.
+/// - Waits: no. - Interrupts: no. - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

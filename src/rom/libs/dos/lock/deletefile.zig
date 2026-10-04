@@ -30,7 +30,7 @@ const nameAction = _lock.nameAction;
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; a process gets IoErr().
 ///
 /// OWNERSHIP:

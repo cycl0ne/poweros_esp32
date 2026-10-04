@@ -30,7 +30,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: the task that took it.
 ///
 /// OWNERSHIP:

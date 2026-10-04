@@ -55,7 +55,7 @@ const RastPort = _draw.RastPort;
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded and it hands rows on to
 ///   rtg.library at the end.
-/// - Forbid: not held and not wanted.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -39,7 +39,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: never. It spins on the ports.
 /// - Interrupts: it may be called from one, and from a trap.
-/// - Forbid: not needed; nothing else runs while it has the machine.
+/// - Locks: none needed; nothing else runs while it has the machine.
 /// - Process: any task, or none at all.
 ///
 /// NOTES:

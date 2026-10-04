@@ -179,7 +179,7 @@ the packet to come back.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -236,7 +236,7 @@ of the list. The list is locked with LDF_ALL | LDF_WRITE for the call.
 
 - Waits: yes, for the device list's semaphores.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -298,7 +298,7 @@ volume - keeps `dirname`'s device part and replaces what follows it.
 
 - Waits: no.
 - Interrupts: no; it sets IoErr.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do; IoErr is then not set.
 
 **OWNERSHIP**
@@ -359,7 +359,7 @@ first; a name already on the list is not checked for.
 
 - Waits: yes, for the segment list's semaphore.
 - Interrupts: not safe.
-- Forbid: not to be held; it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Task will do. Not while holding LockSegmentList, which
   it takes exclusive.
 
@@ -420,7 +420,7 @@ DosPacket's message length is set so it can be sent at once.
 
 - Waits: no.
 - Interrupts: not safe; it allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -479,7 +479,7 @@ AssignLock makes one.
 
 - Waits: yes. It takes the device list's lock for writing.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -541,7 +541,7 @@ copy of `path`.
 - Waits: yes. It takes the device list's lock for writing, and unlocking
   a replaced assign's locks sends packets.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -600,7 +600,7 @@ A null lock takes the assign off the list and frees it.
 - Waits: yes. It takes the device list's lock for writing, and unlocking
   a replaced assign's locks sends packets.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -663,7 +663,7 @@ copy of `path`.
 - Waits: yes. It takes the device list's lock for writing, and unlocking
   a replaced assign's locks sends packets.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -717,7 +717,7 @@ released again, so a null result holds nothing.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do; this is the form for a handler, which must
   not wait for the list.
 
@@ -778,7 +778,7 @@ and `mode`; the handler decides.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -831,7 +831,7 @@ left alone. It doesn't wait.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -889,7 +889,7 @@ or checked.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process for an answer; a plain Task gets null.
 
 **OWNERSHIP**
@@ -949,7 +949,7 @@ close cannot be retried with it.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -1010,7 +1010,7 @@ Days, then minutes, then ticks.
 
 - Waits: no.
 - Interrupts: safe. It only reads its inputs.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1065,7 +1065,7 @@ directory is tried while the answer is ERROR_OBJECT_NOT_FOUND.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -1117,6 +1117,10 @@ fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process
   NP_UserData (tc_UserData, there before the process first runs),
   NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
   any),
+  NP_EndMsg (a message replied to its reply port once the process is
+  gone and nothing runs on its stack; default none),
+  NP_HoldLibrary (a library whose code it runs, its open count handed
+  over and closed by dos once that code has returned; default none),
   NP_CopyVars (default true: the caller's local variables are copied),
   NP_Cli (a CLI of its own) with NP_CommandName and NP_Path.
 
@@ -1149,7 +1153,7 @@ the block freed.
 
 - Waits: yes: DupLock sends packets, and the CLI table is a semaphore.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; it then passes nothing on and there is
   nothing to copy.
 
@@ -1213,7 +1217,7 @@ checked, copied nor unlocked.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: needed; a plain task changes nothing and gets null.
 
 **OWNERSHIP**
@@ -1270,7 +1274,7 @@ field is 0.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1332,7 +1336,7 @@ name for the week before yesterday.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1396,7 +1400,7 @@ once. 0 returns at once.
 
 - Waits: yes.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1451,7 +1455,7 @@ while the object isn't found.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -1508,7 +1512,7 @@ ENVARC:name as well with GVF_SAVE_VAR.
 - Waits: yes, for a global variable (file system packets); not for a
   local one.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do for a global variable; only a process has
   local ones and gets IoErr.
 
@@ -1568,7 +1572,7 @@ nothing else the caller has in flight is lost.
 
 - Waits: yes, until the handler replies.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1629,7 +1633,7 @@ The lock's handler is sent ACTION_COPY_DIR with the lock.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -1684,7 +1688,7 @@ lock.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -1737,7 +1741,7 @@ Reads pr_CES of the running process. Nothing is checked or changed.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -1811,7 +1815,7 @@ own errors.
 - Waits: for the answer, which is as long as the user takes; and for
   intuition.library to open the first time a question goes on screen.
 - Interrupts: no.
-- Forbid: not held and not to be held.
+- Locks: no spinlock may be held.
 - Process: a Process, not a bare Task: it reads `pr_WindowPtr` and
   the process's console.
 
@@ -1882,7 +1886,7 @@ tried before match_func, and an entry either leaves out taking no room.
 
 - Waits: yes, for the handler.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process, for IoErr.
 
 **OWNERSHIP**
@@ -1953,7 +1957,7 @@ last_key set to 0.
 
 - Waits: yes, for the handler.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process.
 
 **OWNERSHIP**
@@ -2010,7 +2014,7 @@ first.
 
 - Waits: yes, for the handler.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process, for IoErr.
 
 **OWNERSHIP**
@@ -2068,7 +2072,7 @@ from: pass the same lock and block to it.
 
 - Waits: yes, for the handler.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process, for IoErr and the current directory.
 
 **OWNERSHIP**
@@ -2125,7 +2129,7 @@ the owner fields zeroed before.
 
 - Waits: yes, for the handler.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process, for IoErr.
 
 **OWNERSHIP**
@@ -2185,7 +2189,7 @@ command line is its first input, then `input`.
 - Waits: yes. It sends packets, and a synchronous start waits for the
   shell to end.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process's CLI and current directory are
   passed on, and only a process gets IoErr.
 
@@ -2247,7 +2251,7 @@ can be read on after an end of input.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2311,7 +2315,7 @@ this one stopped.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2374,7 +2378,7 @@ the byte goes straight out and what was read ahead stays to be read.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2429,7 +2433,7 @@ fn FPuts(db: *DosBase, file: ?*FileHandle, string: [*:0]const u8) i32
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2492,7 +2496,7 @@ past. At the end `IoErr()` is 0.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2557,7 +2561,7 @@ console the bytes go straight out.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -2625,7 +2629,7 @@ IoErr is not touched.
 - Waits: no.
 - Interrupts: safe. It only reads its inputs and writes the caller's
   buffer.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2679,7 +2683,7 @@ a colon or a slash gives itself. A path that ends in '/' gives "".
 
 - Waits: no.
 - Interrupts: safe. It only reads `name`.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2732,7 +2736,7 @@ Every alias of every item counts ("Q=QUIET/S" is found by "q" and by
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2783,13 +2787,15 @@ The CLI table is read under its lock.
 
 - Waits: yes, for the CLI table's semaphore.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-The process is not the caller's. It can end at any time after the call;
-a caller that looks into it holds Forbid meanwhile.
+The process is not the caller's. It can end at any time after the call,
+on either core; a caller that changes it first makes sure, under
+Disable, that it is still on exec's task lists or running (as
+`C:ChangeTaskPri` does).
 
 **BUGS**
 
@@ -2841,7 +2847,7 @@ case.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do. The caller holds the list (LockDosList).
 
 **OWNERSHIP**
@@ -2901,7 +2907,7 @@ answer as `start` finds the next of the same name.
 
 - Waits: no.
 - Interrupts: not safe.
-- Forbid: not needed; the list must be locked with LockSegmentList.
+- Locks: none taken; the list must be locked with LockSegmentList.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2959,7 +2965,7 @@ set matches nothing. IoErr is not set.
 
 - Waits: no.
 - Interrupts: not callable.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: required for a result; a plain task gets null.
 
 **OWNERSHIP**
@@ -3020,7 +3026,7 @@ and what was typed would otherwise be lost.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -3075,7 +3081,7 @@ RDArgs can go to ReadArgs again as it is.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3136,7 +3142,7 @@ alone.
 
 - Waits: yes, when it unlocks a lock (a packet to its handler).
 - Interrupts: not safe.
-- Forbid: not to be held; it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3188,7 +3194,7 @@ lock or a path it holds is the caller's to free first.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3242,7 +3248,7 @@ free first (Close, FreeArgs). An unknown type does nothing.
 
 - Waits: no.
 - Interrupts: not safe; it frees memory.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3293,7 +3299,7 @@ pr_Arguments is read.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a process; a plain task gets null.
 
 **OWNERSHIP**
@@ -3346,7 +3352,7 @@ changed.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -3407,7 +3413,7 @@ an empty one.
 - Waits: yes, when there is no CLI: NameFromLock sends packets to
   the directory's handler.
 - Interrupts: not safe.
-- Forbid: not to be held; it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Process; a plain Task gets an empty buffer and false.
 
 **OWNERSHIP**
@@ -3476,7 +3482,7 @@ after unlocking a lock made for it.
 - Waits: yes: for the device list's locks, and for a starting
   handler's answer.
 - Interrupts: not safe.
-- Forbid: not to be held; it waits.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do for a name with a device; a name without
   one, CONSOLE: and PROGDIR: need a Process.
 
@@ -3538,7 +3544,7 @@ or changed.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -3593,7 +3599,7 @@ changed.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -3652,7 +3658,7 @@ the buffer is made empty.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a CLI process for an answer; any other caller gets an
   empty buffer and false.
 
@@ -3712,7 +3718,7 @@ is made empty.
 
 - Waits: no.
 - Interrupts: not safe; it reads the running task's Process.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a CLI process for an answer; any other caller gets an
   empty buffer and false.
 
@@ -3779,7 +3785,7 @@ copied as it is, and with GVF_DONT_NULL_TERM as well, no NUL is added.
 - Waits: yes, for a global variable (file system packets); not for a
   local one.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do for a global variable; only a process has
   local ones and gets IoErr.
 
@@ -3837,7 +3843,7 @@ with the lock and `data`.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -3890,7 +3896,7 @@ Reads the field; nothing is opened.
 
 - Waits: no.
 - Interrupts: no. It reads the running task.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process; from a plain Task the answer is null and nothing
   changes.
 
@@ -3947,7 +3953,7 @@ there), so it is read right after the call it belongs to.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a process; a plain task gets ERROR_NO_PROCESS.
 
 **OWNERSHIP**
@@ -4006,7 +4012,7 @@ file system if its root ("DEV:") can be locked.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -4059,7 +4065,7 @@ no packet is sent.
 
 - Waits: no.
 - Interrupts: safe: it reads one field.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4120,7 +4126,7 @@ everything loaded so far is freed.
 
 - Waits: yes, for the file system.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -4184,7 +4190,7 @@ the search.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -4246,7 +4252,7 @@ found by FindDosEntry.
 
 - Waits: yes, for the device list's semaphores.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4308,7 +4314,7 @@ it is until UnLockSegmentList.
 
 - Waits: yes, for the segment list's semaphore.
 - Interrupts: not safe.
-- Forbid: not to be held; it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4366,7 +4372,7 @@ It is not put on the list.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4421,7 +4427,7 @@ an error, does nothing.
 
 - Waits: yes, unlocking sends packets.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4485,7 +4491,7 @@ ERROR_BUFFER_OVERFLOW frees the chain.
 
 - Waits: yes, for the handlers' answers.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do for a pattern with a device; without one the
   search starts in the current directory, which only a process has.
 
@@ -4551,7 +4557,7 @@ error but ERROR_BUFFER_OVERFLOW frees the chain.
 
 - Waits: yes, for the handlers' answers.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do for a pattern with a device; without one the
   search starts in the current directory, which only a process has.
 
@@ -4607,7 +4613,7 @@ free.
 
 - Waits: yes, for the CLI table's semaphore.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4669,7 +4675,7 @@ freed before it returns.
 
 - Waits: yes, for the handler's answers.
 - Interrupts: not safe.
-- Forbid: not to be held; it waits.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4737,7 +4743,7 @@ plain Task can call it too.
 
 - Waits: yes, for the handler's answers.
 - Interrupts: not safe.
-- Forbid: not to be held; it waits.
+- Locks: no spinlock may be held: it waits.
 - Process: a Task will do; a null lock needs a Process (its
   pr_FileSystemTask).
 
@@ -4792,7 +4798,7 @@ FindDosEntry from the node after `dlist`, for any name.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do. The caller holds the list (LockDosList).
 
 **OWNERSHIP**
@@ -4864,7 +4870,7 @@ with no buffer until the first buffered call.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -4920,7 +4926,7 @@ the lock. On success the handler has taken the lock into the open file.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -4979,7 +4985,7 @@ Reads the field; nothing is opened.
 
 - Waits: no.
 - Interrupts: no. It reads the running task.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process; from a plain Task the answer is null and nothing
   changes.
 
@@ -5034,7 +5040,7 @@ with the lock.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
   With a null lock, a plain task has no file system and gets
 ERROR_DEVICE_NOT_MOUNTED.
@@ -5092,7 +5098,7 @@ A shared lock on the directory, or null with `IoErr()` set
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -5151,7 +5157,7 @@ it holds the defaults when the call fails.
 
 - Waits: no.
 - Interrupts: no; it sets IoErr.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do; IoErr is then not set.
 
 **OWNERSHIP**
@@ -5209,7 +5215,7 @@ colon is the name.
 
 - Waits: no.
 - Interrupts: safe. It only reads `name`.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5265,7 +5271,7 @@ caller can report an error and still hand it on.
 
 - Waits: yes, for the output's handler.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: required for output; a plain task has no Output() and gets
   false.
 
@@ -5322,7 +5328,7 @@ Task or a process without output).
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -5385,7 +5391,7 @@ console answers with what has been typed.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -5457,7 +5463,7 @@ skipped.
 
 - Waits: yes, when it reads Input().
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process for Input(); a Task will do with a CSource.
 
 **OWNERSHIP**
@@ -5524,7 +5530,7 @@ input's end is put back for the next reader.
 
 - Waits: yes, when it reads Input().
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process for Input(); a Task will do with a CSource.
 
 **OWNERSHIP**
@@ -5587,7 +5593,7 @@ removed directory's own lock - dos's, not `lock` - is unlocked.
 - Waits: yes. It takes the device list's lock for writing, and SameLock
   and UnLock send packets.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -5642,7 +5648,7 @@ nobody else is removing one. The node's `next` is cleared.
 
 - Waits: yes, for the entry and delete locks.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do. The caller holds the list with LDF_WRITE.
 
 **OWNERSHIP**
@@ -5701,7 +5707,7 @@ list it was loaded with is unloaded, and its memory freed.
 
 - Waits: yes, for the segment list's semaphore.
 - Interrupts: not safe.
-- Forbid: not to be held; it may wait.
+- Locks: no spinlock may be held: it may wait.
 - Process: a Task will do. Not while holding LockSegmentList, which
   it takes exclusive.
 
@@ -5766,7 +5772,7 @@ directory, `to`); the handler strips the device part of each name.
 
 - Waits: yes, for the handler's answer.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -5824,7 +5830,7 @@ back to whoever answered it. From a plain task dp_Port is left null.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5886,7 +5892,7 @@ Input()'s buffer are put back as they were.
 
 - Waits: whatever the command does.
 - Interrupts: not safe.
-- Forbid: not to be held; the command may wait.
+- Locks: no spinlock may be held: the command may wait.
 - Process: a Process.
 
 **OWNERSHIP**
@@ -5947,7 +5953,7 @@ number (RAW:, a window) has no medium to compare. No packet is sent.
 
 - Waits: yes, for the device list (LockDosList, LDF_READ).
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6005,7 +6011,7 @@ be sent the answer is LOCK_SAME_VOLUME.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -6064,7 +6070,7 @@ position is read.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -6121,8 +6127,7 @@ freed.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -6177,7 +6182,7 @@ Sets `pr_CIS`. The old handle is neither closed nor flushed.
 
 - Waits: no.
 - Interrupts: no. It reads the running task.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process; from a plain Task the answer is null and nothing
   changes.
 
@@ -6232,7 +6237,7 @@ Sets `pr_COS`. The old handle is neither closed nor flushed.
 
 - Waits: no.
 - Interrupts: no. It reads the running task.
-- Forbid: not needed, and not taken.
+- Locks: none taken, none needed.
 - Process: a Process; from a plain Task the answer is null and nothing
   changes.
 
@@ -6291,7 +6296,7 @@ sends it back to dp_Port.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6347,7 +6352,7 @@ line is set then; `string` is never freed by dos.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a process; a plain task changes nothing.
 
 **OWNERSHIP**
@@ -6410,7 +6415,7 @@ object isn't found.
 
 - Waits: yes, for the handler's answer.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -6467,8 +6472,7 @@ closed or freed.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -6529,8 +6533,7 @@ both.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a CLI process; any other caller gets false.
 
 **OWNERSHIP**
@@ -6590,7 +6593,7 @@ directory is tried in turn while the object isn't found.
 
 - Waits: yes, for the handler's answer.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -6648,7 +6651,7 @@ file gains are 0.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -6704,8 +6707,7 @@ closed or freed.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -6758,7 +6760,7 @@ pr_Result2 is set. From a plain task nothing is set.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a process; a plain task changes nothing.
 
 **OWNERSHIP**
@@ -6819,7 +6821,7 @@ to the handler.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -6887,7 +6889,7 @@ the object isn't found.
 
 - Waits: yes, for the handler's answer.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -6943,8 +6945,7 @@ closed or freed.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a Process for an answer; from a plain Task it does
   nothing and answers null.
 
@@ -7004,8 +7005,7 @@ refused whole and the old one kept, rather than stored cut.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a CLI process; any other caller gets false.
 
 **OWNERSHIP**
@@ -7061,8 +7061,7 @@ refused whole and the old one kept, rather than stored cut.
 - Waits: no.
 - Interrupts: not safe; it reads and changes the running task's
   Process.
-- Forbid: not needed, and not taken; only the running process
-  touches these fields.
+- Locks: none taken; only the running process touches these fields.
 - Process: a CLI process; any other caller gets false.
 
 **OWNERSHIP**
@@ -7123,7 +7122,7 @@ directory is tried in turn while the object isn't found.
 
 - Waits: yes, for the handler's answer.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; only a process gets IoErr.
 
 **OWNERSHIP**
@@ -7189,7 +7188,7 @@ handle is freed. There is no smallest size.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -7262,7 +7261,7 @@ local variables, so it always sets the global one.
 - Waits: yes, for a global variable (file system packets); not for a
   local one.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do for a global variable; only a process has
   local ones and gets IoErr.
 
@@ -7323,7 +7322,7 @@ still returns the position after its separator, so the walk goes on.
 
 - Waits: no.
 - Interrupts: safe. It reads `name` and writes `buf`.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7389,7 +7388,7 @@ ds_Days, the time ds_Minute and ds_Tick.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7444,7 +7443,7 @@ reading stops at the first byte that is not a digit. There is no '+'.
 
 - Waits: no.
 - Interrupts: safe. It reads `string` and writes `value`.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7514,7 +7513,7 @@ interactive shell, is read before the input and closed by the shell.
 - Waits: yes. It sends packets, and a synchronous start waits for the
   shell to end.
 - Interrupts: not callable.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process's CLI and current directory are
   passed on, and only a process gets IoErr.
 
@@ -7577,7 +7576,7 @@ first out, before the buffer. The handle is a reading one from then on.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -7631,7 +7630,7 @@ goes. Nothing must still run in it.
 
 - Waits: no.
 - Interrupts: not callable.
-- Forbid: not needed, and not taken.
+- Locks: takes dos's code lock around the list of loaded files.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -7686,7 +7685,7 @@ there.
 
 - Waits: yes, for the handler's answer to a packet.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; a process gets IoErr().
 
 **OWNERSHIP**
@@ -7738,7 +7737,7 @@ bits are not looked at.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: allowed.
+- Locks: none needed.
 - Process: a Task will do; the task that locked the list.
 
 **OWNERSHIP**
@@ -7790,7 +7789,7 @@ LockSegmentList wants one UnLockSegmentList.
 
 - Waits: no.
 - Interrupts: not safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the Task that locked it.
 
 **OWNERSHIP**
@@ -7851,7 +7850,7 @@ failed write the rest is formatted and dropped.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -7908,7 +7907,7 @@ from a Task or a process without output.
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 
@@ -7967,7 +7966,7 @@ line.
 
 - Waits: yes: up to `timeout`, for the handler's answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -8028,7 +8027,7 @@ otherwise the next message at msg_port, waiting for one.
 
 - Waits: yes.
 - Interrupts: no.
-- Forbid: never under Forbid.
+- Locks: no spinlock may be held.
 - Process: a Process; a Task gets null.
 
 **OWNERSHIP**
@@ -8091,7 +8090,7 @@ carries the bytes.
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
 - Interrupts: no. It waits.
-- Forbid: not taken, and never to be held around it: it waits.
+- Locks: none taken; no spinlock may be held around it: it waits.
 - Process: a Task will do; the answer comes back on a port of its own.
 
 **OWNERSHIP**
@@ -8146,7 +8145,7 @@ from a Task or a process without output).
 - Waits: only when the buffer has to go to or come from the handler;
   then it sends a packet and waits for the answer.
 - Interrupts: no. It may wait.
-- Forbid: not taken, and never to be held around it: it may wait.
+- Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
   a handle take turns themselves.
 

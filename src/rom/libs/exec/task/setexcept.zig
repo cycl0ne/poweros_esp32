@@ -34,8 +34,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no - it is the running task's.
-/// - Forbid: not needed; it takes Disable. Under Forbid the exception is
-///   postponed to the `Permit`.
+/// - Locks: takes Disable. With a spinlock held the exception is postponed to
+///   the `ReleaseLock`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

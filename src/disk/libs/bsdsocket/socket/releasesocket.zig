@@ -37,7 +37,7 @@ const _lock = @import("../lock/_lock.zig");
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

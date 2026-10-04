@@ -33,7 +33,7 @@ const colour = @import("_colour.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: callable; it touches nothing but its arguments.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

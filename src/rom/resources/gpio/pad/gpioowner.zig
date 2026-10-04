@@ -28,7 +28,7 @@ const GpioBase = @import("../gpio_base.zig").GpioBase;
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: yes.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

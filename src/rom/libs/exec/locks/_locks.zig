@@ -13,8 +13,8 @@
 //! message instead of waiting, so a lock can be waited for beside a port
 //! and a timer in one Wait.
 //!
-//! This is the lock for anywhere Forbid will not do - which is anywhere
-//! the holder has to wait, since a task cannot wait under Forbid.
+//! This is the lock for a holder that has to wait, since a task cannot
+//! wait holding a spinlock.
 //!
 //! The calls are a file each in this folder; this file is what they share:
 //! taking a semaphore or queueing for it, giving it up and handing it to
@@ -211,8 +211,7 @@ pub fn reply(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) voi
 /// The flag is read through a volatile pointer because it is written by
 /// another task - the one releasing the semaphore - and nothing in the
 /// loop would otherwise make the compiler read it again. The caller holds
-/// no lock; a `Wait` under the caller's own Forbid breaks it while it
-/// sleeps, which is how a semaphore can be obtained under Forbid at all.
+/// no spinlock: `Wait` with one held is a dead end.
 ///
 /// INPUTS:
 /// - `base` - exec: the jump table `Wait` goes through.
@@ -391,7 +390,13 @@ pub fn checkWait(base: *ExecBase, where: usize) void {
     hardware.restore(state);
     if (in_interrupt) @panic("Wait called from an interrupt");
     const lock = held orelse return;
-    ruleBroken(base, "Wait called while %.40s is held", .{nameOf(lock)}, where);
+    // A dead end: the core's count of locks held is the core's, not the
+    // task's, so a task that waited holding one would leave the next task
+    // on its core unable to be switched - and everyone after the lock
+    // spinning for good.
+    var text: [120]u8 = undefined;
+    format(base, &text, "Wait called while %.40s is held", .{nameOf(lock)});
+    base.iface().AlertAt(sdk.exec.AT_DeadEnd | sdk.exec.AN_LockRule, where, @ptrCast(&text));
 }
 
 /// A lock given back that the core does not hold.

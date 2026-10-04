@@ -97,7 +97,7 @@ listener goes on listening.
 
 - Waits: yes, unless the listener does not wait.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; the one that opened the base.
 
 **OWNERSHIP**
@@ -156,7 +156,7 @@ the list already stays where it is.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -246,7 +246,7 @@ the address is (a gratuitous ARP).
 
 - Waits: yes: the device is opened and asked, and the task started.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a process, to load the device from DEVS:.
 
 **OWNERSHIP**
@@ -314,7 +314,7 @@ address, the one with the longest netmask is taken.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -381,7 +381,7 @@ its broadcasts.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -445,7 +445,7 @@ and answers `EBADF`.
 
 - Waits: only for the stack's lock, unless SO_LINGER has a time.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -516,7 +516,7 @@ A device already in the state asked for is left as it is.
 
 - Waits: for the stack's lock, and for the device with `IFA_State`.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do; `IFA_State` makes a message port.
 
 **OWNERSHIP**
@@ -593,7 +593,7 @@ replaces the peer.
 
 - Waits: for a stream socket, yes, unless it does not wait.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -651,7 +651,7 @@ The route is found by its destination and netmask, as it was added.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -707,7 +707,7 @@ A call that succeeds leaves it as it was.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -763,7 +763,7 @@ and what they point at are gone after it.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -844,7 +844,7 @@ of - an IPv6 link-local address does not count.
 
 - Waits: yes: for the name servers, as GetHostByName.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a process, to read the hosts file; a Task will do for an
   address given as text.
 
@@ -911,7 +911,7 @@ Descriptors run from 0 to one less than this.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -975,7 +975,7 @@ is looked up as IPv4. Reverse answers are not cached.
 
 - Waits: yes, for the name servers.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a process, to read the hosts file.
 
 **OWNERSHIP**
@@ -1041,7 +1041,7 @@ answers is cached for its time to live, between 30 s and an hour.
 
 - Waits: yes, for the name servers; the break signals end it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a process, to read the hosts file; a task goes without it.
 
 **OWNERSHIP**
@@ -1104,7 +1104,7 @@ SetHostName's once it has been called.
 
 - Waits: for the stack's lock, and the first time for the file.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1173,7 +1173,7 @@ the port's name if GetAddrInfo knows one, else its number.
 
 - Waits: yes, for the name servers, unless `NI_NUMERICHOST`.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a process, to read the hosts file.
 
 **OWNERSHIP**
@@ -1245,7 +1245,7 @@ them.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1307,7 +1307,7 @@ As much of the address is written as there is room for.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1368,7 +1368,7 @@ address is written as there is room for.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1433,7 +1433,7 @@ The flags answer 1 or 0.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1497,7 +1497,7 @@ WaitSelect.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1558,7 +1558,7 @@ The name is copied with its NUL.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1617,7 +1617,7 @@ and the next interface added may take it then.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1675,7 +1675,7 @@ Only the four-part decimal form is taken.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1731,7 +1731,7 @@ Four numbers from 0 to 255, with dots between.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1794,7 +1794,7 @@ dotted: `::ffff:10.0.2.15`.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1858,7 +1858,7 @@ dotted IPv4 address if the text likes.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1923,7 +1923,7 @@ waited.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1987,7 +1987,7 @@ the backlog.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2047,7 +2047,7 @@ afterwards do not change it. Each node's `ln_Name` points at its
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2112,7 +2112,7 @@ opener's signal, and closing the library closes it.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2177,7 +2177,7 @@ belong to one moment.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2237,7 +2237,7 @@ RecvFrom without the sender's address.
 
 - Waits: yes, unless the socket does not wait.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; the one that opened the base.
 
 **OWNERSHIP**
@@ -2315,7 +2315,7 @@ stack - until a datagram comes, one of the opener's break signals
 
 - Waits: yes, unless the socket does not wait.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; it must be the one that opened the base,
   whose signals the wait is on.
 
@@ -2374,7 +2374,7 @@ The list and its nodes are one block, freed at once.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2436,7 +2436,7 @@ own, each with its own base.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2493,7 +2493,7 @@ The servers after it move up.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2553,7 +2553,7 @@ was the last interface on a device, the task ends as well.
 
 - Waits: yes, until the task has done it.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2613,7 +2613,7 @@ SendTo without an address.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2699,7 +2699,7 @@ their way when this returns.
 
 - Waits: for a stream socket, while its ring is full.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2758,7 +2758,7 @@ Another size, or null, stops the writing.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2818,7 +2818,7 @@ writes that file, for the name to hold from the next boot.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2910,7 +2910,7 @@ is no interface of is `ENXIO`.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2971,7 +2971,7 @@ answers 0. The socket stays open until CloseSocket.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3042,7 +3042,7 @@ unless FIONBIO says otherwise.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do; it must be the one that opened the base.
 
 **OWNERSHIP**
@@ -3134,7 +3134,7 @@ the other system tags work as anywhere.
 
 - Waits: only for the stack's lock.
 - Interrupts: no.
-- Forbid: not held.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3216,7 +3216,7 @@ program waits on its sockets and on its windows' ports in one call.
 
 - Waits: yes, unless something is ready or the timeout is zero.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do; the one that opened the base.
 
 **OWNERSHIP**

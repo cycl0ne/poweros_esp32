@@ -47,7 +47,7 @@ const rtu = @import("../protocol/rtu.zig");
 /// CONTEXT:
 /// - Waits: yes, on the device.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do. The context's reply port is the caller's,
 ///   so every call with it must come from the same task.
 ///

@@ -54,7 +54,7 @@ const DevProc = dos.DevProc;
 /// - Waits: yes: for the device list's locks, and for a starting
 ///   handler's answer.
 /// - Interrupts: not safe.
-/// - Forbid: not to be held; it waits.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do for a name with a device; a name without
 ///   one, CONSOLE: and PROGDIR: need a Process.
 ///

@@ -38,7 +38,7 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// CONTEXT:
 /// - Waits: yes, while another task holds the layer.
 /// - Interrupts: no. It may wait.
-/// - Forbid: must not be held: waiting for the lock would break it.
+/// - Locks: no spinlock may be held: it waits for a lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

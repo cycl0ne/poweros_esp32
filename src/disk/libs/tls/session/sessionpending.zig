@@ -30,7 +30,7 @@ const _session = @import("_session.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: the task that opened the session.
 ///
 /// OWNERSHIP:

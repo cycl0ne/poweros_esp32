@@ -33,7 +33,7 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// IEQUALIFIER_LALT) or IEQUALIFIER_CONTROL.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed. - Process: a Task
+/// - Waits: no. - Interrupts: no. - Locks: none needed. - Process: a Task
 ///   will do.
 ///
 /// OWNERSHIP:

@@ -42,7 +42,7 @@ const Window = @import("../window/_window.zig").Window;
 /// CONTEXT:
 /// - Waits: until it is answered.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

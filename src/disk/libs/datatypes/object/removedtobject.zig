@@ -39,7 +39,7 @@ const DataTypesBase = _base.DataTypesBase;
 /// CONTEXT:
 /// - Waits: for the window's layer, and for whatever the object stops.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

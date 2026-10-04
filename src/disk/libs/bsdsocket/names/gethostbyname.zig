@@ -38,7 +38,7 @@ const resolver = @import("resolver.zig");
 /// CONTEXT:
 /// - Waits: yes, for the name servers; the break signals end it.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a process, to read the hosts file; a task goes without it.
 ///
 /// OWNERSHIP:

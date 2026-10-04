@@ -37,7 +37,7 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed, though the list must not change meanwhile:
+/// - Locks: none taken, though the list must not change meanwhile:
 ///   `LockLayerInfo` is how to be sure.
 /// - Process: a Task will do.
 ///

@@ -41,8 +41,8 @@ const Interrupt = sdk.exec.Interrupt;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It takes Disable, which an interrupt may.
-/// - Forbid: not needed. Disable is what guards the vectors, since they are
-///   what interrupts themselves touch.
+/// - Locks: takes Disable, which guards the vectors, since they are what
+///   interrupts themselves touch.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -28,7 +28,7 @@ const DosList = dos.DosList;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed.
+/// - Locks: none needed.
 /// - Process: a Task will do. The caller holds the list (LockDosList).
 ///
 /// OWNERSHIP:

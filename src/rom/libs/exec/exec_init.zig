@@ -37,11 +37,14 @@ pub const LIBRARY_VERSION = 1;
 /// ring as large as the board says, six followers. 3: spinlocks
 /// (InitLock, AcquireLock, AttemptLock, ReleaseLock) and their rules,
 /// checked on every call; the semaphores, the memory and the ports kept
-/// under exec's own locks instead of Forbid and Disable. 4: the second
+/// under exec's own locks. 4: the second
 /// core - its own state, its own dispatcher, HoldOtherCores and
 /// ReleaseOtherCores, SetTaskAffinity and CoreTask. 5: each core's time
-/// in tasks, idle and in interrupts (ReadCoreTimes).
-pub const LIBRARY_REVISION = 5;
+/// in tasks, idle and in interrupts (ReadCoreTimes). 6: every list under a
+/// lock of its own - LockExecList and UnlockExecList for a program that
+/// walks one, a library's own lock and pin around its vectors,
+/// DetachLibrary - SetTaskEndMsg and RemoveMsg, and Forbid and Permit gone.
+pub const LIBRARY_REVISION = 6;
 const BUILD_DATE = "04.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -83,8 +86,7 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // is nothing to call a vector through yet (codex rule 1).
     const sys: *ExecBase = @fieldParentPtr("lib", lib);
     exec.RawIOInit(sys);
-    // Every core's own state as it starts: no Forbid, no Disable, no
-    // locks held.
+    // Every core's own state as it starts: no Disable, no locks held.
     sys.cpus = @splat(.{});
     sys.log_followers = @splat(.{});
     sys.log_told = 0;
@@ -94,13 +96,14 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // from the struct's defaults. A second core counts itself in when it
     // starts.
     sys.disable_lock = 0;
-    sys.forbid_lock = 0;
-    sys.forbid_waiters = 0;
+    sys.multitasking = 0;
     sys.cores_running = 1;
     sys.share_cores = 0;
     exec.InitLock(sys, &sys.lock_semaphores, "exec semaphores", _locks.order_semaphores, 0);
     exec.InitLock(sys, &sys.lock_memory, "exec memory", _locks.order_memory, 0);
     exec.InitLock(sys, &sys.lock_ports, "exec ports", _locks.order_ports, sdk.exec.LOCKF_INTERRUPT);
+    exec.InitSemaphore(sys, &sys.sem_libraries);
+    exec.InitSemaphore(sys, &sys.sem_memhandlers);
     sys.lib_list.init(.library);
     sys.device_list.init(.device);
     sys.resource_list.init(.resource);
@@ -113,11 +116,13 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     exec.SysBase = sys;
     // From here the table exists, so exec calls itself through it.
     const sys_base = sys.iface();
+    // The tasks first: adding takes the library list's semaphore, and a
+    // semaphore is held by a task.
+    _task.initTasks(sys) catch return null;
     sys_base.AddLibrary(lib);
     // The flusher finds exec's base in its data.
     library_flusher.data = sys;
     sys_base.AddMemHandler(&library_flusher);
-    _task.initTasks(sys) catch return null;
     exec.initialized = true;
     const boot: *const exec.BootInfo = @ptrCast(@alignCast(seg_list orelse return lib));
     // Before any resident runs: from here code without a base finds exec.
@@ -129,16 +134,17 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     return lib;
 }
 
-/// initExec's second half, the system start: turns Forbid on and leaves it
-/// on (the kernel's Permit starts multitasking), scans the ROM tags,
-/// creates the exec task, and starts the RTF_SINGLETASK residents.
+/// initExec's second half, the system start: scans the ROM tags, creates
+/// the exec task, and starts the RTF_SINGLETASK residents. Multitasking is
+/// not started yet (`ExecBase.multitasking`), so the exec task waits for
+/// the kernel's `startMultitasking`.
 ///
 /// INPUTS:
 /// - `base` - exec, just made.
 /// - `boot` - where the other ROM tags are.
 pub fn startSystem(base: *ExecBase, boot: *const exec.BootInfo) error{OutOfMemory}!void {
     const sys_base = base.iface();
-    sys_base.Forbid();
+    base.multitasking = 0;
     try _resident.initResidents(base, boot.rom_start, boot.rom_end);
     _ = sys_base.CreateTask("exec", exec_task_pri, &execTask, exec_task_stack) orelse
         return error.OutOfMemory;

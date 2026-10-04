@@ -37,7 +37,7 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not needed. It holds interrupts off while it changes the
+/// - Locks: none needed. It holds interrupts off while it changes the
 ///   followers.
 /// - Process: a Task will do.
 ///

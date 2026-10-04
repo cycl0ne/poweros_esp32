@@ -46,6 +46,8 @@ pub const AslBase = extern struct {
     /// Every requester made and not yet freed, so the expunge can refuse
     /// while one is out.
     requesters: exec.MinList = .{},
+    /// The list above, which any opener's task changes: a spinlock.
+    requester_lock: exec.Lock = .{},
 };
 
 /// The base from exec's Library header.

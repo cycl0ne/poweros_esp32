@@ -29,7 +29,7 @@ const TaskEndHook = sdk.exec.TaskEndHook;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed; it takes Forbid for the list itself.
+/// - Locks: takes Disable, which the hooks are kept under.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -52,8 +52,8 @@ const TaskEndHook = sdk.exec.TaskEndHook;
 /// ```
 pub fn RemTaskEndHook(base: *ExecBase, hook: *TaskEndHook) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.Disable();
+    defer sys.Enable();
     if (hook.task == null) return;
     sys.Remove(@ptrCast(&hook.node));
     hook.task = null;

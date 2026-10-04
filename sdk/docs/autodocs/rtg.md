@@ -102,7 +102,7 @@ transport would sit on the list answering nothing, so it is refused.
 
 - Waits: yes, while another task holds the driver list.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -159,7 +159,7 @@ and should be brief. A server that answers non-zero stops the chain.
 
 - Waits: no.
 - Interrupts: safe. It takes Disable.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -224,7 +224,7 @@ and format.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -282,7 +282,7 @@ engine or its refresh.
 
 - Waits: no.
 - Interrupts: no. It allocates.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -339,7 +339,7 @@ line up where they meet.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -393,7 +393,7 @@ As for `FillRect`.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -446,7 +446,7 @@ in its information; one that cannot answers what was last set.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -502,7 +502,7 @@ shown, before the driver is asked.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -554,7 +554,7 @@ draw on the display can use it directly.
 
 - Waits: no.
 - Interrupts: safe. It reads one field.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -605,7 +605,7 @@ The mode the last `SetBoardMode` that worked put the board in.
 
 - Waits: no.
 - Interrupts: safe. It reads one field.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -659,7 +659,7 @@ and may overlap; the engine is what copies in the right order.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -721,7 +721,7 @@ the driver and a number: rgb0, rgb1.
 - Waits: yes, while another task holds the board list, and if the
   driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -780,7 +780,7 @@ which names the transport with `RTGA_Transport` when its board is made.
 - Waits: yes, while another task holds the board list, and if the
   driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -838,7 +838,7 @@ The driver and a transport it used are one open less.
 - Waits: yes, while another task holds the board list, and if the
   driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -893,7 +893,7 @@ transport leaves the list.
 - Waits: yes, while another task holds the board list, and if the
   driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -951,7 +951,7 @@ and the layer above does the work in software.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1002,7 +1002,7 @@ An exact match on the name.
 
 - Waits: yes, while another task is changing the board list.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1059,7 +1059,7 @@ the default.
 
 - Waits: no.
 - Interrupts: no. It calls through the jump table.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1112,7 +1112,7 @@ as the answer is used.
 
 - Waits: yes, while another task holds the driver list.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1167,7 +1167,7 @@ this library.
 
 - Waits: no.
 - Interrupts: safe in itself: it reads the list.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1221,7 +1221,7 @@ the caller's, to free once another is shown.
 
 - Waits: no.
 - Interrupts: no. It frees memory.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1279,7 +1279,7 @@ turned ones, since they are what a caller draws on.
 
 - Waits: only if the driver's brightness read does.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1336,7 +1336,7 @@ the counts again.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1391,7 +1391,7 @@ this library.
 
 - Waits: no.
 - Interrupts: safe in itself: it reads the list.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1443,7 +1443,7 @@ As for `FillRect`: cut to the buffer here, and the engine's or nobody's.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1495,7 +1495,7 @@ while it is held. It nests.
 
 - Waits: yes, while another task holds the driver list.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1551,7 +1551,7 @@ is the business of whoever draws.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1609,10 +1609,13 @@ into the picture's own order on its way out, before the turn.
 
 **CONTEXT**
 
-- Waits: no. Made for an input handler, on every pointer event.
+- Waits: for the pointer's lock while another task changes the pointer,
+  and on a board that sends the rows the pointer left over a bus, for
+  that. Made for an input handler, on every pointer event.
 - Interrupts: no. A driver may send the rows the pointer left over a
   bus.
-- Forbid: taken for the moment it takes the driver to move it.
+- Locks: takes rtg's pointer lock, a semaphore, for the moment it takes the
+  driver to move it; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1663,7 +1666,7 @@ The boards alive, in the order they were made.
 
 - Waits: yes, while another task is changing the board list.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1718,7 +1721,7 @@ The modes are the driver's, fixed when the board was made.
 
 - Waits: no.
 - Interrupts: safe: the modes do not change after the board is made.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1771,7 +1774,7 @@ for the whole walk, so nothing joins or leaves in between.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed; the caller holds the list.
+- Locks: none taken; the caller holds the list.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1830,7 +1833,7 @@ that is not black.
 
 - Waits: no.
 - Interrupts: safe. It works on its arguments alone.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1888,7 +1891,7 @@ buffer.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1941,7 +1944,7 @@ not taken off under them.
 
 - Waits: yes, while another task holds the driver list.
 - Interrupts: no. It may wait.
-- Forbid: must not be held: waiting for the lock would break it.
+- Locks: no spinlock may be held: it waits for a lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1995,7 +1998,7 @@ it half changed; once this returns the server is not called again.
 
 - Waits: no.
 - Interrupts: safe. It takes Disable.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2047,7 +2050,7 @@ still prints something true about a newer code.
 
 - Waits: no.
 - Interrupts: safe.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2100,7 +2103,7 @@ leave it here.
 
 - Waits: no.
 - Interrupts: safe. It reads one field.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2159,7 +2162,7 @@ Nothing else reaches the bus between the command and the answer.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2212,7 +2215,7 @@ fn SetBoardBrightness(_: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2265,7 +2268,7 @@ that.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2318,7 +2321,7 @@ For glass whose visible area does not start where the controller's does.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2377,7 +2380,7 @@ information follows it.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2442,10 +2445,11 @@ Whether it is seen is ShowBoardPointer's business.
 
 **CONTEXT**
 
-- Waits: no. A driver's pointer ops never wait.
+- Waits: for rtg's pointer lock while another task moves the pointer,
+  and for a driver that sends the pointer's rows over a bus.
 - Interrupts: no. It allocates.
-- Forbid: taken while the driver changes images, so a move cannot come
-  between.
+- Locks: takes rtg's pointer lock while the driver changes images, so a move
+  cannot come between; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2518,7 +2522,7 @@ next.
 
 - Waits: for the display's next frame, where the board streams one.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2593,7 +2597,7 @@ this returns when it has.
 
 - Waits: for the display's next frame, where the board streams one.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2658,9 +2662,11 @@ drawn. Shown with no image set, nothing appears until one is.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: for rtg's pointer lock while another task changes the pointer,
+  and for a driver that sends the pointer's rows over a bus.
 - Interrupts: no. A driver may send the pointer's rows over a bus.
-- Forbid: taken while the driver changes it.
+- Locks: takes rtg's pointer lock while the driver changes it; no spinlock
+  may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2715,7 +2721,7 @@ counts in the board's statistics.
 
 - Waits: no.
 - Interrupts: yes: this is what a driver's interrupt calls.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: any, or none.
 
 **OWNERSHIP**
@@ -2770,7 +2776,7 @@ caller draws on.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2827,7 +2833,7 @@ they have, and the bytes must stay put until then.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2882,7 +2888,7 @@ The driver's own send, handed straight through.
 
 - Waits: only if the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2933,7 +2939,7 @@ One `LockRtgDrivers` given back.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that took it.
 
 **OWNERSHIP**
@@ -2988,7 +2994,7 @@ range.
 
 - Waits: no.
 - Interrupts: safe. It works on its arguments alone.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3041,7 +3047,7 @@ finished before it returns.
 
 - Waits: yes, while the engine works.
 - Interrupts: no. The driver may wait on its bus.
-- Forbid: must not be held: a driver may wait.
+- Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3098,7 +3104,7 @@ waits.
 
 - Waits: yes.
 - Interrupts: no. It waits.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

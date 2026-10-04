@@ -26,7 +26,7 @@ const currentProcess = _process.currentProcess;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: allowed.
+/// - Locks: none needed.
 /// - Process: a process; a plain task gets null.
 ///
 /// OWNERSHIP:

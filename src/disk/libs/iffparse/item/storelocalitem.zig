@@ -39,7 +39,7 @@ const FindPropContext = @import("../context/findpropcontext.zig").FindPropContex
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

@@ -42,7 +42,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: only if the driver's brightness read does.
 /// - Interrupts: no.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

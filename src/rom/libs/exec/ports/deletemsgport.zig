@@ -31,7 +31,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It frees memory and a signal.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do, and it must be **the task that created it**.
 ///
 /// OWNERSHIP:

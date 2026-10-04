@@ -55,7 +55,7 @@ const tcp_user = @import("../tcp/user.zig");
 /// CONTEXT:
 /// - Waits: yes, unless the socket does not wait.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; it must be the one that opened the base,
 ///   whose signals the wait is on.
 ///

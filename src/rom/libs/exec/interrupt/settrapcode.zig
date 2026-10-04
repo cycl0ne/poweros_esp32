@@ -39,8 +39,7 @@ const TrapFn = sdk.exec.TrapFn;
 ///   exception, not on the task's own time.
 /// - Interrupts: no - it reads the running task, and an interrupt has none
 ///   of its own.
-/// - Forbid: not needed. The field belongs to the one task that can write
-///   it.
+/// - Locks: none needed. The field belongs to the one task that can write it.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

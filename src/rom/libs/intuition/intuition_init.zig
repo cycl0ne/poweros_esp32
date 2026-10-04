@@ -112,13 +112,15 @@ fn intuitionBase(lib: *exec.Library) *IntuitionBase {
 /// - Waits: only for the semaphore it has just made, which nobody else
 ///   can hold yet.
 /// - Interrupts: no; it runs on the exec task at cold start.
-/// - Forbid: not held. InitCode takes none.
+/// - Locks: none held. InitCode takes none.
 /// - Process: a Task will do.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const ib = intuitionBase(lib);
     lib.revision = LIBRARY_REVISION;
     ib.sys_base = sys_base;
+    sys_base.InitLock(&ib.look_lock, "intuition look", exec.LOCKORDER_DRIVER, 0);
+    sys_base.InitLock(&ib.mark_lock, "intuition marks", exec.LOCKORDER_DRIVER, 0);
     ib.font_height = @import("screen/_screen.zig").default_font_height;
     ib.system_fonts = @splat(null);
     sys_base.InitSemaphore(&ib.system_font_lock);

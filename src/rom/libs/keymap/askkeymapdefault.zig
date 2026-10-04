@@ -26,7 +26,7 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// "deutsch" until SetKeyMapDefault changes it.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed. - Process: a Task
+/// - Waits: no. - Interrupts: no. - Locks: none needed. - Process: a Task
 ///   will do.
 ///
 /// OWNERSHIP:

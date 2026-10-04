@@ -34,7 +34,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///   taken from somewhere that must not block - an interrupt's task, or
 ///   code holding another lock.
 /// - Interrupts: no. It takes exec's semaphore lock.
-/// - Forbid: may be held.
+/// - Locks: takes exec's semaphore lock for a moment.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

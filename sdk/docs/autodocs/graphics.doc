@@ -113,7 +113,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: yes, while another task holds the font list.
 	- Interrupts: no.
-	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Locks: no spinlock may be held: it waits for the font list's semaphore.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -173,7 +173,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it allocates.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -231,7 +231,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -271,7 +271,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -315,7 +315,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -355,7 +355,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -397,7 +397,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -442,7 +442,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -490,7 +490,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -539,7 +539,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -585,7 +585,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt
 	  does not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -628,7 +628,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
 	  not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -663,13 +663,15 @@ graphics.library/XorRegionRegion
 
    BEHAVIOR
 	The one way to take a font off from where waiting is not allowed: a
-	low-memory handler runs under Forbid, and a font loader freeing the
-	fonts nobody holds there calls this, skipping any it cannot have.
+	low-memory handler runs inside AllocMem, whose caller may hold
+	anything, and a font loader freeing the fonts nobody holds there calls
+	this, skipping any it cannot have.
 
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: allowed; this is what it is for.
+	- Locks: any may be held: it only tries the font list's lock, which is what
+	  it is for.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -722,7 +724,7 @@ graphics.library/XorRegionRegion
 	this does nothing for it.
 
    CONTEXT
-	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+	Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
    OWNERSHIP
 	Nothing is allocated.
@@ -732,9 +734,8 @@ graphics.library/XorRegionRegion
 
    BUGS
 	A `BeginDraw` whose `EndDraw` never comes leaves the buffer gathering
-	for ever and nothing more reaches the display from it, as a `Forbid`
-	with no `Permit` stops the machine scheduling. Pair them on every
-	path out, an error return included.
+	for ever and nothing more reaches the display from it. Pair them on
+	every path out, an error return included.
 
    SEE ALSO
 	`EndDraw`, `rtg.RefreshBitMap`
@@ -781,7 +782,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -843,7 +844,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it
 	  wrote on to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -902,7 +903,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. The work is unbounded.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -951,7 +952,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1018,7 +1019,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1080,7 +1081,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1130,7 +1131,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1179,7 +1180,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1236,7 +1237,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. The work is unbounded and it hands rows on at the end.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1304,7 +1305,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1357,7 +1358,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. A large area is a great deal of work.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1419,7 +1420,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1457,7 +1458,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It frees memory.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1494,7 +1495,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: yes, while another task holds the font list.
 	- Interrupts: no.
-	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Locks: no spinlock may be held: it waits for the font list's semaphore.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1567,9 +1568,9 @@ graphics.library/XorRegionRegion
 
    CONTEXT
 	- Waits: no.
-	- Interrupts: no. It allocates, and finding the View takes Forbid.
-	- Forbid: not held by the caller and not wanted; the View is read under
-	  a Forbid of its own.
+	- Interrupts: no. It allocates, and finding the View takes rtg's board
+	  list.
+	- Locks: none needed; the View is looked up under rtg's board list.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1637,7 +1638,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It frees memory.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1696,7 +1697,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. The work is unbounded and it hands rows on at the end.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1758,7 +1759,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1802,7 +1803,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1848,7 +1849,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1892,7 +1893,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1936,7 +1937,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -1982,7 +1983,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2038,7 +2039,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2102,7 +2103,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2153,7 +2154,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2195,7 +2196,7 @@ graphics.library/XorRegionRegion
 	last one closes. Without a `BeginDraw` to match, it does nothing.
 
    CONTEXT
-	Waits: no. Interrupts: yes. Forbid: yes. Process: no.
+	Waits: no. Interrupts: yes. Locks: none needed. Process: no.
 
    OWNERSHIP
 	Nothing is allocated.
@@ -2257,7 +2258,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: only if the hook does.
 	- Interrupts: no. It draws, and it may call a hook.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2311,7 +2312,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2380,7 +2381,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded and it hands rows on to
 	  rtg.library at the end.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2432,7 +2433,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads the font and nothing else.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2476,7 +2477,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads its argument and the DPI.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2516,7 +2517,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it frees memory.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2557,7 +2558,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it frees memory.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2613,7 +2614,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it calls utility.library to walk the list.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2667,7 +2668,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It is a lookup in the ROM and touches nothing.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2726,7 +2727,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2769,7 +2770,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: yes, while a task changes the list.
 	- Interrupts: no.
-	- Forbid: must not be held: it may wait.
+	- Locks: no spinlock may be held: it may wait.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2815,7 +2816,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort, which an interrupt
 	  does not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2860,7 +2861,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. It allocates.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2901,7 +2902,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do; it must hold `LockFonts`.
 
    OWNERSHIP
@@ -2946,7 +2947,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -2998,7 +2999,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: yes, while another task holds the font list.
 	- Interrupts: no.
-	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Locks: no spinlock may be held: it waits for the font list's semaphore.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3049,7 +3050,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3090,7 +3091,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3132,7 +3133,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe in itself: it only reads the region.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3179,7 +3180,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
 	  not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3242,7 +3243,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded - a full-screen fill is a
 	  million pixels - and it hands rows on to rtg.library at the end.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3310,7 +3311,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe in itself: it only reads the region.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3361,7 +3362,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: yes, while another task holds the font list.
 	- Interrupts: no.
-	- Forbid: must not be held: it waits on the font list's semaphore.
+	- Locks: no spinlock may be held: it waits for the font list's semaphore.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3421,7 +3422,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it
 	  wrote on to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3484,7 +3485,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. The work is unbounded and it hands rows on at the end.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3542,7 +3543,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no; it calls utility.library to walk the list.
-	- Forbid: not held and not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3601,7 +3602,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It changes the caller's RastPort, which an interrupt
 	  does not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3640,7 +3641,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3709,7 +3710,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3762,7 +3763,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
 	  not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3827,7 +3828,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
 	  not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3878,7 +3879,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not held and not wanted.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3932,7 +3933,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. It reads the caller's RastPort, which an interrupt does
 	  not share.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -3971,7 +3972,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4031,7 +4032,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: safe. It reads its arguments and nothing else.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4094,7 +4095,7 @@ graphics.library/XorRegionRegion
 	- Waits: no, but it allocates.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote
 	  on to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4141,7 +4142,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 	  to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4196,7 +4197,7 @@ graphics.library/XorRegionRegion
 	- Waits: no.
 	- Interrupts: no. The work is unbounded, and it hands the rows it wrote
 	  on to the display at the end.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4242,7 +4243,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -4282,7 +4283,7 @@ graphics.library/XorRegionRegion
    CONTEXT
 	- Waits: no.
 	- Interrupts: no. Rectangles come from the region pool.
-	- Forbid: not needed; the region is the caller's to keep others off.
+	- Locks: none taken; keeping others off the region is the caller's.
 	- Process: a Task will do.
 
    OWNERSHIP

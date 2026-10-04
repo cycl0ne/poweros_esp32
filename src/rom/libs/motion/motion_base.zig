@@ -14,7 +14,8 @@ pub const MotionBase = extern struct {
     sys_base: *ExecBase,
     /// For the tags an animation is made and changed with.
     utility_base: *UtilityBase,
-    /// Guards `running`, and the request's being out or not.
+    /// Guards `running`, the request's being out or not, and the claim to
+    /// start the clock task (`started` from 0).
     lock: exec.SignalSemaphore = .{},
     /// Everything that wants to run, a `Clocked` each, in no order.
     running: exec.MinList = .{},

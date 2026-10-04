@@ -33,7 +33,7 @@ const IORequest = sdk.exec.IORequest;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It frees memory.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

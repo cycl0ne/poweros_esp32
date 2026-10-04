@@ -32,7 +32,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: no. It is the call for when waiting is what you do not want.
 /// - Interrupts: no - it reads the running task, and an interrupt has none
 ///   of its own.
-/// - Forbid: not needed; it takes Disable.
+/// - Locks: takes Disable.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

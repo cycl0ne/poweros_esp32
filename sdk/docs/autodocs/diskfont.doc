@@ -44,7 +44,7 @@ diskfont.library/OpenDiskFont
    CONTEXT
 	- Waits: yes: for the disk, and for graphics' font list.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Process, since it reads files.
 
    OWNERSHIP
@@ -88,7 +88,7 @@ diskfont.library/OpenDiskFont
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -135,7 +135,7 @@ diskfont.library/OpenDiskFont
    CONTEXT
 	- Waits: yes, for the disk.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Process, since it reads files.
 
    OWNERSHIP
@@ -186,7 +186,7 @@ diskfont.library/OpenDiskFont
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Forbid: not needed.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -251,7 +251,7 @@ diskfont.library/OpenDiskFont
    CONTEXT
 	- Waits: yes: for the disk, and for another task loading.
 	- Interrupts: no.
-	- Forbid: must not be held.
+	- Locks: no spinlock may be held.
 	- Process: a Process, since it reads files.
 
    OWNERSHIP

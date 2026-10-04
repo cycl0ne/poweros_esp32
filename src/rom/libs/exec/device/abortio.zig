@@ -37,7 +37,7 @@ const IORequest = sdk.exec.IORequest;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no; the device's AbortIO may do anything.
-/// - Forbid: no.
+/// - Locks: no spinlock may be held: the device's AbortIO takes what it needs.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

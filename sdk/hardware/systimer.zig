@@ -55,7 +55,8 @@ pub inline fn uptimeUs() u64 {
 }
 
 /// Wait `us` microseconds without giving the CPU away: the wait for code
-/// that may not Wait - under Forbid, before timer.device, in the boot.
+/// that may not Wait - holding a spinlock, before timer.device, in the
+/// boot.
 pub inline fn spinUs(us: u64) void {
     const until = uptimeUs() + us;
     while (uptimeUs() < until) {}

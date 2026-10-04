@@ -57,7 +57,7 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// CONTEXT:
 /// - Waits: on the file, for memory, and for the class library to load.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: needed - the file is reached through dos.
 ///
 /// OWNERSHIP:

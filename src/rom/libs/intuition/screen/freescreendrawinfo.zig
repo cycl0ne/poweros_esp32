@@ -30,7 +30,7 @@ const Screen = _screen.Screen;
 /// caller changing.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: not needed.
+/// - Waits: no. - Interrupts: no. - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

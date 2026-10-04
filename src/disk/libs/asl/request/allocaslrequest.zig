@@ -45,7 +45,7 @@ const Requester = _request.Requester;
 /// CONTEXT:
 /// - Waits: for memory.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -78,8 +78,8 @@ pub fn AllocAslRequest(ab: *AslBase, kind: u32, tags: ?[*]const TagItem) ?*anyop
     const r: *Requester = @ptrCast(@alignCast(block));
     r.* = .{ .public = .{ .file = .{} }, .base = ab, .kind = kind };
     _request.takeTags(r, tags);
-    sys.Forbid();
+    sys.AcquireLock(&ab.requester_lock);
     sys.AddTail(@ptrCast(&ab.requesters), @ptrCast(&r.node));
-    sys.Permit();
+    sys.ReleaseLock(&ab.requester_lock);
     return @ptrCast(r);
 }

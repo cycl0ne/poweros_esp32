@@ -33,7 +33,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no, but it waits for the port to drain.
 /// - Interrupts: safe.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do. It runs before there are any.
 ///
 /// OWNERSHIP:

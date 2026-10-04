@@ -36,7 +36,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: no - it spins until the others are parked.
 /// - Interrupts: masked by the caller (Disable): an interrupt in between
 ///   would run code the held cores' state may not allow.
-/// - Forbid: may be held.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

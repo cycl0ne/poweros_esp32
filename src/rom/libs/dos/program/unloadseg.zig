@@ -27,7 +27,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: not callable.
-/// - Forbid: not needed, and not taken.
+/// - Locks: takes dos's code lock around the list of loaded files.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -46,9 +46,9 @@ const DosBase = @import("../dos_base.zig").DosBase;
 pub fn UnLoadSeg(db: *DosBase, seg_list: ?*dos.SegList) void {
     const sys = db.sys_base;
     if (seg_list) |first| if (first.file.succ != null) {
-        sys.Forbid();
+        sys.AcquireLock(&db.code_lock);
         sys.Remove(&first.file);
-        sys.Permit();
+        sys.ReleaseLock(&db.code_lock);
     };
     var seg = seg_list;
     while (seg) |s| {

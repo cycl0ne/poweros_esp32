@@ -140,7 +140,7 @@ pub const IntuitionBase = extern struct {
     default_style: ?*const sdk.intuition.Style,
     /// The system's style (`SetStyle` with no screen): asked after a
     /// screen's own and before the default, so it changes every screen at
-    /// once. Null until one is given; replaced under Forbid.
+    /// once. Null until one is given; replaced under `look_lock`.
     system_style: ?*sdk.intuition.Style = null,
     /// Raised each time a screen's style or the system's is replaced
     /// (`SetStyle`): a class that keeps what it drew in a style draws it
@@ -153,6 +153,15 @@ pub const IntuitionBase = extern struct {
     /// motion.library, opened the first time a style asks for a
     /// transition; null before, and where there is none.
     motion_base: ?*sdk.interface.motion.MotionBase = null,
+    /// The look as a drawing reads it: the system's style and each
+    /// screen's (`draw_info.style`), which a lookup reads and `SetStyle`
+    /// replaces, and the system's pens. A spinlock: a lookup is a few
+    /// lines, made while drawing, on either core.
+    look_lock: exec.Lock,
+    /// A gadget's mark to be drawn again (`GFLG_REFRESH`), set by any task
+    /// - motion.library's among them - and taken by the input task, and
+    /// `motion_base` as it is first set. A spinlock.
+    mark_lock: exec.Lock,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

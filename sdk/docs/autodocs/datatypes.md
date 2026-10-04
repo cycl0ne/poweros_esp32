@@ -65,7 +65,7 @@ layout instead does not call this: the layout adds it.
 
 - Waits: for the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -120,7 +120,7 @@ its last object is gone, so it is unloaded when memory runs short.
 
 - Waits: for the object's layout to finish.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: needed - closing a file is dos's.
 
 **OWNERSHIP**
@@ -178,7 +178,7 @@ lock is held over it, so nothing disposes of an object mid-layout.
 
 - Waits: for memory and for the object's lock, briefly.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do; the work itself needs a Process, which is
   why there is one.
 
@@ -237,7 +237,7 @@ message by hand.
 
 - Waits: whatever the method waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do, unless the method needs more.
 
 **OWNERSHIP**
@@ -294,7 +294,7 @@ gadget of anything.
 
 - Waits: whatever the class waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -348,7 +348,7 @@ program can ask for more than a class may have.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -405,7 +405,7 @@ object cannot do - no Copy for an object that does not answer
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -454,7 +454,7 @@ The words are the library's own and are the same for everyone.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -510,7 +510,7 @@ knowing what kind of object it is.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -576,7 +576,7 @@ because it has an object, and goes when the last one is disposed of.
 
 - Waits: on the file, for memory, and for the class library to load.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: needed - the file is reached through dos.
 
 **OWNERSHIP**
@@ -642,7 +642,7 @@ work once.
 
 - Waits: whatever the class waits for; a picture waits for memory.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -709,7 +709,7 @@ against that one reading.
 
 - Waits: on the file, and on the list's lock.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: needed - the file is reached through dos.
 
 **OWNERSHIP**
@@ -773,7 +773,7 @@ it did to the window that the object would not have heard about.
 
 - Waits: for the window's layer.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -822,7 +822,7 @@ it got ready.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -871,7 +871,7 @@ holds it it may be taken off the list again.
 
 - Waits: on the list's lock, briefly.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -929,7 +929,7 @@ disposed of: it can be put into another window.
 
 - Waits: for the window's layer, and for whatever the object stops.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -981,7 +981,7 @@ Without a window the attributes are set and nothing is drawn.
 
 - Waits: whatever the object waits for.
 - Interrupts: no.
-- Forbid: not held and not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

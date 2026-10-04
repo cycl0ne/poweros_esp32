@@ -42,7 +42,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// - Waits: for the class list's semaphore when finding by name; beyond
 ///   that, whatever the classes do.
 /// - Interrupts: no; it allocates.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do, unless a class says otherwise.
 ///
 /// OWNERSHIP:

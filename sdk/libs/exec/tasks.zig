@@ -7,6 +7,7 @@ const Node = @import("nodes.zig").Node;
 const MinNode = @import("nodes.zig").MinNode;
 const MinList = @import("lists.zig").MinList;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
+const Message = @import("ports.zig").Message;
 
 /// tc_State
 pub const TaskState = enum(u8) {
@@ -134,10 +135,9 @@ pub const Task = extern struct {
     flags: u8 = 0,
     /// tc_State
     state: TaskState = .invalid,
-    /// tc_IDNestCnt, tc_TDNestCnt: the task's Disable/Forbid nesting,
-    /// kept here while it is switched out.
+    /// tc_IDNestCnt: the task's Disable nesting, kept here while it is
+    /// switched out.
     id_nest_cnt: i8 = -1,
-    td_nest_cnt: i8 = -1,
     /// tc_SigAlloc: allocated signals.
     sig_alloc: u32 = system_signals,
     /// tc_SigWait: signals the task waits for.
@@ -177,6 +177,10 @@ pub const Task = extern struct {
     /// with `AddTaskEndHook` and run by `RemTask`. Made empty the first
     /// time a hook is put on.
     end_hooks: MinList = .{},
+    /// What is replied to its reply port once the task has ended and
+    /// nothing runs on its stack any more (`SetTaskEndMsg`). Set before the
+    /// task may end: in the Task handed to AddTask, or with the call.
+    end_msg: ?*Message = null,
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");

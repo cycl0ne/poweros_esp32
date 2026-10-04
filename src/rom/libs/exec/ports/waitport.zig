@@ -33,7 +33,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// CONTEXT:
 /// - Waits: yes, on the port's signal.
 /// - Interrupts: no. It waits.
-/// - Forbid: no - it waits, and waiting under Forbid stops the machine.
+/// - Locks: no spinlock may be held: it waits.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

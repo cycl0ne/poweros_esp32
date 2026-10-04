@@ -41,7 +41,7 @@ const TaskFn = sdk.exec.TaskFn;
 /// CONTEXT:
 /// - Waits: no, but it may switch.
 /// - Interrupts: no. It allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do. This makes a Task and not a Process - dos's
 ///   `CreateNewProc` is what makes one of those, and only a Process may
 ///   reach a file system.

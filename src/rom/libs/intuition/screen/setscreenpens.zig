@@ -54,7 +54,7 @@ const Screen = _screen.Screen;
 /// CONTEXT:
 /// - Waits: yes - for intuition's lock, and for the layers it draws in.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -88,7 +88,10 @@ pub fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen, pens: ?[*]const Pen) 
         s.own_pens = pens != null;
         s.pens = if (pens) |given| given[0..sc.NUMDRIPENS].* else ib.system_pens;
     } else {
+        // Read by a prefs copy under the look's lock.
+        ib.sys_base.AcquireLock(&ib.look_lock);
         ib.system_pens = if (pens) |given| given[0..sc.NUMDRIPENS].* else _screen.default_pens;
+        ib.sys_base.ReleaseLock(&ib.look_lock);
     }
     // What was drawn and kept in the old pens is old.
     ib.style_serial +%= 1;

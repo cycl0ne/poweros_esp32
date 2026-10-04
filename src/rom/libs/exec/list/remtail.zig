@@ -32,7 +32,7 @@ const Remove = @import("remove.zig").Remove;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe in itself; the caller's locking is what decides.
-/// - Forbid: not taken here, and the caller's to take.
+/// - Locks: none taken here; the caller holds whatever guards the list.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

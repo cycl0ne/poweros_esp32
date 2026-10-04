@@ -48,7 +48,7 @@ socket's affair - the session is freed either way. Null does nothing.
 
 - Waits: yes, while the alert is sent.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the session.
 
 **OWNERSHIP**
@@ -117,7 +117,7 @@ ReadSession or WriteSession still answers.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -206,7 +206,7 @@ allows; the socket is left as it is.
 - Waits: yes, for the server, as long as the socket's own timeouts
   allow.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: yes - the stores are files.
 
 **OWNERSHIP**
@@ -281,7 +281,7 @@ record had.
 
 - Waits: yes, for the server, as long as the socket's timeouts allow.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the session.
 
 **OWNERSHIP**
@@ -345,7 +345,7 @@ wake it.
 
 - Waits: no.
 - Interrupts: no.
-- Forbid: not needed.
+- Locks: none needed.
 - Process: the task that opened the session.
 
 **OWNERSHIP**
@@ -405,7 +405,7 @@ the server would see a record broken off.
 
 - Waits: yes, while the socket sends.
 - Interrupts: no.
-- Forbid: must not be held.
+- Locks: no spinlock may be held.
 - Process: the task that opened the session.
 
 **OWNERSHIP**

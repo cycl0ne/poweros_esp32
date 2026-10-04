@@ -40,7 +40,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It may allocate.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do; only a process gets the IoErr.
 ///
 /// OWNERSHIP:

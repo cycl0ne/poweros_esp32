@@ -29,9 +29,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// interrupt leaves interrupts masked, which is what they already were.
 ///
 /// It guards what interrupts themselves touch: the interrupt vectors, the
-/// server chains and the software interrupt queues. What only tasks touch -
-/// the library, device, memory, port and semaphore lists - is Forbid's, and
-/// Disable is the heavier of the two because it stops the machine
+/// server chains, the software interrupt queues and the task lists. What
+/// only tasks touch has locks of its own - exec's lists each theirs - and
+/// Disable is heavier than any of them because it stops the machine
 /// responding to its hardware.
 ///
 /// **Both cores.** The outermost Disable also takes the system's
@@ -42,13 +42,12 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// all core 0's; core 1 has its tick and the cross-core interrupt.
 ///
 /// CONTEXT:
-/// - Waits: no. Never `Wait` while holding it, for the same reason as
-///   Forbid and more so.
+/// - Waits: no. Never `Wait` while holding it: what it guards is not
+///   guarded across the wait.
 /// - Interrupts: safe, and the nesting is what makes it so.
-/// - Forbid: neither implies the other. Task switching is not stopped by
-///   this, except that a switch cannot be delivered while interrupts are
-///   masked. Forbid inside Disable, while the other core holds Forbid,
-///   lets the interrupt lock go until it has its own (see `Forbid`).
+/// - Locks: none. Disable and a spinlock are separate: neither implies the
+///   other. Task switching is not stopped by Disable itself, except that a
+///   switch cannot be delivered while interrupts are masked.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -67,7 +66,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `Enable`, `Forbid`, `Cause`
+/// `Enable`, `AcquireLock`, `Cause`
 ///
 /// EXAMPLES:
 /// ```zig

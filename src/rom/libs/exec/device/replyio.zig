@@ -35,7 +35,7 @@ const IORequest = sdk.exec.IORequest;
 /// - Waits: no.
 /// - Interrupts: **safe, and that is what it is for.** A device's interrupt
 ///   finishes the request the task started.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do; an interrupt will do.
 ///
 /// OWNERSHIP:

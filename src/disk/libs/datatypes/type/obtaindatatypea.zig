@@ -49,7 +49,7 @@ const DataTypesBase = _base.DataTypesBase;
 /// CONTEXT:
 /// - Waits: on the file, and on the list's lock.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: needed - the file is reached through dos.
 ///
 /// OWNERSHIP:

@@ -28,7 +28,7 @@ const unlock = _screen.unlock;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do; the one that locked the list.
 ///
 /// OWNERSHIP:

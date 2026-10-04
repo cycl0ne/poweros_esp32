@@ -35,7 +35,7 @@ const Date2Amiga = @import("date2amiga.zig").Date2Amiga;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe. It reads only its inputs and allocates nothing.
-/// - Forbid: not needed, and not taken.
+/// - Locks: none taken, none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

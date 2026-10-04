@@ -32,7 +32,7 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 /// CONTEXT:
 /// - Waits: whatever the class does.
 /// - Interrupts: no, unless a class says a method is safe there.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do, unless a class says otherwise.
 ///
 /// OWNERSHIP:

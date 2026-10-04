@@ -42,7 +42,7 @@ const Screen = _screen.Screen;
 /// - Waits: for the screen list's semaphore, and for the display to take
 ///   the new picture up at its next frame.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

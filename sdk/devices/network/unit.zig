@@ -9,10 +9,11 @@
 //!
 //! **Who runs what.** Everything here runs on the device's task, except
 //! `open`, `close`, `abort`, `query` and `stationAddress`, which run on the
-//! caller's. The queues are therefore touched only under Forbid, for a
-//! moment and without waiting. An opener's copy calls may wait, so none
-//! of them runs under Forbid: a request is taken off its queue first, and
-//! copied into or out of afterwards. The opener stays until every request
+//! caller's. The queues are therefore touched only under the unit's lock
+//! (`lock`), a semaphore: nothing an interrupt does reaches them, and an
+//! opener's packet filter runs inside it while a read is claimed. An
+//! opener's copy calls run outside it: a request is taken off its queue
+//! first, and copied into or out of afterwards. The opener stays until every request
 //! of its own is answered - its CloseDevice comes after them - so its copy
 //! calls are still there when one of its requests is being answered.
 //!
@@ -117,6 +118,8 @@ pub fn Unit(comptime Link: type) type {
 
         sys: *ExecBase,
         link: *Link,
+        /// The openers and every queue below: see the file's header.
+        lock: exec.SignalSemaphore = .{},
         /// The openers' records.
         openers: exec.List = .{},
         /// The writes waiting for the hardware, oldest first.
@@ -142,13 +145,14 @@ pub fn Unit(comptime Link: type) type {
         /// lists point into it.
         pub fn init(unit: *Self, sys: *ExecBase, link: *Link, factory: *const ethernet.Address) void {
             unit.* = .{ .sys = sys, .link = link, .station = factory.*, .factory = factory.* };
+            sys.InitSemaphore(&unit.lock);
             unit.openers.init(.unknown);
             unit.writes.init(.message);
         }
 
         // --- opening and closing ------------------------------------------
 
-        /// OpenDevice's part, under its Forbid: a record for the opener,
+        /// OpenDevice's part, inside the device's lock: a record for the opener,
         /// made from the tag list in ios2_BufferManagement, which the
         /// record then replaces. 0 or the error OpenDevice answers.
         pub fn open(unit: *Self, req: *net.IOSana2Req, flags: u32, utility: *UtilityBase) i8 {
@@ -171,7 +175,10 @@ pub fn Unit(comptime Link: type) type {
             opener.reads.init(.message);
             opener.orphans.init(.message);
             opener.events.init(.message);
+            // The device's task walks the openers as a frame comes in.
+            sys.ObtainSemaphore(&unit.lock);
             sys.AddTail(&unit.openers, &opener.node);
+            sys.ReleaseSemaphore(&unit.lock);
             if (alone) unit.exclusive = 1;
             if (flags & net.SANA2OPF_PROM != 0) {
                 unit.promiscuous += 1;
@@ -187,9 +194,9 @@ pub fn Unit(comptime Link: type) type {
             const opener = openerOf(req) orelse return;
             unit.flush(opener);
             const sys = unit.sys;
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             sys.Remove(&opener.node);
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             if (opener.flags & net.SANA2OPF_MINE != 0) unit.exclusive = 0;
             if (opener.flags & net.SANA2OPF_PROM != 0) {
                 unit.promiscuous -= 1;
@@ -205,11 +212,11 @@ pub fn Unit(comptime Link: type) type {
             const sys = unit.sys;
             const opener = openerOf(req) orelse return false;
             const node = nodeOf(req);
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             const found = holds(&opener.reads, node) or holds(&opener.orphans, node) or
                 holds(&opener.events, node) or holds(&unit.writes, node);
             if (found) sys.Remove(node);
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             if (!found) return false;
             req.req.err = exec.IOERR_ABORTED;
             sys.ReplyIO(&req.req);
@@ -293,9 +300,9 @@ pub fn Unit(comptime Link: type) type {
             if (unit.online == 0) return unit.answer(req, net.S2ERR_OUTOFSERVICE, unit.offlineError());
             const opener = openerOf(req) orelse return unit.answer(req, net.S2ERR_BAD_ARGUMENT, net.S2WERR_BUFF_ERROR);
             const sys = unit.sys;
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             sys.AddTail(if (orphan) &opener.orphans else &opener.reads, nodeOf(req));
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
         }
 
         fn queueWrite(unit: *Self, req: *net.IOSana2Req) void {
@@ -312,9 +319,9 @@ pub fn Unit(comptime Link: type) type {
                 }
             }
             const sys = unit.sys;
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             sys.AddTail(&unit.writes, nodeOf(req));
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             Link.startWrites(unit.link);
         }
 
@@ -329,9 +336,9 @@ pub fn Unit(comptime Link: type) type {
                 return unit.sys.ReplyIO(&req.req);
             }
             const sys = unit.sys;
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             sys.AddTail(&opener.events, nodeOf(req));
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
         }
 
         /// Everything `opener` has queued, answered as aborted.
@@ -339,7 +346,7 @@ pub fn Unit(comptime Link: type) type {
             const sys = unit.sys;
             var taken: exec.List = .{};
             taken.init(.message);
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             moveAll(sys, &opener.reads, &taken);
             moveAll(sys, &opener.orphans, &taken);
             moveAll(sys, &opener.events, &taken);
@@ -349,7 +356,7 @@ pub fn Unit(comptime Link: type) type {
                 sys.Remove(node);
                 sys.AddTail(&taken, node);
             }
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             unit.answerAll(&taken, exec.IOERR_ABORTED, 0);
         }
 
@@ -428,7 +435,7 @@ pub fn Unit(comptime Link: type) type {
             const sys = unit.sys;
             var taken: exec.List = .{};
             taken.init(.message);
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             var it = unit.openers.iterator();
             while (it.next()) |node| {
                 const opener: *Opener = @fieldParentPtr("node", node);
@@ -436,7 +443,7 @@ pub fn Unit(comptime Link: type) type {
                 moveAll(sys, &opener.orphans, &taken);
             }
             moveAll(sys, &unit.writes, &taken);
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             unit.answerAll(&taken, net.S2ERR_OUTOFSERVICE, net.S2WERR_UNIT_OFFLINE);
             unit.event(net.S2EVENT_OFFLINE);
         }
@@ -447,7 +454,7 @@ pub fn Unit(comptime Link: type) type {
             const sys = unit.sys;
             var taken: exec.List = .{};
             taken.init(.message);
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             var openers = unit.openers.iterator();
             while (openers.next()) |opener_node| {
                 const opener: *Opener = @fieldParentPtr("node", opener_node);
@@ -458,7 +465,7 @@ pub fn Unit(comptime Link: type) type {
                     sys.AddTail(&taken, node);
                 }
             }
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             while (sys.RemHead(&taken)) |node| {
                 const req = requestOf(node);
                 req.wire_error &= happened;
@@ -555,7 +562,7 @@ pub fn Unit(comptime Link: type) type {
             var taken: exec.List = .{};
             taken.init(.message);
             var orphan = false;
-            sys.Forbid();
+            sys.ObtainSemaphore(&unit.lock);
             var it = unit.openers.iterator();
             while (it.next()) |node| {
                 const opener: *Opener = @fieldParentPtr("node", node);
@@ -570,7 +577,7 @@ pub fn Unit(comptime Link: type) type {
                     if (sys.RemHead(&opener.orphans)) |read| sys.AddTail(&taken, read);
                 }
             }
-            sys.Permit();
+            sys.ReleaseSemaphore(&unit.lock);
             if (unit.findTracked(packet_type)) |tracked| {
                 if (orphan) {
                     tracked.stats.packets_dropped += 1;
@@ -600,7 +607,7 @@ pub fn Unit(comptime Link: type) type {
         }
 
         /// The first of `opener`'s reads of `packet_type` its filter
-        /// accepts, taken off its queue. Under Forbid.
+        /// accepts, taken off its queue. Under the unit's lock.
         fn claimRead(sys: *ExecBase, opener: *Opener, packet_type: u32, frame: []const u8) ?*net.IOSana2Req {
             var it = opener.reads.iterator();
             while (it.next()) |node| {
@@ -639,8 +646,8 @@ pub fn Unit(comptime Link: type) type {
         /// send; null if there is none.
         pub fn nextWrite(unit: *Self) ?*net.IOSana2Req {
             const sys = unit.sys;
-            sys.Forbid();
-            defer sys.Permit();
+            sys.ObtainSemaphore(&unit.lock);
+            defer sys.ReleaseSemaphore(&unit.lock);
             const node = sys.RemHead(&unit.writes) orelse return null;
             return requestOf(node);
         }

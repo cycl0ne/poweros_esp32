@@ -31,7 +31,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// CONTEXT:
 /// - Waits: yes, while another task holds the driver list.
 /// - Interrupts: no. It may wait.
-/// - Forbid: must not be held: waiting for the lock would break it.
+/// - Locks: no spinlock may be held: it waits for a lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

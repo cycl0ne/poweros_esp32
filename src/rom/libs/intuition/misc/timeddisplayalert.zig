@@ -53,7 +53,7 @@ const border_y = 3;
 /// CONTEXT:
 /// - Waits: for the answer or the time, and for an alert already up.
 /// - Interrupts: no.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; not intuition's input task, whose events
 ///   answer it.
 ///

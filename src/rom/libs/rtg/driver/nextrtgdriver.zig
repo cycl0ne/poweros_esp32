@@ -33,7 +33,7 @@ const _driver = @import("_driver.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Forbid: not needed; the caller holds the list.
+/// - Locks: none taken; the caller holds the list.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

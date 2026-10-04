@@ -12,19 +12,17 @@
 //!
 //! Everything here is read from exec's and dos's own lists rather than
 //! from a copy, so every walk is done holding the thing that keeps the
-//! list still - Forbid for exec's, Disable for the two task queues, each
-//! core's running task and the interrupt vectors, the DosList's own lock
-//! for the handlers - and nothing writes. A list is walked, printed from,
-//! and let go; the tasks, which move all the time, are copied out all
-//! together first.
+//! list still - each of exec's lists under its own lock (LockExecList),
+//! Disable for each core's running task and the interrupt vectors, the
+//! DosList's own lock for the handlers - and nothing writes. A list is
+//! copied out under its lock and printed once it is let go: some of those
+//! locks are spinlocks, under which nothing may wait.
 //!
 //! TASKS shows what each core runs, then the ready and the waiting tasks,
 //! with the core a task is pinned to (SetTaskAffinity, NP_Affinity).
 //!
-//! What a list's owner keeps under a lock of its own is not walked at all:
-//! the free blocks of a memory region change under exec's memory lock,
-//! which Forbid does not hold off on the other core, so a region's largest
-//! block is asked of AvailMem - the largest of memory of its kind.
+//! A region's free blocks are not walked: its largest block is asked of
+//! AvailMem - the largest of memory of its kind.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -98,18 +96,74 @@ fn nextNode(node: *exec.Node) ?*exec.Node {
     return if (succ.succ == null) null else succ;
 }
 
-fn firstOf(which: u32) ?*exec.Node {
-    const list = sys.ExecList(which) orelse return null;
-    return list.first();
+/// How many nodes one of exec's lists holds, counted under its own lock.
+fn countOf(which: u32) u32 {
+    const list = sys.LockExecList(which) orelse return 0;
+    defer sys.UnlockExecList(which);
+    var count: u32 = 0;
+    var it = list.iterator();
+    while (it.next()) |_| count += 1;
+    return count;
 }
 
-fn countOf(which: u32) u32 {
-    sys.Forbid();
-    defer sys.Permit();
-    var count: u32 = 0;
-    var node = firstOf(which);
-    while (node) |n| : (node = nextNode(n)) count += 1;
-    return count;
+/// One node of one of exec's lists, copied out under the list's lock: the
+/// node may be gone by the time its line is printed.
+const Row = struct {
+    name: [40]u8 = @splat(0),
+    pri: i8 = 0,
+    address: usize = 0,
+    version: u16 = 0,
+    revision: u16 = 0,
+    open_cnt: u16 = 0,
+    free: usize = 0,
+    attributes: u32 = 0,
+};
+
+/// The rows of the list being printed.
+var rows: [64]Row = undefined;
+
+/// What `copyRows` copied: how many rows, and how many did not fit.
+const Copy = struct { count: usize = 0, more: u32 = 0 };
+
+/// Every node of exec's list `which` into `rows`, under the list's own
+/// lock. Copied, never printed there: the memory, port and semaphore lists
+/// are under spinlocks, where nothing may wait.
+fn copyRows(which: u32) Copy {
+    const list = sys.LockExecList(which) orelse return .{};
+    defer sys.UnlockExecList(which);
+    var copy: Copy = .{};
+    var it = list.iterator();
+    while (it.next()) |n| {
+        if (copy.count == rows.len) {
+            copy.more += 1;
+            continue;
+        }
+        var row: Row = .{ .pri = n.pri, .address = @intFromPtr(n) };
+        copyName(&row.name, n.name);
+        switch (which) {
+            exec.EXECLIST_LIBRARIES, exec.EXECLIST_DEVICES => {
+                const lib: *exec.Library = @fieldParentPtr("node", n);
+                row.version = lib.version;
+                row.revision = lib.revision;
+                row.open_cnt = lib.open_cnt;
+                row.address = @intFromPtr(lib);
+            },
+            exec.EXECLIST_MEMORY => {
+                const mh: *exec.MemHeader = @fieldParentPtr("node", n);
+                row.free = mh.free;
+                row.attributes = mh.attributes;
+            },
+            else => {},
+        }
+        rows[copy.count] = row;
+        copy.count += 1;
+    }
+    return copy;
+}
+
+/// The line under a listing that did not fit.
+fn more(copy: Copy) void {
+    if (copy.more != 0) _ = Printf(dl, "... and %u more\n", .{copy.more});
 }
 
 fn name(of: ?[*:0]const u8) [*:0]const u8 {
@@ -122,8 +176,8 @@ fn summary() i32 {
     _ = Printf(dl, "%-12s %d running, %d ready, %d waiting\n", .{
         "Tasks",
         countRunning(),
-        countTasks(exec.EXECLIST_TASK_READY),
-        countTasks(exec.EXECLIST_TASK_WAIT),
+        countOf(exec.EXECLIST_TASK_READY),
+        countOf(exec.EXECLIST_TASK_WAIT),
     });
     _ = Printf(dl, "%-12s %d\n", .{ "Libraries", countOf(exec.EXECLIST_LIBRARIES) });
     _ = Printf(dl, "%-12s %d\n", .{ "Devices", countOf(exec.EXECLIST_DEVICES) });
@@ -158,6 +212,8 @@ fn tasks() void {
     var copied: Copied = .{ .seen = @as([*]Seen, @ptrCast(@alignCast(block)))[0..max_seen] };
     const self = sys.FindTask(null);
 
+    // One Disable around all of it, so no task is seen twice or missed as
+    // it moves; the queues' own lock is Disable too, and nests.
     sys.Disable();
     var core: u32 = 0;
     while (sys.CoreTask(core)) |task| : (core += 1) copied.take(task, "run", core, task == self);
@@ -165,8 +221,10 @@ fn tasks() void {
         .{ .state = "ready", .which = exec.EXECLIST_TASK_READY },
         .{ .state = "wait", .which = exec.EXECLIST_TASK_WAIT },
     }) |queue| {
-        var node = firstOf(queue.which);
-        while (node) |n| : (node = nextNode(n)) copied.take(@fieldParentPtr("node", n), queue.state, null, false);
+        const list = sys.LockExecList(queue.which).?;
+        var it = list.iterator();
+        while (it.next()) |n| copied.take(@fieldParentPtr("node", n), queue.state, null, false);
+        sys.UnlockExecList(queue.which);
     }
     sys.Enable();
 
@@ -203,17 +261,6 @@ fn countRunning() u32 {
         sys.Enable();
         if (task == null) return core;
     }
-}
-
-/// How many tasks a queue holds, counted under Disable: they move from an
-/// interrupt and from the other core.
-fn countTasks(which: u32) u32 {
-    sys.Disable();
-    defer sys.Enable();
-    var count: u32 = 0;
-    var node = firstOf(which);
-    while (node) |n| : (node = nextNode(n)) count += 1;
-    return count;
 }
 
 /// A task as it was when it was looked at, copied out under Disable into
@@ -280,39 +327,18 @@ fn copyName(into: []u8, from: ?[*:0]const u8) void {
 fn modules(title: [*:0]const u8, which: u32) void {
     _ = Printf(dl, "\n%s\n", .{title});
     _ = dl.PutStr("name                  ver  open  pri  address\n");
-    var after: ?*exec.Node = null;
-    while (true) {
-        var buffer: [40]u8 = @splat(0);
-        var version: u16 = 0;
-        var revision: u16 = 0;
-        var open_cnt: u16 = 0;
-        var pri: i8 = 0;
-        var address: usize = 0;
-
-        sys.Forbid();
-        const node = if (after) |a| nextNode(a) else firstOf(which);
-        if (node) |n| {
-            const lib: *exec.Library = @fieldParentPtr("node", n);
-            copyName(&buffer, n.name);
-            version = lib.version;
-            revision = lib.revision;
-            open_cnt = lib.open_cnt;
-            pri = n.pri;
-            address = @intFromPtr(lib);
-            after = n;
-        }
-        sys.Permit();
-
-        if (node == null) return;
+    const copy = copyRows(which);
+    for (rows[0..copy.count]) |*row| {
         _ = Printf(dl, "%-20s %2d.%-2d %4d  %3d  0x%08x\n", .{
-            @as([*:0]const u8, @ptrCast(&buffer)),
-            version,
-            revision,
-            open_cnt,
-            pri,
-            address,
+            @as([*:0]const u8, @ptrCast(&row.name)),
+            row.version,
+            row.revision,
+            row.open_cnt,
+            row.pri,
+            row.address,
         });
     }
+    more(copy);
 }
 
 /// A resource is a node and whatever its owner made of it: there is no
@@ -338,29 +364,15 @@ fn semaphores() void {
 /// What every list has in common, for the ones with nothing else worth
 /// printing.
 fn nodeList(which: u32) void {
-    var after: ?*exec.Node = null;
-    while (true) {
-        var buffer: [40]u8 = @splat(0);
-        var pri: i8 = 0;
-        var address: usize = 0;
-
-        sys.Forbid();
-        const node = if (after) |a| nextNode(a) else firstOf(which);
-        if (node) |n| {
-            copyName(&buffer, n.name);
-            pri = n.pri;
-            address = @intFromPtr(n);
-            after = n;
-        }
-        sys.Permit();
-
-        if (node == null) return;
+    const copy = copyRows(which);
+    for (rows[0..copy.count]) |*row| {
         _ = Printf(dl, "%-20s %4d  0x%08x\n", .{
-            @as([*:0]const u8, @ptrCast(&buffer)),
-            pri,
-            address,
+            @as([*:0]const u8, @ptrCast(&row.name)),
+            row.pri,
+            row.address,
         });
     }
+    more(copy);
 }
 
 /// The biggest single piece of a region: MemHeader says how much is free
@@ -368,34 +380,17 @@ fn nodeList(which: u32) void {
 fn memory() void {
     _ = dl.PutStr("\nMemory\n");
     _ = dl.PutStr("name                           pri      free     largest\n");
-    var after: ?*exec.Node = null;
-    while (true) {
-        var buffer: [40]u8 = @splat(0);
-        var pri: i8 = 0;
-        var free: usize = 0;
-        var attributes: u32 = 0;
-
-        sys.Forbid();
-        const node = if (after) |a| nextNode(a) else firstOf(exec.EXECLIST_MEMORY);
-        if (node) |n| {
-            const mh: *exec.MemHeader = @fieldParentPtr("node", n);
-            copyName(&buffer, n.name);
-            pri = n.pri;
-            free = mh.free;
-            attributes = mh.attributes;
-            after = n;
-        }
-        sys.Permit();
-
-        if (node == null) return;
-        const largest = sys.AvailMem(attributes | exec.MEMF_LARGEST);
+    const copy = copyRows(exec.EXECLIST_MEMORY);
+    for (rows[0..copy.count]) |*row| {
+        const largest = sys.AvailMem(row.attributes | exec.MEMF_LARGEST);
         _ = Printf(dl, "%-29s %4d  %8d  %10d\n", .{
-            @as([*:0]const u8, @ptrCast(&buffer)),
-            pri,
-            free,
+            @as([*:0]const u8, @ptrCast(&row.name)),
+            row.pri,
+            row.free,
             largest,
         });
     }
+    more(copy);
 }
 
 // --- the ROM's own ------------------------------------------------------------

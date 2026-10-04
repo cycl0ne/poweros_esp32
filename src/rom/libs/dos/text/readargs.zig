@@ -69,7 +69,7 @@ const RDArgs = rd.RDArgs;
 /// CONTEXT:
 /// - Waits: yes, when it reads Input().
 /// - Interrupts: no.
-/// - Forbid: never under Forbid.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process for Input(); a Task will do with a CSource.
 ///
 /// OWNERSHIP:

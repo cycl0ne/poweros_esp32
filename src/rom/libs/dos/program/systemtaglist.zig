@@ -51,7 +51,7 @@ const TagItem = utility.TagItem;
 /// - Waits: yes. It sends packets, and a synchronous start waits for the
 ///   shell to end.
 /// - Interrupts: not callable.
-/// - Forbid: must not be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Task will do; a process's CLI and current directory are
 ///   passed on, and only a process gets IoErr.
 ///

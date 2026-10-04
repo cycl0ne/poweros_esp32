@@ -37,9 +37,11 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// memory is cleared only if the pool was made with MEMF_CLEAR.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no; it may allocate. - Forbid: taken here,
-///   so one pool may be used from more than one task. - Process: a Task
-///   will do.
+/// - Waits: for the pool's lock while another task uses the pool.
+/// - Interrupts: no; it may allocate.
+/// - Locks: takes the pool's own lock, so one pool may be used from more
+///   than one task; no spinlock may be held.
+/// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// The caller's until `FreePooled`, or until `DeletePool` takes the lot.
@@ -58,8 +60,8 @@ pub fn AllocPooled(base: *ExecBase, pool_handle: ?*anyopaque, byte_size: usize) 
     const pool: *Pool = @ptrCast(@alignCast(pool_handle orelse return null));
     if (byte_size == 0) return null;
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&pool.lock);
+    defer sys.ReleaseSemaphore(&pool.lock);
 
     const block = take(base, pool, byte_size) orelse return null;
     if (pool.clear) {

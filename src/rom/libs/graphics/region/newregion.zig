@@ -35,7 +35,7 @@ const Region = _region.Region;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It allocates.
-/// - Forbid: not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

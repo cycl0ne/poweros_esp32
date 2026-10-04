@@ -110,8 +110,11 @@ const InputData = extern struct {
     /// after it by (keymap.library).
     prev1: i32 = 0,
     prev2: i32 = 0,
+    /// The repeat's timing, set by any caller and read by the task, two
+    /// words each: under `timing_lock`, a spinlock.
     thresh: timer.TimeVal = timer.TimeVal.fromMicros(thresh_us),
     period: timer.TimeVal = timer.TimeVal.fromMicros(period_us),
+    timing_lock: exec.Lock = .{},
     pointer: events.Pointer = .{},
     /// Owned by the task: the port every source replies to, and the reads.
     port: ?*exec.MsgPort = null,
@@ -221,7 +224,7 @@ fn gotKeys(id: *InputData) void {
                 id.repeat_code = code;
                 id.repeat_numeric = e.qualifier & ie.IEQUALIFIER_NUMERICPAD;
                 id.repeating = 1;
-                startTimer(id, &id.repeat_io, id.thresh);
+                startTimer(id, &id.repeat_io, timing(id, .thresh));
             }
         } else if (id.repeating != 0 and code == id.repeat_code) {
             stopRepeat(id);
@@ -242,7 +245,15 @@ fn gotRepeat(id: *InputData) void {
         .y = id.prev2,
     };
     dispatch(id, &id.repeat_event);
-    startTimer(id, &id.repeat_io, id.period);
+    startTimer(id, &id.repeat_io, timing(id, .period));
+}
+
+/// The repeat's threshold or period, read whole.
+fn timing(id: *InputData, which: enum { thresh, period }) timer.TimeVal {
+    const sys = id.sys_base;
+    sys.AcquireLock(&id.timing_lock);
+    defer sys.ReleaseLock(&id.timing_lock);
+    return if (which == .thresh) id.thresh else id.period;
 }
 
 fn gotTouch(id: *InputData) void {
@@ -401,9 +412,9 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         },
         input.IND_SETTHRESH, input.IND_SETPERIOD => {
             const tr: *timer.TimeRequest = @ptrCast(@alignCast(io));
-            sys.Forbid();
+            sys.AcquireLock(&id.timing_lock);
             if (io.command == input.IND_SETTHRESH) id.thresh = tr.time else id.period = tr.time;
-            sys.Permit();
+            sys.ReleaseLock(&id.timing_lock);
         },
         else => io.err = exec.IOERR_NOCMD,
     }
@@ -415,17 +426,12 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const id = inputData(dev);
     const sys = id.sys_base;
-    sys.Forbid();
-    defer sys.Permit();
-    var it = id.unit.msg_port.msg_list.iterator();
-    while (it.next()) |n| {
-        if (n != &io.message.node) continue;
-        sys.Remove(n);
-        io.err = exec.IOERR_ABORTED;
-        sys.ReplyMsg(&io.message);
-        return 0;
-    }
-    return -1;
+    // The port is the task's, put to by every caller: taken back under the
+    // port's own lock.
+    if (!sys.RemoveMsg(&id.unit.msg_port, &io.message)) return -1;
+    io.err = exec.IOERR_ABORTED;
+    sys.ReplyMsg(&io.message);
+    return 0;
 }
 
 fn lvoPeekQualifier(id: *InputData) callconv(.c) u32 {
@@ -469,6 +475,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     id.handlers.init(.interrupt);
     id.thresh = timer.TimeVal.fromMicros(thresh_us);
     id.period = timer.TimeVal.fromMicros(period_us);
+    sys_base.InitLock(&id.timing_lock, "input timing", exec.LOCKORDER_DRIVER, 0);
     id.pointer = .{};
     return dev;
 }

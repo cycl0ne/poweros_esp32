@@ -36,8 +36,10 @@ const Puddle = _memory.Puddle;
 /// how memory goes back to the system.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no. - Forbid: taken here. - Process: a Task
-///   will do.
+/// - Waits: for the pool's lock while another task uses the pool.
+/// - Interrupts: no.
+/// - Locks: takes the pool's own lock; no spinlock may be held.
+/// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// The space is the pool's again and must not be touched.
@@ -64,8 +66,8 @@ pub fn FreePooled(base: *ExecBase, pool_handle: ?*anyopaque, memory_block: ?*any
     const block = memory_block orelse return;
     if (byte_size == 0) return;
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.ObtainSemaphore(&pool.lock);
+    defer sys.ReleaseSemaphore(&pool.lock);
 
     const address = @intFromPtr(block);
     var it = pool.puddles.iterator();

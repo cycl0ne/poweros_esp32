@@ -26,7 +26,7 @@ const ExpansionBase = @import("../expansion_base.zig").ExpansionBase;
 /// ones FindBoardPart hands out as BoardParts.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: yes. - Forbid: not needed.
+/// - Waits: no. - Interrupts: yes. - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

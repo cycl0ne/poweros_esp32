@@ -29,7 +29,7 @@ const IFFParseBase = _base.IFFParseBase;
 /// CONTEXT:
 /// - Waits: for clipboard.device to close.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do - the one that opened it.
 ///
 /// OWNERSHIP:

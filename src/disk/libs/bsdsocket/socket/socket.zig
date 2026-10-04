@@ -46,7 +46,7 @@ const _task = @import("../task/_task.zig");
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a Task will do; it must be the one that opened the base.
 ///
 /// OWNERSHIP:

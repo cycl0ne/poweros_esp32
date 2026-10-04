@@ -63,7 +63,7 @@ const Address = address_file.Address;
 /// CONTEXT:
 /// - Waits: yes: for the name servers, as GetHostByName.
 /// - Interrupts: no.
-/// - Forbid: not held.
+/// - Locks: none needed.
 /// - Process: a process, to read the hosts file; a Task will do for an
 ///   address given as text.
 ///

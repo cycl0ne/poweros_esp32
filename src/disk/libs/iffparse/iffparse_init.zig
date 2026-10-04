@@ -64,8 +64,8 @@ fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (lib.open_cnt != 0) return null;
     sys.CloseLibrary(@ptrCast(@alignCast(ib.utility_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(ib.dos_base)));
-    if (lib.flags & exec.LIBF_DELEXP == 0) return null;
-    return expunge(lib);
+    // A delayed expunge is CloseLibrary's, once this has answered.
+    return null;
 }
 
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
@@ -76,7 +76,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     }
     const sys = ib.sys_base;
     const seg_list = ib.seg_list;
-    if (lib.node.pred != null) sys.Remove(&lib.node);
+    sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);
     return seg_list;

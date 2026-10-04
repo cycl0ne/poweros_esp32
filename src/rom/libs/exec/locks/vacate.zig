@@ -42,7 +42,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: no, but releasing may signal and so may switch.
 /// - Interrupts: no. It takes exec's semaphore lock.
-/// - Forbid: may be held.
+/// - Locks: takes exec's semaphore lock for a moment.
 /// - Process: a Task will do. **Any task may vacate a bid**, though the
 ///   lock belongs to whoever procured it.
 ///

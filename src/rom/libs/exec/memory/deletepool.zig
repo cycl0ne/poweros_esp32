@@ -29,7 +29,9 @@ const Puddle = _memory.Puddle;
 /// first, and no block in the pool may be touched afterwards.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no; it frees memory. - Forbid: taken here.
+/// - Waits: for the pool's lock while another task is in the pool.
+/// - Interrupts: no; it frees memory.
+/// - Locks: takes the pool's own lock; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -44,8 +46,9 @@ const Puddle = _memory.Puddle;
 pub fn DeletePool(base: *ExecBase, pool_handle: ?*anyopaque) void {
     const pool: *Pool = @ptrCast(@alignCast(pool_handle orelse return));
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    // Whoever is in the pool finishes first; nobody may come in after, as
+    // the pool is the caller's to delete.
+    sys.ObtainSemaphore(&pool.lock);
 
     var it = pool.puddles.iterator();
     while (it.next()) |node| {

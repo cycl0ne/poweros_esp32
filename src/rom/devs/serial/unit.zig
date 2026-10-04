@@ -434,7 +434,6 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
         u.stopped = 0;
     }
     dev.open_cnt -= 1;
-    if (dev.open_cnt == 0 and dev.flags & exec.LIBF_DELEXP != 0) return expunge(dev);
     return null;
 }
 
@@ -456,7 +455,7 @@ fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
         sys.Enable();
         sys.RemIntServer(u.port.source(), &u.int);
     }
-    sys.Remove(&dev.node);
+    sys.DetachLibrary(dev);
     // The jump table and the base, as MakeLibrary allocated them.
     const start: *anyopaque = @ptrFromInt(@intFromPtr(dev) - dev.neg_size);
     sys.FreeMem(start, @as(usize, dev.neg_size) + dev.pos_size);

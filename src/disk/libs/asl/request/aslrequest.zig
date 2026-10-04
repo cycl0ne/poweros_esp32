@@ -53,7 +53,7 @@ const font = @import("../font/ask.zig");
 /// CONTEXT:
 /// - Waits: for input, for the screen, and for the drawer to be read.
 /// - Interrupts: no.
-/// - Forbid: not held and not to be held.
+/// - Locks: no spinlock may be held.
 /// - Process: a Process, not a bare Task: it opens a window and reads a
 ///   drawer.
 ///

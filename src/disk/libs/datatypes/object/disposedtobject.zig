@@ -39,7 +39,7 @@ const DataTypesBase = _base.DataTypesBase;
 /// CONTEXT:
 /// - Waits: for the object's layout to finish.
 /// - Interrupts: no.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: needed - closing a file is dos's.
 ///
 /// OWNERSHIP:

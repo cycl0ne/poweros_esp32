@@ -497,16 +497,46 @@ does not touch. The next boot puts them at the head of its log, between
 Software Failure requester keeps them too. The reset button clears that
 memory: it powers the chip down.
 
-## Keeping others out: Forbid, semaphores and spinlocks
+## Keeping others out: semaphores, spinlocks and Disable
 
 Three ways keep two pieces of code from changing the same thing at once,
 each for its own case:
 
 | | Holds for | The others | For |
 |---|---|---|---|
-| `Forbid`/`Permit` | a few lines | no other task inside Forbid runs, and no task starts running; interrupts do | exec's lists, walked by a task |
-| `ObtainSemaphore`/`ReleaseSemaphore` | as long as needed, waits included | a task that wants it sleeps until it is given back | a file, a screen, a device's unit |
-| `AcquireLock`/`ReleaseLock` | a few hundred cycles | one that wants it tries again until it is free | what an interrupt or another core touches too |
+| `ObtainSemaphore`/`ReleaseSemaphore` | as long as needed, waits included | a task that wants it sleeps until it is given back | a file, a screen, a device's unit: what its holder works on at length |
+| `AcquireLock`/`ReleaseLock` | a few hundred cycles | one that wants it tries again until it is free | a few fields or a list changed in a few lines - and with `LOCKF_INTERRUPT`, what an interrupt touches too |
+| `Disable`/`Enable` | a few lines | no interrupt runs, on either core | what exec's own interrupts touch: vectors, task queues |
+
+Which one is a question of what the holder does:
+
+- an interrupt touches it too: a `LOCKF_INTERRUPT` spinlock;
+- the holder waits, or calls what may - `DoIO`, `AllocMem`, `OpenLibrary`,
+  another library's call, printing: a semaphore;
+- otherwise - a few lines, a node added or taken off: a spinlock.
+
+**No bare atomics on data that may be in PSRAM.** This chip has no atomic
+instruction that works there: `@atomicRmw` on PSRAM compiles and runs, and
+is not atomic between the two cores. A `Lock` works anywhere.
+
+exec's own lists are each under a lock of their own, and a program that
+walks one takes it with `LockExecList`, which hands the list back locked,
+and gives it back with `UnlockExecList`. The memory, port and semaphore
+lists are under spinlocks, so the walk copies what it wants and prints
+after:
+
+```zig
+var names: [32][24]u8 = undefined;
+var count: usize = 0;
+const ports = sys.LockExecList(sdk.exec.EXECLIST_PORTS).?;
+var it = ports.iterator();
+while (it.next()) |node| : (count += 1) {
+    if (count == names.len) break;
+    copyName(&names[count], node.name);
+}
+sys.UnlockExecList(sdk.exec.EXECLIST_PORTS);
+// ... print names[0..count] now ...
+```
 
 A **spinlock** is an `exec.Lock`, made once with `InitLock`: a name for
 the alerts that mention it, its place in the lock order, and
@@ -529,7 +559,7 @@ takes the lock only if it is free and answers at once.
 **The rules**, which exec checks on every call:
 
 - Nothing that may wait while a lock is held: no `Wait`, `DoIO`,
-  `ObtainSemaphore` or file. `Wait` with a lock held is an alert. Nor
+  `ObtainSemaphore` or file. `Wait` with a lock held is a dead end. Nor
   `AllocMem`: when memory runs short it runs the low-memory handlers,
   which expunge libraries.
 - Locks in one order. Each has a number (`LOCKORDER_DRIVER` and up for a
@@ -540,9 +570,44 @@ takes the lock only if it is free and answers at once.
 - A lock an interrupt takes is a `LOCKF_INTERRUPT` lock; a plain one taken
   in an interrupt is an alert.
 
-A broken rule is a recoverable alert (`AN_LockRule`), and the call goes on.
-A lock taken again on the core that holds it would spin for good, so it is
-a dead end (`AN_LockDeadlock`) instead.
+A broken rule is a recoverable alert (`AN_LockRule`), and the call goes on -
+but for `Wait`. A lock taken again on the core that holds it would spin for
+good, so it is a dead end (`AN_LockDeadlock`) instead.
+
+### A library's or a device's own calls
+
+exec opens, closes and expunges a library under locks of its own, so its
+vectors keep to a few rules:
+
+- **Open and Close run inside the library's own lock** (`Library.lock`):
+  two of them never run at once on one library, and the open count is a
+  plain field changed there. Opens of different libraries run at once, and
+  nothing of exec's is held - an Open may start a task and wait for it.
+- **A Close does not expunge its library.** When the last Close leaves it
+  marked to go (`LIBF_DELEXP`), exec expunges it after the Close has
+  answered.
+- **An Expunge that goes takes its library off the list with
+  `DetachLibrary`**, then frees what it holds - closing the libraries it
+  opened is allowed - and its memory. One that stays answers without
+  detaching.
+- A library that hands each opener **a base of its own** gets that base
+  back in its Close with nothing of exec's held (the base is on no list),
+  and changes its own open count under `Library.lock` itself.
+
+### When the code goes
+
+A task that runs code someone else unloads - a server's sessions, a
+device's unit task, a library's own process - must be gone before that
+code goes. exec says when it is:
+
+- `SetTaskEndMsg(task, msg)` has `msg` replied to its reply port once the
+  task has ended and nothing runs on its stack any more; dos's
+  `NP_EndMsg` sets it for a process. A message, not a signal, so a server
+  counts every session that has gone.
+- `NP_HoldLibrary` hands a process an open count of a library whose code
+  it runs; dos closes it once that code has returned, so the library
+  cannot be expunged under it.
+
 
 A lock may live anywhere. In internal memory taking it is one
 compare-and-set instruction; in PSRAM, where this chip has none, exec takes
@@ -557,13 +622,9 @@ dispatcher of its own, both take tasks from one ready list, and a task
 runs on whichever core is free - so two tasks really do run at once, and
 what keeps them apart has to hold on both cores:
 
-- **Forbid** is one lock for the whole machine. Two Forbid sections never
-  run at once, and while one runs the other core keeps the task it has
-  but starts no other: a task made ready inside Forbid runs after the
-  `Permit`, as on one core. So a task that signals its parent inside
-  Forbid and ends is gone before the parent runs. What Forbid does not do
-  is stop the task already running on the other core - it guards what
-  everybody touches only inside Forbid, which exec's lists are.
+- **Nothing stops the whole machine.** exec's lists, every library's
+  vectors and every module's own data are under locks of their own, which
+  hold on both cores; a task made ready runs as soon as a core is free.
 - **Disable** masks this core's interrupts and holds off the other core's
   interrupts and Disables as well. The devices' interrupts are all core
   0's.
@@ -577,13 +638,17 @@ what keeps them apart has to hold on both cores:
 
 A task that has to stay on one core - code written for one core, or one
 that drives a core's own hardware - is pinned with `SetTaskAffinity`, or
-from its first instruction with `NP_Affinity` when dos makes it:
+from its first instruction: with its `TF_CORE0` or `TF_CORE1` set in the
+`Task` handed to `AddTask`, or with `NP_Affinity` when dos makes it:
 
 ```zig
-sys.Forbid(); // no core starts it before it is pinned
-const task = sys.CreateTask("radio", 5, &radioCode, 8192) orelse return error.NoMemory;
-_ = sys.SetTaskAffinity(task, sdk.exec.TF_CORE0);
-sys.Permit();
+radio.task = .{
+    .node = .{ .name = "radio", .pri = 5 },
+    .flags = sdk.exec.TF_CORE0, // no core but 0 ever runs it
+    .sp_lower = @intFromPtr(stack),
+    .sp_upper = @intFromPtr(stack) + stack_size,
+};
+_ = sys.AddTask(&radio.task, &radioCode, null);
 ```
 
 The idle tasks are pinned one to each core, and so is the Wi-Fi vendor

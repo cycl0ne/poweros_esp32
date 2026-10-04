@@ -49,7 +49,7 @@ const setPen = _rastport.setPen;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no; it calls utility.library to walk the list.
-/// - Forbid: not held and not needed.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

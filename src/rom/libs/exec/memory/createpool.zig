@@ -40,7 +40,7 @@ const MEMF_CLEAR = sdk.exec.MEMF_CLEAR;
 /// first puddle.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no; it allocates. - Forbid: not needed.
+/// - Waits: no. - Interrupts: no; it allocates. - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -81,6 +81,7 @@ pub fn CreatePool(base: *ExecBase, requirements: u32, puddle_size: usize, thresh
         // literally would mean.
         .thresh_size = if (thresh_size == 0) largest else @min(thresh_size, largest),
     };
+    sys.InitSemaphore(&pool.lock);
     sys.NewList(&pool.puddles);
     return block;
 }

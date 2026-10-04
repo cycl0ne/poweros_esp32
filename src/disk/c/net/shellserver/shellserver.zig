@@ -62,9 +62,11 @@ const MSG_WRONG = "\r\nWrong password\r\n";
 /// stack, and the server does not return while a session runs - their
 /// code is its code.
 const Server = struct {
-    task: *exec.Task,
-    done_mask: u32,
-    /// Sessions running; changed under Forbid.
+    /// Where each session's end message comes back, once the session is
+    /// gone and nothing runs its code any more (NP_EndMsg).
+    ended: *exec.MsgPort,
+    /// Sessions not gone yet: counted by the server alone, up as one is
+    /// made and down as its end message comes back.
     sessions: u32 = 0,
     /// The next device's number.
     next: u32 = 0,
@@ -73,7 +75,6 @@ const Server = struct {
 
 /// A session's own block, freed when it ends.
 const Session = struct {
-    server: *Server,
     /// The device's name, and with a colon, the name opened.
     name: [16:0]u8 = @splat(0),
     path: [17:0]u8 = @splat(0),
@@ -103,12 +104,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(socket_lib);
     const sb: *SocketBase = @ptrCast(socket_lib);
 
-    const done_signal = sys.AllocSignal(-1);
-    if (done_signal < 0) return dos.RETURN_FAIL;
-    defer sys.FreeSignal(done_signal);
+    const ended = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
+    defer sys.DeleteMsgPort(ended);
     var server: Server = .{
-        .task = sys.FindTask(null).?,
-        .done_mask = @as(u32, 1) << @intCast(done_signal),
+        .ended = ended,
         .quiet = quiet,
     };
 
@@ -131,6 +130,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         var peer: bsd.sockaddr_in6 = .{};
         var peer_length: u32 = @sizeOf(bsd.sockaddr_in6);
         const connection = sb.Accept(listener, peer.any(), &peer_length);
+        collect(sys, &server);
         if (connection < 0) {
             if (sb.Errno() != bsd.EINTR) result = failed(dl, sb, "Accept");
             break;
@@ -150,16 +150,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     _ = sb.CloseSocket(listener);
 
-    // The sessions run this program's code: it stays until they are done.
-    while (true) {
-        sys.Forbid();
-        const running = server.sessions;
-        sys.Permit();
-        if (running == 0) break;
-        if (!quiet) _ = Printf(dl, MSG_WAITING, .{ COMMAND_NAME, running });
-        _ = sys.Wait(server.done_mask);
+    // The sessions run this program's code: it stays until they are gone.
+    while (server.sessions != 0) {
+        if (!quiet) _ = Printf(dl, MSG_WAITING, .{ COMMAND_NAME, server.sessions });
+        _ = sys.WaitPort(ended);
+        collect(sys, &server);
     }
     return result;
+}
+
+/// The end messages of the sessions gone since the last look, freed and
+/// counted off.
+fn collect(sys: *ExecBase, server: *Server) void {
+    while (sys.GetMsg(server.ended)) |message| {
+        sys.FreeVec(message);
+        server.sessions -= 1;
+    }
 }
 
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
@@ -186,15 +192,19 @@ fn start(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, server: *Server, id: i32
     _ = sb;
     const memory = sys.AllocVec(@sizeOf(Session), exec.MEMF_CLEAR) orelse return false;
     const session: *Session = @ptrCast(@alignCast(memory));
-    session.* = .{ .server = server };
+    session.* = .{};
     const number = server.next;
     server.next += 1;
     writeName(&session.name, number, false);
     writeName(&session.path, number, true);
     session.startup = .{ .unit = @bitCast(id), .device = sdk.devices.telnet.TELNETNAME };
-    sys.Forbid();
+    // Comes back once the session is gone: the server's to free.
+    const ended: *exec.Message = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(exec.Message), exec.MEMF_CLEAR) orelse {
+        sys.FreeVec(memory);
+        return false;
+    }));
+    ended.* = .{ .reply_port = server.ended };
     server.sessions += 1;
-    sys.Permit();
     const tags = [_]TagItem{
         .{ .tag = dos.NP_Entry, .data = @intFromPtr(&sessionEntry) },
         .{ .tag = dos.NP_Name, .data = @intFromPtr(&session.name) },
@@ -202,12 +212,12 @@ fn start(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, server: *Server, id: i32
         .{ .tag = dos.NP_StackSize, .data = 8192 },
         // The server's CLI, and with it its command path, for the shell.
         .{ .tag = dos.NP_Cli, .data = 1 },
+        .{ .tag = dos.NP_EndMsg, .data = @intFromPtr(ended) },
         .{},
     };
     if (dl.CreateNewProc(&tags) == null) {
-        sys.Forbid();
         server.sessions -= 1;
-        sys.Permit();
+        sys.FreeVec(ended);
         sys.FreeVec(memory);
         return false;
     }
@@ -246,15 +256,9 @@ fn writeName(into: []u8, number: u32, colon: bool) void {
 fn sessionEntry(sys: *ExecBase) callconv(.c) void {
     const me = sys.FindTask(null).?;
     const session: *Session = @ptrCast(@alignCast(me.user_data.?));
-    const server = session.server;
-    defer {
-        sys.FreeVec(session);
-        // The server is told last, under a Forbid that lasts until this
-        // process is gone: the code it runs is the server's.
-        sys.Forbid();
-        server.sessions -= 1;
-        sys.Signal(server.task, server.done_mask);
-    }
+    // The server hears of the end from exec, once this process is gone
+    // (NP_EndMsg): the code it runs is the server's.
+    defer sys.FreeVec(session);
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
