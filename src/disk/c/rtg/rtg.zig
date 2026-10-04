@@ -318,7 +318,7 @@ fn printStats(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
         s.starved_frames,
     });
     if (has(got, "late_refills")) {
-        _ = Printf(dl, "%-12s %d copied, %d of them waited for\n", .{ "Refills", s.refills, s.late_refills });
+        _ = Printf(dl, "%-12s %d copied, %d of them late\n", .{ "Refills", s.refills, s.late_refills });
     }
     if (has(got, "slow_gaps")) {
         _ = Printf(dl, "%-12s %d, last gap %d us, worst %d us, %d over a line, %d over 5 us\n", .{

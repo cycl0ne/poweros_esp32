@@ -12,9 +12,9 @@
 //! two microseconds of stall, which is what the memory's own refresh costs
 //! - and by half as much again with the CPU working. The pixel FIFO holds
 //! about a microsecond, so every such stall is pixels the panel never
-//! gets, and the picture slips sideways for good. So the panel reads two
-//! small buffers in internal memory, and a second DMA channel copies the
-//! picture into the one it has just finished with. The copy is the DMA's
+//! gets, and the picture slips sideways for good. So the panel reads a
+//! few small buffers in internal memory, and a second DMA channel copies
+//! the picture into the one it has just finished with. The copy is the DMA's
 //! and not the CPU's because the panel needs 39 MB/s of it continuously
 //! and this machine's CPU copies memory at about half that.
 //!
@@ -103,6 +103,16 @@ pub const Panel = struct {
     /// Which buffer the panel finishes next, and which stretch goes in it.
     next_buffer: u32 = 0,
     next_stretch: u32 = 0,
+    /// Buffers the panel has finished whose copy has not been started: the
+    /// `owed` before `next_buffer`, each owed the stretch as far before
+    /// `next_stretch`. The copy channel runs one copy at a time, so a
+    /// buffer freed while it is busy waits here for the copy's end.
+    owed: u32 = 0,
+    /// Whether a copy has been started that may not have ended.
+    copying: bool = false,
+    /// The last descriptor of each buffer in the ring: the panel's channel
+    /// names the one it reached last, and so the buffer it finished.
+    buffer_ends: [bounce_count]usize = @splat(0),
 
     buffer_done: exec.Interrupt = .{},
     vblank: exec.Interrupt = .{},
@@ -152,6 +162,11 @@ const max_cached = 4;
 /// less the copy - where two left it one. The interrupt runs out of
 /// flash, through exec's dispatch, and a burst of cache misses there -
 /// while a host reads the USB console, say - took longer than one.
+///
+/// Later than that costs the stretches whose copies came too late, for
+/// one frame, and no more: the interrupt learns from the channel which
+/// buffer it finished, so a late one still copies the right stretch into
+/// each buffer and the picture stays where it is.
 const bounce_count = 3;
 
 /// One picture's chains, and where its pixels start.
@@ -292,7 +307,11 @@ pub fn bringUp(panel: *Panel) i32 {
         panel.fill_into[i] = db.AllocDMAChain(dmares.DMA_IN, at, panel.bounce_bytes, 0) orelse
             return giveBack(panel, err.RTGERR_NO_MEMORY);
     }
-    for (0..bounce_count) |i| lastOf(panel.bounce_chain[i].?).next = panel.bounce_chain[(i + 1) % bounce_count];
+    for (0..bounce_count) |i| {
+        const last = lastOf(panel.bounce_chain[i].?);
+        last.next = panel.bounce_chain[(i + 1) % bounce_count];
+        panel.buffer_ends[i] = @intFromPtr(last);
+    }
     panel.chain = panel.bounce_chain[0];
 
     // The chains over a picture are made when it is first shown.
@@ -315,8 +334,8 @@ pub fn bringUp(panel: *Panel) i32 {
     lcd.intClear(lcd.INT_VSYNC);
     sys.AddIntServer(intbits.INTB_LCD_CAM, &panel.vblank);
 
-    // The copy's end, for a stretch the pointer crosses: enabled only for
-    // those (`pointer.zig`).
+    // The copy's end, for a stretch the pointer crosses and for a copy
+    // owed behind it: enabled only for those (`pointer.zig`).
     panel.copy_done = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
         .data = @ptrCast(panel),
@@ -619,30 +638,20 @@ fn lastOf(head: *dmares.DMADescriptor) *dmares.DMADescriptor {
 
 // --- feeding it -------------------------------------------------------------
 
-/// Copy one stretch of the picture into one buffer. Both sides of the copy
-/// channel are started on chains built in advance, so this is four
-/// register writes and nothing else - it runs from the panel's own DMA
-/// interrupt, sixty times a frame.
+/// Copy one stretch of the picture into one buffer, the copy channel being
+/// free. Both sides of the copy channel are started on chains built in
+/// advance, so this is four register writes and nothing else - it runs
+/// from the panel's own DMA interrupt, sixty times a frame.
 pub fn startCopy(panel: *Panel, into: u32, from: u32) void {
     const db = panel.dma orelse return;
     const chains = panel.fill_from orelse return;
-    // The one before it had at least a buffer's worth of time - 460 microseconds
-    // for ten lines - and takes about half that. Under a CPU working PSRAM
-    // hard it can still be running, and a channel must not be started
-    // again while it is: the rest of it is waited for here, since the
-    // buffer it is writing is the one the panel reads next either way.
-    if (panel.stats.refills > 2 and
-        db.DMARawIntStatus(panel.copy_channel, dmares.DMA_IN) & dmares.DMAINTF_IN_SUC_EOF == 0)
-    {
-        panel.stats.late_refills +%= 1;
-        waitCopy(panel);
-    }
     // The pointer owed to the copy before, which has ended: laid here if
     // that copy's own interrupt has not got to it yet.
     if (panel.paint_pending) pointer.painted(panel);
     db.ClearDMAInts(panel.copy_channel, dmares.DMA_IN, dmares.DMAINTF_IN_SUC_EOF);
     _ = db.StartDMA(panel.copy_channel, dmares.DMA_IN, panel.fill_into[into].?);
     _ = db.StartDMA(panel.copy_channel, dmares.DMA_OUT, chains[from].?);
+    panel.copying = true;
     panel.stats.refills +%= 1;
     panel.copy_into = into;
     panel.copy_stretch = from;
@@ -652,12 +661,20 @@ pub fn startCopy(panel: *Panel, into: u32, from: u32) void {
     }
 }
 
+/// Whether the copy last started is still running.
+fn copyRunning(panel: *Panel, db: *dmares.DmaBase) bool {
+    if (!panel.copying) return false;
+    if (db.DMARawIntStatus(panel.copy_channel, dmares.DMA_IN) & dmares.DMAINTF_IN_SUC_EOF == 0) return true;
+    panel.copying = false;
+    return false;
+}
+
 /// Wait for the copy in flight, which is only ever done while the panel is
 /// stopped: at bring-up, and at a realignment.
 pub fn waitCopy(panel: *Panel) void {
     const db = panel.dma orelse return;
     var spins: u32 = 0;
-    while (db.DMARawIntStatus(panel.copy_channel, dmares.DMA_IN) & dmares.DMAINTF_IN_SUC_EOF == 0) {
+    while (copyRunning(panel, db)) {
         spins += 1;
         if (spins > 1_000_000) return; // something is wrong; do not hang the boot
     }
@@ -666,12 +683,55 @@ pub fn waitCopy(panel: *Panel) void {
 /// Every buffer filled with the top of the picture, and the counters set
 /// to match: the panel is about to be started on the first of them.
 pub fn primeBuffers(panel: *Panel) void {
+    // A copy still running from before writes into a buffer filled here.
+    waitCopy(panel);
     for (0..bounce_count) |i| {
         startCopy(panel, @intCast(i), @intCast(i % panel.stretches));
         waitCopy(panel);
     }
     panel.next_buffer = 0;
     panel.next_stretch = bounce_count % panel.stretches;
+    panel.owed = 0;
+    // An end the panel's channel signalled before it was stopped is not
+    // one of these buffers'.
+    if (panel.dma) |db| db.ClearDMAInts(panel.channel, dmares.DMA_OUT, dmares.DMAINTF_OUT_EOF);
+}
+
+/// Start the copy owed longest, if the copy channel is free. One owed
+/// behind it, or one that finds the channel busy, has the copy's end
+/// call this again (`pointer.copyServer`).
+///
+/// A busy channel is not waited for. The copy before had a buffer's time
+/// - 460 microseconds for ten lines - and takes about half that, but
+/// under CPUs working PSRAM hard it can take longer, and waiting for it
+/// in an interrupt holds off every other one on this core for as long.
+pub fn refill(panel: *Panel) void {
+    const db = panel.dma orelse return;
+    if (panel.owed == 0) return;
+    if (copyRunning(panel, db)) {
+        db.EnableDMAInts(panel.copy_channel, dmares.DMA_IN, dmares.DMAINTF_IN_SUC_EOF);
+        return;
+    }
+    const into = (panel.next_buffer + bounce_count - panel.owed) % bounce_count;
+    const stretch = (panel.next_stretch + panel.stretches - panel.owed) % panel.stretches;
+    panel.owed -= 1;
+    // A new frame's first stretch: the moment a new picture can take over
+    // without the frame showing any of the old one.
+    if (stretch == 0) takePending(panel);
+    startCopy(panel, into, stretch);
+    if (panel.owed != 0) db.EnableDMAInts(panel.copy_channel, dmares.DMA_IN, dmares.DMAINTF_IN_SUC_EOF);
+}
+
+/// How many buffers the panel has finished since the last time: the ones
+/// from `next_buffer` up to the one the channel names. One, unless the
+/// interrupt came so late that the next buffer's end is in it too - its
+/// bit says that a buffer ended, not how many.
+fn finishedSince(panel: *Panel, db: *dmares.DmaBase) u32 {
+    const last = @intFromPtr(db.DMAEOFDescriptor(panel.channel, dmares.DMA_OUT) orelse return 1);
+    for (panel.buffer_ends, 0..) |end, buffer| {
+        if (end == last) return (@as(u32, @intCast(buffer)) + bounce_count - panel.next_buffer) % bounce_count + 1;
+    }
+    return 1;
 }
 
 /// The panel has finished with a buffer: fill it with the next stretch of
@@ -680,14 +740,24 @@ fn bufferServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
     const db = panel.dma orelse return 0;
     if (db.DMAIntStatus(panel.channel, dmares.DMA_OUT) & dmares.DMAINTF_OUT_EOF == 0) return 0;
+    // Which buffer ended is read before the bit is cleared: an end that
+    // falls between the two is then counted at the next interrupt, rather
+    // than counted here and its bit raising another.
+    const finished = finishedSince(panel, db);
     db.ClearDMAInts(panel.channel, dmares.DMA_OUT, dmares.DMAINTF_OUT_EOF);
-    // A new frame's first stretch: the moment a new picture can take over
-    // without the frame showing any of the old one.
-    if (panel.next_stretch == 0) takePending(panel);
-    startCopy(panel, panel.next_buffer, panel.next_stretch);
-    panel.next_buffer = (panel.next_buffer + 1) % bounce_count;
-    panel.next_stretch += 1;
-    if (panel.next_stretch == panel.stretches) panel.next_stretch = 0;
+    const behind = panel.owed + finished;
+    panel.next_buffer = (panel.next_buffer + finished) % bounce_count;
+    panel.next_stretch = (panel.next_stretch + finished) % panel.stretches;
+    // The panel has gone on to `next_buffer`. Its copy is late if it is
+    // still owed - every buffer is - or still running: that stretch shows
+    // what the buffer held before, or part of it does, for this frame.
+    if (behind >= bounce_count or (copyRunning(panel, db) and panel.copy_into == panel.next_buffer)) {
+        panel.stats.late_refills +%= 1;
+    }
+    // A buffer owed longer than the panel took to come round to it again
+    // has been read as it was: its stretch is past, and not copied.
+    panel.owed = @min(behind, bounce_count);
+    refill(panel);
     return 1;
 }
 
@@ -741,7 +811,15 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const at = panel.next_stretch;
     if (panel.stats.frames > 2) {
         const walk = @as(i32, @intCast(at)) - @as(i32, @intCast(panel.last_at));
-        if (walk != 0) panel.stats.total_walk +%= walk;
+        // A stretch missed is a picture shifted from now on, and further
+        // with every one after it: put back in step here and now, which
+        // costs this frame and not every frame after. A refill comes late
+        // when PSRAM is busy - with the other core drawing into it while
+        // this one waits for a copy, most of all.
+        if (walk != 0) {
+            panel.stats.total_walk +%= walk;
+            panel.aligned = false;
+        }
         panel.stats.walk_frames +%= 1;
     }
     panel.last_at = at;
@@ -772,9 +850,9 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     return 1;
 }
 
-/// Put the stream back in step at the next blanking. Nothing should need
-/// this once the panel is running; it is here because a picture that has
-/// been knocked sideways can be put right without a reset.
+/// Put the stream back in step at the next blanking. The blanking does it
+/// by itself when it finds the stream walked; this is for a picture
+/// knocked sideways some other way, put right without a reset.
 pub fn realign(panel: *Panel) void {
     panel.aligned = false;
 }

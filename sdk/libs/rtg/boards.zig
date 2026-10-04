@@ -198,7 +198,8 @@ pub const RtgBoardStats = extern struct {
     worst_gap_us: u32 = 0,
     long_gaps: u32 = 0,
     slow_gaps: u32 = 0,
-    /// Buffer refills, and the ones that were not finished in time.
+    /// Buffer refills, and the ones that were not finished in time: the
+    /// display reached the buffer before the copy into it was done.
     refills: u32 = 0,
     late_refills: u32 = 0,
     /// Where in the frame the stream was at the last blanking, and how far

@@ -2,7 +2,7 @@
 //! The pointer, laid into the buffers the panel is really fed from.
 //!
 //! The picture never holds the pointer. The copy channel brings the
-//! picture into the two small buffers in internal memory a stretch at a
+//! picture into the small buffers in internal memory a stretch at a
 //! time (`panel.zig`), and a stretch the pointer crosses has the pointer
 //! laid over it there, after the copy has put it in and before the panel
 //! reads it: the buffer being filled is the one the panel reads next, a
@@ -11,11 +11,12 @@
 //!
 //! What says the copy is done is the copy channel's own end-of-transfer
 //! interrupt, which is enabled only for a copy of a stretch the pointer
-//! crosses - a few of a frame's sixty - and switched off again by the
-//! server rather than cleared. So the status bit stays for `startCopy`,
-//! which reads it to know whether the copy before has finished; and when
-//! `startCopy` finds a lay still owed - the refill interrupt came first -
-//! it lays it itself, the copy being over by then.
+//! crosses - a few of a frame's sixty - or one with another copy owed
+//! behind it, and switched off again by the server rather than cleared.
+//! So the status bit stays for `refill`, which reads it to know whether
+//! the copy before has finished; and when `startCopy` finds a lay still
+//! owed - the refill interrupt came first - it lays it itself, the copy
+//! being over by then.
 //!
 //! The lay is a masked copy of at most `RTG_POINTER_MAX` rows of a stretch,
 //! from internal memory into internal memory. It runs from IRAM, where no
@@ -30,7 +31,8 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const err = rtg.errors;
 const dmares = sdk.resources.dma;
-const Panel = @import("panel.zig").Panel;
+const panel_feed = @import("panel.zig");
+const Panel = panel_feed.Panel;
 
 /// Whether the pointer is to be laid into a copy of stretch `stretch`.
 pub fn crosses(panel: *Panel, stretch: u32) bool {
@@ -51,12 +53,14 @@ pub fn painted(panel: *Panel) void {
 }
 
 /// The copy channel's end-of-transfer interrupt: a stretch the pointer
-/// crosses is in its buffer.
+/// crosses is in its buffer, and the channel is free for a copy owed
+/// behind it.
 pub fn copyServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
     const db = panel.dma orelse return 0;
     if (db.DMAIntStatus(panel.copy_channel, dmares.DMA_IN) & dmares.DMAINTF_IN_SUC_EOF == 0) return 0;
     painted(panel);
+    panel_feed.refill(panel);
     return 1;
 }
 
