@@ -221,4 +221,8 @@ u32 SetTaskAffinity(?*exec.Task task, u32 cores)
 /// The task core `core` is running now, or null for a core that is not
 /// running. Asked inside Disable; copy what is wanted before the Enable.
 ?*exec.Task CoreTask(u32 core)
+/// How core `core` has spent its time since it started, in cycles of its
+/// clock: in tasks, idle and in interrupts. False for a core that is not
+/// running. A program reads twice and divides the differences.
+bool ReadCoreTimes(u32 core, *exec.CoreTimes times)
 ##end

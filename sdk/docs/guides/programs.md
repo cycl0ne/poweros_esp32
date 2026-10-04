@@ -590,8 +590,13 @@ The idle tasks are pinned one to each core, and so is the Wi-Fi vendor
 code, to core 0. A running task is on neither of exec's task queues:
 `CoreTask(core)` answers what a core runs - asked inside `Disable`, from
 core 0 up until it answers null - which is how `ShowInfo TASKS` lists every
-task once, with the core it runs on and the core it is pinned to. On the
-`s3>` console `cores` shows what each core runs,
+task once, with the core it runs on and the core it is pinned to.
+`ReadCoreTimes(core, &times)` answers how a core has spent its time since
+it started - in tasks, idle, in interrupts, in cycles of its clock, counted
+at every exception rather than sampled; read it twice and divide the
+differences for how busy the core was in between, which is what
+`SYS:Programs/CPULoad` charts. On the `s3>` console `cores` shows what each
+core runs,
 and `cores share off` keeps the second core to its own tasks, which is
 how a fault is told from one that only shows with two cores.
 `C:test/Cores` sets tasks on each other through all of the above - FREE

@@ -39,8 +39,9 @@ pub const LIBRARY_VERSION = 1;
 /// checked on every call; the semaphores, the memory and the ports kept
 /// under exec's own locks instead of Forbid and Disable. 4: the second
 /// core - its own state, its own dispatcher, HoldOtherCores and
-/// ReleaseOtherCores, SetTaskAffinity and CoreTask.
-pub const LIBRARY_REVISION = 4;
+/// ReleaseOtherCores, SetTaskAffinity and CoreTask. 5: each core's time
+/// in tasks, idle and in interrupts (ReadCoreTimes).
+pub const LIBRARY_REVISION = 5;
 const BUILD_DATE = "04.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

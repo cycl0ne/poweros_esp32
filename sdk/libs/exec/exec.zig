@@ -114,6 +114,7 @@ pub const TB_CORE0 = tasks.TB_CORE0;
 pub const TB_CORE1 = tasks.TB_CORE1;
 pub const TF_CORE0 = tasks.TF_CORE0;
 pub const TF_CORE1 = tasks.TF_CORE1;
+pub const CoreTimes = tasks.CoreTimes;
 pub const SIGF_ABORT = tasks.SIGF_ABORT;
 pub const SIGF_CHILD = tasks.SIGF_CHILD;
 pub const SIGF_BLIT = tasks.SIGF_BLIT;

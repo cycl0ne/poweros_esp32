@@ -260,6 +260,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     boot.state = .run;
     boot.flags |= sdk.exec.TF_CORE0;
     base.cpu().this_task = boot;
+    base.cpu().time_mark = cycles();
     boot_task = boot;
     const idle = base.iface().CreateTask(idle_names[0], -128, &idleLoop, idle_stack_size) orelse
         return error.OutOfMemory;
@@ -304,6 +305,7 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
 /// INPUTS:
 /// - `base` - exec: how many cores take tasks.
 pub fn coreStarted(base: *ExecBase) void {
+    base.cpu().time_mark = cycles();
     _interrupt.takeSystemInterrupts(base);
     base.cores_running = exec_base.coreId() + 1;
     _interrupt.dropSystemInterrupts(base);
@@ -571,7 +573,21 @@ pub fn blockCurrent(base: *ExecBase, task: *Task, signal_set: u32) void {
 pub fn interruptEnter(base: *ExecBase) void {
     const cpu = base.cpu();
     if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.takeSystemInterrupts(base);
+    // The time since the last exit was the task's it resumed - or idle.
+    if (cpu.int_depth == 0) {
+        const now = cycles();
+        const spent = now -% cpu.time_mark;
+        if (cpu.this_task == idle_tasks[exec_base.coreId()]) cpu.time_idle +%= spent else cpu.time_tasks +%= spent;
+        cpu.time_mark = now;
+    }
     cpu.int_depth += 1;
+}
+
+/// The core's clock, in cycles: what its times are counted in. None on
+/// the host.
+pub fn cycles() u32 {
+    if (comptime @import("builtin").cpu.arch != .xtensa) return 0;
+    return sdk.hardware.cpu.ccount();
 }
 
 /// Counts an exception exit and answers the context to resume: the one
@@ -593,7 +609,12 @@ pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
         if (cpu.sys_flags & SFF_SAR != 0) resumed = reschedule(base, context);
     }
     cpu.int_depth -= 1;
-    if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.dropSystemInterrupts(base);
+    if (cpu.int_depth == 0) {
+        const now = cycles();
+        cpu.time_interrupts +%= now -% cpu.time_mark;
+        cpu.time_mark = now;
+        if (cpu.id_nest_cnt < 0) _interrupt.dropSystemInterrupts(base);
+    }
     return resumed;
 }
 

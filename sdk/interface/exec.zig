@@ -141,6 +141,7 @@ pub const LVO = struct {
     pub const ReleaseOtherCores = libraries.lvo(127);
     pub const SetTaskAffinity = libraries.lvo(128);
     pub const CoreTask = libraries.lvo(129);
+    pub const ReadCoreTimes = libraries.lvo(130);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -272,6 +273,7 @@ pub const Fn = struct {
     pub const ReleaseOtherCores = *const fn (*ExecBase) callconv(.c) void;
     pub const SetTaskAffinity = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) u32;
     pub const CoreTask = *const fn (*ExecBase, u32) callconv(.c) ?*exec.Task;
+    pub const ReadCoreTimes = *const fn (*ExecBase, u32, *exec.CoreTimes) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -852,5 +854,12 @@ pub const ExecBase = opaque {
     /// running. Asked inside Disable; copy what is wanted before the Enable.
     pub fn CoreTask(self: *ExecBase, core: u32) ?*exec.Task {
         return libraries.call(self, LVO.CoreTask, Fn.CoreTask, .{core});
+    }
+
+    /// How core `core` has spent its time since it started, in cycles of its
+    /// clock: in tasks, idle and in interrupts. False for a core that is not
+    /// running. A program reads twice and divides the differences.
+    pub fn ReadCoreTimes(self: *ExecBase, core: u32, times: *exec.CoreTimes) bool {
+        return libraries.call(self, LVO.ReadCoreTimes, Fn.ReadCoreTimes, .{ core, times });
     }
 };

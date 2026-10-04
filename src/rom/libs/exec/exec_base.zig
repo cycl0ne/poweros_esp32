@@ -80,6 +80,14 @@ pub const CpuState = extern struct {
     /// moment it no longer runs on their stacks, or a later one if the
     /// memory lock is held then.
     reap: ?*Task = null,
+    /// The core's time so far, in cycles of its clock: in tasks, in its
+    /// idle task, in exceptions (`ReadCoreTimes`). Added to at the
+    /// outermost exception entry and exit, from `time_mark`, the clock
+    /// when the core last went from one to another.
+    time_tasks: u64 align(4) = 0,
+    time_idle: u64 align(4) = 0,
+    time_interrupts: u64 align(4) = 0,
+    time_mark: u32 = 0,
     /// The core's task another core's RemTask is taking away, switched out
     /// at its next switch point; once it is, `stopped` until the next exit,
     /// which signals `stop_waiter`, the task taking it away.

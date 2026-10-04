@@ -120,6 +120,7 @@ const contract_files = [_][]const u8{
     @embedFile("interrupt/releaseothercores.zig"),
     @embedFile("task/settaskaffinity.zig"),
     @embedFile("task/coretask.zig"),
+    @embedFile("task/readcoretimes.zig"),
     @embedFile("debug/debug.zig"),
     @embedFile("task/findtask.zig"),
     @embedFile("task/settaskpri.zig"),
@@ -325,6 +326,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoReleaseOtherCores),
     vec(lvoSetTaskAffinity),
     vec(lvoCoreTask),
+    vec(lvoReadCoreTimes),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -841,6 +843,10 @@ fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) callconv(.c) u3
 
 fn lvoCoreTask(base: *ExecBase, core: u32) callconv(.c) ?*Task {
     return exec.CoreTask(base, core);
+}
+
+fn lvoReadCoreTimes(base: *ExecBase, core: u32, times: *sdk.exec.CoreTimes) callconv(.c) bool {
+    return exec.ReadCoreTimes(base, core, times);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

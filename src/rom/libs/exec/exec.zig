@@ -143,6 +143,7 @@ pub const FindTask = @import("task/findtask.zig").FindTask;
 pub const SetTaskPri = @import("task/settaskpri.zig").SetTaskPri;
 pub const SetTaskAffinity = @import("task/settaskaffinity.zig").SetTaskAffinity;
 pub const CoreTask = @import("task/coretask.zig").CoreTask;
+pub const ReadCoreTimes = @import("task/readcoretimes.zig").ReadCoreTimes;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const Forbid = @import("task/forbid.zig").Forbid;
@@ -2126,6 +2127,23 @@ test "tasks: SetTaskAffinity - a task pinned to another core is passed over, and
 
     RemTask(SysBase, task);
     try expectNoLeaks();
+}
+
+test "tasks: ReadCoreTimes - a running core answers, and its times only grow" {
+    try setUp();
+    defer deinit();
+    var first: sdk.exec.CoreTimes = .{};
+    try testing.expect(ReadCoreTimes(SysBase, 0, &first));
+    _ = exceptionExit(boot_ctx);
+    var second: sdk.exec.CoreTimes = .{};
+    try testing.expect(ReadCoreTimes(SysBase, 0, &second));
+    try testing.expect(second.tasks >= first.tasks);
+    try testing.expect(second.idle >= first.idle);
+    try testing.expect(second.interrupts >= first.interrupts);
+    // One core running: core 1 answers nothing, and its times stay put.
+    var untouched: sdk.exec.CoreTimes = .{ .tasks = 7 };
+    try testing.expect(!ReadCoreTimes(SysBase, 1, &untouched));
+    try testing.expectEqual(@as(u64, 7), untouched.tasks);
 }
 
 test "tasks: CoreTask - each running core's task, null past the last" {

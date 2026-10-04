@@ -92,6 +92,16 @@ pub const TB_CORE1 = 2;
 pub const TF_CORE0: u8 = 1 << TB_CORE0;
 pub const TF_CORE1: u8 = 1 << TB_CORE1;
 
+/// How a core has spent its time since it started, in cycles of its own
+/// clock (`ReadCoreTimes`): running tasks, in its idle task, and in
+/// interrupts and exceptions. The sum is all of it; what a program makes
+/// of them is the ratios, between two readings.
+pub const CoreTimes = extern struct {
+    tasks: u64 align(4) = 0,
+    idle: u64 align(4) = 0,
+    interrupts: u64 align(4) = 0,
+};
+
 /// tc_Switch and tc_Launch. They get the task and SysBase (A3 and A6 in the
 /// ROM). exec calls them from its dispatcher, at the exception exit with
 /// interrupts masked, so they must be short and must not wait, switch, or
