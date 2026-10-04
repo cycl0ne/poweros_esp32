@@ -117,6 +117,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_PsramSize, 8 * 1024 * 1024),
     .value(st.SYSTAG_PsramMode, st.PSRAM_OCTAL),
     .value(st.SYSTAG_Console, console),
+    // Espressif's QEMU has the second core.
+    .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     // The 7B's, whose screen this one stands in for, so text sized in points is laid out as the 7B will show it.

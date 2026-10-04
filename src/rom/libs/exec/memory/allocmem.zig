@@ -55,11 +55,16 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// handler is exec's own, which expunges libraries and devices nobody has
 /// open - one per call, so only as much goes as the allocation needed.
 ///
+/// The regions are searched under exec's memory lock, a few hundred
+/// cycles; the handlers run under Forbid, outside it, so that what they
+/// free goes straight back.
+///
 /// CONTEXT:
 /// - Waits: no, and it must not - the handlers run inside its Forbid and
 ///   are forbidden to wait for the same reason.
-/// - Interrupts: no. It takes Forbid, and an interrupt must not allocate.
-/// - Forbid: taken here, around the search, the handlers and the clear.
+/// - Interrupts: no. It takes exec's memory lock, and an interrupt must
+///   not allocate.
+/// - Forbid: may be held; taken here around the handlers.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -86,42 +91,44 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// ```
 pub fn AllocMem(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
     if (byte_size == 0) return null;
-    const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
-
-    const block = allocFromList(base, byte_size, requirements) orelse
-        (if (requirements & sdk.exec.MEMF_NO_EXPUNGE != 0) null else lowMemory(base, byte_size, requirements)) orelse
+    const caller = @returnAddress();
+    const block = allocFromList(base, byte_size, requirements, caller) orelse
+        (if (requirements & sdk.exec.MEMF_NO_EXPUNGE != 0) null else lowMemory(base, byte_size, requirements, caller)) orelse
         return null;
+    // The block is the caller's already: cleared without the lock.
     if (requirements & sdk.exec.MEMF_CLEAR != 0) {
         const bytes: [*]u8 = @ptrCast(block);
         @memset(bytes[0.._memory.alignUp(byte_size, MEM_BLOCKSIZE)], 0);
     }
-    if (_memory.trace.on) _memory.traceEvent('A', byte_size, block, @returnAddress());
     return block;
 }
 
 /// The first region on the memory list with every attribute bit asked for
-/// and room for the block, or null if there is none.
+/// and room for the block, or null if there is none - under exec's memory
+/// lock, which the trace's counts are kept under too.
 ///
 /// INPUTS:
-/// - `base` - exec: its memory list, and the jump table `Allocate` is
-///   called through.
+/// - `base` - exec: its memory list and lock, and the jump table
+///   `Allocate` is called through.
 /// - `byte_size` - what is wanted.
 /// - `requirements` - the MEMF_* word; `MEMF_REVERSE` takes the block
 ///   from the top of the region.
-fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
+/// - `caller` - AllocMem's caller, for the trace.
+fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32, caller: usize) ?*anyopaque {
     const sys = base.iface();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
     const wanted = requirements & _memory.attribute_mask;
     var it = base.mem_list.iterator();
     while (it.next()) |node| {
         const mh: *MemHeader = @fieldParentPtr("node", node);
         if (@as(u32, mh.attributes) & wanted != wanted) continue;
-        const block = if (requirements & sdk.exec.MEMF_REVERSE != 0)
+        const block = (if (requirements & sdk.exec.MEMF_REVERSE != 0)
             allocateReverse(mh, byte_size)
         else
-            sys.Allocate(mh, byte_size);
-        return block orelse continue;
+            sys.Allocate(mh, byte_size)) orelse continue;
+        if (_memory.trace.on) _memory.traceEvent('A', byte_size, block, caller);
+        return block;
     }
     return null;
 }
@@ -133,14 +140,21 @@ fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaq
 /// handler that frees one thing at a time is driven until the allocation
 /// succeeds.
 ///
+/// The handlers run under Forbid, which keeps their list still, and not
+/// under the memory lock: what they free goes back through FreeMem.
+///
 /// INPUTS:
 /// - `base` - exec: its handler list and memory list.
 /// - `byte_size`, `requirements` - the failed allocation's, handed to each
 ///   handler in a `MemHandlerData` so it knows how much to look for.
+/// - `caller` - AllocMem's caller, for the trace.
 ///
 /// RESULT:
 /// The block, or null when every handler is spent.
-fn lowMemory(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
+fn lowMemory(base: *ExecBase, byte_size: usize, requirements: u32, caller: usize) ?*anyopaque {
+    const sys = base.iface();
+    sys.Forbid();
+    defer sys.Permit();
     var data: sdk.exec.MemHandlerData = .{
         .request_size = _memory.fitsWord(byte_size) orelse ~@as(u32, 0),
         .request_flags = requirements,
@@ -152,7 +166,7 @@ fn lowMemory(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
         const code: sdk.exec.MemHandlerFn = @ptrCast(@alignCast(handler.code.?));
         const result = code(&data, handler.data);
         if (result != sdk.exec.MEM_DID_NOTHING) {
-            if (allocFromList(base, byte_size, requirements)) |block| return block;
+            if (allocFromList(base, byte_size, requirements, caller)) |block| return block;
         }
         if (result == sdk.exec.MEM_TRY_AGAIN) {
             data.flags = sdk.exec.MEMHF_RECYCLE;

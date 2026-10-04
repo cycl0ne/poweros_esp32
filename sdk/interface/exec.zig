@@ -133,6 +133,14 @@ pub const LVO = struct {
     pub const AddTaskEndHook = libraries.lvo(119);
     pub const RemTaskEndHook = libraries.lvo(120);
     pub const LogControl = libraries.lvo(121);
+    pub const InitLock = libraries.lvo(122);
+    pub const AcquireLock = libraries.lvo(123);
+    pub const AttemptLock = libraries.lvo(124);
+    pub const ReleaseLock = libraries.lvo(125);
+    pub const HoldOtherCores = libraries.lvo(126);
+    pub const ReleaseOtherCores = libraries.lvo(127);
+    pub const SetTaskAffinity = libraries.lvo(128);
+    pub const CoreTask = libraries.lvo(129);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -256,6 +264,14 @@ pub const Fn = struct {
     pub const AddTaskEndHook = *const fn (*ExecBase, ?*exec.Task, *exec.TaskEndHook) callconv(.c) void;
     pub const RemTaskEndHook = *const fn (*ExecBase, *exec.TaskEndHook) callconv(.c) void;
     pub const LogControl = *const fn (*ExecBase, u32, isize) callconv(.c) isize;
+    pub const InitLock = *const fn (*ExecBase, *exec.Lock, ?[*:0]const u8, u32, u32) callconv(.c) void;
+    pub const AcquireLock = *const fn (*ExecBase, *exec.Lock) callconv(.c) void;
+    pub const AttemptLock = *const fn (*ExecBase, *exec.Lock) callconv(.c) bool;
+    pub const ReleaseLock = *const fn (*ExecBase, *exec.Lock) callconv(.c) void;
+    pub const HoldOtherCores = *const fn (*ExecBase) callconv(.c) void;
+    pub const ReleaseOtherCores = *const fn (*ExecBase) callconv(.c) void;
+    pub const SetTaskAffinity = *const fn (*ExecBase, ?*exec.Task, u32) callconv(.c) u32;
+    pub const CoreTask = *const fn (*ExecBase, u32) callconv(.c) ?*exec.Task;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -787,5 +803,54 @@ pub const ExecBase = opaque {
     /// it was; -1 for a setting or value it does not know.
     pub fn LogControl(self: *ExecBase, what: u32, value: isize) isize {
         return libraries.call(self, LVO.LogControl, Fn.LogControl, .{ what, value });
+    }
+
+    /// Make a spinlock ready: free, named `name` (what it guards), at `order`
+    /// in the lock order (LOCKORDER_*), with LOCKF_INTERRUPT when an interrupt
+    /// takes it too.
+    pub fn InitLock(self: *ExecBase, lock: *exec.Lock, name: ?[*:0]const u8, order: u32, flags: u32) void {
+        return libraries.call(self, LVO.InitLock, Fn.InitLock, .{ lock, name, order, flags });
+    }
+
+    /// Take a spinlock, trying again while another core holds it. Task
+    /// switching on this core (with LOCKF_INTERRUPT its interrupts) stops
+    /// until ReleaseLock; nothing that may wait is called meanwhile.
+    pub fn AcquireLock(self: *ExecBase, lock: *exec.Lock) void {
+        return libraries.call(self, LVO.AcquireLock, Fn.AcquireLock, .{lock});
+    }
+
+    /// Take a spinlock if it is free: false at once if it is not.
+    pub fn AttemptLock(self: *ExecBase, lock: *exec.Lock) bool {
+        return libraries.call(self, LVO.AttemptLock, Fn.AttemptLock, .{lock});
+    }
+
+    /// Give a spinlock back.
+    pub fn ReleaseLock(self: *ExecBase, lock: *exec.Lock) void {
+        return libraries.call(self, LVO.ReleaseLock, Fn.ReleaseLock, .{lock});
+    }
+
+    /// Hold the other cores still - parked in internal RAM, interrupts masked -
+    /// until ReleaseOtherCores: around what nothing may run beside, a flash
+    /// write. The caller has Disable. Nothing on one core.
+    pub fn HoldOtherCores(self: *ExecBase) void {
+        return libraries.call(self, LVO.HoldOtherCores, Fn.HoldOtherCores, .{});
+    }
+
+    /// Let go of the cores HoldOtherCores held.
+    pub fn ReleaseOtherCores(self: *ExecBase) void {
+        return libraries.call(self, LVO.ReleaseOtherCores, Fn.ReleaseOtherCores, .{});
+    }
+
+    /// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
+    /// or 0 for any - and move it if it is where it may no longer be. Returns
+    /// what they were.
+    pub fn SetTaskAffinity(self: *ExecBase, task: ?*exec.Task, cores: u32) u32 {
+        return libraries.call(self, LVO.SetTaskAffinity, Fn.SetTaskAffinity, .{ task, cores });
+    }
+
+    /// The task core `core` is running now, or null for a core that is not
+    /// running. Asked inside Disable; copy what is wanted before the Enable.
+    pub fn CoreTask(self: *ExecBase, core: u32) ?*exec.Task {
+        return libraries.call(self, LVO.CoreTask, Fn.CoreTask, .{core});
     }
 };

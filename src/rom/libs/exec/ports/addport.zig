@@ -33,8 +33,10 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's port lock, around the list.
+/// - Forbid: may be held. It is taken here as well, around the change:
+///   a program walks the port list under Forbid, which must keep it
+///   still on both cores.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -62,5 +64,7 @@ pub fn AddPort(base: *ExecBase, port: *MsgPort) void {
     const sys = base.iface();
     sys.Forbid();
     defer sys.Permit();
+    sys.AcquireLock(&base.lock_ports);
+    defer sys.ReleaseLock(&base.lock_ports);
     sys.Enqueue(&base.port_list, &port.node);
 }

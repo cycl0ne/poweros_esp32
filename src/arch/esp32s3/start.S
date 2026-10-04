@@ -6,6 +6,10 @@
  * From there we own the CPU: install our vector table, reset the register
  * window, set up the stack, call kernel_early() (in IRAM: it maps the code
  * in flash) and then kmain() with the windowed ABI.
+ *
+ * The second core starts at _start_cpu1 once core 0 lets it go
+ * (cpu1.zig): the same vector table and the same steps, on the stack core
+ * 0 handed it in cpu1_stack_top, and then kmain_cpu1().
  */
 
 #define PS_UM               0x00000020
@@ -221,6 +225,9 @@ _DoubleExceptionVector:
 .Llit_debug_dispatch: .long xtensa_debug
 .Llit_uart:         .long 0x60000000
 .Llit_fatal_msg:    .long fatal_msg
+.Llit_cpu1_stack:   .long cpu1_stack_top
+.Llit_kmain_cpu1:   .long kmain_cpu1
+.Llit_task_leaving: .long task_leaving
 
 /*
  * Reset entry, jumped to by the ROM bootloader.
@@ -272,6 +279,43 @@ _start:
     callx4  a8
 3:  waiti   15
     j       3b
+
+/*
+ * The second core's entry, where the ROM sends it once core 0 has set its
+ * boot address: what _start does, but no .bss to clear and no early boot -
+ * core 0 did both - and the stack core 0 set aside for it.
+ */
+    .balign 4
+    .global _start_cpu1
+    .type _start_cpu1, @function
+_start_cpu1:
+    movi    a0, PS_UM | PS_INTLEVEL(5)      /* interrupts masked, windowing off */
+    wsr     a0, ps
+    rsync
+    movi    a0, 0
+    wsr     a0, intenable
+    l32r    a0, .Llit_vecbase
+    wsr     a0, vecbase
+    rsync
+    movi    a0, 0
+    wsr     a0, windowbase
+    rsync
+    movi    a0, 1
+    wsr     a0, windowstart
+    rsync
+    movi    a0, 0xff
+    wsr     a0, cpenable
+    rsync
+    l32r    a1, .Llit_cpu1_stack
+    l32i    a1, a1, 0
+    movi    a0, 0                           /* terminates backtraces */
+    l32r    a2, .Llit_ps_kernel             /* windowed ABI on, still masked */
+    wsr     a2, ps
+    rsync
+    l32r    a8, .Llit_kmain_cpu1
+    callx4  a8
+1:  waiti   15
+    j       1b
 
 /*
  * The debug exception: a breakpoint, a watchpoint, a single step or a
@@ -457,6 +501,18 @@ _user_exception:
     sll     a6, a6
     wsr     a6, windowstart
     rsync
+
+    /* Off the task left, and nothing of it in the register file: another
+       core may resume it now (context.zig, task_leaving[core] = 0). */
+    rsr     a5, prid
+    extui   a5, a5, 13, 1
+    slli    a5, a5, 2
+    l32r    a6, .Llit_task_leaving
+    add     a6, a6, a5
+    movi    a5, 0
+    memw
+    s32i    a5, a6, 0
+    memw
 
 .Lresume:                           /* a4 = frame */
     l32i    a5, a4, F_PS

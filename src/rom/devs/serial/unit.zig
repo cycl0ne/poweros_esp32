@@ -370,7 +370,11 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
         u.unit.msg_port.msg_list.init(.message);
         u.write_queue.init(.message);
         sys_base.InitSemaphore(&u.write_lock);
+        // Inside Disable: the bus clock and reset are SYSTEM's registers,
+        // shared with the other core's drivers.
+        sys_base.Disable();
         port.setUp();
+        sys_base.Enable();
         // Empty the port's FIFO (there is no buffer until the first open).
         // The receive interrupt stays off until its server is in place: one
         // raised before its source is routed is lost.

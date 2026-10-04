@@ -334,12 +334,12 @@ const TestProcess = struct {
 
     fn enter(tp: *TestProcess) void {
         tp.proc.task.node.name = "test process";
-        tp.saved = kexec.SysBase.this_task;
-        kexec.SysBase.this_task = &tp.proc.task;
+        tp.saved = kexec.SysBase.cpu().this_task;
+        kexec.SysBase.cpu().this_task = &tp.proc.task;
     }
 
     fn leave(tp: *TestProcess) void {
-        kexec.SysBase.this_task = tp.saved.?;
+        kexec.SysBase.cpu().this_task = tp.saved.?;
     }
 };
 

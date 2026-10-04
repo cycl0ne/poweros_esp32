@@ -32,8 +32,8 @@ const List = sdk.exec.List;
 ///
 /// CONTEXT:
 /// - Waits: no, but it may signal and so may switch.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here.
+/// - Interrupts: no. It takes exec's semaphore lock.
+/// - Forbid: may be held.
 /// - Process: a Task will do, and it must be the task that obtained them.
 ///
 /// OWNERSHIP:
@@ -51,8 +51,8 @@ const List = sdk.exec.List;
 /// ```
 pub fn ReleaseSemaphoreList(base: *ExecBase, list: *List) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     const task = sys.FindTask(null).?;
     var it = list.iterator();
     while (it.next()) |node| _locks.leave(base, _locks.semaphoreOf(node), task);

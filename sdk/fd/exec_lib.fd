@@ -196,4 +196,29 @@ void RemTaskEndHook(*exec.TaskEndHook hook)
 /// LOGCTRL_USBPORT) set to `value`, or asked with LOGCTRL_ASK. Returns what
 /// it was; -1 for a setting or value it does not know.
 isize LogControl(u32 what, isize value)
+/// Make a spinlock ready: free, named `name` (what it guards), at `order`
+/// in the lock order (LOCKORDER_*), with LOCKF_INTERRUPT when an interrupt
+/// takes it too.
+void InitLock(*exec.Lock lock, ?[*:0]const u8 name, u32 order, u32 flags)
+/// Take a spinlock, trying again while another core holds it. Task
+/// switching on this core (with LOCKF_INTERRUPT its interrupts) stops
+/// until ReleaseLock; nothing that may wait is called meanwhile.
+void AcquireLock(*exec.Lock lock)
+/// Take a spinlock if it is free: false at once if it is not.
+bool AttemptLock(*exec.Lock lock)
+/// Give a spinlock back.
+void ReleaseLock(*exec.Lock lock)
+/// Hold the other cores still - parked in internal RAM, interrupts masked -
+/// until ReleaseOtherCores: around what nothing may run beside, a flash
+/// write. The caller has Disable. Nothing on one core.
+void HoldOtherCores()
+/// Let go of the cores HoldOtherCores held.
+void ReleaseOtherCores()
+/// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
+/// or 0 for any - and move it if it is where it may no longer be. Returns
+/// what they were.
+u32 SetTaskAffinity(?*exec.Task task, u32 cores)
+/// The task core `core` is running now, or null for a core that is not
+/// running. Asked inside Disable; copy what is wanted before the Enable.
+?*exec.Task CoreTask(u32 core)
 ##end

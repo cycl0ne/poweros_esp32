@@ -19,6 +19,10 @@
 //! back. That is what every packet, I/O request and semaphore bid in this
 //! system is built on: a Message with something on the end of it.
 //!
+//! Every port's message list, and the list of public ports, are kept
+//! under exec's port lock (`lock_ports`): a `LOCKF_INTERRUPT` lock, since
+//! an interrupt sends and replies too.
+//!
 //! The port and message calls are a file each in this folder; this file
 //! is the half `PutMsg` and `ReplyMsg` share.
 
@@ -29,8 +33,9 @@ const Message = sdk.exec.Message;
 const MsgPort = sdk.exec.MsgPort;
 
 /// Queues a message on a port and does the port's action - the half
-/// `PutMsg` and `ReplyMsg` share. It runs under Disable, because the port's
-/// list and its action may be reached from an interrupt.
+/// `PutMsg` and `ReplyMsg` share. It runs under exec's port lock, which
+/// masks the core's interrupts, because the port's list and its action
+/// may be reached from an interrupt.
 ///
 /// INPUTS:
 /// - `base` - exec: the jump table the calls go through.
@@ -40,8 +45,8 @@ const MsgPort = sdk.exec.MsgPort;
 ///   so that a sender can tell a reply from a fresh message.
 pub fn put(base: *ExecBase, port: *MsgPort, msg: *Message, node_type: sdk.exec.NodeType) void {
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    sys.AcquireLock(&base.lock_ports);
+    defer sys.ReleaseLock(&base.lock_ports);
     msg.node.type = node_type;
     sys.AddTail(&port.msg_list, &msg.node);
     switch (port.flags & sdk.exec.PF_ACTION) {

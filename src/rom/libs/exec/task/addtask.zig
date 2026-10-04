@@ -94,7 +94,7 @@ pub fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn, final_pc: ?TaskFn)
     sys.Disable();
     task.state = .ready;
     sys.Enqueue(&base.task_ready, &task.node);
-    if (task.node.pri > sys.FindTask(null).?.node.pri) base.sys_flags |= _task.SFF_SAR;
+    _task.wakeFor(base, task);
     sys.Enable(); // switches now if needed
     return task;
 }

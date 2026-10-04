@@ -665,12 +665,9 @@ fn runDma(sb: *SdCardBase, side: u32, link: *sdk.resources.dma.DMADescriptor) vo
     // Bytes the controller sends it before then are dropped, and the frame
     // ends with nothing in it. With the panel's copy channel busy on the
     // bus, 1 us was too little for 7 receives in a thousand; 5 us has been
-    // enough for every one measured.
-    {
-        const cpu = sdk.hardware.cpu;
-        const since = cpu.ccount();
-        while (cpu.ccount() -% since < descriptor_fetch_cycles) {}
-    }
+    // enough for every one measured. On one core's counter, with this
+    // task kept on it.
+    sdk.hardware.cpu.spinCycles(descriptor_fetch_cycles);
     spi.doneInterrupt(true);
     spi.begin();
     armDeadline(sb, _sdcard.command_timeout_us);

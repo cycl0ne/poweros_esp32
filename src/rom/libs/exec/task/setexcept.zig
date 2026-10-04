@@ -63,7 +63,7 @@ pub fn SetExcept(base: *ExecBase, new_signals: u32, signal_set: u32) u32 {
     const task = sys.FindTask(null).?;
     const old = task.sig_except;
     task.sig_except = (old & ~signal_set) | (new_signals & signal_set);
-    if (_task.exceptionPending(task)) base.sys_flags |= _task.SFF_SAR;
+    if (_task.exceptionPending(task)) base.cpu().sys_flags |= _task.SFF_SAR;
     sys.Enable(); // raises it now if pending
     return old;
 }

@@ -533,7 +533,7 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
         put('\n');
     }
     if (exec.initialized) {
-        const task = exec.SysBase.this_task;
+        const task = exec.SysBase.cpu().this_task;
         printf("stopped in task \"%s\"\n", .{task.name()});
     }
 

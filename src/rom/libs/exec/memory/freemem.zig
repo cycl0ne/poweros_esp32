@@ -36,8 +36,9 @@ const MemHeader = sdk.exec.MemHeader;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the search and the free.
+/// - Interrupts: no. It takes exec's memory lock, around the search and
+///   the free.
+/// - Forbid: may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -65,8 +66,8 @@ pub fn FreeMem(base: *ExecBase, memory_block: ?*anyopaque, byte_size: usize) voi
     const block = memory_block orelse return;
     if (byte_size == 0) return;
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
 
     if (_memory.trace.on) _memory.traceEvent('F', byte_size, block, @returnAddress());
     const addr = @intFromPtr(block);

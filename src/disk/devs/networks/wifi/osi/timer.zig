@@ -183,6 +183,7 @@ pub fn startTask() bool {
     const stack = (@intFromPtr(memory) + @sizeOf(exec.Task) + 15) & ~@as(usize, 15);
     task.* = .{
         .node = .{ .type = .task, .pri = task_file.priority(timer_task_priority), .name = "wifi timers" },
+        .flags = exec.TF_CORE0, // the vendor code's core
         .sp_lower = stack,
         .sp_upper = stack + stack_size,
     };

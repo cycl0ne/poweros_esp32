@@ -30,7 +30,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&cb.sha_lock);
     sys_base.InitSemaphore(&cb.aes_lock);
     sys_base.InitSemaphore(&cb.rsa_lock);
+    // Inside Disable: the engines' clocks and resets are SYSTEM's
+    // registers, shared with the other core's drivers.
+    sys_base.Disable();
     _engine.start();
+    sys_base.Enable();
     return lib;
 }
 
@@ -44,7 +48,9 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const cb = _base.cryptoBase(lib);
     const sys = cb.sys_base;
     const seg_list = cb.seg_list;
+    sys.Disable();
     _engine.stop();
+    sys.Enable();
     if (lib.node.pred != null) sys.Remove(&lib.node);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);

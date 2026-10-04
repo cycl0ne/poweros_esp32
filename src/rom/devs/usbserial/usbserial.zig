@@ -50,7 +50,7 @@ const Mirror = struct {
     from_log: [256]u8 = undefined,
     /// What goes out: the log's bytes, a "\r" before every "\n".
     to_port: [512]u8 = undefined,
-    stack: [mirror_stack]u8 align(16) = undefined,
+    stack: [mirror_stack]u8 = undefined,
 };
 
 const mirror_stack = 3 * 1024;

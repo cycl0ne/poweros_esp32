@@ -22,17 +22,16 @@ const MsgPort = sdk.exec.MsgPort;
 /// The port, or null if there is none of that name.
 ///
 /// BEHAVIOR:
-/// **The port may go away as soon as Forbid is let go**, and this call
-/// takes and releases Forbid itself. So the pointer is only trustworthy
-/// while the caller holds Forbid *across* both this and the `PutMsg` that
-/// follows - which is the usual shape and the reason the two are almost
-/// always written together.
+/// **The port may go away as soon as the search is over**: this call
+/// looks under exec's port lock and lets it go. So the pointer is only
+/// trustworthy while the caller holds Forbid *across* both this and the
+/// `PutMsg` that follows - which is the usual shape and the reason the
+/// two are almost always written together.
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here for the search, and needed by the caller around
-///   the call and the send.
+/// - Interrupts: no. It takes exec's port lock for the search.
+/// - Forbid: needed by the caller around the call and the send.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -53,8 +52,8 @@ const MsgPort = sdk.exec.MsgPort;
 /// ```
 pub fn FindPort(base: *ExecBase, name: [*:0]const u8) ?*MsgPort {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_ports);
+    defer sys.ReleaseLock(&base.lock_ports);
     const node = sys.FindName(&base.port_list, name) orelse return null;
     return @fieldParentPtr("node", node);
 }

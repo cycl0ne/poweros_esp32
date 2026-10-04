@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Enable: undoes one `Disable`. The outermost one puts the interrupt state
-//! back and takes a task switch that fell due while interrupts were off.
+//! Enable: undoes one `Disable`. The outermost one lets the system's
+//! interrupt lock go, puts the interrupt state back and takes a task switch
+//! that fell due while interrupts were off.
 
 const _interrupt = @import("_interrupt.zig");
-const switchIfPending = @import("../task/_task.zig").switchIfPending;
+const _task = @import("../task/_task.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -25,7 +26,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// BEHAVIOR:
 /// Only the outermost Enable unmasks, and it restores the state from before
 /// the outermost Disable rather than simply enabling - so this never turns
-/// interrupts on in a context that had them off.
+/// interrupts on in a context that had them off. At task level it lets the
+/// system's interrupt lock go first, so the other core's interrupts and
+/// Disables come in again.
 ///
 /// A switch asked for while interrupts were masked - by a `Signal` or an
 /// `AddTask` from inside one - is taken here, so like `Permit` this is a
@@ -52,9 +55,15 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// defer sys.Enable();
 /// ```
 pub fn Enable(base: *ExecBase) void {
-    base.id_nest_cnt -= 1;
-    if (base.id_nest_cnt < 0) {
-        _interrupt.interrupt_hardware.restore(base.id_saved);
-        switchIfPending(base); // a Signal or AddTask may have asked for one
-    }
+    // Inside Disable, so masked: the caller is on this core.
+    const cpu = base.cpu();
+    cpu.id_nest_cnt -= 1;
+    if (cpu.id_nest_cnt >= 0) return;
+    // An exception keeps the lock until its exit.
+    if (cpu.int_depth == 0) _interrupt.dropSystemInterrupts(base);
+    // A Signal or AddTask may have asked for a switch; taken once the
+    // interrupts are back.
+    const due = _task.switchDue(cpu);
+    _interrupt.interrupt_hardware.restore(cpu.id_saved);
+    if (due) _task.task_hardware.switch_now();
 }

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Permit: undoes one `Forbid`. The outermost one lets task switching
-//! happen again and takes a switch that came due while it was held, so a
-//! Permit is a point at which the caller may lose the processor.
+//! Permit: undoes one `Forbid`. The outermost one lets the Forbid lock go,
+//! lets task switching happen again and takes a switch that came due while
+//! it was held, so a Permit is a point at which the caller may lose the
+//! processor.
+
+const _interrupt = @import("../interrupt/_interrupt.zig");
+const _task = @import("_task.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -26,14 +30,18 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// is taken here. So `Permit` is a point at which the caller may lose the
 /// processor, which the call before it was not.
 ///
+/// The outermost Permit lets the machine's Forbid lock go, and pokes the
+/// other core if a task there waits for it.
+///
 /// This is also what starts multitasking: the boot code holds Forbid from
 /// before there are any tasks, and the `Permit` that matches it is the
 /// moment the machine becomes preemptive.
 ///
 /// CONTEXT:
 /// - Waits: no, but it may switch, which looks the same to the caller.
-/// - Interrupts: no. An interrupt that let the scheduler go would switch
-///   tasks from inside an interrupt.
+/// - Interrupts: only to match a `Forbid` the same interrupt made; there it
+///   only counts. An interrupt that let the scheduler go would switch tasks
+///   from inside an interrupt.
 /// - Forbid: it is the release of it. One more `Permit` than `Forbid`
 ///   leaves the count wrong and the next Forbid holding nothing.
 /// - Process: a Task will do.
@@ -58,14 +66,19 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// defer sys.Permit();
 /// ```
 pub fn Permit(base: *ExecBase) void {
-    // Counted with the interrupts off, for the reason `Forbid` gives: the
-    // count is read and written back, and losing that between the two
-    // would leave a Forbid that nothing can undo. A switch that came due
-    // while forbidden is taken by the `Enable`, once the interrupts are
-    // back and the count is negative again - this is where the caller may
-    // lose the processor, and it must not do that with them held off.
-    const sys = base.iface();
-    sys.Disable();
-    base.tdn_nest_cnt -= 1;
-    sys.Enable();
+    // Counted with the core's interrupts masked, for the reason `Forbid`
+    // gives: the count is read and written back, and losing that between
+    // the two would leave a Forbid that nothing can undo. A switch that
+    // came due while forbidden is taken once they are back and the count
+    // is negative again - this is where the caller may lose the
+    // processor, and it must not do that with them held off.
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    const cpu = base.cpu();
+    cpu.tdn_nest_cnt -= 1;
+    const outermost = cpu.tdn_nest_cnt < 0 and cpu.int_depth == 0;
+    if (outermost) _task.releaseForbid(base);
+    const due = outermost and _task.switchDue(cpu);
+    hardware.restore(state);
+    if (due) _task.task_hardware.switch_now();
 }

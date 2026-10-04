@@ -4,6 +4,7 @@
 //! read, so it alone reads `this_task` from the base.
 
 const sdk = @import("sdk");
+const _interrupt = @import("../interrupt/_interrupt.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Task = sdk.exec.Task;
@@ -27,7 +28,8 @@ const Task = sdk.exec.Task;
 /// BEHAVIOR:
 /// The running task is checked first, then the ready and waiting lists -
 /// which is what makes the null case free and the named case a search of
-/// every task there is.
+/// every task there is. A named search looks at what runs on the other
+/// core too.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -60,17 +62,34 @@ const Task = sdk.exec.Task;
 /// if (sys.FindTask("timer.device")) |t| sys.Signal(t, 1 << sig);
 /// ```
 pub fn FindTask(base: *ExecBase, name: ?[*:0]const u8) ?*Task {
-    const wanted = name orelse return base.this_task;
+    const wanted = name orelse return running(base);
     const sys = base.iface();
     sys.Disable();
     defer sys.Enable();
-    if (base.this_task.node.name) |own_name| {
-        if (sameName(own_name, wanted)) return base.this_task;
+    const own = base.cpu().this_task;
+    if (own.node.name) |own_name| {
+        if (sameName(own_name, wanted)) return own;
+    }
+    for (base.cpus[0..base.cores_running]) |*cpu| {
+        if (cpu.this_task == own) continue;
+        if (cpu.this_task.node.name) |other_name| {
+            if (sameName(other_name, wanted)) return cpu.this_task;
+        }
     }
     for ([_]*sdk.exec.List{ &base.task_ready, &base.task_wait }) |list| {
         if (sys.FindName(list, wanted)) |node| return @fieldParentPtr("node", node);
     }
     return null;
+}
+
+/// The caller: this core's running task, read with the core's interrupts
+/// masked so that the caller cannot be moved to the other core between
+/// asking which core it is on and reading.
+fn running(base: *ExecBase) *Task {
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    defer hardware.restore(state);
+    return base.cpu().this_task;
 }
 
 /// Whether two NUL-terminated names are the same, byte for byte. A leaf of

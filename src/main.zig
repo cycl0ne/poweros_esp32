@@ -8,6 +8,7 @@ const bootstrap = @import("bootstrap.zig");
 const clock = @import("arch/esp32s3/clock.zig");
 const context = @import("arch/esp32s3/context.zig");
 const cpu = @import("arch/esp32s3/cpu.zig");
+const cpu1 = @import("arch/esp32s3/cpu1.zig");
 const entropy = @import("arch/esp32s3/entropy.zig");
 const exec = @import("rom/libs/exec/exec.zig");
 const flashmap = @import("arch/esp32s3/flashmap.zig");
@@ -20,7 +21,8 @@ const shell = @import("rom/libs/exec/_shell/shell.zig");
 const timer = @import("arch/esp32s3/timer.zig");
 const wdt = @import("arch/esp32s3/wdt.zig");
 const boards = @import("boards/boards.zig");
-const st = @import("sdk").expansion.systemtags;
+const sdk = @import("sdk");
+const st = sdk.expansion.systemtags;
 
 comptime {
     _ = @import("arch/esp32s3/trap.zig"); // exports xtensa_exception for start.S
@@ -82,6 +84,25 @@ export fn kernel_early() linksection(".iram.text") callconv(.c) void {
     flashmap.map();
 }
 
+/// Core 1's stack, which its idle task goes on running on: internal
+/// memory, as an exception's frame is written to it with the caches
+/// possibly frozen.
+const cpu1_stack_size = 4096;
+
+fn startCpu1(sys: *sdk.interface.exec.ExecBase) void {
+    const stack = sys.AllocMem(cpu1_stack_size, exec.MEMF_INTERNAL) orelse {
+        note("core 1: no memory for its stack", .{});
+        return;
+    };
+    const lower = @intFromPtr(stack);
+    const top = (lower + cpu1_stack_size) & ~@as(usize, 15);
+    if (!exec.prepareCore(exec.SysBase, 1, lower, top)) {
+        note("core 1: no memory for its idle task", .{});
+        return;
+    }
+    if (cpu1.start(top)) note("core 1 up", .{}) else note("core 1 did not start", .{});
+}
+
 /// The system log's ring, as large as the board says: exec keeps every
 /// line from the first one in it.
 var log_ring: [boards.fact(st.SYSTAG_LogSize, 16 * 1024)]u8 = undefined;
@@ -132,6 +153,10 @@ export fn kmain() callconv(.c) noreturn {
     // Who asks about a task that failed, so the machine need not stop.
     alert.startHelper();
     timer.init(100);
+    // The second core, where the build has one: let go once exec and the
+    // tick's rate exist, on a stack of internal memory.
+    cpu1.cores = boards.cores;
+    if (boards.cores > 1) startCpu1(sys);
     if (timer.cpu_hz != clock.cpu_hz) {
         note("cpu runs at %d MHz, not %d MHz (pll calibrated: %s); using the measured clock", .{
             timer.measured_cpu_hz / 1_000_000,
@@ -147,6 +172,13 @@ export fn kmain() callconv(.c) noreturn {
     // RTF_COLDSTART residents (dos.library last, which starts the
     // RTF_AFTERDOS ones) and ends. This task goes on as the shell.
     sys.Permit();
+    // Until here core 1 ran only its idle task, so the system came up as
+    // on one core; from here it takes any task that is not pinned.
+    if (cpu1.isUp()) {
+        sys.Disable();
+        exec.SysBase.share_cores = 1;
+        sys.Enable();
+    }
 
     // The shell's code is a task's code: it gets SysBase as the tasks of
     // CreateTask do, and when it returns, the task ends.

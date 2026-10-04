@@ -36,8 +36,8 @@ const MemHeader = sdk.exec.MemHeader;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the walk.
+/// - Interrupts: no. It takes exec's memory lock, around the walk.
+/// - Forbid: may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -63,8 +63,8 @@ const MemHeader = sdk.exec.MemHeader;
 pub fn AvailMem(base: *ExecBase, requirements: u32) usize {
     const wanted = requirements & _memory.attribute_mask;
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
 
     var result: usize = 0;
     var it = base.mem_list.iterator();

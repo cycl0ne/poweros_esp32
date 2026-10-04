@@ -55,6 +55,9 @@ pub const SYSTAG_LogSize = SYSTAG_Dummy + 11;
 /// whose raw port (UART0) reaches no host, so that the USB port is the
 /// only way to read it. Absent, 0; `C:Log MIRROR` changes it.
 pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
+/// How many cores the kernel runs tasks on: 1 or 2. Absent, 1. The
+/// build's `-Dcores` has the last word.
+pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

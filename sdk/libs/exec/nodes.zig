@@ -43,6 +43,8 @@ pub const NodeType = enum(u8) {
     /// list (sdk/libs/expansion/systemtags.zig). No start flags - there is
     /// nothing to start - and expansion.library finds it by name.
     board = 23,
+    /// A spinlock (sdk/libs/exec/locks.zig).
+    lock = 24,
     _,
 };
 

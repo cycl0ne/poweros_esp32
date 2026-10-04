@@ -449,7 +449,7 @@ test "animations: a new end while running turns from where it is; stopped at the
 test "animations: a signal to the owner, a curve, a Bezier, and deleted while it runs" {
     const mb = try setUp();
     defer kexec.deinit();
-    const me = kexec.SysBase.this_task;
+    const me = kexec.SysBase.cpu().this_task;
     const bit = kexec.AllocSignal(kexec.SysBase, -1);
     defer kexec.FreeSignal(kexec.SysBase, bit);
     const points = [4]i32{ one / 4, one / 10, one / 4, one };

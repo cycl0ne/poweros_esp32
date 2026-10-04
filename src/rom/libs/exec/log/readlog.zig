@@ -40,7 +40,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Forbid: not needed. It holds interrupts off while it copies.
+/// - Forbid: not needed. It holds this core's interrupts off, and the
+///   other core's writes out, while it copies.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -66,9 +67,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///     _ = dl.Write(dl.Output(), &buffer, count);
 /// }
 /// ```
-pub fn ReadLog(base: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32 {
-    const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+pub fn ReadLog(_: *ExecBase, position: *u64, buffer: [*]u8, size: u32) u32 {
+    const state = _log.lock();
+    defer _log.unlock(state);
     return @intCast(_log.copyOut(position, buffer[0..size]));
 }

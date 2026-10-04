@@ -37,8 +37,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: no, but handing the semaphore on signals a task, which may
 ///   switch.
-/// - Interrupts: no. It takes Forbid and may signal.
-/// - Forbid: taken here.
+/// - Interrupts: no. It takes exec's semaphore lock, and may signal.
+/// - Forbid: may be held.
 /// - Process: a Task will do, and it must be **the task that obtained
 ///   it**.
 ///
@@ -58,7 +58,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn ReleaseSemaphore(base: *ExecBase, sem: *SignalSemaphore) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     _locks.leave(base, sem, sys.FindTask(null).?);
 }

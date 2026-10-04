@@ -30,7 +30,9 @@ tags and constants, each with its doc comment.
 ## Guides
 
 - [Writing programs](guides/programs.md) - a window drawn into, and a
-  window of gadgets laid out by a layout and a window object.
+  window of gadgets laid out by a layout and a window object; when a
+  check fails, the system log, Forbid, semaphores and spinlocks, and what
+  two cores change.
 - [Fonts](guides/fonts.md) - the font image, drawing text, text from a
   description (IntuiText), choosing a font, sizes in points, font files
   and `FONTS:`, diskfont.library, outline fonts, the system's fonts, and

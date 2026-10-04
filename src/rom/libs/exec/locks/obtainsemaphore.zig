@@ -35,9 +35,10 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: yes, whenever another task holds it.
 /// - Interrupts: no. It waits.
-/// - Forbid: it takes Forbid, and the `Wait` inside breaks it while
-///   waiting - so a caller must **not** hold Forbid across this expecting
-///   it to be held throughout.
+/// - Forbid: may be held, but the `Wait` inside breaks it while waiting -
+///   so a caller must **not** count on it being held throughout. The
+///   semaphore is looked at under exec's semaphore lock, given back
+///   before the wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

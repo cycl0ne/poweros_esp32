@@ -40,8 +40,8 @@ const MsgPort = sdk.exec.MsgPort;
 /// CONTEXT:
 /// - Waits: no. Sending is never blocking - a port's queue has no limit,
 ///   and flow control is something the two ends arrange between them.
-/// - Interrupts: safe. It takes Disable, and it is how an interrupt hands
-///   work to a task.
+/// - Interrupts: safe. It takes exec's port lock, which masks the core's
+///   interrupts, and it is how an interrupt hands work to a task.
 /// - Forbid: not needed for the send itself; needed by the caller around
 ///   `FindPort` and this, so that a public port cannot go away in between.
 /// - Process: a Task will do.

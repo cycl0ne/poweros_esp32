@@ -142,7 +142,9 @@ fn read(fb: *FlashBase, offset: u32, dest: [*]u8, len: u32) bool {
     while (done < len) {
         const piece: u32 = @min(spiflash.page_size, len - done);
         sys.Disable();
+        sys.HoldOtherCores();
         const ok = spiflash.readRaw(fb.offset + offset + done, @ptrCast(buffer), piece);
+        sys.ReleaseOtherCores();
         sys.Enable();
         if (!ok) return false;
         @memcpy(dest[done..][0..piece], buffer[0..piece]);
@@ -170,7 +172,9 @@ fn program(fb: *FlashBase, offset: u32, src: [*]const u8, len: u32) bool {
         @memset(buffer[0..whole], 0xFF);
         @memcpy(buffer[lead..][0..piece], src[done..][0..piece]);
         sys.Disable();
+        sys.HoldOtherCores();
         const ok = spiflash.programPage(start, whole);
+        sys.ReleaseOtherCores();
         sys.Enable();
         if (!ok) return false;
         done += piece;
@@ -186,7 +190,9 @@ fn erase(fb: *FlashBase, offset: u32, len: u32) bool {
     const end = at + len;
     while (at < end) : (at += spiflash.sector_size) {
         sys.Disable();
+        sys.HoldOtherCores();
         const ok = spiflash.eraseSector(at / spiflash.sector_size);
+        sys.ReleaseOtherCores();
         sys.Enable();
         if (!ok) return false;
     }
@@ -251,9 +257,11 @@ fn flashTask(sys: *ExecBase) callconv(.c) void {
 fn setUp(fb: *FlashBase) void {
     const sys = fb.sys_base;
     sys.Disable();
+    sys.HoldOtherCores();
     fb.map = spiflash.map(fb.offset, fb.size);
     const sized = spiflash.setSize(fb.chip_size);
     const unlocked = spiflash.unlock();
+    sys.ReleaseOtherCores();
     sys.Enable();
     if (!sized) {
         sdk.exec.kprintf(sys, "%s: the chip's size stays %d bytes\n", .{ DEVICE_NAME, spiflash.size() });

@@ -21,7 +21,13 @@ pub const hardware: exec.TaskHardware = .{
     .push_exception = pushException,
     .leave_exception = leaveException,
     .call_on_stack = callOnStack,
+    .leaving = &task_leaving,
 };
+
+/// The task each core's dispatcher is switching away from, until start.S
+/// has written its windows to its stack and moved to the next task's
+/// stack, and clears it. Internal memory (.bss).
+export var task_leaving: [2]usize = .{ 0, 0 };
 
 /// A task's first context. Resuming it (rfe) enters `entry` as if called
 /// with call4 from a frame whose stack pointer is the top of the task's

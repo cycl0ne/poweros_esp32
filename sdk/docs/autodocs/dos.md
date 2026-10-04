@@ -1115,6 +1115,8 @@ fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process
   caller's),
   NP_Arguments (copied), NP_ExitCode and NP_ExitData,
   NP_UserData (tc_UserData, there before the process first runs),
+  NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
+  any),
   NP_CopyVars (default true: the caller's local variables are copied),
   NP_Cli (a CLI of its own) with NP_CommandName and NP_Path.
 

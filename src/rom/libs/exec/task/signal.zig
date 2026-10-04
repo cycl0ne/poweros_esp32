@@ -30,6 +30,9 @@ const Task = sdk.exec.Task;
 /// The bits are set in the task's received set. If it was waiting for any
 /// of them it becomes ready, and **runs at once if its priority is higher
 /// than the caller's** - so this call may cost the caller the processor.
+/// With two cores it goes where it runs soonest: to the other core when it
+/// outranks what runs there and that is less than what runs here, which
+/// that core learns from its cross-core interrupt.
 ///
 /// A bit that is in the task's exception set raises its exception instead,
 /// which also wakes a waiting task.
@@ -70,15 +73,14 @@ pub fn Signal(base: *ExecBase, task: *Task, signals: u32) void {
     const sys = base.iface();
     sys.Disable();
     defer sys.Enable();
-    const current = sys.FindTask(null).?;
     task.sig_recvd |= signals;
     const except = _task.exceptionPending(task);
     if (task.state == .wait and (task.sig_recvd & task.sig_wait != 0 or except)) {
         sys.Remove(&task.node);
         task.state = .ready;
         sys.Enqueue(&base.task_ready, &task.node);
-        if (task.node.pri > current.node.pri) base.sys_flags |= _task.SFF_SAR;
-    } else if (task == current and except) {
-        base.sys_flags |= _task.SFF_SAR; // raised at the next exception exit
+        _task.wakeFor(base, task);
+    } else if (task.state == .run and except) {
+        _task.askCoreOf(base, task); // raised at its core's next exception exit
     }
 }

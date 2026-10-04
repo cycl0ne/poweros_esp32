@@ -30,9 +30,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here for the search, and needed by the caller across
-///   this and the obtain.
+/// - Interrupts: no. It takes exec's semaphore lock for the search.
+/// - Forbid: needed by the caller across this and the obtain.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -53,8 +52,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn FindSemaphore(base: *ExecBase, name: [*:0]const u8) ?*SignalSemaphore {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     const node = sys.FindName(&base.sem_list, name) orelse return null;
     return _locks.semaphoreOf(node);
 }

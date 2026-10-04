@@ -63,19 +63,19 @@ const Task = sdk.exec.Task;
 pub fn SetTaskPri(base: *ExecBase, task: *Task, pri: i8) i8 {
     const sys = base.iface();
     sys.Disable();
-    const current = sys.FindTask(null).?;
     const old = task.node.pri;
     task.node.pri = pri;
     if (task.state == .ready) {
         sys.Remove(&task.node);
         sys.Enqueue(&base.task_ready, &task.node);
-    }
-    if (task == current) {
-        if (_task.firstReady(base)) |best| {
-            if (best.node.pri > pri) base.sys_flags |= _task.SFF_SAR;
+        _task.wakeFor(base, task);
+    } else if (task == base.cpu().this_task) {
+        const core = @import("../exec_base.zig").coreId();
+        if (_task.bestReady(base, core)) |best| {
+            if (best.node.pri > pri) base.cpu().sys_flags |= _task.SFF_SAR;
         }
-    } else if (task.state == .ready and pri > current.node.pri) {
-        base.sys_flags |= _task.SFF_SAR;
+    } else if (task.state == .run) {
+        _task.askCoreOf(base, task); // running on the other core
     }
     sys.Enable();
     return old;

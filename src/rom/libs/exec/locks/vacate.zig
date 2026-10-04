@@ -41,8 +41,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no, but releasing may signal and so may switch.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here.
+/// - Interrupts: no. It takes exec's semaphore lock.
+/// - Forbid: may be held.
 /// - Process: a Task will do. **Any task may vacate a bid**, though the
 ///   lock belongs to whoever procured it.
 ///
@@ -66,8 +66,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn Vacate(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     bid.semaphore = null;
     const task = bid.request.waiter orelse return; // nothing to give back
     const granted = bid.request.granted;

@@ -29,8 +29,10 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's semaphore lock, around the list.
+/// - Forbid: may be held. It is taken here as well, around the change:
+///   a program walks the semaphore list under Forbid, which must keep it
+///   still on both cores.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -51,5 +53,7 @@ pub fn RemSemaphore(base: *ExecBase, sem: *SignalSemaphore) void {
     const sys = base.iface();
     sys.Forbid();
     defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     sys.Remove(&sem.link);
 }

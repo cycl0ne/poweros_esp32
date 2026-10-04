@@ -8,14 +8,47 @@
 //! switch between the read and the write would put back a word without
 //! the bit another driver had set meanwhile. Masking at the CPU rather
 //! than through exec's Disable lets the same helpers serve exec's own
-//! early output and the boot code, which run before exec does, as well as
-//! a driver loaded off the disk while other tasks run.
+//! early output and the boot code, which run before exec does.
+//!
+//! **Two cores** share the registers too, and masking holds off only the
+//! caller's own. So a driver - once the system runs - makes its changes
+//! inside exec's Disable, which keeps the other core's Disables out as
+//! well: every change made that way is made alone.
 //!
 //! All `inline`: nothing here is a call into flash, so code in internal RAM
 //! may use it.
 
 const mmio = @import("mmio.zig");
 const map = @import("map.zig");
+
+/// Core 1's clock, stall and reset.
+pub const CORE_1_CONTROL_0: usize = map.SYSTEM + 0x00;
+/// Core 1 stalled.
+pub const CORE_1_RUNSTALL: u32 = 1 << 0;
+/// Core 1's clock on.
+pub const CORE_1_CLKGATE_EN: u32 = 1 << 1;
+/// Core 1 held in reset while set.
+pub const CORE_1_RESETING: u32 = 1 << 2;
+/// Where core 1 goes from the ROM's reset code, 0 while it is to wait:
+/// the ROM's `ets_set_appcpu_boot_addr` writes it.
+pub const CORE_1_CONTROL_1: usize = map.SYSTEM + 0x04;
+
+/// Core 1 put back as the chip starts it - held in reset, then its clock
+/// off, and no address to go to - right before a system reset, so the
+/// boot after lets it go afresh whatever the reset leaves of these
+/// registers: Espressif's QEMU keeps the address, and a core 1 that found
+/// it would run before core 0 had set anything up. Reset first: a core
+/// stopped inside an S32C1I would keep its memory locked to it.
+pub inline fn core1Off() void {
+    const control = mmio.reg(CORE_1_CONTROL_0);
+    control.* |= CORE_1_RESETING;
+    control.* &= ~CORE_1_CLKGATE_EN;
+    mmio.reg(CORE_1_CONTROL_1).* = 0;
+}
+
+/// The four cross-core interrupts, a word each: writing 1 raises source
+/// `INTB_FROM_CPU_INTR0 + n`, writing 0 lowers it.
+pub const CPU_INTR_FROM_CPU_0: usize = map.SYSTEM + 0x30;
 
 pub const PERIP_CLK_EN0: usize = map.SYSTEM + 0x18;
 pub const PERIP_CLK_EN1: usize = map.SYSTEM + 0x1C;

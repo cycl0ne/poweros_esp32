@@ -81,6 +81,12 @@ pub inline fn prid() u32 {
     );
 }
 
+/// The core this runs on: 0 or 1 (PRID bit 13: 0xCDCD on core 0, 0xABAB
+/// on core 1).
+pub inline fn coreId() u32 {
+    return (prid() >> 13) & 1;
+}
+
 pub inline fn stackPointer() u32 {
     return asm volatile ("mov %[r], a1"
         : [r] "=r" (-> u32),

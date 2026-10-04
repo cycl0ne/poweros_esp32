@@ -90,6 +90,8 @@ pub fn build(b: *std.Build) void {
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
+    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
+    if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
@@ -112,7 +114,7 @@ pub fn build(b: *std.Build) void {
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, target, optimize, sdk, board, disk_offset);
+    const kernel = addKernel(b, target, optimize, sdk, board, disk_offset, cores);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -269,7 +271,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, qemuConsole(b, &.{"-nographic"}, rs485));
@@ -395,7 +397,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&make_disk.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
-        if (other != board) test_step.dependOn(&addKernel(b, target, optimize, sdk, other, disk_offset).step);
+        if (other != board) test_step.dependOn(&addKernel(b, target, optimize, sdk, other, disk_offset, cores).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -714,8 +716,9 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
 }
 
 /// The kernel for `board`: src/main.zig with the board's description
-/// chosen (src/boards/boards.zig reads `build_options.board`).
-fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32) *std.Build.Step.Compile {
+/// chosen (src/boards/boards.zig reads `build_options.board`). `cores` 0
+/// leaves the number of cores to the board.
+fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32) *std.Build.Step.Compile {
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -727,6 +730,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     const options = b.addOptions();
     options.addOption(Board, "board", board);
     options.addOption(u32, "disk_offset", disk_offset);
+    options.addOption(u32, "cores", cores);
     kernel_mod.addOptions("build_options", options);
     kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/start.S"));
     kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/cache.S"));

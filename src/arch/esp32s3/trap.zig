@@ -63,10 +63,18 @@ const Cause = enum(u32) {
 
 /// Gets the CPU interrupt line that fired.
 pub const Handler = *const fn (irq: u5) void;
-var handlers: [32]?Handler = @splat(null);
+/// Each core's own: its lines are its own, and core 1 carries other
+/// things on them than core 0.
+var handlers: [2][32]?Handler = @splat(@splat(null));
 
+/// `handler` for line `irq` of the core this runs on.
 pub fn setHandler(irq: u5, handler: Handler) void {
-    handlers[irq] = handler;
+    handlers[cpu.coreId()][irq] = handler;
+}
+
+/// `handler` for line `irq` of core `core`, from either core.
+pub fn setHandlerOn(core: u32, irq: u5, handler: Handler) void {
+    handlers[core][irq] = handler;
 }
 
 pub const Syscall = enum(u32) {
@@ -80,8 +88,8 @@ pub const Syscall = enum(u32) {
     _,
 };
 
-/// Set by the leave_exception syscall.
-var resume_frame: ?*Frame = null;
+/// Set by the leave_exception syscall, each core's own.
+var resume_frame: [2]?*Frame = @splat(null);
 
 /// Trap into the kernel with `syscall`; the result comes back in a2.
 pub fn syscall(nr: u32, arg: u32) u32 {
@@ -101,8 +109,9 @@ export fn xtensa_exception(frame: *Frame) callconv(.c) *Frame {
     }
     exec.interruptEnter(exec.SysBase);
     handle(frame);
-    const current = resume_frame orelse frame;
-    resume_frame = null;
+    const core = cpu.coreId();
+    const current = resume_frame[core] orelse frame;
+    resume_frame[core] = null;
     return @ptrCast(@alignCast(exec.interruptExit(exec.SysBase, current)));
 }
 
@@ -141,7 +150,7 @@ fn dispatchInterrupts() void {
 }
 
 fn dispatchLine(irq: u5) void {
-    if (handlers[irq]) |handler| {
+    if (handlers[cpu.coreId()][irq]) |handler| {
         handler(irq);
     } else {
         cpu.disableInterrupt(irq);
@@ -156,7 +165,7 @@ fn handleSyscall(nr: Syscall, arg: u32) u32 {
         .uptime_ms => @truncate(timer.uptimeUs() / 1000),
         .reschedule => 0,
         .leave_exception => blk: {
-            resume_frame = @ptrFromInt(arg);
+            resume_frame[cpu.coreId()] = @ptrFromInt(arg);
             break :blk 0;
         },
         _ => 0xFFFF_FFFF,

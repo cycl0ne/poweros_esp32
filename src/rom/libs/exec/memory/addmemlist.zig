@@ -32,8 +32,10 @@ const MemHeader = sdk.exec.MemHeader;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid for the memory list.
-/// - Forbid: taken here, around the list.
+/// - Interrupts: no. It takes exec's memory lock, around the list.
+/// - Forbid: may be held. It is taken here as well, around the change:
+///   a program walks the memory list under Forbid, which must keep it
+///   still on both cores.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -61,6 +63,8 @@ pub fn AddMemList(base: *ExecBase, size: usize, attributes: u32, pri: i8, region
     const mh = sys.CreateMemHeader(size, attributes, pri, region, name) orelse return null;
     sys.Forbid();
     defer sys.Permit();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
     sys.Enqueue(&base.mem_list, &mh.node);
     return mh;
 }

@@ -29,8 +29,8 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: safe. It takes Disable, which is how a port with
-///   `PA_SOFTINT` is drained.
+/// - Interrupts: safe. It takes exec's port lock, which masks the core's
+///   interrupts - which is how a port with `PA_SOFTINT` is drained.
 /// - Forbid: not needed.
 /// - Process: a Task will do.
 ///
@@ -39,7 +39,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// it must be replied, or the sender waits for ever.
 ///
 /// NOTES:
-/// The list is taken from under Disable, because an interrupt may be
+/// The list is taken from under the port lock, because an interrupt may be
 /// putting a message on it.
 ///
 /// BUGS:
@@ -58,8 +58,8 @@ const MsgPort = sdk.exec.MsgPort;
 /// ```
 pub fn GetMsg(base: *ExecBase, port: *MsgPort) ?*Message {
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    sys.AcquireLock(&base.lock_ports);
+    defer sys.ReleaseLock(&base.lock_ports);
     const node = sys.RemHead(&port.msg_list) orelse return null;
     return @fieldParentPtr("node", node);
 }

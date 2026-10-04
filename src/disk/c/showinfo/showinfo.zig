@@ -12,9 +12,19 @@
 //!
 //! Everything here is read from exec's and dos's own lists rather than
 //! from a copy, so every walk is done holding the thing that keeps the
-//! list still - Forbid for exec's, Disable for the two task queues and the
-//! interrupt vectors, the DosList's own lock for the handlers - and
-//! nothing writes. A list is walked, printed from, and let go.
+//! list still - Forbid for exec's, Disable for the two task queues, each
+//! core's running task and the interrupt vectors, the DosList's own lock
+//! for the handlers - and nothing writes. A list is walked, printed from,
+//! and let go; the tasks, which move all the time, are copied out all
+//! together first.
+//!
+//! TASKS shows what each core runs, then the ready and the waiting tasks,
+//! with the core a task is pinned to (SetTaskAffinity, NP_Affinity).
+//!
+//! What a list's owner keeps under a lock of its own is not walked at all:
+//! the free blocks of a memory region change under exec's memory lock,
+//! which Forbid does not hold off on the other core, so a region's largest
+//! block is asked of AvailMem - the largest of memory of its kind.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -24,7 +34,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowInfo";
-const VERSION_STRING = "\x00$VER: ShowInfo 1.1 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowInfo 1.2 (04.10.2026)\r\n";
 
 const template = "TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S," ++
     "HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S";
@@ -109,10 +119,11 @@ fn name(of: ?[*:0]const u8) [*:0]const u8 {
 // --- one line each ------------------------------------------------------------
 
 fn summary() i32 {
-    _ = Printf(dl, "%-12s %d ready, %d waiting\n", .{
+    _ = Printf(dl, "%-12s %d running, %d ready, %d waiting\n", .{
         "Tasks",
-        countOf(exec.EXECLIST_TASK_READY),
-        countOf(exec.EXECLIST_TASK_WAIT),
+        countRunning(),
+        countTasks(exec.EXECLIST_TASK_READY),
+        countTasks(exec.EXECLIST_TASK_WAIT),
     });
     _ = Printf(dl, "%-12s %d\n", .{ "Libraries", countOf(exec.EXECLIST_LIBRARIES) });
     _ = Printf(dl, "%-12s %d\n", .{ "Devices", countOf(exec.EXECLIST_DEVICES) });
@@ -130,58 +141,131 @@ fn summary() i32 {
 
 // --- exec's lists -------------------------------------------------------------
 
-/// The two task queues, and whoever is running. A task is moved between
-/// them from an interrupt, so this holds them still with Disable rather
-/// than Forbid - and prints nothing while it has them, since printing
-/// waits on a handler.
+/// What each core runs, then the two task queues. A task moves between
+/// them from an interrupt and from the other core all the time, so they
+/// are copied out together, under one Disable - a walk a node at a time
+/// would follow a task that moved into the other queue - and printed
+/// after, since printing waits on a handler. A running task is on no
+/// queue: each core is asked for its own (CoreTask), from core 0 up until
+/// one is not running.
 fn tasks() void {
     _ = dl.PutStr("\nTasks\n");
-    _ = dl.PutStr("state     pri  address     name\n");
-    if (sys.FindTask(null)) |self| {
-        _ = Printf(dl, "%-8s %4d  0x%08x  %s (this one)\n", .{
-            "run",
-            self.node.pri,
-            @intFromPtr(self),
-            name(self.node.name),
-        });
+    const block = sys.AllocVec(max_seen * @sizeOf(Seen), 0) orelse {
+        _ = dl.PutStr("no memory to copy them into\n");
+        return;
+    };
+    defer sys.FreeVec(block);
+    var copied: Copied = .{ .seen = @as([*]Seen, @ptrCast(@alignCast(block)))[0..max_seen] };
+    const self = sys.FindTask(null);
+
+    sys.Disable();
+    var core: u32 = 0;
+    while (sys.CoreTask(core)) |task| : (core += 1) copied.take(task, "run", core, task == self);
+    for ([_]struct { state: [*:0]const u8, which: u32 }{
+        .{ .state = "ready", .which = exec.EXECLIST_TASK_READY },
+        .{ .state = "wait", .which = exec.EXECLIST_TASK_WAIT },
+    }) |queue| {
+        var node = firstOf(queue.which);
+        while (node) |n| : (node = nextNode(n)) copied.take(@fieldParentPtr("node", n), queue.state, null, false);
     }
-    showQueue("ready", exec.EXECLIST_TASK_READY);
-    showQueue("wait", exec.EXECLIST_TASK_WAIT);
+    sys.Enable();
+
+    _ = dl.PutStr("state    core  pinned   pri  address     name\n");
+    for (copied.seen[0..copied.count]) |*seen| seen.show();
+    if (copied.missed != 0) _ = Printf(dl, "... and %u more\n", .{copied.missed});
 }
 
-/// One queue, a node at a time: what is printed is copied out under
-/// Disable and printed after, because a printed line goes to a handler and
-/// a handler cannot run while the scheduler is held.
-fn showQueue(state: [*:0]const u8, which: u32) void {
-    var after: ?*exec.Node = null;
-    while (true) {
-        var address: usize = 0;
-        var pri: i8 = 0;
-        var buffer: [40]u8 = @splat(0);
-        var is_process = false;
+/// How many tasks one listing copies out.
+const max_seen = 64;
 
-        sys.Disable();
-        const node = if (after) |a| nextNode(a) else firstOf(which);
-        if (node) |n| {
-            const task: *exec.Task = @fieldParentPtr("node", n);
-            address = @intFromPtr(task);
-            pri = n.pri;
-            is_process = n.type == .process;
-            copyName(&buffer, n.name);
-            after = n;
+/// The tasks copied so far, and how many did not fit.
+const Copied = struct {
+    seen: []Seen,
+    count: usize = 0,
+    missed: u32 = 0,
+
+    fn take(copied: *Copied, task: *const exec.Task, state: [*:0]const u8, core: ?u32, own: bool) void {
+        if (copied.count == copied.seen.len) {
+            copied.missed += 1;
+            return;
         }
-        sys.Enable();
+        copied.seen[copied.count].copy(task, state, core, own);
+        copied.count += 1;
+    }
+};
 
-        if (node == null) return;
-        _ = Printf(dl, "%-8s %4d  0x%08x  %s%s\n", .{
-            state,
-            pri,
-            address,
-            @as([*:0]const u8, @ptrCast(&buffer)),
-            if (is_process) " (process)" else "",
-        });
+/// How many cores are running a task: each of them, asked.
+fn countRunning() u32 {
+    var core: u32 = 0;
+    while (true) : (core += 1) {
+        sys.Disable();
+        const task = sys.CoreTask(core);
+        sys.Enable();
+        if (task == null) return core;
     }
 }
+
+/// How many tasks a queue holds, counted under Disable: they move from an
+/// interrupt and from the other core.
+fn countTasks(which: u32) u32 {
+    sys.Disable();
+    defer sys.Enable();
+    var count: u32 = 0;
+    var node = firstOf(which);
+    while (node) |n| : (node = nextNode(n)) count += 1;
+    return count;
+}
+
+/// A task as it was when it was looked at, copied out under Disable into
+/// this program's own memory: the task may be gone by the time its line
+/// is printed.
+const Seen = struct {
+    address: usize = 0,
+    pri: i8 = 0,
+    is_process: bool = false,
+    own: bool = false,
+    /// The cores it may run on: its TF_CORE0 and TF_CORE1 flags.
+    pins: u8 = 0,
+    state: [*:0]const u8 = "",
+    /// The core it runs on, for a running one.
+    core: ?u32 = null,
+    buffer: [32]u8 = @splat(0),
+
+    fn copy(seen: *Seen, task: *const exec.Task, state: [*:0]const u8, core: ?u32, own: bool) void {
+        seen.* = .{
+            .address = @intFromPtr(task),
+            .pri = task.node.pri,
+            .is_process = task.node.type == .process,
+            .own = own,
+            .pins = task.flags & (exec.TF_CORE0 | exec.TF_CORE1),
+            .state = state,
+            .core = core,
+        };
+        copyName(&seen.buffer, task.node.name);
+    }
+
+    /// Its line: the state, the core it runs on (a running task's only),
+    /// the core it is pinned to, or "-" for any.
+    fn show(seen: *const Seen) void {
+        var core_text: [4:0]u8 = .{ '-', 0, 0, 0 };
+        if (seen.core) |number| core_text[0] = '0' + @as(u8, @intCast(number % 10));
+        const pinned: [*:0]const u8 = switch (seen.pins) {
+            exec.TF_CORE0 => "core 0",
+            exec.TF_CORE1 => "core 1",
+            else => "-",
+        };
+        _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08x  %s%s%s\n", .{
+            seen.state,
+            @as([*:0]const u8, &core_text),
+            pinned,
+            seen.pri,
+            seen.address,
+            @as([*:0]const u8, @ptrCast(&seen.buffer)),
+            if (seen.is_process) " (process)" else "",
+            if (seen.own) " (this one)" else "",
+        });
+    }
+};
 
 /// A name out of a list, into memory of this program's own: the node it
 /// came from may be gone by the time the line is printed.
@@ -281,15 +365,6 @@ fn nodeList(which: u32) void {
 
 /// The biggest single piece of a region: MemHeader says how much is free
 /// altogether, and the chunks say whether it is in one piece.
-fn largestChunk(mh: *exec.MemHeader) usize {
-    var most: usize = 0;
-    var chunk = mh.first;
-    while (chunk) |c| : (chunk = c.next) {
-        if (c.bytes > most) most = c.bytes;
-    }
-    return most;
-}
-
 fn memory() void {
     _ = dl.PutStr("\nMemory\n");
     _ = dl.PutStr("name                           pri      free     largest\n");
@@ -298,7 +373,7 @@ fn memory() void {
         var buffer: [40]u8 = @splat(0);
         var pri: i8 = 0;
         var free: usize = 0;
-        var largest: usize = 0;
+        var attributes: u32 = 0;
 
         sys.Forbid();
         const node = if (after) |a| nextNode(a) else firstOf(exec.EXECLIST_MEMORY);
@@ -307,12 +382,13 @@ fn memory() void {
             copyName(&buffer, n.name);
             pri = n.pri;
             free = mh.free;
-            largest = largestChunk(mh);
+            attributes = mh.attributes;
             after = n;
         }
         sys.Permit();
 
         if (node == null) return;
+        const largest = sys.AvailMem(attributes | exec.MEMF_LARGEST);
         _ = Printf(dl, "%-29s %4d  %8d  %10d\n", .{
             @as([*:0]const u8, @ptrCast(&buffer)),
             pri,

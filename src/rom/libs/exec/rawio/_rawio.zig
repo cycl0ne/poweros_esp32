@@ -74,6 +74,7 @@ const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
 const _log = @import("../log/_log.zig");
+const exec_base = @import("../exec_base.zig");
 
 const PutChProc = sdk.exec.PutChProc;
 
@@ -92,13 +93,17 @@ pub var raw_io_hardware: RawIOHardware = if (builtin.is_test) no_raw_io else chi
 /// Set by RawIOInit: before it, the raw port is silent.
 pub var raw_ready = false;
 
-/// The next character starts a line, and gets the time and the writer in
-/// front of it.
-var line_start = true;
-/// A `LOG_MARK` started the line: the next character is its level.
-var marked = false;
-/// The line being written is below the level kept, and goes nowhere.
-var dropping = false;
+/// Each core's own line, as both write: the next character starts a
+/// line, and gets the time and the writer in front of it; a `LOG_MARK`
+/// started the line, so the next character is its level; the line being
+/// written is below the level kept, and goes nowhere. Two cores writing at
+/// once mix their characters on the port, but each line is read right.
+const Line = struct {
+    start: bool = true,
+    marked: bool = false,
+    dropping: bool = false,
+};
+var lines: [exec_base.max_cores]Line = @splat(.{});
 /// Every line goes out, whatever its level: set while an alert is shown,
 /// which must reach the port.
 pub var unfiltered = false;
@@ -133,34 +138,35 @@ fn noGet() ?u8 {
 /// - `character` - the byte to send.
 pub fn putChar(character: u8) void {
     if (character == 0) return;
-    if (marked) {
-        marked = false;
-        if (character >= '1' and character <= '4') return startLine(character - '0');
+    const line = &lines[exec_base.coreId()];
+    if (line.marked) {
+        line.marked = false;
+        if (character >= '1' and character <= '4') return startLine(line, character - '0');
         // No level after the mark: the mark goes, the line is information.
-        startLine(sdk.exec.LOG_INFO);
-    } else if (line_start and character == sdk.exec.log.LOG_MARK) {
-        marked = true;
+        startLine(line, sdk.exec.LOG_INFO);
+    } else if (line.start and character == sdk.exec.log.LOG_MARK) {
+        line.marked = true;
         return;
-    } else if (line_start and character != '\n') {
-        startLine(sdk.exec.LOG_INFO);
+    } else if (line.start and character != '\n') {
+        startLine(line, sdk.exec.LOG_INFO);
     }
-    if (dropping) {
+    if (line.dropping) {
         if (character == '\n') {
-            dropping = false;
-            line_start = true;
+            line.dropping = false;
+            line.start = true;
         }
         return;
     }
     emit(character);
-    if (character == '\n') line_start = true;
+    if (character == '\n') line.start = true;
 }
 
 /// A line at `level` begins: dropped when the log keeps less, else its
 /// prefix, and its level's letter when it is not information.
-fn startLine(level: u32) void {
-    line_start = false;
-    dropping = !unfiltered and level > _log.level;
-    if (dropping) return;
+fn startLine(line: *Line, level: u32) void {
+    line.start = false;
+    line.dropping = !unfiltered and level > _log.level;
+    if (line.dropping) return;
     linePrefix();
     const letter: u8 = switch (level) {
         sdk.exec.LOG_ERROR => 'E',
@@ -211,10 +217,10 @@ fn linePrefix() void {
     const us = _log.clock();
     const writer: [*:0]const u8 = if (!exec.initialized)
         "boot"
-    else if (exec.SysBase.int_depth != 0)
+    else if (exec.SysBase.cpu().int_depth != 0)
         "int"
     else
-        exec.SysBase.this_task.node.name orelse "?";
+        exec.SysBase.cpu().this_task.node.name orelse "?";
     const stream = sdk.exec.fmtStream(.{ us / 1_000_000, us % 1_000_000, writer });
     comptime sdk.exec.checkFormat("[%4ld.%06ld %.24s] ", @TypeOf(.{ @as(u64, 0), @as(u64, 0), writer }));
     _ = format("[%4ld.%06ld %.24s] ", &stream, &emitPut, null);

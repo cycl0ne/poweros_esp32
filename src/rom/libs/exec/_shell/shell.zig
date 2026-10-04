@@ -140,6 +140,7 @@ const commands = .{
     @import("cmds/help.zig"),
     @import("cmds/info.zig"),
     @import("cmds/uptime.zig"),
+    @import("cmds/cores.zig"),
     @import("cmds/memlist.zig"),
     @import("cmds/memtrace.zig"),
     @import("cmds/peek.zig"),

@@ -39,7 +39,7 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: yes, until the last one is granted.
 /// - Interrupts: no. It waits.
-/// - Forbid: taken here and broken by the waiting, as with
+/// - Forbid: may be held, and is broken by the waiting, as with
 ///   `ObtainSemaphore`.
 /// - Process: a Task will do.
 ///
@@ -65,16 +65,16 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn ObtainSemaphoreList(base: *ExecBase, list: *List) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
     enterList(base, list, sys.FindTask(null).?);
+    sys.ReleaseLock(&base.lock_semaphores);
     var it = list.iterator();
     while (it.next()) |node| _locks.waitGranted(base, &_locks.semaphoreOf(node).multiple_link);
 }
 
 /// The first half: queues a request on **every** semaphore of the list
 /// before any of them is waited for, which is what makes the
-/// all-or-nothing hold possible. The caller holds Forbid.
+/// all-or-nothing hold possible. The caller holds the semaphore lock.
 ///
 /// Each semaphore's own built-in request is used, which is why only one
 /// task at a time may do this over the same semaphores.

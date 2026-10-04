@@ -30,8 +30,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, and not broken.
+/// - Interrupts: no. It takes exec's semaphore lock.
+/// - Forbid: may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -50,8 +50,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn AttemptSemaphoreShared(base: *ExecBase, sem: *SignalSemaphore) bool {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     const task = sys.FindTask(null).?;
     if (sem.queue_count >= 0 and sem.owner != task and sem.owner != null) return false;
     var request: SemaphoreRequest = .{ .waiter = task, .shared = true };

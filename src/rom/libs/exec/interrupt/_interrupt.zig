@@ -40,6 +40,7 @@
 
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
+const exec_base = @import("../exec_base.zig");
 
 const ExecBase = exec.ExecBase;
 const Interrupt = sdk.exec.Interrupt;
@@ -61,7 +62,46 @@ pub const InterruptHardware = struct {
     restore: *const fn (state: u32) void,
     /// Raise the software interrupt; its handler calls dispatchSoftInts.
     cause_softint: *const fn () void,
+    /// The other cores held still - parked where nothing reaches the
+    /// caches, their interrupts masked - and let go again (HoldOtherCores,
+    /// ReleaseOtherCores). Nothing where there is one core.
+    hold_others: *const fn () void = noOthers,
+    release_others: *const fn () void = noOthers,
+    /// Parked if another core asks: what a spin with interrupts masked
+    /// asks as it goes round, since it never takes the interrupt that
+    /// would ask it otherwise.
+    park_if_asked: *const fn () void = noOthers,
+    /// Core `core` asked to look at its scheduling flags: its cross-core
+    /// interrupt, whose exit runs its dispatcher.
+    poke_core: *const fn (core: u32) void = noPoke,
 };
+
+/// One core: nobody to hold, nobody to park for.
+fn noOthers() void {}
+fn noPoke(_: u32) void {}
+
+/// The system's interrupt lock (`disable_lock`) taken by this core, as
+/// Disable and the exception entry take it: spun for while the other core
+/// has it, answering a hold as it goes round. This core's interrupts are
+/// masked already, so nothing here can want it again.
+///
+/// INPUTS:
+/// - `base` - exec: the lock.
+pub fn takeSystemInterrupts(base: *ExecBase) void {
+    const me = exec_base.coreId() + 1;
+    while (@cmpxchgWeak(u32, &base.disable_lock, 0, me, .acquire, .monotonic) != null) {
+        interrupt_hardware.park_if_asked();
+    }
+}
+
+/// The system's interrupt lock let go, everything written under it seen
+/// first.
+///
+/// INPUTS:
+/// - `base` - exec: the lock.
+pub fn dropSystemInterrupts(base: *ExecBase) void {
+    @atomicStore(u32, &base.disable_lock, 0, .release);
+}
 
 /// Where exec reaches the interrupt hardware. The kernel writes it before
 /// the bootstrap; host tests put their own stub here. It is the kernel's
@@ -237,7 +277,7 @@ fn nextSoftInt(base: *ExecBase) ?*Interrupt {
 /// - `base` - exec: the running task.
 /// - `info` - the exception, with the `pc` execution resumes at.
 pub fn dispatchTrap(base: *ExecBase, info: *TrapInfo) void {
-    const task = base.this_task;
+    const task = base.cpu().this_task;
     if (task.trap_code) |code| {
         if (code(info, task.trap_data) != 0) return;
     }

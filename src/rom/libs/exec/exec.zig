@@ -86,6 +86,12 @@ const _log = @import("log/_log.zig");
 pub const ReadLog = @import("log/readlog.zig").ReadLog;
 pub const SetLogSignal = @import("log/setlogsignal.zig").SetLogSignal;
 pub const LogControl = @import("log/logcontrol.zig").LogControl;
+pub const InitLock = @import("locks/initlock.zig").InitLock;
+pub const AcquireLock = @import("locks/acquirelock.zig").AcquireLock;
+pub const AttemptLock = @import("locks/attemptlock.zig").AttemptLock;
+pub const ReleaseLock = @import("locks/releaselock.zig").ReleaseLock;
+pub const HoldOtherCores = @import("interrupt/holdothercores.zig").HoldOtherCores;
+pub const ReleaseOtherCores = @import("interrupt/releaseothercores.zig").ReleaseOtherCores;
 pub const Debug = @import("debug/debug.zig").Debug;
 pub const DebugHardware = @import("debug/_debug.zig").DebugHardware;
 /// The chip's part of the ROM debugger, which the kernel installs.
@@ -135,6 +141,8 @@ pub const AddTaskEndHook = @import("task/addtaskendhook.zig").AddTaskEndHook;
 pub const RemTaskEndHook = @import("task/remtaskendhook.zig").RemTaskEndHook;
 pub const FindTask = @import("task/findtask.zig").FindTask;
 pub const SetTaskPri = @import("task/settaskpri.zig").SetTaskPri;
+pub const SetTaskAffinity = @import("task/settaskaffinity.zig").SetTaskAffinity;
+pub const CoreTask = @import("task/coretask.zig").CoreTask;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const Forbid = @import("task/forbid.zig").Forbid;
@@ -142,6 +150,12 @@ pub const Permit = @import("task/permit.zig").Permit;
 pub const interruptEnter = _task.interruptEnter;
 pub const interruptExit = _task.interruptExit;
 pub const tickQuantum = _task.tickQuantum;
+/// The second core's part (task/_task.zig): its idle task made before it
+/// starts, its start, its idle loop, and its cross-core interrupt.
+pub const prepareCore = _task.prepareCore;
+pub const coreStarted = _task.coreStarted;
+pub const idleHere = _task.idleHere;
+pub const crossCorePoke = _task.crossCorePoke;
 
 /// Signals and task exceptions (task/).
 pub const Signal = @import("task/signal.zig").Signal;
@@ -719,7 +733,7 @@ test "OpenLibrary: by name and version, counts openers" {
 
     try testing.expect(RemLibrary(SysBase, lib) == null);
     try testing.expect(OpenLibrary(SysBase, "test.library", 0) == null);
-    try testing.expectEqual(@as(i8, -1), SysBase.tdn_nest_cnt);
+    try testing.expectEqual(@as(i8, -1), SysBase.cpu().tdn_nest_cnt);
     try expectNoLeaks();
 }
 
@@ -1359,20 +1373,20 @@ test "Disable/Enable nest; only the outermost Enable restores" {
     Disable(SysBase); // token 1: the state to restore later
     Disable(SysBase);
     Disable(SysBase);
-    try testing.expectEqual(@as(i8, 2), SysBase.id_nest_cnt);
+    try testing.expectEqual(@as(i8, 2), SysBase.cpu().id_nest_cnt);
     Enable(SysBase);
     Enable(SysBase);
     try testing.expectEqual(@as(u32, 0), FakeHardware.restores);
     Enable(SysBase);
     try testing.expectEqual(@as(u32, 1), FakeHardware.restores);
     try testing.expectEqual(@as(u32, 1), FakeHardware.last_restore);
-    try testing.expectEqual(@as(i8, -1), SysBase.id_nest_cnt);
+    try testing.expectEqual(@as(i8, -1), SysBase.cpu().id_nest_cnt);
 
     // One Disable and Enable pair from the start.
     Disable(SysBase);
-    try testing.expectEqual(@as(i8, 0), SysBase.id_nest_cnt);
+    try testing.expectEqual(@as(i8, 0), SysBase.cpu().id_nest_cnt);
     Enable(SysBase);
-    try testing.expectEqual(@as(i8, -1), SysBase.id_nest_cnt);
+    try testing.expectEqual(@as(i8, -1), SysBase.cpu().id_nest_cnt);
     try testing.expectEqual(@as(u32, 2), FakeHardware.restores);
 
     var hits: u32 = 0;
@@ -1553,13 +1567,21 @@ const FakeAlert = struct {
     var last_where: usize = 0;
     var last_info: ?*const TrapInfo = null;
     var last_text: ?[*:0]const u8 = null;
+    /// The text copied: an alert's text may be on its raiser's stack.
+    var text_copy: [200:0]u8 = @splat(0);
 
     fn show(alert_num: u32, where: usize, info: ?*const TrapInfo, text: ?[*:0]const u8) void {
         count += 1;
         last_num = alert_num;
         last_where = where;
         last_info = info;
-        last_text = text;
+        last_text = null;
+        if (text) |given| {
+            var at: usize = 0;
+            while (given[at] != 0 and at < text_copy.len) : (at += 1) text_copy[at] = given[at];
+            text_copy[at] = 0;
+            last_text = &text_copy;
+        }
     }
     fn install() void {
         count = 0;
@@ -1582,6 +1604,106 @@ fn skipThree(info: *TrapInfo, data: ?*anyopaque) callconv(.c) i32 {
 }
 fn decline(_: *TrapInfo, _: ?*anyopaque) callconv(.c) i32 {
     return 0;
+}
+
+test "spinlocks: taken and given back, tried, and their rules" {
+    try setUp();
+    defer deinit();
+    FakeAlert.install();
+    defer FakeAlert.uninstall();
+    const sys = SysBase.iface();
+    const lk = sdk.exec.locks;
+
+    var outer: sdk.exec.Lock = undefined;
+    var inner: sdk.exec.Lock = undefined;
+    sys.InitLock(&outer, "outer", sdk.exec.LOCKORDER_DRIVER, 0);
+    sys.InitLock(&inner, "inner", sdk.exec.LOCKORDER_DRIVER + 1, 0);
+    try testing.expectEqual(sdk.exec.NodeType.lock, outer.node.type);
+    try testing.expectEqual(@as(u32, 0), outer.state);
+
+    // Taken: held by this task, on the core's list, task switching off
+    // until it is given back.
+    const holds = SysBase.cpu().hold_count;
+    sys.AcquireLock(&outer);
+    try testing.expect(outer.state != 0);
+    try testing.expectEqual(SysBase.cpu().this_task, outer.owner.?);
+    try testing.expectEqual(@as(u32, 1), SysBase.cpu().lock_count);
+    try testing.expectEqual(holds + 1, SysBase.cpu().hold_count);
+    // In the order: no alert.
+    sys.AcquireLock(&inner);
+    try testing.expectEqual(@as(u32, 0), FakeAlert.count);
+    // Given back in either order.
+    sys.ReleaseLock(&outer);
+    sys.ReleaseLock(&inner);
+    try testing.expectEqual(@as(u32, 0), outer.state);
+    try testing.expect(outer.owner == null);
+    try testing.expectEqual(@as(u32, 0), SysBase.cpu().lock_count);
+    try testing.expectEqual(holds, SysBase.cpu().hold_count);
+
+    // Out of order: a recoverable alert naming both, and the lock taken
+    // all the same.
+    sys.AcquireLock(&inner);
+    sys.AcquireLock(&outer);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expectEqual(sdk.exec.AN_LockRule, FakeAlert.last_num);
+    try testing.expect(std.mem.indexOf(u8, std.mem.span(FakeAlert.last_text.?), "outer") != null);
+    try testing.expect(std.mem.indexOf(u8, std.mem.span(FakeAlert.last_text.?), "inner") != null);
+    sys.ReleaseLock(&outer);
+    sys.ReleaseLock(&inner);
+
+    // Tried: free is taken; held by another core is refused at once, and
+    // switching is back as it was. A try is not held to the order.
+    try testing.expect(sys.AttemptLock(&outer));
+    sys.ReleaseLock(&outer);
+    outer.state = 2;
+    try testing.expect(!sys.AttemptLock(&outer));
+    try testing.expectEqual(holds, SysBase.cpu().hold_count);
+    outer.state = 0;
+
+    // Taken again on the core that holds it: a dead end, not a spin; a
+    // try just says no.
+    sys.AcquireLock(&outer);
+    try testing.expect(!sys.AttemptLock(&outer));
+    FakeAlert.count = 0;
+    sys.AcquireLock(&outer);
+    try testing.expectEqual(sdk.exec.AN_LockDeadlock, FakeAlert.last_num);
+    try testing.expect(FakeAlert.last_num & sdk.exec.AT_DeadEnd != 0);
+    try testing.expectEqual(holds + 1, SysBase.cpu().hold_count);
+
+    // Wait with a lock held: an alert, and the Wait goes on.
+    FakeAlert.count = 0;
+    const bit = sys.AllocSignal(-1);
+    const mask = @as(u32, 1) << @intCast(bit);
+    sys.Signal(sys.FindTask(null).?, mask);
+    try testing.expectEqual(mask, sys.Wait(mask));
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expect(std.mem.indexOf(u8, std.mem.span(FakeAlert.last_text.?), "Wait") != null);
+    sys.FreeSignal(bit);
+    sys.ReleaseLock(&outer);
+
+    // Given back without being held: an alert, and switching untouched.
+    FakeAlert.count = 0;
+    sys.ReleaseLock(&outer);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expectEqual(holds, SysBase.cpu().hold_count);
+
+    // In an interrupt only a LOCKF_INTERRUPT lock, taken with the core's
+    // interrupts masked.
+    var shared: sdk.exec.Lock = undefined;
+    sys.InitLock(&shared, "shared", sdk.exec.LOCKORDER_DRIVER, lk.LOCKF_INTERRUPT);
+    const disables = SysBase.cpu().id_nest_cnt;
+    SysBase.cpu().int_depth = 1;
+    FakeAlert.count = 0;
+    sys.AcquireLock(&shared);
+    try testing.expectEqual(@as(u32, 0), FakeAlert.count);
+    try testing.expectEqual(disables + 1, SysBase.cpu().id_nest_cnt);
+    sys.ReleaseLock(&shared);
+    try testing.expectEqual(disables, SysBase.cpu().id_nest_cnt);
+    sys.AcquireLock(&inner);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expect(std.mem.indexOf(u8, std.mem.span(FakeAlert.last_text.?), "interrupt") != null);
+    sys.ReleaseLock(&inner);
+    SysBase.cpu().int_depth = 0;
 }
 
 test "CPU exceptions: the trap code first, otherwise a dead-end Alert" {
@@ -1624,7 +1746,7 @@ test "CPU exceptions: the trap code first, otherwise a dead-end Alert" {
     try testing.expectEqual(@as(u32, 4), FakeAlert.count);
     try testing.expectEqual(@as(u32, 0x0100_0000), FakeAlert.last_num);
     try testing.expect(SetTrapCode(SysBase, &decline, null) == null);
-    try testing.expectEqual(@as(?TrapFn, &decline), SysBase.this_task.trap_code);
+    try testing.expectEqual(@as(?TrapFn, &decline), SysBase.cpu().this_task.trap_code);
     _ = SetTrapCode(SysBase, null, null);
 
     // AlertAt, through the table: the caller's address and its text.
@@ -1722,16 +1844,16 @@ test "tasks: a stack's guard is written by AddTask and NewStackRun, and a guard 
     Probed.number = 0;
     alert_hook.* = Probed.caught;
     defer alert_hook.* = _interrupt.default_alert;
-    const boot = SysBase.this_task;
+    const boot = SysBase.cpu().this_task;
     const boot_context = boot_ctx;
     _ = SetTaskPri(SysBase, task, 10);
     _ = exceptionExit(boot_context);
-    try testing.expectEqual(task, SysBase.this_task);
+    try testing.expectEqual(task, SysBase.cpu().this_task);
     @as(*u32, @ptrFromInt(task.sp_lower)).* = 0;
     _ = SetTaskPri(SysBase, task, -1);
     _ = exceptionExit(ctx(task));
     try testing.expectEqual(sdk.exec.AT_DeadEnd | sdk.exec.AN_StackProbe, Probed.number);
-    try testing.expectEqual(boot, SysBase.this_task);
+    try testing.expectEqual(boot, SysBase.cpu().this_task);
     RemTask(SysBase, task);
     try expectNoLeaks();
 }
@@ -1766,7 +1888,7 @@ test "tasks: end hooks run when the task ends, in their order, once; one taken o
     // then; the caller's own task when none is named.
     var own: Ended = .{};
     AddTaskEndHook(SysBase, null, &own.hook);
-    try testing.expectEqual(@as(?*Task, SysBase.this_task), own.hook.task);
+    try testing.expectEqual(@as(?*Task, SysBase.cpu().this_task), own.hook.task);
     RemTaskEndHook(SysBase, &own.hook);
     try expectNoLeaks();
 }
@@ -1779,7 +1901,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         try testing.expectEqualStrings("kernel", boot.name());
         try testing.expectEqual(TaskState.run, boot.state);
         try testing.expect(FindTask(SysBase, "idle") != null);
@@ -1791,7 +1913,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         const high = CreateTask(SysBase, "high", 10, &idleCode, 1024).?;
         try testing.expectEqual(@as(u32, 1), FakeTaskHardware.switches); // switch asked for at once
         try testing.expectEqual(ctx(high), exceptionExit(boot_ctx));
-        try testing.expectEqual(high, SysBase.this_task);
+        try testing.expectEqual(high, SysBase.cpu().this_task);
         try testing.expectEqual(TaskState.ready, boot.state);
         try testing.expectEqual(boot_ctx, boot.sp_reg.?);
 
@@ -1800,7 +1922,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         try testing.expectEqual(ctx(same), exceptionExit(ctx(high)));
         _ = SetTaskPri(SysBase, same, -2);
         try testing.expectEqual(boot_ctx, exceptionExit(ctx(same)));
-        try testing.expectEqual(boot, SysBase.this_task);
+        try testing.expectEqual(boot, SysBase.cpu().this_task);
 
         RemTask(SysBase, high);
         RemTask(SysBase, same);
@@ -1846,7 +1968,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const other = CreateTask(SysBase, "other", 0, &idleCode, 1024).?;
         var tick: u32 = 1;
         while (tick < SysBase.quantum) : (tick += 1) {
@@ -1858,7 +1980,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
 
         for (0..SysBase.quantum) |_| tickQuantum(SysBase);
         try testing.expectEqual(boot_ctx, exceptionExit(ctx(other)));
-        try testing.expectEqual(boot, SysBase.this_task);
+        try testing.expectEqual(boot, SysBase.cpu().this_task);
 
         RemTask(SysBase, other);
         try expectNoLeaks();
@@ -1888,7 +2010,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         try setUp();
         defer deinit();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const t = CreateTask(SysBase, "finder", -3, &idleCode, 1024).?;
         try testing.expectEqual(t, FindTask(SysBase, "finder").?);
         try testing.expectEqual(boot, FindTask(SysBase, null).?);
@@ -1910,7 +2032,7 @@ test "tasks: preemption, their code, NT_TASK, time slices, Forbid, FindTask and 
         defer FakeTaskHardware.uninstall();
         SwitchHooks.reset();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         boot.switch_code = SwitchHooks.onSwitch;
         boot.launch_code = SwitchHooks.onLaunch;
         boot.flags |= TF_SWITCH | TF_LAUNCH;
@@ -1976,19 +2098,58 @@ const TaskCode = struct {
     }
 };
 
+test "tasks: SetTaskAffinity - a task pinned to another core is passed over, and runs here once let go" {
+    try setUp();
+    defer deinit();
+    const boot = SysBase.cpu().this_task;
+    const task = CreateTask(SysBase, "pinned", -1, &idleCode, 2048).?;
+
+    // On core 1 alone, and core 1 not running: core 0 never takes it,
+    // however high it is raised.
+    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, task, sdk.exec.TF_CORE1));
+    _ = SetTaskPri(SysBase, task, 10);
+    try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
+    try testing.expectEqual(boot, SysBase.cpu().this_task);
+
+    // Let go: it outranks the running task, and runs.
+    try testing.expectEqual(@as(u32, sdk.exec.TF_CORE1), SetTaskAffinity(SysBase, task, 0));
+    try testing.expectEqual(ctx(task), exceptionExit(boot_ctx));
+    try testing.expectEqual(task, SysBase.cpu().this_task);
+
+    // Pinned away from this core by itself: switched out at once, and the
+    // boot task - pinned to core 0 - goes on.
+    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, null, sdk.exec.TF_CORE1 | 0x80));
+    try testing.expectEqual(sdk.exec.TF_CORE1, task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1));
+    try testing.expectEqual(boot_ctx, exceptionExit(ctx(task)));
+    try testing.expectEqual(boot, SysBase.cpu().this_task);
+    try testing.expectEqual(TaskState.ready, task.state);
+
+    RemTask(SysBase, task);
+    try expectNoLeaks();
+}
+
+test "tasks: CoreTask - each running core's task, null past the last" {
+    try setUp();
+    defer deinit();
+    try testing.expectEqual(SysBase.cpu().this_task, CoreTask(SysBase, 0).?);
+    try testing.expectEqual(FindTask(SysBase, null).?, CoreTask(SysBase, 0).?);
+    try testing.expect(CoreTask(SysBase, 1) == null); // one core running
+    try testing.expect(CoreTask(SysBase, 7) == null);
+}
+
 test "signals: Signal wakes a waiting task, Wait, SetSignal, AllocSignal" {
     try setUp();
     defer deinit();
     FakeTaskHardware.install();
     defer FakeTaskHardware.uninstall();
 
-    const boot = SysBase.this_task;
+    const boot = SysBase.cpu().this_task;
     const waiter = CreateTask(SysBase, "waiter", 5, &idleCode, 1024).?;
     try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
 
     // The waiter waits for bit 20 (the part of Wait before its switch).
     const sig: u32 = 1 << 20;
-    _task.blockCurrent(SysBase, SysBase.this_task, sig);
+    _task.blockCurrent(SysBase, SysBase.cpu().this_task, sig);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
     try testing.expectEqual(TaskState.wait, waiter.state);
 
@@ -2017,7 +2178,7 @@ test "signals: Signal wakes a waiting task, Wait, SetSignal, AllocSignal" {
 
     _ = SetTaskPri(SysBase, waiter, -5);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
-    try testing.expectEqual(boot, SysBase.this_task);
+    try testing.expectEqual(boot, SysBase.cpu().this_task);
     RemTask(SysBase, waiter);
     try expectNoLeaks();
 }
@@ -2044,7 +2205,7 @@ test "task exceptions: SetExcept, raised at the exception exit, after Forbid, in
     FakeExcept.calls = 0;
     FakeExcept.enable_again = 0;
 
-    const boot = SysBase.this_task;
+    const boot = SysBase.cpu().this_task;
     const ctrl_d = SIGBREAKF_CTRL_D;
     const ctrl_e = SIGBREAKF_CTRL_E;
     boot.except_code = &FakeExcept.code;
@@ -2103,7 +2264,7 @@ test "task exceptions: SetExcept, raised at the exception exit, after Forbid, in
     try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
     waiter.except_code = &FakeExcept.code;
     _ = SetExcept(SysBase, ctrl_d, ctrl_d);
-    _task.blockCurrent(SysBase, SysBase.this_task, 1 << 20);
+    _task.blockCurrent(SysBase, SysBase.cpu().this_task, 1 << 20);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
     Signal(SysBase, waiter, ctrl_d);
     try testing.expectEqual(TaskState.ready, waiter.state);
@@ -2134,7 +2295,7 @@ test "messages: PutMsg, GetMsg, ReplyMsg, WaitPort and the port actions" {
     FakeTaskHardware.install();
     defer FakeTaskHardware.uninstall();
 
-    const boot = SysBase.this_task;
+    const boot = SysBase.cpu().this_task;
     const port = CreateMsgPort(SysBase).?;
     const reply = CreateMsgPort(SysBase).?;
     try testing.expectEqual(@as(u8, 31), port.sig_bit);
@@ -2187,7 +2348,7 @@ test "messages: PutMsg, GetMsg, ReplyMsg, WaitPort and the port actions" {
     try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
     const wport = CreateMsgPort(SysBase).?;
     try testing.expectEqual(@as(?*anyopaque, waiter), wport.sig_task);
-    _task.blockCurrent(SysBase, SysBase.this_task, wport.sigMask()); // WaitPort's Wait
+    _task.blockCurrent(SysBase, SysBase.cpu().this_task, wport.sigMask()); // WaitPort's Wait
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
     PutMsg(SysBase, wport, &msg);
     try testing.expectEqual(TaskState.ready, waiter.state);
@@ -2233,7 +2394,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
         const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
         var sem: SignalSemaphore = .{};
@@ -2294,7 +2455,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
         const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
         const c = CreateTask(SysBase, "c", -1, &idleCode, 1024).?;
@@ -2362,7 +2523,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
         var sems: [3]SignalSemaphore = .{ .{}, .{}, .{} };
         var list: List = .{};
@@ -2424,7 +2585,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         FakeTaskHardware.install();
         defer FakeTaskHardware.uninstall();
 
-        const boot = SysBase.this_task;
+        const boot = SysBase.cpu().this_task;
         const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
         var sem: SignalSemaphore = .{};
         InitSemaphore(SysBase, &sem);
@@ -3128,14 +3289,14 @@ test "system start: ROM scan, single-task stage; the exec task runs cold start a
 
     TestRom.build();
     TestRom.rom.plain.flags = RTF_SINGLETASK;
-    const first = SysBase.this_task;
+    const first = SysBase.cpu().this_task;
     const start = @intFromPtr(&TestRom.rom);
     const info: BootInfo = .{ .rom_start = start, .rom_end = start + @sizeOf(@TypeOf(TestRom.rom)) };
     try exec_init.startSystem(SysBase, &info);
 
     // Single task: plain ran. Task switching stays off; the exec task waits.
     try testing.expectEqual(@as(u32, 1), TestRom.plain_inits);
-    try testing.expect(SysBase.tdn_nest_cnt >= 0);
+    try testing.expect(SysBase.cpu().tdn_nest_cnt >= 0);
     const exec_task = FindTask(SysBase, "exec").?;
     try testing.expectEqual(TaskState.ready, exec_task.state);
     try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx)); // Forbid
@@ -3151,7 +3312,7 @@ test "system start: ROM scan, single-task stage; the exec task runs cold start a
     // It returns and ends (taskEntry's RemTask); the first task goes on.
     RemTask(SysBase, null);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(exec_task)));
-    try testing.expectEqual(first, SysBase.this_task);
+    try testing.expectEqual(first, SysBase.cpu().this_task);
     try testing.expect(FindTask(SysBase, "exec") == null);
 
     const dev: *Device = @fieldParentPtr("node", FindName(SysBase, &SysBase.device_list, "test.device").?);
@@ -3384,7 +3545,7 @@ test "caches: CacheClearU, CacheClearE, CachePreDMA, CachePostDMA on the cached 
 
     // After DMA into memory: invalidated, shared lines written back first
     // with interrupts off; nothing if the device only read.
-    const nest = SysBase.id_nest_cnt;
+    const nest = SysBase.cpu().id_nest_cnt;
     len = 0xC0;
     sys.CachePostDMA(testAddress(0x3C00_1004), &len, sdk.exec.DMAF_ReadFromRAM);
     sys.CachePostDMA(testAddress(0x3C00_1004), &len, sdk.exec.DMAF_NoModify);
@@ -3397,7 +3558,7 @@ test "caches: CacheClearU, CacheClearE, CachePreDMA, CachePostDMA on the cached 
         .{ .op = 'i', .addr = 0x3C00_10C0, .size = 0x40 },
         .{ .op = 'i', .addr = 0x3C00_1040, .size = 0x80 },
     });
-    try testing.expectEqual(nest, SysBase.id_nest_cnt);
+    try testing.expectEqual(nest, SysBase.cpu().id_nest_cnt);
 
     // 4 MB per hardware call; the range ends with the data bus.
     len = 0x60_0000;

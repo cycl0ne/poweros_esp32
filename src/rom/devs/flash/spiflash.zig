@@ -16,8 +16,11 @@
 //! - have interrupts off (exec's Disable): an interrupt would vector into
 //!   `xtensa_exception`, which is in flash,
 //! - run on a stack in internal SRAM, not the PSRAM one a task gets by
-//!   default: a register-window spill would fault otherwise.
-//! flash.device does both; that is why it has a task of its own.
+//!   default: a register-window spill would fault otherwise,
+//! - have the other core held (exec's HoldOtherCores): the caches are
+//!   both cores', and an instruction of the other core fetched from flash
+//!   while they are suspended would be its last.
+//! flash.device does all three; that is why it has a task of its own.
 //!
 //! Every entry point is `noinline`: without it the compiler puts a copy
 //! into its caller, which is in flash, and the first instruction fetched

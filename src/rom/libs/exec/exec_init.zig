@@ -18,6 +18,7 @@ const exec_lvo = @import("exec_lvo.zig");
 const _library = @import("library/_library.zig");
 const _resident = @import("resident/_resident.zig");
 const _task = @import("task/_task.zig");
+const _locks = @import("locks/_locks.zig");
 
 const ExecBase = exec.ExecBase;
 const Interrupt = sdk.exec.Interrupt;
@@ -33,8 +34,13 @@ pub const LIBRARY_NAME = "exec.library";
 pub const LIBRARY_VERSION = 1;
 /// 1: end hooks in the TCB (AddTaskEndHook, RemTaskEndHook), run by
 /// RemTask. 2: the system log's levels and settings (LogControl), its
-/// ring as large as the board says, six followers.
-pub const LIBRARY_REVISION = 2;
+/// ring as large as the board says, six followers. 3: spinlocks
+/// (InitLock, AcquireLock, AttemptLock, ReleaseLock) and their rules,
+/// checked on every call; the semaphores, the memory and the ports kept
+/// under exec's own locks instead of Forbid and Disable. 4: the second
+/// core - its own state, its own dispatcher, HoldOtherCores and
+/// ReleaseOtherCores, SetTaskAffinity and CoreTask.
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "04.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -76,11 +82,24 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // is nothing to call a vector through yet (codex rule 1).
     const sys: *ExecBase = @fieldParentPtr("lib", lib);
     exec.RawIOInit(sys);
-    sys.tdn_nest_cnt = -1;
-    sys.id_nest_cnt = -1;
+    // Every core's own state as it starts: no Forbid, no Disable, no
+    // locks held.
+    sys.cpus = @splat(.{});
     sys.log_followers = @splat(.{});
     sys.log_told = 0;
     sys.log_ticks = 0;
+    sys.lock_guard = 0;
+    // One core running and nothing held: the base is allocated, not made
+    // from the struct's defaults. A second core counts itself in when it
+    // starts.
+    sys.disable_lock = 0;
+    sys.forbid_lock = 0;
+    sys.forbid_waiters = 0;
+    sys.cores_running = 1;
+    sys.share_cores = 0;
+    exec.InitLock(sys, &sys.lock_semaphores, "exec semaphores", _locks.order_semaphores, 0);
+    exec.InitLock(sys, &sys.lock_memory, "exec memory", _locks.order_memory, 0);
+    exec.InitLock(sys, &sys.lock_ports, "exec ports", _locks.order_ports, sdk.exec.LOCKF_INTERRUPT);
     sys.lib_list.init(.library);
     sys.device_list.init(.device);
     sys.resource_list.init(.resource);

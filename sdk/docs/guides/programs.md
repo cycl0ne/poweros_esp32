@@ -496,3 +496,104 @@ does not touch. The next boot puts them at the head of its log, between
 ----`, and says so on its second line; `Log` shows them. Reboot in the
 Software Failure requester keeps them too. The reset button clears that
 memory: it powers the chip down.
+
+## Keeping others out: Forbid, semaphores and spinlocks
+
+Three ways keep two pieces of code from changing the same thing at once,
+each for its own case:
+
+| | Holds for | The others | For |
+|---|---|---|---|
+| `Forbid`/`Permit` | a few lines | no other task inside Forbid runs, and no task starts running; interrupts do | exec's lists, walked by a task |
+| `ObtainSemaphore`/`ReleaseSemaphore` | as long as needed, waits included | a task that wants it sleeps until it is given back | a file, a screen, a device's unit |
+| `AcquireLock`/`ReleaseLock` | a few hundred cycles | one that wants it tries again until it is free | what an interrupt or another core touches too |
+
+A **spinlock** is an `exec.Lock`, made once with `InitLock`: a name for
+the alerts that mention it, its place in the lock order, and
+`LOCKF_INTERRUPT` when an interrupt takes it as well.
+
+```zig
+sys.InitLock(&unit.lock, "mydev unit", sdk.exec.LOCKORDER_DRIVER, sdk.exec.LOCKF_INTERRUPT);
+
+// In a task, and in the unit's interrupt server alike:
+sys.AcquireLock(&unit.lock);
+unit.pending += 1;
+sys.ReleaseLock(&unit.lock);
+```
+
+While a lock is held, task switching on the core stops, and with
+`LOCKF_INTERRUPT` its interrupts are masked too, so a task holding a lock
+its own interrupt needs cannot be interrupted into a spin. `AttemptLock`
+takes the lock only if it is free and answers at once.
+
+**The rules**, which exec checks on every call:
+
+- Nothing that may wait while a lock is held: no `Wait`, `DoIO`,
+  `ObtainSemaphore` or file. `Wait` with a lock held is an alert. Nor
+  `AllocMem`: when memory runs short it runs the low-memory handlers,
+  which expunge libraries.
+- Locks in one order. Each has a number (`LOCKORDER_DRIVER` and up for a
+  program's or a driver's own, `LOCKORDER_SYSTEM` and up for exec's), and
+  a lock is taken only while every lock held has a smaller one. Taking
+  them in different orders on two cores could leave each waiting for the
+  other; taking them out of order is an alert naming both.
+- A lock an interrupt takes is a `LOCKF_INTERRUPT` lock; a plain one taken
+  in an interrupt is an alert.
+
+A broken rule is a recoverable alert (`AN_LockRule`), and the call goes on.
+A lock taken again on the core that holds it would spin for good, so it is
+a dead end (`AN_LockDeadlock`) instead.
+
+A lock may live anywhere. In internal memory taking it is one
+compare-and-set instruction; in PSRAM, where this chip has none, exec takes
+it under a guard word in internal memory, with interrupts masked for those
+few instructions.
+
+## Two cores
+
+The kernel runs on both of the chip's cores where the board says so (and
+always in QEMU; `-Dcores=1` builds one that keeps to one). Each core has a
+dispatcher of its own, both take tasks from one ready list, and a task
+runs on whichever core is free - so two tasks really do run at once, and
+what keeps them apart has to hold on both cores:
+
+- **Forbid** is one lock for the whole machine. Two Forbid sections never
+  run at once, and while one runs the other core keeps the task it has
+  but starts no other: a task made ready inside Forbid runs after the
+  `Permit`, as on one core. So a task that signals its parent inside
+  Forbid and ends is gone before the parent runs. What Forbid does not do
+  is stop the task already running on the other core - it guards what
+  everybody touches only inside Forbid, which exec's lists are.
+- **Disable** masks this core's interrupts and holds off the other core's
+  interrupts and Disables as well. The devices' interrupts are all core
+  0's.
+- **A spinlock** stops task switching on its own core only, which is all
+  it needs: the other core spins until it is free.
+- **The cycle counter** (`sdk.hardware.cpu.ccount`) is each core's own,
+  and the two do not agree. A wait of a few microseconds is
+  `cpu.spinCycles`, which keeps the task on one core while it counts.
+- **SYSTEM's clock and reset registers** are shared by every driver on
+  both cores: a driver changes them inside `Disable`.
+
+A task that has to stay on one core - code written for one core, or one
+that drives a core's own hardware - is pinned with `SetTaskAffinity`, or
+from its first instruction with `NP_Affinity` when dos makes it:
+
+```zig
+sys.Forbid(); // no core starts it before it is pinned
+const task = sys.CreateTask("radio", 5, &radioCode, 8192) orelse return error.NoMemory;
+_ = sys.SetTaskAffinity(task, sdk.exec.TF_CORE0);
+sys.Permit();
+```
+
+The idle tasks are pinned one to each core, and so is the Wi-Fi vendor
+code, to core 0. A running task is on neither of exec's task queues:
+`CoreTask(core)` answers what a core runs - asked inside `Disable`, from
+core 0 up until it answers null - which is how `ShowInfo TASKS` lists every
+task once, with the core it runs on and the core it is pinned to. On the
+`s3>` console `cores` shows what each core runs,
+and `cores share off` keeps the second core to its own tasks, which is
+how a fault is told from one that only shows with two cores.
+`C:test/Cores` sets tasks on each other through all of the above - FREE
+lets them run flat out, PIN puts half on each core - and checks that
+nothing overlapped and nothing was lost.

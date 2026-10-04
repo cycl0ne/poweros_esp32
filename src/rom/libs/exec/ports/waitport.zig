@@ -45,7 +45,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// what such a task calls instead. That is why most loops in this tree use
 /// `Wait` and not this.
 ///
-/// The list is looked at under Disable, because an interrupt may be putting
+/// The list is looked at under the port lock, because an interrupt may be putting
 /// a message on it; the wait itself is on the port's signal, so a message
 /// that arrives in between leaves the signal set and the wait returns at
 /// once.
@@ -64,9 +64,9 @@ const MsgPort = sdk.exec.MsgPort;
 pub fn WaitPort(base: *ExecBase, port: *MsgPort) *Message {
     const sys = base.iface();
     while (true) {
-        sys.Disable();
+        sys.AcquireLock(&base.lock_ports);
         const first = port.msg_list.first();
-        sys.Enable();
+        sys.ReleaseLock(&base.lock_ports);
         if (first) |node| return @fieldParentPtr("node", node);
         _ = sys.Wait(port.sigMask());
     }

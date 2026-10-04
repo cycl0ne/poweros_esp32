@@ -28,7 +28,9 @@
 //!
 //! Writing masks interrupts at the CPU around the ring's index only,
 //! through `interrupt_hardware` rather than `Disable`, since it runs before
-//! there is an exec to call and after it has broken.
+//! there is an exec to call and after it has broken - and takes the ring's
+//! own word lock meanwhile, as both cores write into it. A core that waits
+//! for it answers a hold as it spins.
 
 const builtin = @import("builtin");
 const sdk = @import("sdk");
@@ -67,6 +69,25 @@ pub var usb_taken = false;
 /// The number the next byte gets: how many were ever kept.
 var written: u64 = 0;
 
+/// The ring's lock: the core holding it and one, or 0. Internal memory
+/// (.bss), where the compare-and-set is atomic.
+var ring_lock: u32 = 0;
+
+/// The ring locked against the other core, with this core's interrupts
+/// masked; answers the state `unlock` puts back.
+pub fn lock() u32 {
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    while (@cmpxchgWeak(u32, &ring_lock, 0, 1, .acquire, .monotonic) != null) hardware.park_if_asked();
+    return state;
+}
+
+/// What `lock` took, let go.
+pub fn unlock(state: u32) void {
+    @atomicStore(u32, &ring_lock, 0, .release);
+    _interrupt.interrupt_hardware.restore(state);
+}
+
 /// The time in front of a line, in microseconds since the boot. The kernel
 /// puts its clock here before exec is made; without one (the host tests)
 /// every line is at 0.
@@ -82,23 +103,23 @@ fn noClock() u64 {
 /// - `character` - the byte, never a NUL.
 pub fn keep(character: u8) void {
     if (ring.len == 0) return;
-    const state = _interrupt.interrupt_hardware.disable();
+    const state = lock();
     ring[@intCast(written % ring.len)] = character;
     written += 1;
-    _interrupt.interrupt_hardware.restore(state);
+    unlock(state);
 }
 
 /// How many bytes were ever kept: the number the next one gets.
 pub fn end() u64 {
-    const state = _interrupt.interrupt_hardware.disable();
-    defer _interrupt.interrupt_hardware.restore(state);
+    const state = lock();
+    defer unlock(state);
     return written;
 }
 
 /// Copies what the ring holds from `position.*` on into `buffer` and moves
 /// `position` past it. A position older than the oldest byte kept starts
-/// at that byte; one past the end reads nothing. The caller holds
-/// interrupts off.
+/// at that byte; one past the end reads nothing. The caller holds the ring
+/// (`lock`).
 ///
 /// INPUTS:
 /// - `position` - the number of the first byte wanted; moved past the
@@ -129,8 +150,8 @@ pub fn copyOut(position: *u64, buffer: []u8) usize {
 /// INPUTS:
 /// - `into` - where it goes; as much of the log's end as fits.
 pub fn tail(into: []u8) []u8 {
-    const state = _interrupt.interrupt_hardware.disable();
-    defer _interrupt.interrupt_hardware.restore(state);
+    const state = lock();
+    defer unlock(state);
     var position = written -| into.len;
     const whole_log = position == 0;
     const count = copyOut(&position, into);
@@ -154,8 +175,9 @@ pub fn tail(into: []u8) []u8 {
 pub fn tickLog(base: *ExecBase) void {
     base.log_ticks +%= 1;
     if (base.log_ticks % signal_ticks != 0) return;
-    if (written == base.log_told) return;
-    base.log_told = written;
+    const now = end();
+    if (now == base.log_told) return;
+    base.log_told = now;
     const sys = base.iface();
     for (&base.log_followers) |*follower| {
         if (follower.task) |task| sys.Signal(task, follower.signal_mask);

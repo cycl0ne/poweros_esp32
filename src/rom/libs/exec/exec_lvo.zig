@@ -112,6 +112,14 @@ const contract_files = [_][]const u8{
     @embedFile("log/readlog.zig"),
     @embedFile("log/setlogsignal.zig"),
     @embedFile("log/logcontrol.zig"),
+    @embedFile("locks/initlock.zig"),
+    @embedFile("locks/acquirelock.zig"),
+    @embedFile("locks/attemptlock.zig"),
+    @embedFile("locks/releaselock.zig"),
+    @embedFile("interrupt/holdothercores.zig"),
+    @embedFile("interrupt/releaseothercores.zig"),
+    @embedFile("task/settaskaffinity.zig"),
+    @embedFile("task/coretask.zig"),
     @embedFile("debug/debug.zig"),
     @embedFile("task/findtask.zig"),
     @embedFile("task/settaskpri.zig"),
@@ -309,6 +317,14 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoAddTaskEndHook),
     vec(lvoRemTaskEndHook),
     vec(lvoLogControl),
+    vec(lvoInitLock),
+    vec(lvoAcquireLock),
+    vec(lvoAttemptLock),
+    vec(lvoReleaseLock),
+    vec(lvoHoldOtherCores),
+    vec(lvoReleaseOtherCores),
+    vec(lvoSetTaskAffinity),
+    vec(lvoCoreTask),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -793,6 +809,38 @@ fn lvoRemTaskEndHook(base: *ExecBase, hook: *sdk.exec.TaskEndHook) callconv(.c) 
 
 fn lvoLogControl(base: *ExecBase, what: u32, value: isize) callconv(.c) isize {
     return exec.LogControl(base, what, value);
+}
+
+fn lvoInitLock(base: *ExecBase, lock: *sdk.exec.Lock, name: ?[*:0]const u8, order: u32, flags: u32) callconv(.c) void {
+    exec.InitLock(base, lock, name, order, flags);
+}
+
+fn lvoAcquireLock(base: *ExecBase, lock: *sdk.exec.Lock) callconv(.c) void {
+    exec.AcquireLock(base, lock);
+}
+
+fn lvoAttemptLock(base: *ExecBase, lock: *sdk.exec.Lock) callconv(.c) bool {
+    return exec.AttemptLock(base, lock);
+}
+
+fn lvoReleaseLock(base: *ExecBase, lock: *sdk.exec.Lock) callconv(.c) void {
+    exec.ReleaseLock(base, lock);
+}
+
+fn lvoHoldOtherCores(base: *ExecBase) callconv(.c) void {
+    exec.HoldOtherCores(base);
+}
+
+fn lvoReleaseOtherCores(base: *ExecBase) callconv(.c) void {
+    exec.ReleaseOtherCores(base);
+}
+
+fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) callconv(.c) u32 {
+    return exec.SetTaskAffinity(base, task, cores);
+}
+
+fn lvoCoreTask(base: *ExecBase, core: u32) callconv(.c) ?*Task {
+    return exec.CoreTask(base, core);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

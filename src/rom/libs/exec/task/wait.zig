@@ -9,6 +9,7 @@
 const _task = @import("_task.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
+const _locks = @import("../locks/_locks.zig");
 
 /// Sleeps until one of a set of signals arrives.
 ///
@@ -42,9 +43,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Interrupts: no, and it is fatal to try. An interrupt has no task to
 ///   suspend, so there would be nothing to wake.
 /// - Forbid: it switches even under Forbid, which is the one exception to
-///   the scheduler being held. That makes waiting under Forbid *work*
-///   mechanically while still being wrong: the task that would signal you
-///   cannot run.
+///   the scheduler being held, and lets the Forbid lock go until the task
+///   runs again. That makes waiting under Forbid *work* mechanically while
+///   still being wrong: what the Forbid guarded is not guarded across the
+///   Wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -69,7 +71,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// while (sys.GetMsg(port)) |msg| { ... }
 /// ```
 pub fn Wait(base: *ExecBase, signal_set: u32) u32 {
-    if (base.int_depth != 0) @panic("Wait called from an interrupt");
+    _locks.checkWait(base, @returnAddress());
     const sys = base.iface();
     sys.Disable();
     const task = sys.FindTask(null).?;

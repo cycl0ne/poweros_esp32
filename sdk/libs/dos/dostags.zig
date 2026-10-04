@@ -45,6 +45,9 @@ pub const NP_ExitData = NP_Dummy + 25;
 /// its code finds with FindTask(null), which is how a module hands its
 /// own process its base.
 pub const NP_UserData = NP_Dummy + 26;
+/// The cores the new process runs on (exec's TF_CORE0, TF_CORE1, or 0 for
+/// any), set before it first runs.
+pub const NP_Affinity = NP_Dummy + 27;
 
 // SystemTagList's tags.
 pub const SYS_Dummy = TAG_USER + 32;

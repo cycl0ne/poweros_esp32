@@ -440,7 +440,11 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.unit.msg_port.msg_list.init(.message);
 
     sys_base.AddIntServer(port.source(), &work.int);
+    // Inside Disable: the bus clock and reset are SYSTEM's registers,
+    // shared with the other core's drivers.
+    sys_base.Disable();
     port.start(base.tx_pad, base.rx_pad, base.line);
+    sys_base.Enable();
 
     base.stack = stack;
     base.task = .{

@@ -33,8 +33,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// - Waits: **no, and that is the point of it.** This is how a lock is
 ///   taken from somewhere that must not block - an interrupt's task, or
 ///   code holding another lock.
-/// - Interrupts: no. It takes Forbid.
-/// - Forbid: taken here, and not broken, since nothing waits.
+/// - Interrupts: no. It takes exec's semaphore lock.
+/// - Forbid: may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -58,8 +58,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn AttemptSemaphore(base: *ExecBase, sem: *SignalSemaphore) bool {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     const task = sys.FindTask(null).?;
     if (sem.queue_count >= 0 and sem.owner != task) return false;
     var request: SemaphoreRequest = .{ .waiter = task };

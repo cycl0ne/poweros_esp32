@@ -112,8 +112,11 @@ pub fn taskCreate(entry: ?*anyopaque, name: ?[*:0]const u8, stack_bytes: u32, pa
         .entry = @ptrCast(@alignCast(entry.?)),
         .param = param,
     };
+    // On core 0, as everything that runs the vendor code: it was written
+    // for one core, and its interrupts are core 0's.
     made.task = .{
         .node = .{ .type = .task, .pri = priority(prio), .name = &made.name },
+        .flags = exec.TF_CORE0,
         .sp_lower = @intFromPtr(stack),
         .sp_upper = @intFromPtr(stack) + size,
     };

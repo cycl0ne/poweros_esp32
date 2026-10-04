@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Time keeping. SYSTIMER runs at a fixed 16 MHz and gives us wall-clock
-//! time; the core's CCOMPARE0 timer drives the periodic kernel tick.
+//! time; the core's CCOMPARE0 timer drives the periodic kernel tick. Each
+//! core has a CCOMPARE0 of its own, and core 1 ticks at the same rate as
+//! core 0: each tick counts off its own core's time slice, and core 0's
+//! keeps the clock and the log.
 
 const clock = @import("clock.zig");
 const cpu = @import("cpu.zig");
@@ -21,6 +24,7 @@ pub var cpu_hz: u32 = 0;
 pub var tick_hz: u32 = 0;
 var period: u32 = 0;
 var ticks: u32 = 0;
+var core1_ticks: u32 = 0;
 
 /// SYSTIMER unit 0, in 1/16 µs.
 pub fn now() linksection(".iram.text") u64 {
@@ -34,6 +38,18 @@ pub fn uptimeUs() u64 {
 
 pub fn tickCount() u32 {
     return @as(*volatile u32, &ticks).*;
+}
+
+/// Core 1's ticks.
+pub fn core1TickCount() u32 {
+    return @as(*volatile u32, &core1_ticks).*;
+}
+
+/// Core 1's tick, on core 1, at the rate `init` set.
+pub fn initCore1() void {
+    trap.setHandler(tick_irq, onTick);
+    cpu.setCcompare0(cpu.ccount() +% period);
+    cpu.enableInterrupt(tick_irq);
 }
 
 pub fn init(hz: u32) void {
@@ -63,6 +79,11 @@ fn onTick(_: u5) void {
     // Fell behind (e.g. a long masked section): resynchronise.
     if (@as(i32, @bitCast(next -% cpu.ccount())) <= 0) next = cpu.ccount() +% period;
     cpu.setCcompare0(next);
+    if (cpu.coreId() != 0) {
+        core1_ticks +%= 1;
+        exec.tickQuantum(exec.SysBase);
+        return;
+    }
     ticks +%= 1;
     exec.tickQuantum(exec.SysBase);
     exec.tickLog(exec.SysBase);

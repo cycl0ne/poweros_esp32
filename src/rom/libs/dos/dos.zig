@@ -140,12 +140,12 @@ const TestProcess = struct {
             tp.proc.task.node.name = "test process";
             process.initMsgPort(&tp.proc);
         }
-        tp.saved = kexec.SysBase.this_task;
-        kexec.SysBase.this_task = &tp.proc.task;
+        tp.saved = kexec.SysBase.cpu().this_task;
+        kexec.SysBase.cpu().this_task = &tp.proc.task;
     }
 
     fn leave(tp: *TestProcess) void {
-        kexec.SysBase.this_task = tp.saved.?;
+        kexec.SysBase.cpu().this_task = tp.saved.?;
     }
 };
 
@@ -2713,10 +2713,10 @@ test "SetVar, GetVar, DeleteVar: global variables in ENV:" {
 /// A process's code run as the running task, as exec runs it: its final
 /// code (dos's end) finds the process with FindTask.
 fn runAs(proc: *Process) void {
-    const saved = kexec.SysBase.this_task;
-    kexec.SysBase.this_task = &proc.task;
+    const saved = kexec.SysBase.cpu().this_task;
+    kexec.SysBase.cpu().this_task = &proc.task;
     kexec.runCode(kexec.SysBase, &proc.task);
-    kexec.SysBase.this_task = saved;
+    kexec.SysBase.cpu().this_task = saved;
 }
 
 const ExitHook = struct {
@@ -2927,6 +2927,7 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
         .{ .tag = dos.NP_ExitCode, .data = @intFromPtr(&ExitHook.hook) },
         .{ .tag = dos.NP_ExitData, .data = 42 },
         .{ .tag = dos.NP_UserData, .data = 0x1234 },
+        .{ .tag = dos.NP_Affinity, .data = sdk.exec.TF_CORE0 },
         .{ .tag = dos.NP_Cli, .data = 1 },
         .{ .tag = dos.NP_Path, .data = @intFromPtr(&path) },
         .{},
@@ -2940,6 +2941,7 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
     try testing.expectEqual(dos.LOCK_SAME, dl.SameLock(proc.current_dir, tp.proc.current_dir));
     try testing.expectEqualStrings("some args", std.mem.span(proc.arguments.?));
     try testing.expectEqual(@as(usize, 0x1234), @intFromPtr(proc.task.user_data)); // NP_UserData
+    try testing.expectEqual(sdk.exec.TF_CORE0, proc.task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1)); // NP_Affinity
     const copied_var: *dos.LocalVar = @ptrCast(proc.local_vars.head.?);
     try testing.expectEqualStrings("v", std.mem.span(copied_var.name));
     try testing.expectEqual(@as(u32, 1), proc.task_num);
@@ -2952,10 +2954,10 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
     // The line replaced by SetArgStr, as the process itself would: the copy
     // CreateNewProc made is still freed at the end (the leak check below),
     // and the replacement, which is the caller's, is not.
-    const saved = kexec.SysBase.this_task;
-    kexec.SysBase.this_task = &proc.task;
+    const saved = kexec.SysBase.cpu().this_task;
+    kexec.SysBase.cpu().this_task = &proc.task;
     try testing.expectEqualStrings("some args", std.mem.span(dl.SetArgStr("replaced").?));
-    kexec.SysBase.this_task = saved;
+    kexec.SysBase.cpu().this_task = saved;
 
     proc.pkt_wait = tp.proc.pkt_wait; // its packets at the end go to the RAM: disk too
     ExitHook.data = 0;

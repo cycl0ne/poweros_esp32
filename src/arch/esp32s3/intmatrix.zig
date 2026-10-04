@@ -13,21 +13,38 @@
 //! handler need not check. The matrix's own status registers would say
 //! which source it was, but QEMU does not emulate them, so a shared line
 //! asks every chain instead.
+//!
+//! Every device source goes to core 0. Each core has a matrix of its own
+//! (core 1's 0x800 above core 0's), and core 1's routes nothing but its
+//! cross-core interrupt: line 18 on both cores is kept for that, the
+//! source `FROM_CPU_INTR<n>` raising it on core n (`raiseCrossCore`).
+//! A core's own lines are enabled only from that core, so core 0's device
+//! lines are all enabled once at init, routed or not - a line nothing is
+//! routed to never fires - and adding a source from either core is then a
+//! write to the matrix alone.
 
 const cpu = @import("cpu.zig");
 const intbits = @import("sdk").hardware.intbits;
 const exec = @import("../../rom/libs/exec/exec.zig");
 const reg = @import("sdk").hardware.mmio.reg;
 const trap = @import("trap.zig");
+const rendezvous = @import("rendezvous.zig");
 
-/// INTERRUPT_CORE0: one map register per source, holding its CPU line.
+/// INTERRUPT_CORE0: one map register per source, holding its CPU line;
+/// core 1's the same, 0x800 above.
 const matrix = @import("sdk").hardware.map.INTERRUPT_MATRIX;
+const core1_matrix = matrix + 0x800;
+const system = @import("sdk").hardware.system;
+/// How many sources the matrix routes.
+const source_count = 99;
 /// Routing a source to the CPU's internal timer line disconnects it
 /// (ESP-IDF's ETS_INVALID_INUM).
 const disconnected = 6;
 
-/// The CPU's level-1, level-triggered external lines.
-const lines = [_]u5{ 0, 1, 2, 3, 4, 5, 8, 9, 12, 13, 17, 18 };
+/// The CPU's level-1, level-triggered external lines for devices.
+const lines = [_]u5{ 0, 1, 2, 3, 4, 5, 8, 9, 12, 13, 17 };
+/// The line the cross-core interrupt comes in on, on either core.
+pub const cross_core_line: u5 = 18;
 /// The most sources one line carries.
 const per_line = 8;
 /// The sources on each CPU line, and whether one of them has a handler
@@ -42,12 +59,58 @@ pub const hardware: exec.InterruptHardware = .{
     .disable = disable,
     .restore = restore,
     .cause_softint = causeSoftInt,
+    .hold_others = rendezvous.holdOther,
+    .release_others = rendezvous.releaseOther,
+    .park_if_asked = rendezvous.parkIfAsked,
+    .poke_core = raiseCrossCore,
 };
 
-/// Hook the CPU's software interrupt line up to exec's software interrupts.
+/// Hook the CPU's software interrupt line up to exec's software interrupts,
+/// core 0's cross-core interrupt to its line, and every device line to
+/// its dispatch, enabled.
 pub fn init() void {
+    for (0..source_count) |source| reg(matrix + 4 * source).* = disconnected;
     trap.setHandler(trap.software_line, onSoftInt);
     cpu.enableInterrupt(trap.software_line);
+    for (lines) |line| {
+        trap.setHandler(line, onLine);
+        cpu.enableInterrupt(line);
+    }
+    routeCrossCore(matrix, 0);
+}
+
+/// Core 1's matrix and lines, on core 1: every source disconnected but
+/// its cross-core interrupt, and the software interrupt line.
+pub fn initCore1() void {
+    for (0..source_count) |source| reg(core1_matrix + 4 * source).* = disconnected;
+    trap.setHandler(trap.software_line, onSoftInt);
+    cpu.enableInterrupt(trap.software_line);
+    routeCrossCore(core1_matrix, 1);
+}
+
+fn routeCrossCore(core_matrix: usize, core: u32) void {
+    const source = intbits.INTB_FROM_CPU_INTR0 + core;
+    trap.setHandler(cross_core_line, onCrossCore);
+    reg(core_matrix + 4 * @as(usize, source)).* = cross_core_line;
+    cpu.enableInterrupt(cross_core_line);
+}
+
+/// Each core counts its cross-core interrupts.
+pub var cross_core_count: [2]u32 = @splat(0);
+
+/// The cross-core interrupt raised on `core`.
+pub fn raiseCrossCore(core: u32) void {
+    reg(system.CPU_INTR_FROM_CPU_0 + 4 * @as(usize, core)).* = 1;
+}
+
+fn onCrossCore(_: u5) void {
+    const core = cpu.coreId();
+    reg(system.CPU_INTR_FROM_CPU_0 + 4 * @as(usize, core)).* = 0;
+    cross_core_count[core] +%= 1;
+    // Held by the other core: parked until it lets go.
+    rendezvous.parkIfAsked();
+    // Otherwise poked: the dispatcher looks again at the exit.
+    if (exec.initialized) exec.crossCorePoke(exec.SysBase);
 }
 
 fn causeSoftInt() void {
@@ -67,9 +130,7 @@ fn enableSource(source: u32, shareable: bool) bool {
         line_sources[line][0] = source;
         line_count[line] = 1;
         line_exclusive[line] = !shareable;
-        trap.setHandler(line, onLine);
         reg(matrix + 4 * @as(usize, source)).* = line;
-        cpu.enableInterrupt(line);
         return true;
     }
     if (!shareable) return false;
@@ -96,10 +157,7 @@ fn disableSource(source: u32) void {
         line_count[line] = n - 1;
         break;
     }
-    if (line_count[line] == 0) {
-        cpu.disableInterrupt(line);
-        line_exclusive[line] = false;
-    }
+    if (line_count[line] == 0) line_exclusive[line] = false;
 }
 
 /// Every source on the line, its chain run in turn. Counted before the

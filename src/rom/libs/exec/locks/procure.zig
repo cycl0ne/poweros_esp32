@@ -45,8 +45,9 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no. Not waiting is the whole point.
-/// - Interrupts: no. It takes Forbid and may reply a message.
-/// - Forbid: taken here.
+/// - Interrupts: no. It takes exec's semaphore lock, and may reply a
+///   message.
+/// - Forbid: may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -74,8 +75,8 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn Procure(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) void {
     const sys = base.iface();
-    sys.Forbid();
-    defer sys.Permit();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
     const task = sys.FindTask(null).?;
     const shared = bid.isShared();
     const holder: ?*Task = if (shared) null else task;

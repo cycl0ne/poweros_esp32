@@ -31,6 +31,7 @@ const debugexc = @import("debugexc.zig");
 const _task = @import("../../rom/libs/exec/task/_task.zig");
 const IntuitionBase = @import("../../rom/libs/intuition/intuition.zig").IntuitionBase;
 const lastwords = @import("lastwords.zig");
+const rendezvous = @import("rendezvous.zig");
 const Screen = @import("../../rom/libs/intuition/screen/_screen.zig").Screen;
 const LayerInfo = @import("../../rom/libs/layers/layerinfo/_layerinfo.zig").LayerInfo;
 
@@ -57,13 +58,22 @@ pub const debug_hardware: debug.DebugHardware = .{
     .causeName = debugexc.causeName,
 };
 
+/// The debugger has the machine: this core's interrupts masked, and the
+/// other core held still - unless it does not answer, being stuck itself.
 fn stopHere() u32 {
-    return cpu.setIntlevel(15);
+    const saved = cpu.setIntlevel(15);
+    _ = rendezvous.holdOtherWithin(hold_spins);
+    return saved;
 }
 
 fn goOn(saved: u32) void {
+    rendezvous.releaseOther();
     cpu.restorePs(saved);
 }
+
+/// How long a failing machine waits for the other core to park: some tens
+/// of milliseconds.
+const hold_spins: u32 = 4_000_000;
 
 fn rebootHere() void {
     exec.SysBase.iface().ColdReboot();
@@ -112,7 +122,12 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
     // A task that failed where it may wait is asked about on the display,
     // and the machine runs on; anything else stops it.
     const asking = dead_end and canAsk(info != null);
-    if (dead_end and !asking) _ = cpu.setIntlevel(15);
+    // A dead end stops the machine: the other core is held still too, so
+    // what is printed is what was.
+    if (dead_end and !asking) {
+        _ = cpu.setIntlevel(15);
+        _ = rendezvous.holdOtherWithin(hold_spins);
+    }
 
     // An alert is copied to the chip's own USB port as well as the raw
     // one: both boards' console is that port, and what a Guru says is
@@ -130,7 +145,7 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
     if (text) |line| exec.kprintf("*** %.96s\n", .{line});
     place(where);
     if (exec.initialized) {
-        const task = exec.SysBase.this_task;
+        const task = exec.SysBase.cpu().this_task;
         exec.kprintf("*** Task \"%s\" at 0x%08x\n", .{ task.name(), @intFromPtr(task) });
     }
     if (info) |i| {
@@ -153,7 +168,7 @@ pub fn show(alert_num: u32, return_address: usize, info: ?*const exec.TrapInfo, 
         // another instruction, and the exception's exit switches to the
         // next task. A call from the task holds it where it is.
         if (info != null) {
-            _task.blockCurrent(base, base.this_task, 0);
+            _task.blockCurrent(base, base.cpu().this_task, 0);
             base.iface().Signal(helper.task, helper.mask);
             return;
         }
@@ -186,6 +201,7 @@ fn endAlertOutput() void {
 /// broke. RTC memory, and the last words in it, survive it.
 fn restart() noreturn {
     const hardware = sdk.hardware;
+    hardware.system.core1Off();
     hardware.mmio.reg(hardware.rtc_cntl.OPTIONS0).* |= hardware.rtc_cntl.OPTIONS0_SW_SYS_RST;
     while (true) {}
 }
@@ -250,9 +266,9 @@ fn helperMain(sys_base: *sdk.interface.exec.ExecBase) callconv(.c) void {
 fn canAsk(exception: bool) bool {
     if (failing or !exec.initialized or helper.mask == 0) return false;
     const base = exec.SysBase;
-    if (base.int_depth != @intFromBool(exception)) return false;
-    if (base.id_nest_cnt >= 0 or base.tdn_nest_cnt >= 0) return false;
-    const task = base.this_task;
+    if (base.cpu().int_depth != @intFromBool(exception)) return false;
+    if (base.cpu().id_nest_cnt >= 0 or base.cpu().tdn_nest_cnt >= 0) return false;
+    const task = base.cpu().this_task;
     if (task == helper.task) return false;
     if (std.mem.eql(u8, task.name(), "intuition input")) return false;
     const ib = findIntuition() orelse return false;
@@ -296,7 +312,7 @@ fn holdsDisplayLocks(ib: *IntuitionBase, task: *exec.Task) bool {
 /// cause and address.
 fn keep(alert_num: u32, guru: []const u8, text: ?[*:0]const u8, info: ?*const exec.TrapInfo) void {
     failing = true;
-    failure = .{ .task = exec.SysBase.this_task, .alert_num = alert_num };
+    failure = .{ .task = exec.SysBase.cpu().this_task, .alert_num = alert_num };
     const take = @min(guru.len, failure.guru.len - 1);
     @memcpy(failure.guru[0..take], guru[0..take]);
     if (text) |line| {
@@ -368,9 +384,9 @@ const recoverable_frames = 600;
 fn displayRecoverable(alert_num: u32, guru: []const u8, text: ?[*:0]const u8) void {
     if (displaying or !exec.initialized) return;
     const base = exec.SysBase;
-    if (base.int_depth != 0) return;
-    if (base.id_nest_cnt >= 0 or base.tdn_nest_cnt >= 0) return;
-    const task = base.this_task;
+    if (base.cpu().int_depth != 0) return;
+    if (base.cpu().id_nest_cnt >= 0 or base.cpu().tdn_nest_cnt >= 0 or base.cpu().hold_count != 0) return;
+    const task = base.cpu().this_task;
     if (std.mem.eql(u8, task.name(), "intuition input")) return;
     if (!hasLibrary("intuition.library")) return;
     const sys = base.iface();

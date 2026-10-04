@@ -424,6 +424,7 @@ pub const NP_Synchronous = dostags.NP_Synchronous;
 pub const NP_ExitCode = dostags.NP_ExitCode;
 pub const NP_ExitData = dostags.NP_ExitData;
 pub const NP_UserData = dostags.NP_UserData;
+pub const NP_Affinity = dostags.NP_Affinity;
 
 // Buffered I/O (stdio.zig).
 pub const BufferState = dosextens.BufferState;

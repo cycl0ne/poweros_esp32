@@ -52,13 +52,16 @@ Espressif's QEMU. The ESP32-P4 is next.
   Amiga software.
 - **It is not** a protected system. All tasks share one address space; it
   is a machine for one person at a time.
-- **It does not (yet)** have Bluetooth, USB host support, or use the
-  chip's second core.
+- **It does not (yet)** have Bluetooth or USB host support, or run on the
+  boards' second core: the kernel runs on both of the chip's cores in
+  QEMU, and a board takes the second once it is proved there.
 
 ### What is in it
 
-- **Kernel (exec):** preemptive multitasking, signals, message ports,
-  semaphores; libraries and devices opened by name, loaded from disk on
+- **Kernel (exec):** preemptive multitasking on one or both cores - a
+  dispatcher per core, one ready list, tasks pinned to a core where they
+  must be - signals, message ports, semaphores, spinlocks with checked
+  rules; libraries and devices opened by name, loaded from disk on
   demand and expunged when memory runs short; internal SRAM and 8 MiB of
   PSRAM as memory with attributes. A system log from the first byte of
   the boot, with levels, on the USB console where UART0 is not wired, and
@@ -175,6 +178,7 @@ More build steps and options:
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
+| `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two for `qemu`, one for the boards so far) |
 
 ## Repository layout
 

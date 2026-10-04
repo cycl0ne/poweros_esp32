@@ -76,8 +76,8 @@ const Rig = struct {
 
         rig.proc.task.node.name = "test process";
         host.dos_process.initMsgPort(&rig.proc);
-        rig.saved = kexec.SysBase.this_task;
-        kexec.SysBase.this_task = &rig.proc.task;
+        rig.saved = kexec.SysBase.cpu().this_task;
+        kexec.SysBase.cpu().this_task = &rig.proc.task;
 
         const dos_lib = rig.dosLib();
         Disk.dl = dos_lib;
@@ -113,7 +113,7 @@ const Rig = struct {
         _ = rig.sysLib().RemLibrary(rig.library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, diskfont.DISKFONTNAME) == null);
         Disk.disk.deinit();
-        kexec.SysBase.this_task = rig.saved.?;
+        kexec.SysBase.cpu().this_task = rig.saved.?;
 
         const gb = rig.gb;
         const rb: *host.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));

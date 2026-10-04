@@ -84,6 +84,13 @@ pub const TF_LAUNCH: u8 = 1 << TB_LAUNCH;
 /// (`AddTask`, `NewStackRun`), which the dispatcher checks.
 pub const TB_GUARDED = 0;
 pub const TF_GUARDED: u8 = 1 << TB_GUARDED;
+/// The cores a task runs on: TF_CORE0 alone keeps it on core 0, TF_CORE1
+/// alone on core 1; neither (or both) lets it run on whichever core is
+/// free.
+pub const TB_CORE0 = 1;
+pub const TB_CORE1 = 2;
+pub const TF_CORE0: u8 = 1 << TB_CORE0;
+pub const TF_CORE1: u8 = 1 << TB_CORE1;
 
 /// tc_Switch and tc_Launch. They get the task and SysBase (A3 and A6 in the
 /// ROM). exec calls them from its dispatcher, at the exception exit with
@@ -113,7 +120,7 @@ pub const TaskEndHook = extern struct {
 pub const Task = extern struct {
     /// tc_Node: ln_Type NT_TASK, ln_Pri, ln_Name.
     node: Node = .{ .type = .task },
-    /// tc_Flags: TF_SWITCH, TF_LAUNCH.
+    /// tc_Flags: TF_SWITCH, TF_LAUNCH, TF_CORE0, TF_CORE1.
     flags: u8 = 0,
     /// tc_State
     state: TaskState = .invalid,
