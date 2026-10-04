@@ -53,6 +53,23 @@ pub const LayerInfo = struct {
     /// The library, so a layer can reach exec and graphics from anything
     /// that has only the layer.
     lb: *anyopaque,
+    /// A count each look at a layer's stores moves on, so that a store
+    /// several pieces share is counted once (`Store.visit`).
+    visit: u32 = 0,
+};
+
+/// A surface a covered part of a layer was put into. It stays as long as
+/// any of that part is still covered: the pieces that are share it, and
+/// the last of them to go frees it.
+pub const Store = struct {
+    surface: *rtg.Surface,
+    /// Where the surface's (0,0) is, in the **layer's** coordinates.
+    x: i32,
+    y: i32,
+    /// How many pieces keep their pixels in it.
+    refs: u32 = 0,
+    /// The `LayerInfo.visit` it was last counted at.
+    visit: u32 = 0,
 };
 
 /// A piece of a layer that is covered, and where its pixels are being kept
@@ -60,10 +77,10 @@ pub const LayerInfo = struct {
 /// the pixels are simply lost.
 pub const Kept = struct {
     next: ?*Kept = null,
-    /// What of the layer this is, in the **layer's** coordinates.
+    /// What of the layer this is, in the **layer's** coordinates: a part
+    /// of what its store holds.
     area: Rect = .{},
-    /// Where those pixels are. Its (0,0) is the piece's top-left.
-    surface: *rtg.Surface,
+    store: *Store,
 };
 
 /// One window's worth of a display.
@@ -129,6 +146,16 @@ pub const Layer = struct {
 /// - `info` - the display whose pool it is.
 pub fn newKept(sys: *ExecBase, info: *LayerInfo) ?*Kept {
     const mem = sys.AllocPooled(info.pool, @sizeOf(Kept)) orelse return null;
+    return @ptrCast(@alignCast(mem));
+}
+
+/// Room for one store, from the LayerInfo's pool.
+///
+/// INPUTS:
+/// - `sys` - exec, for the pool.
+/// - `info` - the display whose pool it is.
+pub fn newStore(sys: *ExecBase, info: *LayerInfo) ?*Store {
+    const mem = sys.AllocPooled(info.pool, @sizeOf(Store)) orelse return null;
     return @ptrCast(@alignCast(mem));
 }
 

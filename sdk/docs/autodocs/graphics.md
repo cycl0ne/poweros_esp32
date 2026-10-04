@@ -1785,7 +1785,10 @@ all of it succeeded.
 
 Every rectangle of the region that meets it is cut into the up to four
 pieces that lie around it. This one cut is the geometry every other
-region call rests on.
+region call rests on. A rectangle it does not meet stays as it is, so
+the call costs what it cuts, not what the region holds; and nothing
+changes until every piece has been had, so a call that runs out of
+memory leaves the region as it was.
 
 **CONTEXT**
 
@@ -3872,7 +3875,10 @@ when all of it succeeded, so a region is never left half changed.
 
 The rectangle is cut out of everything already there before it is
 added, so nothing in a region ever overlaps and no tidying pass is
-needed.
+needed. Then it is joined with every rectangle it lines up with - one
+sharing a whole edge with it - so a region built up a piece at a time,
+strips side by side, stays as few rectangles as its shape needs rather
+than one per piece.
 
 **CONTEXT**
 

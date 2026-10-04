@@ -6,10 +6,13 @@
 //! below, and what is left to the left and right between them. Every
 //! operation is that, repeated:
 //!
-//! - taking a rectangle out is cutting it out of each rectangle in turn;
-//! - adding one is taking it out of everything first, then putting it on
-//!   the end - which is what keeps them from overlapping, and is why a
-//!   region never needs a pass to tidy itself up;
+//! - taking a rectangle out is cutting it out of each rectangle it meets,
+//!   the others left as they are, so a cut costs what it cuts;
+//! - adding one is taking it out of everything first, then joining it
+//!   with whatever it lines up with and putting it on the end - which is
+//!   what keeps them from overlapping, and keeps a region built up a
+//!   strip at a time as few rectangles as its shape needs, so a region
+//!   never needs a pass to tidy itself up;
 //! - keeping only what is inside a rectangle is intersecting each and
 //!   dropping the empty ones;
 //! - the region-against-region operations are those three applied once per

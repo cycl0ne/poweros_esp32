@@ -1237,6 +1237,10 @@ pub fn sizeVerified(ib: *IntuitionBase, purpose: verify.Purpose, answer: verify.
 
 fn release(ib: *IntuitionBase) void {
     const st = stateOf(ib);
+    // A drag or a sizing ends where the pointer was let go: the moves just
+    // before the release may have been given up for it, when events came
+    // faster than they were handled.
+    if (st.mode == .drag or st.mode == .size or st.mode == .screen_drag) moved(ib);
     const mode = st.mode;
     st.mode = .none;
     if (mode == .screen_depth) return releaseScreenDepth(ib);

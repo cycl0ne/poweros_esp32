@@ -36,7 +36,10 @@ const _region = @import("_region.zig");
 /// BEHAVIOR:
 /// Every rectangle of the region that meets it is cut into the up to four
 /// pieces that lie around it. This one cut is the geometry every other
-/// region call rests on.
+/// region call rests on. A rectangle it does not meet stays as it is, so
+/// the call costs what it cuts, not what the region holds; and nothing
+/// changes until every piece has been had, so a call that runs out of
+/// memory leaves the region as it was.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -62,16 +65,37 @@ pub fn ClearRectRegion(gb: *GraphicsBase, region: *Region, rect: *const Rect) bo
     if (hole.isEmpty()) return true;
     if (Rect.intersect(region.bounds, hole).isEmpty()) return true;
 
-    var built: ?*RegionRect = null;
+    // The pieces of every rectangle the hole meets, all of them had
+    // before anything changes.
+    var pieces: ?*RegionRect = null;
     var at = region.head;
     while (at) |r| : (at = r.next) {
-        if (!cutOut(gb, r.bounds, hole, &built)) {
-            freeList(gb, built);
+        if (Rect.intersect(r.bounds, hole).isEmpty()) continue;
+        if (!cutOut(gb, r.bounds, hole, &pieces)) {
+            freeList(gb, pieces);
             return false;
         }
     }
-    freeList(gb, region.head);
-    region.head = built;
+    // Then the rectangles it meets go and the others stay, with the
+    // pieces after them.
+    var kept: ?*RegionRect = null;
+    at = region.head;
+    while (at) |r| {
+        const next = r.next;
+        if (Rect.intersect(r.bounds, hole).isEmpty()) {
+            r.next = kept;
+            kept = r;
+        } else {
+            gb.sys_base.FreePooled(gb.region_pool, r, @sizeOf(RegionRect));
+        }
+        at = next;
+    }
+    while (pieces) |p| {
+        pieces = p.next;
+        p.next = kept;
+        kept = p;
+    }
+    region.head = kept;
     refreshBounds(region);
     return true;
 }

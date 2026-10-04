@@ -15,10 +15,17 @@
 //!
 //! The work is all in one place: when the tiling changes, what a layer can
 //! see changes with it, and both the keeping and the putting back are
-//! worked out from the difference. Where a new covered piece gets its
-//! contents from is the only fiddly part - some of it was visible a moment
-//! ago and is still on the display, and some of it was already covered and
-//! is in a surface that is about to go.
+//! worked out from the difference.
+//!
+//! **A change costs what it changes.** A surface stays for as long as any
+//! of what was put in it is still covered: a piece is a part of a store,
+//! several pieces may share one, and the last to go frees it. So when a
+//! window is dragged over another a step at a time, the one behind keeps
+//! the surfaces it has, gives back the strip the step uncovers and puts
+//! away the strip it covers - a few rows of pixels a step, not the whole
+//! of what it has covered. The pieces that pile up that way, and the
+//! surfaces that end up mostly given back, are gathered into fresh ones
+//! now and then (`compact`).
 
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
@@ -33,22 +40,51 @@ const info_mod = @import("../layerinfo/_layerinfo.zig");
 const LayerInfo = info_mod.LayerInfo;
 const Layer = info_mod.Layer;
 const Kept = info_mod.Kept;
+const Store = info_mod.Store;
 const LayersBase = @import("../layers.zig").LayersBase;
 
-/// A surface to keep one covered piece in, in the display's format.
+/// A store for the covered part `area` of a layer, in the display's
+/// format, with no piece in it yet.
 ///
 /// INPUTS:
-/// - `gb` - graphics.library, to allocate the surface.
-/// - `info` - the display, whose format it takes.
-/// - `area` - the piece, whose size it takes.
-fn keepingSurface(gb: *GraphicsBase, info: *LayerInfo, area: Rect) ?*rtg.Surface {
+/// - `lb` - the library.
+/// - `info` - the display, whose format and pool it takes.
+/// - `area` - the part, in the layer's coordinates, whose size it takes.
+fn newStore(lb: *LayersBase, info: *LayerInfo, area: Rect) ?*Store {
+    const gb = lb.graphics_base;
     const tags = [_]TagItem{
         .{ .tag = graphics.BMTAG_Width, .data = @intCast(area.width()) },
         .{ .tag = graphics.BMTAG_Height, .data = @intCast(area.height()) },
         .{ .tag = graphics.BMTAG_Format, .data = @intFromEnum(info.surface.format) },
         .{},
     };
-    return gb.AllocBitMapTagList(&tags);
+    const surface = gb.AllocBitMapTagList(&tags) orelse return null;
+    const store = info_mod.newStore(lb.sys_base, info) orelse {
+        gb.FreeBitMap(surface);
+        return null;
+    };
+    store.* = .{ .surface = surface, .x = area.min_x, .y = area.min_y };
+    return store;
+}
+
+/// A piece of `store`, put at the head of `list`.
+fn addPiece(lb: *LayersBase, info: *LayerInfo, list: *?*Kept, area: Rect, store: *Store) bool {
+    const node = info_mod.newKept(lb.sys_base, info) orelse return false;
+    node.* = .{ .next = list.*, .area = area, .store = store };
+    store.refs += 1;
+    list.* = node;
+    return true;
+}
+
+/// One piece given back, and its store with it when it was the last.
+fn dropPiece(lb: *LayersBase, info: *LayerInfo, piece: *Kept) void {
+    const store = piece.store;
+    store.refs -= 1;
+    if (store.refs == 0) {
+        lb.graphics_base.FreeBitMap(store.surface);
+        lb.sys_base.FreePooled(info.pool, store, @sizeOf(Store));
+    }
+    lb.sys_base.FreePooled(info.pool, piece, @sizeOf(Kept));
 }
 
 /// Every kept piece given back, with nothing put anywhere. For a layer
@@ -58,15 +94,7 @@ fn keepingSurface(gb: *GraphicsBase, info: *LayerInfo, area: Rect) ?*rtg.Surface
 /// - `lb` - the library.
 /// - `layer` - the layer going away.
 pub fn dropKept(lb: *LayersBase, layer: *Layer) void {
-    const gb = lb.graphics_base;
-    const sys = lb.sys_base;
-    var at = layer.kept;
-    while (at) |k| {
-        const next = k.next;
-        gb.FreeBitMap(k.surface);
-        sys.FreePooled(layer.info.pool, k, @sizeOf(Kept));
-        at = next;
-    }
+    dropList(lb, layer, layer.kept);
     layer.kept = null;
 }
 
@@ -157,7 +185,6 @@ pub fn regather(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
 /// False without memory.
 pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
     const gb = lb.graphics_base;
-    const sys = lb.sys_base;
     const info = layer.info;
     const bx = layer.bounds.min_x;
     const by = layer.bounds.min_y;
@@ -169,85 +196,151 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
     defer gb.DisposeRegion(now_visible);
     gb.OffsetRegion(now_visible, -bx, -by);
 
-    const was_visible = info_mod.copyRegion(gb, layer.visible) orelse return false;
-    defer gb.DisposeRegion(was_visible);
-    gb.OffsetRegion(was_visible, -bx, -by);
-
     // What is covered now: the whole layer less what it can see.
     const now_hidden = gb.NewRegion() orelse return false;
     defer gb.DisposeRegion(now_hidden);
     if (!gb.OrRectRegion(now_hidden, &own) or !gb.SubRegionRegion(now_visible, now_hidden)) return false;
 
-    // Where the pixels of a covered piece can come from: what the layer
-    // could see until now, and what it was already keeping. A piece
-    // outside both - the new part of a layer that has just grown, or
-    // anything at all once a keeping had to be dropped - has no pixels
-    // anywhere, and keeping a surface for it would keep whatever was in
-    // that memory. It is not kept: `putBack` then reports it as owed and
-    // the layer is asked to draw it.
-    const sources = info_mod.copyRegion(gb, was_visible) orelse return false;
-    defer gb.DisposeRegion(sources);
+    var fresh: ?*Kept = null;
+    var count: u32 = 0;
+
+    // What it keeps already, as far as it is still covered: the same
+    // pixels, in the same stores - nothing copied.
     var had = layer.kept;
     while (had) |k| : (had = k.next) {
-        if (!gb.OrRectRegion(sources, &k.area)) return false;
-    }
-    if (!gb.AndRegionRegion(sources, now_hidden)) return false;
-
-    const hidden = takeRects(lb, info, now_hidden) orelse return false;
-    defer dropRects(lb, info, hidden);
-
-    // A surface for each covered piece, filled from wherever those pixels
-    // are at this moment.
-    var fresh: ?*Kept = null;
-    var i: u32 = 0;
-    while (i < hidden.n) : (i += 1) {
-        const area = hidden.ptr[i];
-        const surface = keepingSurface(gb, info, area) orelse {
-            dropList(lb, layer, fresh);
-            return false;
-        };
-        const node = info_mod.newKept(sys, info) orelse {
-            gb.FreeBitMap(surface);
-            dropList(lb, layer, fresh);
-            return false;
-        };
-        node.* = .{ .next = fresh, .area = area, .surface = surface };
-        fresh = node;
-
-        // The part of it that is still on the display, because it was
-        // visible until a moment ago. A piece that cannot be filled is
-        // worse than a piece not kept, so running out here fails the
-        // whole keeping rather than leaving a surface holding whatever
-        // was in that memory.
-        const from_screen = meeting(lb, area, was_visible) orelse {
-            dropList(lb, layer, fresh);
-            return false;
-        };
-        defer gb.DisposeRegion(from_screen);
-        const parts = takeRects(lb, info, from_screen) orelse {
-            dropList(lb, layer, fresh);
-            return false;
-        };
+        const still = meeting(lb, k.area, now_hidden) orelse return failed(lb, layer, fresh);
+        defer gb.DisposeRegion(still);
+        const parts = takeRects(lb, info, still) orelse return failed(lb, layer, fresh);
         defer dropRects(lb, info, parts);
-        var j: u32 = 0;
-        while (j < parts.n) : (j += 1) {
-            const p = parts.ptr[j];
-            _ = gb.BltBitMap(info.surface, p.min_x + bx, p.min_y + by, surface, p.min_x - area.min_x, p.min_y - area.min_y, p.width(), p.height());
+        var i: u32 = 0;
+        while (i < parts.n) : (i += 1) {
+            if (!addPiece(lb, info, &fresh, parts.ptr[i], k.store)) return failed(lb, layer, fresh);
+            count += 1;
         }
+    }
 
-        // And the part that was already covered, which is in a surface
-        // that is about to be given back.
+    // What it could see until now and is covered now: off the display,
+    // which still shows it, into stores of its own. What is covered now
+    // and was neither visible nor kept - the new part of a layer that has
+    // just grown, or anything once a keeping had to be dropped - has no
+    // pixels anywhere, and keeping a surface for it would keep whatever
+    // was in that memory. It is not kept: `putBack` then reports it as
+    // owed and the layer is asked to draw it.
+    const newly = info_mod.copyRegion(gb, layer.visible) orelse return failed(lb, layer, fresh);
+    defer gb.DisposeRegion(newly);
+    gb.OffsetRegion(newly, -bx, -by);
+    if (!gb.AndRegionRegion(now_hidden, newly)) return failed(lb, layer, fresh);
+    const covered = takeRects(lb, info, newly) orelse return failed(lb, layer, fresh);
+    defer dropRects(lb, info, covered);
+    var i: u32 = 0;
+    while (i < covered.n) : (i += 1) {
+        const area = covered.ptr[i];
+        const store = newStore(lb, info, area) orelse return failed(lb, layer, fresh);
+        if (!addPiece(lb, info, &fresh, area, store)) {
+            gb.FreeBitMap(store.surface);
+            lb.sys_base.FreePooled(info.pool, store, @sizeOf(Store));
+            return failed(lb, layer, fresh);
+        }
+        count += 1;
+        _ = gb.BltBitMap(info.surface, area.min_x + bx, area.min_y + by, store.surface, 0, 0, area.width(), area.height());
+    }
+
+    // Gathered into fresh stores when the pieces have piled up or the
+    // stores are mostly given back; kept as they are when that cannot be
+    // had. The area they cover is what is covered now and has pixels
+    // somewhere: what was visible or kept until now.
+    if (count > pieces_before_gathering or wasteful(info, fresh)) {
+        const sources = info_mod.copyRegion(gb, layer.visible) orelse return keepAsItIs(layer, fresh);
+        defer gb.DisposeRegion(sources);
+        gb.OffsetRegion(sources, -bx, -by);
         var old = layer.kept;
         while (old) |k| : (old = k.next) {
-            const meet = Rect.intersect(area, k.area);
-            if (meet.isEmpty()) continue;
-            _ = gb.BltBitMap(k.surface, meet.min_x - k.area.min_x, meet.min_y - k.area.min_y, surface, meet.min_x - area.min_x, meet.min_y - area.min_y, meet.width(), meet.height());
+            if (!gb.OrRectRegion(sources, &k.area)) return keepAsItIs(layer, fresh);
         }
+        if (!gb.AndRegionRegion(now_hidden, sources)) return keepAsItIs(layer, fresh);
+        if (compact(lb, info, fresh, count, sources)) |gathered| fresh = gathered;
     }
 
     layer.pending = fresh;
     layer.pending_made = true;
     return true;
+}
+
+/// `keepCovered` done without gathering, which there was no memory for.
+fn keepAsItIs(layer: *Layer, fresh: ?*Kept) bool {
+    layer.pending = fresh;
+    layer.pending_made = true;
+    return true;
+}
+
+/// Whether the stores of `list` hold more pixels nobody keeps any more
+/// than pixels kept, past a small allowance.
+fn wasteful(info: *LayerInfo, list: ?*Kept) bool {
+    // In 32 bits: a display's worth is well under a million pixels.
+    info.visit +%= 1;
+    var kept_pixels: u32 = 0;
+    var store_pixels: u32 = 0;
+    var at = list;
+    while (at) |k| : (at = k.next) {
+        kept_pixels +|= @as(u32, @intCast(k.area.width())) *| @as(u32, @intCast(k.area.height()));
+        if (k.store.visit == info.visit) continue;
+        k.store.visit = info.visit;
+        store_pixels +|= @as(u32, k.store.surface.width) *| @as(u32, k.store.surface.height);
+    }
+    return store_pixels > (kept_pixels *| 2) +| pixels_before_gathering;
+}
+
+/// `keepCovered` giving up: what it had made so far given back, and false.
+fn failed(lb: *LayersBase, layer: *Layer, made: ?*Kept) bool {
+    dropList(lb, layer, made);
+    return false;
+}
+
+/// Pieces past this many are gathered when they are many more than the
+/// covered area needs.
+const pieces_before_gathering = 16;
+/// Stores holding more than this many pixels nobody keeps any more are
+/// gathered when that is more than what is kept.
+const pixels_before_gathering = 64 * 64;
+
+/// The pieces of `list` gathered into as few fresh stores as `area` - the
+/// region they cover - takes, filled from the old ones, when there are
+/// more than twice as many pieces as that or the stores hold more pixels
+/// given back than kept. A window dragged over another leaves a strip
+/// piece behind at each step and stores that shrink, and this is what
+/// keeps both bounded. The new list on success, the old one then given
+/// back; null when nothing needed doing or there was no memory, and the
+/// old list stands.
+fn compact(lb: *LayersBase, info: *LayerInfo, list: ?*Kept, count: u32, area_region: *graphics.Region) ?*Kept {
+    const gb = lb.graphics_base;
+    if (count == 0) return null;
+    const rects = takeRects(lb, info, area_region) orelse return null;
+    defer dropRects(lb, info, rects);
+    if (!wasteful(info, list) and count <= 2 * rects.n) return null;
+
+    var gathered: ?*Kept = null;
+    var i: u32 = 0;
+    while (i < rects.n) : (i += 1) {
+        const area = rects.ptr[i];
+        const store = newStore(lb, info, area) orelse {
+            dropPieces(lb, info, gathered);
+            return null;
+        };
+        if (!addPiece(lb, info, &gathered, area, store)) {
+            gb.FreeBitMap(store.surface);
+            lb.sys_base.FreePooled(info.pool, store, @sizeOf(Store));
+            dropPieces(lb, info, gathered);
+            return null;
+        }
+        var at = list;
+        while (at) |k| : (at = k.next) {
+            const meet = Rect.intersect(area, k.area);
+            if (meet.isEmpty()) continue;
+            _ = gb.BltBitMap(k.store.surface, meet.min_x - k.store.x, meet.min_y - k.store.y, store.surface, meet.min_x - area.min_x, meet.min_y - area.min_y, meet.width(), meet.height());
+        }
+    }
+    dropPieces(lb, info, list);
+    return gathered;
 }
 
 /// The second half: what was covered and is not any more goes back on the
@@ -300,7 +393,7 @@ pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphic
         while (j < parts.n) : (j += 1) {
             const p = parts.ptr[j];
             if (dest) |rp| {
-                gb.BltBitMapRastPort(k.surface, p.min_x - k.area.min_x, p.min_y - k.area.min_y, rp, p.min_x + bx, p.min_y + by, p.width(), p.height());
+                gb.BltBitMapRastPort(k.store.surface, p.min_x - k.store.x, p.min_y - k.store.y, rp, p.min_x + bx, p.min_y + by, p.width(), p.height());
             }
             // Those pixels are there: nobody is owed them.
             if (owed) |region| {
@@ -367,12 +460,15 @@ pub fn dropPending(lb: *LayersBase, layer: *Layer) void {
 /// - `layer` - the layer.
 /// - `from` - the first piece of the list.
 fn dropList(lb: *LayersBase, layer: *Layer, from: ?*Kept) void {
-    const gb = lb.graphics_base;
+    dropPieces(lb, layer.info, from);
+}
+
+/// Every piece of a list given back, and each store with its last piece.
+fn dropPieces(lb: *LayersBase, info: *LayerInfo, from: ?*Kept) void {
     var at = from;
     while (at) |k| {
         const next = k.next;
-        gb.FreeBitMap(k.surface);
-        lb.sys_base.FreePooled(layer.info.pool, k, @sizeOf(Kept));
+        dropPiece(lb, info, k);
         at = next;
     }
 }

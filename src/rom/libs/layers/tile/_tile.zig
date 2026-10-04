@@ -163,10 +163,10 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
             };
             t.* = .{
                 .rect = piece.area,
-                .surface = piece.surface,
+                .surface = piece.store.surface,
                 .bitmap = null,
-                .dx = -piece.area.min_x,
-                .dy = -piece.area.min_y,
+                .dx = -piece.store.x,
+                .dy = -piece.store.y,
             };
             // In among the others rather than after them: the order is by
             // where the rectangles lie, and a caller reading it expects
