@@ -100,6 +100,15 @@ pub fn syscall(nr: u32, arg: u32) u32 {
         : .{ .memory = true });
 }
 
+/// The longest exception each core has taken, in cycles - its cause and
+/// the lines that were pending - and the longest each line's handler ran,
+/// until `s3> cores reset`. An exception holds the core's interrupts off
+/// for as long as it runs, so these are what makes one late.
+pub var longest: [2]u32 = @splat(0);
+pub var longest_cause: [2]u32 = @splat(0);
+pub var longest_lines: [2]u32 = @splat(0);
+pub var line_longest: [2][32]u32 = @splat(@splat(0));
+
 /// Called by start.S for every level-1 exception. Returns the frame to
 /// resume: `frame` itself, or another task's when exec switched tasks.
 export fn xtensa_exception(frame: *Frame) callconv(.c) *Frame {
@@ -107,12 +116,21 @@ export fn xtensa_exception(frame: *Frame) callconv(.c) *Frame {
         handle(frame);
         return frame;
     }
+    const began = cpu.ccount();
+    const lines = cpu.interrupt() & cpu.intenable();
     exec.interruptEnter(exec.SysBase);
     handle(frame);
     const core = cpu.coreId();
     const current = resume_frame[core] orelse frame;
     resume_frame[core] = null;
-    return @ptrCast(@alignCast(exec.interruptExit(exec.SysBase, current)));
+    const resumed: *Frame = @ptrCast(@alignCast(exec.interruptExit(exec.SysBase, current)));
+    const took = cpu.ccount() -% began;
+    if (took > longest[core]) {
+        longest[core] = took;
+        longest_cause[core] = frame.exccause;
+        longest_lines[core] = lines;
+    }
+    return resumed;
 }
 
 fn handle(frame: *Frame) void {
@@ -151,7 +169,10 @@ fn dispatchInterrupts() void {
 
 fn dispatchLine(irq: u5) void {
     if (handlers[cpu.coreId()][irq]) |handler| {
+        const began = cpu.ccount();
         handler(irq);
+        const core = cpu.coreId();
+        line_longest[core][irq] = @max(line_longest[core][irq], cpu.ccount() -% began);
     } else {
         cpu.disableInterrupt(irq);
         exec.kprintf("\n[trap] spurious interrupt %d, disabled\n", .{irq});

@@ -82,5 +82,5 @@ pub fn Disable(base: *ExecBase) void {
     if (cpu.id_nest_cnt != 0) return;
     cpu.id_saved = state;
     // An exception holds the lock already.
-    if (cpu.int_depth == 0) _interrupt.takeSystemInterrupts(base);
+    if (cpu.int_depth == 0) _interrupt.takeSystemInterrupts(base, @returnAddress());
 }

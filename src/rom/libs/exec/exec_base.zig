@@ -31,6 +31,12 @@ const Task = sdk.exec.Task;
 /// How many cores exec keeps state for. A one-core ROM uses the first.
 pub const max_cores = 2;
 
+/// The core's cycle counter; none on the host.
+pub inline fn cycles() u32 {
+    if (comptime builtin.cpu.arch != .xtensa) return 0;
+    return sdk.hardware.cpu.ccount();
+}
+
 /// The core this code runs on: 0 or 1, from PRID (0xCDCD for core 0,
 /// 0xABAB for core 1 - bit 13 tells them apart). The host tests have one.
 pub inline fn coreId() u32 {
@@ -88,6 +94,18 @@ pub const CpuState = extern struct {
     time_idle: u64 align(4) = 0,
     time_interrupts: u64 align(4) = 0,
     time_mark: u32 = 0,
+    /// How the system's interrupt lock fares on this core, in cycles, kept
+    /// as the worst seen until `s3> cores reset`: the longest the core held
+    /// it and the longest it waited for it, each with the code that took
+    /// it (1 for an exception); and the longest a task of it waited inside
+    /// Disable for Forbid. These are what make an interrupt late.
+    lock_held_max: u32 = 0,
+    lock_held_where: usize = 0,
+    lock_wait_max: u32 = 0,
+    lock_wait_where: usize = 0,
+    lock_taken_at: u32 = 0,
+    lock_taker: usize = 0,
+    forbid_spin_max: u32 = 0,
     /// The core's task another core's RemTask is taking away, switched out
     /// at its next switch point; once it is, `stopped` until the next exit,
     /// which signals `stop_waiter`, the task taking it away.

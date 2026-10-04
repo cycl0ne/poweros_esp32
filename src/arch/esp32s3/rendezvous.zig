@@ -64,12 +64,18 @@ pub fn releaseOther() void {
     @atomicStore(u32, &asker, 0, .release);
 }
 
+/// The longest each core was parked, in cycles, until `s3> cores reset`.
+pub var parked_max: [2]u32 = @splat(0);
+
 /// Parked if the other core asks: from the cross-core interrupt, and from
 /// every spin with interrupts masked.
 pub fn parkIfAsked() void {
     const asked = @atomicLoad(u32, &asker, .acquire);
-    if (asked == 0 or asked == cpu.coreId() + 1) return;
+    const core = cpu.coreId();
+    if (asked == 0 or asked == core + 1) return;
+    const before = cpu.ccount();
     parkHere();
+    parked_max[core] = @max(parked_max[core], cpu.ccount() -% before);
 }
 
 /// The loop a held core waits in: internal RAM, no calls, nothing but the

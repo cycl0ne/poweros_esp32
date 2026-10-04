@@ -59,11 +59,57 @@
 //! the data cache's autoload suspended: a line loaded while the write-back
 //! walks the range must not then be written back, which would put stale
 //! data into memory.
+//!
+//! **One engine for both cores.** The controller's sync registers - the
+//! address, the size, the go - and the autoload switch are the chip's,
+//! not a core's: two cores writing back at once would set each other's
+//! range. So every use takes `engine_lock`, with the core's interrupts
+//! masked while it holds it, and a long range goes a piece at a time
+//! (`engine_piece`), so neither core's interrupts wait long for it.
 
 const builtin = @import("builtin");
 const sdk = @import("sdk");
 
 const ExecBase = @import("../exec.zig").ExecBase;
+const _interrupt = @import("../interrupt/_interrupt.zig");
+const exec_base = @import("../exec_base.zig");
+
+/// Who has the cache controller's sync engine: the core's number and one,
+/// or 0. Internal memory (.bss), where the compare-and-set is atomic; the
+/// kernel's state, like `cache_hardware`.
+var engine_lock: u32 = 0;
+
+/// The longest each core waited for the engine and held it, in cycles,
+/// until `s3> cores reset`: both with the core's interrupts masked.
+pub var engine_wait_max: [exec_base.max_cores]u32 = @splat(0);
+pub var engine_held_max: [exec_base.max_cores]u32 = @splat(0);
+var engine_taken_at: [exec_base.max_cores]u32 = @splat(0);
+
+/// The engine taken by this core, its interrupts masked meanwhile; answers
+/// the state `dropEngine` puts back. A hold asked meanwhile is answered.
+fn takeEngine() u32 {
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    const core = exec_base.coreId();
+    const before = exec_base.cycles();
+    while (@cmpxchgWeak(u32, &engine_lock, 0, core + 1, .acquire, .monotonic) != null) hardware.park_if_asked();
+    const now = exec_base.cycles();
+    engine_wait_max[core] = @max(engine_wait_max[core], now -% before);
+    engine_taken_at[core] = now;
+    return state;
+}
+
+fn dropEngine(state: u32) void {
+    const core = exec_base.coreId();
+    engine_held_max[core] = @max(engine_held_max[core], exec_base.cycles() -% engine_taken_at[core]);
+    @atomicStore(u32, &engine_lock, 0, .release);
+    _interrupt.interrupt_hardware.restore(state);
+}
+
+/// What one hold of the engine covers. On the 7B, with the panel's DMA
+/// keeping PSRAM busy, 16 KB took up to 0.8 ms - as long as the panel
+/// gives an interrupt - so a piece is 2 KB, about a tenth of that.
+const engine_piece = 2 * 1024;
 
 /// What the calls drive. Ranges are whole lines, except writeback_line's.
 pub const CacheHardware = struct {
@@ -268,13 +314,17 @@ const frozen_chunk = 256 * 1024;
 fn writebackAll() void {
     var at: usize = data_bus.start;
     while (at < data_bus.start + chip_code_map.size) : (at += frozen_chunk) {
+        const state = takeEngine();
         cache_writeback_range_frozen(@intCast(at), frozen_chunk);
+        dropEngine(state);
     }
 }
 
 /// Invalidates the whole instruction cache, so every instruction is
 /// fetched from memory again.
 fn invalidateICacheAll() void {
+    const state = takeEngine();
+    defer dropEngine(state);
     rom.Cache_Invalidate_ICache_All();
 }
 
@@ -282,19 +332,37 @@ fn invalidateICacheAll() void {
 /// be whole lines. The autoload is suspended around it: a line the cache
 /// loads by itself while this walks the range must not be written back.
 fn writeback(addr: usize, size: usize) void {
-    const autoload = rom.Cache_Suspend_DCache_Autoload();
-    _ = rom.Cache_WriteBack_Addr(@intCast(addr), @intCast(size));
-    rom.Cache_Resume_DCache_Autoload(autoload);
+    var at = addr;
+    const end = addr + size;
+    while (at < end) {
+        const piece = @min(end - at, engine_piece);
+        const state = takeEngine();
+        const autoload = rom.Cache_Suspend_DCache_Autoload();
+        _ = rom.Cache_WriteBack_Addr(@intCast(at), @intCast(piece));
+        rom.Cache_Resume_DCache_Autoload(autoload);
+        dropEngine(state);
+        at += piece;
+    }
 }
 
 /// Writes back the single data line holding `addr` - the case where the
 /// line also holds somebody else's data.
 fn writebackLine(addr: usize) void {
+    const state = takeEngine();
+    defer dropEngine(state);
     cache_writeback_line_frozen(@intCast(addr));
 }
 
 /// Invalidates the lines of `size` bytes at `addr`. Which cache is decided
 /// by the address: the two buses have their own ranges.
 fn invalidate(addr: usize, size: usize) void {
-    _ = rom.Cache_Invalidate_Addr(@intCast(addr), @intCast(size));
+    var at = addr;
+    const end = addr + size;
+    while (at < end) {
+        const piece = @min(end - at, engine_piece);
+        const state = takeEngine();
+        _ = rom.Cache_Invalidate_Addr(@intCast(at), @intCast(piece));
+        dropEngine(state);
+        at += piece;
+    }
 }

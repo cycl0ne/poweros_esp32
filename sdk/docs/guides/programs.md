@@ -596,9 +596,12 @@ it started - in tasks, idle, in interrupts, in cycles of its clock, counted
 at every exception rather than sampled; read it twice and divide the
 differences for how busy the core was in between, which is what
 `SYS:Programs/CPULoad` charts. On the `s3>` console `cores` shows what each
-core runs,
-and `cores share off` keeps the second core to its own tasks, which is
-how a fault is told from one that only shows with two cores.
+core runs and what has held its interrupts off longest - the system's
+interrupt lock, the cache engine, each device source and interrupt line -
+which is what makes a driver's interrupt late (`cores reset` starts the
+count again), and `cores share off` keeps the second core to its own
+tasks, which is how a fault is told from one that only shows with two
+cores.
 `C:test/Cores` sets tasks on each other through all of the above - FREE
 lets them run flat out, PIN puts half on each core - and checks that
 nothing overlapped and nothing was lost.

@@ -83,23 +83,43 @@ fn noPoke(_: u32) void {}
 /// The system's interrupt lock (`disable_lock`) taken by this core, as
 /// Disable and the exception entry take it: spun for while the other core
 /// has it, answering a hold as it goes round. This core's interrupts are
-/// masked already, so nothing here can want it again.
+/// masked already, so nothing here can want it again. The longest wait
+/// for it and the code that waited are kept in the core's state.
 ///
 /// INPUTS:
 /// - `base` - exec: the lock.
-pub fn takeSystemInterrupts(base: *ExecBase) void {
+/// - `where` - the code taking it, or 1 for an exception: what the
+///   longest wait and hold are put down to.
+pub fn takeSystemInterrupts(base: *ExecBase, where: usize) void {
+    const cpu = base.cpu();
     const me = exec_base.coreId() + 1;
+    const before = exec_base.cycles();
     while (@cmpxchgWeak(u32, &base.disable_lock, 0, me, .acquire, .monotonic) != null) {
         interrupt_hardware.park_if_asked();
     }
+    const now = exec_base.cycles();
+    const waited = now -% before;
+    if (waited > cpu.lock_wait_max) {
+        cpu.lock_wait_max = waited;
+        cpu.lock_wait_where = where;
+    }
+    cpu.lock_taken_at = now;
+    cpu.lock_taker = where;
 }
 
 /// The system's interrupt lock let go, everything written under it seen
-/// first.
+/// first; the longest hold and the code that took it kept in the core's
+/// state.
 ///
 /// INPUTS:
 /// - `base` - exec: the lock.
 pub fn dropSystemInterrupts(base: *ExecBase) void {
+    const cpu = base.cpu();
+    const held = exec_base.cycles() -% cpu.lock_taken_at;
+    if (held > cpu.lock_held_max) {
+        cpu.lock_held_max = held;
+        cpu.lock_held_where = cpu.lock_taker;
+    }
     @atomicStore(u32, &base.disable_lock, 0, .release);
 }
 

@@ -166,8 +166,16 @@ fn onLine(line: u5) void {
     const n = line_count[line];
     var copy: [per_line]u32 = undefined;
     for (0..n) |i| copy[i] = line_sources[line][i];
-    for (copy[0..n]) |source| exec.dispatchInterrupt(exec.SysBase, source);
+    for (copy[0..n]) |source| {
+        const began = cpu.ccount();
+        exec.dispatchInterrupt(exec.SysBase, source);
+        source_longest[source] = @max(source_longest[source], cpu.ccount() -% began);
+    }
 }
+
+/// The longest each device source's chain ran, in cycles, until
+/// `s3> cores reset`.
+pub var source_longest: [source_count]u32 = @splat(0);
 
 /// Disable: mask levels 1-3 (all interrupts the kernel uses).
 fn disable() u32 {

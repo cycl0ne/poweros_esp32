@@ -306,7 +306,7 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
 /// - `base` - exec: how many cores take tasks.
 pub fn coreStarted(base: *ExecBase) void {
     base.cpu().time_mark = cycles();
-    _interrupt.takeSystemInterrupts(base);
+    _interrupt.takeSystemInterrupts(base, @returnAddress());
     base.cores_running = exec_base.coreId() + 1;
     _interrupt.dropSystemInterrupts(base);
 }
@@ -572,7 +572,7 @@ pub fn blockCurrent(base: *ExecBase, task: *Task, signal_set: u32) void {
 /// - `base` - exec: this core's exception depth, and the lock.
 pub fn interruptEnter(base: *ExecBase) void {
     const cpu = base.cpu();
-    if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.takeSystemInterrupts(base);
+    if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.takeSystemInterrupts(base, 1);
     // The time since the last exit was the task's it resumed - or idle.
     if (cpu.int_depth == 0) {
         const now = cycles();
@@ -586,8 +586,7 @@ pub fn interruptEnter(base: *ExecBase) void {
 /// The core's clock, in cycles: what its times are counted in. None on
 /// the host.
 pub fn cycles() u32 {
-    if (comptime @import("builtin").cpu.arch != .xtensa) return 0;
-    return sdk.hardware.cpu.ccount();
+    return exec_base.cycles();
 }
 
 /// Counts an exception exit and answers the context to resume: the one
@@ -1037,10 +1036,14 @@ pub fn waitForForbid(base: *ExecBase) void {
 /// - `base` - exec: both locks.
 pub fn waitForForbidInDisable(base: *ExecBase) void {
     _interrupt.dropSystemInterrupts(base);
+    const before = exec_base.cycles();
     while (@atomicLoad(u32, &base.forbid_lock, .acquire) != 0) {
         _interrupt.interrupt_hardware.park_if_asked();
     }
-    _interrupt.takeSystemInterrupts(base);
+    const spun = exec_base.cycles() -% before;
+    const cpu = base.cpu();
+    if (spun > cpu.forbid_spin_max) cpu.forbid_spin_max = spun;
+    _interrupt.takeSystemInterrupts(base, @returnAddress());
 }
 
 // --- task exceptions --------------------------------------------------------
@@ -1084,7 +1087,7 @@ pub fn runExceptions(base: *ExecBase, task: *Task) void {
         const now = base.cpu();
         now.id_saved = saved;
         now.id_nest_cnt = nest;
-        _interrupt.takeSystemInterrupts(base);
+        _interrupt.takeSystemInterrupts(base, @returnAddress());
         task.sig_except |= enable;
     }
 }
