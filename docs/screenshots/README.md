@@ -13,7 +13,8 @@ graphics.library in one moving picture: filled polygons with a hole
 (the star), circles and arcs, lines with patterns, a ball blitted through a
 mask, gradients, a tiled background, text measured and drawn in bold, and a
 scroller in italic and underlined - everything in one RastPort, redrawn
-every frame.
+every frame. It fills a screen of its own; `WINDOW` puts it in a window
+on the default screen instead, which may be sized.
 
 ## On the board
 

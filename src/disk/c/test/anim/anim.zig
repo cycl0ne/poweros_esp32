@@ -2,25 +2,42 @@
 //! Anim: a moving picture drawn with every primitive graphics.library has.
 //! Built against the SDK only.
 //!
-//!   Anim FRAMES/N,SCALE/K/N,RATE/K/N,TIMES/S
+//!   Anim FRAMES/N,SCALE/K/N,RATE/K/N,WINDOW/S,TIMES/S
 //!
-//! It runs until Ctrl-C, or for FRAMES frames, and then says how many it
-//! drew and how fast. RATE is how many frames a second it aims for, 1 to
-//! 60, 25 by default. SCALE is how many display pixels a stage pixel
-//! becomes, 1 to 4: the stage is the display divided by it, drawn at that
-//! size and stretched back up. 2 by default; 1 draws at the display's own
-//! size and costs about half the frame rate. TIMES adds a table at the
-//! end: what each part of a frame cost, on average, in microseconds of
-//! timer.device's E-clock - which is how to find out where a frame goes on
-//! a machine rather than guess.
+//! It opens a screen of its own with no title bar, fills it with a window
+//! that has no border, and draws into that window. The screen keeps every
+//! other window out of the picture; the window is what hears the keyboard
+//! and the pointer. Esc or Ctrl-C typed into it, or a click or a touch on
+//! the picture, ends it.
+//!
+//! WINDOW draws into a window on the default public screen instead, two
+//! thirds of the screen's size, which may be moved, sized and closed. Its
+//! close gadget ends it, and so do Esc and Ctrl-C typed into it; a new
+//! size starts the scene again at that size.
+//!
+//! Either way it runs until then, until Ctrl-C reaches it from its shell,
+//! or for FRAMES frames, and then says how many it drew and how fast. RATE
+//! is how many frames a second it aims for, 1 to 60, 25 by default. SCALE
+//! is how many window pixels a stage pixel becomes, 1 to 4: the stage is
+//! the window's inside divided by it, drawn at that size and stretched
+//! back up. 2 by default; 1 draws at the window's own size and costs about
+//! half the frame rate. TIMES adds a table at the end: what each part of a
+//! frame cost, on average, in microseconds of timer.device's E-clock -
+//! which is how to find out where a frame goes on a machine rather than
+//! guess.
 //!
 //! Each frame is drawn off the display, into a bitmap of its own, and put
-//! on the display in one move - BitMapScale when stretched,
-//! BltBitMapRastPort when not. Drawn straight onto the display, every
-//! frame would show its own clearing: the background goes down first and
-//! everything else after it, and the panel streams whatever is there at
-//! that moment. Double buffering is the only way a picture that is cleared
-//! and redrawn sixty times a second looks like one that moves.
+//! into the window in one move - BitMapScale when stretched,
+//! BltBitMapRastPort when not - with the window's layer held, since
+//! graphics.library knows nothing of layers and cannot take it itself.
+//! Drawn straight into the window, every frame would show its own
+//! clearing: the background goes down first and everything else after it,
+//! and the panel streams whatever is there at that moment. Double
+//! buffering is the only way a picture that is cleared and redrawn sixty
+//! times a second looks like one that moves. The bitmap is made once, as
+//! big as the screen divided by SCALE - the most a window on it can show -
+//! and a smaller window's stage is a part of it, so a new size allocates
+//! nothing.
 //!
 //! **The pace is motion.library's clock.** A timer fires RATE times a
 //! second; its hook, on the clock's task, only stores how many times it
@@ -66,7 +83,12 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const LayersBase = sdk.interface.layers.LayersBase;
 const graphics = sdk.graphics;
+const intuition = sdk.intuition;
+const sc = intuition.screens;
+const wn = intuition.windows;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
@@ -79,22 +101,26 @@ const motion = sdk.motion;
 const MotionBase = sdk.interface.motion.MotionBase;
 
 pub const COMMAND_NAME = "Anim";
-const VERSION_STRING = "\x00$VER: Anim 1.1 (2.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Anim 1.2 (4.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FRAMES/N,SCALE/K/N,RATE/K/N,TIMES/S";
+const template = "FRAMES/N,SCALE/K/N,RATE/K/N,WINDOW/S,TIMES/S";
 const arg_frames = 0;
 const arg_scale = 1;
 const arg_rate = 2;
-const arg_times = 3;
+const arg_window = 3;
+const arg_times = 4;
 
 const MSG_NOLIBRARY = "No %s - this machine has no drawing layer\n";
-const MSG_NODISPLAY = "No display - %s\n";
+const MSG_NOSCREEN = "No screen of its own - error %lu\n";
+const MSG_NOPUBSCREEN = "No default screen - no display\n";
+const MSG_NOWINDOW = "No window\n";
 const MSG_NOSTAGE = "No room for a %dx%d stage - %s\n";
 const MSG_BADSCALE = "SCALE must be 1 to 4\n";
 const MSG_BADRATE = "RATE must be 1 to 60\n";
 const MSG_NOCLOCK = "No %s - drawing as fast as it can\n";
-const MSG_RUNNING = "Anim %dx%d on %dx%d - Ctrl-C to stop\n";
+const MSG_ONSCREEN = "Anim %dx%d on a screen of %dx%d - Esc, a click or Ctrl-C stops it\n";
+const MSG_INWINDOW = "Anim %dx%d in a window of %dx%d - its close gadget, Esc or Ctrl-C stops it\n";
 const MSG_DONE = "%d frames in %d.%02d s\n";
 const MSG_RATE = "%d.%d frames a second\n";
 const MSG_NOTIMER = "No timer.device - no TIMES\n";
@@ -751,6 +777,135 @@ const Pace = struct {
     }
 };
 
+// --- where the frames go -------------------------------------------------
+
+/// The keys that end it, as IDCMP_VANILLAKEY gives them.
+const key_ctrl_c = 0x03;
+const key_escape = 0x1B;
+
+/// The smallest a WINDOW may be sized to, border and all.
+const min_window_width = 160;
+const min_window_height = 120;
+
+/// The smallest a stage is made, however small the window: the scene's
+/// sky and floor need a few rows each.
+const min_stage = 16;
+
+fn screenAttr(ib: *IntuitionBase, screen: *intuition.Screen, tag: sdk.utility.Tag) usize {
+    var value: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} };
+    ib.GetScreenAttrs(screen, &ask);
+    return value;
+}
+
+fn windowAttr(ib: *IntuitionBase, window: *intuition.Window, tag: sdk.utility.Tag) usize {
+    var value: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} };
+    ib.GetWindowAttrs(window, &ask);
+    return value;
+}
+
+/// The window the frames go into. With WINDOW, an ordinary one on the
+/// default public screen, two thirds of its size and in the middle of it,
+/// whose inside is a layer of its own so that the picture starts at its
+/// `(0, 0)` and never reaches the border. Without, one with no border at
+/// the back of the program's own screen, filling it.
+fn openWindow(ib: *IntuitionBase, screen: *intuition.Screen, in_window: bool, screen_w: i32, screen_h: i32) ?*intuition.Window {
+    if (in_window) {
+        return ib.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
+            .{ .tag = wn.WA_Left, .data = @intCast(@divTrunc(screen_w, 6)) },
+            .{ .tag = wn.WA_Top, .data = @intCast(@divTrunc(screen_h, 6)) },
+            .{ .tag = wn.WA_InnerWidth, .data = @intCast(@divTrunc(screen_w * 2, 3)) },
+            .{ .tag = wn.WA_InnerHeight, .data = @intCast(@divTrunc(screen_h * 2, 3)) },
+            .{ .tag = wn.WA_MinWidth, .data = min_window_width },
+            .{ .tag = wn.WA_MinHeight, .data = min_window_height },
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_Title, .data = @intFromPtr("Anim") },
+            .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_SizeGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_VANILLAKEY },
+            .{},
+        });
+    }
+    // The right button trapped, so that it does not bring the screen's
+    // menu bar up over the picture.
+    return ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = @intCast(screen_w) },
+        .{ .tag = wn.WA_Height, .data = @intCast(screen_h) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Backdrop, .data = 1 },
+        .{ .tag = wn.WA_NoCareRefresh, .data = 1 },
+        .{ .tag = wn.WA_RMBTrap, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_VANILLAKEY | wn.IDCMP_MOUSEBUTTONS },
+        .{},
+    });
+}
+
+/// What the window said since the last frame.
+const Heard = struct { stop: bool = false, resized: bool = false };
+
+fn listen(ib: *IntuitionBase, window: *intuition.Window) Heard {
+    var heard: Heard = .{};
+    while (ib.GetIMsg(window)) |im| {
+        const class = im.class;
+        const code = im.code;
+        ib.ReplyIMsg(im);
+        switch (class) {
+            wn.IDCMP_CLOSEWINDOW => heard.stop = true,
+            wn.IDCMP_NEWSIZE => heard.resized = true,
+            wn.IDCMP_VANILLAKEY => {
+                if (code == key_escape or code == key_ctrl_c) heard.stop = true;
+            },
+            wn.IDCMP_MOUSEBUTTONS => {
+                if (code == wn.SELECTDOWN) heard.stop = true;
+            },
+            else => {},
+        }
+    }
+    return heard;
+}
+
+/// How much of the stage a window's inside shows, and where it goes.
+const Fit = struct {
+    /// The scene's size, in stage pixels.
+    w: i32,
+    h: i32,
+    /// Where the stretched stage lands, in the window's inside: in the
+    /// middle, with what the division leaves over round it.
+    out: Rect,
+
+    fn of(inner_w: i32, inner_h: i32, scale: i32, most_w: i32, most_h: i32) Fit {
+        const w: i32 = @min(@max(@divTrunc(inner_w, scale), min_stage), most_w);
+        const h: i32 = @min(@max(@divTrunc(inner_h, scale), min_stage), most_h);
+        const left = @divTrunc(inner_w - w * scale, 2);
+        const top = @divTrunc(inner_h - h * scale, 2);
+        return .{
+            .w = w,
+            .h = h,
+            .out = .{ .min_x = left, .min_y = top, .max_x = left + w * scale, .max_y = top + h * scale },
+        };
+    }
+};
+
+/// The window's whole inside in black: the pixels round the stage, which
+/// no frame covers. Once at the start and once after each new size.
+fn blackOut(gb: *GraphicsBase, lb: *LayersBase, target: *RastPort, layer: *sdk.layers.Layer, inner_w: i32, inner_h: i32) void {
+    lb.LockLayer(layer);
+    defer lb.UnlockLayer(layer);
+    mode(gb, target, graphics.DRMD_JAM1);
+    pen(gb, target, graphics.penRGB(0, 0, 0));
+    gb.RectFill(target, &.{ .max_x = inner_w, .max_y = inner_h });
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -758,7 +913,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -776,38 +931,82 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_BADRATE, .{});
         return dos.RETURN_ERROR;
     }
+    const in_window = argv[arg_window] != 0;
 
-    const lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse {
+    const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{graphics.GRAPHICSNAME});
         return dos.RETURN_FAIL;
     };
-    defer sys.CloseLibrary(lib);
-    const gb: *GraphicsBase = @ptrCast(lib);
-
-    var why: i32 = 0;
-    const display_tags = [_]TagItem{ .{ .tag = graphics.RPTAG_ErrorPtr, .data = @intFromPtr(&why) }, .{} };
-    const screen = gb.CreateRastPortTagList(&display_tags) orelse {
-        _ = Printf(dl, MSG_NODISPLAY, .{gb.GraphicsErrorText(why)});
+    defer sys.CloseLibrary(gfx_lib);
+    const gb: *GraphicsBase = @ptrCast(gfx_lib);
+    const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
         return dos.RETURN_FAIL;
     };
-    defer gb.FreeRastPort(screen);
+    defer sys.CloseLibrary(int_lib);
+    const ib: *IntuitionBase = @ptrCast(int_lib);
+    const lay_lib = sys.OpenLibrary(sdk.layers.LAYERSNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{sdk.layers.LAYERSNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(lay_lib);
+    const lb: *LayersBase = @ptrCast(lay_lib);
 
-    var bounds: Rect = .{};
-    const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_Bounds, .data = @intFromPtr(&bounds) }, .{} };
-    gb.GetRPAttrs(screen, &ask);
+    // The screen the window goes on: one of the program's own, or with
+    // WINDOW the default public screen, held while the window is on it.
+    // Both are given back after the window closes, since the defers run
+    // the other way.
+    var own: ?*intuition.Screen = null;
+    defer if (own) |own_screen| {
+        // Behind before it closes, so the display goes straight back to
+        // the screen that was in front.
+        ib.ScreenToBack(own_screen);
+        _ = ib.CloseScreen(own_screen);
+    };
+    var public: ?*intuition.Screen = null;
+    defer if (public) |held| ib.UnlockPubScreen(null, held);
+    if (in_window) {
+        public = ib.LockPubScreen(null) orelse {
+            _ = Printf(dl, MSG_NOPUBSCREEN, .{});
+            return dos.RETURN_FAIL;
+        };
+    } else {
+        var screen_error: u32 = 0;
+        own = ib.OpenScreenTagList(&[_]TagItem{
+            .{ .tag = sc.SA_Quiet, .data = 1 },
+            .{ .tag = sc.SA_ErrorCode, .data = @intFromPtr(&screen_error) },
+            .{},
+        }) orelse {
+            _ = Printf(dl, MSG_NOSCREEN, .{@as(u64, screen_error)});
+            return dos.RETURN_FAIL;
+        };
+    }
+    const screen = own orelse public.?;
+    const screen_w: i32 = @intCast(screenAttr(ib, screen, sc.SA_Width));
+    const screen_h: i32 = @intCast(screenAttr(ib, screen, sc.SA_Height));
 
-    // The stage: the display divided by the scale, drawn off-screen.
-    const w = @divTrunc(bounds.width(), scale);
-    const h = @divTrunc(bounds.height(), scale);
+    const window = openWindow(ib, screen, in_window, screen_w, screen_h) orelse {
+        _ = Printf(dl, MSG_NOWINDOW, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer ib.CloseWindow(window);
+    const target: *RastPort = @ptrFromInt(windowAttr(ib, window, wn.WA_RastPort));
+    const layer: *sdk.layers.Layer = @ptrFromInt(windowAttr(ib, window, wn.WA_Layer));
+
+    // The stage: drawn off the display, as big as the screen divided by
+    // the scale, which is the most a window on it can show.
+    const most_w = @divTrunc(screen_w, scale);
+    const most_h = @divTrunc(screen_h, scale);
+    var why: i32 = 0;
     const stage_tags = [_]TagItem{
-        .{ .tag = graphics.BMTAG_Width, .data = @intCast(w) },
-        .{ .tag = graphics.BMTAG_Height, .data = @intCast(h) },
-        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(screen) },
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(most_w) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(most_h) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(target) },
         .{ .tag = graphics.BMTAG_ErrorPtr, .data = @intFromPtr(&why) },
         .{},
     };
     const stage = gb.AllocBitMapTagList(&stage_tags) orelse {
-        _ = Printf(dl, MSG_NOSTAGE, .{ w, h, gb.GraphicsErrorText(why) });
+        _ = Printf(dl, MSG_NOSTAGE, .{ most_w, most_h, gb.GraphicsErrorText(why) });
         return dos.RETURN_FAIL;
     };
     defer gb.FreeBitMap(stage);
@@ -832,20 +1031,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer gb.CloseFont(fonts.title);
     defer gb.CloseFont(fonts.scroller);
 
-    // The border round a stage smaller than the display, cleared once.
-    const black = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0, 0, 0) }, .{} };
-    gb.SetRPAttrs(screen, &black);
-    gb.RectFill(screen, &bounds);
+    var inner_w: i32 = @intCast(windowAttr(ib, window, wn.WA_InnerWidth));
+    var inner_h: i32 = @intCast(windowAttr(ib, window, wn.WA_InnerHeight));
+    var fit = Fit.of(inner_w, inner_h, scale, most_w, most_h);
+    blackOut(gb, lb, target, layer, inner_w, inner_h);
 
-    const out = Rect{
-        .min_x = @divTrunc(bounds.width() - w * scale, 2),
-        .min_y = @divTrunc(bounds.height() - h * scale, 2),
-        .max_x = @divTrunc(bounds.width() - w * scale, 2) + w * scale,
-        .max_y = @divTrunc(bounds.height() - h * scale, 2) + h * scale,
-    };
-    const whole = Rect{ .max_x = w, .max_y = h };
-
-    _ = Printf(dl, MSG_RUNNING, .{ w, h, bounds.width(), bounds.height() });
+    if (in_window) {
+        _ = Printf(dl, MSG_INWINDOW, .{ fit.w, fit.h, inner_w, inner_h });
+    } else {
+        _ = Printf(dl, MSG_ONSCREEN, .{ fit.w, fit.h, inner_w, inner_h });
+    }
 
     // The E-clock, for TIMES: a request opened only to reach the device's
     // functions, never sent.
@@ -863,7 +1058,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer if (timer_open) sys.CloseDevice(&timer_req.node);
 
     var scene: Scene = undefined;
-    scene.init(w, h);
+    scene.init(fit.w, fit.h);
 
     // The pace: a timer on motion.library's clock, RATE times a second.
     var pace: Pace = .{};
@@ -878,6 +1073,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var shown: u32 = 0;
     while (frames == 0 or drawn < frames) {
         const now = pace.next(sys, dl) orelse break;
+        const heard = listen(ib, window);
+        if (heard.stop) break;
+        if (heard.resized) {
+            // A new size: the scene starts again at the size it now has.
+            inner_w = @intCast(windowAttr(ib, window, wn.WA_InnerWidth));
+            inner_h = @intCast(windowAttr(ib, window, wn.WA_InnerHeight));
+            fit = Fit.of(inner_w, inner_h, scale, most_w, most_h);
+            blackOut(gb, lb, target, layer, inner_w, inner_h);
+            scene.init(fit.w, fit.h);
+        }
         // On by every firing since the last frame, but never by so many
         // that a long stall makes the picture jump.
         var behind: u32 = @min(now -% shown, max_catch_up);
@@ -887,11 +1092,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         const t: i32 = @intCast(shown % 0x4000_0000);
         drawFrame(gb, rp, &scene, slats, ball, fonts, t, &timing);
+        // Into the window with its layer held: graphics.library knows
+        // nothing of layers and cannot take it itself.
+        lb.LockLayer(layer);
         if (scale == 1) {
-            gb.BltBitMapRastPort(stage, 0, 0, screen, out.min_x, out.min_y, w, h);
+            gb.BltBitMapRastPort(stage, 0, 0, target, fit.out.min_x, fit.out.min_y, fit.w, fit.h);
         } else {
-            gb.BitMapScale(stage, &whole, screen, &out);
+            gb.BitMapScale(stage, &.{ .max_x = fit.w, .max_y = fit.h }, target, &fit.out);
         }
+        lb.UnlockLayer(layer);
         timing.lap(12);
         scene.step();
         shown = now;
