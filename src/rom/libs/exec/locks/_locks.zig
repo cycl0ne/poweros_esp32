@@ -31,6 +31,14 @@
 //! LOCKF_INTERRUPT the core's interrupts) stopped while one is held, and
 //! the rules of sdk/libs/exec/locks.zig checked against the locks the
 //! core holds.
+//!
+//! That list of the core's locks is written by its tasks and by its
+//! interrupts alike: a task taking a plain lock runs with interrupts on,
+//! and an interrupt's PutMsg takes and gives back the port lock in
+//! between. So it is read and written with the core's interrupts masked.
+//! Unmasked, an interrupt's entry laid where the task's was about to go
+//! left the task's lock off the list: its release found it missing, left
+//! it held, and the core's next take of it was a dead end.
 
 const builtin = @import("builtin");
 const sdk = @import("sdk");
@@ -306,45 +314,66 @@ fn nameOf(lock: *const Lock) [*:0]const u8 {
 /// INPUTS:
 /// - `where` - the caller's address, for the alert.
 pub fn checkTake(base: *ExecBase, lock: *const Lock, ordered: bool, where: usize) void {
-    if (base.cpu().int_depth != 0 and lock.flags & lk.LOCKF_INTERRUPT == 0) {
+    // Read with the interrupts masked, alerted with them on: the alert
+    // prints.
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    const cpu = base.cpu();
+    const in_interrupt = cpu.int_depth != 0;
+    const full = cpu.lock_count == lk.LOCKS_HELD_MAX;
+    var later: ?*const Lock = null;
+    if (ordered and !full) {
+        for (cpu.locks_held[0..cpu.lock_count]) |entry| {
+            const held = entry orelse continue;
+            if (held.order < lock.order) continue;
+            later = held;
+            break;
+        }
+    }
+    hardware.restore(state);
+
+    if (in_interrupt and lock.flags & lk.LOCKF_INTERRUPT == 0) {
         ruleBroken(base, "%.40s taken in an interrupt, without LOCKF_INTERRUPT", .{nameOf(lock)}, where);
     }
-    if (base.cpu().lock_count == lk.LOCKS_HELD_MAX) {
+    if (full) {
         ruleBroken(base, "%.40s taken while the core holds %u locks already", .{ nameOf(lock), @as(u32, lk.LOCKS_HELD_MAX) }, where);
         return;
     }
-    if (!ordered) return;
-    for (base.cpu().locks_held[0..base.cpu().lock_count]) |entry| {
-        const held = entry orelse continue;
-        if (held.order < lock.order) continue;
-        ruleBroken(base, "%.40s (order %u) taken while %.40s (order %u) is held", .{
-            nameOf(lock),
-            @as(u32, lock.order),
-            nameOf(held),
-            @as(u32, held.order),
-        }, where);
-        return;
-    }
+    const held = later orelse return;
+    ruleBroken(base, "%.40s (order %u) taken while %.40s (order %u) is held", .{
+        nameOf(lock),
+        @as(u32, lock.order),
+        nameOf(held),
+        @as(u32, held.order),
+    }, where);
 }
 
 /// `lock` taken: on the core's list, and its holder noted.
 pub fn noteTaken(base: *ExecBase, lock: *Lock) void {
-    if (base.cpu().lock_count < lk.LOCKS_HELD_MAX) {
-        base.cpu().locks_held[base.cpu().lock_count] = lock;
-        base.cpu().lock_count += 1;
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    defer hardware.restore(state);
+    const cpu = base.cpu();
+    if (cpu.lock_count < lk.LOCKS_HELD_MAX) {
+        cpu.locks_held[cpu.lock_count] = lock;
+        cpu.lock_count += 1;
     }
-    lock.owner = if (base.cpu().int_depth == 0) base.cpu().this_task else null;
+    lock.owner = if (cpu.int_depth == 0) cpu.this_task else null;
 }
 
 /// `lock` off the core's list; false when it was not on it.
 pub fn noteReleased(base: *ExecBase, lock: *Lock) bool {
+    const hardware = _interrupt.interrupt_hardware;
+    const state = hardware.disable();
+    defer hardware.restore(state);
+    const cpu = base.cpu();
     var at: usize = 0;
-    while (at < base.cpu().lock_count) : (at += 1) {
-        if (base.cpu().locks_held[at] == lock) break;
+    while (at < cpu.lock_count) : (at += 1) {
+        if (cpu.locks_held[at] == lock) break;
     } else return false;
-    while (at + 1 < base.cpu().lock_count) : (at += 1) base.cpu().locks_held[at] = base.cpu().locks_held[at + 1];
-    base.cpu().lock_count -= 1;
-    base.cpu().locks_held[base.cpu().lock_count] = null;
+    while (at + 1 < cpu.lock_count) : (at += 1) cpu.locks_held[at] = cpu.locks_held[at + 1];
+    cpu.lock_count -= 1;
+    cpu.locks_held[cpu.lock_count] = null;
     lock.owner = null;
     return true;
 }
