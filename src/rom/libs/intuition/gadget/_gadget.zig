@@ -188,10 +188,12 @@ pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
 /// copy. The picture reaches from the window's corner to the box's far
 /// corner, so the gadget draws at its own coordinates exactly as on the
 /// window; only the box is filled, drawn and copied, and a clip holds the
-/// drawing to it. The box starts in the screen's background pen, which is
-/// what a gadget is drawn over in place. False, and nothing drawn, when the
-/// picture cannot be had or would be larger than `aside_most`: the caller
-/// draws in place.
+/// drawing to it. The box starts as what the gadget is drawn over in
+/// place: the screen's background pen, or for a gadget in the border the
+/// border itself - its colour, active or not, and its frame - since a
+/// border gadget is drawn over the border and paints only its own shapes.
+/// False, and nothing drawn, when the picture cannot be had or would be
+/// larger than `aside_most`: the caller draws in place.
 fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
     const gb = ib.graphics_base;
     const place = boxIn(gadgetOf(ib, o), gi.domain_width, gi.domain_height);
@@ -236,6 +238,11 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
         .{ .tag = graphics.RPTAG_BackFill, .data = graphics.BACKFILL_NONE },
         .{},
     });
+
+    // A gadget in the border: the border under it, as drawBorder puts it
+    // there before every one of its gadgets.
+    const w: *Window = @ptrCast(@alignCast(gi.window));
+    if (inBorder(ib, w, o)) _window.paintBorder(ib, w, aside);
 
     msg.rast_port = aside;
     _ = ib.iface().SendMessage(o, @ptrCast(msg));

@@ -27,6 +27,7 @@
 const sdk = @import("sdk");
 const utility = sdk.utility;
 const graphics = sdk.graphics;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const intuition = sdk.intuition;
 const classes = intuition.classes;
 const classusr = intuition.classusr;
@@ -84,6 +85,10 @@ pub const Data = extern struct {
     /// `STRINGA_Font`: the font the text is drawn in, which the caller
     /// keeps open; null takes the RastPort's.
     font: ?*graphics.TextFont = null,
+    /// How many characters the last drawing showed, and how far in from
+    /// the box's left edge the text began: where a press is measured from.
+    disp_count: u32 = 0,
+    text_left: i32 = 2,
 };
 
 /// Make strgclass, from gadgetclass, and put it on the public list.
@@ -157,13 +162,37 @@ fn textChanged(p: *Data) void {
     p.long_val = numberOf(buffer, p.num_chars);
 }
 
-/// How many characters fit in the box, and which is the first shown, so
-/// that the cursor is always one of them.
-fn scrollTo(p: *Data, room: u32) void {
-    if (room == 0) return;
+/// The tallest a line is measured against: TextFit asks for a height too.
+const any_height = 0x7FFF;
+
+/// Which character is shown first and how many are, in `room` pixels, so
+/// that the cursor is always one of them, measured in the RastPort's font
+/// a character at a time: a proportional font's narrow letters let more
+/// of the line show than its widest would. `extra` is kept free at the
+/// right for the cursor when it stands past the last character.
+fn scrollTo(gb: *GraphicsBase, rp: *graphics.RastPort, p: *Data, buffer: [*]const u8, room: i32, extra: i32) u32 {
+    var te: graphics.TextExtent = undefined;
+    const avail = @max(room - extra, 1);
+    if (p.num_chars == 0) {
+        p.disp_pos = 0;
+        return 0;
+    }
     if (p.buffer_pos < p.disp_pos) p.disp_pos = p.buffer_pos;
-    if (p.buffer_pos >= p.disp_pos + room) p.disp_pos = p.buffer_pos - room + 1;
-    if (p.disp_pos > p.num_chars) p.disp_pos = p.num_chars;
+    p.disp_pos = @min(p.disp_pos, p.num_chars);
+    var shown = gb.TextFit(rp, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, avail, any_height);
+    // Everything up to the cursor, and the character under it, shows.
+    const needed = @min(p.buffer_pos + 1, p.num_chars);
+    if (p.disp_pos + shown < needed) {
+        const back = gb.TextFit(rp, buffer + needed - 1, needed, &te, null, -1, avail, any_height);
+        p.disp_pos = needed - @max(back, 1);
+        shown = gb.TextFit(rp, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, avail, any_height);
+    } else if (p.disp_pos > 0 and p.disp_pos + shown >= p.num_chars) {
+        // Scrolled further than the end needs: as much as fits is shown.
+        const back = gb.TextFit(rp, buffer + p.num_chars - 1, p.num_chars, &te, null, -1, avail, any_height);
+        p.disp_pos = p.num_chars - @max(back, 1);
+        shown = @max(back, 1);
+    }
+    return shown;
 }
 
 // --- the default edit ------------------------------------------------------------
@@ -412,23 +441,23 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     }
     if (width == 0 or height == 0) return;
     const inner_w = b.width - 4;
-    const room: u32 = @intCast(@max(@divTrunc(inner_w, @as(i32, @intCast(width))), 1));
-    scrollTo(p, room);
-    const shown = @min(room, p.num_chars - p.disp_pos);
+    // The cursor past the last character takes a space's room of its own,
+    // which is part of what is placed - otherwise a line pushed against
+    // the right edge would put its cursor on the frame, outside the field.
+    const space_w = gb.TextLength(rp, " ", 1);
+    const past_end = p.buffer_pos >= p.num_chars;
+    const extra: i32 = if (past_end) space_w else 0;
+    const shown = scrollTo(gb, rp, p, buffer, inner_w, extra);
+    p.disp_count = shown;
 
-    // Where the line sits in the box. The cursor takes a cell of its own
-    // when it sits past the last character shown, and that cell is part of
-    // what is being placed - otherwise a line pushed against the right edge
-    // would put its cursor on the frame, outside the field it belongs to.
-    // `scrollTo` keeps the cursor within `room`, so the line and the cell
-    // together never come to more than the field holds.
-    const caret: u32 = if (p.active != 0 and p.buffer_pos - p.disp_pos >= shown) 1 else 0;
-    const text_w: i32 = @intCast((shown + caret) * width);
+    const caret_w: i32 = if (p.active != 0 and past_end) space_w else 0;
+    const text_w: i32 = gb.TextLength(rp, buffer + p.disp_pos, shown) + caret_w;
     const left = switch (p.justification) {
         gc.GACT_STRINGCENTER => b.left + 2 + @divTrunc(inner_w - text_w, 2),
         gc.GACT_STRINGRIGHT => b.left + 2 + inner_w - text_w,
         else => b.left + 2,
     };
+    p.text_left = left - b.left;
     const top = b.top + @divTrunc(b.height - @as(i32, @intCast(height)), 2);
 
     if (shown > 0) {
@@ -439,9 +468,9 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     // The cursor, while it is being typed into: the cell the next
     // character goes in, the other way round.
     if (p.active == 0) return;
-    const at = p.buffer_pos - p.disp_pos;
-    const cursor_x = left + @as(i32, @intCast(at * width));
-    d.box(gb, rp, cursor_x, top, @intCast(width), @intCast(height), ink);
+    const cursor_x = left + gb.TextLength(rp, buffer + p.disp_pos, p.buffer_pos - p.disp_pos);
+    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, buffer + p.buffer_pos, 1);
+    d.box(gb, rp, cursor_x, top, @max(cursor_w, 1), @intCast(height), ink);
     if (p.buffer_pos < p.num_chars) {
         d.pen(gb, rp, paper);
         gb.Move(rp, cursor_x, top + @as(i32, @intCast(baseline)));
@@ -607,20 +636,29 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
     return changed;
 }
 
-/// The cursor moved to the character a press landed on. The field scrolls,
-/// so what is under the pointer is `disp_pos` characters along from the
-/// start of the text, not from the start of the buffer.
+/// The cursor moved to the character a press landed on: as many
+/// characters along from the first shown as fit whole to the left of the
+/// pointer, measured from where the text began when it was last drawn and
+/// in the font it was drawn in. A press past the last character shown
+/// lands on it, or after it when it ends the text.
 fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) void {
     const it = ib.iface();
-    var width: u32 = 0;
-    if (it.ObtainGIRPort(gi)) |port| {
-        const metric = [_]TagItem{ .{ .tag = graphics.RPTAG_FontWidth, .data = @intFromPtr(&width) }, .{} };
-        ib.graphics_base.GetRPAttrs(port, &metric);
-        it.ReleaseGIRPort(port);
+    const gb = ib.graphics_base;
+    const buffer = p.buffer orelse return;
+    const port = it.ObtainGIRPort(gi) orelse return;
+    defer it.ReleaseGIRPort(port);
+    if (p.font) |font| graphics.SetFont(gb, port, font);
+    const click = x - p.text_left;
+    var index: u32 = 0;
+    if (click > 0 and p.num_chars > p.disp_pos) {
+        var te: graphics.TextExtent = undefined;
+        index = gb.TextFit(port, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, click, any_height);
+        if (p.disp_count > 0 and index >= p.disp_count) {
+            index = p.disp_count - 1;
+            if (p.disp_pos + index == p.num_chars - 1) index += 1;
+        }
     }
-    if (width == 0) return;
-    const at = @divTrunc(x - 2, @as(i32, @intCast(width)));
-    p.buffer_pos = @min(p.disp_pos + @as(u32, @intCast(@max(at, 0))), p.num_chars);
+    p.buffer_pos = @min(p.disp_pos + index, p.num_chars);
 }
 
 fn setMode(p: *Data, bits: u32, on: bool) void {

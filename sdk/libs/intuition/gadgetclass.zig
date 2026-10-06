@@ -275,6 +275,11 @@ pub const GFLG_STILL: u32 = 1 << 13;
 /// It is waiting to be drawn again by intuition, at a class's asking
 /// (`QueueGadgetRefresh`). Set and cleared by intuition alone.
 pub const GFLG_REFRESH: u32 = 1 << 14;
+/// It is typed into while it has the input, as a line of text is: on a
+/// board without a keyboard the on-screen one comes up for it. Set by a
+/// class that takes text, as it makes the gadget; strgclass and the
+/// classes made from it need not.
+pub const GFLG_TYPING: u32 = 1 << 15;
 
 /// Whether a class should move a gadget rather than change it at once:
 /// neither the gadget (`GA_Animate`) nor its screen (`SA_Animate`) said

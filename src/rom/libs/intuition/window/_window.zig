@@ -409,8 +409,9 @@ fn drawBorderGadgets(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) voi
 
 /// The border drawn through `rp`, in the window's own coordinates: the
 /// window's RastPort, or one that sends what falls in a strip to its
-/// bitmap and drops the rest.
-fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
+/// bitmap and drops the rest - or a gadget's picture kept aside, which is
+/// what a gadget in the border is drawn over (`_gadget.renderAside`).
+pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
     const gb = ib.graphics_base;
     const it = ib.iface();
     const saved = d.save(gb, rp);

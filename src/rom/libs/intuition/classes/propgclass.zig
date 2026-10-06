@@ -234,9 +234,22 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const knob = graphics.Rect{ .min_x = k.left, .min_y = k.top, .max_x = k.left + k.width, .max_y = k.top + k.height };
     const edged = p.flags & pg.PROPNEWLOOK != 0 and k.width > 2 and k.height > 2;
     const round = edged and it.GetStyleAttr(dri, own_style, style.PART_KNOB, st, style.STYLE_Radius) != 0;
-    const ground: graphics.Pen = if (round) channel_ground else @truncate(it.GetStyleAttr(dri, own_style, style.PART_KNOB, st, style.STYLE_Background));
+    // In the border of a window that is not the active one the knob goes
+    // the way the border goes, as the border's own gadgets do: its colour
+    // is the inactive border's, and its edge is what tells it apart.
+    const asleep = inSleepingBorder(ib, o, p, gi_);
+    const ground: graphics.Pen = if (round or asleep) channel_ground else @truncate(it.GetStyleAttr(dri, own_style, style.PART_KNOB, st, style.STYLE_Background));
     d.box(gb, rp, k.left, k.top, k.width, k.height, ground);
-    if (edged) it.DrawPart(rp, dri, own_style, style.PART_KNOB, st, 0, &knob, null);
+    if (edged) it.DrawPart(rp, dri, own_style, style.PART_KNOB, st, if (asleep) style.DPF_EDGES_ONLY else 0, &knob, null);
+}
+
+/// Whether the bar sits in the border of a window that is not the active
+/// one.
+fn inSleepingBorder(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo) bool {
+    if (p.flags & pg.PROPBORDERLESS == 0) return false;
+    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return false;
+    const w: *_window.Window = @ptrCast(@alignCast(gi.window));
+    return w.flags & _window.WF_ACTIVE == 0;
 }
 
 /// What shows beside the knob.

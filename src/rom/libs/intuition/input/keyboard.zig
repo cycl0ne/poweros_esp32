@@ -5,7 +5,8 @@
 //! After each event the input task has handled, with nothing held,
 //! `follow` looks at what has the input. A string gadget - strgclass or a
 //! class made from it, as the innermost gadget with the keys - on a
-//! screen is being typed into; then, if the keyboard is wanted and not up,
+//! screen is being typed into, and so is any gadget that says it takes
+//! text (`GFLG_TYPING`); then, if the keyboard is wanted and not up,
 //! it opens: a borderless window across the bottom of that screen, never
 //! made active (`WA_NoActivate`), holding one keyboard.gadget as large as
 //! the window. Its keys go to input.device, and from there to the field
@@ -45,8 +46,10 @@ pub const State = extern struct {
     pad: [2]u8 = .{ 0, 0 },
 };
 
-/// Whether `o`'s class is strgclass or made from it.
+/// Whether `o` is typed into: its class is strgclass or made from it,
+/// or it says so itself (`GFLG_TYPING`).
 fn isString(ib: *IntuitionBase, o: *intuition.Object) bool {
+    if (gc.gadget(o).flags & gc.GFLG_TYPING != 0) return true;
     var cl: ?*classes.Class = classes.objectClass(o);
     while (cl) |c| : (cl = c.super) {
         if (c == ib.string_class) return true;
