@@ -46,7 +46,6 @@ pub const MAXPUBSCREENNAME = 31;
 // ti_Data is a `*usize` the value is written to.
 
 pub const SA_Dummy = utility.TAG_USER + 32;
-/// Read only: the screen's size, which is its display's.
 /// i32: where the screen's left edge is on its display. Screens are as
 /// wide as their display, so 0 is the only place there is.
 pub const SA_Left = SA_Dummy + 0x0001;
@@ -54,6 +53,7 @@ pub const SA_Left = SA_Dummy + 0x0001;
 /// opened further down shows the one behind above it. Read back by
 /// GetScreenAttrs as where it is now.
 pub const SA_Top = SA_Dummy + 0x0002;
+/// Read only: the screen's size, which is its display's.
 pub const SA_Width = SA_Dummy + 0x0003;
 pub const SA_Height = SA_Dummy + 0x0004;
 /// Read only: bits per pixel of the display.
@@ -275,11 +275,11 @@ pub const NUMDRIPENS = 12;
 /// after the fields here and raises it.
 pub const DRI_VERSION: u32 = 3;
 
-/// What a screen's parts are drawn with: `GetScreenDrawInfo` hands out the
-/// screen's own. Read only.
 /// `DrawInfo.flags`: nothing on the screen moves (`SA_Animate` false).
 pub const DRIF_STILL: u32 = 1 << 0;
 
+/// What a screen's parts are drawn with: `GetScreenDrawInfo` hands out the
+/// screen's own. Read only.
 pub const DrawInfo = extern struct {
     /// dri_Version: `DRI_VERSION` of the library that made it.
     version: u32 = DRI_VERSION,

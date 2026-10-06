@@ -29,7 +29,8 @@
 //!   ones.
 //! - **Fonts**: the screens', the windows' and the consoles' fonts.
 //! - **System**: the double-click time, the height of a screen's font when
-//!   it is given none, and when the keyboard on the screen comes up.
+//!   it is given none, when the keyboard on the screen comes up, and
+//!   whether a window may be moved partly past the screen's edges.
 //!
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
@@ -116,6 +117,7 @@ const ID_HEIGHT = 57;
 const ID_KEYBOARD = 58;
 const ID_PRESET = 59;
 const ID_BUILTIN = 60;
+const ID_OFFSCREEN = 61;
 /// A colour field's chooser's ID: this and its key's number.
 const ID_PEN_CHOICE = 64;
 /// A system pen's field's ID, and its button's: these and the pen.
@@ -311,6 +313,7 @@ const Editor = struct {
     double: *Object = undefined,
     height: *Object = undefined,
     keyboard: *Object = undefined,
+    off_screen: *Object = undefined,
     /// The system's pens as the colours page has them, and whether one
     /// was changed.
     pens: [sc.NUMDRIPENS]Pen = palette_file.defaults,
@@ -670,6 +673,8 @@ const Editor = struct {
         p.screen_font = @intCast(@max(@as(isize, @bitCast(value)), 1));
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.keyboard, &value);
         p.keyboard = @intCast(@min(value, 2));
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.off_screen, &value);
+        p.off_screen = @intFromBool(value != 0);
         return p;
     }
 
@@ -1153,6 +1158,7 @@ fn build(e: *Editor) ?*Object {
         pair(intuition.IPREFS_DoubleClick, @intFromPtr(&now.double_click)),
         pair(intuition.IPREFS_ScreenFontHeight, @intFromPtr(&now.screen_font)),
         pair(intuition.IPREFS_Keyboard, @intFromPtr(&now.keyboard)),
+        pair(intuition.IPREFS_OffScreen, @intFromPtr(&now.off_screen)),
         .{},
     });
     e.double = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
@@ -1176,7 +1182,12 @@ fn build(e: *Editor) ?*Object {
         pair(ch.CHOOSER_Active, @min(now.keyboard, 2)),
         .{},
     }) orelse return null;
-    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen" }) orelse return null;
+    e.off_screen = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_OFFSCREEN),
+        pair(cb.CHECKBOX_Checked, now.off_screen),
+        .{},
+    }) orelse return null;
+    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges" }) orelse return null;
 
     const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&pages)), .{} }) orelse return null;
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{

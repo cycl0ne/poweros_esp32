@@ -12,7 +12,8 @@
 //! to the glass, so nothing that draws ever has to know about it.
 //!
 //! It moves in intuition's input handler, on input.device's task, as each
-//! event arrives: `MoveBoardPointer` never waits, and following it there
+//! event arrives: `MoveBoardPointer` waits only for rtg's pointer
+//! semaphore and, on a bus board, its send, and following it there
 //! rather than on intuition's own task keeps it moving while that task is
 //! busy dragging a window. The task sees the same event after and moves it
 //! to the same place, which the board takes as no move.

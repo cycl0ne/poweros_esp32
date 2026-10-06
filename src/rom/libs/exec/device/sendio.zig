@@ -53,6 +53,12 @@ const IORequest = sdk.exec.IORequest;
 /// `IOERR_OPENFAIL`, so the `WaitIO` that follows answers at once instead
 /// of waiting for a reply that can never come.
 ///
+/// A request aborted after a `Wait` that something else ended is replied
+/// to its port, and `WaitIO` then finds it done without waiting: the
+/// port's signal, set by that reply, stays set. A task that sends again
+/// clears it first (`SetSignal(0, port_mask)`), or its next `Wait`
+/// answers at once.
+///
 /// BUGS:
 /// None known.
 ///
@@ -61,6 +67,7 @@ const IORequest = sdk.exec.IORequest;
 ///
 /// EXAMPLES:
 /// ```zig
+/// _ = sys.SetSignal(0, port_mask);
 /// sys.SendIO(@ptrCast(io));
 /// const got = sys.Wait(port_mask | exec.SIGBREAKF_CTRL_C);
 /// if (got & exec.SIGBREAKF_CTRL_C != 0) _ = sys.AbortIO(@ptrCast(io));

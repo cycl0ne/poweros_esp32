@@ -283,7 +283,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
 /// RESULT:
 /// False when there was no memory for the task.
 pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: usize) bool {
-    const task = newTask(base, idle_names[core], -128, 0) orelse return false;
+    const task = newTask(base, idle_names[core].ptr, -128, 0) orelse return false;
     task.sp_lower = stack_lower;
     task.sp_upper = stack_upper;
     task.flags |= if (core == 0) sdk.exec.TF_CORE0 else sdk.exec.TF_CORE1;
@@ -370,15 +370,17 @@ fn idleRound(base: *ExecBase) void {
 ///
 /// RESULT:
 /// The task, not yet on any list, or null if there was no memory.
-pub fn newTask(base: *ExecBase, name: [:0]const u8, pri: i8, stack_size: usize) ?*Task {
-    const header = alignUp(@sizeOf(Task) + name.len + 1, 16);
+pub fn newTask(base: *ExecBase, name: [*:0]const u8, pri: i8, stack_size: usize) ?*Task {
+    var name_len: usize = 0;
+    while (name[name_len] != 0) name_len += 1;
+    const header = alignUp(@sizeOf(Task) + name_len + 1, 16);
     const stack = if (stack_size == 0) 0 else alignUp(@max(stack_size, min_stack_size), 16);
     const total = header + stack;
     const block = base.iface().AllocMem(total, sdk.exec.MEMF_CLEAR) orelse return null;
     const bytes: [*]u8 = @ptrCast(block);
     const name_copy = bytes + @sizeOf(Task);
-    @memcpy(name_copy[0..name.len], name);
-    name_copy[name.len] = 0;
+    @memcpy(name_copy[0..name_len], name[0..name_len]);
+    name_copy[name_len] = 0;
     const task: *Task = @ptrCast(@alignCast(block));
     task.* = .{
         .node = .{ .type = .task, .pri = pri, .name = @ptrCast(name_copy) },

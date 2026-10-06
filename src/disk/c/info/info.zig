@@ -29,9 +29,8 @@
 //! - **Sizes are 64-bit.** id_NumBlocks and id_NumBlocksUsed are u64 here,
 //!   so a disk larger than 4 GiB counts correctly; a 32-bit product would
 //!   wrap.
-//! - **Names are C strings**, not BSTRs, and `id_VolumeNode` is a pointer,
-//!   so the volume's name is read straight off the node instead of through
-//!   BADDR twice.
+//! - **Names are C strings**, and `id_VolumeNode` is a pointer, so the
+//!   volume's name is read straight off the node.
 //! - A handler that does not answer DISK_INFO (NIL:, PIPE:) is skipped.
 //! - **A console is skipped too.** CON: and RAW: do answer DISK_INFO, with
 //!   `ID_CON` and `ID_RAWCON`, which are not file systems, so they would

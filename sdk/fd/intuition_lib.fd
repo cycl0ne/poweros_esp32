@@ -86,10 +86,11 @@ bool PointInImage(i32 x, i32 y, ?*intuition.Object image)
 bool CloseScreen(?*intuition.Screen screen)
 /// Read a screen: each tag's data is a *usize the value is written to.
 void GetScreenAttrs(*intuition.Screen screen, ?[*]const utility.TagItem tags)
-/// Bring a screen in front of the others on its display. A display shows
-/// one screen, so there is nothing to change yet.
+/// Bring a screen in front of the others on its display, which then shows
+/// it.
 void ScreenToFront(*intuition.Screen screen)
-/// Put a screen behind the others on its display. The same.
+/// Put a screen behind the others on its display, which then shows the
+/// one now in front.
 void ScreenToBack(*intuition.Screen screen)
 /// The pens and font a screen's parts are drawn in. Give it back with
 /// FreeScreenDrawInfo.

@@ -548,9 +548,10 @@ The handle stays the caller's.
 
 **NOTES**
 
-dos mounts what the table says at boot, so the change is seen at the
-next one. Changing the cylinders of a partition that is mounted leaves
-its file system on the old ones until then.
+The flash disk's table is read at boot, and its partitions mounted as
+it says, so the change is seen at the next one. Changing the cylinders
+of a partition that is mounted leaves its file system on the old ones
+until then.
 
 **BUGS**
 

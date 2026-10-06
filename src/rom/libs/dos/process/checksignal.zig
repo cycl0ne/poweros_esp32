@@ -40,7 +40,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// if (dos_lib.CheckSignal(dos.SIGBREAKF_CTRL_C) != 0) {
+/// if (dos_lib.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
 ///     _ = dos_lib.PrintFault(dos.ERROR_BREAK, null);
 ///     return;
 /// }

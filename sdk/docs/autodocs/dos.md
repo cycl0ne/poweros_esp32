@@ -407,7 +407,7 @@ fn AllocDosObject(db: *DosBase, obj_type: u32, tags: ?[*]const TagItem) ?*anyopa
 **RESULT**
 
 The object, ready to use, or null: with ERROR_NO_FREE_STORE when
-there was no memory, and with IoErr unchanged for a type it doesn't
+there was no memory, and with ERROR_BAD_NUMBER for a type it doesn't
 know.
 
 **BEHAVIOR**
@@ -849,7 +849,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (dos_lib.CheckSignal(dos.SIGBREAKF_CTRL_C) != 0) {
+if (dos_lib.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
     _ = dos_lib.PrintFault(dos.ERROR_BREAK, null);
     return;
 }
@@ -3451,7 +3451,7 @@ fn GetDeviceProc(db: *DosBase, name: [*:0]const u8, olddp: ?*DevProc) ?*DevProc
 
 **INPUTS**
 
-- `name` - the name: "DF0:file", "NIL:", "CONSOLE:", an assign, or a
+- `name` - the name: "DH0:file", "NIL:", "CONSOLE:", an assign, or a
   path without a device.
 - `olddp` - null for a new lookup; the last answer to move on to the
   next directory of a multi-assign.
@@ -4107,8 +4107,8 @@ fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList
 **RESULT**
 
 The chain of segments, the first one with the entry point in its
-`entry`, for RunCommand and CreateNewProc and later UnLoadSeg; IoErr is
-0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
+`entry` - which a `SegCode` wraps for RunCommand or CreateNewProc -
+and later UnLoadSeg; IoErr is 0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
 that isn't a load file of this version, ERROR_BAD_HUNK for one that is
 damaged (too many or too large segments, relocations outside them, an
 entry point outside the code), ERROR_NO_FREE_STORE, or Open's error.
@@ -5233,8 +5233,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-const end = dos_lib.PathPart(path);
-end[0] = 0; // path is now the directory it named a file in
+const length = @intFromPtr(dos_lib.PathPart(path)) - @intFromPtr(path);
+// path[0..length] is the directory it named a file in
 ```
 
 ## PrintFault

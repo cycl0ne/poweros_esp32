@@ -31,8 +31,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
 /// the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
 /// upper case and compares as itself. The comparison also ends at the end
-/// of
-/// either string.
+/// of either string.
 ///
 /// CONTEXT:
 /// - Waits: no.

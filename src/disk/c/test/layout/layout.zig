@@ -351,11 +351,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer ib.DisposeObject(object);
 
     var open = wc.WmOpen{};
-    const window: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
-    if (@intFromPtr(window) == 0) {
+    const opened = ib.SendMessage(object, @ptrCast(&open));
+    if (opened == 0) {
         _ = Printf(dl, MSG_NOWINDOW, .{});
         return dos.RETURN_FAIL;
     }
+    const window: *intuition.Window = @ptrFromInt(opened);
     _ = Printf(dl, MSG_HELLO, .{});
 
     var handle = wc.WmHandleInput{};

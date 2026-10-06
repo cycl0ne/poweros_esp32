@@ -40,7 +40,9 @@ const MEMF_CLEAR = sdk.exec.MEMF_CLEAR;
 /// first puddle.
 ///
 /// CONTEXT:
-/// - Waits: no. - Interrupts: no; it allocates. - Locks: none needed.
+/// - Waits: only when memory runs short, as `AllocMem` does.
+/// - Interrupts: no; it allocates.
+/// - Locks: none taken but `AllocMem`'s; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

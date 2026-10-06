@@ -42,6 +42,10 @@ const _input = @import("../input/_input.zig");
 ///   font of its own takes it. 0 is refused.
 /// - `IPREFS_Keyboard`: when the keyboard on the screen comes up. A
 ///   value past `KEYBOARD_NEVER` is refused.
+/// - `IPREFS_OffScreen`: whether a window may be moved partly past its
+///   screen's edges, 0 or 1; anything else is refused. It holds from the
+///   next move or size on: a window already past an edge stays there until
+///   it is moved or sized.
 /// - `IPREFS_ScreenFont`, `IPREFS_DefaultFont`, `IPREFS_FixedFont`: the
 ///   fonts screens, windows and consoles opened from now on use, as
 ///   `SetSystemFonts` sets them; one not given keeps the font it has.
@@ -120,6 +124,14 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
                     continue;
                 }
                 ib.keyboard_mode = @truncate(item.data);
+                told = true;
+            },
+            intuition.IPREFS_OffScreen => {
+                if (item.data > 1) {
+                    taken = false;
+                    continue;
+                }
+                ib.off_screen = @truncate(item.data);
                 told = true;
             },
             intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {

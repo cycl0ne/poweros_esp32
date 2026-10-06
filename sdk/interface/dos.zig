@@ -335,9 +335,9 @@ pub const DosBase = opaque {
         return libraries.call(self, LVO.AbortPkt, Fn.AbortPkt, .{ port, packet });
     }
 
-    /// A dos object of `obj_type` (DOS_*): so far DOS_STDPKT, a cleared
-    /// DosPacket. Null for no memory (ERROR_NO_FREE_STORE), a type not done
-    /// yet (ERROR_NOT_IMPLEMENTED) or an unknown one.
+    /// A dos object of `obj_type` (DOS_*): a DosPacket, FileHandle,
+    /// FileInfoBlock, ExAllControl, CLI or RDArgs, cleared. Null for no
+    /// memory (ERROR_NO_FREE_STORE) or an unknown type (ERROR_BAD_NUMBER).
     pub fn AllocDosObject(self: *DosBase, obj_type: u32, tags: ?[*]const utility.TagItem) ?*anyopaque {
         return libraries.call(self, LVO.AllocDosObject, Fn.AllocDosObject, .{ obj_type, tags });
     }
@@ -420,7 +420,7 @@ pub const DosBase = opaque {
         return libraries.call(self, LVO.FreeDosEntry, Fn.FreeDosEntry, .{dlist});
     }
 
-    /// The handler for a name ("NIL:", "DF0:file", "CONSOLE:", or a path
+    /// The handler for a name ("NIL:", "DH0:file", "CONSOLE:", or a path
     /// without device for the current file system), starting a device's
     /// handler if it isn't running. With the previous DevProc of a
     /// multi-assign, the next directory. Null on failure; IoErr() says why.

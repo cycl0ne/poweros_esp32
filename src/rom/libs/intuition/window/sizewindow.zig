@@ -23,8 +23,13 @@ const Window = _window.Window;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// `ChangeWindowBox` at its place and a new size, kept within its limits
-/// and its screen.
+/// `ChangeWindowBox` at its place and a new size, kept within its limits.
+/// **The window stays where it is**: it grows no further than its
+/// screen's right and bottom edges, measured from its own left and top -
+/// or, while windows may hang past those edges (`IPREFS_OffScreen`), no
+/// larger than the screen. `ChangeWindowBox` given a size that does not
+/// fit at the place it is given moves the window to make room; a size is
+/// not a move.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -49,5 +54,9 @@ const Window = _window.Window;
 /// ib.SizeWindow(window, 20, 20);
 /// ```
 pub fn SizeWindow(ib: *IntuitionBase, window: *Window, dw: i32, dh: i32) void {
-    ib.iface().ChangeWindowBox(@ptrCast(window), window.left, window.top, window.width + dw, window.height + dh);
+    const s = window.screen;
+    const past_edges = ib.off_screen != 0;
+    const width = if (past_edges) window.width + dw else @min(window.width + dw, s.width - window.left);
+    const height = if (past_edges) window.height + dh else @min(window.height + dh, s.height - window.top);
+    ib.iface().ChangeWindowBox(@ptrCast(window), window.left, window.top, width, height);
 }

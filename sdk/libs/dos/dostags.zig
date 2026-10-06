@@ -6,9 +6,10 @@
 const TAG_USER = @import("../utility/utility.zig").TAG_USER;
 
 pub const NP_Dummy = TAG_USER + 1000;
-/// A seglist to run. Not yet: CreateNewProc refuses it.
+/// A `SegCode` whose process entry runs, instead of NP_Entry.
 pub const NP_Seglist = NP_Dummy + 1;
-/// Free the seglist when the process ends (default true).
+/// Free the seglist when the process ends. Not read: CreateNewProc frees
+/// no code.
 pub const NP_FreeSeglist = NP_Dummy + 2;
 /// The code to run: a TaskFn, which gets SysBase.
 pub const NP_Entry = NP_Dummy + 3;

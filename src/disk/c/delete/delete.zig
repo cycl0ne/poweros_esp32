@@ -142,8 +142,8 @@ fn say(run: *Run, name: [*:0]const u8) void {
     _ = run.dl.PutStr(MSG_DELETED);
 }
 
-/// Ctrl-C, once. The reference's Delete cannot be stopped at all, which is
-/// no use on a tree that takes a while.
+/// Ctrl-C, once: deleting a large tree takes a while, and has to be
+/// stoppable.
 fn breakNow(run: *Run) bool {
     if (run.stopped) return true;
     if (run.dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) return false;

@@ -43,8 +43,8 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// const end = dos_lib.PathPart(path);
-/// end[0] = 0; // path is now the directory it named a file in
+/// const length = @intFromPtr(dos_lib.PathPart(path)) - @intFromPtr(path);
+/// // path[0..length] is the directory it named a file in
 /// ```
 pub fn PathPart(db: *DosBase, name: [*:0]const u8) [*:0]const u8 {
     const utility_lib = db.utility_base;

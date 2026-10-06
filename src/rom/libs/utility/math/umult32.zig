@@ -22,8 +22,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 /// The low 32 bits of the product. An overflow wraps.
 ///
 /// BEHAVIOR:
-/// The low half of the product, which is the same bits whatever the
-/// signs; `UMult64` gives the whole product.
+/// The low half of the product; `UMult64` gives the whole product.
 ///
 /// CONTEXT:
 /// - Waits: no.

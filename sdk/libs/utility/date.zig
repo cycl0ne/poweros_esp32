@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Dates: seconds since 1 January 1978, 00:00, and struct ClockData.
+//! Dates: seconds since 1 January 1978, 00:00, days since that day, and
+//! struct ClockData.
 
 /// struct ClockData.
 pub const ClockData = extern struct {
@@ -13,7 +14,8 @@ pub const ClockData = extern struct {
     mday: u16 = 0,
     /// 1 to 12
     month: u16 = 0,
-    /// 1978 to 2114
+    /// 1978 to 2114 from seconds (`Amiga2Date`), to 65535 from days
+    /// (`DateSplit`)
     year: u16 = 0,
     /// 0 (Sunday) to 6 (Saturday)
     wday: u16 = 0,

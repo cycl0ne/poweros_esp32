@@ -57,6 +57,14 @@ pub const IPREFS_Pens = IPREFS_Dummy + 7;
 /// none, which leaves the default. Set only: a style once read is
 /// intuition's own, and there is nothing to give back.
 pub const IPREFS_Style = IPREFS_Dummy + 8;
+/// Whether a window may be moved partly past its screen's edges: 0 keeps
+/// every window wholly on its screen, 1 lets one hang past the left, right
+/// and bottom edges while enough of it stays to take hold of again - its
+/// top edge never above the screen's, 64 pixels of its width (all of a
+/// narrower one) across, and its title bar's height (16 rows without one)
+/// above the bottom. A window opens wholly on its screen either way. Got:
+/// a `*u32`.
+pub const IPREFS_OffScreen = IPREFS_Dummy + 9;
 
 /// `IPREFS_Keyboard`: on a board with no keyboard of its own.
 pub const KEYBOARD_AUTO: u32 = 0;

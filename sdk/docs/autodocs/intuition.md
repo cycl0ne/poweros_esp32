@@ -156,8 +156,8 @@ fn ActivateGadget(ib: *IntuitionBase, gadget: *Object, window: *Window, requeste
 
 **INPUTS**
 
-- `gadget` - a gadget on the window's list, or of the requester in front
-  in it.
+- `gadget` - a gadget in the window - on its list, or a member of a
+  layout or group that is - or of the requester in front in it.
 - `window` - its window, which must be the active one.
 - `requester` - the requester the gadget is in, or null for one of the
   window's own.
@@ -870,7 +870,11 @@ Nothing.
 **BEHAVIOR**
 
 The size is kept within the window's limits, never below its border,
-and on the screen; the place keeps it on the screen. When the size
+and no larger than the screen. The place keeps it on the screen - or,
+while windows may hang past the screen's edges (`IPREFS_OffScreen`),
+keeps enough of it there to take hold of again: its top never above
+the screen's, 64 pixels of its width across, and its title bar above
+the bottom. A box that does not fit where it is given is moved. When the size
 changed, what was the right and bottom border is cleared to the
 background and the border drawn where it now is, and the program is
 told `IDCMP_NEWSIZE`; either way it is told `IDCMP_CHANGEWINDOW`.
@@ -2722,8 +2726,9 @@ How many were written.
 
 What the system is born with, whatever has been set since: a
 double-click of 1500 milliseconds, a screen font 16 rows tall, the
-keyboard on the screen on a board with none, pospaz from the ROM for
-all three fonts, the built-in pens. Written as `GetPrefs` writes them;
+keyboard on the screen on a board with none, every window kept wholly
+on its screen, pospaz from the ROM for all three fonts, the built-in
+pens. Written as `GetPrefs` writes them;
 what a settings editor's "use the defaults" hands to `SetPrefs`. The
 style is the default when none is set: `IPREFS_Style` with null.
 
@@ -2899,8 +2904,8 @@ fn GetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 - `ib` - intuition.library's base.
 - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
   where its value is written: a `*u32` for `IPREFS_DoubleClick`
-  (milliseconds), `IPREFS_ScreenFontHeight` (rows) and
-  `IPREFS_Keyboard`; a `*?*graphics.TextFont` for the three fonts; a
+  (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`
+  and `IPREFS_OffScreen`; a `*?*graphics.TextFont` for the three fonts; a
   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 
 **RESULT**
@@ -3176,7 +3181,9 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   the limits, `WA_Title`, `WA_IDCMP`, `WA_RastPort`, `WA_UserPort`,
   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
-  `WA_AmigaKey`, `WA_MenuHelp`.
+  `WA_AmigaKey`, `WA_MenuHelp`. `WA_Left` and `WA_Top` are signed,
+  written by their bits: a window past the screen's left edge
+  (`IPREFS_OffScreen`) has a negative left.
 
 **RESULT**
 
@@ -3361,9 +3368,9 @@ fn IntuiTextLength(ib: *IntuitionBase, itext: ?[*]const TagItem) i32
 **RESULT**
 
 How far graphics' `Text` would move along drawing it, in the run's own
-font and style or, when it names no font, in the ROM's font at the
-height a screen opens with when it is given no font. 0 for null, no
-text, or when there is no memory to measure in.
+font and style or, when it names no font, in the system's default
+font (`SYSFONT_DEFAULT`). 0 for null, no text, or when there is no
+memory to measure in.
 
 **BEHAVIOR**
 
@@ -4154,7 +4161,9 @@ Nothing.
 
 **BEHAVIOR**
 
-`ChangeWindowBox` at its size and a new place, kept on the screen.
+`ChangeWindowBox` at its size and a new place, kept on the screen - or,
+while windows may hang past its edges (`IPREFS_OffScreen`), with
+enough of it on the screen to take hold of again.
 
 **CONTEXT**
 
@@ -4778,7 +4787,7 @@ fn OpenScreenTagList(ib: *IntuitionBase,
 **RESULT**
 
 The screen, or null: `OSERR_NOMONITOR` (no display), `OSERR_NOTAVAILABLE`
-(the display already shows a screen), `OSERR_PUBNOTUNIQUE`,
+(the display's memory has no room for another screen), `OSERR_PUBNOTUNIQUE`,
 `OSERR_BADNAME` (a public name too long), `OSERR_NOMEM`.
 
 **BEHAVIOR**
@@ -4803,8 +4812,9 @@ others, and cannot close while it is.
 
 **NOTES**
 
-- One screen to a display, for now. A second on the same display is
-  refused rather than hidden, so a program knows.
+- A display holds as many screens as its memory has room for; the one
+  in front is shown, and `ScreenToFront` and `ScreenToBack` change
+  which.
 - Without memory for its title bar it opens with none.
 
 **BUGS**
@@ -6722,6 +6732,10 @@ value:
   font of its own takes it. 0 is refused.
 - `IPREFS_Keyboard`: when the keyboard on the screen comes up. A
   value past `KEYBOARD_NEVER` is refused.
+- `IPREFS_OffScreen`: whether a window may be moved partly past its
+  screen's edges, 0 or 1; anything else is refused. It holds from the
+  next move or size on: a window already past an edge stays there until
+  it is moved or sized.
 - `IPREFS_ScreenFont`, `IPREFS_DefaultFont`, `IPREFS_FixedFont`: the
   fonts screens, windows and consoles opened from now on use, as
   `SetSystemFonts` sets them; one not given keeps the font it has.
@@ -7302,8 +7316,13 @@ Nothing.
 
 **BEHAVIOR**
 
-`ChangeWindowBox` at its place and a new size, kept within its limits
-and its screen.
+`ChangeWindowBox` at its place and a new size, kept within its limits.
+**The window stays where it is**: it grows no further than its
+screen's right and bottom edges, measured from its own left and top -
+or, while windows may hang past those edges (`IPREFS_OffScreen`), no
+larger than the screen. `ChangeWindowBox` given a size that does not
+fit at the place it is given moves the window to make room; a size is
+not a move.
 
 **CONTEXT**
 

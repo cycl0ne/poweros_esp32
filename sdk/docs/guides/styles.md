@@ -3,8 +3,9 @@
 How gadgets, windows and menus get their look: what a style is, where one
 comes from, how a property is found, and what a class or a program does to
 draw in it. The calls are in the reference: [intuition](../autodocs/intuition.md)
-(`DrawPart`, `GetStyleAttr`, `StylePens`, `SetStyle`) and
-[graphics](../autodocs/graphics.md) for the fill styles.
+(`DrawPart`, `GetStyleAttr`, `StylePens`, `SetStyle`); the fill styles
+are graphics.library's `FillStyle` and `RPTAG_FillStyle`, in
+`sdk/libs/graphics/graphics.zig`.
 
 - [What a style is](#what-a-style-is)
 - [Parts](#parts)
@@ -14,6 +15,7 @@ draw in it. The calls are in the reference: [intuition](../autodocs/intuition.md
 - [How a property is found](#how-a-property-is-found)
 - [Giving a screen or a gadget a style](#giving-a-screen-or-a-gadget-a-style)
 - [The system's style and style.prefs](#the-systems-style-and-styleprefs)
+- [The screens' pens](#the-screens-pens)
 - [Drawing a part in a class](#drawing-a-part-in-a-class)
 - [Hover and focus](#hover-and-focus)
 - [Tools](#tools)
@@ -267,7 +269,10 @@ ib.DrawPart(rp, dri, g.style, style.PART_MAIN, states, 0, &box, &inside);
 With a null RastPort `DrawPart` only measures: `inside` is what the border
 and padding leave, which is how a frame says how much bigger it is than
 what it holds. `DPF_EDGES_ONLY` draws the border alone, `DPF_INVERT`
-turns it the other way.
+turns it the other way, and `DPF_CLEAR` erases the box to the
+RastPort's background first - for a part drawn straight on a window,
+where something square may have been drawn before, not for one drawn
+over another part.
 
 **Which part.** A button, or anything pressed, is `PART_MAIN`; a box
 that holds content - a field, a list - is `PART_FIELD`, so a list is
@@ -276,7 +281,11 @@ stands on the window - a page, a row of tabs between the tabs, a text
 without a frame - is not a part at all: it is the window's ground,
 painted as the window paints it with `EraseRect` through the gadget's
 RastPort. A round part's corners are its own: what is drawn inside it
-keeps clear of them by the radius less the border.
+keeps clear of them by the radius less the border. A gadget in a
+window's border (`GA_RightBorder` and the like) stands on the border
+instead: what it does not draw is the border's, in its colour while the
+window is active and the inactive title's while it is not, and a part
+it draws there - a scroller's knob - takes the inactive colours too.
 
 **A single property** - a label's colour, a mark's:
 
@@ -367,7 +376,7 @@ by its class as it goes active and inactive, which it does anyway.
 
 | Command | What it does |
 |---------|--------------|
-| `C:SetPrefs` | hands the style, the pens, the fonts and intuition's settings from the files in `ENV:Sys` - or `FROM` another directory - to intuition in one `SetPrefs`; `RESET` back to what the system starts with; `SHOW` prints what is in force |
+| `C:SetPrefs` | hands the style, the pens, the fonts and intuition's settings from the files in `ENV:Sys` - or `FROM` another directory - to intuition in one `SetPrefs`; `RESET` back to what the system starts with; `SHOW` prints the pens, the fonts and the settings in force (the style can be set, not read back) |
 | `SYS:Programs/Prefs` | edits the style, the screens' pens, the fonts and intuition's settings in a window; Save, Use, Cancel |
 | `C:test/Styles` | a public screen in a style of its own, made the default public screen; `DARK` with dark pens and a style to match |
 | `C:test/Gadgets`, `C:test/Layout`, `C:test/ListView` | windows of gadgets to look at in either |

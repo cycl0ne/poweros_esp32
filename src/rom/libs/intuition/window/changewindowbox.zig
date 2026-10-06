@@ -35,7 +35,11 @@ const unlock = _window.unlock;
 ///
 /// BEHAVIOR:
 /// The size is kept within the window's limits, never below its border,
-/// and on the screen; the place keeps it on the screen. When the size
+/// and no larger than the screen. The place keeps it on the screen - or,
+/// while windows may hang past the screen's edges (`IPREFS_OffScreen`),
+/// keeps enough of it there to take hold of again: its top never above
+/// the screen's, 64 pixels of its width across, and its title bar above
+/// the bottom. A box that does not fit where it is given is moved. When the size
 /// changed, what was the right and bottom border is cleared to the
 /// background and the border drawn where it now is, and the program is
 /// told `IDCMP_NEWSIZE`; either way it is told `IDCMP_CHANGEWINDOW`.
@@ -72,8 +76,9 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     // Within its limits, never smaller than its border, and on its screen.
     const new_w = @min(@max(@max(width, window.min_width), window.border_left + window.border_right + 1), @min(window.max_width, s.width));
     const new_h = @min(@max(@max(height, window.min_height), window.border_top + window.border_bottom + 1), @min(window.max_height, s.height));
-    const new_l = @max(@min(left, s.width - new_w), 0);
-    const new_t = @max(@min(top, s.height - new_h), 0);
+    const place = _window.legalPlace(ib, window, left, top, new_w, new_h);
+    const new_l = place.left;
+    const new_t = place.top;
     const dx = new_l - window.left;
     const dy = new_t - window.top;
     const dw = new_w - window.width;

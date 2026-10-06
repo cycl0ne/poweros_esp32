@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! rdb [init [partition]]: the flash disk's RigidDiskBlock and the
 //! partitions hanging off it (sdk/libs/dos/hardblocks.zig), which is what
-//! dos.library reads at boot to decide what to mount; or a fresh one
-//! written.
+//! flash.device reads at boot to hand dos.library the partitions to mount;
+//! or a fresh one written.
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");

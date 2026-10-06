@@ -28,7 +28,7 @@ const UDivMod32Result = sdk.utility.UDivMod32Result;
 ///
 /// BEHAVIOR:
 /// A zero divisor is a programming error with no answer to give, and ends
-/// in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+/// in exec's dead-end alert for a division by zero (`ACPU_Base | 6`).
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -9,7 +9,8 @@
 //! intuition.library in one `SetPrefs`:
 //!
 //! - intuition.prefs: the double-click time, the height of a screen's
-//!   font when it is given none, when the keyboard on the screen comes up.
+//!   font when it is given none, when the keyboard on the screen comes up,
+//!   and whether a window may be moved partly past the screen's edges.
 //! - font.prefs: the fonts of screens' bars and menus, of windows and
 //!   gadgets, and of consoles - each opened with diskfont.library, so any
 //!   size of any family in FONTS: will do; one left out is pospaz from the
@@ -33,6 +34,7 @@
 //!   DOUBLECLICK  1500 ms
 //!   SCREENFONT   16 rows
 //!   KEYBOARD     AUTO
+//!   OFFSCREEN    NO
 //!   SCREEN       go.font 24 rows
 //!   DEFAULT      go.font 21 rows
 //!   FIXED        pospaz.font 16 rows (ROM)
@@ -276,15 +278,18 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     var ms: u32 = 0;
     var rows: u32 = 0;
     var keys: u32 = 0;
+    var off_screen: u32 = 0;
     _ = l.ib.GetDefPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
+        .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
         .{},
     });
     g.add(intuition.IPREFS_DoubleClick, ms);
     g.add(intuition.IPREFS_ScreenFontHeight, rows);
     g.add(intuition.IPREFS_Keyboard, keys);
+    g.add(intuition.IPREFS_OffScreen, off_screen);
     for (font_tags) |tag| g.add(tag, 0);
     g.add(intuition.IPREFS_Pens, 0);
     g.add(intuition.IPREFS_Style, 0);
@@ -295,12 +300,14 @@ fn show(l: Libs) void {
     var ms: u32 = 0;
     var rows: u32 = 0;
     var keys: u32 = 0;
+    var off_screen: u32 = 0;
     var fonts: [3]?*graphics.TextFont = @splat(null);
     var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
     _ = l.ib.GetPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
+        .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
         .{ .tag = font_tags[0], .data = @intFromPtr(&fonts[0]) },
         .{ .tag = font_tags[1], .data = @intFromPtr(&fonts[1]) },
         .{ .tag = font_tags[2], .data = @intFromPtr(&fonts[2]) },
@@ -314,6 +321,10 @@ fn show(l: Libs) void {
     const name = intuition_file.keyboard_names[@min(keys, 2)];
     @memcpy(keyboard[0..name.len], name);
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "KEYBOARD"), @as([*:0]const u8, &keyboard) });
+    var past_edges: [4:0]u8 = @splat(0);
+    const answer = intuition_file.off_screen_names[@min(off_screen, 1)];
+    @memcpy(past_edges[0..answer.len], answer);
+    _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "OFFSCREEN"), @as([*:0]const u8, &past_edges) });
     const font_names = [3][*:0]const u8{ "SCREEN", "DEFAULT", "FIXED" };
     for (fonts, font_names) |font, label| {
         const f = font orelse continue;

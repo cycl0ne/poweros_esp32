@@ -27,11 +27,11 @@ const Library = sdk.exec.Library;
 /// INPUTS:
 /// - `name` - the library's name, as it is on its node. Matched exactly,
 ///   case included.
-/// - `ver` - the lowest version that will do. 0 takes whatever is there.
+/// - `version` - the lowest version that will do. 0 takes whatever is there.
 ///
 /// RESULT:
 /// The library base to call through, or null: there is no library of that
-/// name, it is older than `ver`, or its Open vector refused.
+/// name, it is older than `version`, or its Open vector refused.
 ///
 /// BEHAVIOR:
 /// The version check is here rather than in the library, so every library

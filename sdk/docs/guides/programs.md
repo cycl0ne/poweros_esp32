@@ -45,9 +45,10 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 
 ## Hello, world - in a window
 
-The shell's hello-world, with intuition.library and graphics.library
-instead of dos.library: a window on the default screen, the words drawn into its RastPort, and its messages
-waited for until the close gadget is used or Ctrl-C comes:
+The shell's hello-world, with intuition.library and graphics.library instead
+of dos.library, and layers.library for the window's lock: a window on the
+default screen, the words drawn into its RastPort, and its messages waited
+for until the close gadget is used or Ctrl-C comes:
 
 ```zig
 // window.zig
@@ -61,6 +62,7 @@ const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const LayersBase = sdk.interface.layers.LayersBase;
 
 export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
@@ -69,6 +71,9 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(gfx_lib);
     const gb: *GraphicsBase = @ptrCast(gfx_lib);
+    const layers_lib = sys.OpenLibrary(sdk.layers.LAYERSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(layers_lib);
+    const lb: *LayersBase = @ptrCast(layers_lib);
 
     // A window on the default screen, with a close gadget that tells us so.
     const w = ib.OpenWindowTagList(&[_]TagItem{
@@ -84,22 +89,28 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     }) orelse return dos.RETURN_FAIL;
     defer ib.CloseWindow(w);
 
-    // The window's RastPort, and where the inside starts.
+    // The window's RastPort and layer, and where the inside starts.
     var rp_addr: usize = 0;
+    var layer_addr: usize = 0;
     var left: usize = 0;
     var top: usize = 0;
     ib.GetWindowAttrs(w, &[_]TagItem{
         .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp_addr) },
+        .{ .tag = wn.WA_Layer, .data = @intFromPtr(&layer_addr) },
         .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
         .{ .tag = wn.WA_BorderTop, .data = @intFromPtr(&top) },
         .{},
     });
     const rp: *graphics.RastPort = @ptrFromInt(rp_addr);
+    const layer: *sdk.layers.Layer = @ptrFromInt(layer_addr);
 
-    // The words, in the screen's text pen.
+    // The words, in the screen's text pen, with the window's layer held:
+    // intuition draws the border and the gadgets from its own task.
     const text = "Hello, world!";
+    lb.LockLayer(layer);
     gb.Move(rp, @intCast(left + 20), @intCast(top + 35));
     gb.Text(rp, text, text.len);
+    lb.UnlockLayer(layer);
 
     // Wait until the close gadget is used, or Ctrl-C comes.
     while (true) {
@@ -175,8 +186,9 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     defer ib.DisposeObject(object); // the window, the layout, the buttons
 
     var open = wc.WmOpen{};
-    const window: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
-    if (@intFromPtr(window) == 0) return dos.RETURN_FAIL;
+    const opened = ib.SendMessage(object, @ptrCast(&open));
+    if (opened == 0) return dos.RETURN_FAIL;
+    const window: *intuition.Window = @ptrFromInt(opened);
 
     // Each message as one word: what happened, and which gadget.
     var handle = wc.WmHandleInput{};
@@ -198,11 +210,12 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
 }
 ```
 
-Each gets its own `addProgram` in `build.zig`, as `hello` above,
-and `zig build` makes `zig-out/bin/window.seg` and `buttons.seg`. Put them on the disk with
-`-Dextra=c/hello=path/to/hello.seg` (or drop them into the tree's
-`disk/c/`), and run them from the shell: `run window` keeps the shell free while
-the window is open.
+Each gets its own `addProgram` in `build.zig`, as `hello` above, and
+`zig build` makes `zig-out/bin/window.seg` and `buttons.seg`. Put them on
+the disk with `-Dextra=c/window=path/to/window.seg` and
+`-Dextra=c/buttons=path/to/buttons.seg` (or drop them into the tree's
+`disk/c/`), and run them from the shell: `run window` keeps the shell free
+while the window is open.
 
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
@@ -227,7 +240,8 @@ dbg> m 3fc89a00 0            one word written
 dbg> b 428e5de4              a breakpoint; b off [n] takes one away
 dbg> w 3fc9bbf8 8 w          a watchpoint: 8 bytes, on writing
 dbg> s                       one instruction
-dbg> g                       go on
+dbg> g                       go on (q as well)
+dbg> reset                   the machine started again
 ```
 
 The breakpoints and watchpoints are the core's own - two of each - so
@@ -242,12 +256,12 @@ the one the core stops at - so the breakpoint is held off, the one
 instruction stepped, and it is put back. That step is the one visit to
 the debugger that says nothing.
 
-There are three ways in: a dead-end Guru offers it for a few seconds and
-halts as it always has if nobody answers; `debug` at the `s3>` prompt
-stops a working machine and `g` sets it going again; and `Debug()` from
-code. It talks on **both** raw ports at once - UART0 and the chip's own
-USB port - and takes a character from whichever has one, because which
-cable is plugged in is not something a stopped machine can ask. A Guru
+There are three ways in: a dead end the machine cannot run on from offers it
+for a few seconds and restarts the machine if nobody answers; `debug` at the
+`s3>` prompt stops a working machine and `g` sets it going again; and
+`Debug(0)` from code. It talks on **both** raw ports at once - UART0 and the
+chip's own USB port - and takes a character from whichever has one, because
+which cable is plugged in is not something a stopped machine can ask. A Guru
 is copied to both for the same reason.
 
 An address is named with the code it is in, which for a program loaded
@@ -270,9 +284,11 @@ text as a QR code, a Code 128 or an EAN-13), `chart` (values over time
 as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
 written to input.device as a keyboard's are),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
-button that pops a list up to pick from), and `clicktab` with `page` (a
-row of tabs over pages of gadgets), and `getfile` with `getfont` (a
-field with a button beside it that opens asl.library's requester). Each
+button that pops a list up to pick from), `clicktab` with `page` (a
+row of tabs over pages of gadgets), `getfile` with `getfont` (a
+field with a button beside it that opens asl.library's requester), and
+`textedit` (text of many lines to edit, with undo, the clipboard and
+finding - what `SYS:Programs/Notepad` is made of). Each
 has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig
@@ -297,6 +313,9 @@ field and told to the gadget's `ICA_TARGET`, so a gadget whose target is
 `WMHI_IDCMPUPDATE`:
 
 ```zig
+const gfi = sdk.gadgets.getfile;
+const icc = sdk.intuition.icclass;
+
 const file = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &.{
     .{ .tag = gc.GA_ID, .data = 7 },
     .{ .tag = gfi.GETFILE_TitleText, .data = @intFromPtr("Which file?") },
@@ -322,6 +341,8 @@ small markup (`TEXT_Markup`): `<b>`, `<i>`, `<u>`, `<c=#RRGGBB>`,
 the gadget:
 
 ```zig
+const tx = sdk.gadgets.text;
+
 const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
     .{ .tag = tx.TEXT_Markup, .data = 1 },
     .{ .tag = tx.TEXT_Wrap, .data = 1 },
@@ -336,12 +357,18 @@ const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 On a board whose only input is a touch panel, intuition brings a
 keyboard up at the bottom of the screen whenever a field gets the input,
 and takes it away when the field lets go: a program does nothing for
-it. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
+it. A field is a string gadget, or a gadget of any class that sets
+`GFLG_TYPING` in its flags as it is made - which is how a class of a
+program's own that takes text, `textedit.gadget` among them, gets the
+keyboard too. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
 the board, the default), `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
 `C:test/Keyboard` turns it on and opens a field to try it with.
 The setting is kept in `ENVARC:Sys/intuition.prefs` with intuition's
-other two - `DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO` - which
-`C:SetPrefs` hands to intuition at boot and `SYS:Programs/Prefs` edits.
+other three - `DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO`
+- which `C:SetPrefs` hands to intuition at boot and `SYS:Programs/Prefs`
+edits. `OFFSCREEN` (`IPREFS_OffScreen`) lets a window be moved partly
+past the screen's edges; see
+[A window from tags](intuition.md#a-window-from-tags).
 
 Every setting the system keeps is a tag: `SetPrefs` changes those
 given and tells every window that listens (`IDCMP_NEWPREFS`), `GetPrefs`
@@ -370,8 +397,7 @@ worked in.
 Programs are built ReleaseSafe, so an overflow, an index out of bounds or a
 null unwrapped is caught where it happens. `addProgram` gives every program
 the SDK's panic handler (`sdk/program.zig`, `sdk.exec.panic`), and a failed
-check stops the machine with a Guru on the serial console that says what
-failed and where:
+check is a Guru on the serial console that says what failed and where:
 
 ```
 *** Software Failure.
@@ -379,8 +405,20 @@ failed and where:
 *** index out of bounds: index 5, len 2
 *** in EchoArgs at +0x51A
 *** Task "Shell Process [2]" at 0x3C084148
-*** system halted
+*** task held, and asked about on the display
 ```
+
+**The machine runs on.** The task that failed is held where it is - it
+never runs another instruction - and a Software Failure requester on the
+display names it: Suspend leaves it held for good, with whatever it holds,
+while everything else goes on; Reboot starts the machine again. That is
+so whenever the task can be held: not in an interrupt, nothing masked, no
+spinlock held, not intuition's own input task, none of the display's locks
+in its hands. Anything else is a dead end the machine cannot run on from:
+it keeps the end of the system log over the restart (the last words,
+below), offers the ROM debugger for a few seconds, and restarts -
+`*** restarting` - unless the debugger is taken, after which it stays
+stopped (`*** system halted`).
 
 `81000101` is `AN_ProgramPanic`. The fourth line names the loaded file and
 the offset into its code, which is the address in the program's linked ELF
@@ -412,8 +450,10 @@ register-window stack.
 The bottom words of every stack - a task's, and the one a command runs on
 - hold a guard. exec looks at it each time it switches away from the task,
 and once more when the command ends; a stack that ran past its end has
-written over it, and the machine stops at that moment rather than in
-whatever memory the overflow landed on:
+written over it, and that is a Guru at that moment rather than wherever
+the overflow landed. Found when the command ends, its task is held and
+asked about as any failed check is; found as the task is switched away
+from, nothing can be held, and the machine stops:
 
 ```
 *** Software Failure.
@@ -471,7 +511,7 @@ var buffer: [512]u8 = undefined;
 while (true) {
     const count = sys.ReadLog(&position, &buffer, buffer.len);
     if (count == 0) break;
-    _ = dl.Write(dl.Output(), &buffer, count);
+    _ = dl.Write(dl.Output(), &buffer, @intCast(count));
 }
 ```
 
@@ -574,6 +614,11 @@ A broken rule is a recoverable alert (`AN_LockRule`), and the call goes on -
 but for `Wait`. A lock taken again on the core that holds it would spin for
 good, so it is a dead end (`AN_LockDeadlock`) instead.
 
+A lock may live anywhere. In internal memory taking it is one
+compare-and-set instruction; in PSRAM, where this chip has none, exec takes
+it under a guard word in internal memory, with interrupts masked for those
+few instructions.
+
 ### A library's or a device's own calls
 
 exec opens, closes and expunges a library under locks of its own, so its
@@ -608,16 +653,10 @@ code goes. exec says when it is:
   it runs; dos closes it once that code has returned, so the library
   cannot be expunged under it.
 
-
-A lock may live anywhere. In internal memory taking it is one
-compare-and-set instruction; in PSRAM, where this chip has none, exec takes
-it under a guard word in internal memory, with interrupts masked for those
-few instructions.
-
 ## Two cores
 
-The kernel runs on both of the chip's cores where the board says so (and
-always in QEMU; `-Dcores=1` builds one that keeps to one). Each core has a
+The kernel runs on both of the chip's cores, on every board and in
+QEMU, and `-Dcores=1` builds one that keeps to one. Each core has a
 dispatcher of its own, both take tasks from one ready list, and a task
 runs on whichever core is free - so two tasks really do run at once, and
 what keeps them apart has to hold on both cores:

@@ -19,7 +19,7 @@ const Puddle = _memory.Puddle;
 /// SINCE: 1.0. LVO -452.
 ///
 /// INPUTS:
-/// - `pool` - what CreatePool answered, or null, which does nothing.
+/// - `pool_handle` - what CreatePool answered, or null, which does nothing.
 ///
 /// RESULT:
 /// Nothing.

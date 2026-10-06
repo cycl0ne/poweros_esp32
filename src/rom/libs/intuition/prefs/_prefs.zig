@@ -45,6 +45,7 @@ pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
                 milliseconds(ib.double_seconds, ib.double_micros),
             intuition.IPREFS_ScreenFontHeight => @as(*u32, @ptrFromInt(item.data)).* = if (born) _screen.default_font_height else ib.font_height,
             intuition.IPREFS_Keyboard => @as(*u32, @ptrFromInt(item.data)).* = if (born) intuition.KEYBOARD_AUTO else ib.keyboard_mode,
+            intuition.IPREFS_OffScreen => @as(*u32, @ptrFromInt(item.data)).* = if (born) 0 else ib.off_screen,
             intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {
                 const into: *?*graphics.TextFont = @ptrFromInt(item.data);
                 into.* = if (born)

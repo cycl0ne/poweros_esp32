@@ -26,7 +26,7 @@ const DevProc = dos.DevProc;
 /// SINCE: 1.0. LVO -96.
 ///
 /// INPUTS:
-/// - `name` - the name: "DF0:file", "NIL:", "CONSOLE:", an assign, or a
+/// - `name` - the name: "DH0:file", "NIL:", "CONSOLE:", an assign, or a
 ///   path without a device.
 /// - `olddp` - null for a new lookup; the last answer to move on to the
 ///   next directory of a multi-assign.

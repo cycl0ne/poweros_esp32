@@ -62,8 +62,8 @@ const TaskFn = sdk.exec.TaskFn;
 ///
 /// NOTES:
 /// The stack has to be big enough for the register windows the ABI spills
-/// into it, which is why `CreateTask`'s smallest is 8 KiB rather than
-/// something nominal.
+/// into it, which is why `CreateTask` gives 8 KiB when it is asked for no
+/// size, and never less than 1 KiB, rather than something nominal.
 ///
 /// BUGS:
 /// None known.

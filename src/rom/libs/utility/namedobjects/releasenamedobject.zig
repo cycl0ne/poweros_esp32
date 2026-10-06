@@ -26,8 +26,7 @@ const Object = _namedobjects.Object;
 ///
 /// BEHAVIOR:
 /// The use count goes down under utility's object lock. When it reaches
-/// zero and a
-/// `RemNamedObject` is waiting, its message is replied now. A count already
+/// zero and a `RemNamedObject` is waiting, its message is replied now. A count already
 /// at zero stays there.
 ///
 /// CONTEXT:

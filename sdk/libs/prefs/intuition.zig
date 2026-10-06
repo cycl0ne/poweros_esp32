@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! intuition.prefs: intuition.library's own settings as a file - one line,
-//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO`:
+//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO`:
 //!
 //! - DOUBLECLICK: how far apart two presses may be and still be one
 //!   double-click, in milliseconds.
@@ -8,6 +8,8 @@
 //!   is given none.
 //! - KEYBOARD: when the on-screen keyboard comes up while a field is typed
 //!   into - AUTO (on a board with no keyboard), ALWAYS or NEVER.
+//! - OFFSCREEN: whether a window may be moved partly past the screen's
+//!   edges - YES or NO.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `toTags` makes those it gave the tags `SetPrefs` takes,
@@ -20,7 +22,7 @@ const utility = @import("../utility/utility.zig");
 const style = @import("style.zig");
 const TagItem = utility.TagItem;
 
-/// The line's three settings, and which of them it gave.
+/// The line's four settings, and which of them it gave.
 pub const Settings = struct {
     /// Milliseconds.
     double_click: u32 = 1500,
@@ -28,17 +30,22 @@ pub const Settings = struct {
     screen_font: u32 = 16,
     /// `KEYBOARD_`.
     keyboard: u32 = intuition.KEYBOARD_AUTO,
+    /// 1 when a window may hang past the screen's edges.
+    off_screen: u32 = 0,
     /// A bit each, in that order.
     given: u32 = 0,
 };
 const given_double: u32 = 1;
 const given_font: u32 = 2;
 const given_keyboard: u32 = 4;
+const given_off_screen: u32 = 8;
 
 pub const ENV_FILE = "ENV:Sys/intuition.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/intuition.prefs";
 
 pub const keyboard_names = [3][]const u8{ "AUTO", "ALWAYS", "NEVER" };
+/// OFFSCREEN's words, by its value.
+pub const off_screen_names = [2][]const u8{ "NO", "YES" };
 
 /// The line read into `settings`, which keeps what it leaves out: null
 /// when it is taken, else what is wrong with it.
@@ -73,7 +80,12 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
                 if (style.same(value, name)) break @intCast(k);
             } else return "KEYBOARD is AUTO, ALWAYS or NEVER";
             settings.given |= given_keyboard;
-        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO";
+        } else if (style.same(word, "OFFSCREEN")) {
+            settings.off_screen = for (off_screen_names, 0..) |name, k| {
+                if (style.same(value, name)) break @intCast(k);
+            } else return "OFFSCREEN is YES or NO";
+            settings.given |= given_off_screen;
+        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO OFFSCREEN=NO";
     }
     return null;
 }
@@ -92,7 +104,7 @@ fn number(value: u32, into: []u8) usize {
     return n;
 }
 
-/// The settings the line gave as `SetPrefs`'s tags, into `out` (three
+/// The settings the line gave as `SetPrefs`'s tags, into `out` (four
 /// will do); how many, no end.
 pub fn toTags(settings: *const Settings, out: []TagItem) usize {
     var n: usize = 0;
@@ -108,10 +120,14 @@ pub fn toTags(settings: *const Settings, out: []TagItem) usize {
         out[n] = .{ .tag = intuition.IPREFS_Keyboard, .data = settings.keyboard };
         n += 1;
     }
+    if (settings.given & given_off_screen != 0) {
+        out[n] = .{ .tag = intuition.IPREFS_OffScreen, .data = settings.off_screen };
+        n += 1;
+    }
     return n;
 }
 
-/// `settings` written as the line, all three, into `into` (64 bytes will
+/// `settings` written as the line, all four, into `into` (96 bytes will
 /// do); how many bytes, no newline.
 pub fn write(settings: *const Settings, into: []u8) usize {
     var n: usize = 0;
@@ -127,6 +143,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     n += number(settings.screen_font, into[n..]);
     put(into, &n, " KEYBOARD=");
     put(into, &n, keyboard_names[@min(settings.keyboard, 2)]);
+    put(into, &n, " OFFSCREEN=");
+    put(into, &n, off_screen_names[@min(settings.off_screen, 1)]);
     return n;
 }
 
@@ -142,10 +160,13 @@ pub const header =
     \\# KEYBOARD     when the keyboard on the screen comes up while a field
     \\#              is typed into: AUTO (on a board with no keyboard of
     \\#              its own), ALWAYS or NEVER.
+    \\# OFFSCREEN    whether a window may be moved partly past the screen's
+    \\#              edges: YES or NO. Enough of it always stays on the
+    \\#              screen to take hold of again.
     \\#
     \\# One left out keeps the value intuition has. These are the system's
     \\# own:
     \\#
-    \\# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO
+    \\# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO
     \\
 ;

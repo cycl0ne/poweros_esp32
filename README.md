@@ -22,7 +22,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [displays](sdk/docs/guides/rtg.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [displays](sdk/docs/guides/rtg.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -52,13 +52,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   Amiga software.
 - **It is not** a protected system. All tasks share one address space; it
   is a machine for one person at a time.
-- **It does not (yet)** have Bluetooth or USB host support, or run on the
-  boards' second core: the kernel runs on both of the chip's cores in
-  QEMU, and a board takes the second once it is proved there.
+- **It does not (yet)** have Bluetooth or USB host support.
 
 ### What is in it
 
-- **Kernel (exec):** preemptive multitasking on one or both cores - a
+- **Kernel (exec):** preemptive multitasking on both of the chip's cores - a
   dispatcher per core, one ready list, tasks pinned to a core where they
   must be - signals, message ports, semaphores, spinlocks with checked
   rules, and every system list under a lock of its own, so neither core
@@ -106,9 +104,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   eased values, timers that do not drift, timelines; a style change
   fades, a gauge fills, a list glides. See the
   [motion guide](sdk/docs/guides/motion.md).
-- **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts
-  and the input in one window, and every open window takes a change at
-  once; `C:SetPrefs` hands them over at boot.
+- **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts,
+  the input, and whether windows may be moved partly past the screen's
+  edges, in one window; every open window takes a change at once, and
+  `C:SetPrefs` hands them over at boot.
 - **Fonts:** bitmap and TrueType, any size, smooth or in colour, shown
   by `SYS:Programs/FontView`. See the
   [fonts guide](sdk/docs/guides/fonts.md).
@@ -122,8 +121,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   a device from the shell, and `SYS:Programs/Battery` shows a battery a
   Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
 - **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
-  card, I2C, touch, keyboard, mouse, input, console, four-channel audio; watchdog, DMA,
-  GPIO and platform resources; `LIBS:crypto.library` on the chip's SHA,
+  card, I2C, touch, keyboard, mouse, input, console, four-channel audio,
+  Telnet; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures.
 - **Boards are data:** which parts are fitted and how they are wired is a
@@ -178,12 +177,13 @@ More build steps and options:
 | `./zig build qemu-disk` | QEMU on an image whose disk keeps what is written |
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
+| `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
-| `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two for `qemu`, one for the boards so far) |
+| `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
 
 ## Repository layout
 
@@ -194,8 +194,8 @@ src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, checks
-scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts), a serial terminal
+tools/         build helpers: mkfs, ressize, the autodocs, the module charts, checks
+scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts, certificates), a serial terminal
 ```
 
 ## License

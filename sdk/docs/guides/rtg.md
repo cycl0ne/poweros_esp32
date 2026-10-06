@@ -81,9 +81,13 @@ and reads back (`RxParam`).
 
 **The machine's own display is made at boot.** graphics.library's init asks
 expansion.library for the board's panel part, hands its tags to the driver
-that drives such a panel, puts the board in its default mode, clears a
-first buffer to black and shows it. The board is called `display`
-(`sdk.graphics.DISPLAY_BOARD`), which is how everything finds it again:
+that drives such a panel, puts the board in its mode of the screen's size
+(`SYSTAG_ScreenWidth` and `SYSTAG_ScreenHeight`), or in its default mode
+when it has none such, clears a first buffer to black and shows it. The mode
+is what says which way up a panel that can be turned runs: the 3.5" board's
+default is upright, 320 by 480, and its screen 480 by 320. The board is
+called `display` (`sdk.graphics.DISPLAY_BOARD`), which is how everything
+finds it again:
 
 ```zig
 const board = rb.FindBoard(sdk.graphics.DISPLAY_BOARD) orelse return dos.RETURN_FAIL;
@@ -137,8 +141,9 @@ alignment, a cache line unless the driver says otherwise, because a
 display reads its memory a line at a time.
 
 `AttachBitMap` makes a buffer over memory the caller already has: the
-seven fields of a surface are read out of the description and nothing is
-allocated. `FreeBitMap` then gives back only the handle.
+pixels, width, height, pitch and format are read out of the description,
+and only the handle is allocated. `FreeBitMap` then gives back only the
+handle.
 
 **The head of a buffer is a drawing surface.** An `RtgBitMap`'s first
 seven fields - `pixels`, `width`, `height`, `pitch`, `size_bytes`,
@@ -158,17 +163,18 @@ Writing into a buffer is not yet showing it. A board does one of two
 things with its picture:
 
 - **It streams** (`RTGBF_STREAMING`): the board reads its memory over and
-  over by itself. The 7B's RGB panel and the emulator's display are such
-  boards. What the CPU writes reaches the board's eyes once it is out of
-  the cache.
+  over by itself. The 7B's RGB panel is such a board. What the CPU writes
+  reaches the board's eyes once it is out of the cache.
 - **It is sent** what changed: a controller with a picture of its own,
   reached over a bus, such as the 3.5" board's. Nothing reaches the glass
-  until it goes over the bus.
+  until it goes over the bus. The emulator's display is handed on the same
+  way: its refresh tells the emulator that the buffer on show changed.
 
 Either way the writer says what it wrote, with `RefreshBitMap(bitmap, y,
-rows)` (`rows` 0: all of them). A streaming board writes those rows back
-out of the cache; a sending board sends them. Rows of a buffer that is not
-being shown go nowhere and cost nothing.
+rows)` (`rows` 0: every row from `y` on). A streaming board writes those
+rows back out of the cache, whichever buffer they are in; a sending board
+sends them, and rows of a buffer it is not showing go nowhere and cost
+nothing.
 
 **graphics.library does this for its RastPorts.** Every drawing call hands
 on the rows it touched. Between `BeginDraw` and `EndDraw` the rows are
@@ -198,12 +204,15 @@ it: the display is still reading it. `BoardDisplayBitMap` answers which
 buffer that is. `ShowBitMap(board, null, 0, 0)` shows nothing.
 
 The `x` and `y` are the buffer's pixel at the display's top left, for a
-buffer larger than the display shown through a window of it. A board that
-cannot pan (no `RTGBC_PAN`) answers `RTGERR_NOT_SUPPORTED` for anything
-but `(0, 0)` - none of this machine's can.
+buffer larger than the display shown through a window of it. No board on
+this machine can pan: each driver refuses anything but `(0, 0)` itself,
+the 7B's and the 3.5" board's with `RTGERR_NOT_SUPPORTED`, the
+emulator's with `RTGERR_BAD_ARG`.
 
 `WaitVBlank(board, frames)` waits for the display's blanking: 0 is the
-next one. `SetBoardDisplay` turns the display on or off, and
+next one. A board that neither streams nor has a wait of its own has no
+blanking to wait for and answers `RTGERR_NOT_SUPPORTED` - the 3.5"
+board does. `SetBoardDisplay` turns the display on or off, and
 `SetBoardBrightness` sets the backlight, 0 to 100 whichever way round the
 part counts.
 
@@ -278,6 +287,10 @@ anything, and has none of these (`RTGBC_MIRROR`, `RTGBC_SWAP_XY`,
 `RTGBC_GAP` clear): turning the picture is then the business of whoever
 draws it.
 
+No board on this machine has them. The 3.5" board's controller turns the
+picture by its mode instead: an upright and a sideways one, chosen with
+`SetBoardMode`.
+
 ## The pointer
 
 A board with `RTGBC_POINTER` lays a small image over the picture on its
@@ -290,8 +303,10 @@ other.
   once into the board's format with a one-bit mask. Pixel `(hot_x, hot_y)`
   is the point.
 - `MoveBoardPointer(board, x, y)` puts the point at `(x, y)`, in the
-  coordinates a caller draws in. It never waits: intuition calls it on
-  every pointer event.
+  coordinates a caller draws in. It holds rtg's pointer semaphore while
+  the driver moves it, and on a board reached over a bus waits for the
+  send, so it is called from a task, never with a spinlock held;
+  intuition calls it on every pointer event.
 - `ShowBoardPointer(board, show)` lays it over the picture or stops.
 
 intuition drives all three from the mouse; a program sets its window's
@@ -318,6 +333,11 @@ The server's code is an `RtgEventFn` and **runs in interrupt context**:
 it may signal a task and no more. Returning non-zero ends the chain, so a
 server returns 0 unless it means to keep the event from those below it. A
 driver raises an event with `SignalRtgEvent`, from its own interrupt.
+
+Which events come depends on the board: the 7B's RGB panel raises
+`RTGEV_VBLANK` and `RTGEV_SHOWN`, the QSPI and I2C transports
+`RTGEV_TX_DONE`; the 3.5" board and the emulator raise neither of the
+first two, so a server for them never runs there.
 
 ## Asking a board about itself
 
@@ -353,8 +373,9 @@ The calls that answer with a status answer an `RTGERR_` code: 0 is
 `RTGERR_OK`, everything else is below zero. The calls that answer with a
 pointer - `CreateBoardTagList`, `AllocBitMap`, `AttachBitMap`,
 `CreateTransportTagList` - answer null, and `RtgLastError` says why. That
-is one word for the whole library, so a caller that wants its own passes
-`RTGA_ErrorPtr` with somewhere to put it. `RtgErrorText` gives any code in
+is one word for the whole library, so a caller of `CreateBoardTagList` or
+`CreateTransportTagList` that wants its own passes `RTGA_ErrorPtr` with
+somewhere to put it. `RtgErrorText` gives any code in
 words.
 
 ## Writing a driver
@@ -385,14 +406,15 @@ fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
 ```
 
 **`create_board`** is called by `CreateBoardTagList` with a board the
-library has allocated and cleared, and the tags. It fills the board in -
-its `ops`, its modes on `board.modes`, its display memory in
-`board.region`, its info - and answers `RTGERR_OK` or why not. The tags
-below `RTGA_DriverBase` (the size, the format, the display memory, the
-buffers, the brightness, the transport) mean the same to every driver and
-the library has already read them; above it each driver has a block of 64
-of its own, listed in `sdk/libs/rtg/tags.zig` so that two never claim
-one.
+library has allocated and cleared, and the tags. It fills the board in - its
+`ops`, its modes on `board.modes`, its display memory in `board.region`, its
+info - and answers `RTGERR_OK` or why not. The tags below `RTGA_DriverBase`
+mean the same to every driver. The library reads the name, the user data,
+the alignment, the transport, the brightness, whether the display starts on,
+and the error pointer; the size, the format, the pitch, the display memory
+and the buffers are the driver's to read from the same list. Above
+`RTGA_DriverBase` each driver has a block of 64 of its own, listed in
+`sdk/libs/rtg/tags.zig` so that two never claim one.
 
 **A board's own state** is its `instance`: `instance_size` bytes the
 library allocates with the handle, clears and frees with it. Everything an
@@ -407,8 +429,9 @@ memory traffic.
 has. A slot left null is one it has not got: the call answers
 `RTGERR_NOT_SUPPORTED` and its `RTGBC_` bit stays clear. The library
 checks and clips before it calls a slot, so a driver is never given a
-rectangle outside the buffer, a band list out of order, or a pan to a
-board that cannot pan.
+rectangle outside the buffer or a band list out of order. A pan it does
+not check: a driver that cannot pan refuses an `x` or `y` that is not
+zero in its `show_bitmap`.
 
 | Slot | What it does |
 |---|---|
@@ -446,6 +469,7 @@ the copy into them runs from the panel's own interrupt.
   machine's display in full - what it can do, its modes, its display
   memory cut into buffers, and how the stream is doing. `MODES`, `MEMORY`
   and `STATS` print one section, `FULL` everything.
-- `C:Backlight` sets the brightness.
+- `C:Backlight` sets the brightness through the board's IO expander
+  (expander.resource), and says so on a board without one.
 - `C:test/Screens` double-buffers a screen and prints the frame rate;
   `SWITCH` puts two screens on the display to drag and switch.

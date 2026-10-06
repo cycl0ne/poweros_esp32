@@ -762,9 +762,18 @@ const Notepad = struct {
 /// The two scroll bars in the border.
 const Bars = struct { vert: *Object, horiz: *Object };
 
-/// What a bar tells the text as it is dragged.
-const vert_map = [_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopVert }, .{} };
-const horiz_map = [_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopHoriz }, .{} };
+/// What a bar tells the text as it is dragged; its GA_ID goes no further,
+/// or the text would take it for its own.
+const vert_map = [_]TagItem{
+    .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopVert },
+    .{ .tag = gc.GA_ID, .data = sdk.utility.TAG_IGNORE },
+    .{},
+};
+const horiz_map = [_]TagItem{
+    .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopHoriz },
+    .{ .tag = gc.GA_ID, .data = sdk.utility.TAG_IGNORE },
+    .{},
+};
 
 fn windowAttr(ib: *IntuitionBase, window: *Window, attr: sdk.utility.Tag) isize {
     var value: usize = 0;

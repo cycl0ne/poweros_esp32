@@ -3,6 +3,6 @@
 
 const sdk = @import("sdk");
 
-/// The divide-by-zero exception (number 5), as the dead-end alert exec
-/// shows for it.
-pub const ACPU_DivZero: u32 = sdk.exec.ACPU_Base | 5;
+/// The integer divide-by-zero exception (EXCCAUSE 6), as the dead-end
+/// alert exec shows for it.
+pub const ACPU_DivZero: u32 = sdk.exec.ACPU_Base | 6;

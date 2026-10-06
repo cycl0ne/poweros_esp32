@@ -41,7 +41,9 @@
 //! }) orelse return;
 //! defer ib.DisposeObject(win);
 //! var open = wc.WmOpen{};
-//! const window: *intuition.Window = @ptrFromInt(ib.SendMessage(win, @ptrCast(&open)));
+//! const opened = ib.SendMessage(win, @ptrCast(&open));
+//! if (opened == 0) return; // no window
+//! const window: *intuition.Window = @ptrFromInt(opened);
 //! while (true) {
 //!     _ = ib.WaitIMsg(window, 0);
 //!     var code: u32 = 0;

@@ -14,7 +14,7 @@
 //! **IDCMP** is how a window talks back. A window opened with `WA_IDCMP`
 //! has a message port, and intuition.library puts an `IntuiMessage` on it
 //! for each thing in those flags that happens. The program takes each off
-//! with GetMsg and hands it back with ReplyMsg - promptly, since each is
+//! with GetIMsg and hands it back with ReplyIMsg - promptly, since each is
 //! an allocation until it comes back.
 //!
 //! **Refresh.** A smart-refresh window keeps what is covered and gets it
@@ -36,7 +36,9 @@ pub const Window = opaque {};
 // ti_Data is a `*usize` the value is written to.
 
 pub const WA_Dummy = utility.TAG_USER + 99;
-/// Where, on its screen. 0, 0 by default.
+/// Where, on its screen. 0, 0 by default. Read back signed, by its bits:
+/// a window past the screen's left edge (`IPREFS_OffScreen`) is at a
+/// negative left.
 pub const WA_Left = WA_Dummy + 0x01;
 pub const WA_Top = WA_Dummy + 0x02;
 /// How big, border included. 200 by 100 by default.
@@ -275,7 +277,6 @@ pub const WFLG_WINDOWREFRESH: u32 = 0x01000000;
 /// One tick at a time: another is sent when this one is replied.
 pub const WFLG_WINDOWTICKED: u32 = 0x04000000;
 
-/// Read only: its RastPort, whose (0,0) is the window's top-left.
 /// How many IDCMP_MOUSEMOVE messages may be waiting unreplied at once.
 /// Past that the moves are dropped until the program catches up: the next
 /// one says where the pointer is anyway, and a program too slow to keep up
@@ -289,6 +290,7 @@ pub const WA_RptQueue = WA_Dummy + 0x1D;
 pub const DEFAULTMOUSEQUEUE: u32 = 5;
 pub const DEFAULTRPTQUEUE: u32 = 3;
 
+/// Read only: its RastPort, whose (0,0) is the window's top-left.
 pub const WA_RastPort = WA_Dummy + 0x100;
 /// Read only: its message port, or 0 without IDCMP.
 pub const WA_UserPort = WA_Dummy + 0x101;
@@ -383,7 +385,6 @@ pub const IDCMP_CLOSEWINDOW: u32 = 0x0000_0200;
 /// A key went down or up: `code` the rawkey (with IECODE_UP_PREFIX),
 /// `qualifier` the qualifiers.
 pub const IDCMP_RAWKEY: u32 = 0x0000_0400;
-/// It became the active window.
 /// The settings changed (`SetPrefs`): a window that draws something
 /// they decide reads them again and draws it anew.
 pub const IDCMP_NEWPREFS: u32 = 0x0000_4000;
@@ -393,6 +394,7 @@ pub const IDCMP_NEWPREFS: u32 = 0x0000_4000;
 pub const IDCMP_DISKINSERTED: u32 = 0x0000_8000;
 /// A medium was taken out of a drive.
 pub const IDCMP_DISKREMOVED: u32 = 0x0001_0000;
+/// It became the active window.
 pub const IDCMP_ACTIVEWINDOW: u32 = 0x0004_0000;
 /// It stopped being the active window.
 pub const IDCMP_INACTIVEWINDOW: u32 = 0x0008_0000;
@@ -443,7 +445,7 @@ pub const MIDDLEUP: u32 = 0xEA;
 
 /// One thing that happened to a window.
 pub const IntuiMessage = extern struct {
-    /// Hand it back with ReplyMsg.
+    /// Hand it back with ReplyIMsg.
     msg: exec.Message = .{},
     /// Class: one `IDCMP_` bit.
     class: u32 = 0,

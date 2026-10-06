@@ -62,7 +62,8 @@ pub const Library = extern struct {
     version: u16 = 0,
     revision: u16 = 0,
     id_string: ?[*:0]const u8 = null,
-    /// Checksum of the jump table, see SumLibrary.
+    /// Checksum of the jump table, kept by exec as the table is made
+    /// (AddLibrary, AddDevice) and changed (SetFunction).
     sum: u32 = 0,
     open_cnt: u16 = 0,
     /// Openers between finding the library and its Open vector: a library

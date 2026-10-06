@@ -15,6 +15,7 @@ side on one timeline, a gauge, a spinner and a button that fades.
 
 ```zig
 const sdk = @import("sdk");
+const dos = sdk.dos;
 const exec = sdk.exec;
 const motion = sdk.motion;
 const TagItem = sdk.utility.TagItem;
@@ -25,8 +26,9 @@ defer sys.CloseLibrary(lib);
 const mb: *MotionBase = @ptrCast(lib);
 ```
 
-Version 1 has every call in this guide. The structures and tags are in
-`sdk.motion`, the calls in `sdk.interface.motion`.
+The ROM's motion.library, 1.4, has every call in this guide. The
+structures and tags are in `sdk.motion`, the calls in
+`sdk.interface.motion`.
 
 ## The clock
 
@@ -41,7 +43,8 @@ of several animations due together run on one wake.
 **A step is worked out from the time, not counted.** An animation's value
 is where it should be at the moment the step runs: a step that comes late
 - a busy system - lands further along, and the animation still ends when
-it should. A step that would not change the value tells nobody.
+it should. A step that would not change the value tells nobody - but
+the first one after a start always tells.
 
 **Everything on the clock belongs to the task that made it.** A task that
 ends without deleting what it made has it stopped and freed as it ends,
@@ -78,7 +81,7 @@ answer is signed.
 | `EASE_OUT` | fast at the start, slowing to the end - what a thing that stops looks like (cubic) |
 | `EASE_INOUT` | slow at both ends, fastest in the middle (cubic) |
 | `EASE_OVERSHOOT` | out, about a tenth past the end and back |
-| `EASE_BOUNCE` | out, four bounces each lower than the last, like a ball dropped on a floor |
+| `EASE_BOUNCE` | out, the drop and then three bounces each lower than the last, like a ball dropped on a floor |
 | `EASE_STEP` | nothing until the end, then all of it |
 
 An animation applies its curve itself. A program that times something of
@@ -103,14 +106,15 @@ const tenth = motion.MOTION_ONE / 10;
 const eased = mb.EaseBezier(quarter, tenth, quarter, motion.MOTION_ONE, progress);
 ```
 
-It finds the curve's point by halving - thirty-one evaluations a call:
+It finds the curve's point by halving - thirty-two evaluations a call:
 cheap beside drawing a step, but a program that wants thousands of points
 a frame keeps a table.
 
 ### A curve on an animation
 
-An animation takes one of three: an `EASE_` (`ANIM_Easing`), four
-control points (`ANIM_Bezier`, a pointer to `[4]i32`, copied), or a hook
+An animation takes one of three: an `EASE_` (`ANIM_Easing`), two
+control points as four numbers (`ANIM_Bezier`, a pointer to `[4]i32`,
+copied), or a hook
 of the program's own (`ANIM_EaseHook`). The last one set wins.
 
 ```zig
@@ -136,7 +140,8 @@ var ease_hook: sdk.utility.Hook = .{ .entry = &threeSteps };
 // ... .{ .tag = motion.ANIM_EaseHook, .data = @intFromPtr(&ease_hook) },
 ```
 
-It runs on the clock's task, like every hook (see below).
+It runs where the step that asks for it runs: on the clock's task, or
+on a caller's for a stop or a timeline set to a point (see below).
 
 ## Animations
 
@@ -255,13 +260,17 @@ once at the end, each with the animation as the object and an
 | `progress` | how far through its play, 16.16, before the curve |
 | `user_data` | `ANIM_UserData` |
 
-**A hook runs on the clock's task, holding the clock.** So it is quick,
-it waits for nothing, and it never waits for something another task may
-hold while that task starts or stops an animation - which rules out
-drawing into a window, and any lock a program's own loop takes. It stores
-the value, or hands it on. It may not delete its own animation: it would
-be freed under the hook. It signals its owner instead, and the owner
-deletes it.
+**A hook runs holding the clock** - on the clock's task, or on the task that
+called `StopAnimation`, `StopTimeline` or `SetTimelineProgress`, which run
+the hooks they cause themselves. So it is quick, it waits for nothing, and
+it never waits for something another task may hold while that task starts or
+stops an animation - which rules out drawing into a window, and any
+semaphore a program's own loop takes. A spinlock is safe, since no call here
+is made while one is held, and it is what a value of more than one word
+needs: on two cores the hook really runs beside the loop that reads it,
+which could otherwise read half of it. It stores the value, or hands it on.
+It may not delete its own animation: it would be freed under the hook. It
+signals its owner instead, and the owner deletes it.
 
 ```zig
 const Gauge = struct {
@@ -539,7 +548,7 @@ screen. A class asks before it starts anything:
   slowing to the end, from wherever it is; the number counts with it.
 - **meter.gadget** swings its needle, **arc.gadget** fills its ring and
   **roller.gadget** turns its wheel to a value a program sets, over a
-  moment; turned by the pointer they follow it at once.
+  moment; arc and roller, turned by the pointer, follow it at once.
 - **spinner.gadget** is a ring of eight dots, the lit one going round
   with a fading trail behind it, while `SPINNER_Running` is on
   (`SPINNER_Period`, a turn in milliseconds, 1000). Stopped, every dot is

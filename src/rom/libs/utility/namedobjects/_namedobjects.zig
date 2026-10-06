@@ -111,11 +111,13 @@ pub fn search(ub: *UtilityBase, space: *NameSpace, start: *exec.Node, name: ?[*:
 /// True if the object was taken out.
 ///
 /// CONTEXT:
-/// Claims the object under utility's object lock - its name space taken
-/// from it, so a second removal finds none - and then takes it out under
-/// the name space's semaphore, which may wait. The caller's own use keeps
-/// the count above zero until the end, so no release in between can miss
-/// the message.
+/// Reads the object's name space under utility's object lock, then holds
+/// that space's semaphore, which may wait, and claims the object under
+/// both - its name space taken from it, so a second removal finds none.
+/// No search runs while the semaphore is held, so none takes a use
+/// between the look at the count and the removal. The caller's own use
+/// keeps the count above zero until the end, so no release in between
+/// can miss the message.
 pub fn remNamedObject(ub: *UtilityBase, object: ?*NamedObject, message: ?*exec.Message) bool {
     const utility = ub.iface();
     const sys = ub.sys_base;
@@ -125,19 +127,28 @@ pub fn remNamedObject(ub: *UtilityBase, object: ?*NamedObject, message: ?*exec.M
         sys.ReleaseLock(&ub.object_lock);
         return notRemoved(ub, message);
     };
+    sys.ReleaseLock(&ub.object_lock);
+
+    // The space cannot go meanwhile: its object is not freed while it
+    // holds this one.
+    sys.ObtainSemaphore(&space.lock);
+    sys.AcquireLock(&ub.object_lock);
+    if (obj.parent != space) {
+        // Another removal claimed it first.
+        sys.ReleaseLock(&ub.object_lock);
+        sys.ReleaseSemaphore(&space.lock);
+        return notRemoved(ub, message);
+    }
     if (message == null and obj.use_count != 1) {
         sys.ReleaseLock(&ub.object_lock);
+        sys.ReleaseSemaphore(&space.lock);
         return false;
     }
     obj.parent = null;
-    sys.ReleaseLock(&ub.object_lock);
-
-    sys.ObtainSemaphore(&space.lock);
-    sys.Remove(&obj.node);
     if (message) |msg| msg.node.name = @ptrFromInt(@intFromPtr(&obj.public));
-    sys.AcquireLock(&ub.object_lock);
     obj.remove_msg = message;
     sys.ReleaseLock(&ub.object_lock);
+    sys.Remove(&obj.node);
     sys.ReleaseSemaphore(&space.lock);
     utility.ReleaseNamedObject(object);
     return true;

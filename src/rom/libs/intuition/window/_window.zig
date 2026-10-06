@@ -310,6 +310,37 @@ pub fn depthWidthOf(w: *const Window) i32 {
 pub const side_border = 4;
 pub const bottom_border = 2;
 
+/// How much of a window's width stays on its screen when it may hang past
+/// the edges (`IPREFS_OffScreen`): enough to take hold of it again.
+pub const off_screen_keep = 64;
+/// How much of its height stays above the bottom when it has no title bar.
+pub const off_screen_keep_rows = 16;
+
+/// Where a window `width` by `height` may stand on its screen, as near
+/// `left`, `top` as it may: wholly on the screen, or - while windows may
+/// hang past its edges (`IPREFS_OffScreen`) - past the left, right and
+/// bottom edges with its top never above the screen's, `off_screen_keep`
+/// of its width across and its title bar's height above the bottom.
+///
+/// INPUTS:
+/// - `ib` - the library, for the setting.
+/// - `w` - the window: its screen and its title bar's height.
+/// - `left`, `top` - the place asked for, on the screen.
+/// - `width`, `height` - its size there, already within the screen's.
+pub fn legalPlace(ib: *IntuitionBase, w: *const Window, left: i32, top: i32, width: i32, height: i32) struct { left: i32, top: i32 } {
+    const s = w.screen;
+    if (ib.off_screen == 0) return .{
+        .left = @max(@min(left, s.width - width), 0),
+        .top = @max(@min(top, s.height - height), 0),
+    };
+    const keep_x = @min(width, off_screen_keep);
+    const keep_y = @min(height, if (w.border_top > 0) w.border_top else off_screen_keep_rows);
+    return .{
+        .left = @max(@min(left, s.width - keep_x), keep_x - width),
+        .top = @max(@min(top, s.height - keep_y), 0),
+    };
+}
+
 fn textLen(s: [*:0]const u8) u32 {
     var n: u32 = 0;
     while (s[n] != 0) n += 1;

@@ -10,7 +10,7 @@ itself; the program never sees a byte of the format.
 const dt: *DataTypesBase = @ptrCast(sys.OpenLibrary(datatypes.DATATYPESNAME, 0) orelse return);
 defer sys.CloseLibrary(@ptrCast(dt));
 
-const object = dt.NewDTObjectA("SYS:Tests/picture.iff", &.{
+const object = dt.NewDTObjectA("SYS:Tests/datatypes/Colours.png", &.{
     .{ .tag = gc.GA_Left, .data = 4 },
     .{ .tag = gc.GA_Top, .data = 4 },
     .{},
@@ -18,13 +18,20 @@ const object = dt.NewDTObjectA("SYS:Tests/picture.iff", &.{
 defer dt.DisposeDTObject(object);
 
 _ = dt.AddDTObject(window, null, object, -1);
+defer _ = dt.RemoveDTObject(window, object);
 dt.RefreshDTObjectA(object, window, null, null);
 ```
 
+An object is taken out of its window before it is disposed of; the two
+`defer`s run in that order.
+
 `NewDTObjectA` fails with `IoErr()` set: `DTERROR_UNKNOWN_DATATYPE` when
 nothing recognises the file or its class is not on the disk,
-`DTERROR_COULDNT_OPEN` when the file cannot be read.
-`GetDTString(IoErr())` gives the words to print.
+`DTERROR_COULDNT_OPEN` when the file cannot be read, `DTERROR_TOO_LARGE`
+when it is more than the machine can hold, and dos's
+`ERROR_OBJECT_WRONG_TYPE` when `DTA_GroupID` asked for another group.
+`GetDTString(@intCast(IoErr()))` gives the words for a `DTERROR_`
+number, dos's `Fault` those for the rest.
 
 ## What a file is
 
@@ -59,18 +66,19 @@ added later is read with `AddDataTypes DEVS:DataTypes/MyFormat`, and
 is what a file requester does to decide whether to show it:
 
 ```
-RAM:Test.iff        text (text.FTXT), class ftxt.datatype
+RAM:Test.iff        text (text.FTXT), class ascii.datatype
 S:startup-sequence  text (text.TEXT), class ascii.datatype
 ```
 
 ## Working an object
 
 An object is a BOOPSI gadget, so `SetGadgetAttrsTagList` and the rest
-work on it; `SetDTAttrsA` and `GetDTAttrsA` are the same thing with the
-window and requester passed in.
+work on it; `SetDTAttrsA` is the same thing with the window and
+requester passed in, and `GetDTAttrsA` reads several attributes at once.
 
 What every object has in common is how much of it there is and how much
-is shown, in units of its own - a line for text, a pixel for a picture:
+is shown, in units of its own - pixels, for a picture and for text alike,
+since a heading's line is taller than a line of prose:
 
 ```zig
 var total: usize = 0;
@@ -82,11 +90,11 @@ _ = dt.GetDTAttrsA(object, &.{
 });
 ```
 
-Those three numbers drive a scroller gadget straight, and setting
-`DTA_TopVert` scrolls the object. `GetDTMethods` says what an object can
-do and `GetDTTriggerMethods` what it can be told to do, each with a name
-to put in a menu, so a program offers Play and Pause for a sound without
-knowing it is a sound.
+Those two and `DTA_TopVert` drive a scroller gadget straight, and
+setting `DTA_TopVert` scrolls the object. `GetDTMethods` lists the
+methods an object answers, and `GetDTTriggerMethods` what it can be told
+to do, each of those with a label to put in a menu, so a program offers
+Play and Pause for a sound without knowing it is a sound.
 
 `DTM_COPY` puts what is picked on the clipboard, `DTM_WRITE` saves the
 contents, `DTM_TRIGGER` starts and stops. They go through `DoDTMethodA`,
@@ -110,7 +118,8 @@ _ = dt.GetDTAttrsA(object, &.{
 const bmh: *pic.BitMapHeader = @ptrFromInt(header);
 ```
 
-**A picture larger than the machine can hold is kept smaller** - half, a
+**A picture larger than the machine can hold is kept smaller** by the
+format's class (see *Writing a class*) - half, a
 quarter or an eighth of each side - rather than refused, because a
 picture that can be looked at is worth more than one that cannot. The
 header then says the size that is kept, which is what everything that
@@ -129,7 +138,7 @@ size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
 Every piece of text is a `text.datatype` object, whatever file it came
 out of. What it holds is the text and the runs it is made of: a run is a
 stretch drawn one way - a font, a style, a pen, and where it leads when
-it is pressed - so plain text is one run a line and a marked-up document
+it is pressed - so plain text is a single run and a marked-up document
 is several. The class breaks the runs into lines that fit the window,
 draws them, scrolls them, lets a stretch be marked with the pointer and
 puts what is marked on the clipboard as a `FORM FTXT`.
@@ -162,11 +171,14 @@ the program to follow.
 ## Animations
 
 Every animation is an `animation.datatype` object, whatever file it came
-out of. The class plays it: a process of the object's own draws the
-frames ahead, three at a time, into buffers the class holds, and a
-motion.library timer puts each one up when its time has come and asks
-for the object to be drawn again. A frame that is ready late is shown
-late rather than skipped, and the timer catches up from there.
+out of. The class plays it from three buffers - one on show, one ready,
+one being drawn: a process of the object's own draws the frames one at a
+time, a frame or two ahead, and a motion.library timer puts each one up
+when its time has come and asks for the object to be drawn again. A
+frame that is ready late is shown late rather than skipped, and the
+frames after it are counted from when it was due, so they catch up -
+unless it was more than 200 ms late, when the timing starts again from
+it.
 
 `DTA_Immediate` set at `OM_NEW` plays it as soon as it is laid out;
 otherwise the program starts it:
@@ -220,29 +232,32 @@ corner - which is why the window is opened with `WA_SizeBRight` and
 `WA_SizeBBottom`. The bars are made once the window is open, because
 how deep a border came out is known only then.
 
-The object and the bars are joined through a **model**, not by the
-program. Each bar's `ICA_TARGET` is the model, with an `ICA_MAP`
-turning `SCROLLER_Top` into `DTA_TopVert` or `DTA_TopHoriz`; the model
-holds an `ICCLASS` connection to each bar, mapping `DTA_TotalVert` and
-its like back to `SCROLLER_Total`, and one to the object carrying the
-two tops. So a bar dragged scrolls the object, and a layout that
-finishes sizes the bars, all of it inside the objects and in one task.
+A bar dragged scrolls the object without the program: each bar's
+`ICA_TARGET` is a **model**, with an `ICA_MAP` turning `SCROLLER_Top`
+into `DTA_TopVert` or `DTA_TopHoriz`, and the model holds one `ICCLASS`
+connection, to the object, carrying the two tops.
 
-That is what `DTM_ASYNCLAYOUT` reports when it is done: the totals, how
-much of each is visible, where each view starts, and `DTA_Sync`. The
-model passes it to the bars and then to the program as one
-`IDCMP_IDCMPUPDATE`. The program answers that by drawing the object
-again, and answers a resize by doing nothing at all - the object was
-told to lay itself out by intuition, and the bars followed it. A
-program that drew once per message instead would fall a message further
-behind with every step of a drag, since a redraw costs about what a
-step does.
+The other way round goes through the program. The object lays itself
+out on a process of its own, and that process draws nothing - the
+window it was told about may be gone by the time it finishes - so it
+cannot set a bar, which would draw. When `DTM_ASYNCLAYOUT` is done the
+object notifies `DTA_Sync`; its `ICA_TARGET` is `ICTARGET_IDCMP`, so
+that reaches the program as an `IDCMP_IDCMPUPDATE`. The program, which
+owns the window and knows it is open, then reads `DTA_TotalVert`,
+`DTA_VisibleVert`, `DTA_TopVert` and their horizontal three with
+`GetAttr`, sets the bars from them and draws the object again. A resize
+needs nothing more: intuition tells the object to lay itself out, and
+its update follows. The program takes every message waiting before it
+does this, once for the batch: one redraw per message would fall a
+message further behind with every step of a drag, since a redraw costs
+about what a step does.
 
 ## Writing a class
 
 A format is a class library in `SYS:classes/datatypes/`, a subclass of
 `datatypesclass` or of the superclass of its group - `picture.datatype`
-for anything in `pict` - and a descriptor beside it. The class reads the source
+for anything in `pict` - and a descriptor in `DEVS:DataTypes` that
+names it. The class reads the source
 it is given in `OM_NEW` - `DTA_Handle` is a lock for a file, an open IFF
 handle for the clipboard - fills in the numbers above, and answers
 `DTM_ASYNCLAYOUT` to lay itself out and `GM_RENDER` to draw. The layout
@@ -255,15 +270,26 @@ and its memory, and then hands each row over with
 `PDTM_WRITEPIXELARRAY`. Drawing, scrolling and scaling are the
 superclass's, so a format class holds no pixels and has no `GM_RENDER`.
 
+Keeping a large picture smaller is the format class's part, because only
+it knows what it holds beside the picture while it reads.
+`sdk.datatypes.subclass.shrinkFor(sys, width, height, working)` says by
+how much - 1, 2, 4 or 8, or 0 when not even an eighth fits, which the
+class answers with `DTERROR_TOO_LARGE`; the header is set to the shrunk
+size, `thinRow` thins each row before it is handed over, and `setSource`
+tells the superclass what the file held. A class that skips this fails
+on a file too large rather than showing it smaller.
+
 An animation class, in `anim`, is a subclass of `animation.datatype`.
 It reads its file in `OM_NEW` and tells the superclass `ADTA_Width`,
 `ADTA_Height`, `ADTA_Frames` and `ADTA_FramesPerSecond`; then it answers
 `ADTM_LOADFRAME`, which hands it an `AdtFrame` - the frame wanted and a
-cleared buffer of pens to draw it into - and takes back how long that
-frame stays up. The message comes on the object's own player process,
-one frame at a time, so the class keeps whatever it builds frames from
-without a lock; in `OM_DISPOSE` it passes the message on first, which
-stops that process, and frees what it kept after.
+buffer of pens to draw it into, cleared unless `keep` says it still
+holds the frame before - and takes back how long that frame stays up.
+The message comes on the object's own player process, one frame at a
+time, so the class keeps whatever it builds frames from without a lock.
+In `OM_DISPOSE` it copies its instance data, passes the message on,
+which stops that process and frees the object, and frees what it kept
+from the copy.
 
 A format whose files cannot be told apart by name, mask or form type
 says `RECOGNISE` in its descriptor and exports one function at the first

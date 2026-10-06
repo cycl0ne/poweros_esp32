@@ -2274,6 +2274,123 @@ test "windows: IDCMP - activation, a simple window repaired and told, moves and 
     try tearDown(ib);
 }
 
+test "windows: a size stops at the screen's edge and leaves the window where it is" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const display = try Display.up(ib);
+
+    // On a screen of 64 by 40, with its bottom right corner at (49, 31).
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 30 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_MaxWidth, .data = 0xFFFF },
+        .{ .tag = wn.WA_MaxHeight, .data = 0xFFFF },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+
+    // The sizing gadget dragged to the screen's corner and past what fits:
+    // the window grows to the edges and does not move.
+    pointerEvent(ib, ie.IECODE_LBUTTON, 48, 30);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 63, 39);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 63, 39);
+    try testing.expectEqual(@as(usize, 30), windowAttr(ib, w, wn.WA_Left));
+    try testing.expectEqual(@as(usize, 12), windowAttr(ib, w, wn.WA_Top));
+    try testing.expectEqual(@as(usize, 64 - 30), windowAttr(ib, w, wn.WA_Width));
+    try testing.expectEqual(@as(usize, 40 - 12), windowAttr(ib, w, wn.WA_Height));
+
+    // SizeWindow the same.
+    ib.iface().SizeWindow(w, -10, -10);
+    ib.iface().SizeWindow(w, 100, 100);
+    try testing.expectEqual(@as(usize, 30), windowAttr(ib, w, wn.WA_Left));
+    try testing.expectEqual(@as(usize, 64 - 30), windowAttr(ib, w, wn.WA_Width));
+    try testing.expectEqual(@as(usize, 40 - 12), windowAttr(ib, w, wn.WA_Height));
+
+    // A box that does not fit where it is given is moved to make room.
+    ib.iface().ChangeWindowBox(w, 30, 12, 50, 20);
+    try testing.expectEqual(@as(usize, 64 - 50), windowAttr(ib, w, wn.WA_Left));
+    try testing.expectEqual(@as(usize, 50), windowAttr(ib, w, wn.WA_Width));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expect(ib.iface().CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "windows: with IPREFS_OffScreen a window hangs past the edges, and enough of it stays" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 128, 40, .rgb565);
+
+    var on: u32 = 9;
+    _ = it.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&on) }, .{} });
+    try testing.expectEqual(@as(u32, 0), on);
+    try testing.expect(!it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_OffScreen, .data = 2 }, .{} }));
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_OffScreen, .data = 1 }, .{} }));
+    _ = it.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&on) }, .{} });
+    try testing.expectEqual(@as(u32, 1), on);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 40 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 80 },
+        .{ .tag = wn.WA_Height, .data = 24 },
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("Off") },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_MaxWidth, .data = 0xFFFF },
+        .{ .tag = wn.WA_MaxHeight, .data = 0xFFFF },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const bar: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderTop));
+    const left = struct {
+        fn of(base: *IntuitionBase, window: *intuition.Window) i32 {
+            return @truncate(@as(isize, @bitCast(windowAttr(base, window, wn.WA_Left))));
+        }
+    }.of;
+
+    // Dragged by its title bar past the left edge: 64 of its 80 pixels stay.
+    pointerEvent(ib, ie.IECODE_LBUTTON, 60, 11);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 0, 11);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 0, 11);
+    try testing.expectEqual(@as(i32, 64 - 80), left(ib, w));
+
+    // Past the right edge, past the bottom with its title bar left, and
+    // never above the top.
+    it.MoveWindow(w, 1000, 0);
+    try testing.expectEqual(@as(i32, 128 - 64), left(ib, w));
+    it.MoveWindow(w, 0, 1000);
+    try testing.expectEqual(@as(usize, @intCast(40 - bar)), windowAttr(ib, w, wn.WA_Top));
+    it.MoveWindow(w, 0, -1000);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Top));
+
+    // Sized past the right edge it stays where it is.
+    it.SizeWindow(w, 30, 0);
+    try testing.expectEqual(@as(i32, 128 - 64), left(ib, w));
+    try testing.expectEqual(@as(usize, 110), windowAttr(ib, w, wn.WA_Width));
+
+    // Turned off, the next move brings all of it back on.
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_OffScreen, .data = 0 }, .{} }));
+    it.MoveWindow(w, -1, 0);
+    try testing.expectEqual(@as(i32, 128 - 110), left(ib, w));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 /// Every message on a window's port, copied out and replied.
 fn drainMessages(ib: *IntuitionBase, w: *intuition.Window, out: []intuition.IntuiMessage) usize {
     var n: usize = 0;

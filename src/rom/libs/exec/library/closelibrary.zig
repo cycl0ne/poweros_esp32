@@ -19,7 +19,7 @@ const Library = sdk.exec.Library;
 /// SINCE: 1.0. LVO -36.
 ///
 /// INPUTS:
-/// - `lib` - what `OpenLibrary` answered, or null, which does nothing. The
+/// - `library` - what `OpenLibrary` answered, or null, which does nothing. The
 ///   null case is so that a cleanup path need not test what it is closing.
 ///
 /// RESULT:

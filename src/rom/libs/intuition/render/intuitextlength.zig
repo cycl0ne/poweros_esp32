@@ -26,9 +26,9 @@ const runOf = @import("_render.zig").runOf;
 ///
 /// RESULT:
 /// How far graphics' `Text` would move along drawing it, in the run's own
-/// font and style or, when it names no font, in the ROM's font at the
-/// height a screen opens with when it is given no font. 0 for null, no
-/// text, or when there is no memory to measure in.
+/// font and style or, when it names no font, in the system's default
+/// font (`SYSFONT_DEFAULT`). 0 for null, no text, or when there is no
+/// memory to measure in.
 ///
 /// BEHAVIOR:
 /// The run is measured by itself: the runs linked after it are drawn

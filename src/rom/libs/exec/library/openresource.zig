@@ -27,7 +27,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// machine is running.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for exec's library list, while another task holds it.
 /// - Interrupts: no. It takes exec's library list, a semaphore.
 /// - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 /// - Process: a Task will do.

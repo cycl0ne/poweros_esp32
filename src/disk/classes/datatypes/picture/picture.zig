@@ -14,7 +14,8 @@
 //! `WritePixelArray` and its two companions take without converting
 //! anything, and a picture converted once when it is read costs nothing
 //! on every later redraw. What it costs is four bytes a pixel, so a
-//! picture too large for memory fails to open rather than opening badly.
+//! format class keeps a picture too large for memory smaller
+//! (`subclass.shrinkFor`) rather than letting it fail half read.
 //!
 //! **A picture with coverage is drawn through `BlendPixelArray`** and
 //! one without through `WritePixelArray`, and a scaled one through

@@ -2,8 +2,8 @@
 //! T:, where Execute's work files (T:Command-nn-Tnn) and the shell's
 //! backquote output (T:tick$n) go. It is in the SDK so
 //! that the shell and any program on disk can reach it, since each is built
-//! as its own module. dos.library's init makes T a late assign to RAM:T;
-//! the directory is made here the first time it is missing.
+//! as its own module. S:Startup-Sequence assigns T: to RAM:T; the
+//! directory is made here the first time it is missing.
 
 const dos = @import("dos.zig");
 const DosBase = @import("../../interface/dos.zig").DosBase;

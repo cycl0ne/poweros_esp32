@@ -12,7 +12,7 @@
 //!
 //! **Text is runs, not characters.** A run is a stretch of the text
 //! drawn one way: a font, a style, a pen, and where it leads when it is
-//! pressed. Plain text is one run a line; a marked-up document is
+//! pressed. Plain text is a single run; a marked-up document is
 //! several. Everything that differs between formats is in the runs, and
 //! everything that does not is here.
 //!

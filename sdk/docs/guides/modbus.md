@@ -68,7 +68,7 @@ io.std.data = &frame;
 io.std.length = frame.len;
 io.timeout = 500_000; // µs
 if (sys.DoIO(&io.std.req) == 0) {
-    // frame[0..io.std.actual]
+    // frame[0..@intCast(io.std.actual)]
 }
 ```
 
@@ -130,8 +130,13 @@ function the library has no call for.
 | Result | |
 |---|---|
 | `MBERR_OK` (0) | done; what was read is in the buffer |
-| above 0 | the device answered with an exception: `MBEX_ILLEGAL_FUNCTION` (it does not do that), `MBEX_ILLEGAL_ADDRESS` (no such address, or a run past its end), `MBEX_ILLEGAL_VALUE`, `MBEX_DEVICE_FAILURE`, `MBEX_DEVICE_BUSY`, and a gateway's two |
+| above 0 | the device answered with an exception: `MBEX_ILLEGAL_FUNCTION` (it does not do that), `MBEX_ILLEGAL_ADDRESS` (no such address, or a run past its end), `MBEX_ILLEGAL_VALUE`, `MBEX_DEVICE_FAILURE`, `MBEX_ACKNOWLEDGE` (taken, still working), `MBEX_DEVICE_BUSY`, and a gateway's two |
 | below 0 | no answer came (`MBERR_TIMEOUT`), it came damaged (`MBERR_CRC`), it was not an answer to the question (`MBERR_REPLY`), the device or the connection failed (`MBERR_IO`, `MBERR_CLOSED`), or the question itself was out of range (`MBERR_ARGS`) |
+
+`OpenModbusRTU`, `OpenModbusTCP` and `StartModbusServer` answer null
+when they fail and put why in their `err`: `MBERR_DEVICE` (the bus's
+device would not open), `MBERR_HOST` (no such host), `MBERR_CONNECT`
+(no connection), `MBERR_NOMEM` or `MBERR_ARGS`.
 
 `ModbusErrorText` gives any of them in words.
 
@@ -140,8 +145,10 @@ function the library has no call for.
 `StartModbusServer` makes the board a Modbus device: it answers
 questions from tables the program hands it - from address 0, as many of
 each as the program has - on a process of its own, until
-`StopModbusServer`. On RTU it is one unit on the bus; on TCP it listens
-on port 502, for IPv4 and IPv6, and answers every unit.
+`StopModbusServer`. On RTU it is one unit on the bus, the one
+`MBS_Unit` names (1 to 247, and without it the server does not start);
+on TCP it listens on port 502, for IPv4 and IPv6, and answers every
+unit, or only the one a non-zero `MBS_Unit` names.
 
 ```zig
 var lock: exec.SignalSemaphore = .{};

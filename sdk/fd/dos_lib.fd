@@ -32,9 +32,9 @@ void ReplyPkt(?*dos.DosPacket packet, isize res1, i32 res2)
 /// for the packet to come back all the same.
 void AbortPkt(*exec.MsgPort port, *dos.DosPacket packet)
 // Dos objects
-/// A dos object of `obj_type` (DOS_*): so far DOS_STDPKT, a cleared
-/// DosPacket. Null for no memory (ERROR_NO_FREE_STORE), a type not done
-/// yet (ERROR_NOT_IMPLEMENTED) or an unknown one.
+/// A dos object of `obj_type` (DOS_*): a DosPacket, FileHandle,
+/// FileInfoBlock, ExAllControl, CLI or RDArgs, cleared. Null for no
+/// memory (ERROR_NO_FREE_STORE) or an unknown type (ERROR_BAD_NUMBER).
 ?*anyopaque AllocDosObject(u32 obj_type, ?[*]const utility.TagItem tags)
 /// Free an object from AllocDosObject, given its type. Null does nothing.
 void FreeDosObject(u32 obj_type, ?*anyopaque ptr)
@@ -79,7 +79,7 @@ bool RemDosEntry(*dos.DosList dlist)
 /// Free a node from MakeDosEntry (off the list). Null does nothing.
 void FreeDosEntry(?*dos.DosList dlist)
 // Handlers
-/// The handler for a name ("NIL:", "DF0:file", "CONSOLE:", or a path
+/// The handler for a name ("NIL:", "DH0:file", "CONSOLE:", or a path
 /// without device for the current file system), starting a device's
 /// handler if it isn't running. With the previous DevProc of a
 /// multi-assign, the next directory. Null on failure; IoErr() says why.

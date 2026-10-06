@@ -308,8 +308,8 @@ pub const RtgBoardOps = extern struct {
     /// already dealt with the buffers that were alive.
     set_mode: ?*const fn (*RtgBoard, *const RtgMode) callconv(.c) i32 = null,
     /// Show that buffer, its pixel (x, y) at the top left; null shows
-    /// nothing. A board that cannot pan is never given an x or y that is
-    /// not zero.
+    /// nothing. The library passes x and y on unchecked: a board that
+    /// cannot pan refuses any that is not zero.
     show_bitmap: ?*const fn (*RtgBoard, ?*RtgBitMap, u32, u32) callconv(.c) i32 = null,
     /// Wait for `frames` vertical blanks; 0 is the next one.
     wait_vblank: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,

@@ -7,7 +7,7 @@
 //!            <page-size> [<path-in-image>[=<host-file>] ...]
 //!
 //! `volume` is what the file system calls itself; `partition` is what the
-//! device node is called (`DH0`), which is what dos.library reads out of
+//! device node is called (`DH0`), which is what flash.device reads out of
 //! the PartitionBlock at boot. A path with no `=` is a directory to make,
 //! one with `=` a file to write from the host; directories come before what
 //! goes in them, so the order on the command line matters (build.zig writes

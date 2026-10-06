@@ -684,8 +684,7 @@ The copy, or null without memory.
 
 The copy holds the items `NextTagItem` finds, in order, in one array
 ended by `TAG_DONE`: the control items are gone and a `TAG_MORE` chain
-is
-joined into one. The data is copied as it stands - what a data word
+is joined into one. The data is copied as it stands - what a data word
 points to is not. Later changes to the original are not seen;
 `RefreshTagItemClones` copies them into the same array again.
 
@@ -850,7 +849,6 @@ fn DateJoin(ub: *UtilityBase, date: *const ClockData) i32
 
 **INPUTS**
 
-- `ub` - the library's base.
 - `date` - the date. Only `year`, `month` (1 to 12) and `mday` (1 to
   31) are read; the time fields and `wday` are ignored.
 
@@ -878,7 +876,10 @@ bits and so stops in 2114; this reaches any year a `ClockData` holds.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+- Waits: no.
+- Interrupts: yes.
+- Locks: none needed.
+- Process: a Task will do; an interrupt will do.
 
 **OWNERSHIP**
 
@@ -919,7 +920,6 @@ fn DateSplit(ub: *UtilityBase, days: u32, result: *ClockData) void
 
 **INPUTS**
 
-- `ub` - the library's base.
 - `days` - days since 1 January 1978, which is day 0.
 - `result` - filled in with the date.
 
@@ -947,7 +947,10 @@ is, rather than with a year that has wrapped.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+- Waits: no.
+- Interrupts: yes.
+- Locks: none needed.
+- Process: a Task will do; an interrupt will do.
 
 **OWNERSHIP**
 
@@ -956,7 +959,8 @@ Nothing is allocated. `result` is the caller's.
 **NOTES**
 
 `DateJoin` is the inverse, and the two round-trip exactly for every
-day number this takes.
+day number up to the last day of 65535; a larger one comes back as
+that day.
 
 **BUGS**
 
@@ -2149,8 +2153,7 @@ Nothing.
 **BEHAVIOR**
 
 The use count goes down under utility's object lock. When it reaches
-zero and a
-`RemNamedObject` is waiting, its message is replied now. A count already
+zero and a `RemNamedObject` is waiting, its message is replied now. A count already
 at zero stays there.
 
 **CONTEXT**
@@ -2275,7 +2278,7 @@ dividend's sign: -7 / 2 is -3 remainder -1. The smallest number divided
 by -1 wraps to itself, remainder 0, instead of faulting.
 
 A zero divisor is a programming error with no answer to give, and ends
-in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+in exec's dead-end alert for a division by zero (`ACPU_Base | 6`).
 
 **CONTEXT**
 
@@ -2780,8 +2783,7 @@ Each character goes through `ToUpper` before the comparison, so the
 order is that of the upper-case codes: `_` (0x5F) sorts after `Z`, and
 the Latin-1 letters after all of ASCII. There is no locale: `ß` has no
 upper case and compares as itself. The comparison also ends at the end
-of
-either string.
+of either string.
 
 **CONTEXT**
 
@@ -2860,7 +2862,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const slash = ub.Strrchr(path, '/') orelse path; // the last part of a path
+const slash = ub.Strrchr(path, '/'); // the last '/' of a path, or null
 ```
 
 ## TagInArray
@@ -3051,7 +3053,7 @@ remainder`. A zero divisor does not return.
 **BEHAVIOR**
 
 A zero divisor is a programming error with no answer to give, and ends
-in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+in exec's dead-end alert for a division by zero (`ACPU_Base | 6`).
 
 **CONTEXT**
 
@@ -3104,8 +3106,7 @@ The low 32 bits of the product. An overflow wraps.
 
 **BEHAVIOR**
 
-The low half of the product, which is the same bits whatever the
-signs; `UMult64` gives the whole product.
+The low half of the product; `UMult64` gives the whole product.
 
 **CONTEXT**
 

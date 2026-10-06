@@ -36,14 +36,14 @@ const commands = [_][]const u8{
     "diskchange",   "modbus",    "more",
 };
 const tests = [_][]const u8{
-    "hello",        "echoargs",   "testlib",  "gfx",     "anim",
-    "intuition",    "console",    "keyboard", "touch",   "input",
-    "lines",        "nyan",       "plasma",   "audio",   "fonts",
-    "screens",      "layout",     "classes",  "gadgets", "listview",
-    "diskfont",     "colorwheel", "tapedeck", "pointer", "crypto",
-    "bsdsocktest",  "asl",        "settings", "iff",     "datatypes",
-    "shapes",       "styles",     "motion",   "widgets", "keyboard",
-    "modbusserver", "cores",
+    "hello",       "echoargs",   "testlib",  "gfx",     "anim",
+    "intuition",   "console",    "keyboard", "touch",   "input",
+    "lines",       "nyan",       "plasma",   "audio",   "fonts",
+    "screens",     "layout",     "classes",  "gadgets", "listview",
+    "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
+    "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
+    "shapes",      "styles",     "motion",   "widgets", "modbusserver",
+    "cores",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 

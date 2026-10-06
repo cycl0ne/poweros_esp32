@@ -67,14 +67,22 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expectEqual(@as(u32, 400), settings.double_click);
     try testing.expectEqual(sdk.intuition.KEYBOARD_ALWAYS, settings.keyboard);
     try testing.expectEqual(@as(u32, 16), settings.screen_font);
-    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS", out[0..prefs.intuition.write(&settings, &out)]);
+    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=NO", out[0..prefs.intuition.write(&settings, &out)]);
     // Only what the line gave becomes a tag: the font height was left out.
-    var tags: [3]sdk.utility.TagItem = undefined;
+    var tags: [4]sdk.utility.TagItem = undefined;
     try testing.expectEqual(@as(usize, 2), prefs.intuition.toTags(&settings, &tags));
     try testing.expectEqual(sdk.intuition.IPREFS_DoubleClick, tags[0].tag);
     try testing.expectEqual(@as(usize, 400), tags[0].data);
     try testing.expectEqual(sdk.intuition.IPREFS_Keyboard, tags[1].tag);
     try testing.expect(prefs.intuition.parse("KEYBOARD=SOMETIMES", &settings) != null);
+    // Windows past the screen's edges: YES or NO, and a tag of its own.
+    try testing.expect(prefs.intuition.parse("OFFSCREEN=yes", &settings) == null);
+    try testing.expectEqual(@as(u32, 1), settings.off_screen);
+    try testing.expectEqual(@as(usize, 3), prefs.intuition.toTags(&settings, &tags));
+    try testing.expectEqual(sdk.intuition.IPREFS_OffScreen, tags[2].tag);
+    try testing.expectEqual(@as(usize, 1), tags[2].data);
+    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=YES", out[0..prefs.intuition.write(&settings, &out)]);
+    try testing.expect(prefs.intuition.parse("OFFSCREEN=MAYBE", &settings) != null);
 }
 
 test "the settings files of a fresh disk: the explanation the SDK writes" {

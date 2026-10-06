@@ -8,8 +8,11 @@
 # KEYBOARD     when the keyboard on the screen comes up while a field
 #              is typed into: AUTO (on a board with no keyboard of
 #              its own), ALWAYS or NEVER.
+# OFFSCREEN    whether a window may be moved partly past the screen's
+#              edges: YES or NO. Enough of it always stays on the
+#              screen to take hold of again.
 #
 # One left out keeps the value intuition has. These are the system's
 # own:
 #
-# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO
+# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO

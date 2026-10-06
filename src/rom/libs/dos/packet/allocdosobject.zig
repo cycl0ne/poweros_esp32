@@ -29,7 +29,7 @@ const TagItem = sdk.utility.TagItem;
 ///
 /// RESULT:
 /// The object, ready to use, or null: with ERROR_NO_FREE_STORE when
-/// there was no memory, and with IoErr unchanged for a type it doesn't
+/// there was no memory, and with ERROR_BAD_NUMBER for a type it doesn't
 /// know.
 ///
 /// BEHAVIOR:

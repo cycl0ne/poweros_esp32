@@ -963,8 +963,8 @@ them instead.
 **NOTES**
 
 The stack has to be big enough for the register windows the ABI spills
-into it, which is why `CreateTask`'s smallest is 8 KiB rather than
-something nominal.
+into it, which is why `CreateTask` gives 8 KiB when it is asked for no
+size, and never less than 1 KiB, rather than something nominal.
 
 **BUGS**
 
@@ -1306,7 +1306,7 @@ fn AllocPooled(base: *ExecBase, pool_handle: ?*anyopaque,
 
 **INPUTS**
 
-- `pool` - what CreatePool answered, or null.
+- `pool_handle` - what CreatePool answered, or null.
 - `byte_size` - how many bytes.
 
 **RESULT**
@@ -1446,9 +1446,9 @@ past the header, with the whole size in the word immediately below it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: only when memory runs short, as `AllocMem` does.
 - Interrupts: no. `AllocMem` takes exec's memory lock.
-- Locks: none needed.
+- Locks: none taken but `AllocMem`'s; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2254,7 +2254,7 @@ fn CloseLibrary(base: *ExecBase, library: ?*Library) void
 
 **INPUTS**
 
-- `lib` - what `OpenLibrary` answered, or null, which does nothing. The
+- `library` - what `OpenLibrary` answered, or null, which does nothing. The
   null case is so that a cleanup path need not test what it is closing.
 
 **RESULT**
@@ -2941,7 +2941,9 @@ first puddle.
 
 **CONTEXT**
 
-- Waits: no. - Interrupts: no; it allocates. - Locks: none needed.
+- Waits: only when memory runs short, as `AllocMem` does.
+- Interrupts: no; it allocates.
+- Locks: none taken but `AllocMem`'s; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2977,7 +2979,7 @@ Allocates a task with a stack of its own, and starts it.
 **SYNOPSIS**
 
 ```zig
-fn CreateTask(base: *ExecBase, name: [:0]const u8, pri: i8,
+fn CreateTask(base: *ExecBase, name: [*:0]const u8, pri: i8,
     init_pc: TaskFn, stack_size: usize) ?*Task
 ```
 
@@ -3009,9 +3011,10 @@ before this returns.
 
 **CONTEXT**
 
-- Waits: no, but it may switch.
+- Waits: only when memory runs short, as `AllocMem` does; and it may
+  switch.
 - Interrupts: no. It allocates.
-- Locks: none needed.
+- Locks: none taken but `AllocMem`'s; no spinlock may be held.
 - Process: a Task will do. This makes a Task and not a Process - dos's
   `CreateNewProc` is what makes one of those, and only a Process may
   reach a file system.
@@ -3303,7 +3306,7 @@ fn DeletePool(base: *ExecBase, pool_handle: ?*anyopaque) void
 
 **INPUTS**
 
-- `pool` - what CreatePool answered, or null, which does nothing.
+- `pool_handle` - what CreatePool answered, or null, which does nothing.
 
 **RESULT**
 
@@ -4100,7 +4103,7 @@ fn FreePooled(base: *ExecBase, pool_handle: ?*anyopaque,
 
 **INPUTS**
 
-- `pool` - the pool it came from, or null, which does nothing.
+- `pool_handle` - the pool it came from, or null, which does nothing.
 - `memory_block` - the block, or null, which does nothing.
 - `byte_size` - **what was asked for**. A pooled block carries no
   header saying how big it is, which is the point of a pool, so this
@@ -5476,12 +5479,12 @@ fn OpenLibrary(base: *ExecBase, name: [*:0]const u8,
 
 - `name` - the library's name, as it is on its node. Matched exactly,
   case included.
-- `ver` - the lowest version that will do. 0 takes whatever is there.
+- `version` - the lowest version that will do. 0 takes whatever is there.
 
 **RESULT**
 
 The library base to call through, or null: there is no library of that
-name, it is older than `ver`, or its Open vector refused.
+name, it is older than `version`, or its Open vector refused.
 
 **BEHAVIOR**
 
@@ -5576,7 +5579,7 @@ machine is running.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: for exec's library list, while another task holds it.
 - Interrupts: no. It takes exec's library list, a semaphore.
 - Locks: takes exec's library list, a semaphore; no spinlock may be held.
 - Process: a Task will do.
@@ -7483,6 +7486,12 @@ With no device open the request is left marked quick with
 `IOERR_OPENFAIL`, so the `WaitIO` that follows answers at once instead
 of waiting for a reply that can never come.
 
+A request aborted after a `Wait` that something else ended is replied
+to its port, and `WaitIO` then finds it done without waiting: the
+port's signal, set by that reply, stays set. A task that sends again
+clears it first (`SetSignal(0, port_mask)`), or its next `Wait`
+answers at once.
+
 **BUGS**
 
 None known.
@@ -7494,6 +7503,7 @@ None known.
 **EXAMPLES**
 
 ```zig
+_ = sys.SetSignal(0, port_mask);
 sys.SendIO(@ptrCast(io));
 const got = sys.Wait(port_mask | exec.SIGBREAKF_CTRL_C);
 if (got & exec.SIGBREAKF_CTRL_C != 0) _ = sys.AbortIO(@ptrCast(io));

@@ -13,7 +13,7 @@ const TaskFn = sdk.exec.TaskFn;
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn CreateTask(base: *ExecBase, name: [:0]const u8, pri: i8,
+/// fn CreateTask(base: *ExecBase, name: [*:0]const u8, pri: i8,
 ///     init_pc: TaskFn, stack_size: usize) ?*Task
 /// ```
 ///
@@ -39,9 +39,10 @@ const TaskFn = sdk.exec.TaskFn;
 /// before this returns.
 ///
 /// CONTEXT:
-/// - Waits: no, but it may switch.
+/// - Waits: only when memory runs short, as `AllocMem` does; and it may
+///   switch.
 /// - Interrupts: no. It allocates.
-/// - Locks: none needed.
+/// - Locks: none taken but `AllocMem`'s; no spinlock may be held.
 /// - Process: a Task will do. This makes a Task and not a Process - dos's
 ///   `CreateNewProc` is what makes one of those, and only a Process may
 ///   reach a file system.
@@ -65,7 +66,7 @@ const TaskFn = sdk.exec.TaskFn;
 /// ```zig
 /// const task = sys.CreateTask("my task", 0, &myTask, 0) orelse return;
 /// ```
-pub fn CreateTask(base: *ExecBase, name: [:0]const u8, pri: i8, init_pc: TaskFn, stack_size: usize) ?*Task {
+pub fn CreateTask(base: *ExecBase, name: [*:0]const u8, pri: i8, init_pc: TaskFn, stack_size: usize) ?*Task {
     const task = _task.newTask(base, name, pri, if (stack_size == 0) _task.default_stack_size else stack_size) orelse return null;
     return base.iface().AddTask(task, init_pc, null);
 }

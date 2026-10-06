@@ -26,8 +26,9 @@ const _prefs = @import("_prefs.zig");
 /// BEHAVIOR:
 /// What the system is born with, whatever has been set since: a
 /// double-click of 1500 milliseconds, a screen font 16 rows tall, the
-/// keyboard on the screen on a board with none, pospaz from the ROM for
-/// all three fonts, the built-in pens. Written as `GetPrefs` writes them;
+/// keyboard on the screen on a board with none, every window kept wholly
+/// on its screen, pospaz from the ROM for all three fonts, the built-in
+/// pens. Written as `GetPrefs` writes them;
 /// what a settings editor's "use the defaults" hands to `SetPrefs`. The
 /// style is the default when none is set: `IPREFS_Style` with null.
 ///

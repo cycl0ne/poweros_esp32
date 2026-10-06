@@ -267,6 +267,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_PsramSize, 8 * 1024 * 1024),
     .value(st.SYSTAG_PsramMode, st.PSRAM_OCTAL),
     .value(st.SYSTAG_Console, console),
+    .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     // 1024 by 600 on a 7 inch diagonal.

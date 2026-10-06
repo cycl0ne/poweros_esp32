@@ -21,7 +21,6 @@ pub const no_date: i32 = -1;
 /// SINCE: 1.0. LVO -252.
 ///
 /// INPUTS:
-/// - `ub` - the library's base.
 /// - `date` - the date. Only `year`, `month` (1 to 12) and `mday` (1 to
 ///   31) are read; the time fields and `wday` are ignored.
 ///
@@ -46,7 +45,10 @@ pub const no_date: i32 = -1;
 /// bits and so stops in 2114; this reaches any year a `ClockData` holds.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+/// - Waits: no.
+/// - Interrupts: yes.
+/// - Locks: none needed.
+/// - Process: a Task will do; an interrupt will do.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. `date` is the caller's and is not written.

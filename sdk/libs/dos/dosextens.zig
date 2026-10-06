@@ -6,9 +6,8 @@
 //! and the arguments have typed views (PacketArgs). STARTUP is action 1,
 //! apart from NIL.
 //!
-//! The Process has the classic fields in their order, without the BCPL
-//! ones (pr_Pad, pr_GlobVec, pr_ReturnAddr). Fields are pointer-sized, no BPTRs;
-//! the CLI is opaque until its type exists.
+//! The Process's fields are pointer-sized, and pointers are plain
+//! pointers; the CLI is opaque until its type exists.
 
 const ports = @import("../exec/ports.zig");
 const tasks = @import("../exec/tasks.zig");
@@ -453,7 +452,7 @@ pub const Process = extern struct {
     task: Task = .{ .node = .{ .type = .process } },
     /// pr_MsgPort: signals SIGB_DOS.
     msg_port: MsgPort = .{},
-    /// pr_SegList: the process's code (none yet: no LoadSeg).
+    /// pr_SegList: the process's code; null, CreateNewProc sets none.
     seg_list: ?*anyopaque = null,
     /// pr_StackSize: in bytes.
     stack_size: u32 = 0,

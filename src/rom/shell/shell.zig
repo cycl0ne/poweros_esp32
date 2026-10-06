@@ -36,11 +36,10 @@
 //!   command stream, or the shell; EndCLI (the background flag set) ends it
 //!   too.
 //!
-//! No programs from disk (no LoadSeg: a file that isn't a script is "file
-//! is not executable"); no pipes yet; every `command` of a line is
-//! replaced, and one that can't start counts as failing (20); dos sets the
-//! CLI up; the prompt goes out through FPuts, so its text isn't a VFWritef
-//! format; EndCLI is noticed by the background flag.
+//! Every `command` of a line is replaced, and one that can't start counts
+//! as failing (20); dos sets the CLI up; the prompt goes out through
+//! FPuts, so its text isn't a VFWritef format; EndCLI is noticed by the
+//! background flag.
 
 const std = @import("std");
 const sdk = @import("sdk");

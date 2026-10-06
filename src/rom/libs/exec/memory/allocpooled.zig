@@ -23,7 +23,7 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// SINCE: 1.0. LVO -456.
 ///
 /// INPUTS:
-/// - `pool` - what CreatePool answered, or null.
+/// - `pool_handle` - what CreatePool answered, or null.
 /// - `byte_size` - how many bytes.
 ///
 /// RESULT:

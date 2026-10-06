@@ -32,7 +32,7 @@ const SDivMod32Result = sdk.utility.SDivMod32Result;
 /// by -1 wraps to itself, remainder 0, instead of faulting.
 ///
 /// A zero divisor is a programming error with no answer to give, and ends
-/// in exec's dead-end alert for a division by zero (`ACPU_DivZero`).
+/// in exec's dead-end alert for a division by zero (`ACPU_Base | 6`).
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -20,8 +20,8 @@ const _prefs = @import("_prefs.zig");
 /// - `ib` - intuition.library's base.
 /// - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
 ///   where its value is written: a `*u32` for `IPREFS_DoubleClick`
-///   (milliseconds), `IPREFS_ScreenFontHeight` (rows) and
-///   `IPREFS_Keyboard`; a `*?*graphics.TextFont` for the three fonts; a
+///   (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`
+///   and `IPREFS_OffScreen`; a `*?*graphics.TextFont` for the three fonts; a
 ///   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 ///
 /// RESULT:

@@ -7,12 +7,9 @@
  * HANDLERS:DEVICE says it first.
  *
  * Handler names the code that serves the device. dos looks it up by name
- * among its segments, which is where the ROM's handlers are, so a plain
- * name is what an entry says today. It may also be written as the file it
- * would come from - HANDLERS:con-handler - and then the name at the end is
- * what is looked for; an entry written that way mounts now and will mean
- * the same when a handler's code can be loaded off the disk, which is what
- * this directory is for.
+ * among its segments, which is where the ROM's handlers are, and else
+ * loads it as a file - a bare name from HANDLERS:, where fat-handler is.
+ * It may also be written as the file itself, HANDLERS:fat-handler.
  *
  * Baud and Control are the line a handler on a serial port gets: its
  * speed, and "8N1/NONE" - data bits, parity (N, E or O), stop bits, and

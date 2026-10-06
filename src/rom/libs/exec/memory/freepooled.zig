@@ -20,7 +20,7 @@ const Puddle = _memory.Puddle;
 /// SINCE: 1.0. LVO -460.
 ///
 /// INPUTS:
-/// - `pool` - the pool it came from, or null, which does nothing.
+/// - `pool_handle` - the pool it came from, or null, which does nothing.
 /// - `memory_block` - the block, or null, which does nothing.
 /// - `byte_size` - **what was asked for**. A pooled block carries no
 ///   header saying how big it is, which is the point of a pool, so this

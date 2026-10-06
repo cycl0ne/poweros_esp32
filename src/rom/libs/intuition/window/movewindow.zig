@@ -23,7 +23,9 @@ const Window = _window.Window;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// `ChangeWindowBox` at its size and a new place, kept on the screen.
+/// `ChangeWindowBox` at its size and a new place, kept on the screen - or,
+/// while windows may hang past its edges (`IPREFS_OffScreen`), with
+/// enough of it on the screen to take hold of again.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.

@@ -21,6 +21,7 @@ const messages = [_]struct { id: u32, text: [*:0]const u8 }{
     .{ .id = @intCast(datatypes.DTERROR_UNKNOWN_COMPRESSION), .text = "Unknown compression" },
     .{ .id = @intCast(datatypes.DTERROR_NOT_ENOUGH_DATA), .text = "Not enough data" },
     .{ .id = @intCast(datatypes.DTERROR_INVALID_DATA), .text = "The data is not what it says it is" },
+    .{ .id = @intCast(datatypes.DTERROR_TOO_LARGE), .text = "Too large for this machine" },
     // The groups, by name, for a program listing what it can open.
     .{ .id = datatypes.GID_SYSTEM, .text = "system" },
     .{ .id = datatypes.GID_TEXT, .text = "text" },

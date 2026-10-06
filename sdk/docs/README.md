@@ -33,6 +33,21 @@ tags and constants, each with its doc comment.
   window of gadgets laid out by a layout and a window object; when a
   check fails, the system log, semaphores, spinlocks and exec's list
   locks, and what two cores change.
+- [exec.library](guides/exec.md) - the base, opening libraries, devices
+  and resources, memory and pools, lists, tasks, signals, messages and
+  ports, I/O requests and a timed wait, interrupts, and a library or a
+  device of one's own.
+- [dos.library](guides/dos.md) - files, buffered reading and writing,
+  names and paths, locks and directories, patterns, command arguments,
+  errors and Ctrl-C, processes, running commands, variables, the device
+  list and assigns, handlers and packets, disks at boot, and consoles.
+- [utility.library](guides/utility.md) - tag lists, pack tables, hooks,
+  dates, arithmetic, strings and case, patterns, named objects, unique
+  numbers, and comparing records.
+- [Intuition](guides/intuition.md) - screens and their pens, windows and
+  their messages, window objects, BOOPSI objects and how they are
+  connected, gadgets and layouts, the keyboard, gadgets in the border,
+  how a gadget is drawn again, menus and requesters.
 - [Fonts](guides/fonts.md) - the font image, drawing text, text from a
   description (IntuiText), choosing a font, sizes in points, font files
   and `FONTS:`, diskfont.library, outline fonts, the system's fonts, and
@@ -46,8 +61,8 @@ tags and constants, each with its doc comment.
   keys), timelines (there and back, scrubbing), moving a gadget, what
   moves on its own, and a whole program.
 - [Datatypes](guides/datatypes.md) - what a file is to datatypes.library,
-  working an object, pictures, text, showing one in a window, and
-  writing a class.
+  working an object, pictures, text, animations, showing one in a
+  window, and writing a class.
 - [Network](guides/network.md) - sockets, waiting on them, names, TLS,
   interfaces and their files, the network device API, wireless devices,
   writing a network driver, telnet.device, and the commands.

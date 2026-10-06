@@ -126,6 +126,9 @@ pub const IntuitionBase = extern struct {
     double_micros: u32,
     /// When the on-screen keyboard comes up (`IPREFS_Keyboard`).
     keyboard_mode: u32,
+    /// Whether a window may be moved partly past its screen's edges
+    /// (`IPREFS_OffScreen`): 0 or 1.
+    off_screen: u32,
     /// The RastPorts `ObtainGIRPort` has given out, and the layer held for
     /// each, so that the release can let the right one go.
     held: [_gadget.held_max]_gadget.Held,

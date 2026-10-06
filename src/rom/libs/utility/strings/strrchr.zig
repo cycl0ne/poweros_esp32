@@ -44,7 +44,7 @@ const UtilityBase = @import("../utility.zig").UtilityBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// const slash = ub.Strrchr(path, '/') orelse path; // the last part of a path
+/// const slash = ub.Strrchr(path, '/'); // the last '/' of a path, or null
 /// ```
 pub fn Strrchr(_: *UtilityBase, string: [*:0]const u8, character: u8) ?[*:0]const u8 {
     var found: ?[*:0]const u8 = null;

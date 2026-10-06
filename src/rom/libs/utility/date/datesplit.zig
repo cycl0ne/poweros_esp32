@@ -18,7 +18,6 @@ const _date = @import("_date.zig");
 /// SINCE: 1.0. LVO -248.
 ///
 /// INPUTS:
-/// - `ub` - the library's base.
 /// - `days` - days since 1 January 1978, which is day 0.
 /// - `result` - filled in with the date.
 ///
@@ -43,14 +42,18 @@ const _date = @import("_date.zig");
 /// is, rather than with a year that has wrapped.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+/// - Waits: no.
+/// - Interrupts: yes.
+/// - Locks: none needed.
+/// - Process: a Task will do; an interrupt will do.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. `result` is the caller's.
 ///
 /// NOTES:
 /// `DateJoin` is the inverse, and the two round-trip exactly for every
-/// day number this takes.
+/// day number up to the last day of 65535; a larger one comes back as
+/// that day.
 ///
 /// BUGS:
 /// None known.
@@ -76,7 +79,7 @@ pub fn DateSplit(_: *UtilityBase, days: u32, result: *ClockData) void {
         .month = civil.month,
         .year = civil.year,
         // Day 0 was a Sunday, and the weekdays have run unbroken since.
-        .wday = @intCast(days % 7),
+        .wday = @intCast(at % 7),
     };
 }
 
@@ -143,6 +146,7 @@ test "a day number past the last year answers with the last date" {
     try testing.expectEqual(edge.year, over.year);
     try testing.expectEqual(edge.month, over.month);
     try testing.expectEqual(edge.mday, over.mday);
+    try testing.expectEqual(edge.wday, over.wday);
 }
 
 test "DateSplit: past the year the seconds-based calls stop at" {

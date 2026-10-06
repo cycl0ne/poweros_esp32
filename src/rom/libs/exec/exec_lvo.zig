@@ -520,7 +520,7 @@ fn lvoFreeSignal(base: *ExecBase, signal_num: i8) callconv(.c) void {
     exec.FreeSignal(base, signal_num);
 }
 fn lvoCreateTask(base: *ExecBase, name: [*:0]const u8, pri: i8, init_pc: TaskFn, stack_size: usize) callconv(.c) ?*Task {
-    return exec.CreateTask(base, std.mem.span(name), pri, init_pc, stack_size);
+    return exec.CreateTask(base, name, pri, init_pc, stack_size);
 }
 fn lvoSetExcept(base: *ExecBase, new_signals: u32, signal_set: u32) callconv(.c) u32 {
     return exec.SetExcept(base, new_signals, signal_set);

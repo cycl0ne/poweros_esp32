@@ -19,8 +19,8 @@ const _input = @import("../input/_input.zig");
 /// SINCE: 0.12. LVO -292.
 ///
 /// INPUTS:
-/// - `gadget` - a gadget on the window's list, or of the requester in front
-///   in it.
+/// - `gadget` - a gadget in the window - on its list, or a member of a
+///   layout or group that is - or of the requester in front in it.
 /// - `window` - its window, which must be the active one.
 /// - `requester` - the requester the gadget is in, or null for one of the
 ///   window's own.

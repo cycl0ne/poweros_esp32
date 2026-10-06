@@ -418,13 +418,14 @@ pub const IntuitionBase = opaque {
         return libraries.call(self, LVO.GetScreenAttrs, Fn.GetScreenAttrs, .{ screen, tags });
     }
 
-    /// Bring a screen in front of the others on its display. A display shows
-    /// one screen, so there is nothing to change yet.
+    /// Bring a screen in front of the others on its display, which then shows
+    /// it.
     pub fn ScreenToFront(self: *IntuitionBase, screen: *intuition.Screen) void {
         return libraries.call(self, LVO.ScreenToFront, Fn.ScreenToFront, .{screen});
     }
 
-    /// Put a screen behind the others on its display. The same.
+    /// Put a screen behind the others on its display, which then shows the
+    /// one now in front.
     pub fn ScreenToBack(self: *IntuitionBase, screen: *intuition.Screen) void {
         return libraries.call(self, LVO.ScreenToBack, Fn.ScreenToBack, .{screen});
     }

@@ -187,6 +187,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.double_seconds = @import("prefs/_prefs.zig").default_double_seconds;
     ib.double_micros = @import("prefs/_prefs.zig").default_double_micros;
     ib.keyboard_mode = sdk.intuition.KEYBOARD_AUTO;
+    ib.off_screen = 0;
     ib.style_serial = 0;
     ib.system_pens = @import("screen/_screen.zig").default_pens;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));

@@ -35,7 +35,9 @@ const interior = _window.interior;
 ///   the limits, `WA_Title`, `WA_IDCMP`, `WA_RastPort`, `WA_UserPort`,
 ///   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
 ///   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
-///   `WA_AmigaKey`, `WA_MenuHelp`.
+///   `WA_AmigaKey`, `WA_MenuHelp`. `WA_Left` and `WA_Top` are signed,
+///   written by their bits: a window past the screen's left edge
+///   (`IPREFS_OffScreen`) has a negative left.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -73,8 +75,9 @@ pub fn GetWindowAttrs(ib: *IntuitionBase, window: *Window, tags: ?[*]const TagIt
         if (item.data == 0) continue;
         const out: *usize = @ptrFromInt(item.data);
         switch (item.tag) {
-            wn.WA_Left => out.* = @intCast(window.left),
-            wn.WA_Top => out.* = @intCast(window.top),
+            // Signed, by its bits: a window may hang past the left edge.
+            wn.WA_Left => out.* = @bitCast(@as(isize, window.left)),
+            wn.WA_Top => out.* = @bitCast(@as(isize, window.top)),
             wn.WA_Width => out.* = @intCast(window.width),
             wn.WA_Height => out.* = @intCast(window.height),
             wn.WA_InnerWidth => out.* = @intCast(interior(window).width),

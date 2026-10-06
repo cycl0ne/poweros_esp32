@@ -973,12 +973,12 @@ fn moved(ib: *IntuitionBase) void {
             w.width,
             w.height,
         ),
-        .size => if (st.window) |w| ib.iface().ChangeWindowBox(
+        // Through SizeWindow, which keeps the window where it is: dragged
+        // past the screen's edge, it stops growing there.
+        .size => if (st.window) |w| ib.iface().SizeWindow(
             @ptrCast(w),
-            w.left,
-            w.top,
-            st.box_width + st.x - st.grab_x,
-            st.box_height + st.y - st.grab_y,
+            st.box_width + st.x - st.grab_x - w.width,
+            st.box_height + st.y - st.grab_y - w.height,
         ),
         .screen_drag => if (st.screen) |s| _kscreen.moveTo(ib, s, st.box_top + st.disp_y - st.grab_y),
         .screen_depth => if (st.screen) |s| {

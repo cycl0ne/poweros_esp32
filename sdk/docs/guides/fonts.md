@@ -1,8 +1,8 @@
 # Fonts
 
-How text gets onto a surface: what a font is, how one is chosen and
-opened, where fonts come from, and what a program has to do to use them.
-The calls themselves are in the reference: [graphics](../autodocs/graphics.md),
+How text gets onto a surface: what a font is, how one is chosen and opened,
+where fonts come from, and what a program has to do to use them. The calls
+themselves are in the reference: [graphics](../autodocs/graphics.md),
 [diskfont](../autodocs/diskfont.md), [truetype](../autodocs/truetype.md),
 [intuition](../autodocs/intuition.md).
 
@@ -115,8 +115,10 @@ gb.Text(rp, "Hello", 5);
   more is inverted.
 - **Styles are drawn, not stored.** `FSF_BOLD` draws each glyph again
   `bold_smear` to the right, `FSF_ITALIC` leans the rows, `FSF_UNDERLINED`
-  draws a line under the run, `FSF_EXTENDED` widens each advance by one. A
-  style the font was drawn with (its `style`) is not added again.
+  draws a line under the run, `FSF_EXTENDED` sets the letters a pixel
+  further apart. Bold widens every advance by one as well, for the glyph
+  drawn again, so a run in either is longer than the plain one. A style the
+  font was drawn with (its `style`) is not added again.
 - `GetRPAttrs` with `RPTAG_FontHeight`, `RPTAG_FontBaseline`,
   `RPTAG_FontWidth` (the nominal width) and `RPTAG_FontProportional`
   answers what a layout needs without touching the font.
@@ -169,7 +171,8 @@ ib.PrintIText(rp, &heading, 10, 20);
   colour or style, are one IntuiText drawn by one call. A run with no
   words is passed over and the runs after it are still drawn.
 - **`IntuiTextLength` measures one run,** in its `IT_Font` and `IT_Style`,
-  or in the font a screen opens with when it names none. The runs after
+  or in the system's default font (`SYSFONT_DEFAULT`) when it names
+  none. The runs after
   it are not added: each goes where it says. `intuition.text.plainRun(words,
   font)` makes the run to measure a word with.
 - **The font stays the caller's,** and open, for as long as the run is

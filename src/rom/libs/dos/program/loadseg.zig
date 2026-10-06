@@ -28,8 +28,8 @@ const readValue = _program.readValue;
 ///
 /// RESULT:
 /// The chain of segments, the first one with the entry point in its
-/// `entry`, for RunCommand and CreateNewProc and later UnLoadSeg; IoErr is
-/// 0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
+/// `entry` - which a `SegCode` wraps for RunCommand or CreateNewProc -
+/// and later UnLoadSeg; IoErr is 0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
 /// that isn't a load file of this version, ERROR_BAD_HUNK for one that is
 /// damaged (too many or too large segments, relocations outside them, an
 /// entry point outside the code), ERROR_NO_FREE_STORE, or Open's error.

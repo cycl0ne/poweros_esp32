@@ -31,9 +31,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// past the header, with the whole size in the word immediately below it.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: only when memory runs short, as `AllocMem` does.
 /// - Interrupts: no. `AllocMem` takes exec's memory lock.
-/// - Locks: none needed.
+/// - Locks: none taken but `AllocMem`'s; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

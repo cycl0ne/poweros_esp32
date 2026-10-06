@@ -3,14 +3,17 @@
 What a disk holds is said by the disk itself: a RigidDiskBlock in one of
 its first blocks, and a chain of PartitionBlocks hanging off it, one per
 partition, each with the name its device node gets (`DH0`), the
-cylinders it covers and the file system it is for. dos.library reads
-that table at boot and mounts what it says. `rdb.library`, in `LIBS:`,
-is how a program reads the table, changes it and writes it back.
+cylinders it covers and the file system it is for. The flash disk's
+table is read when the system starts, and its partitions are mounted as
+it says. `rdb.library`, in `LIBS:`, is how a program reads the table,
+changes it and writes it back.
 
 This guide is how the table is laid out, how the library holds it, and
 what a program does with it - from listing the partitions to putting a
-fresh table on a disk. `C:RDB` is the library's own command, and does
-all of it from the shell.
+fresh table on a disk. `C:RDB` is the library's own command: it shows a
+table, makes a fresh one, and adds and takes away partitions from the
+shell. `s3> rdb init` writes a first table on a blank flash chip, where
+there is no `C:` yet to run `C:RDB` from.
 
 ## The table on the disk
 
@@ -248,7 +251,9 @@ which may have written part of the table.
 `flash.device` reads the table of the flash disk (its unit 0) once, when
 it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `MSD\0` the FAT handler. It hands the nodes to
+file system, `MSD\0` the FAT handler; a partition whose DosType names
+neither, or that has no name, is passed over, and the chain is followed
+for 16 PartitionBlocks at most. It hands the nodes to
 expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
 dos.library is up and takes them in. The bootable partition with the
 highest boot priority is where the system starts from. So what
@@ -260,8 +265,10 @@ system working on the old ones until the next boot, and a file system
 that finds its partition smaller than it was is not going to like it:
 change a partition's size only when what is on it can go.
 
-A card in the slot is mounted as `SD0:` by looking at what is on it, not
-from a table; a table on a card is for a program that reads it.
+A card in the slot is mounted as `SD0:` by `Mount SD0:`, from its entry in
+`HANDLERS:MountList`, and fat-handler finds the volume from the card's
+own partition table and boot sector - not from a RigidDiskBlock. A
+RigidDiskBlock on a card is for a program that reads it.
 
 ## From the shell
 

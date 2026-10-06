@@ -482,8 +482,9 @@ fn paste(cb: *ConsoleBase, u: *Unit) void {
 
 /// Which cell of `u` the pointer is over, and whether it is over it at all.
 fn cellAt(cb: *ConsoleBase, u: *Unit, x: i32, y: i32) ?u32 {
-    const left: i32 = @intCast(windowAttr(cb, u.window, wn.WA_Left));
-    const top: i32 = @intCast(windowAttr(cb, u.window, wn.WA_Top));
+    // Signed: a window may hang past the screen's left edge.
+    const left: i32 = @truncate(@as(isize, @bitCast(windowAttr(cb, u.window, wn.WA_Left))));
+    const top: i32 = @truncate(@as(isize, @bitCast(windowAttr(cb, u.window, wn.WA_Top))));
     const in_x = x - left - u.pub_unit.origin_x;
     const in_y = y - top - u.pub_unit.origin_y;
     if (in_x < 0 or in_y < 0) return null;

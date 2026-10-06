@@ -16,11 +16,12 @@
 //! opening the object and adding it to a window; a new kind of file is a
 //! new class and a new descriptor, and this program does not change.
 //!
-//! The bars are the object's `ICA_TARGET`, and an `ICA_MAP` turns
-//! `SCROLLER_Top` into `DTA_TopVert` and `DTA_TopHoriz`, so dragging one
-//! moves the view without the program hearing anything. What the program
-//! does is read back how much there is and how much of it is seen -
-//! after the window opens and after every resize - and tell the bars.
+//! The bars' `ICA_TARGET` is a model whose one connection is to the
+//! object, and an `ICA_MAP` turns `SCROLLER_Top` into `DTA_TopVert` and
+//! `DTA_TopHoriz`, so dragging one moves the view without the program
+//! hearing anything. What the program does is read back how much there
+//! is and how much of it is seen - once the window is open, and each time
+//! the object says it has laid itself out - and tell the bars.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -82,13 +83,16 @@ const ID_HORIZ = 2;
 // program is told is that a layout has finished, which is the one thing
 // only it can answer - by drawing the object again.
 
-/// What a bar tells the model as it moves.
+/// What a bar tells the model as it moves. Its GA_ID goes no further:
+/// the object would take it for its own.
 const vert_map = [_]TagItem{
     .{ .tag = sr.SCROLLER_Top, .data = dtc.DTA_TopVert },
+    .{ .tag = gc.GA_ID, .data = utility.TAG_IGNORE },
     .{},
 };
 const horiz_map = [_]TagItem{
     .{ .tag = sr.SCROLLER_Top, .data = dtc.DTA_TopHoriz },
+    .{ .tag = gc.GA_ID, .data = utility.TAG_IGNORE },
     .{},
 };
 
@@ -436,8 +440,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.DisposeObject(made.vert);
         ib.DisposeObject(made.horiz);
     }
-    // What the object already knows, put into the bars once. From here
-    // on the model keeps them level with it.
+    // What the object already knows, put into the bars. From here on
+    // each IDCMPUPDATE puts in what its new layout worked out.
     followObject(ib, made, object, window);
 
     var code: u32 = 0;

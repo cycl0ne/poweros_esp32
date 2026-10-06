@@ -27,8 +27,7 @@ const TagItem = sdk.utility.TagItem;
 /// BEHAVIOR:
 /// The copy holds the items `NextTagItem` finds, in order, in one array
 /// ended by `TAG_DONE`: the control items are gone and a `TAG_MORE` chain
-/// is
-/// joined into one. The data is copied as it stands - what a data word
+/// is joined into one. The data is copied as it stands - what a data word
 /// points to is not. Later changes to the original are not seen;
 /// `RefreshTagItemClones` copies them into the same array again.
 ///

@@ -58,7 +58,7 @@ const unlock = _screen.unlock;
 ///
 /// RESULT:
 /// The screen, or null: `OSERR_NOMONITOR` (no display), `OSERR_NOTAVAILABLE`
-/// (the display already shows a screen), `OSERR_PUBNOTUNIQUE`,
+/// (the display's memory has no room for another screen), `OSERR_PUBNOTUNIQUE`,
 /// `OSERR_BADNAME` (a public name too long), `OSERR_NOMEM`.
 ///
 /// BEHAVIOR:
@@ -79,8 +79,9 @@ const unlock = _screen.unlock;
 /// others, and cannot close while it is.
 ///
 /// NOTES:
-/// - One screen to a display, for now. A second on the same display is
-///   refused rather than hidden, so a program knows.
+/// - A display holds as many screens as its memory has room for; the one
+///   in front is shown, and `ScreenToFront` and `ScreenToBack` change
+///   which.
 /// - Without memory for its title bar it opens with none.
 ///
 /// BUGS:

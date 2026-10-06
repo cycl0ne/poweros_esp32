@@ -1,11 +1,11 @@
 # Network
 
 How the machine talks to a network: the TCP/IP stack a program uses, the
-interfaces it runs on, the devices that carry its frames, and what it
-takes to write one. The calls are in the reference:
-[bsdsocket](../autodocs/bsdsocket.md) and [tls](../autodocs/tls.md); the device requests are described
-in `sdk/devices/network.zig`, `sdk/devices/wireless.zig` and
-`sdk/devices/telnet.zig`.
+interfaces it runs on, the devices that carry its frames, and what it takes
+to write one. The calls are in the reference:
+[bsdsocket](../autodocs/bsdsocket.md) and [tls](../autodocs/tls.md); the
+device requests are described in `sdk/devices/network.zig`,
+`sdk/devices/wireless.zig` and `sdk/devices/telnet.zig`.
 
 - [The layers](#the-layers)
 - [Using sockets](#using-sockets)
@@ -46,7 +46,7 @@ Two tasks that both use sockets each open the library.
 
 ```zig
 const bsd = sdk.bsdsocket;
-const lib = sys.OpenLibrary(bsd.SOCKETNAME, 0) orelse return;
+const lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return;
 defer sys.CloseLibrary(lib);
 const sb: *sdk.interface.bsdsocket.SocketBase = @ptrCast(lib);
 
@@ -74,11 +74,11 @@ const got = sb.Recv(fd, &reply, reply.len, 0);
   `MSG_DONTWAIT`, `MSG_OOB`), `Shutdown`, `CloseSocket`, `GetSockName`,
   `GetPeerName`, `SetSockOpt`/`GetSockOpt`, `IoctlSocket` (`FIONBIO`,
   `SIOCATMARK`).
-- **Errors:** a call that fails answers -1; `Errno()` gives the reason,
-  or `SocketBaseTagList` with `SBTC_ERRNO` puts it where the program
-  wants it. `sdk.bsdsocket.errnoText(sb, errno)` gives it in words, as
-  the library has them (`SBTC_ERRNOSTRPTR`, and `SBTC_HERRNOSTRPTR` for
-  a name lookup's h_errno): the network commands print
+- **Errors:** a call that fails answers -1; `Errno()` gives the reason, and
+  `SetErrnoPtr` has the library keep it in a variable of the program's as
+  well. `sdk.bsdsocket.errnoText(sb, errno)` gives it in words, as the
+  library has them (`SBTC_ERRNOSTRPTR`, and `SBTC_HERRNOSTRPTR` for a name
+  lookup's h_errno): the network commands print
   `Connect failed: Network is unreachable - no route to it (errno 51)`.
 - **Byte order:** addresses and ports inside a `sockaddr_in` are in
   network order; `htons`, `htonl`, `ntohs`, `ntohl` turn the chip's order
@@ -124,7 +124,7 @@ connection to a task, or to a device (below).
 name, IPv6 and IPv4, as a list freed with `FreeAddrInfo`; `GetNameInfo`
 goes the other way. A name is looked for in order:
 
-1. `ENVARC:Sys/net/hosts` (copied to `ENV:`): an address, then its names.
+1. `ENVARC:Sys/net/hosts`: an address, then its names.
 2. The name servers: those DHCP gave, those in an interface file, those a
    router's advertisement named, or, with none of those,
    `ENVARC:Sys/net/nameservers`.
@@ -139,9 +139,10 @@ file.
 
 ## TLS: a secure connection
 
-`LIBS:tls.library` puts TLS - 1.3, and 1.2 for a server that speaks
-nothing newer - over a stream socket a program has connected - the program's own socket, in its own bsdsocket base, which
-it keeps: it waits on it, and it closes it after the session.
+`LIBS:tls.library` puts TLS - 1.3, and 1.2 for a server that speaks nothing
+newer - over a stream socket a program has connected - the program's own
+socket, in its own bsdsocket base, which it keeps: it waits on it, and it
+closes it after the session.
 
 ```zig
 const tls = sdk.tls;
@@ -234,7 +235,7 @@ behind it are:
 | `RemoveInterface` | takes one down and closes its device |
 | `AddRouteTagList` / `DeleteRouteTagList` | routes: `RTA_Destination`, `RTA_NetMask`, `RTA_Gateway`, `RTA_DefaultGateway` |
 | `AddDomainNameServer` / `RemoveDomainNameServer` | name servers, stack-wide |
-| `GetNetworkStatistics` | the stack's counts, by protocol |
+| `GetNetworkStatistics` | what the stack holds, by kind: `NETSTATUS_COUNTS` (its packet counts), `ROUTES`, `SOCKETS`, `ARP`, `ADDRESSES6`, `ROUTES6`, `NEIGHBORS`, `NAMESERVERS` |
 
 With DHCP, `AddInterfaceTagList` answers at once and the address comes
 when the server answers; `IFQ_State` and `IFQ_Address` show when it has.
@@ -252,8 +253,9 @@ keeps with the device grows with the link's speed unless the file says.
 | `ENVARC:Sys/net/nameservers` | name servers to ask when the network names none |
 | `ENVARC:Sys/net/timeserver` | where `C:net/TimeSync` asks the time, when DHCP names no server |
 | `ENVARC:Sys/net/networks/<network>` | a Wi-Fi network's passphrase, its first line |
+| `ENVARC:Sys/net/syslog` | a syslog server: `S:Network-Startup` starts `C:Log SYSLOG` to it |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
-| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync` |
+| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:
 
@@ -278,8 +280,10 @@ Configure  = DHCP
 | `Address6`, `Prefix6`, `Gateway6` | a fixed IPv6 address, its prefix length, and an IPv6 router |
 
 A keyword not in the table is an error, reported with its line and
-column. A board without the file's device skips the interface and says
-nothing, so one set of files serves every board.
+column. A board without the file's device skips the interface; with
+`QUIET`, as `S:Network-Startup` runs it, it says nothing, so one set of
+files serves every board (without, it names the interface it could not
+add and ends with `WARN`).
 
 ## The network device API
 
@@ -378,10 +382,11 @@ and the driver tells the unit what the hardware did:
 | `unit.setCarrier(up)` | the link came or went (a radio joining or leaving) |
 | `unit.damaged()`, `unit.overrun()` | a bad frame, a frame lost for want of room |
 
-The device's own calls hand over: `BeginIO` gives `open`, `close`,
-`abort`, `query` and `stationAddress` to the unit on the caller's task,
-and queues everything else to the device's task, where `unit.perform`
-does it.
+The device's own calls hand over: `Open`, `Close` and `AbortIO` go to
+the unit's `open`, `close` and `abort`; `BeginIO` does `S2_DEVICEQUERY`
+and `S2_GETSTATIONADDRESS` with `query` and `stationAddress` on the
+caller's task, and queues everything else to the device's task, where
+`unit.perform` does it.
 
 **Rules a driver keeps:**
 

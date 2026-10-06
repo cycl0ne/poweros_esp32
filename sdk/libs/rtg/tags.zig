@@ -17,7 +17,10 @@
 const TAG_USER = @import("../utility/tagitem.zig").TAG_USER;
 const RTGCTRL_DRIVER = @import("boards.zig").RTGCTRL_DRIVER;
 
-/// The generic tags, which every board driver is handed already read.
+/// The generic tags, which mean the same to every board driver. The
+/// library reads the name, user data, alignment, transport, brightness,
+/// display-on and error pointer; the driver reads the rest of them from
+/// the same list.
 pub const RTGA_Dummy = TAG_USER + 4000;
 /// Where the drivers' own blocks start. Each takes 64.
 pub const RTGA_DriverBase = TAG_USER + 4100;
