@@ -17,8 +17,8 @@
 //! Disable and a spinlock make `reschedule` leave it set, and the matching
 //! `Enable` or `ReleaseLock` takes it.
 //!
-//! `reschedule` and `switchIfPending` do not go through the jump table and
-//! must not: the scheduler cannot run on a vector something has replaced.
+//! `reschedule` does not go through the jump table and must not: the
+//! scheduler cannot run on a vector something has replaced.
 //!
 //! Signals: Signal/Wait, SetSignal, AllocSignal/FreeSignal, and task
 //! exceptions (SetExcept), which run a task's exception code when one of
@@ -36,8 +36,8 @@
 //! everything else.
 //!
 //! The scheduler - `interruptEnter`/`interruptExit` around every exception,
-//! `tickQuantum` from the tick, `switchIfPending` from `Permit` and
-//! `Enable`, and the dispatcher `reschedule` behind them; making the boot
+//! `tickQuantum` from the tick, `switchDue` for `Enable` and
+//! `ReleaseLock`, and the dispatcher `reschedule` behind them; making the boot
 //! and idle tasks at init and giving them back; laying a task out in one
 //! block and freeing it; running a task's code; and raising a task's
 //! exception on its way back into the processor.
@@ -666,24 +666,11 @@ pub fn tickQuantum(base: *ExecBase) void {
     }
 }
 
-/// Takes a switch that is due, if it is allowed now: at task level, with
-/// no Disable and no spinlock outstanding. `Enable` and `ReleaseLock` call
-/// it, which is what makes each of them a point where the caller may lose
-/// the processor.
-///
-/// INPUTS:
-/// - `base` - exec: this core's scheduling flags and nesting counts.
-pub fn switchIfPending(base: *ExecBase) void {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    const due = switchDue(base.cpu());
-    hardware.restore(state);
-    if (due) task_hardware.switch_now();
-}
-
-/// Whether a switch is due on the core and allowed now; `switchIfPending`
-/// without the masking, for a caller whose interrupts are masked already
-/// and who takes it once they are back.
+/// Whether a switch is due on the core and allowed now: at task level, with
+/// no Disable and no spinlock outstanding. `Enable` and `ReleaseLock` ask
+/// it with their interrupts masked and take the switch once they are back,
+/// which is what makes each of them a point where the caller may lose the
+/// processor.
 ///
 /// INPUTS:
 /// - `cpu` - this core's state.

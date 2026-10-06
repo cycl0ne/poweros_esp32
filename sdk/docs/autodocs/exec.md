@@ -3603,8 +3603,8 @@ system's interrupt lock go first, so the other core's interrupts and
 Disables come in again.
 
 A switch asked for while interrupts were masked - by a `Signal` or an
-`AddTask` from inside one - is taken here, so like `Permit` this is a
-point at which the caller may lose the processor.
+`AddTask` from inside one - is taken here, so like `ReleaseLock` this is
+a point at which the caller may lose the processor.
 
 **CONTEXT**
 
@@ -3623,7 +3623,7 @@ None known.
 
 **SEE ALSO**
 
-`Disable`, `Permit`
+`Disable`, `ReleaseLock`
 
 **EXAMPLES**
 
@@ -4433,8 +4433,9 @@ be built leaves everything above it with nothing to open.
 
 **CONTEXT**
 
-- Waits: whatever the modules do. Cold start runs on the exec task after
-  `Permit`, so a module may wait, allocate and open other modules.
+- Waits: whatever the modules do. Cold start runs on the exec task once
+  multitasking has started, so a module may wait, allocate and open
+  other modules.
 - Interrupts: no.
 - Locks: **none held.** A module's init runs as its task's code, and takes
   what it needs itself.

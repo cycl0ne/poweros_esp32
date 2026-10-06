@@ -31,8 +31,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// Disables come in again.
 ///
 /// A switch asked for while interrupts were masked - by a `Signal` or an
-/// `AddTask` from inside one - is taken here, so like `Permit` this is a
-/// point at which the caller may lose the processor.
+/// `AddTask` from inside one - is taken here, so like `ReleaseLock` this is
+/// a point at which the caller may lose the processor.
 ///
 /// CONTEXT:
 /// - Waits: no, but it may switch.
@@ -47,7 +47,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `Disable`, `Permit`
+/// `Disable`, `ReleaseLock`
 ///
 /// EXAMPLES:
 /// ```zig

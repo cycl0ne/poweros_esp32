@@ -151,7 +151,7 @@ pub fn startSystem(base: *ExecBase, boot: *const exec.BootInfo) error{OutOfMemor
     _ = sys_base.InitCode(sdk.exec.RTF_SINGLETASK, 0);
 }
 
-/// Above the boot task: the exec task runs as soon as Permit lets it.
+/// Above the boot task: the exec task runs as soon as multitasking starts.
 const exec_task_pri = 5;
 const exec_task_stack = 16 * 1024;
 

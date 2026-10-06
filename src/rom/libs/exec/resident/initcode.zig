@@ -38,8 +38,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// be built leaves everything above it with nothing to open.
 ///
 /// CONTEXT:
-/// - Waits: whatever the modules do. Cold start runs on the exec task after
-///   `Permit`, so a module may wait, allocate and open other modules.
+/// - Waits: whatever the modules do. Cold start runs on the exec task once
+///   multitasking has started, so a module may wait, allocate and open
+///   other modules.
 /// - Interrupts: no.
 /// - Locks: **none held.** A module's init runs as its task's code, and takes
 ///   what it needs itself.
