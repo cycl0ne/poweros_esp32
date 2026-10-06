@@ -68,6 +68,7 @@ pub const LVO = struct {
     pub const Strrchr = libraries.lvo(60);
     pub const DateSplit = libraries.lvo(61);
     pub const DateJoin = libraries.lvo(62);
+    pub const CompareMem = libraries.lvo(63);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -125,6 +126,7 @@ pub const Fn = struct {
     pub const Strrchr = *const fn (*UtilityBase, [*:0]const u8, u8) callconv(.c) ?[*:0]const u8;
     pub const DateSplit = *const fn (*UtilityBase, u32, *utility.ClockData) callconv(.c) void;
     pub const DateJoin = *const fn (*UtilityBase, *const utility.ClockData) callconv(.c) i32;
+    pub const CompareMem = *const fn (*UtilityBase, *const anyopaque, *const anyopaque, usize) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -368,5 +370,12 @@ pub const UtilityBase = opaque {
     /// are read.
     pub fn DateJoin(self: *UtilityBase, date: *const utility.ClockData) i32 {
         return libraries.call(self, LVO.DateJoin, Fn.DateJoin, .{date});
+    }
+
+    /// The first `length` bytes at `first` and at `second` compared: 0 when
+    /// they are the same, else below or above 0 as the first byte that differs
+    /// is lower or higher at `first`.
+    pub fn CompareMem(self: *UtilityBase, first: *const anyopaque, second: *const anyopaque, length: usize) i32 {
+        return libraries.call(self, LVO.CompareMem, Fn.CompareMem, .{ first, second, length });
     }
 };

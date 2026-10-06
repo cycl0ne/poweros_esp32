@@ -96,6 +96,7 @@ test {
     _ = @import("strings/tolower.zig");
     _ = @import("strings/toupper.zig");
     _ = @import("utils/aligndown.zig");
+    _ = @import("utils/comparemem.zig");
     _ = @import("utils/alignup.zig");
     _ = @import("pack/_pack.zig");
     _ = @import("pack/packstructuretags.zig");
@@ -155,7 +156,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 0), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 1), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);

@@ -22,8 +22,8 @@ pub const LIBRARY_NAME = "utility.library";
 /// The version programs ask `OpenLibrary` for.
 const LIBRARY_VERSION = 1;
 /// The revision within the version, set by `init`.
-const LIBRARY_REVISION = 0;
-const BUILD_DATE = "15.9.2026";
+const LIBRARY_REVISION = 1;
+const BUILD_DATE = "06.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

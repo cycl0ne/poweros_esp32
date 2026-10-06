@@ -49,6 +49,7 @@ const Strchr = @import("strings/strchr.zig").Strchr;
 const Strrchr = @import("strings/strrchr.zig").Strrchr;
 const DateSplit = @import("date/datesplit.zig").DateSplit;
 const DateJoin = @import("date/datejoin.zig").DateJoin;
+const CompareMem = @import("utils/comparemem.zig").CompareMem;
 const PackStructureTags = @import("pack/packstructuretags.zig").PackStructureTags;
 const UnpackStructureTags = @import("pack/unpackstructuretags.zig").UnpackStructureTags;
 const AddNamedObject = @import("namedobjects/addnamedobject.zig").AddNamedObject;
@@ -152,6 +153,7 @@ const contract_files = [_][]const u8{
     @embedFile("strings/strlen.zig"),
     @embedFile("utils/alignup.zig"),
     @embedFile("utils/aligndown.zig"),
+    @embedFile("utils/comparemem.zig"),
     @embedFile("strings/strlcpy.zig"),
     @embedFile("strings/strchr.zig"),
     @embedFile("strings/strrchr.zig"),
@@ -319,6 +321,9 @@ fn lvoDateSplit(ub: *UtilityBase, days: u32, result: *ClockData) callconv(.c) vo
 fn lvoDateJoin(ub: *UtilityBase, date: *const ClockData) callconv(.c) i32 {
     return DateJoin(ub, date);
 }
+fn lvoCompareMem(ub: *UtilityBase, first: *const anyopaque, second: *const anyopaque, length: usize) callconv(.c) i32 {
+    return CompareMem(ub, first, second, length);
+}
 
 fn lvoGetUniqueID(ub: *UtilityBase) callconv(.c) u32 {
     return GetUniqueID(ub);
@@ -391,6 +396,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoStrrchr),
     vec(lvoDateSplit),
     vec(lvoDateJoin),
+    vec(lvoCompareMem),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -398,7 +404,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: every slot, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 63), vectors.len);
+    try testing.expectEqual(@as(usize, 64), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

@@ -20,6 +20,7 @@ Generated from the source by `./zig build autodoc`.
 - [CallHookPkt](#callhookpkt) - Calls a hook with an object and a message.
 - [CheckDate](#checkdate) - Checks that a date is real and in range, and returns its seconds since 1 January 1978.
 - [CloneTagItems](#clonetagitems) - Makes a flat copy of a tag list.
+- [CompareMem](#comparemem) - Compares two blocks of memory.
 - [Date2Amiga](#date2amiga) - Turns a date into seconds since 1 January 1978.
 - [DateJoin](#datejoin) - The day number a date falls on.
 - [DateSplit](#datesplit) - A day number as the date it falls on.
@@ -712,6 +713,70 @@ None known.
 ```zig
 const copy = ub.CloneTagItems(tags) orelse return error.NoMemory;
 defer ub.FreeTagItems(copy);
+```
+
+## CompareMem
+
+Compares two blocks of memory.
+
+**SYNOPSIS**
+
+```zig
+fn CompareMem(_: *UtilityBase, first: *const anyopaque,
+    second: *const anyopaque, length: usize) i32
+```
+
+**SINCE**
+
+1.1. LVO -256.
+
+**INPUTS**
+
+- `first`, `second` - the two blocks.
+- `length` - how many bytes of each to compare.
+
+**RESULT**
+
+0 when the bytes are the same; otherwise the first byte that differs
+at `first` less the one at `second`, so below 0 when `first` comes
+first in byte order.
+
+**BEHAVIOR**
+
+The bytes are compared from the start, and the first difference ends
+it. A `length` of 0 compares nothing and answers 0.
+
+A record compared this way is equal to another when every byte of it
+is, padding included: the record to compare is best an extern struct
+of whole words, which has none, or one made zero before it is filled.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only its inputs and allocates nothing.
+- Locks: none taken, none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+The blocks may overlap; each is only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+exec.library `CopyMem`, `Strcmp`
+
+**EXAMPLES**
+
+```zig
+if (ub.CompareMem(&now, &last, @sizeOf(View)) != 0) tell(now);
 ```
 
 ## Date2Amiga

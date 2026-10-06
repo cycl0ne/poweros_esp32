@@ -108,4 +108,9 @@ void DateSplit(u32 days, *utility.ClockData result)
 /// when it is no date. Only the year, the month and the day of the month
 /// are read.
 i32 DateJoin(*const utility.ClockData date)
+// Memory
+/// The first `length` bytes at `first` and at `second` compared: 0 when
+/// they are the same, else below or above 0 as the first byte that differs
+/// is lower or higher at `first`.
+i32 CompareMem(*const anyopaque first, *const anyopaque second, usize length)
 ##end
