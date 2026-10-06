@@ -9,8 +9,9 @@ const BoardPart = sdk.expansion.BoardPart;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 
-/// The base: the system tag list it was started with, and one BoardPart
-/// per part on it, in the board's order.
+/// The base: the system tag list it was started with, one BoardPart per
+/// part on it, in the board's order, and the disks' device nodes kept
+/// until dos.library is up.
 pub const ExpansionBase = extern struct {
     lib: exec.Library,
     sys_base: *ExecBase,
@@ -21,6 +22,11 @@ pub const ExpansionBase = extern struct {
     /// The parts, in one allocation of `part_count`.
     parts: ?[*]BoardPart = null,
     part_count: u32 = 0,
+    /// The BootNodes AddBootNode kept, by boot priority, until
+    /// EnterBootNodes hands them to dos. Under `boot_lock`, a semaphore:
+    /// who holds it opens dos.library and adds to its list.
+    boot_nodes: exec.List = .{},
+    boot_lock: exec.SignalSemaphore = .{},
 };
 
 /// What SystemTags answers on a machine whose ROM carries no system tag

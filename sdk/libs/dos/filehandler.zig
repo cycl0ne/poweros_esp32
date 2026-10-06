@@ -5,8 +5,9 @@
 //! A device node's `startup` (dol_Startup) points at a FileSysStartupMsg,
 //! and the handler gets it as ACTION_STARTUP's dp_Arg2. Its fields are
 //! exactly OpenDevice's arguments, plus the environment: the medium's
-//! geometry and the file system's parameters. There is no MountList and
-//! no DEVS:, so dos's init writes the one for DH0: itself.
+//! geometry and the file system's parameters. A disk's partition gets its
+//! pair from expansion.library's MakeDosNode, a mountlist entry from
+//! C:Mount.
 //!
 //! The shape:
 //! - Names are C strings, not BSTRs, and the pointers are pointers, not

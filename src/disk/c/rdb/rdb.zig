@@ -19,8 +19,9 @@
 //! that answers TD_GETGEOMETRY and CMD_READ can be read. A change is made
 //! in the order INIT, REMOVE, ADD, then the table is written as a whole
 //! and printed. Only the table's own blocks are written: what is on a
-//! partition's cylinders stays. dos reads the table at boot, so a
-//! partition added or taken out is mounted, or no longer, at the next one.
+//! partition's cylinders stays. The flash disk's table is read at boot, so
+//! a partition added or taken out there is mounted, or no longer, at the
+//! next one.
 //!
 //! A disk with no RigidDiskBlock is not an error: it says so and stops,
 //! since that is the normal state of a blank chip.

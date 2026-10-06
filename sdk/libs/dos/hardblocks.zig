@@ -12,10 +12,11 @@
 //! it with. Each block carries its own identifier and a checksum, so a disk
 //! that holds none of this is recognised at once.
 //!
-//! What we do with them: dos.library's init reads the RDB at boot and adds
-//! a device node per partition (`src/rom/libs/dos/mount.zig`), which is how
-//! `DH0:` comes to exist. It is what makes a second partition, or another
-//! file system on the same chip, a matter of writing blocks rather than of
+//! What we do with them: flash.device reads the RDB when it starts and
+//! hands a device node per partition to expansion.library (MakeDosNode,
+//! AddBootNode), which dos.library takes in at boot - which is how `DH0:`
+//! comes to exist. It is what makes a second partition, or another file
+//! system on the same chip, a matter of writing blocks rather than of
 //! changing the kernel.
 //!
 //! Made for this machine:

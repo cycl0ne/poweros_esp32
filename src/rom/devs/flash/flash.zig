@@ -40,6 +40,10 @@
 //! erased before it is written. The device never
 //! expunges: it owns its task and the unit's mapping, and dos's file system
 //! sits on it (dos.library keeps itself for the same reason).
+//!
+//! **The disk's partitions** are the device's to find: when it starts it
+//! reads the disk's RigidDiskBlock and hands a device node per partition
+//! to expansion.library, which keeps them for dos.library (mount.zig).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -49,11 +53,12 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
 const spiflash = @import("spiflash.zig");
+const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = td.FLASHNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "06.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -450,7 +455,8 @@ fn findDisk(fb: *FlashBase) bool {
 /// exec has copied the tag's name, version and ID string into the base.
 /// The unit's area is mapped into the data window for reading, the chip's
 /// write protection comes off, and the task that does the slow work gets a
-/// stack in internal SRAM.
+/// stack in internal SRAM. Then the disk's partitions go to
+/// expansion.library.
 fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Device {
     _ = seg_list;
     dev.revision = DEVICE_REVISION;
@@ -495,6 +501,15 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     if (signal >= 0) {
         _ = sys_base.Wait(@as(u32, 1) << @intCast(signal));
         sys_base.FreeSignal(@intCast(signal));
+    }
+
+    // The partitions, read out of the mapping: dos takes them in once it
+    // is up. Without the mapping a read needs the task, and the disk stays
+    // unmounted.
+    if (window(fb)) |disk| {
+        mount.mountPartitions(sys_base, disk, spiflash.sector_size);
+    } else {
+        sdk.exec.kprintf(sys_base, "%s: the disk is not mapped; its partitions are not mounted\n", .{DEVICE_NAME});
     }
     return dev;
 }

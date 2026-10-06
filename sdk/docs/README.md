@@ -80,7 +80,7 @@ first time something opens it.
 | exec.library | ROM | tasks, signals, messages, memory, lists, libraries and devices | [md](autodocs/exec.md) · [doc](autodocs/exec.doc) |
 | utility.library | ROM | tag lists, hooks, dates, strings, patterns | [md](autodocs/utility.md) · [doc](autodocs/utility.doc) |
 | dos.library | ROM | processes, files, locks, handlers, assigns, `ReadArgs` | [md](autodocs/dos.md) · [doc](autodocs/dos.doc) |
-| expansion.library | ROM | the board: which parts it has and how they are wired | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
+| expansion.library | ROM | the board: which parts it has and how they are wired; the disks' partitions until dos takes them in | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
 | rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc) |
 | graphics.library | ROM | drawing: RastPorts, bitmaps, text, fonts | [md](autodocs/graphics.md) · [doc](autodocs/graphics.doc) |
 | layers.library | ROM | overlapping layers and their clipping | [md](autodocs/layers.md) · [doc](autodocs/layers.doc) |

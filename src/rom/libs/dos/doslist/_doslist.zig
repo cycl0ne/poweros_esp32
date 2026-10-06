@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The device list and what hangs off it: its entries, the handlers
-//! started for them (GetDeviceProc), assigns, and the flash disk's
-//! partitions mounted at boot.
+//! started for them (GetDeviceProc), and assigns.
 //!
 //! The device list: every device, volume and assign dos knows, as a
 //! singly linked list of DosList nodes behind a private head node in the
@@ -86,25 +85,10 @@
 //! longer one is ERROR_INVALID_COMPONENT_NAME. Every failure sets IoErr, and
 //! no assign of the name is ERROR_OBJECT_NOT_FOUND.
 //!
-//! Mounting a disk: the device nodes come from the disk's own
-//! RigidDiskBlock (`sdk/libs/dos/hardblocks.zig`).
-//!
-//! There is no list of devices to read - that is what a disk is for -
-//! so dos's init looks at the first blocks of the medium for a
-//! RigidDiskBlock, walks its chain of PartitionBlocks, and adds a
-//! device node for each, named as the partition says (`pb_DriveName`)
-//! and with the partition's own DosEnvec as the environment its handler
-//! is started with. Nothing about the disk is written down in the
-//! kernel: a second partition, or another file system on the same chip,
-//! is then a matter of writing blocks.
-//!
-//! Which handler a partition gets comes from its `de_DosType`. The file
-//! systems are in ROM, so a small table here maps a DosType to a
-//! handler's name.
-//!
-//! Without a device, or with no sound RigidDiskBlock on it, there are
-//! no nodes at all - which is what a board with no disk, or one with a
-//! blank chip, wants. `s3> rdb init` writes a first one.
+//! A disk's partitions are not dos's to find: the disk's driver reads its
+//! RigidDiskBlock and hands a device node per partition to
+//! expansion.library (MakeDosNode, AddBootNode), and dos's init takes the
+//! ones handed over before it was up with EnterBootNodes.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -123,12 +107,6 @@ const default_stack_size = 8192;
 const max_bind_depth = 4;
 const DosListType = dos.DosListType;
 const FileLock = dos.FileLock;
-const trackdisk = sdk.devices.trackdisk;
-const hardblocks = dos.hardblocks;
-const flashfs = dos.flashfs;
-const ExecBase = sdk.interface.exec.ExecBase;
-const max_partitions = 16;
-const testing = std.testing;
 
 /// The flags that select a semaphore.
 const lock_flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE;
@@ -665,195 +643,6 @@ pub fn setAssign(db: *DosBase, name: [*:0]const u8, kind: DosListType, dir: ?*Fi
     return true;
 }
 
-/// The disk: which device and unit it is. What is on it, and what the
-/// partitions are called, comes from the disk.
-pub const DISK_DEVICE = sdk.devices.trackdisk.FLASHNAME;
-pub const DISK_UNIT: u32 = 0;
-
-/// The flash file system's handler, a ROM tag (src/rom/handler/flashfs).
-pub const FLASHFS_HANDLER = "flashfs-handler";
-/// The card's: not in the ROM but in HANDLERS: (src/disk/handlers/fat),
-/// which is where a bare name is loaded from.
-pub const FAT_HANDLER = "fat-handler";
-
-/// Which handler a partition's de_DosType asks for.
-const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
-    .{ .dos_type = flashfs.ID_FLASHFS_DISK, .handler = FLASHFS_HANDLER },
-    .{ .dos_type = dos.ID_MSDOS_DISK, .handler = FAT_HANDLER },
-};
-
-/// A runaway partition chain stops here.
-/// What a mounted partition needs to outlive dos's init: the startup
-/// message its handler is given and the environment that points at. One
-/// allocation per partition, never freed - the node isn't either.
-const Mounted = extern struct {
-    startup: dos.FileSysStartupMsg,
-    environ: dos.DosEnvec,
-};
-
-/// What mounting a disk came to: how many nodes it made, and which
-/// partition is the one to boot from - the bootable one with the highest
-/// de_BootPri. The name belongs to its node, which is never removed.
-pub const Mount = struct {
-    count: u32 = 0,
-    boot: ?[*:0]const u8 = null,
-    boot_pri: i32 = -128,
-};
-
-/// Every partition the disk describes, as a device node on the list.
-///
-/// INPUTS:
-/// - `db` - the library's base.
-/// - `sys_base` - exec, to open and read the disk's device.
-///
-/// RESULT:
-/// How many nodes were made, and the partition to boot from. No disk,
-/// no RigidDiskBlock, or one written for another block size gives none.
-pub fn mountDisk(db: *DosBase, sys_base: *ExecBase) Mount {
-    var io: exec.IOStdReq = .{ .req = .{ .message = .{ .length = @sizeOf(exec.IOStdReq) } } };
-    var geo: trackdisk.DriveGeometry = .{};
-    var mounted: Mount = .{};
-    if (sys_base.OpenDevice(DISK_DEVICE, DISK_UNIT, &io.req, 0) != 0) return mounted;
-    defer sys_base.CloseDevice(&io.req);
-    io.req.command = trackdisk.TD_GETGEOMETRY;
-    io.data = &geo;
-    io.length = @sizeOf(trackdisk.DriveGeometry);
-    if (sys_base.DoIO(&io.req) != 0) return mounted;
-    if (geo.sector_size == 0 or geo.total_sectors == 0) return mounted;
-
-    var rdb: hardblocks.RigidDiskBlock = undefined;
-    if (!findRdb(sys_base, &io, &geo, &rdb)) return mounted;
-    // The block numbers in these structures count the device's blocks; a
-    // disk written for another block size is not ours to read.
-    if (rdb.block_bytes != geo.sector_size) return mounted;
-
-    var next = rdb.partition_list;
-    var seen: u32 = 0;
-    while (next != hardblocks.end_of_list and seen < max_partitions) : (seen += 1) {
-        var pb: hardblocks.PartitionBlock = undefined;
-        if (!readBlock(sys_base, &io, next, geo.sector_size, &pb)) break;
-        if (!hardblocks.sound(&pb, hardblocks.IDNAME_PARTITION)) break;
-        next = pb.next;
-        if (pb.flags & hardblocks.PBFF_NOMOUNT != 0) continue;
-        const node = addPartition(db, sys_base, &pb) orelse continue;
-        mounted.count += 1;
-        const bootable = pb.flags & hardblocks.PBFF_BOOTABLE != 0;
-        if (bootable and (mounted.boot == null or pb.environment.boot_pri > mounted.boot_pri)) {
-            mounted.boot = node.name;
-            mounted.boot_pri = pb.environment.boot_pri;
-        }
-    }
-    return mounted;
-}
-
-/// The RigidDiskBlock, in the first RDB_LOCATION_LIMIT blocks of the
-/// medium.
-///
-/// INPUTS:
-/// - `sys_base` - exec, for DoIO.
-/// - `io` - the open disk.
-/// - `geo` - its geometry.
-/// - `into` - where the block goes.
-///
-/// RESULT:
-/// True when a sound one was found.
-fn findRdb(
-    sys_base: *ExecBase,
-    io: *exec.IOStdReq,
-    geo: *const trackdisk.DriveGeometry,
-    into: *hardblocks.RigidDiskBlock,
-) bool {
-    var block: u32 = 0;
-    while (block < hardblocks.RDB_LOCATION_LIMIT and block < geo.total_sectors) : (block += 1) {
-        if (!readBlock(sys_base, io, block, geo.sector_size, into)) continue;
-        if (hardblocks.sound(into, hardblocks.IDNAME_RIGIDDISK)) return true;
-    }
-    return false;
-}
-
-/// One of the disk's blocks, as far as the structure wanted goes: they
-/// all live at the start of a block.
-///
-/// INPUTS:
-/// - `sys_base` - exec, for DoIO.
-/// - `io` - the open disk.
-/// - `block` - the block's number.
-/// - `block_bytes` - the disk's block size.
-/// - `into` - the structure to read into.
-///
-/// RESULT:
-/// True when it was read.
-fn readBlock(sys_base: *ExecBase, io: *exec.IOStdReq, block: u32, block_bytes: u32, into: anytype) bool {
-    io.req.command = exec.CMD_READ;
-    io.offset = @as(u64, block) * block_bytes;
-    io.length = @sizeOf(@TypeOf(into.*));
-    io.data = into;
-    return sys_base.DoIO(&io.req) == 0;
-}
-
-/// A partition's node on the list: its name, the handler its DosType
-/// asks for, and a startup message saying which device, unit and blocks
-/// are its own.
-///
-/// INPUTS:
-/// - `db` - the library's base.
-/// - `sys_base` - exec, to allocate.
-/// - `pb` - the partition's block.
-///
-/// RESULT:
-/// The node, or null for a partition without a name or a known file
-/// system, for no memory, or when AddDosEntry refused it (a name
-/// already there).
-fn addPartition(db: *DosBase, sys_base: *ExecBase, pb: *const hardblocks.PartitionBlock) ?*dos.DosList {
-    const dos_lib = db.iface();
-    const name = pb.name();
-    if (name.len == 0) return null;
-    const handler = handlerFor(pb.environment.dos_type) orelse return null;
-
-    const block = sys_base.AllocVec(@sizeOf(Mounted), exec.MEMF_CLEAR) orelse return null;
-    const mounted: *Mounted = @ptrCast(@alignCast(block));
-    mounted.environ = pb.environment;
-    mounted.startup = .{
-        .unit = DISK_UNIT,
-        .device = DISK_DEVICE,
-        .environ = &mounted.environ,
-        .flags = pb.dev_flags,
-    };
-
-    // MakeDosEntry copies the name, which the partition block holds as a C
-    // string of at most 31 characters.
-    var zero: [pb.drive_name.len + 1:0]u8 = @splat(0);
-    @memcpy(zero[0..name.len], name);
-    const node = dos_lib.MakeDosEntry(&zero, dos.DLT_DEVICE) orelse {
-        sys_base.FreeVec(block);
-        return null;
-    };
-    node.misc.handler.handler = handler;
-    node.misc.handler.startup = @intFromPtr(&mounted.startup);
-    node.misc.handler.priority = 5;
-    node.misc.handler.stack_size = 16384; // a file system does more than RAM:
-    if (!dos_lib.AddDosEntry(node)) {
-        dos_lib.FreeDosEntry(node);
-        sys_base.FreeVec(block);
-        return null;
-    }
-    return node;
-}
-
-/// The handler for a DosType, from file_systems.
-///
-/// INPUTS:
-/// - `dos_type` - the partition's de_DosType.
-///
-/// RESULT:
-/// The handler's name, or null for a file system there is none for.
-fn handlerFor(dos_type: u32) ?[*:0]const u8 {
-    for (file_systems) |fs| {
-        if (fs.dos_type == dos_type) return fs.handler;
-    }
-    return null;
-}
-
 /// Below this a dol_Startup is a plain number (RAW:'s 1, a window's 0),
 /// not a FileSysStartupMsg: no structure lives in the first page.
 const startup_numbers: usize = 0x1000;
@@ -898,55 +687,4 @@ pub fn sameMedium(db: *DosBase, first_port: ?*exec.MsgPort, second_port: ?*exec.
     const one_device = one.device orelse return false;
     const other_device = other.device orelse return false;
     return db.utility_base.Strcmp(one_device, other_device) == 0;
-}
-
-// --- tests ------------------------------------------------------------------
-
-test "a RigidDiskBlock and a PartitionBlock are sound once they carry their checksum" {
-    var rdb: hardblocks.RigidDiskBlock = .{
-        .block_bytes = 4096,
-        .partition_list = 1,
-        .cylinders = 3840,
-        .sectors = 1,
-        .heads = 1,
-        .rdb_blocks_hi = hardblocks.RDB_LOCATION_LIMIT - 1,
-        .lo_cylinder = hardblocks.RDB_LOCATION_LIMIT,
-        .hi_cylinder = 3839,
-        .cyl_blocks = 1,
-    };
-    try testing.expect(!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK));
-    rdb.checksum = hardblocks.checksumOf(&rdb);
-    try testing.expect(hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK));
-    // Computing it again over a sound block gives the same answer.
-    try testing.expectEqual(rdb.checksum, hardblocks.checksumOf(&rdb));
-    // The identifier is checked too, and any change breaks the sum.
-    try testing.expect(!hardblocks.sound(&rdb, hardblocks.IDNAME_PARTITION));
-    rdb.cylinders += 1;
-    try testing.expect(!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK));
-
-    var part: hardblocks.PartitionBlock = .{
-        .flags = hardblocks.PBFF_BOOTABLE,
-        .environment = .{
-            .size_block = 4096,
-            .low_cyl = 16,
-            .high_cyl = 3839,
-            .dos_type = flashfs.ID_FLASHFS_DISK,
-        },
-    };
-    @memcpy(part.drive_name[0..3], "DH0");
-    part.checksum = hardblocks.checksumOf(&part);
-    try testing.expect(hardblocks.sound(&part, hardblocks.IDNAME_PARTITION));
-    try testing.expectEqualStrings("DH0", part.name());
-    try testing.expectEqual(@as(u64, 3824), part.environment.blocks());
-    try testing.expectEqual(@as(u64, 16 * 4096), part.environment.byteOf(0));
-    try testing.expectEqual(FLASHFS_HANDLER, handlerFor(part.environment.dos_type).?);
-    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300)); // "DOS\0"
-}
-
-test "a block of ones is not a RigidDiskBlock" {
-    var rdb: hardblocks.RigidDiskBlock = undefined;
-    @memset(std.mem.asBytes(&rdb), 0xFF);
-    try testing.expect(!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK));
-    @memset(std.mem.asBytes(&rdb), 0);
-    try testing.expect(!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK));
 }

@@ -9,6 +9,11 @@
 //! its part by kind and chip and reads the rest from the part's tags; it
 //! carries no board facts of its own, so the same module serves every
 //! board that has its part.
+//!
+//! It also keeps the disks' partitions until dos.library is up: a disk's
+//! driver starts before dos, so it makes a device node per partition with
+//! MakeDosNode and hands it over with AddBootNode, and dos's init takes
+//! them in with EnterBootNodes.
 
 pub const boardpin = @import("boardpin.zig");
 pub const systemtags = @import("systemtags.zig");

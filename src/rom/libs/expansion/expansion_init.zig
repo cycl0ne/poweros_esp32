@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! expansion.library's ROM tag, and the init routine it names: the system
-//! tag list found, and a BoardPart made for each of its parts.
+//! tag list found, a BoardPart made for each of its parts, and the list the
+//! disks' device nodes wait on for dos.library.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -18,8 +19,8 @@ const ExpansionBase = expansion_base.ExpansionBase;
 /// The name it is opened by. The SDK's.
 pub const LIBRARY_NAME = expansion.EXPANSIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "24.09.2026";
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "06.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -59,7 +60,8 @@ fn findSystem(sys: *ExecBase) ?[*]const utility.TagItem {
 }
 
 /// LibInit: the system tag list found and each of its parts made a
-/// BoardPart, in the board's order.
+/// BoardPart, in the board's order; the boot nodes' list empty and its
+/// semaphore ready.
 ///
 /// INPUTS:
 /// - `lib` - the base exec made from the init table.
@@ -83,6 +85,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     eb.system = findSystem(sys_base) orelse &expansion_base.empty_list;
     eb.parts = null;
     eb.part_count = 0;
+    eb.boot_nodes.init(.unknown);
+    sys_base.InitSemaphore(&eb.boot_lock);
     const ub = eb.utility_base;
 
     // How many parts, then all of them in one allocation.

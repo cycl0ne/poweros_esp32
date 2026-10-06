@@ -3,9 +3,12 @@
 //! soldered on it. The board's ROM carries a description of it - the system
 //! tag list (sdk/libs/expansion/systemtags.zig) - and this library hands
 //! each part out as a BoardPart, so a module asks for its part rather than
-//! knowing any board. Open it with OpenLibrary("expansion.library", 1).
+//! knowing any board. A disk's driver hands it the device nodes of the
+//! disk's partitions, which dos.library takes in once it is up. Open it
+//! with OpenLibrary("expansion.library", 1).
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
+##include libs/dos/dos as dos
 ##include libs/expansion/expansion as expansion
 ##basetype ExpansionBase
 ##name expansion.library
@@ -19,4 +22,17 @@
 /// console, and a SYSTAG_Part per part. Never null on a machine that
 /// started; the list lives as long as the machine does.
 [*]const utility.TagItem SystemTags()
+/// A device node for a disk's partition, made before dos.library is up:
+/// the node named `dos_name`, its FileSysStartupMsg (`device_name`, `unit`,
+/// `flags`) and a copy of `environ`, in one allocation. Null when there is
+/// no memory.
+?*dos.DosList MakeDosNode([*:0]const u8 dos_name, [*:0]const u8 device_name, u32 unit, u32 flags, *const dos.DosEnvec environ)
+/// A node from MakeDosNode into the system: on dos's list at once if dos is
+/// up, else kept until it is. `boot_pri` -128 is never booted from. False
+/// when there is no memory or dos refused the node, which is the caller's
+/// again.
+bool AddBootNode(i32 boot_pri, *dos.DosList node)
+/// dos.library's, at its start: every node AddBootNode kept, onto dos's
+/// list in boot priority order. The one to boot from, or null.
+?*dos.DosList EnterBootNodes()
 ##end

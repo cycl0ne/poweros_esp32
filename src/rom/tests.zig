@@ -15,6 +15,7 @@ test {
     _ = @import("libs/intuition/intuition.zig");
     _ = @import("libs/motion/motion.zig");
     _ = @import("libs/ramlib/ramlib.zig");
+    _ = @import("devs/flash/mount.zig");
     _ = @import("devs/touch/_touch.zig");
     _ = @import("devs/touch/gt911.zig");
     _ = @import("devs/touch/st7123.zig");

@@ -245,13 +245,15 @@ which may have written part of the table.
 
 ## When a change is seen
 
-dos reads the table of the flash disk (`flash.device` unit 0) once, at
-boot, and adds a device node for each partition not marked
+`flash.device` reads the table of the flash disk (its unit 0) once, when
+it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `MSD\0` the FAT handler. The bootable
-partition with the highest boot priority is where the system starts
-from. So what `WriteRDB` writes is mounted at the next boot; until then
-the nodes on the list are the ones from before.
+file system, `MSD\0` the FAT handler. It hands the nodes to
+expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
+dos.library is up and takes them in. The bootable partition with the
+highest boot priority is where the system starts from. So what
+`WriteRDB` writes is mounted at the next boot; until then the nodes on
+the list are the ones from before.
 
 Changing the cylinders of a partition that is mounted leaves its file
 system working on the old ones until the next boot, and a file system

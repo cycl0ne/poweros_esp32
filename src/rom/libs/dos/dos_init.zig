@@ -24,8 +24,8 @@ const segment = @import("program/_program.zig");
 /// What the library is on exec's list as, and its version.
 pub const LIBRARY_NAME = sdk.dos.DOSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "15.9.2026";
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "06.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -62,9 +62,10 @@ const aux_startup: dos.FileSysStartupMsg = .{};
 /// (src/rom/handler/pipe).
 const pipe_handler_name = "pipe-handler";
 
-/// The flash disk's handler (src/rom/handler/flashfs). Which nodes it gets
-/// is the disk's business: doslist/'s mountDisk reads its RigidDiskBlock.
-const flashfs_handler_name = doslist.FLASHFS_HANDLER;
+/// The flash file system's handler (src/rom/handler/flashfs). Which nodes
+/// name it is the disk's business: flash.device reads the disk's
+/// RigidDiskBlock and hands its partitions to expansion.library.
+const flashfs_handler_name = "flashfs-handler";
 
 /// The ROM's handlers, which dos's init adds as system segments from their
 /// tags, so a node names its handler and the handler's code is found.
@@ -72,10 +73,9 @@ const rom_handlers = [_][*:0]const u8{ nil_handler_name, ram_handler_name, con_h
 
 /// MakeLibrary's init: the base's name, version, SysBase and
 /// utility.library; the device list with the ROM's nodes (NIL:, RAM:,
-/// CON:, RAW:, AUX:, PIPE:) and the flash disk's partitions, each handler
-/// started on first use; timer.device, the resident segments, and the
-/// system disk's assigns. Without utility.library or a node there is no
-/// dos.library: null makes MakeLibrary free the base.
+/// CON:, RAW:, AUX:, PIPE:), each handler started on first use;
+/// timer.device and the resident segments. Without utility.library or a
+/// node there is no dos.library: null makes MakeLibrary free the base.
 ///
 /// INPUTS:
 /// - `lib` - the library MakeLibrary made, its jump table in place.
@@ -130,9 +130,6 @@ fn initBase(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) call
     };
     pipe_node.misc.handler.handler = pipe_handler_name;
     _ = dos_lib.AddDosEntry(pipe_node);
-    // The disk's partitions, from its own RigidDiskBlock: nothing here
-    // knows how big the chip is or what the partitions are called.
-    const disk = doslist.mountDisk(db, sys_base);
     date.openTimer(db);
     segment.initSegments(db);
     for (rom_handlers) |name| {
@@ -157,28 +154,6 @@ fn initBase(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) call
     // ENV: and no T:, and a global variable or a work file fails to
     // resolve - which is the honest answer on a machine that has not
     // finished starting.
-    // The boot partition is the system disk, with the usual directories on it:
-    // the bootable one with the highest de_BootPri. Late,
-    // as everything else here is, so the disk is only looked at when
-    // something is wanted from it: an empty or unformatted one costs
-    // nothing and the shell still runs.
-    if (disk.boot) |boot| {
-        var path: [dos.MAX_DEVICE_NAME + 2:0]u8 = @splat(0);
-        const name = boot[0..db.utility_base.Strlen(boot)];
-        if (name.len <= dos.MAX_DEVICE_NAME) {
-            @memcpy(path[0..name.len], name);
-            path[name.len] = ':';
-            _ = dos_lib.AssignLate("SYS", &path);
-            for ([_][2][*:0]const u8{
-                .{ "C", "SYS:c" },
-                .{ "S", "SYS:s" },
-                .{ "LIBS", "SYS:libs" },
-                .{ "DEVS", "SYS:devs" },
-                // What a device is, for Mount to read.
-                .{ "HANDLERS", "SYS:handlers" },
-            }) |pair| _ = dos_lib.AssignLate(pair[0], pair[1]);
-        }
-    }
     lib.node.name = LIBRARY_NAME;
     lib.version = LIBRARY_VERSION;
     lib.revision = LIBRARY_REVISION;
@@ -231,8 +206,44 @@ fn startBootShell(db: *DosBase, sys_base: *ExecBase) void {
     sdk.exec.kprintf(sys_base, "dos.library: no shell on %s (error %d)\n", .{ boot_console, code });
 }
 
-/// The resident's init: the library on the list, the after-DOS residents,
-/// then the machine's own shell.
+/// The disks' partitions, which their drivers handed to expansion.library
+/// before dos was up, onto the device list, and the system disk's assigns
+/// on the one to boot from: the bootable partition with the highest
+/// de_BootPri. Right after AddLibrary - from then on a driver's
+/// AddBootNode finds dos up and adds its node at once, so none is left
+/// behind.
+///
+/// The assigns are late, as everything else here is, so the disk is only
+/// looked at when something is wanted from it: an empty or unformatted
+/// one costs nothing and the shell still runs.
+///
+/// INPUTS:
+/// - `db` - the library's base, on the library list.
+/// - `sys_base` - exec, to open expansion.library.
+fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) void {
+    const expansion_lib = sys_base.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return;
+    defer sys_base.CloseLibrary(expansion_lib);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
+    const boot = eb.EnterBootNodes() orelse return;
+    const name = boot.name[0..db.utility_base.Strlen(boot.name)];
+    if (name.len > dos.MAX_DEVICE_NAME) return;
+    var path: [dos.MAX_DEVICE_NAME + 2:0]u8 = @splat(0);
+    @memcpy(path[0..name.len], name);
+    path[name.len] = ':';
+    const dos_lib = db.iface();
+    _ = dos_lib.AssignLate("SYS", &path);
+    for ([_][2][*:0]const u8{
+        .{ "C", "SYS:c" },
+        .{ "S", "SYS:s" },
+        .{ "LIBS", "SYS:libs" },
+        .{ "DEVS", "SYS:devs" },
+        // What a device is, for Mount to read.
+        .{ "HANDLERS", "SYS:handlers" },
+    }) |pair| _ = dos_lib.AssignLate(pair[0], pair[1]);
+}
+
+/// The resident's init: the library on the list, the disks expansion.library
+/// kept for it, the after-DOS residents, then the machine's own shell.
 ///
 /// INPUTS:
 /// - `seg_list` - handed on to MakeLibrary.
@@ -243,6 +254,7 @@ fn startBootShell(db: *DosBase, sys_base: *ExecBase) void {
 fn init(seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*anyopaque {
     const lib = sys_base.MakeLibrary(&dos_lvo.vectors, dos_lvo.vectors.len, @sizeOf(DosBase), &initBase, seg_list) orelse return null;
     sys_base.AddLibrary(lib);
+    takeBootDisks(@fieldParentPtr("lib", lib), sys_base);
     sdk.exec.kprintf(sys_base, "%s %d.%d: starting the after-DOS residents\n", .{ lib.name(), lib.version, lib.revision });
     _ = sys_base.InitCode(exec.RTF_AFTERDOS, 0);
     startBootShell(@fieldParentPtr("lib", lib), sys_base);

@@ -81,7 +81,6 @@ flowchart TB
     m_display_drivers --> m_i2c_device
     m_display_drivers --> m_rtg_library
     m_display_drivers --> m_timer_device
-    m_dos_library --> m_flash_device
     m_dos_library --> m_intuition_library
     m_dos_library --> m_timer_device
     m_expander_resource --> m_i2c_device
@@ -132,10 +131,12 @@ flowchart TB
 - **ramlib.library** sits in front of `OpenLibrary` and `OpenDevice`: a library
   or device not in memory it loads from `LIBS:` or `DEVS:` through
   dos.library. A handler on the disk dos loads from `HANDLERS:` itself.
-- **dos.library** opens flash.device at boot to mount the flash disk's
-  partitions, and intuition.library when an error is asked about on the
-  screen. It starts each handler the first time its device is used, and
-  reaches it by packets: no arrow goes to a handler.
+- **flash.device** reads the flash disk's RigidDiskBlock when it starts
+  and hands a device node per partition to expansion.library, which keeps
+  them until dos.library is up and takes them in.
+- **dos.library** opens intuition.library when an error is asked about on
+  the screen. It starts each handler the first time its device is used,
+  and reaches it by packets: no arrow goes to a handler.
 - **input.device** reads keyboard, mouse and touch.device - whichever the
   board has - and hands their events down its chain of handlers,
   intuition's among them.

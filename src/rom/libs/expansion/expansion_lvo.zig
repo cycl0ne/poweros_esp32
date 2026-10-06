@@ -8,12 +8,16 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const utility = sdk.utility;
+const dos = sdk.dos;
 const BoardPart = sdk.expansion.BoardPart;
 const vec = exec.vec;
 const expansion_base = @import("expansion_base.zig");
 const ExpansionBase = expansion_base.ExpansionBase;
 const FindBoardPart = @import("part/findboardpart.zig").FindBoardPart;
 const SystemTags = @import("part/systemtags.zig").SystemTags;
+const MakeDosNode = @import("boot/makedosnode.zig").MakeDosNode;
+const AddBootNode = @import("boot/addbootnode.zig").AddBootNode;
+const EnterBootNodes = @import("boot/enterbootnodes.zig").EnterBootNodes;
 
 /// expansion.library's interface, as the SDK generates it from
 /// sdk/fd/expansion_lib.fd.
@@ -41,6 +45,9 @@ comptime {
 const contract_files = [_][]const u8{
     @embedFile("part/findboardpart.zig"),
     @embedFile("part/systemtags.zig"),
+    @embedFile("boot/makedosnode.zig"),
+    @embedFile("boot/addbootnode.zig"),
+    @embedFile("boot/enterbootnodes.zig"),
 };
 
 fn lvoFindBoardPart(eb: *ExpansionBase, old: ?*const BoardPart, kind: u32, chip: u32) callconv(.c) ?*const BoardPart {
@@ -48,6 +55,15 @@ fn lvoFindBoardPart(eb: *ExpansionBase, old: ?*const BoardPart, kind: u32, chip:
 }
 fn lvoSystemTags(eb: *ExpansionBase) callconv(.c) [*]const utility.TagItem {
     return SystemTags(eb);
+}
+fn lvoMakeDosNode(eb: *ExpansionBase, dos_name: [*:0]const u8, device_name: [*:0]const u8, unit: u32, flags: u32, environ: *const dos.DosEnvec) callconv(.c) ?*dos.DosList {
+    return MakeDosNode(eb, dos_name, device_name, unit, flags, environ);
+}
+fn lvoAddBootNode(eb: *ExpansionBase, boot_pri: i32, node: *dos.DosList) callconv(.c) bool {
+    return AddBootNode(eb, boot_pri, node);
+}
+fn lvoEnterBootNodes(eb: *ExpansionBase) callconv(.c) ?*dos.DosList {
+    return EnterBootNodes(eb);
 }
 
 /// The jump table, in slot order: the standard vectors, then one
@@ -59,6 +75,9 @@ pub const vectors = [_]*const anyopaque{
     vec(exec.libExtFunc),
     vec(lvoFindBoardPart),
     vec(lvoSystemTags),
+    vec(lvoMakeDosNode),
+    vec(lvoAddBootNode),
+    vec(lvoEnterBootNodes),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

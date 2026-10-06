@@ -77,8 +77,8 @@ The partition is the handle's, freed by RemPartition or CloseRDB.
 
 **NOTES**
 
-dos reads the table at boot, so a partition written with WriteRDB is
-mounted at the next one.
+The flash disk's table is read at boot, so a partition written there
+with WriteRDB is mounted at the next one.
 
 **BUGS**
 

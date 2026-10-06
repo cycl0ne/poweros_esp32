@@ -1,7 +1,117 @@
 TABLE OF CONTENTS
 
+expansion.library/AddBootNode
+expansion.library/EnterBootNodes
 expansion.library/FindBoardPart
+expansion.library/MakeDosNode
 expansion.library/SystemTags
+expansion.library/AddBootNode                    expansion.library/AddBootNode
+
+   NAME
+	AddBootNode -- Puts a disk's device node into the system.
+
+   SYNOPSIS
+	    fn AddBootNode(eb: *ExpansionBase, boot_pri: i32, node: *dos.DosList) bool
+
+   SINCE
+	1.1. LVO -32.
+
+   INPUTS
+	- `boot_pri` - where the disk stands when the boot disk is chosen:
+	  the highest one is booted from, and -128 never is. A partition's
+	  de_BootPri if it is bootable, else -128.
+	- `node` - a device node from MakeDosNode, its handler named.
+
+   RESULT
+	True when the node is in: on dos's list, or kept for it. False when
+	there is no memory to keep it, or dos refused it - a node of that name
+	is there already.
+
+   BEHAVIOR
+	**dos.library up** - it opens - the node goes onto its device list at
+	once, with AddDosEntry, and `boot_pri` says nothing: the system has
+	booted.
+
+	**dos.library not up yet** - a driver at cold start - the node is kept
+	on expansion's list of boot nodes, highest `boot_pri` first. dos's init
+	takes them all with EnterBootNodes, and boots from the first of them
+	above -128 that it took.
+
+	Both run under the boot nodes' semaphore, as EnterBootNodes does, so a
+	node is never kept after dos has taken the rest.
+
+   CONTEXT
+	- Waits: for the boot nodes' semaphore, and in OpenLibrary and
+	  AddDosEntry.
+	- Interrupts: no.
+	- Locks: takes the boot nodes' semaphore; no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	On true the node is the system's: dos's once it is on its list, which
+	frees it with FreeDosEntry when it is removed. On false it is the
+	caller's again.
+
+   NOTES
+	The handler is started the first time the device is used, not here.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`MakeDosNode`, `EnterBootNodes`, dos.library `AddDosEntry`
+
+   EXAMPLES
+	    const pri = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
+	    if (!eb.AddBootNode(pri, node)) sys.FreeVec(node);
+expansion.library/EnterBootNodes              expansion.library/EnterBootNodes
+
+   NAME
+	EnterBootNodes -- Hands dos.library the disks' device nodes kept for it, and says which one to boot from.
+
+   SYNOPSIS
+	    fn EnterBootNodes(eb: *ExpansionBase) ?*dos.DosList
+
+   SINCE
+	1.1. LVO -36.
+
+   INPUTS
+	None.
+
+   RESULT
+	The node to boot from: the first one taken whose boot priority is
+	above -128. Null when there is none, or dos.library is not up.
+
+   BEHAVIOR
+	dos.library's, called once by its init, as soon as dos is on the
+	library list. Every node AddBootNode kept goes onto dos's device list
+	with AddDosEntry, highest boot priority first, and the list is left
+	empty: every node added from now on goes onto dos's list at once.
+
+	A node dos refuses - one of that name is there already - is freed.
+
+   CONTEXT
+	- Waits: for the boot nodes' semaphore, and in OpenLibrary and
+	  AddDosEntry.
+	- Interrupts: no.
+	- Locks: takes the boot nodes' semaphore; no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The nodes become dos's; the one answered is on dos's list.
+
+   NOTES
+	Without dos.library up it does nothing, and the nodes stay kept.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddBootNode`, `MakeDosNode`
+
+   EXAMPLES
+	    const boot = eb.EnterBootNodes() orelse return;
+	    // boot.name is the system disk: SYS: goes there.
 expansion.library/FindBoardPart                expansion.library/FindBoardPart
 
    NAME
@@ -49,6 +159,65 @@ expansion.library/SystemTags
    EXAMPLES
 	    const slot = eb.FindBoardPart(null, st.PARTKIND_SDSLOT, st.CHIP_ANY) orelse return null;
 	    const clock = BoardPin.of(ub.GetTagData(st.PART_PinClock, 0, slot.tags));
+expansion.library/MakeDosNode                    expansion.library/MakeDosNode
+
+   NAME
+	MakeDosNode -- Makes a device node for a disk's partition, with what its handler is started with.
+
+   SYNOPSIS
+	    fn MakeDosNode(eb: *ExpansionBase, dos_name: [*:0]const u8,
+	        device_name: [*:0]const u8, unit: u32, flags: u32,
+	        environ: *const dos.DosEnvec) ?*dos.DosList
+
+   SINCE
+	1.1. LVO -28.
+
+   INPUTS
+	- `dos_name` - the device's name, without the colon: `DH0`.
+	- `device_name` - the exec device its handler opens: `flash.device`.
+	- `unit` - the unit, for OpenDevice.
+	- `flags` - OpenDevice's flags.
+	- `environ` - the partition's geometry and file system parameters, as
+	  its PartitionBlock holds them. Copied.
+
+   RESULT
+	The node, or null when there is no memory.
+
+   BEHAVIOR
+	A DLT_DEVICE node whose `startup` is a FileSysStartupMsg naming the
+	device, the unit and the flags, with a copy of `environ` as its
+	environment. The node, the message, the copy and both names are one
+	allocation, so nothing in it points outside it. The handler gets a 16
+	KiB stack and priority 5; which handler it is the caller names in
+	`misc.handler.handler` before AddBootNode.
+
+	It needs no dos.library, which is what it is for: a disk's driver
+	starts before dos does.
+
+   CONTEXT
+	- Waits: no, but AllocVec may run the low-memory handlers.
+	- Interrupts: no.
+	- Locks: none taken; no spinlock may be held: it allocates.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's until AddBootNode takes it. One AllocVec: FreeVec frees all
+	of it, and so does dos.library's FreeDosEntry.
+
+   NOTES
+	dos.library's MakeDosEntry makes a bare node, named and nothing more;
+	this one carries what a file system's handler is started with.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddBootNode`, dos.library `MakeDosEntry`, sdk/libs/dos/filehandler.zig
+
+   EXAMPLES
+	    const node = eb.MakeDosNode("DH0", "flash.device", 0, 0, &pb.environment) orelse return;
+	    node.misc.handler.handler = "flashfs-handler";
+	    if (!eb.AddBootNode(pb.environment.boot_pri, node)) sys.FreeVec(node);
 expansion.library/SystemTags                      expansion.library/SystemTags
 
    NAME
