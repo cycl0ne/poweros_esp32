@@ -392,6 +392,38 @@ pub fn build(b: *std.Build) void {
     check_autodocs.addArgs(&autodoc_args);
     check_autodocs.has_side_effects = true;
     test_step.dependOn(&check_autodocs.step);
+    // The charts of which module opens which (sdk/docs/modules.md) come
+    // from the source: `modchart` writes them, and `test` fails if one
+    // isn't up to date (tools/modchart.zig). The ROM's modules it finds by
+    // their place; the disk's are the disk package's list, handed over as a
+    // file of `<name>=<root file>` lines.
+    const modchart = b.addExecutable(.{
+        .name = "modchart",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/modchart.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    var disk_modules: std.ArrayList(u8) = .empty;
+    for (poweros_userland.programs ++ [_]poweros_userland.Program{poweros_userland.wifi_device}) |program| {
+        if (!isModule(program.disk)) continue;
+        const root = b.pathFromRoot(b.fmt("src/disk/{s}", .{program.source}));
+        disk_modules.appendSlice(b.allocator, b.fmt("{s}={s}\n", .{ program.name, root })) catch @panic("OOM");
+    }
+    const disk_module_list = b.addWriteFiles().add("disk-modules", disk_modules.items);
+    const modchart_args = [_][]const u8{ b.pathFromRoot("sdk/docs/modules.md"), b.pathFromRoot("src"), b.pathFromRoot("sdk") };
+    const write_modchart = b.addRunArtifact(modchart);
+    write_modchart.addArgs(&modchart_args);
+    write_modchart.addFileArg(disk_module_list);
+    write_modchart.has_side_effects = true;
+    b.step("modchart", "Generate the module charts (sdk/docs/modules.md) from the source").dependOn(&write_modchart.step);
+    const check_modchart = b.addRunArtifact(modchart);
+    check_modchart.addArg("--check");
+    check_modchart.addArgs(&modchart_args);
+    check_modchart.addFileArg(disk_module_list);
+    check_modchart.has_side_effects = true;
+    test_step.dependOn(&check_modchart.step);
     // Every program and module on the disk compiles: the disk image is
     // made from all of them.
     test_step.dependOn(&make_disk.step);
@@ -808,6 +840,15 @@ fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath,
     run.stdio = .inherit;
     run.has_side_effects = true;
     return run;
+}
+
+/// Whether a thing on the disk is a module - a library, device, handler or
+/// class - rather than a program.
+fn isModule(disk: []const u8) bool {
+    for ([_][]const u8{ "libs/", "devs/", "handlers/", "classes/" }) |place| {
+        if (std.mem.startsWith(u8, disk, place)) return true;
+    }
+    return false;
 }
 
 /// The 240 MHz build from scripts/build-qemu.sh if present, else
