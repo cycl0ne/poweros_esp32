@@ -63,6 +63,11 @@ tags and constants, each with its doc comment.
   in bands, the engine, turning the picture, the pointer, events,
   asking a board, writing a driver, and the boards of this machine.
 
+## Who uses whom
+
+[How the modules use each other](modules.md) - three charts of which
+module opens which: the ROM, the modules on the disk, and the classes.
+
 ## Libraries
 
 Opened with `OpenLibrary`; their calls go through the jump table, and
