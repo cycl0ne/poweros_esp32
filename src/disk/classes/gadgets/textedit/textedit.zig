@@ -32,6 +32,13 @@
 //! that does not fit whole is left out, and a line feed or a control
 //! character takes no room.
 //!
+//! **The cursor** is a block over the byte it stands before, in the fill
+//! pen with the byte in the fill's text pen, as a console's is, and shows
+//! only while the gadget has the keyboard. That is what shows the field is
+//! active: its frame is never drawn focused. A wrapped row keeps an
+//! `n`'s width free at its end, and the view across reaches that far
+//! past the widest line, so the block after a row's last byte always fits.
+//!
 //! **The keyboard** is the gadget's from a press in it, or from
 //! `ActivateGadget`, until a press elsewhere. The keys a program answers -
 //! right Amiga with anything, Control-C, -X and -V, the menu button - end
@@ -83,8 +90,25 @@ comptime {
 /// Room between the frame and the text at either side.
 const text_margin = 3;
 const scroll_size = 16;
-/// The cursor's width.
-const cursor_width = 2;
+
+/// The cursor's width: a block over the byte it stands before, as wide as
+/// that byte; before a line feed or a tab, at the end, or before a byte
+/// that takes no room, as wide as an `n` - a space is too thin to read as
+/// a block.
+fn cursorWidth(text: *const Text, pos: u32) u32 {
+    const room = cursorRoom(text);
+    if (pos >= text.length()) return room;
+    const byte = text.byteAt(pos);
+    if (byte == '\n' or byte == '\t') return room;
+    const width = text.layout.widths[byte];
+    return if (width == 0) room else width;
+}
+
+/// The room kept at a row's end, so the cursor after its last byte fits:
+/// an `n`'s width.
+fn cursorRoom(text: *const Text) u32 {
+    return @max(text.layout.widths['n'], text.layout.widths[' '], 1);
+}
 
 /// The bottom scroller's top, as the view across.
 const left_map = [_]TagItem{ .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopHoriz }, .{} };
@@ -238,7 +262,8 @@ fn syncLayout(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*const classusr.
             again = true;
         }
     }
-    const wanted: u32 = if (own.wrap) @intCast(@max(partsOf(base, own, o, gi).area.width, 1)) else 0;
+    // A wrapped row keeps the cursor's room free at its end.
+    const wanted: u32 = if (own.wrap) @max(@as(u32, @intCast(@max(partsOf(base, own, o, gi).area.width, 1))) -| cursorRoom(&own.text), 1) else 0;
     if (wanted != own.text.layout.wrap_width) {
         own.text.layout.wrap_width = wanted;
         again = true;
@@ -268,7 +293,8 @@ fn showCursor(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*const classusr.
     // Past either edge, the view goes a quarter of its width further, so
     // that typing on does not move it at every character.
     if (x < own.left) own.left = x -| width / 4;
-    if (x + cursor_width > own.left + width) own.left = x + cursor_width + width / 4 - width;
+    const block = cursorWidth(&own.text, own.cursor);
+    if (x + block > own.left + width) own.left = x + block + width / 4 - width;
 }
 
 fn selection(own: *const Data) struct { from: u32, to: u32 } {
@@ -280,7 +306,7 @@ fn selection(own: *const Data) struct { from: u32, to: u32 } {
 /// Bytes of a run gathered before they are drawn.
 const run_room = 128;
 
-const Pens = struct { text: u32, fill: u32, fill_text: u32 };
+const Pens = struct { text: u32, ground: u32, fill: u32, fill_text: u32 };
 
 /// A run of a row's bytes drawn at `x` from the field's left.
 fn drawRun(gb: *sdk.interface.graphics.GraphicsBase, rp: *graphics.RastPort, bytes: []const u8, left: i32, baseline: i32, pen: u32) void {
@@ -350,15 +376,32 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
     }
     drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, if (run_selected) pens.fill_text else pens.text);
 
-    // The cursor, while it has the keyboard.
+    // The cursor, while it has the keyboard: a block over the byte it
+    // stands before, that byte drawn on it - the fill pen as ground and the
+    // text in the fill's text pen, and the other way round inside the
+    // selection, where those two are already the ground and the text.
     if (own.active and text.rowOf(own.cursor) == row) {
         const cursor_x: i64 = @as(i64, text.xOf(own.cursor)) - view_left;
-        if (cursor_x >= 0 and cursor_x <= area.width) support.fill(gb, rp, .{
-            .left = area.left + @as(i32, @intCast(cursor_x)) - 1,
-            .top = top,
-            .width = cursor_width - 1,
-            .height = own.line_height - 1,
-        }, pens.text);
+        const block: i64 = cursorWidth(text, own.cursor);
+        const left = @max(cursor_x, 0);
+        const right = @min(cursor_x + block, @as(i64, area.width));
+        if (right > left) {
+            const selected = own.cursor >= sel.from and own.cursor < sel.to;
+            support.fill(gb, rp, .{
+                .left = area.left + @as(i32, @intCast(left)),
+                .top = top,
+                .width = @intCast(right - left - 1),
+                .height = own.line_height - 1,
+            }, if (selected) pens.ground else pens.fill);
+            // The byte itself, when it is one that is drawn and all of it
+            // is in the field.
+            if (own.cursor < text.length() and left == cursor_x and right == cursor_x + block) {
+                const byte = text.byteAt(own.cursor);
+                if (byte != '\n' and byte != '\t' and text.layout.widths[byte] != 0) {
+                    drawRun(gb, rp, &[1]u8{byte}, area.left + @as(i32, @intCast(cursor_x)), baseline, if (selected) pens.text else pens.fill_text);
+                }
+            }
+        }
     }
 }
 
@@ -377,13 +420,25 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const parts = partsOf(base, own, o, info);
     own.top = @min(own.top, lastTop(own, parts.visible));
 
-    support.drawFrame(ib, own.frame.?, rp, .{ .left = b.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height }, ic.IDS_NORMAL, info.draw_info, g.style);
+    // The field's frame, hovered while the pointer is over it. It is not
+    // drawn focused: the cursor is what shows the field has the keyboard.
+    var frame_draw = ic.ImpDraw{
+        .method_id = ic.IM_DRAWFRAME,
+        .rast_port = rp,
+        .offset = .{ .x = b.left, .y = b.top },
+        .state = ic.IDS_NORMAL,
+        .draw_info = info.draw_info,
+        .dimensions = .{ .width = parts.frame.width, .height = parts.frame.height },
+        .style = g.style,
+        .style_state = gc.styleStates(g.flags) & ~sdk.intuition.style.STATE_FOCUSED,
+    };
+    _ = ib.SendMessage(own.frame.?, @ptrCast(&frame_draw));
     const ground = support.background(ib, info.draw_info, g.style, ic.PART_FIELD);
     const area = gc.Box{ .left = b.left + parts.area.left, .top = b.top + parts.area.top, .width = parts.area.width, .height = parts.area.height };
     support.fill(gb, rp, .{ .left = area.left - text_margin, .top = area.top, .width = area.width + 2 * text_margin - 1, .height = area.height - 1 }, ground);
 
     const styled = support.pensFor(ib, info.draw_info, g.style, ic.PART_FIELD, sdk.intuition.style.PART_SELECTION);
-    const pens = Pens{ .text = styled[sc.TEXTPEN], .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN] };
+    const pens = Pens{ .text = styled[sc.TEXTPEN], .ground = ground, .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN] };
     if (own.font) |font| {
         const set = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
         gb.SetRPAttrs(rp, &set);
@@ -436,7 +491,7 @@ fn putScrollers(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classus
     }
     if (own.horizontal) |scroller| {
         const width: u32 = @intCast(@max(parts.area.width, 1));
-        const total = @max(own.text.widest + cursor_width, own.left + width);
+        const total = @max(own.text.widest + cursorRoom(&own.text), own.left + width);
         const tags = [_]TagItem{
             .{ .tag = sr.SCROLLER_Total, .data = total },
             .{ .tag = sr.SCROLLER_Visible, .data = width },
@@ -467,7 +522,7 @@ fn nowTold(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classu
         .total = own.text.rowCount(),
         .visible = parts.visible,
         .left = own.left,
-        .widest = if (own.wrap) width else @max(own.text.widest + cursor_width, own.left + width),
+        .widest = if (own.wrap) width else @max(own.text.widest + cursorRoom(&own.text), own.left + width),
         .width = width,
     };
 }
