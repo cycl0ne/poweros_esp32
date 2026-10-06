@@ -1,10 +1,10 @@
-/* HANDLERS:MountList - what a device is, for C:Mount to read.
+/* DEVS:MountList - what a device is, for C:Mount to read.
  *
  * An entry begins with the device's name and a colon and ends with a #
  * on a line of its own. Keywords may be given in any order and any case;
  * a value is a number (0x... for hexadecimal), a word, or a string in
  * quotes. Mount DEVICE: reads the entry of that name from here, unless
- * HANDLERS:DEVICE says it first.
+ * DEVS:DEVICE says it first.
  *
  * Handler names the code that serves the device. dos looks it up by name
  * among its segments, which is where the ROM's handlers are, and else

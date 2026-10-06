@@ -3,8 +3,8 @@
 //!
 //!   Mount DEVICE/M,FROM/K
 //!
-//! A name is looked for in `HANDLERS:<name>`, a file holding one entry's
-//! keywords and nothing else; failing that, in `HANDLERS:MountList`, where
+//! A name is looked for in `DEVS:<name>`, a file holding one entry's
+//! keywords and nothing else; failing that, in `DEVS:MountList`, where
 //! each entry begins with the device's name and a colon and ends with a `#`
 //! on a line of its own. `FROM` names a file to read instead of either.
 //!
@@ -60,8 +60,9 @@ const arg_device = 0;
 const arg_from = 1;
 
 /// Where an entry is looked for when FROM says nothing.
-const handler_dir = "HANDLERS:";
-const mount_list = "HANDLERS:MountList";
+/// Where a device's own description is, and the list of them.
+const description_dir = "DEVS:";
+const mount_list = "DEVS:MountList";
 
 /// The keywords, as one string for FindArg. The order is what `Keyword`
 /// below counts on.
@@ -546,9 +547,9 @@ fn mount(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, from: ?[*:0]const u8
     if (from) |file| return mountOne(sys, dl, name, file, true, false);
 
     // Its own file first, then the entry of that name in the mountlist.
-    var path: [max_token + handler_dir.len:0]u8 = @splat(0);
-    for (handler_dir, 0..) |c, i| path[i] = c;
-    var n: usize = handler_dir.len;
+    var path: [max_token + description_dir.len:0]u8 = @splat(0);
+    for (description_dir, 0..) |c, i| path[i] = c;
+    var n: usize = description_dir.len;
     var i: usize = 0;
     while (name[i] != 0 and n < path.len - 1) : (i += 1) {
         path[n] = name[i];

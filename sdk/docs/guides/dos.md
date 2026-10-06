@@ -159,7 +159,7 @@ characters.
 | `PIPE:` | pipes: `PIPE:name` meets whoever opens the same name |
 | `NIL:` | swallows what is written and reads as empty |
 | `SYS:` | the partition the system started from |
-| `C:`, `S:`, `DEVS:`, `HANDLERS:` | `SYS:c`, `SYS:s`, `SYS:devs`, `SYS:handlers` |
+| `C:`, `S:`, `DEVS:`, `HANDLERS:` | `SYS:c`, `SYS:s`, `SYS:devs`, `SYS:devs/handlers` |
 | `LIBS:`, `FONTS:` | `SYS:libs` and `SYS:classes`; `SYS:fonts` |
 | `ENV:`, `ENVARC:`, `T:`, `CLIPS:` | the running variables (`RAM:ENV`), the kept ones (`SYS:Prefs/Env-Archive`), work files (`RAM:T`), the clipboard's units (`RAM:Clipboards`) |
 
@@ -561,7 +561,7 @@ and answers each with `ReplyPkt` - `ERROR_ACTION_NOT_KNOWN` in `res2`
 for an action it does not do. A file system also adds a `DLT_VOLUME`
 node for the disk it serves. `src/rom/handler/nil/nil.zig` is the
 smallest whole handler, with the `exec.ResidentHandler` tag dos finds it
-by; `src/disk/handlers/fat/` is one that is loaded from `HANDLERS:`.
+by; `src/disk/devs/handlers/fat/` is one that is loaded from `HANDLERS:`.
 
 ## Disks at boot
 
@@ -577,7 +577,7 @@ bootable partition with the highest boot priority, `C:`, `S:`, `LIBS:`,
 `DEVS:` and `HANDLERS:` late assigns to its directories, and starts the
 first shell, in a console window, reading `S:Startup-Sequence`.
 `Mount SD0:` puts a device on the list from its entry in
-`HANDLERS:MountList`. [Disks and partitions](rdb.md) has the partition
+`DEVS:MountList`. [Disks and partitions](rdb.md) has the partition
 table and how to change it.
 
 ## Consoles

@@ -237,8 +237,8 @@ fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) void {
         .{ "S", "SYS:s" },
         .{ "LIBS", "SYS:libs" },
         .{ "DEVS", "SYS:devs" },
-        // What a device is, for Mount to read.
-        .{ "HANDLERS", "SYS:handlers" },
+        // The handlers that are not in the ROM, which dos loads.
+        .{ "HANDLERS", "SYS:devs/handlers" },
     }) |pair| _ = dos_lib.AssignLate(pair[0], pair[1]);
 }
 

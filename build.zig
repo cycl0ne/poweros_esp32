@@ -56,6 +56,10 @@ const image_dirs = [_][]const u8{
     // DEVS:DataTypes - one text descriptor per kind of file, which
     // C:AddDataTypes reads into datatypes.library's list.
     "devs/datatypes",
+    // HANDLERS: - the handlers that are not in the ROM, loaded the first
+    // time a device they serve is used. What a device is, for Mount to
+    // read, is DEVS:MountList.
+    "devs/handlers",
     // SYS:Programs - programs with windows, off the command path.
     "programs",
     // SYS:Tests - files to try the system on, a directory per subject.
@@ -64,9 +68,6 @@ const image_dirs = [_][]const u8{
     // FONTS: - a contents file and a directory of sizes per family;
     // empty without scripts/fetch-fonts.sh.
     "fonts",
-    // HANDLERS: - what a device is, for Mount to read, and the handlers
-    // that are not in the ROM.
-    "handlers",
     // ENVARC: lives here: the global variables that survive a reboot.
     // Sys/ holds the system's settings, Sys/net/ the network's, and
     // Sys/net/networks/ a Wi-Fi network's passphrase per file.
@@ -845,7 +846,7 @@ fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath,
 /// Whether a thing on the disk is a module - a library, device, handler or
 /// class - rather than a program.
 fn isModule(disk: []const u8) bool {
-    for ([_][]const u8{ "libs/", "devs/", "handlers/", "classes/" }) |place| {
+    for ([_][]const u8{ "libs/", "devs/", "classes/" }) |place| {
         if (std.mem.startsWith(u8, disk, place)) return true;
     }
     return false;

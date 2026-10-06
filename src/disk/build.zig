@@ -124,7 +124,7 @@ const modules = [_]Program{
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
-    .{ .disk = "handlers/fat-handler", .source = "handlers/fat/fat.zig", .name = "fat-handler" },
+    .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 
 pub const programs: []const Program = blk: {
@@ -162,13 +162,13 @@ pub const wifi_device: Program = .{ .disk = "devs/networks/wifi.device", .source
 pub const wifi_archives = [_][]const u8{ "libcore.a", "libnet80211.a", "libpp.a", "libphy.a" };
 pub const wifi_rom_scripts = [_][]const u8{ "esp32s3.rom.ld", "esp32s3.rom.libc.ld", "esp32s3.rom.libgcc.ld", "esp32s3.rom.api.ld" };
 
-/// The scripts in S:, what HANDLERS: holds for Mount to read, the
-/// interface files and the settings in ENVARC:.
+/// The scripts in S:, DEVS:MountList for Mount to read, the interface
+/// files and the settings in ENVARC:.
 pub const files = [_]File{
     .{ .disk = "s/startup-sequence", .source = "s/startup-sequence" },
     .{ .disk = "s/shell-startup", .source = "s/shell-startup" },
     .{ .disk = "s/network-startup", .source = "s/network-startup" },
-    .{ .disk = "handlers/mountlist", .source = "handlers/mountlist" },
+    .{ .disk = "devs/mountlist", .source = "devs/mountlist" },
     .{ .disk = "devs/datatypes/Directory", .source = "devs/datatypes/Directory" },
     .{ .disk = "devs/datatypes/ILBM", .source = "devs/datatypes/ILBM" },
     .{ .disk = "devs/datatypes/BMP", .source = "devs/datatypes/BMP" },
