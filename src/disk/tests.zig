@@ -5,6 +5,8 @@
 //! system's build hands this root when it runs them.
 
 test {
+    _ = @import("classes/gadgets/textedit/text.zig");
+    _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("devs/sdcard/sdspi.zig");

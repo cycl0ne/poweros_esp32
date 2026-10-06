@@ -55,6 +55,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
     .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
+    .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -105,6 +106,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/barcode.gadget", .source = "classes/gadgets/barcode/barcode.zig", .name = "barcode.gadget" },
     .{ .disk = "classes/gadgets/chart.gadget", .source = "classes/gadgets/chart/chart.zig", .name = "chart.gadget" },
     .{ .disk = "classes/gadgets/keyboard.gadget", .source = "classes/gadgets/keyboard/keyboard.zig", .name = "keyboard.gadget" },
+    .{ .disk = "classes/gadgets/textedit.gadget", .source = "classes/gadgets/textedit/textedit.zig", .name = "textedit.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },

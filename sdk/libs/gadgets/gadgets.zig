@@ -70,3 +70,4 @@ pub const qrcode = @import("qrcode.zig");
 pub const barcode = @import("barcode.zig");
 pub const chart = @import("chart.zig");
 pub const keyboard = @import("keyboard.zig");
+pub const textedit = @import("textedit.zig");
