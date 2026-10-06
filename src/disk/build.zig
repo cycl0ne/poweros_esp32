@@ -33,7 +33,7 @@ const commands = [_][]const u8{
     "backlight",    "rtg",       "showinfo", "setmap",        "mount",
     "showconfig",   "date",      "setdate",  "setprefs",      "fixfonts",
     "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",   "modbus",
+    "diskchange",   "modbus",    "more",
 };
 const tests = [_][]const u8{
     "hello",        "echoargs",   "testlib",  "gfx",     "anim",

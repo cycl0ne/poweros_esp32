@@ -79,9 +79,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
   the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
   [disks guide](sdk/docs/guides/rdb.md)); consoles with line editing and
-  copy and paste; a shell with scripts and resident commands, 37
-  commands in `C:`, test programs in `C:test` and network tools in
-  `C:net`.
+  copy and paste; a shell with scripts and resident commands, 38
+  commands in `C:` (`dir all | more` pages through anything), test
+  programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
   and hands back an object a program puts in a window - pictures (ILBM,
   BMP, PNG, GIF, JPEG), text (plain, FTXT, Markdown) and animations
