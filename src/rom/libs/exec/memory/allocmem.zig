@@ -95,7 +95,7 @@ pub fn AllocMem(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaqu
     if (byte_size == 0) return null;
     const caller = @returnAddress();
     const block = allocFromList(base, byte_size, requirements, caller) orelse
-        (if (requirements & sdk.exec.MEMF_NO_EXPUNGE != 0) null else lowMemory(base, byte_size, requirements, caller)) orelse
+        lowMemory(base, byte_size, requirements, caller) orelse
         return null;
     // The block is the caller's already: cleared without the lock.
     if (requirements & sdk.exec.MEMF_CLEAR != 0) {
@@ -154,8 +154,11 @@ fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32, caller: u
 /// - `caller` - AllocMem's caller, for the trace.
 ///
 /// RESULT:
-/// The block, or null when every handler is spent.
+/// The block, or null when every handler is spent - and at once under
+/// `MEMF_NO_EXPUNGE`.
 fn lowMemory(base: *ExecBase, byte_size: usize, requirements: u32, caller: usize) ?*anyopaque {
+    // The caller asked to fail rather than have anything expunged.
+    if (requirements & sdk.exec.MEMF_NO_EXPUNGE != 0) return null;
     const sys = base.iface();
     sys.ObtainSemaphore(&base.sem_memhandlers);
     defer sys.ReleaseSemaphore(&base.sem_memhandlers);
