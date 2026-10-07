@@ -719,8 +719,10 @@ const Pace = struct {
     signal: i8 = -1,
     hook: sdk.utility.Hook = .{},
     /// How many times the timer has fired: written by the hook on the
-    /// clock's task, read by the program.
+    /// clock's task, read by the program, under `lock`.
     fired: u32 = 0,
+    lock: exec.Lock = .{},
+    sys: ?*ExecBase = null,
     /// The count by a tick of dos's, without the timer.
     ticks: u32 = 0,
 
@@ -728,7 +730,10 @@ const Pace = struct {
     fn firing(hook: *sdk.utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
         const msg: *const motion.TimerMsg = @ptrCast(@alignCast(message.?));
         const pace: *Pace = @ptrCast(@alignCast(hook.data.?));
-        @atomicStore(u32, &pace.fired, msg.count, .release);
+        const sys = pace.sys.?;
+        sys.AcquireLock(&pace.lock);
+        pace.fired = msg.count;
+        sys.ReleaseLock(&pace.lock);
         return 0;
     }
 
@@ -738,6 +743,8 @@ const Pace = struct {
             return;
         };
         pace.motion_base = @ptrCast(lib);
+        pace.sys = sys;
+        sys.InitLock(&pace.lock, "anim pace", exec.LOCKORDER_DRIVER, 0);
         pace.signal = sys.AllocSignal(-1);
         if (pace.signal < 0) return;
         pace.hook = .{ .entry = &firing, .data = pace };
@@ -765,7 +772,9 @@ const Pace = struct {
         const mask = @as(u32, 1) << @intCast(pace.signal);
         const got = sys.Wait(mask | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return null;
-        return @atomicLoad(u32, &pace.fired, .acquire);
+        sys.AcquireLock(&pace.lock);
+        defer sys.ReleaseLock(&pace.lock);
+        return pace.fired;
     }
 
     fn stop(pace: *Pace, sys: *ExecBase) void {

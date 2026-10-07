@@ -8,7 +8,8 @@
 //!   List                       the current directory
 //!   List DH0:C ALL             everything below it, directory by directory
 //!   List PAT #?.info           only what the pattern matches
-//!   List SUB hello             only names with "hello" in them
+//!   List SUB hello             only names with "hello" in them, the text
+//!                              as written: List SUB (1) finds "a(1)"
 //!   List SINCE Yesterday       only what changed since then
 //!   List QUICK                 names alone
 //!   List LFORMAT "%s%s"        each entry as path and name, nothing else
@@ -303,10 +304,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     readSince(run);
     readUpto(run);
 
-    // PAT and SUB are one pattern for the whole run; SUB is PAT with "#?"
-    // around it, which is what makes it a substring match.
+    // PAT and SUB are one pattern for the whole run; SUB is its text with
+    // "#?" around it, which is what makes it a substring match, and a ' in
+    // front of every character a pattern gives a meaning to, so the text
+    // is matched as it is written. A pattern that does not parse is said
+    // so, rather than matching nothing.
     if (run.pat) |pattern| {
-        _ = ub.ParsePatternNoCase(pattern, &run.patbuf, run.patbuf.len);
+        if (ub.ParsePatternNoCase(pattern, &run.patbuf, run.patbuf.len) < 0) {
+            _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+            return dos.RETURN_FAIL;
+        }
     } else if (run.sub) |text| {
         var wrapped: [max_path:0]u8 = @splat(0);
         var at: usize = 0;
@@ -315,14 +322,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         wrapped[at] = '?';
         at += 1;
         var i: usize = 0;
-        while (text[i] != 0 and at + 3 < wrapped.len) : (i += 1) {
+        while (text[i] != 0 and at + 4 < wrapped.len) : (i += 1) {
+            if (isPatternChar(text[i])) {
+                wrapped[at] = '\'';
+                at += 1;
+            }
             wrapped[at] = text[i];
             at += 1;
         }
         wrapped[at] = '#';
         at += 1;
         wrapped[at] = '?';
-        _ = ub.ParsePatternNoCase(@ptrCast(&wrapped), &run.subbuf, run.subbuf.len);
+        if (ub.ParsePatternNoCase(@ptrCast(&wrapped), &run.subbuf, run.subbuf.len) < 0) {
+            _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+            return dos.RETURN_FAIL;
+        }
     }
 
     const anchor_block = sys.AllocVec(@sizeOf(Anchor), exec.MEMF_CLEAR) orelse {
@@ -722,6 +736,15 @@ fn header(run: *Run, ap: *dos.AnchorPath) void {
         @as([*:0]const u8, @ptrCast(&run.date)),
     });
     run.notfirst = true;
+}
+
+/// A character a pattern gives a meaning to, which SUB's text puts a '
+/// in front of so that it stands for itself.
+fn isPatternChar(char: u8) bool {
+    return switch (char) {
+        '*', '~', '[', ']', '#', '?', '(', ')', '|', '%', '\'' => true,
+        else => false,
+    };
 }
 
 /// FILES, DIRS, SINCE, UPTO, PAT and SUB, in that order.

@@ -49,7 +49,9 @@ pub fn hostNameIn(text: []const u8) ?[]const u8 {
 /// has dos.library to read it with. A name SetHostName gave first stays.
 pub fn loadHostName(sb: *SocketBase) void {
     const stack = sb.stack;
-    if (@atomicLoad(u32, &stack.hostname_set, .monotonic) != 0) return;
+    // A look before the file is read; whether it is set is decided again
+    // under the stack's lock below.
+    if (@as(*volatile u32, &stack.hostname_set).* != 0) return;
     const sys = sb.sys_base;
     // Room for a comment above the name as long as the file's own.
     var text: [1024]u8 = undefined;

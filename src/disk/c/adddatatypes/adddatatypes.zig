@@ -89,7 +89,15 @@ fn listOf(sys: *ExecBase, ub: *UtilityBase) ?*datatypes.DataTypesList {
         ub.FreeNamedObject(made);
         return null;
     }
-    return list;
+    // Two copies run at once may both have found none and both added one.
+    // The one added first stays first in the name space, so it is the one
+    // every search finds: a copy whose own is not that one takes its own
+    // off again and fills the first instead.
+    const first = ub.FindNamedObject(null, datatypes.DATATYPESLIST_NAME, null) orelse return list;
+    defer ub.ReleaseNamedObject(first);
+    if (first == made) return list;
+    if (ub.AttemptRemNamedObject(made) != 0) ub.FreeNamedObject(made);
+    return @ptrCast(@alignCast(first.object));
 }
 
 /// A descriptor put on the list, highest priority first, and whatever

@@ -41,9 +41,10 @@ const _timer = @import("_timer.zig");
 /// while it starts or stops a timer.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for the clock's semaphore, while a step runs, to put it in the
+///   calling task's keeping.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: takes the clock's semaphore; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
