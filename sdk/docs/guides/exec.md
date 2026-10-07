@@ -360,20 +360,23 @@ while (sys.Wait(port.sigMask() | exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C 
 }
 
 // A client: the message on its stack, since it waits for the reply.
-const server = sys.FindPort("counter.port") orelse return sdk.dos.RETURN_WARN;
 const reply_port = sys.CreateMsgPort() orelse return sdk.dos.RETURN_FAIL;
 defer sys.DeleteMsgPort(reply_port);
 var request: AddMsg = .{ .add = 5 };
 request.msg.reply_port = reply_port;
 request.msg.length = @sizeOf(AddMsg);
-sys.PutMsg(server, &request.msg);
+if (!sys.SafePutToPort(&request.msg, "counter.port")) return sdk.dos.RETURN_WARN;
 _ = sys.WaitPort(reply_port);
 _ = sys.GetMsg(reply_port); // request.total is the answer
 ```
 
-`FindPort` answers what is on the list at that moment. The port stays as
-long as its owner keeps it, and the owner takes it off and answers what
-is left before it deletes it, as above. A port laid out by hand - in a
+**A message to a port known by its name goes with `SafePutToPort`**,
+which finds the port and puts the message under one hold of exec's port
+lock. `FindPort` answers what is on the list at that moment, and the
+owner may take the port off and delete it before a `PutMsg` that follows
+reaches it. The owner takes it off and answers what is left before it
+deletes it, as above, so every message `SafePutToPort` delivered is
+answered. A port laid out by hand - in a
 structure, with `PA_IGNORE` or `PA_SOFTINT` - has its message list made
 empty with `port.msg_list.init(.message)`, or by `AddPort`.
 

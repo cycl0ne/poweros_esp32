@@ -144,6 +144,7 @@ pub const LVO = struct {
     pub const DetachLibrary = libraries.lvo(132);
     pub const SetTaskEndMsg = libraries.lvo(133);
     pub const RemoveMsg = libraries.lvo(134);
+    pub const SafePutToPort = libraries.lvo(135);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -278,6 +279,7 @@ pub const Fn = struct {
     pub const DetachLibrary = *const fn (*ExecBase, *exec.Library) callconv(.c) void;
     pub const SetTaskEndMsg = *const fn (*ExecBase, ?*exec.Task, ?*exec.Message) callconv(.c) void;
     pub const RemoveMsg = *const fn (*ExecBase, *exec.MsgPort, *exec.Message) callconv(.c) bool;
+    pub const SafePutToPort = *const fn (*ExecBase, *exec.Message, [*:0]const u8) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -882,5 +884,12 @@ pub const ExecBase = opaque {
     /// it (taken by GetMsg already, or never put). What an AbortIO uses.
     pub fn RemoveMsg(self: *ExecBase, port: *exec.MsgPort, msg: *exec.Message) bool {
         return libraries.call(self, LVO.RemoveMsg, Fn.RemoveMsg, .{ port, msg });
+    }
+
+    /// Put `message` to the public port called `name`, the search and the put
+    /// under one hold of the port lock, so the port cannot be removed between:
+    /// false when there is no such port, and the message is still the caller's.
+    pub fn SafePutToPort(self: *ExecBase, message: *exec.Message, name: [*:0]const u8) bool {
+        return libraries.call(self, LVO.SafePutToPort, Fn.SafePutToPort, .{ message, name });
     }
 };

@@ -238,4 +238,8 @@ void SetTaskEndMsg(?*exec.Task task, ?*exec.Message msg)
 /// Take `msg` off `port`, under the port's lock: false when it is not on
 /// it (taken by GetMsg already, or never put). What an AbortIO uses.
 bool RemoveMsg(*exec.MsgPort port, *exec.Message msg)
+/// Put `message` to the public port called `name`, the search and the put
+/// under one hold of the port lock, so the port cannot be removed between:
+/// false when there is no such port, and the message is still the caller's.
+bool SafePutToPort(*exec.Message message, [*:0]const u8 name)
 ##end

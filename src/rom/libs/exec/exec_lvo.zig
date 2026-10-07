@@ -70,6 +70,7 @@ const contract_files = [_][]const u8{
     @embedFile("library/detachlibrary.zig"),
     @embedFile("task/settaskendmsg.zig"),
     @embedFile("ports/removemsg.zig"),
+    @embedFile("ports/safeputtoport.zig"),
     @embedFile("interrupt/intvector.zig"),
     @embedFile("resident/resmodules.zig"),
     @embedFile("library/setramlib.zig"),
@@ -336,6 +337,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoDetachLibrary),
     vec(lvoSetTaskEndMsg),
     vec(lvoRemoveMsg),
+    vec(lvoSafePutToPort),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -871,6 +873,10 @@ fn lvoSetTaskEndMsg(base: *ExecBase, task: ?*Task, msg: ?*Message) callconv(.c) 
 
 fn lvoRemoveMsg(base: *ExecBase, port: *MsgPort, msg: *Message) callconv(.c) bool {
     return exec.RemoveMsg(base, port, msg);
+}
+
+fn lvoSafePutToPort(base: *ExecBase, message: *Message, name: [*:0]const u8) callconv(.c) bool {
+    return exec.SafePutToPort(base, message, name);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

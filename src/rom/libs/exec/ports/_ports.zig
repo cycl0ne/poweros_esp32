@@ -47,6 +47,19 @@ pub fn put(base: *ExecBase, port: *MsgPort, msg: *Message, node_type: sdk.exec.N
     const sys = base.iface();
     sys.AcquireLock(&base.lock_ports);
     defer sys.ReleaseLock(&base.lock_ports);
+    putHeld(base, port, msg, node_type);
+}
+
+/// `put` with exec's port lock already held: what `SafePutToPort` does
+/// once it has found the port, without letting the lock go between.
+///
+/// INPUTS:
+/// - `base` - exec: the jump table the calls go through.
+/// - `port` - where the message goes.
+/// - `msg` - what is sent.
+/// - `node_type` - `.message` or `.replymsg`.
+pub fn putHeld(base: *ExecBase, port: *MsgPort, msg: *Message, node_type: sdk.exec.NodeType) void {
+    const sys = base.iface();
     msg.node.type = node_type;
     sys.AddTail(&port.msg_list, &msg.node);
     switch (port.flags & sdk.exec.PF_ACTION) {

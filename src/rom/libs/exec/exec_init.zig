@@ -21,7 +21,6 @@ const _task = @import("task/_task.zig");
 const _locks = @import("locks/_locks.zig");
 
 const ExecBase = exec.ExecBase;
-const Interrupt = sdk.exec.Interrupt;
 const InitTable = sdk.exec.InitTable;
 const Library = sdk.exec.Library;
 const Resident = sdk.exec.Resident;
@@ -44,8 +43,9 @@ pub const LIBRARY_VERSION = 1;
 /// lock of its own - LockExecList and UnlockExecList for a program that
 /// walks one, a library's own lock and pin around its vectors,
 /// DetachLibrary - SetTaskEndMsg and RemoveMsg, and Forbid and Permit gone.
-pub const LIBRARY_REVISION = 6;
-const BUILD_DATE = "04.10.2026";
+/// 7: SafePutToPort.
+pub const LIBRARY_REVISION = 7;
+const BUILD_DATE = "07.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -120,9 +120,16 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // semaphore is held by a task.
     _task.initTasks(sys) catch return null;
     sys_base.AddLibrary(lib);
-    // The flusher finds exec's base in its data.
-    library_flusher.data = sys;
-    sys_base.AddMemHandler(&library_flusher);
+    // When memory runs out, the libraries and devices nobody has open are
+    // expunged. Priority 0, so a handler that frees something cheaper - a
+    // cache, a buffer - can be given a higher one and be asked first. It
+    // finds exec's base in its data.
+    sys.library_flusher = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = "library flusher" },
+        .data = sys,
+        .code = vec(_library.flushLibraries),
+    };
+    sys_base.AddMemHandler(&sys.library_flusher);
     exec.initialized = true;
     const boot: *const exec.BootInfo = @ptrCast(@alignCast(seg_list orelse return lib));
     // Before any resident runs: from here code without a base finds exec.
@@ -162,11 +169,3 @@ const exec_task_stack = 16 * 1024;
 pub fn execTask(_: *exec.interface.ExecBase) callconv(.c) void {
     _ = exec.SysBase.iface().InitCode(sdk.exec.RTF_COLDSTART, 0);
 }
-
-/// When memory runs out, expunge libraries and devices nobody has open.
-/// Priority 0, so a handler that frees something cheaper - a cache, a
-/// buffer - can be given a higher one and be asked first.
-var library_flusher: Interrupt = .{
-    .node = .{ .type = .interrupt, .pri = 0, .name = "library flusher" },
-    .code = vec(_library.flushLibraries),
-};

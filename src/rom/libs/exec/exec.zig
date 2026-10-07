@@ -147,6 +147,7 @@ pub const ReadCoreTimes = @import("task/readcoretimes.zig").ReadCoreTimes;
 pub const DetachLibrary = @import("library/detachlibrary.zig").DetachLibrary;
 pub const SetTaskEndMsg = @import("task/settaskendmsg.zig").SetTaskEndMsg;
 pub const RemoveMsg = @import("ports/removemsg.zig").RemoveMsg;
+pub const SafePutToPort = @import("ports/safeputtoport.zig").SafePutToPort;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -522,6 +523,7 @@ test {
     _ = @import("library/detachlibrary.zig");
     _ = @import("task/settaskendmsg.zig");
     _ = @import("ports/removemsg.zig");
+    _ = @import("ports/safeputtoport.zig");
     _ = @import("interrupt/intvector.zig");
     _ = @import("resident/resmodules.zig");
     _ = @import("library/setramlib.zig");
@@ -2584,6 +2586,25 @@ test "ports: RemoveMsg takes a given message off a port, and says when it is not
     try testing.expectEqual(&first, GetMsg(SysBase, port).?);
     try testing.expect(GetMsg(SysBase, port) == null);
     try testing.expect(!RemoveMsg(SysBase, port, &first));
+    DeleteMsgPort(SysBase, port);
+    try expectNoLeaks();
+}
+
+test "ports: SafePutToPort sends to a port found by name, and to none that has gone" {
+    try setUp();
+    defer deinit();
+
+    const port = CreateMsgPort(SysBase).?;
+    port.node.name = "safe.port";
+    AddPort(SysBase, port);
+    var first: Message = .{};
+    try testing.expect(SafePutToPort(SysBase, &first, "safe.port"));
+    try testing.expectEqual(&first, GetMsg(SysBase, port).?);
+    try testing.expectEqual(sdk.exec.NodeType.message, first.node.type);
+    RemPort(SysBase, port);
+    var second: Message = .{};
+    try testing.expect(!SafePutToPort(SysBase, &second, "safe.port"));
+    try testing.expect(GetMsg(SysBase, port) == null);
     DeleteMsgPort(SysBase, port);
     try expectNoLeaks();
 }

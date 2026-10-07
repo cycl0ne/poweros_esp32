@@ -21,8 +21,8 @@ const MsgPort = sdk.exec.MsgPort;
 /// SINCE: 1.0. LVO -204.
 ///
 /// INPUTS:
-/// - `port` - where it goes. It must still exist; for a public port that
-///   is the port's owner's protocol (`FindPort`).
+/// - `port` - where it goes. It must still exist: a public port known by
+///   its name is sent to with `SafePutToPort` instead.
 /// - `msg` - the message. Its `reply_port` should be set if a reply is
 ///   wanted, and its length if the receiver reads one.
 ///

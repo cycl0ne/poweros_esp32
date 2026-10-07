@@ -165,6 +165,9 @@ pub const ExecBase = extern struct {
     /// memory handlers, which AllocMem runs when memory runs short.
     sem_libraries: sdk.exec.SignalSemaphore = .{},
     sem_memhandlers: sdk.exec.SignalSemaphore = .{},
+    /// exec's own low-memory handler, on `mem_handlers`: libraries and
+    /// devices nobody has open, expunged (`initExec` sets it up).
+    library_flusher: sdk.exec.Interrupt = .{},
     /// The system's interrupt lock, the holding core and one or 0: Disable's
     /// and the interrupt dispatch's. A core holds it while one of its tasks
     /// is inside Disable or while it is in an exception, so a Disable on one

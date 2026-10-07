@@ -120,6 +120,7 @@ Generated from the source by `./zig build autodoc`.
 - [ReplyIO](#replyio) - For a device: finishes a request and sends it back.
 - [ReplyMsg](#replymsg) - Sends a message back to whoever sent it.
 - [ResModules](#resmodules) - Hands back the table of resident modules.
+- [SafePutToPort](#safeputtoport) - Puts a message to the public port of a name, if there is one.
 - [SendIO](#sendio) - Starts an I/O request and returns at once.
 - [SetExcept](#setexcept) - Chooses which of the calling task's signals raise its exception code.
 - [SetFunction](#setfunction) - Replaces one entry of a library's jump table and answers the old one.
@@ -3799,18 +3800,19 @@ The port, or null if there is none of that name.
 **BEHAVIOR**
 
 **The port may go away as soon as the search is over**: this call
-looks under exec's port lock and lets it go. So the pointer is only as
-good as the protocol of the program that made the port: one that takes
-it off the list first and answers what is on it before it goes is one
-a caller may find and then send to.
+looks under exec's port lock and lets it go, and the owner may take
+the port off and delete it before anything is sent to it. A message
+for a port known by its name goes with `SafePutToPort`, which finds
+and sends under one hold of the lock; this answers whether a port is
+there, and a port a caller keeps a use of by an agreement with its
+owner.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: no. It takes exec's port lock for the search.
 - Locks: takes exec's port lock for the search. The port may be removed the
-  moment it is let go: the protocol of the program that made it is what
-  keeps it there.
+  moment it is let go.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3823,7 +3825,7 @@ None known.
 
 **SEE ALSO**
 
-`AddPort`, `PutMsg`, `FindName`
+`SafePutToPort`, `AddPort`, `PutMsg`, `FindName`
 
 **EXAMPLES**
 
@@ -5702,8 +5704,8 @@ fn PutMsg(base: *ExecBase, port: *MsgPort, msg: *Message) void
 
 **INPUTS**
 
-- `port` - where it goes. It must still exist; for a public port that
-  is the port's owner's protocol (`FindPort`).
+- `port` - where it goes. It must still exist: a public port known by
+  its name is sent to with `SafePutToPort` instead.
 - `msg` - the message. Its `reply_port` should be set if a reply is
   wanted, and its length if the receiver reads one.
 
@@ -7428,6 +7430,74 @@ None known.
 const table = sys.ResModules() orelse return;
 var i: usize = 0;
 while (table[i]) |tag| : (i += 1) { ... }
+```
+
+## SafePutToPort
+
+Puts a message to the public port of a name, if there is one.
+
+**SYNOPSIS**
+
+```zig
+fn SafePutToPort(base: *ExecBase, message: *Message, name: [*:0]const u8) bool
+```
+
+**SINCE**
+
+1.7. LVO -544.
+
+**INPUTS**
+
+- `message` - what is sent, its `reply_port` set if an answer is wanted.
+- `name` - the port's name, matched exactly.
+
+**RESULT**
+
+True when the port was there and has the message; false when no port
+of that name is on the list, and the message is still the caller's.
+
+**BEHAVIOR**
+
+The port is looked for and the message put on it as `PutMsg` puts one
+- the port's action done - without exec's port lock being let go in
+between. `RemPort` takes the same lock, so a port found here is still
+on the list when the message reaches it: its owner, who takes it off
+and then answers what is on it before it deletes the port, answers
+this message too. `FindPort` followed by `PutMsg` leaves a moment in
+which the owner may take the port off and delete it, and the message
+would go to memory that is no longer a port.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It takes exec's port lock, which masks the core's
+  interrupts.
+- Locks: takes exec's port lock for the search and the put.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+On true the message is the port's owner's until it is replied; on false
+it is still the caller's.
+
+**NOTES**
+
+The search is as long as the list of public ports.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindPort`, `PutMsg`, `AddPort`, `RemPort`
+
+**EXAMPLES**
+
+```zig
+if (!sys.SafePutToPort(&request.msg, "counter.port")) return dos.RETURN_WARN;
+_ = sys.WaitPort(reply_port);
+_ = sys.GetMsg(reply_port);
 ```
 
 ## SendIO

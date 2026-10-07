@@ -23,17 +23,18 @@ const MsgPort = sdk.exec.MsgPort;
 ///
 /// BEHAVIOR:
 /// **The port may go away as soon as the search is over**: this call
-/// looks under exec's port lock and lets it go. So the pointer is only as
-/// good as the protocol of the program that made the port: one that takes
-/// it off the list first and answers what is on it before it goes is one
-/// a caller may find and then send to.
+/// looks under exec's port lock and lets it go, and the owner may take
+/// the port off and delete it before anything is sent to it. A message
+/// for a port known by its name goes with `SafePutToPort`, which finds
+/// and sends under one hold of the lock; this answers whether a port is
+/// there, and a port a caller keeps a use of by an agreement with its
+/// owner.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It takes exec's port lock for the search.
 /// - Locks: takes exec's port lock for the search. The port may be removed the
-///   moment it is let go: the protocol of the program that made it is what
-///   keeps it there.
+///   moment it is let go.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -43,7 +44,7 @@ const MsgPort = sdk.exec.MsgPort;
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddPort`, `PutMsg`, `FindName`
+/// `SafePutToPort`, `AddPort`, `PutMsg`, `FindName`
 ///
 /// EXAMPLES:
 /// ```zig
