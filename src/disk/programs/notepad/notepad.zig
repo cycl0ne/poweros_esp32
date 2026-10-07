@@ -25,7 +25,7 @@
 //!            Select All (A)
 //!   Search   Find... (F), Find Next (G), Find Previous (P),
 //!            Replace... (R)
-//!   View     Word Wrap (W), on to begin with
+//!   View     Word Wrap (W), Line Numbers (L), both on to begin with
 //!
 //! Control-X, -C and -V cut, copy and paste as the menu does: the gadget
 //! hands those keys to the window, and Notepad works the clipboard from
@@ -70,7 +70,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION_STRING = "\x00$VER: Notepad 1.0 (06.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Notepad 1.1 (07.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE";
@@ -120,6 +120,7 @@ const ITEM_FIND_PREVIOUS = 2;
 const ITEM_REPLACE = 3;
 
 const ITEM_WRAP = 0;
+const ITEM_NUMBERS = 1;
 
 fn item(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
     return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
@@ -151,6 +152,7 @@ const menus = [_]mn.NewMenu{
     item("Replace...", "R"),
     .{ .type = mn.NM_TITLE, .label = "View" },
     .{ .type = mn.NM_ITEM, .label = "Word Wrap", .comm_key = "W", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
+    .{ .type = mn.NM_ITEM, .label = "Line Numbers", .comm_key = "L", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
     .{},
 };
 
@@ -183,6 +185,7 @@ const Notepad = struct {
     /// What the title says about the text: changed or not.
     shown_changed: bool = false,
     wrap: bool = true,
+    numbers: bool = true,
     finder: ?Finder = null,
     search: [search_size:0]u8 = @splat(0),
     with: [search_size:0]u8 = @splat(0),
@@ -670,10 +673,18 @@ const Notepad = struct {
                 },
                 else => {},
             },
-            MENU_VIEW => if (mn.ITEMNUM(number) == ITEM_WRAP) {
-                np.wrap = !np.wrap;
-                _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_WordWrap, .data = @intFromBool(np.wrap) }, .{} });
-                np.followEditor();
+            MENU_VIEW => switch (mn.ITEMNUM(number)) {
+                ITEM_WRAP => {
+                    np.wrap = !np.wrap;
+                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_WordWrap, .data = @intFromBool(np.wrap) }, .{} });
+                    np.followEditor();
+                },
+                ITEM_NUMBERS => {
+                    np.numbers = !np.numbers;
+                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_LineNumbers, .data = @intFromBool(np.numbers) }, .{} });
+                    np.followEditor();
+                },
+                else => {},
             },
             else => {},
         }
@@ -878,6 +889,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const editor = ib.NewObjectTagList(null, te.TEXTEDIT_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_EDITOR },
         .{ .tag = te.TEXTEDIT_WordWrap, .data = 1 },
+        .{ .tag = te.TEXTEDIT_LineNumbers, .data = 1 },
         .{ .tag = te.TEXTEDIT_Scrollers, .data = 0 },
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{},

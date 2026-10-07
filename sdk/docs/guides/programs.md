@@ -287,8 +287,8 @@ written to input.device as a keyboard's are),
 button that pops a list up to pick from), `clicktab` with `page` (a
 row of tabs over pages of gadgets), `getfile` with `getfont` (a
 field with a button beside it that opens asl.library's requester), and
-`textedit` (text of many lines to edit, with undo, the clipboard and
-finding - what `SYS:Programs/Notepad` is made of). Each
+`textedit` (text of many lines to edit, with undo, the clipboard,
+finding and line numbers - what `SYS:Programs/Notepad` is made of). Each
 has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig

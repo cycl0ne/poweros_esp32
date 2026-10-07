@@ -7,7 +7,8 @@
 //! than the field scrolls sideways under a scroller along the bottom, and
 //! with it a line goes on in the next row, broken after a space where it
 //! has one. It is drawn in its window's font; a tab goes to the next
-//! multiple of eight spaces.
+//! multiple of eight spaces. With `TEXTEDIT_LineNumbers` each line's
+//! number stands in a column at its left.
 //!
 //! **Scrollers in the window's border** instead of its own: made with
 //! `TEXTEDIT_Scrollers` false, the gadget is the field alone, and tells
@@ -128,6 +129,10 @@ pub const TEXTEDIT_VisibleVert = TEXTEDIT_Dummy + 0x0D;
 pub const TEXTEDIT_TopHoriz = TEXTEDIT_Dummy + 0x0E;
 pub const TEXTEDIT_TotalHoriz = TEXTEDIT_Dummy + 0x0F;
 pub const TEXTEDIT_VisibleHoriz = TEXTEDIT_Dummy + 0x10;
+/// Bool: each line's number in a column at the field's left, the cursor's
+/// line standing out; a line that wraps is numbered on its first row.
+/// Made, set and read.
+pub const TEXTEDIT_LineNumbers = TEXTEDIT_Dummy + 0x11;
 
 /// The class's own methods, sent with `DoGadgetMethodA` so that what they
 /// change is drawn. Every one answers 0 when it did nothing.

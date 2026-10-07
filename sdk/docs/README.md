@@ -230,7 +230,7 @@ of its own besides. How a class is written is in
 | qrcode.gadget | a text as a QR code | [`qrcode.zig`](../libs/gadgets/qrcode.zig) |
 | barcode.gadget | a text as a Code 128 or an EAN-13 barcode | [`barcode.zig`](../libs/gadgets/barcode.zig) |
 | keyboard.gadget | keys on the screen, for a board with none | [`keyboard.zig`](../libs/gadgets/keyboard.zig) |
-| textedit.gadget | text of many lines to edit: selection, clipboard, undo, find and replace, word wrap | [`textedit.zig`](../libs/gadgets/textedit.zig) |
+| textedit.gadget | text of many lines to edit: selection, clipboard, undo, find and replace, word wrap, line numbers | [`textedit.zig`](../libs/gadgets/textedit.zig) |
 
 ## Datatype classes
 

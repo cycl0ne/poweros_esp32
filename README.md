@@ -99,7 +99,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   bars, dials, knobs, a calendar, charts, rich text, QR codes and
   barcodes, a keyboard on the screen for a board with none
   (`C:test/Widgets`), and text of many lines to edit, with undo, the
-  clipboard and finding - what `SYS:Programs/Notepad` is made of.
+  clipboard, finding and line numbers - what `SYS:Programs/Notepad` is
+  made of.
   `LIBS:asl.library` asks for a file or a font.
 - **Motion:** motion.library, one clock for everything that moves -
   eased values, timers that do not drift, timelines; a style change

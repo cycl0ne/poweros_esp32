@@ -45,6 +45,12 @@
 //! it with `GMR_REUSE`, so the event goes on to the window as though the
 //! gadget had not had it.
 //!
+//! **Line numbers** (`TEXTEDIT_LineNumbers`) stand in a column of their
+//! own at the field's left, as wide as the last line's number and three
+//! digits at least, so it widens seldom; a line that wraps is numbered on
+//! its first row. The text starts after them and a line between, and the
+//! rows wrap at what is left of the width.
+//!
 //! **Widths** come from the window's font, a byte at a time, measured once
 //! for each font (`IntuiTextLength`); a tab stops every eight spaces.
 
@@ -77,7 +83,9 @@ const Text = model.Text;
 pub const Library = gadgets.ClassLibrary(.{
     .name = te.TEXTEDIT_CLASS,
     .version = 1,
-    .date = "06.10.2026",
+    // 1: the wheel, a third press, indent, line numbers.
+    .revision = 1,
+    .date = "07.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -163,6 +171,7 @@ pub const Data = struct {
     top: u32 = 0,
     left: u32 = 0,
     wrap: bool = false,
+    line_numbers: bool = false,
     read_only: bool = false,
     changed: bool = false,
     /// Scrollers of its own, rather than ones in the window's border.
@@ -207,9 +216,12 @@ fn memoryOf(base: *gadgets.Base) model.Memory {
 // --- where things are -------------------------------------------------------
 
 /// The parts of the gadget, relative to its box: the field's frame, the
-/// text inside it, the two scrollers, and how many rows the text shows.
+/// line numbers' column and the text inside it, the two scrollers, and how
+/// many rows the text shows. Without line numbers their column is empty,
+/// where the text starts.
 const Parts = struct {
     frame: gc.Box,
+    numbers: gc.Box,
     area: gc.Box,
     vertical: gc.Box,
     horizontal: gc.Box,
@@ -224,19 +236,34 @@ fn partsOf(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classu
     const frame = gc.Box{ .width = @max(b.width - across, 0), .height = @max(b.height - down, 0) };
     const dri = if (gi) |info| info.draw_info else g.draw_info;
     const inset = support.frameInset(base.intuition_base, own.frame.?, dri, gc.gadget(o).style);
+    const digits = numbersWidth(own);
+    // The numbers, a margin, a line and a margin before the text.
+    const before: i32 = if (digits > 0) digits + 2 * text_margin + 1 else 0;
     const area = gc.Box{
-        .left = inset.left + text_margin,
+        .left = inset.left + text_margin + before,
         .top = inset.top + 1,
-        .width = @max(frame.width - inset.width - 2 * text_margin, 0),
+        .width = @max(frame.width - inset.width - 2 * text_margin - before, 0),
         .height = @max(frame.height - inset.height - 2, 0),
     };
     return .{
         .frame = frame,
+        .numbers = .{ .left = inset.left + text_margin, .top = area.top, .width = digits, .height = area.height },
         .area = area,
         .vertical = .{ .left = frame.width, .width = across, .height = frame.height },
         .horizontal = .{ .top = frame.height, .width = frame.width, .height = down },
         .visible = @intCast(@max(@divTrunc(area.height, @max(own.line_height, 1)), 1)),
     };
+}
+
+/// How wide the line numbers' digits stand: as many as the last line's
+/// number has, three at least. 0 without them.
+fn numbersWidth(own: *const Data) i32 {
+    if (!own.line_numbers) return 0;
+    var digits: u32 = 1;
+    var count = own.text.lineCount();
+    while (count >= 10) : (count /= 10) digits += 1;
+    const shown: u32 = @max(digits, 3);
+    return @intCast(shown * own.text.layout.widths['0']);
 }
 
 /// The widths of the font a byte at a time, the line's height, and the
@@ -322,6 +349,28 @@ fn drawRun(gb: *sdk.interface.graphics.GraphicsBase, rp: *graphics.RastPort, byt
     gb.SetRPAttrs(rp, &tags);
     gb.Move(rp, left, baseline);
     gb.Text(rp, bytes.ptr, @intCast(bytes.len));
+}
+
+/// The number of the line `row` starts, right-aligned in `numbers` (the
+/// window's coordinates): none for a row that goes on with a wrapped line.
+/// The cursor's line in the text pen, the others in the fill pen.
+fn drawNumber(gb: *sdk.interface.graphics.GraphicsBase, own: *const Data, rp: *graphics.RastPort, numbers: gc.Box, baseline: i32, row: u32, pens: Pens) void {
+    const start = own.text.rowStart(row);
+    const line = own.text.lineOf(start);
+    if (own.text.lineStart(line) != start) return;
+    var digits: [10]u8 = undefined;
+    var at: usize = digits.len;
+    var left = line + 1;
+    while (true) {
+        at -= 1;
+        digits[at] = '0' + @as(u8, @intCast(left % 10));
+        left /= 10;
+        if (left == 0) break;
+    }
+    var width: i32 = 0;
+    for (digits[at..]) |digit| width += own.text.layout.widths[digit];
+    const pen = if (line == own.text.lineOf(own.cursor)) pens.text else pens.fill;
+    drawRun(gb, rp, digits[at..], numbers.left + numbers.width - width, baseline, pen);
 }
 
 /// One row of the text, at `top` in the window, inside `area` (the
@@ -438,7 +487,9 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     _ = ib.SendMessage(own.frame.?, @ptrCast(&frame_draw));
     const ground = support.background(ib, info.draw_info, g.style, ic.PART_FIELD);
     const area = gc.Box{ .left = b.left + parts.area.left, .top = b.top + parts.area.top, .width = parts.area.width, .height = parts.area.height };
-    support.fill(gb, rp, .{ .left = area.left - text_margin, .top = area.top, .width = area.width + 2 * text_margin - 1, .height = area.height - 1 }, ground);
+    const numbers = gc.Box{ .left = b.left + parts.numbers.left, .top = area.top, .width = parts.numbers.width, .height = area.height };
+    const inside = if (own.line_numbers) numbers.left - text_margin else area.left - text_margin;
+    support.fill(gb, rp, .{ .left = inside, .top = area.top, .width = area.left + area.width + text_margin - inside - 1, .height = area.height - 1 }, ground);
 
     const styled = support.pensFor(ib, info.draw_info, g.style, ic.PART_FIELD, sdk.intuition.style.PART_SELECTION);
     const pens = Pens{ .text = styled[sc.TEXTPEN], .ground = ground, .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN] };
@@ -456,6 +507,12 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         if (row >= own.text.rowCount()) break;
         const top = area.top + @as(i32, @intCast(shown)) * own.line_height;
         drawRow(base, own, rp, area, top, top + @as(i32, @intCast(baseline)), row, pens);
+        if (own.line_numbers) drawNumber(gb, own, rp, numbers, top + @as(i32, @intCast(baseline)), row, pens);
+    }
+    if (own.line_numbers and area.height > 0) {
+        // The line between the numbers and the text, in their pen.
+        const x = numbers.left + numbers.width + text_margin;
+        support.fill(gb, rp, .{ .left = x, .top = area.top, .width = 1, .height = area.height }, pens.fill);
     }
 
     putScrollers(base, own, o, null);
@@ -873,7 +930,8 @@ fn toScroller(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, whic
 
 // --- attributes -------------------------------------------------------------
 
-/// What a tag list asks of the text: a new text, wrap, read-only, changed.
+/// What a tag list asks of the text: a new text, wrap, line numbers,
+/// read-only, changed.
 /// Whether it changes what is shown.
 fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem) bool {
     const ub = base.utility_base;
@@ -898,6 +956,13 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem) bool {
         if (wrap != own.wrap) {
             own.wrap = wrap;
             own.left = 0;
+            shows = true;
+        }
+    }
+    if (ub.FindTagItem(te.TEXTEDIT_LineNumbers, tags)) |item| {
+        const numbers = item.data != 0;
+        if (numbers != own.line_numbers) {
+            own.line_numbers = numbers;
             shows = true;
         }
     }
@@ -1051,6 +1116,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             get.storage.* = switch (get.attr_id) {
                 te.TEXTEDIT_Length => own.text.length(),
                 te.TEXTEDIT_WordWrap => @intFromBool(own.wrap),
+                te.TEXTEDIT_LineNumbers => @intFromBool(own.line_numbers),
                 te.TEXTEDIT_ReadOnly => @intFromBool(own.read_only),
                 te.TEXTEDIT_Changed => @intFromBool(own.changed),
                 te.TEXTEDIT_CursorLine => line,
