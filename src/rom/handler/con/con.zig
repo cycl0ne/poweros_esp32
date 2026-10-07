@@ -57,6 +57,14 @@
 //!   ERROR_OBJECT_IN_USE. It is how whoever added a node for one session
 //!   takes it away again.
 //!
+//! **Tab** completes a name (editor.zig): the names come from the directory
+//! the word names as the program waiting to read finds it - from its
+//! current directory, borrowed for the look - with no requester for a
+//! volume that is not there. Only while a READ waits: a program that is
+//! running may be changing its directory, and nothing would read the line
+//! yet anyway. A list of names is as wide as the window's console, or 80
+//! characters on a serial terminal, whose width nobody tells.
+//!
 //! **A stream that ends.** A device read answered with IOERR_ENDOFSTREAM
 //! - a network connection whose peer has gone - is the end of the input,
 //! as Ctrl-\ is: no read goes out again, and what waits to read gets 0.
@@ -104,8 +112,9 @@ pub const window = @import("window.zig");
 
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+/// 1: Tab completes names.
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "07.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -247,7 +256,23 @@ pub fn Handler(comptime Io: type) type {
             }
             h.terminal_open = true;
             h.ed.reset(h.raw_default);
+            h.ed.completer = .{ .ctx = h, .list = &completions, .columns = &columns };
             return true;
+        }
+
+        /// The names a Tab completes from, as the program waiting to read
+        /// finds them. None while nothing waits (the file's header says
+        /// why).
+        fn completions(ctx: *anyopaque, dir: []const u8, matches: *editor.Matches) bool {
+            const h: *Self = @ptrCast(@alignCast(ctx));
+            if (h.read_count == 0) return false;
+            const reader = h.reads[0].port orelse return false;
+            return h.io.list(reader, dir, matches);
+        }
+
+        fn columns(ctx: *anyopaque) usize {
+            const h: *Self = @ptrCast(@alignCast(ctx));
+            return h.io.columns();
         }
 
         /// A WRITE onto the end of the queue. With no room the oldest goes
@@ -465,6 +490,9 @@ const DeviceIo = struct {
     timer_open: bool = false,
     timers: [max_waits]timer.TimeRequest = @splat(.{}),
     timer_busy: [max_waits]bool = @splat(false),
+    /// A Tab's look into a directory: the path asked, and each entry.
+    path: [dos.path_max + 1]u8 = undefined,
+    fib: dos.FileInfoBlock = .{},
 
     /// This console is a window of its own, so it belongs to the one Open
     /// that asked for it and the process ends with it.
@@ -491,6 +519,52 @@ const DeviceIo = struct {
 
     fn reply(io: *DeviceIo, pkt: *DosPacket, res1: isize, res2: i32) void {
         io.dl.ReplyPkt(pkt, res1, res2);
+    }
+
+    /// The entries of `dir` for a Tab, as the process whose READ replies
+    /// to `reader` finds it: from that process's current directory, taken
+    /// for the look as this one's own. A '/' that only ends a name goes;
+    /// one after another '/' or a ':' goes up and stays. No requester
+    /// comes up meanwhile.
+    fn list(io: *DeviceIo, reader: *MsgPort, dir: []const u8, matches: *editor.Matches) bool {
+        const dl = io.dl;
+        const task: *exec.Task = @ptrCast(@alignCast(reader.sig_task orelse return false));
+        if (task.node.type != .process) return false;
+        const owner: *Process = @fieldParentPtr("task", task);
+        var len = dir.len;
+        if (len > 1 and dir[len - 1] == '/' and dir[len - 2] != '/' and dir[len - 2] != ':') len -= 1;
+        if (len >= io.path.len) return false;
+        @memcpy(io.path[0..len], dir[0..len]);
+        io.path[len] = 0;
+        const me: *Process = @fieldParentPtr("task", io.sys.FindTask(null).?);
+        const requesters = me.window_ptr;
+        me.window_ptr = @ptrFromInt(~@as(usize, 0));
+        defer me.window_ptr = requesters;
+        const home = dl.DupLock(owner.current_dir);
+        const mine = dl.CurrentDir(home);
+        defer dl.UnLock(dl.CurrentDir(mine));
+        const lock = dl.Lock(@ptrCast(&io.path), dos.ACCESS_READ) orelse return false;
+        defer dl.UnLock(lock);
+        if (!dl.Examine(lock, &io.fib) or io.fib.dir_entry_type <= 0) return false;
+        while (dl.ExNext(lock, &io.fib)) {
+            var end: usize = 0;
+            while (end < io.fib.file_name.len and io.fib.file_name[end] != 0) end += 1;
+            matches.add(io.fib.file_name[0..end], io.fib.dir_entry_type > 0);
+        }
+        return true;
+    }
+
+    /// How wide the terminal is: the window's console as it is now, 80
+    /// characters on a port.
+    fn columns(io: *DeviceIo) usize {
+        const u = &io.units[0];
+        if (io.inWindow() and u.open) {
+            if (u.read.io_ser.req.unit) |unit| {
+                const console: *const con.ConUnit = @ptrCast(@alignCast(unit));
+                if (console.max_x > 0) return @intCast(console.max_x + 1);
+            }
+        }
+        return 80;
     }
 
     fn signal(io: *DeviceIo, port: *MsgPort, bits: u32) void {
@@ -879,6 +953,20 @@ pub const TestIo = struct {
     opened: u32 = 0,
     closed: u32 = 0,
     timers: [max_waits]bool = @splat(false),
+    /// What a Tab finds, whatever the directory, and the directory it
+    /// asked for last.
+    names: []const TestName = &test_names,
+    asked: [64]u8 = undefined,
+    asked_len: usize = 0,
+
+    pub const TestName = struct { name: []const u8, dir: bool = false };
+    const test_names = [_]TestName{
+        .{ .name = "Startup-Sequence" },
+        .{ .name = "readme" },
+        .{ .name = "Storage", .dir = true },
+        .{ .name = "My Files", .dir = true },
+        .{ .name = "Startup-Old" },
+    };
 
     pub fn sinkWrite(ctx: *anyopaque, bytes: []const u8) void {
         const io: *TestIo = @ptrCast(@alignCast(ctx));
@@ -910,6 +998,17 @@ pub const TestIo = struct {
     }
     pub fn stopTimer(io: *TestIo, slot: usize) void {
         io.timers[slot] = false;
+    }
+    pub fn list(io: *TestIo, reader: *MsgPort, dir: []const u8, matches: *editor.Matches) bool {
+        _ = reader;
+        const n = @min(dir.len, io.asked.len);
+        @memcpy(io.asked[0..n], dir[0..n]);
+        io.asked_len = n;
+        for (io.names) |entry| matches.add(entry.name, entry.dir);
+        return true;
+    }
+    pub fn columns(_: *TestIo) usize {
+        return 40;
     }
     pub fn text(io: *const TestIo) []const u8 {
         return io.out[0..io.out_len];
@@ -983,7 +1082,7 @@ test "editing keys: ^W ^A ^K ^Y, Delete, ^Z BS, ^U, ^X, Home/End, 0x9B" {
     try testing.expectEqualStrings("AbcD\n", nextLine(&ed, &buffer));
     keys(&ed, "xy\x9bDz\x9b1~0\r"); // the 0x9B CSI: left; Home as 1~
     try testing.expectEqualStrings("0xzy\n", nextLine(&ed, &buffer));
-    keys(&ed, "\x07\x09ok\r"); // other control characters are dropped
+    keys(&ed, "\x07\x0eok\r"); // other control characters are dropped
     try testing.expectEqualStrings("ok\n", nextLine(&ed, &buffer));
 }
 
@@ -1088,6 +1187,58 @@ test "output: a prompt nobody has typed into comes back when a READ waits" {
     ed.write("[CLI 2] output\n");
     ed.flush();
     try testing.expectEqualStrings("\r\x1b[K[CLI 2] output\r\n1.System:> ", io.text());
+}
+
+test "Tab: names from the reader's directory, completed, and listed on a second Tab" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    var fh: dos.FileHandle = .{};
+    var reader_port: MsgPort = .{};
+    var find = DosPacket.init(.findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "CON:" } });
+    h.packet(&find);
+    var buffer: [64]u8 = undefined;
+    var read = DosPacket.init(.read, .{ .io = .{ .fh = &fh, .buffer = &buffer, .length = buffer.len } });
+    read.port = &reader_port;
+
+    // One name: the word becomes it, a file's with a space after it.
+    h.packet(&read);
+    io.clear();
+    for ("type sys:R\t") |c| h.input(c);
+    try testing.expectEqualStrings("type sys:R\x1b[1Dreadme ", io.text());
+    try testing.expectEqualStrings("sys:", io.asked[0..io.asked_len]);
+    h.input('\r');
+    try testing.expectEqualStrings("type sys:readme \n", buffer[0..@intCast(read.res1)]);
+
+    // Several that share no more than was typed: a beep, and a second Tab
+    // lists them, sorted, in as many columns as fit, the line below.
+    h.packet(&read);
+    io.clear();
+    for ("list st\t") |c| h.input(c);
+    try testing.expectEqualStrings("list st\x07", io.text());
+    try testing.expectEqualStrings("", io.asked[0..io.asked_len]);
+    io.clear();
+    h.input('\t');
+    try testing.expectEqualStrings("\r\nStartup-Old       Storage/\r\nStartup-Sequence\r\nlist st", io.text());
+    // Several that share more: as far as they agree, and the next Tab
+    // lists them at once.
+    io.clear();
+    for ("a\t") |c| h.input(c);
+    try testing.expectEqualStrings("a\x1b[3DStartup-", io.text());
+    io.clear();
+    h.input('\t');
+    try testing.expectEqualStrings("\r\nStartup-Old       Startup-Sequence\r\nlist Startup-", io.text());
+    for ("s\t\r") |c| h.input(c);
+    try testing.expectEqualStrings("list Startup-Sequence \n", buffer[0..@intCast(read.res1)]);
+
+    // A directory: a '/' after it; a space in the name: a quote in front.
+    h.packet(&read);
+    for ("cd m\t\r") |c| h.input(c);
+    try testing.expectEqualStrings("cd \"My Files/\n", buffer[0..@intCast(read.res1)]);
+
+    // Nothing waits to read: no directory to look in, only a beep.
+    io.clear();
+    for ("x\t") |c| h.input(c);
+    try testing.expectEqualStrings("x\x07", io.text());
 }
 
 test "the handler: opens, pending READs, partial lines, END" {

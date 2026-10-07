@@ -596,7 +596,10 @@ reads and writes the window. `RAW:` is the same window, starting raw.
 boards, UART0 in QEMU - which every Open of it shares.
 
 A console starts cooked: it edits a line, with a history and copy and
-paste, and a read answers once Return is pressed. `SetMode(fh, 1)` makes
+paste, and a read answers once Return is pressed. Tab completes the
+file or directory name before the cursor, looked up from the reading
+program's current directory; when several names fit, it goes as far as
+they agree, and a second Tab lists them. `SetMode(fh, 1)` makes
 it raw - each byte as typed, without echo or editing - and
 `SetMode(fh, 0)` cooked again. `WaitForChar(fh, microseconds)` tells
 whether input comes within that time (a whole line, when cooked)

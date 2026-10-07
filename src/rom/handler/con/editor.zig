@@ -7,8 +7,8 @@
 //! Cooked mode is line editing on a serial terminal: ^A/^Z start/end of line, ^X kill the line, ^B the same and
 //! the history scan reset, ^K kill to the end (into the kill buffer), ^Y
 //! yank, ^U delete to the start, ^W delete a word, BS delete left, ^R
-//! history search (the text before the cursor as a prefix, any case), CR
-//! ends a line, ^S holds what programs write until the next character
+//! history search (the text before the cursor as a prefix, any case), Tab
+//! completes a name (below), CR ends a line, ^S holds what programs write until the next character
 //! comes in (which is all ^Q is), Ctrl-\ ends the input; the terminal's
 //! ESC [ sequences (and
 //! the one-byte CSI, 0x9B): arrows, Home/End, Delete, shift-up (search).
@@ -18,6 +18,18 @@
 //! stays for the next READ. Raw mode: every byte goes to the reader at
 //! once, without echo or editing, and there is no hold - ^S is a byte like
 //! another there.
+//!
+//! **Tab** completes the word before the cursor - after the last space or
+//! `=`, or after the quote that opens it - from the names in its
+//! directory, the part of it up to its last `/` or `:` (none: the current
+//! one). The names come from a `Completer`, the handler's to find; here
+//! they are matched in any case and kept for a list (`Matches`). One name:
+//! the word becomes it, with a `/` after a directory to go on into and a
+//! space after a file. Several: the word goes as far as they all agree;
+//! when that is no further a beep, and a second Tab lists them, sorted, in
+//! columns under the line, with the prompt and the line again below. A
+//! name with a space in it gets the word a quote in front, and a file's a
+//! quote after it. Nothing found, or no directory: a beep.
 //!
 //! **Text can also be handed to a console from elsewhere** (`pushIn`), to
 //! go in as though it were typed: `nextPushed` gives it out a character at
@@ -49,6 +61,10 @@ const pushed_size = max_line + 512;
 /// The most of a prompt that is put back after other output interrupts it.
 const prompt_max = 128;
 const history_size = 2048;
+/// What a Tab's matches keep for a list: the names, each ended by a 0, and
+/// how many. Past either, the rest are counted and not shown.
+const names_size = 2048;
+const names_kept = 128;
 
 const ESC = 0x1B;
 const CSI = 0x9B;
@@ -97,6 +113,115 @@ pub const History = struct {
     }
 };
 
+/// Where the names a Tab completes from come from: the handler's, which
+/// knows where the program reading looks.
+pub const Completer = struct {
+    ctx: *anyopaque,
+    /// Every entry of `dir` - the word up to its last `/` or `:`, empty for
+    /// the current directory - given to `matches.add`. False when it is no
+    /// directory, or cannot be read now.
+    list: *const fn (ctx: *anyopaque, dir: []const u8, matches: *Matches) bool,
+    /// How many characters wide the terminal is, for a list of names.
+    columns: *const fn (ctx: *anyopaque) usize,
+};
+
+/// The names a Tab found for the word: how many start with what was
+/// typed, what they all share, and the first of them for a list.
+pub const Matches = struct {
+    /// What a name has to start with, in any case: the word after its
+    /// directory.
+    start: []const u8 = "",
+    count: usize = 0,
+    /// The first name that matched, cut to what every one shares in any
+    /// case; and whether it is a directory.
+    common: [dos.name_max]u8 = undefined,
+    common_len: usize = 0,
+    dir: bool = false,
+    /// The names kept for a list, each with a `/` after a directory's and
+    /// a 0 at its end, and where each starts.
+    names: [names_size]u8 = undefined,
+    names_len: usize = 0,
+    starts: [names_kept]u16 = undefined,
+    kept: usize = 0,
+
+    /// Empty, for names that start with `start`.
+    pub fn reset(m: *Matches, start: []const u8) void {
+        m.start = start;
+        m.count = 0;
+        m.common_len = 0;
+        m.dir = false;
+        m.names_len = 0;
+        m.kept = 0;
+    }
+
+    /// A name in the directory: counted, and kept while there is room,
+    /// when it starts with `start`.
+    pub fn add(m: *Matches, name: []const u8, is_dir: bool) void {
+        if (name.len < m.start.len or name.len > m.common.len) return;
+        for (m.start, 0..) |c, at| {
+            if (lower(c) != lower(name[at])) return;
+        }
+        if (m.count == 0) {
+            @memcpy(m.common[0..name.len], name);
+            m.common_len = name.len;
+            m.dir = is_dir;
+        } else {
+            var shared: usize = 0;
+            while (shared < m.common_len and shared < name.len and lower(m.common[shared]) == lower(name[shared])) shared += 1;
+            m.common_len = shared;
+        }
+        m.count += 1;
+        const size = name.len + @intFromBool(is_dir) + 1;
+        if (m.kept == names_kept or m.names_len + size > m.names.len) return;
+        m.starts[m.kept] = @intCast(m.names_len);
+        m.kept += 1;
+        @memcpy(m.names[m.names_len..][0..name.len], name);
+        m.names_len += name.len;
+        if (is_dir) {
+            m.names[m.names_len] = '/';
+            m.names_len += 1;
+        }
+        m.names[m.names_len] = 0;
+        m.names_len += 1;
+    }
+
+    /// The kept name that starts at `start`, with its `/`.
+    fn nameAt(m: *const Matches, start: u16) []const u8 {
+        var end: usize = start;
+        while (m.names[end] != 0) end += 1;
+        return m.names[start..end];
+    }
+
+    fn before(m: *const Matches, one: u16, two: u16) bool {
+        const a = m.nameAt(one);
+        const b = m.nameAt(two);
+        const shorter = if (a.len < b.len) a.len else b.len;
+        for (0..shorter) |at| {
+            if (lower(a[at]) != lower(b[at])) return lower(a[at]) < lower(b[at]);
+        }
+        return a.len < b.len;
+    }
+
+    /// The kept names in order, in any case: few enough to insert each in
+    /// its place.
+    fn sort(m: *Matches) void {
+        var next: usize = 1;
+        while (next < m.kept) : (next += 1) {
+            const moving = m.starts[next];
+            var at = next;
+            while (at > 0 and m.before(moving, m.starts[at - 1])) : (at -= 1) m.starts[at] = m.starts[at - 1];
+            m.starts[at] = moving;
+        }
+    }
+};
+
+/// A Latin-1 letter in lower case, as names are matched.
+fn lower(c: u8) u8 {
+    if (c >= 'A' and c <= 'Z') return c + ('a' - 'A');
+    if (c >= 0xC0 and c <= 0xDE and c != 0xD7) return c + 0x20;
+    return c;
+}
+
 /// Ctrl-\\: what has been typed goes to the reader, and the read after
 /// it ends. A window's close gadget is the same thing said with the
 /// pointer, so the handler sends this when one is used.
@@ -125,6 +250,12 @@ pub const Editor = struct {
     history: History = .{},
     /// The history line shown (0: the newest), null when not in it.
     scan: ?usize = null,
+    /// Where a Tab's names come from; none, and a Tab beeps.
+    completer: ?Completer = null,
+    matches: Matches = .{},
+    /// The last key was a Tab that left several names: the next one lists
+    /// them.
+    tabbed: bool = false,
 
     esc: enum { none, esc, csi, ss3 } = .none,
     param: [8]u8 = undefined,
@@ -410,6 +541,8 @@ pub const Editor = struct {
         }
         const after_cr = ed.after_cr;
         ed.after_cr = false;
+        const tabbed = ed.tabbed;
+        ed.tabbed = false;
         switch (ed.esc) {
             .esc => {
                 ed.esc = switch (c) {
@@ -469,6 +602,7 @@ pub const Editor = struct {
             // it means by it.
             0x11 => {},
             END_OF_INPUT => ed.endOfInput(),
+            '\t' => ed.complete(tabbed),
             0x20...0x7E, 0xA0...0xFF => ed.insert(&.{c}),
             else => {},
         }
@@ -606,6 +740,139 @@ pub const Editor = struct {
         ed.emit(&.{BEL});
     }
 
+    // --- Completion ---
+
+    /// Tab: the word before the cursor completed from the names in its
+    /// directory (the file's header says how). `again`: the key before was
+    /// a Tab that left several.
+    fn complete(ed: *Editor, again: bool) void {
+        const completer = ed.completer orelse return ed.emit(&.{BEL});
+        var word: usize = 0;
+        var quoted = false;
+        for (ed.line[0..ed.cursor], 0..) |c, at| {
+            if (c == '"') {
+                quoted = !quoted;
+                word = at + 1;
+            } else if (!quoted and (c == ' ' or c == '=')) {
+                word = at + 1;
+            }
+        }
+        var name = word;
+        for (ed.line[word..ed.cursor], word..) |c, at| {
+            if (c == '/' or c == ':') name = at + 1;
+        }
+        const m = &ed.matches;
+        m.reset(ed.line[name..ed.cursor]);
+        if (!completer.list(completer.ctx, ed.line[word..name], m) or m.count == 0) return ed.emit(&.{BEL});
+        const common = m.common[0..m.common_len];
+        const typed = ed.cursor - name;
+        if (m.count > 1 and common.len <= typed) {
+            ed.tabbed = true;
+            if (again) return ed.listMatches(completer.columns(completer.ctx));
+            return ed.emit(&.{BEL});
+        }
+        // In place of the name typed: the name, or as far as all of them
+        // agree, and after the only one what follows it.
+        var piece: [dos.name_max + 2]u8 = undefined;
+        @memcpy(piece[0..common.len], common);
+        var size = common.len;
+        const opens = !quoted and hasSpace(common);
+        if (m.count == 1) {
+            if (m.dir) {
+                piece[size] = '/';
+                size += 1;
+            } else {
+                if (quoted or opens) {
+                    piece[size] = '"';
+                    size += 1;
+                }
+                piece[size] = ' ';
+                size += 1;
+            }
+        }
+        if (ed.len - typed + size + @intFromBool(opens) > max_line - 1) return ed.emit(&.{BEL});
+        ed.splice(name, ed.cursor, piece[0..size]);
+        if (opens) {
+            const after = ed.cursor + 1;
+            ed.splice(word, word, "\"");
+            ed.moveRight(after - ed.cursor);
+            ed.cursor = after;
+        }
+        ed.tabbed = m.count > 1;
+    }
+
+    /// line[from..to] replaced with `text`, which the caller has made sure
+    /// fits, `from` no further than the cursor: the cursor after it, the
+    /// rest of the line drawn again.
+    fn splice(ed: *Editor, from: usize, to: usize, text: []const u8) void {
+        const rest = ed.len - to;
+        const was = ed.len;
+        const at = from + text.len;
+        ed.moveLeft(ed.cursor - from);
+        if (at > to) {
+            var moved = rest;
+            while (moved > 0) {
+                moved -= 1;
+                ed.line[at + moved] = ed.line[to + moved];
+            }
+        } else {
+            for (0..rest) |moved| ed.line[at + moved] = ed.line[to + moved];
+        }
+        @memcpy(ed.line[from..at], text);
+        ed.len = at + rest;
+        ed.emit(ed.line[from..ed.len]);
+        if (ed.len < was) ed.emit("\x1b[K");
+        ed.cursor = at;
+        ed.moveLeft(ed.len - at);
+    }
+
+    /// The names that matched, sorted, in columns under the line - those
+    /// kept, and how many more there were - then the prompt and the line
+    /// again below them.
+    fn listMatches(ed: *Editor, columns: usize) void {
+        const m = &ed.matches;
+        m.sort();
+        var widest: usize = 0;
+        for (m.starts[0..m.kept]) |start| {
+            const shown = m.nameAt(start).len;
+            if (shown > widest) widest = shown;
+        }
+        const cell = widest + 2;
+        const across = if (columns / cell > 0) columns / cell else 1;
+        const rows = (m.kept + across - 1) / across;
+        ed.moveRight(ed.len - ed.cursor);
+        ed.emit("\r\n");
+        for (0..rows) |row| {
+            for (0..across) |column| {
+                const index = column * rows + row;
+                if (index >= m.kept) break;
+                const shown = m.nameAt(m.starts[index]);
+                ed.emit(shown);
+                if (index + rows < m.kept) ed.spaces(cell - shown.len);
+            }
+            ed.emit("\r\n");
+        }
+        if (m.count > m.kept) {
+            var digits: [20]u8 = undefined;
+            ed.emit("(");
+            ed.emit(decimal(&digits, m.count - m.kept));
+            ed.emit(" more)\r\n");
+        }
+        ed.emit(ed.prompt[0..ed.prompt_len]);
+        ed.emit(ed.line[0..ed.len]);
+        ed.moveLeft(ed.len - ed.cursor);
+    }
+
+    fn spaces(ed: *Editor, count: usize) void {
+        const blank = "                ";
+        var left = count;
+        while (left > 0) {
+            const now = if (left < blank.len) left else blank.len;
+            ed.emit(blank[0..now]);
+            left -= now;
+        }
+    }
+
     /// Enter: the line (and a LF) for the readers, into the history.
     fn commit(ed: *Editor) void {
         ed.moveRight(ed.len - ed.cursor);
@@ -634,3 +901,23 @@ pub const Editor = struct {
         ed.scan = null;
     }
 };
+
+fn hasSpace(text: []const u8) bool {
+    for (text) |c| {
+        if (c == ' ') return true;
+    }
+    return false;
+}
+
+/// `number` in decimal, in `digits`.
+fn decimal(digits: *[20]u8, number: usize) []const u8 {
+    var at: usize = digits.len;
+    var left = number;
+    while (true) {
+        at -= 1;
+        digits[at] = '0' + @as(u8, @intCast(left % 10));
+        left /= 10;
+        if (left == 0) break;
+    }
+    return digits[at..];
+}

@@ -76,8 +76,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   255 characters; a log-structured flash file system (`DH0:`), FAT32 and
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
   the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
-  [disks guide](sdk/docs/guides/rdb.md)); consoles with line editing and
-  copy and paste; a shell with scripts and resident commands, 38
+  [disks guide](sdk/docs/guides/rdb.md)); consoles with line editing,
+  Tab completion of file names, and copy and paste; a shell with scripts and resident commands, 38
   commands in `C:` (`dir all | more` pages through anything), test
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
