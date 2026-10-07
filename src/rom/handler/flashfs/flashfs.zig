@@ -128,6 +128,9 @@ const State = struct {
     /// with.
     buffers: u32 = 0,
     mounted: bool = false,
+    /// The volume node is to be made again - after a format - once the
+    /// device list can be had.
+    renew: bool = false,
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -183,8 +186,9 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
     while (dl.WaitPkt()) |pkt| {
-        const reply = serve(sb, dl, st, pkt);
+        const reply = serve(st, pkt);
         dl.ReplyPkt(pkt, reply.res1, reply.res2);
+        if (st.renew) renewVolume(sb, dl, st);
     }
 }
 
@@ -207,7 +211,7 @@ fn partition(st: *State, fssm: ?*const dos.FileSysStartupMsg) bool {
 
 /// One packet. Before there is a file system only the ones that say what
 /// the disk is, and ACTION_FORMAT, get through.
-fn serve(sb: *ExecBase, dl: *DosBase, st: *State, pkt: *DosPacket) disk.Answer {
+fn serve(st: *State, pkt: *DosPacket) disk.Answer {
     const action = pkt.getAction();
     if (!st.mounted) {
         switch (action) {
@@ -216,7 +220,7 @@ fn serve(sb: *ExecBase, dl: *DosBase, st: *State, pkt: *DosPacket) disk.Answer {
                 const name: []const u8 = if (label) |l| std.mem.span(l) else DEFAULT_LABEL;
                 st.fs.format(name) catch |e| return .{ .res1 = dos.DOSFALSE, .res2 = disk.codeOf(e) };
                 st.mounted = true;
-                addVolume(sb, dl, st);
+                st.renew = true;
                 return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
             },
             .disk_info, .info => {
@@ -239,12 +243,24 @@ fn serve(sb: *ExecBase, dl: *DosBase, st: *State, pkt: *DosPacket) disk.Answer {
         }
     }
     const reply = st.fs.answer(pkt);
-    // A format renames the volume, so its node is made again.
-    if (action == .format and reply.res1 != dos.DOSFALSE) {
-        removeVolume(sb, dl, st);
-        addVolume(sb, dl, st);
-    }
+    // A format renames the volume, so its node is made again, once the
+    // packet is answered.
+    if (action == .format and reply.res1 != dos.DOSFALSE) st.renew = true;
     return reply;
+}
+
+/// The volume node made again to match the file system, but only if the
+/// device list can be had at once. A program holding it may be waiting
+/// on this very handler for an answer - Info holds it while it asks every
+/// device - so waiting for it would never end; the node is renewed after
+/// a later packet instead.
+fn renewVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
+    const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
+    _ = dl.AttemptLockDosList(flags) orelse return;
+    defer dl.UnLockDosList(flags);
+    removeVolume(sb, dl, st);
+    addVolume(sb, dl, st);
+    st.renew = false;
 }
 
 /// The volume on the device list, named as the superblock has it, so
@@ -267,6 +283,8 @@ fn addVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
     st.fs.volume_node = entry;
 }
 
+/// The volume node off the device list and freed. The caller holds the
+/// list.
 fn removeVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
     _ = sb;
     const entry = st.volume orelse return;

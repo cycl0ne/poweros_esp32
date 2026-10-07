@@ -443,7 +443,7 @@ fn addVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
 /// the locks still point at something dos can name and the card coming
 /// back can take it up again. With no room left to remember it, it comes
 /// off the list and is left allocated: memory lost is better than memory
-/// freed under a lock.
+/// freed under a lock. The caller holds the list (`renewVolume`).
 fn partVolume(dl: *DosBase, st: *State) void {
     const entry = st.volume orelse return;
     st.volume = null;

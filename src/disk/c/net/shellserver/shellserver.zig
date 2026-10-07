@@ -273,7 +273,10 @@ fn sessionEntry(sys: *ExecBase) callconv(.c) void {
         // The console told to end once its last handle is closed, then its
         // node taken off the list.
         if (node.task) |console| _ = dl.DoPkt(console, @intFromEnum(dos.ActionCode.die), 0, 0, 0, 0, 0);
+        const flags = dos.LDF_DEVICES | dos.LDF_WRITE;
+        _ = dl.LockDosList(flags);
         _ = dl.RemDosEntry(node);
+        dl.UnLockDosList(flags);
         dl.FreeDosEntry(node);
     }
 
