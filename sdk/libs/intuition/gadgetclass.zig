@@ -185,6 +185,13 @@ pub const GA_Style = GA_Dummy + 0x31;
 /// once; its screen can turn it off for all (`SA_Animate`). A class asks
 /// with `animates`.
 pub const GA_Animate = GA_Dummy + 0x32;
+/// `*const graphics.Rect`: what the gadget may draw on, in the coordinates
+/// of its box; null for everything. A gadget that shows only part of what
+/// it holds - a scrolled group - sets it on what is inside, and a group
+/// hands it on to its members. Intuition puts it in the GadgetInfo it
+/// makes for the gadget (`clip`), and `ObtainGIRPort` holds the RastPort
+/// to it. Read back: a pointer to the rectangle as kept.
+pub const GA_ClipRect = GA_Dummy + 0x33;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -242,6 +249,9 @@ pub const Gadget = extern struct {
     /// intuition's own: a transition of its look in progress, made the
     /// first time its style asks for one.
     transition: ?*anyopaque = null,
+    /// `GA_ClipRect`, as kept: `classusr.unclipped` while nothing narrows
+    /// it.
+    clip: graphics.Rect = classusr.unclipped,
 };
 
 /// `Gadget.flags`.
@@ -372,8 +382,11 @@ pub const GM_KEY: MethodID = 8;
 /// `GpWheel`: the mouse's wheel turned with the pointer over you. intuition
 /// sends it to the gadget under the pointer in the window under it, active
 /// or not; a group (and so a layout) hands it to the member under the
-/// pointer. Answer non-zero when it moved something - a view, a knob, a
-/// value - and 0 to leave it to the window, which tells its program
+/// pointer. Answer `GMWR_TAKEN` when it moved a view or a knob,
+/// `GMWR_VERIFY` when it changed the gadget's value - which reports it to
+/// the program as a press let go does (`IDCMP_GADGETUP`, with the code in
+/// `termination`, from a gadget made with `GA_RelVerify`) - and
+/// `GMWR_NOTHING` to leave it to the window, which tells its program
 /// (`IDCMP_MOUSEWHEEL`). It never makes a gadget active.
 pub const GM_WHEEL: MethodID = 9;
 
@@ -481,7 +494,29 @@ pub const GpWheel = extern struct {
     down: i32 = 0,
     /// The qualifiers as they were.
     qualifier: u32 = 0,
+    /// What the window reports as the code, filled in with `GMWR_VERIFY`
+    /// (`wheelVerify`); null from a caller that wants no report.
+    termination: ?*i32 = null,
+    /// Filled in with the gadget that took the turn, by whatever handed the
+    /// message on, so that the window can name it.
+    gadget: ?*classusr.Object = null,
 };
+
+/// GM_WHEEL's answers: not this gadget's - the window's program hears of
+/// the turn - ...
+pub const GMWR_NOTHING: usize = 0;
+/// ...taken, a view or a knob moved and nothing to report...
+pub const GMWR_TAKEN: usize = 1;
+/// ...or taken and the gadget's value changed: reported as a press let
+/// go is, with the code in `termination`.
+pub const GMWR_VERIFY: usize = 3;
+
+/// A gadget's value changed by the wheel: the code it is reported with,
+/// and the answer that reports it.
+pub fn wheelVerify(w: *const GpWheel, code: i32) usize {
+    if (w.termination) |t| t.* = code;
+    return GMWR_VERIFY;
+}
 
 /// What a gadget that moves along one direction takes from a GM_WHEEL: its
 /// own direction's notches, or the other direction's when its own are 0 -

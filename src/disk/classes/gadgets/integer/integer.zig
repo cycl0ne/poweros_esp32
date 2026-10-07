@@ -380,8 +380,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 // Drawn whole: the field is placed in it only as it draws.
                 support.redraw(ib, o.?, wh.gadget_info);
                 tell(base, own, o.?, wh.gadget_info, 0);
+                return gc.wheelVerify(wh, own.number);
             }
-            return 1;
+            return gc.GMWR_TAKEN;
         },
         // The key gives the field the keyboard, as a press on it would.
         gc.GM_KEY => {

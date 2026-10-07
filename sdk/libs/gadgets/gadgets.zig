@@ -71,3 +71,5 @@ pub const barcode = @import("barcode.zig");
 pub const chart = @import("chart.zig");
 pub const keyboard = @import("keyboard.zig");
 pub const textedit = @import("textedit.zig");
+pub const scrollgroup = @import("scrollgroup.zig");
+pub const listbrowser = @import("listbrowser.zig");

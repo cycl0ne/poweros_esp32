@@ -87,8 +87,11 @@ pub const LIBRARY_VERSION = 0;
 /// menu items, SYSREQ_ - with a style for each run (IT_Style). 31:
 /// GadgetStyleState, a gadget's transition for a class of its own. 32:
 /// the mouse wheel - GM_WHEEL to the gadget under the pointer,
-/// IDCMP_MOUSEWHEEL and WMHI_MOUSEWHEEL to the window's program.
-pub const LIBRARY_REVISION = 32;
+/// IDCMP_MOUSEWHEEL and WMHI_MOUSEWHEEL to the window's program. 33:
+/// GA_ClipRect, a gadget's clip, held by ObtainGIRPort; a layout's labels
+/// move with it; a value the wheel changes reported as GADGETUP
+/// (GMWR_VERIFY).
+pub const LIBRARY_REVISION = 33;
 const BUILD_DATE = "07.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

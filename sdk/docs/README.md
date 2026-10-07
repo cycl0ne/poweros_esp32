@@ -231,6 +231,8 @@ of its own besides. How a class is written is in
 | barcode.gadget | a text as a Code 128 or an EAN-13 barcode | [`barcode.zig`](../libs/gadgets/barcode.zig) |
 | keyboard.gadget | keys on the screen, for a board with none | [`keyboard.zig`](../libs/gadgets/keyboard.zig) |
 | textedit.gadget | text of many lines to edit: selection, clipboard, undo, find and replace, word wrap, line numbers | [`textedit.zig`](../libs/gadgets/textedit.zig) |
+| scrollgroup.gadget | a layout larger than its room, seen through it and moved by scrollers and the wheel; what lies outside is cut off | [`scrollgroup.zig`](../libs/gadgets/scrollgroup.zig) |
+| listbrowser.gadget | a list in columns under headings that sort it, its rows a tree whose branches open and close | [`listbrowser.zig`](../libs/gadgets/listbrowser.zig) |
 
 ## Datatype classes
 

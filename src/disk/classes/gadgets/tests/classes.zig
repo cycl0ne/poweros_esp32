@@ -61,6 +61,10 @@ const cr = sdk.gadgets.chart;
 const integer = @import("../integer/integer.zig");
 const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
+const scrollgroup = @import("../scrollgroup/scrollgroup.zig");
+const listbrowser = @import("../listbrowser/listbrowser.zig");
+const lbr = sdk.gadgets.listbrowser;
+const sgc = sdk.gadgets.scrollgroup;
 const pgc = sdk.gadgets.page;
 const clicktab = @import("../clicktab/clicktab.zig");
 const ct = sdk.gadgets.clicktab;
@@ -2275,6 +2279,309 @@ test "page.gadget: the page that is shown answers for the gadget" {
     // The pages go with it.
     ib.DisposeObject(book);
     try rig.down();
+}
+
+/// A display for a window to open on: the fake board, 64 by 40 pixels.
+const Display = struct {
+    state: *host_rom.fakeboard.State,
+    board: *sdk.rtg.RtgBoard,
+    bitmap: *sdk.rtg.RtgBitMap,
+
+    fn up(kib: *host_rom.intuition.IntuitionBase) !Display {
+        const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
+        const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
+        const state = host_rom.fakeboard.create(kib.sys_base) orelse return error.NoDriver;
+        try testing.expect(rtg_base.AddRtgDriver(&state.driver));
+        const empty = [_]TagItem{.{}};
+        const board = rtg_base.CreateBoardTagList(host_rom.fakeboard.DRIVER_NAME, &empty) orelse return error.NoBoard;
+        board.info.width = 64;
+        board.info.height = 40;
+        const bitmap = rtg_base.AllocBitMap(board, 64, 40, @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgb565), sdk.rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
+        try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rtg_base.ShowBitMap(board, bitmap, 0, 0));
+        return .{ .state = state, .board = board, .bitmap = bitmap };
+    }
+
+    fn down(d: Display, kib: *host_rom.intuition.IntuitionBase) void {
+        const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
+        const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
+        rtg_base.FreeBitMap(d.bitmap);
+        rtg_base.DeleteBoard(d.board);
+        _ = rtg_base.RemRtgDriver(&d.state.driver);
+        host_rom.fakeboard.destroy(d.state);
+    }
+
+    fn pixel(d: Display, x: usize, y: usize) u16 {
+        const shown = d.board.showing orelse d.bitmap;
+        const row = shown.pixels.? + y * shown.pitch;
+        return @as([*]const u16, @ptrCast(@alignCast(row)))[x];
+    }
+};
+
+test "scrollgroup.gadget: a part of its contents in view, the rest cut off, moved by a scroller or the wheel" {
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scrollgroup.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    const display = try Display.up(kib);
+    const wn = intuition.windows;
+    const lg = intuition.layoutgclass;
+
+    // Six buttons one above the other: far taller than the view.
+    var buttons: [6]*Object = undefined;
+    const form = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+        .{},
+    }).?;
+    for (&buttons, 0..) |*button, i| {
+        const label = [_][*:0]const u8{ "1", "2", "3", "4", "5", "6" };
+        button.* = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+            .{ .tag = gc.GA_Text, .data = @intFromPtr(label[i]) },
+            .{},
+        }).?;
+        _ = ib.SetAttrsTagList(form, &[_]TagItem{ .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button.*) }, .{} });
+    }
+    const view = ib.NewObjectTagList(null, sgc.SCROLLGROUP_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 48 },
+        .{ .tag = gc.GA_Height, .data = 24 },
+        .{ .tag = sgc.SCROLLGROUP_Contents, .data = @intFromPtr(form) },
+        .{},
+    }).?;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(view) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const background = display.pixel(54, 30);
+
+    // Laid out at the size they ask for, from the view's corner; the view
+    // is what is left beside the scroller down the right.
+    try testing.expectEqual(@as(usize, 0), attr(ib, view, sgc.SCROLLGROUP_Top));
+    const contents = gc.gadget(form);
+    try testing.expectEqual(@as(i32, 0), contents.top);
+    try testing.expect(contents.height > 24);
+    const clip: *const sdk.graphics.Rect = @ptrFromInt(attr(ib, buttons[5], gc.GA_ClipRect));
+    try testing.expectEqual(sdk.graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 32, .max_y = 24 }, clip.*);
+    // A press on the scroller is the scroll group's; one past the view is
+    // nobody's.
+    var on_bar = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 40, .y = 4 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(view, @ptrCast(&on_bar)));
+    var past = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 4, .y = 30 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(view, @ptrCast(&past)));
+
+    // Nothing of the contents is drawn below the view, though most of them
+    // lie there.
+    ib.RefreshGList(view, w, -1);
+    try expectBlankBelow(display, background);
+
+    // Moved: the contents go up under the view, held at the last full view.
+    _ = ib.SetGadgetAttrsTagList(view, w, &[_]TagItem{ .{ .tag = sgc.SCROLLGROUP_Top, .data = 10 }, .{} });
+    try testing.expectEqual(@as(usize, 10), attr(ib, view, sgc.SCROLLGROUP_Top));
+    try testing.expectEqual(@as(i32, -10), contents.top);
+    _ = ib.SetGadgetAttrsTagList(view, w, &[_]TagItem{ .{ .tag = sgc.SCROLLGROUP_Top, .data = 1000 }, .{} });
+    const last: usize = @intCast(contents.height - 24);
+    try testing.expectEqual(last, attr(ib, view, sgc.SCROLLGROUP_Top));
+    ib.RefreshGList(view, w, -1);
+    try expectBlankBelow(display, background);
+
+    // The wheel over a button, which takes none: three lines a notch.
+    _ = ib.SetGadgetAttrsTagList(view, w, &[_]TagItem{ .{ .tag = sgc.SCROLLGROUP_Top, .data = 0 }, .{} });
+    var notch = gc.GpWheel{ .gadget_info = null, .mouse = .{ .x = 8, .y = 8 }, .across = 0, .down = 1, .qualifier = 0 };
+    try testing.expectEqual(@as(usize, 1), ib.SendMessage(view, @ptrCast(&notch)));
+    const moved = attr(ib, view, sgc.SCROLLGROUP_Top);
+    try testing.expect(moved > 0 and moved <= last);
+    try testing.expectEqual(-@as(i32, @intCast(moved)), contents.top);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    // The contents go with it.
+    ib.DisposeObject(view);
+
+    // Without scrollers of its own - a program's are in the window's
+    // border - the view is the whole box, and the wheel still moves it.
+    const tall = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+        .{},
+    }).?;
+    for (0..6) |_| {
+        const button = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{ .{ .tag = gc.GA_Text, .data = @intFromPtr("x") }, .{} }).?;
+        _ = ib.SetAttrsTagList(tall, &[_]TagItem{ .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button) }, .{} });
+    }
+    const bare = ib.NewObjectTagList(null, sgc.SCROLLGROUP_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 48 },
+        .{ .tag = gc.GA_Height, .data = 24 },
+        .{ .tag = sgc.SCROLLGROUP_Contents, .data = @intFromPtr(tall) },
+        .{ .tag = sgc.SCROLLGROUP_Scrollers, .data = 0 },
+        .{},
+    }).?;
+    const w2 = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(bare) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 48), attr(ib, bare, sgc.SCROLLGROUP_VisibleWidth));
+    try testing.expectEqual(@as(usize, 24), attr(ib, bare, sgc.SCROLLGROUP_VisibleHeight));
+    try testing.expect(attr(ib, bare, sgc.SCROLLGROUP_TotalHeight) > 24);
+    var turn = gc.GpWheel{ .gadget_info = null, .mouse = .{ .x = 8, .y = 8 }, .across = 0, .down = 1, .qualifier = 0 };
+    try testing.expectEqual(@as(usize, 1), ib.SendMessage(bare, @ptrCast(&turn)));
+    try testing.expect(attr(ib, bare, sgc.SCROLLGROUP_Top) > 0);
+    const screen2: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w2, wn.WA_Screen));
+    ib.CloseWindow(w2);
+    try testing.expect(ib.CloseScreen(screen2));
+    ib.DisposeObject(bare);
+    display.down(kib);
+    const sys = kexec.SysBase.iface();
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(sgc.SCROLLGROUP_CLASS) == null);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+/// Below the view, where the buttons' edges and digits would be if they
+/// were drawn past it, nothing but the window's ground.
+fn expectBlankBelow(display: Display, background: u16) !void {
+    for (25..36) |y| {
+        for (0..32) |x| try testing.expectEqual(background, display.pixel(x, y));
+    }
+}
+
+/// The first column of every row of `list`, in order, joined by spaces.
+fn namesOf(list: *exec.List, into: []u8) []const u8 {
+    var n: usize = 0;
+    var node = list.first();
+    while (node) |each| : (node = each.next()) {
+        const row: *lbr.Row = @fieldParentPtr("node", each);
+        const name = std.mem.span(row.cells[0].?);
+        if (n > 0) {
+            into[n] = ' ';
+            n += 1;
+        }
+        @memcpy(into[n..][0..name.len], name);
+        n += name.len;
+    }
+    return into[0..n];
+}
+
+test "listbrowser.gadget: rows in a tree, a closed branch hidden, sorted with every branch kept under its row" {
+    var heard = Heard{ .tag = lbr.LISTBROWSER_Selected, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listbrowser.Library.resident_tag, null).?));
+    const listener_class = ib.MakeClass(null, classusr.ROOTCLASS, null, 0).?;
+    listener_class.dispatcher.entry = &listen;
+    listener_class.user_data = @intFromPtr(&heard);
+    const listener = ib.NewObjectTagList(listener_class, null, null).?;
+    const sys = kexec.SysBase.iface();
+
+    // A branch "alpha" with two rows under it, closed, between two rows.
+    const columns = [_]lbr.Column{
+        .{ .title = "Name", .weight = 2 },
+        .{ .title = "Size", .weight = 1, .flags = lbr.COLUMN_RIGHT | lbr.COLUMN_NUMBER },
+        .{},
+    };
+    var rows: exec.List = .{};
+    rows.init(.unknown);
+    const given = [_]struct { name: [*:0]const u8, size: [*:0]const u8, depth: u16 }{
+        .{ .name = "zeta", .size = "5", .depth = 0 },
+        .{ .name = "alpha", .size = "30", .depth = 0 },
+        .{ .name = "b", .size = "2", .depth = 1 },
+        .{ .name = "a", .size = "9", .depth = 1 },
+        .{ .name = "mid", .size = "100", .depth = 0 },
+    };
+    for (given) |one| sys.AddTail(&rows, &lbr.allocRow(sys, &.{ one.name, one.size }, one.depth).?.node);
+    const browser = ib.NewObjectTagList(null, lbr.LISTBROWSER_CLASS, &[_]TagItem{
+        .{ .tag = lbr.LISTBROWSER_Columns, .data = @intFromPtr(&columns) },
+        .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&rows) },
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(listener) },
+        .{},
+    }).?;
+    const cl = classes.objectClass(browser);
+    const own = classes.instData(listbrowser.Data, cl, browser);
+    const parts = listbrowser.partsOf(sdk.gadgets.baseOf(cl), own, browser, null);
+    try testing.expect(parts.visible >= 3);
+
+    // Sorted by name: each branch under its row, sorted among itself.
+    var names: [64]u8 = undefined;
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_SortColumn, .data = 0 }, .{} });
+    try testing.expectEqualStrings("alpha a b mid zeta", namesOf(&rows, &names));
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_SortReverse, .data = 1 }, .{} });
+    try testing.expectEqualStrings("zeta mid alpha b a", namesOf(&rows, &names));
+    // By size, as numbers: 5 before 30 before 100, and 2 before 9.
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_SortColumn, .data = 1 }, .{ .tag = lbr.LISTBROWSER_SortReverse, .data = 0 }, .{} });
+    try testing.expectEqualStrings("zeta alpha b a mid", namesOf(&rows, &names));
+
+    // The selection is the row, counted among all rows.
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Selected, .data = 4 }, .{} });
+    const chosen: *lbr.Row = @ptrFromInt(attr(ib, browser, lbr.LISTBROWSER_SelectedRow));
+    try testing.expectEqualStrings("mid", std.mem.span(chosen.cells[0].?));
+    try testing.expectEqual(@as(usize, 4), attr(ib, browser, lbr.LISTBROWSER_Selected));
+
+    // "alpha" is closed: the third row shown is "mid", not "b". A press on
+    // it, let go, reports its place among every row, 4, and tells the
+    // target so.
+    const x = parts.lines.left + 30;
+    const third = parts.lines.top + 2 * parts.line_height + 1;
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, x, third, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(browser, @ptrCast(&down)));
+    var up = input(gc.GM_HANDLEINPUT, &release, x, third, &termination);
+    try testing.expect(ib.SendMessage(browser, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 4), termination);
+    try testing.expectEqual(@as(?usize, 4), heard.value);
+
+    // Its triangle opens "alpha": the third row shown is now "b".
+    const second = parts.lines.top + parts.line_height + 1;
+    var open_it = input(gc.GM_GOACTIVE, &press, parts.lines.left + @divTrunc(parts.line_height, 2), second, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(browser, @ptrCast(&open_it)));
+    var again = input(gc.GM_GOACTIVE, &press, x, third, &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&again));
+    var let_go = input(gc.GM_HANDLEINPUT, &release, x, third, &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&let_go));
+    try testing.expectEqual(@as(i32, 2), termination);
+    try testing.expectEqual(@as(usize, 5), attr(ib, browser, lbr.LISTBROWSER_Total));
+    try testing.expectEqual(@as(usize, parts.visible), attr(ib, browser, lbr.LISTBROWSER_Visible));
+
+    // A press on the "Name" heading, let go on it: sorted by name.
+    const heading_y = parts.heads.top + 1;
+    var on_heading = input(gc.GM_GOACTIVE, &press, x, heading_y, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(browser, @ptrCast(&on_heading)));
+    var off_heading = input(gc.GM_HANDLEINPUT, &release, x, heading_y, &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&off_heading));
+    try testing.expectEqualStrings("alpha a b mid zeta", namesOf(&rows, &names));
+    try testing.expectEqual(@as(usize, 0), attr(ib, browser, lbr.LISTBROWSER_SortColumn));
+
+    ib.DisposeObject(browser);
+    lbr.freeRows(sys, &rows);
+    ib.DisposeObject(listener);
+    try testing.expect(ib.FreeClass(listener_class));
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(lbr.LISTBROWSER_CLASS) == null);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+fn windowAttrOf(ib: *IntuitionBase, w: *intuition.Window, tag: utility.Tag) usize {
+    var value: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} };
+    ib.GetWindowAttrs(w, &ask);
+    return value;
 }
 
 test "clicktab.gadget: a press takes the tab under it at once, and the key steps them" {

@@ -33,6 +33,9 @@ const hold = _gadget.hold;
 /// BEHAVIOR:
 /// The layer lock is what lets a gadget draw while the program draws in the
 /// same window.
+/// What is drawn through it stays inside the GadgetInfo's `clip`: a gadget
+/// inside a scrolled group draws only on the part of it that shows, and
+/// nothing at all while it is scrolled out of sight.
 /// `EraseRect` through it paints the window's ground, as through the
 /// window's own RastPort: its backfill hook comes with it.
 ///
@@ -104,10 +107,11 @@ pub fn ObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*classusr.GadgetInfo) ?*g
         .{},
     };
     gb.GetRPAttrs(from_rp, &from);
+    const narrowed = graphics.Rect.intersect(clip, info_.clip);
     const to = [_]TagItem{
         .{ .tag = graphics.RPTAG_ClipTargets, .data = targets },
         .{ .tag = graphics.RPTAG_ClipRegion, .data = 0 },
-        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) },
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&narrowed) },
         .{ .tag = graphics.RPTAG_APen, .data = w.detail_pen },
         .{ .tag = graphics.RPTAG_BPen, .data = w.block_pen },
         .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },

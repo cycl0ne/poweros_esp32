@@ -339,8 +339,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (own.level != was) {
                 if (!own.fill.towards(base, o.?, wh.gadget_info, own.level, fill_time)) support.redraw(ib, o.?, wh.gadget_info);
                 tell(base, own, o.?, wh.gadget_info, 0);
+                return gc.wheelVerify(wh, own.level);
             }
-            return 1;
+            return gc.GMWR_TAKEN;
         },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));

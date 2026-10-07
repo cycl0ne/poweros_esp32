@@ -36,14 +36,14 @@ const commands = [_][]const u8{
     "diskchange",   "modbus",    "more",
 };
 const tests = [_][]const u8{
-    "hello",       "echoargs",   "testlib",  "gfx",     "anim",
-    "intuition",   "console",    "keyboard", "touch",   "input",
-    "lines",       "nyan",       "plasma",   "audio",   "fonts",
-    "screens",     "layout",     "classes",  "gadgets", "listview",
-    "diskfont",    "colorwheel", "tapedeck", "pointer", "crypto",
-    "bsdsocktest", "asl",        "settings", "iff",     "datatypes",
-    "shapes",      "styles",     "motion",   "widgets", "modbusserver",
-    "cores",
+    "hello",       "echoargs",   "testlib",     "gfx",     "anim",
+    "intuition",   "console",    "keyboard",    "touch",   "input",
+    "lines",       "nyan",       "plasma",      "audio",   "fonts",
+    "screens",     "layout",     "classes",     "gadgets", "listview",
+    "diskfont",    "colorwheel", "tapedeck",    "pointer", "crypto",
+    "bsdsocktest", "asl",        "settings",    "iff",     "datatypes",
+    "shapes",      "styles",     "motion",      "widgets", "modbusserver",
+    "cores",       "scroll",     "listbrowser",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname" };
 
@@ -107,6 +107,8 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/chart.gadget", .source = "classes/gadgets/chart/chart.zig", .name = "chart.gadget" },
     .{ .disk = "classes/gadgets/keyboard.gadget", .source = "classes/gadgets/keyboard/keyboard.zig", .name = "keyboard.gadget" },
     .{ .disk = "classes/gadgets/textedit.gadget", .source = "classes/gadgets/textedit/textedit.zig", .name = "textedit.gadget" },
+    .{ .disk = "classes/gadgets/scrollgroup.gadget", .source = "classes/gadgets/scrollgroup/scrollgroup.zig", .name = "scrollgroup.gadget" },
+    .{ .disk = "classes/gadgets/listbrowser.gadget", .source = "classes/gadgets/listbrowser/listbrowser.zig", .name = "listbrowser.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },

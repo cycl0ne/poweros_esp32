@@ -3820,6 +3820,68 @@ test "ObtainGIRPort: a gadget draws in its own RastPort, and the lock comes back
     try tearDown(ib);
 }
 
+test "GA_ClipRect: a gadget draws only inside its clip, which a group hands on to its members" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const paint = paintClass(ib);
+
+    // A red box in a group, the group clipped to the box's left half.
+    const g = it.NewObjectTagList(paint, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 10 },
+        .{ .tag = gc.GA_Top, .data = 10 },
+        .{ .tag = gc.GA_Width, .data = 12 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    }).?;
+    intuition.instData(Paint, paint, g).pen = graphics.penRGB(255, 0, 0);
+    const group = it.NewObjectTagList(null, classusr.GROUPGCLASS, null).?;
+    var add = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = g };
+    try testing.expect(it.SendMessage(group, @ptrCast(&add)) != 0);
+    const half = graphics.Rect{ .min_x = 10, .min_y = 10, .max_x = 16, .max_y = 18 };
+    _ = it.SetAttrsTagList(group, &[_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = @intFromPtr(&half) }, .{} });
+    // The member was given the group's clip.
+    var kept: usize = 0;
+    _ = it.GetAttr(gc.GA_ClipRect, g, &kept);
+    try testing.expectEqual(half, @as(*const graphics.Rect, @ptrFromInt(kept)).*);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(group) },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const background = display.pixel(30, 30);
+
+    // Drawn with the window: the left half only.
+    _gadget.renderAll(ib, win);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(12, 12));
+    try testing.expectEqual(background, display.pixel(19, 12));
+    // Drawn on its own, as a refresh does: still the left half only.
+    _gadget.render(ib, win, g, gc.GREDRAW_UPDATE);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(15, 15));
+    try testing.expectEqual(background, display.pixel(16, 15));
+
+    // No clip: the whole box.
+    _ = it.SetAttrsTagList(group, &[_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = 0 }, .{} });
+    _gadget.renderAll(ib, win);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(19, 12));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(group);
+    try testing.expect(it.FreeClass(paint));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "icclass: an update aimed at a window's IDCMP reaches it" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -5517,6 +5579,7 @@ test "the wheel: to the gadget under the pointer through a group, and else to th
         .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
         .{ .tag = pg.PGA_Total, .data = 100 },
         .{ .tag = pg.PGA_Visible, .data = 16 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{ .tag = intuition.icclass.ICA_TARGET, .data = intuition.icclass.ICTARGET_IDCMP },
         .{},
     }).?;
@@ -5536,7 +5599,7 @@ test "the wheel: to the gadget under the pointer through a group, and else to th
         .{ .tag = wn.WA_Height, .data = 28 },
         .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(group) },
         .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_MOUSEWHEEL },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_GADGETUP },
         .{},
     }).?;
     var got: [8]intuition.IntuiMessage = undefined;
@@ -5548,13 +5611,23 @@ test "the wheel: to the gadget under the pointer through a group, and else to th
     }.turn;
 
     // Over the bar, through the group: two notches down are four things,
-    // told to its target as a drag's end is, and the window hears no wheel.
+    // told to its target as a drag's end is and reported, as a press let go
+    // is, as the bar's own GADGETUP with its top; the window hears no wheel.
     pointerEvent(ib, ie.IECODE_NOBUTTON, 8, 12 + 10);
     wheelEvent(ib, 0, 2, 0);
     try testing.expectEqual(@as(usize, 4), getAttr(ib, bar, pg.PGA_Top));
     const n = drainMessages(ib, w, &got);
     try testing.expect(n >= 1);
-    for (got[0..@min(n, got.len)]) |m| try testing.expect(m.class != wn.IDCMP_MOUSEWHEEL);
+    var reported = false;
+    for (got[0..@min(n, got.len)]) |m| {
+        try testing.expect(m.class != wn.IDCMP_MOUSEWHEEL);
+        if (m.class == wn.IDCMP_GADGETUP) {
+            try testing.expectEqual(@as(u32, 4), m.code);
+            try testing.expectEqual(@as(?*anyopaque, @ptrCast(bar)), m.iaddress);
+            reported = true;
+        }
+    }
+    try testing.expect(reported);
     // Up past the start it stops there.
     wheelEvent(ib, 0, -9, 0);
     try testing.expectEqual(@as(usize, 0), getAttr(ib, bar, pg.PGA_Top));

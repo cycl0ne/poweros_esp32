@@ -288,7 +288,10 @@ button that pops a list up to pick from), `clicktab` with `page` (a
 row of tabs over pages of gadgets), `getfile` with `getfont` (a
 field with a button beside it that opens asl.library's requester), and
 `textedit` (text of many lines to edit, with undo, the clipboard,
-finding and line numbers - what `SYS:Programs/Notepad` is made of). Each
+finding and line numbers - what `SYS:Programs/Notepad` is made of), and
+`scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
+and `listbrowser` (a list in columns, sorted by a heading, its rows a
+tree; `C:test/ListBrowser`). Each
 has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig

@@ -559,6 +559,14 @@ of after. `SYS:Programs/Notepad` has both bars this way, and
 `SYS:Programs/MultiView` has them round a picture
 ([Showing one](datatypes.md#showing-one)).
 
+scrollgroup.gadget and listbrowser.gadget take bars in the border the
+same way: made with `SCROLLGROUP_Scrollers` or `LISTBROWSER_Scrollers`
+false, they tell where their view is - `SCROLLGROUP_Top`,
+`SCROLLGROUP_TotalHeight` and `SCROLLGROUP_VisibleHeight` (and the same
+across), `LISTBROWSER_Top`, `LISTBROWSER_Total` and
+`LISTBROWSER_Visible` - and a bar's `ICA_MAP` turns `SCROLLER_Top` into
+their top. `C:test/Scroll` and `C:test/ListBrowser` are built so.
+
 ### The wheel
 
 A mouse's wheel goes to the window the pointer is over, active or not,
@@ -573,12 +581,21 @@ no gadget under it - leaves it to the window, which tells its program
 `IDCMP_MOUSEWHEEL` (a window object: `WMHI_MOUSEWHEEL`) if it asked.
 A window behind a requester takes no wheel.
 
+A notch that changes a gadget's value is reported as a press let go is:
+the gadget answers `GMWR_VERIFY` with its code, and a gadget made with
+`GA_RelVerify` reaches its program as `IDCMP_GADGETUP` (`WMHI_GADGETUP`)
+in its own name, through any groups round it - a slider's level, an
+integer field's number. A notch that only moves a view (`GMWR_TAKEN`) is
+told to the target and no more.
+
 What a notch does in the classes that take it:
 
 | Class | A notch |
 |---|---|
 | `textedit.gadget` | three rows down the text, an eighth of the field across it when rows do not wrap |
 | `propgclass`, `scroller.gadget` | the knob an eighth of the view along the bar, the target told as at the end of a drag - so a bar in a window's border scrolls what it is joined to |
+| `scrollgroup.gadget` | three lines of its contents, where the contents under the pointer take none |
+| `listbrowser.gadget` | three rows |
 | `listview.gadget` | three lines |
 | a data type object | an eighth of what shows, its target told the new tops - so MultiView's bars follow |
 | `integer.gadget` | its `INTEGER_Step`, up for more |
@@ -590,7 +607,8 @@ A class of its own takes the wheel by answering `GM_WHEEL`;
 `gc.wheelNotches(msg, vertical)` gives a gadget that moves one way the
 notches for that way, or the other way's when its own are 0. It moves
 what it shows, draws it, and tells its target as it would after a key
-or a drag. It never becomes active for it.
+or a drag; when its value changed it answers `gc.wheelVerify(msg,
+code)`. It never becomes active for it.
 
 ## How a gadget is drawn again
 
@@ -616,6 +634,21 @@ on how it asked.
 
 `SetGadgetAttrsTagList` and `RefreshGList` are not called with the
 window's layer held: drawing a gadget takes it.
+
+### Only part of it showing
+
+A gadget may lie partly outside what shows of it: in a
+`scrollgroup.gadget`, a form larger than the window is seen through a
+view, and a field half past the view's edge is half drawn. That is a
+gadget's clip, `GA_ClipRect`: a rectangle in the coordinates of its box,
+everything until something narrows it. A group hands its clip on to its
+members, intuition puts it in the GadgetInfo it makes for the gadget
+(`GadgetInfo.clip`), and the RastPort `ObtainGIRPort` gives out draws
+inside it and nowhere else - so a class draws as it always does, through
+whichever RastPort it is handed, and a part that does not show is simply
+not drawn. A class that holds gadgets of its own and shows only part of
+them sets their clip, and narrows the clip in the GadgetInfo of whatever
+it hands on to them while they handle it.
 
 ## Menus
 

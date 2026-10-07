@@ -462,8 +462,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 putKnob(base, own, wh.gadget_info);
                 support.redraw(ib, o.?, wh.gadget_info);
                 tell(base, own, o.?, wh.gadget_info, 0);
+                return gc.wheelVerify(wh, own.level);
             }
-            return 1;
+            return gc.GMWR_TAKEN;
         },
         // The key moves the knob one level on, and back with a Shift key
         // held.

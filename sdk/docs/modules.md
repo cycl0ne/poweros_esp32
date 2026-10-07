@@ -272,6 +272,7 @@ flowchart TB
     m_keyboard_gadget["keyboard.gadget"]
     m_keymap_library["keymap.library"]
     m_layers_library["layers.library"]
+    m_listbrowser_gadget["listbrowser.gadget"]
     m_listview_gadget["listview.gadget"]
     m_lottie_datatype["lottie.datatype"]
     m_markdown_datatype["markdown.datatype"]
@@ -280,6 +281,7 @@ flowchart TB
     m_picture_datatype["picture.datatype"]
     m_png_datatype["png.datatype"]
     m_scroller_gadget["scroller.gadget"]
+    m_scrollgroup_gadget["scrollgroup.gadget"]
     m_spinner_gadget["spinner.gadget"]
     m_string_gadget["string.gadget"]
     m_text_datatype["text.datatype"]
@@ -319,6 +321,7 @@ flowchart TB
     m_jpeg_datatype --> m_picture_datatype
     m_keyboard_gadget --> m_input_device
     m_keyboard_gadget --> m_keymap_library
+    m_listbrowser_gadget --> m_scroller_gadget
     m_listview_gadget --> m_motion_library
     m_listview_gadget --> m_scroller_gadget
     m_lottie_datatype --> m_animation_datatype
@@ -330,6 +333,7 @@ flowchart TB
     m_png_datatype --> m_dos_library
     m_png_datatype --> m_picture_datatype
     m_scroller_gadget --> m_motion_library
+    m_scrollgroup_gadget --> m_scroller_gadget
     m_spinner_gadget --> m_motion_library
     m_text_datatype --> m_datatypes_library
     m_text_datatype --> m_iffparse_library
@@ -340,7 +344,7 @@ flowchart TB
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_asl_library,m_datatypes_library,m_diskfont_library,m_iffparse_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
-    class m_animation_datatype,m_ascii_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
+    class m_animation_datatype,m_ascii_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
     class m_dos_library,m_input_device,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
 ```

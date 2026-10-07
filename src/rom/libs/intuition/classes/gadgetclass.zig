@@ -90,6 +90,8 @@ pub const Data = extern struct {
     style: ?*intuition.Style = null,
     /// A transition of its look in progress (`style/_transition.zig`).
     transition: ?*anyopaque = null,
+    /// `GA_ClipRect`, as kept; put in every GadgetInfo made for it.
+    clip: graphics.Rect = classusr.unclipped,
 };
 
 // The flags are the SDK's: `gc.Gadget` is the public view of `Data`.
@@ -384,6 +386,7 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
                 changed = 1;
             },
             gc.GA_Animate => setFlag(&g.flags, GFLG_STILL, v == 0),
+            gc.GA_ClipRect => g.clip = if (v == 0) classusr.unclipped else @as(*const graphics.Rect, @ptrFromInt(v)).*,
             gc.GA_Style => {
                 _style.drop(ib, g.style);
                 g.style = _style.keep(ib, @ptrFromInt(v));
@@ -468,6 +471,7 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_Key => out.* = g.key,
         gc.GA_Style => out.* = @intFromPtr(g.style),
         gc.GA_Animate => out.* = @intFromBool(g.flags & GFLG_STILL == 0),
+        gc.GA_ClipRect => out.* = @intFromPtr(&g.clip),
         gc.GA_IntuiText => out.* = @intFromPtr(g.itext),
         gc.GA_LabelImage => out.* = @intFromPtr(g.label_image),
         gc.GA_SelectRender => out.* = @intFromPtr(g.select_render),
@@ -546,6 +550,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const obj: *Object = @ptrFromInt(made);
             const g = classes.instData(Data, cl, obj);
+            // Made cleared, and a cleared clip would cut everything.
+            g.clip = classusr.unclipped;
             _ = setAttrs(ib, g, new.attr_list);
             linkAfter(ib, obj, g, new.attr_list);
             return made;

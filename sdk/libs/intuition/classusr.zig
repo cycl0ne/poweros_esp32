@@ -8,6 +8,7 @@
 
 const utility = @import("../utility/utility.zig");
 const exec = @import("../exec/exec.zig");
+const graphics = @import("../graphics/graphics.zig");
 const classes = @import("classes.zig");
 
 pub const MethodID = u32;
@@ -100,7 +101,16 @@ pub const GadgetInfo = extern struct {
     domain_top: i32,
     domain_width: i32,
     domain_height: i32,
+    /// What the gadget may draw on, in the coordinates of its box: all of
+    /// it, unless it sits in something that shows only part of what it
+    /// holds - a scrolled group - which narrows it (`GA_ClipRect`).
+    /// `ObtainGIRPort` holds the RastPort it gives out to this.
+    clip: graphics.Rect = unclipped,
 };
+
+/// A clip that cuts nothing: `GadgetInfo.clip` and a gadget's
+/// `GA_ClipRect` while nothing narrows them.
+pub const unclipped = graphics.Rect{ .min_x = -0x4000_0000, .min_y = -0x4000_0000, .max_x = 0x4000_0000, .max_y = 0x4000_0000 };
 
 /// OM_NEW and OM_SET.
 pub const OpSet = extern struct {

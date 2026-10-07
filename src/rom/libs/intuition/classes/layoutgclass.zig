@@ -652,6 +652,14 @@ pub fn putChild(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, box: 
     }
 }
 
+/// Where the layout's corner is, in the room `gi` measures; its own edges
+/// without one.
+fn cornerOf(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) _gadget.Box {
+    const g = gadgetclass.gadgetOf(ib, o);
+    if (gi) |info| return _gadget.boxIn(g, info.domain_width, info.domain_height);
+    return .{ .left = g.left, .top = g.top, .width = g.width, .height = g.height };
+}
+
 /// Every child placed in the layout's box, in the room `gi` measures.
 fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, initial: bool) void {
     const p = own(cl, o);
@@ -889,7 +897,21 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
-            return it.SendSuperMessage(cl, o, msg) | setAttrs(ib, cl, o.?, set.attr_list);
+            const was = cornerOf(ib, o.?, set.gadget_info);
+            const changed = it.SendSuperMessage(cl, o, msg) | setAttrs(ib, cl, o.?, set.attr_list);
+            // Moved - the group moves the children - the labels go with
+            // them: where each is drawn was worked out when the layout was
+            // last laid out, as a scroll group moves its contents and lays
+            // nothing out again.
+            const now = cornerOf(ib, o.?, set.gadget_info);
+            if (now.left != was.left or now.top != was.top) {
+                var walk = Walk.over(own(cl, o.?));
+                while (walk.next()) |record| {
+                    record.label_x += now.left - was.left;
+                    record.label_y += now.top - was.top;
+                }
+            }
+            return changed;
         },
         classusr.OM_ADDMEMBER => {
             const m: *classusr.OpMember = @ptrCast(@alignCast(msg));

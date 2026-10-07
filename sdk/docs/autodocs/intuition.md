@@ -4557,6 +4557,9 @@ GadgetInfo, which a gadget in no window is sent.
 
 The layer lock is what lets a gadget draw while the program draws in the
 same window.
+What is drawn through it stays inside the GadgetInfo's `clip`: a gadget
+inside a scrolled group draws only on the part of it that shows, and
+nothing at all while it is scrolled out of sight.
 `EraseRect` through it paints the window's ground, as through the
 window's own RastPort: its backfill hook comes with it.
 

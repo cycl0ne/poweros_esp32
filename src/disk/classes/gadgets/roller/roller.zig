@@ -336,8 +336,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (to != own.selected) {
                 turnTo(base, own, o.?, wh.gadget_info, @intCast(to));
                 tell(base, own, o.?, wh.gadget_info, 0);
+                return gc.wheelVerify(wh, @intCast(to));
             }
-            return 1;
+            return gc.GMWR_TAKEN;
         },
         // The key turns it a row, back with a Shift key held.
         gc.GM_KEY => {

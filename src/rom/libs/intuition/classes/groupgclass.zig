@@ -18,6 +18,10 @@
 //! `IDCMP_GADGETUP`, not the group, which reports only for a member that
 //! did not ask to (`activeMember`, and `_gadget.reporter`).
 //!
+//! **A clip on the group is a clip on its members** (`GA_ClipRect`): set
+//! on the group, it is set on each of them, and a member that joins takes
+//! the group's.
+//!
 //! Disposing of the group disposes of its members, since they are its.
 
 const sdk = @import("sdk");
@@ -118,6 +122,18 @@ fn moveTo(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, left: i32, 
     _ = ib.iface().SendMessage(o, @ptrCast(&set));
 }
 
+/// Every member clipped as the group is.
+fn clipMembers(ib: *IntuitionBase, cl: *Class, o: *Object) void {
+    const clip = &gadgetclass.gadgetOf(ib, o).clip;
+    var walk = Walk.over(ib, own(cl, o));
+    while (walk.next()) |member| clipOne(ib, member, clip);
+}
+
+fn clipOne(ib: *IntuitionBase, member: *Object, clip: *const graphics.Rect) void {
+    const tags = [_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = @intFromPtr(clip) }, .{} };
+    _ = ib.iface().SetAttrsTagList(member, &tags);
+}
+
 /// The member a point in the group is over, and the point in its own
 /// coordinates. The point comes in relative to the group.
 fn propagateHit(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, x: i32, y: i32) ?*Object {
@@ -204,6 +220,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     moveTo(ib, member, set.gadget_info, b.left + dx, b.top + dy);
                 }
             }
+            if (ib.utility_base.FindTagItem(gc.GA_ClipRect, set.attr_list) != null) clipMembers(ib, cl, o.?);
             return changed;
         },
         classusr.OM_ADDMEMBER => {
@@ -221,6 +238,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             group.width = @max(group.width, b.left + b.width);
             group.height = @max(group.height, b.top + b.height);
             moveTo(ib, member, null, group.left + b.left, group.top + b.top);
+            clipOne(ib, member, &group.clip);
             return 1;
         },
         classusr.OM_REMMEMBER => {
@@ -306,7 +324,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (gadgetclass.gadgetOf(ib, member).flags & gadgetclass.GFLG_DISABLED != 0) return 0;
                 var one = wh.*;
                 one.mouse = .{ .x = in_x, .y = in_y };
-                return it.SendMessage(member, @ptrCast(&one));
+                const answer = it.SendMessage(member, @ptrCast(&one));
+                // The gadget that took it, named as GM_KEY names it: the
+                // innermost, which a group inside this one has named.
+                if (answer != gc.GMWR_NOTHING and wh.gadget == null) wh.gadget = one.gadget orelse member;
+                return answer;
             }
             return 0;
         },

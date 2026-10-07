@@ -474,8 +474,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (own.current != was) {
                 redraw(base, own, o.?, wh.gadget_info, false);
                 tell(base, own, o.?, wh.gadget_info, true);
+                return gc.wheelVerify(wh, @intCast(own.current));
             }
-            return 1;
+            return gc.GMWR_TAKEN;
         },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));

@@ -534,7 +534,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.top = to;
             putCount(base, own, wh.gadget_info);
             tell(base, own, o.?, wh.gadget_info, 0);
-            return 1;
+            return gc.wheelVerify(wh, @intCast(to));
         },
         // The key moves the view on a line, and back with a Shift key
         // held, as one of the arrows would.

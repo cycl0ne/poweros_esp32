@@ -132,6 +132,14 @@ pub fn toDomain(w: *Window, x: i32, y: i32) struct { x: i32, y: i32 } {
 /// and the whole window is its room, so such a gadget is measured from the
 /// window's corner and there is nothing to take off a point to reach it.
 pub fn infoFor(ib: *IntuitionBase, w: *Window, o: *Object) classusr.GadgetInfo {
+    var gi = placeFor(ib, w, o);
+    gi.clip = gadgetOf(ib, o).clip;
+    return gi;
+}
+
+/// Where a gadget is drawn and measured: its window's room, a requester's,
+/// or the border's.
+fn placeFor(ib: *IntuitionBase, w: *Window, o: *Object) classusr.GadgetInfo {
     var gi = info(w);
     // A requester's gadget lives in the requester: measured from its corner
     // and against its size, drawn through its layer.
@@ -473,7 +481,9 @@ pub fn hitList(ib: *IntuitionBase, w: *Window, first: ?*Object, x: i32, y: i32) 
 /// of the window's own whose box holds the point, the first on the list.
 /// Only the box decides, with no `GM_HITTEST`: a group's hit test marks the
 /// member it finds as the one with the input, which a turn of the wheel
-/// must not change under a gadget that has it. Whether a gadget took it.
+/// must not change under a gadget that has it. A gadget whose value the
+/// turn changed is reported as a press let go is (`IDCMP_GADGETUP`), when
+/// it asked to be. Whether a gadget took it.
 pub fn wheelAt(ib: *IntuitionBase, w: *Window, x: i32, y: i32, across: i32, down: i32, qualifier: u32) bool {
     var next = w.gadgets;
     while (next) |o| : (next = gadgetOf(ib, o).next) {
@@ -484,14 +494,23 @@ pub fn wheelAt(ib: *IntuitionBase, w: *Window, x: i32, y: i32, across: i32, down
         const at_y = y - gi.domain_top;
         if (at_x < b.left or at_y < b.top or at_x >= b.left + b.width or at_y >= b.top + b.height) continue;
         if (g.flags & gadgetclass.GFLG_DISABLED != 0) return false;
+        var code: i32 = 0;
         var msg = gc.GpWheel{
             .gadget_info = &gi,
             .mouse = .{ .x = at_x - b.left, .y = at_y - b.top },
             .across = across,
             .down = down,
             .qualifier = qualifier,
+            .termination = &code,
         };
-        return ib.iface().SendMessage(o, @ptrCast(&msg)) != 0;
+        const answer = ib.iface().SendMessage(o, @ptrCast(&msg));
+        if (answer & gc.GMWR_VERIFY == gc.GMWR_VERIFY) {
+            const reported = msg.gadget orelse o;
+            if (gadgetOf(ib, reported).activation & gadgetclass.GACT_RELVERIFY != 0) {
+                _ = _window.sendWith(ib, w, @import("sdk").intuition.windows.IDCMP_GADGETUP, @bitCast(code), reported);
+            }
+        }
+        return answer != gc.GMWR_NOTHING;
     }
     return false;
 }
