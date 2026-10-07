@@ -129,7 +129,7 @@ fn allocFromList(base: *ExecBase, byte_size: usize, requirements: u32, caller: u
             allocateReverse(mh, byte_size)
         else
             sys.Allocate(mh, byte_size)) orelse continue;
-        if (_memory.trace.on) _memory.traceEvent('A', byte_size, block, caller);
+        if (base.mem_trace.on) _memory.traceEvent(base, 'A', byte_size, block, caller);
         return block;
     }
     return null;

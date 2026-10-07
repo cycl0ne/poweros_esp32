@@ -20,6 +20,7 @@ const exec = @import("exec.zig");
 const _interrupt = @import("interrupt/_interrupt.zig");
 const _library = @import("library/_library.zig");
 const _log = @import("log/_log.zig");
+const _memory = @import("memory/_memory.zig");
 
 const interface = sdk.interface.exec;
 const IntVector = sdk.exec.IntVector;
@@ -55,6 +56,9 @@ pub inline fn coreId() u32 {
 pub const CpuState = extern struct {
     /// ThisTask: the task running on this core.
     this_task: *Task = undefined,
+    /// The core's idle task, pinned to it, which runs when nothing else is
+    /// ready: what its time is counted against (`time_idle`).
+    idle_task: ?*Task = null,
     /// IDNestCnt: Disable() nesting, -1 when interrupts are enabled.
     id_nest_cnt: i8 = -1,
     /// Exception nesting: the dispatcher runs only at the outermost
@@ -134,11 +138,20 @@ pub const ExecBase = extern struct {
     /// TaskReady: ready tasks by priority. TaskWait: waiting tasks.
     task_ready: List,
     task_wait: List,
+    /// The task the boot code became on core 0, "kernel".
+    boot_task: ?*Task,
     /// Quantum: time slice in ticks.
     quantum: u16,
     /// ResModules: the resident modules by priority, null-terminated; set
     /// by initResidents.
     res_modules: ?[*]?*const Resident,
+    /// The bytes `res_modules` was allocated with, so it is freed with
+    /// them.
+    res_modules_size: usize,
+    /// The memory trace (`s3> memtrace`): what AllocMem and FreeMem have
+    /// counted since it was started. All off until then, as the base is
+    /// made cleared.
+    mem_trace: _memory.Trace,
     /// The loader's base, kept for whatever loads libraries and devices
     /// from a disk. exec never looks at what it points to: it is one word
     /// a module has nowhere else to put, since this structure is opaque to

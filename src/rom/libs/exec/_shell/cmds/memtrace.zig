@@ -20,7 +20,7 @@ pub const help =
 ;
 
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
-    const trace = exec.trace;
+    const trace = &shell.base.mem_trace;
     const word = args.next() orelse {
         report(shell, trace);
         return;

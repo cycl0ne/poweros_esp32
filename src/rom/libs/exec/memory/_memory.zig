@@ -59,6 +59,7 @@
 
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
+const ExecBase = exec.ExecBase;
 
 const Node = sdk.exec.Node;
 const List = sdk.exec.List;
@@ -125,7 +126,7 @@ pub fn fitsWord(value: usize) ?u32 {
 /// block, which is what a `FreeMem` that never comes is found by.
 ///
 /// Off, it costs one test per allocation, which is why it can live here.
-pub const Trace = struct {
+pub const Trace = extern struct {
     /// Whether anything is counted at all.
     on: bool = false,
     /// Whether every event is printed as well as counted.
@@ -152,19 +153,17 @@ pub const Trace = struct {
     }
 };
 
-/// The system's one trace. It is exec's own state rather than a module's,
-/// like `SysBase` and the hardware hooks beside it.
-pub var trace: Trace = .{};
-
 /// Counts one event of the trace, and prints it when the trace is loud.
 ///
 /// INPUTS:
+/// - `base` - exec: the trace, in its base.
 /// - `letter` - 'A' for an allocation, 'F' for a free.
 /// - `byte_size` - the size asked for; the region's rounded size is what is
 ///   counted.
 /// - `block` - the block.
 /// - `caller` - the return address of `AllocMem` or `FreeMem`.
-pub fn traceEvent(letter: u8, byte_size: usize, block: ?*anyopaque, caller: usize) void {
+pub fn traceEvent(base: *ExecBase, letter: u8, byte_size: usize, block: ?*anyopaque, caller: usize) void {
+    const trace = &base.mem_trace;
     const size = alignUp(byte_size, MEM_BLOCKSIZE);
     if (letter == 'A') {
         trace.allocs += 1;

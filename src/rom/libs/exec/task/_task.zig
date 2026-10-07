@@ -226,12 +226,6 @@ pub fn alignUp(value: usize, alignment: usize) usize {
 
 // --- the boot and idle tasks ------------------------------------------------
 
-/// The task the boot code became, and the ones that run when nothing else
-/// is ready, one pinned to each core. They are the kernel's own state,
-/// like `SysBase`; the host tests need them by name to give the memory
-/// back in `deinitTasks`.
-var boot_task: ?*Task = null;
-var idle_tasks: [exec_base.max_cores]?*Task = @splat(null);
 const idle_names = [exec_base.max_cores][:0]const u8{ "idle", "idle 1" };
 
 /// Makes the machine able to run tasks: the code running now becomes the
@@ -260,12 +254,12 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     boot.flags |= sdk.exec.TF_CORE0;
     base.cpu().this_task = boot;
     base.cpu().time_mark = cycles();
-    boot_task = boot;
+    base.boot_task = boot;
     const idle = base.iface().CreateTask(idle_names[0], -128, &idleLoop, idle_stack_size) orelse
         return error.OutOfMemory;
     // Pinned once it is on the ready list: no other core runs yet.
     idle.flags |= sdk.exec.TF_CORE0;
-    idle_tasks[0] = idle;
+    base.cpu().idle_task = idle;
 }
 
 /// Core `core`'s idle task, made by core 0 before it lets that core go:
@@ -293,7 +287,7 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
     base.cpus[core] = .{};
     base.cpus[core].this_task = task;
     base.cpus[core].elapsed = base.quantum;
-    idle_tasks[core] = task;
+    base.cpus[core].idle_task = task;
     return true;
 }
 
@@ -326,13 +320,13 @@ pub fn idleHere(base: *ExecBase) noreturn {
 /// INPUTS:
 /// - `base` - exec: the jump table the calls go through.
 pub fn deinitTasks(base: *ExecBase) void {
-    for ([_]?*Task{ idle_tasks[0], boot_task }) |maybe| {
+    for ([_]?*Task{ base.cpus[0].idle_task, base.boot_task }) |maybe| {
         const task = maybe orelse continue;
         if (task.state == .ready or task.state == .wait) base.iface().Remove(&task.node);
         freeTaskMemory(base, task);
     }
-    idle_tasks[0] = null;
-    boot_task = null;
+    base.cpus[0].idle_task = null;
+    base.boot_task = null;
 }
 
 /// The idle task: count a round and sleep until the next interrupt. It
@@ -607,7 +601,7 @@ pub fn interruptEnter(base: *ExecBase) void {
     if (cpu.int_depth == 0) {
         const now = cycles();
         const spent = now -% cpu.time_mark;
-        if (cpu.this_task == idle_tasks[exec_base.coreId()]) cpu.time_idle +%= spent else cpu.time_tasks +%= spent;
+        if (cpu.this_task == cpu.idle_task) cpu.time_idle +%= spent else cpu.time_tasks +%= spent;
         cpu.time_mark = now;
     }
     cpu.int_depth += 1;

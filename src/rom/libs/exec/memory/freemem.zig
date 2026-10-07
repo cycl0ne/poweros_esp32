@@ -69,7 +69,7 @@ pub fn FreeMem(base: *ExecBase, memory_block: ?*anyopaque, byte_size: usize) voi
     sys.AcquireLock(&base.lock_memory);
     defer sys.ReleaseLock(&base.lock_memory);
 
-    if (_memory.trace.on) _memory.traceEvent('F', byte_size, block, @returnAddress());
+    if (base.mem_trace.on) _memory.traceEvent(base, 'F', byte_size, block, @returnAddress());
     const addr = @intFromPtr(block);
     var it = base.mem_list.iterator();
     while (it.next()) |node| {

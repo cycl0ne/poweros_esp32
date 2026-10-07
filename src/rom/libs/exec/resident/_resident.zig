@@ -24,11 +24,6 @@ const sdk = @import("sdk");
 const ExecBase = @import("../exec.zig").ExecBase;
 const Resident = sdk.exec.Resident;
 
-/// Bytes allocated for SysBase.res_modules, so that the table can be freed
-/// with the size it was taken with. It is exec's own state rather than a
-/// module's, like `SysBase` beside it.
-pub var table_size: usize = 0;
-
 /// The next ROM tag at or after `address.*` and below `end`: one with the
 /// right match word whose match tag points back at it. `address.*` is moved
 /// on past it - to its rt_EndSkip when that is further - or to `end` when
@@ -101,7 +96,7 @@ pub fn initResidents(base: *ExecBase, start: usize, end: usize) error{OutOfMemor
     }
     sortByPriority(table[0..count]);
     base.res_modules = table;
-    table_size = size;
+    base.res_modules_size = size;
 }
 
 /// Where a tag of that name already is in the table, or null.
@@ -142,7 +137,7 @@ fn sortByPriority(tags: []?*const Resident) void {
 pub fn deinitResidents(base: *ExecBase) void {
     const table = base.res_modules orelse return;
     base.res_modules = null;
-    base.iface().FreeMem(@ptrCast(table), table_size);
+    base.iface().FreeMem(@ptrCast(table), base.res_modules_size);
 }
 
 /// The ROM tag called `name` in [start, end), or null.

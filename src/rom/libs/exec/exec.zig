@@ -34,9 +34,9 @@ const _library = @import("library/_library.zig");
 const exec_base = @import("exec_base.zig");
 /// Memory regions, pools and the allocation trace (memory/).
 const _memory = @import("memory/_memory.zig");
-/// The allocation trace the shell reads and sets.
+/// The allocation trace the shell reads and sets, in the base
+/// (`ExecBase.mem_trace`).
 pub const Trace = _memory.Trace;
-pub const trace = &_memory.trace;
 /// Interrupt handlers, server chains, software interrupts, Disable
 /// (interrupt/).
 pub const Interrupt = sdk.exec.Interrupt;
