@@ -45,6 +45,10 @@ git apply "$root/scripts/qemu/sdl_hide_cursor.patch"
 # the minor version raised to 6 so a guest can tell.
 patch "$rgb" 's/#define ESP_RGB_MAX_VRAM_SIZE   (ESP_RGB_MAX_WIDTH \* ESP_RGB_MAX_HEIGHT \* 4)/#define ESP_RGB_MAX_VRAM_SIZE   (ESP_RGB_MAX_WIDTH * ESP_RGB_MAX_HEIGHT * 8)/' 'ESP_RGB_MAX_HEIGHT \* 8)'
 patch "$rgb_c" 's/#define RGB_VERSION_MINOR 5/#define RGB_VERSION_MINOR 6/' 'RGB_VERSION_MINOR 6'
+# Virtual display: the mouse wheel's notches for mouse.device (RGB_WHEEL),
+# and the minor version raised to 7 so a guest can tell.
+git apply "$root/scripts/qemu/esp_rgb_wheel.patch"
+patch "$rgb_c" 's/#define RGB_VERSION_MINOR 6/#define RGB_VERSION_MINOR 7/' 'RGB_VERSION_MINOR 7'
 
 # Espressif's release flags (.github/workflows/scripts/configure-native.sh),
 # minus -Werror. SDL provides the window for the virtual display. Newer glibc turns const-qualifier mismatches in

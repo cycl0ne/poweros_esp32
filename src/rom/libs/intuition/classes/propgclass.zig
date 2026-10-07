@@ -560,6 +560,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return gc.GMR_MEACTIVE;
         },
+        // The knob moved by an eighth of the view per notch along the way
+        // it moves, the target told as at the end of a drag. At either end
+        // it is still taken: the wheel was meant for this bar.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const p = own(cl, o.?);
+            const notches = gc.wheelNotches(wh, !horizontal(p));
+            if (notches == 0) return 0;
+            const step: i64 = @max(p.visible / 8, 1);
+            const last: i64 = if (p.total > p.visible) p.total - p.visible else 0;
+            const to: u32 = @intCast(@min(@max(@as(i64, p.top) + notches * step, 0), last));
+            if (to == p.top) return 1;
+            p.top = to;
+            thingsChanged(p);
+            redraw(ib, o.?, wh.gadget_info);
+            tell(ib, cl, o.?, wh.gadget_info, 0);
+            return 1;
+        },
         // The key moves it on by one, and back by one with a Shift key
         // held, as an arrow beside it would.
         gc.GM_KEY => {

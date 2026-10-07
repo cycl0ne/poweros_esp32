@@ -6,7 +6,8 @@
 //! `Mouse.change` is handed the mouse as it is now and answers with a move
 //! if the pointer went somewhere, and then an event for each button that
 //! went down or up - left, right, middle - each with the qualifiers as they
-//! are after it. It is plain arithmetic, so the host tests drive it.
+//! are after it. `Mouse.wheel` makes the event for the wheel's notches. It
+//! is plain arithmetic, so the host tests drive it.
 
 const sdk = @import("sdk");
 const ie = sdk.devices.inputevent;
@@ -48,6 +49,13 @@ pub const Mouse = extern struct {
             n += 1;
         }
         return n;
+    }
+
+    /// The wheel turned by `across` notches right and `down` notches down
+    /// (left and up negative): an IECODE_WHEEL event, its counts in `x`
+    /// and `y`, with the buttons down as its qualifiers.
+    pub fn wheel(m: *const Mouse, across: i32, down: i32) InputEvent {
+        return .{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_WHEEL, .qualifier = m.qualifier, .x = across, .y = down };
     }
 
     fn event(m: *const Mouse, code: u32) InputEvent {
@@ -120,6 +128,18 @@ test "a move, then each button that changed, with the qualifiers after it" {
     try testing.expectEqual(ie.IEQUALIFIER_LEFTBUTTON, out[1].qualifier);
     try testing.expectEqual(ie.IECODE_MBUTTON, out[2].code);
     try testing.expectEqual(ie.IEQUALIFIER_LEFTBUTTON | ie.IEQUALIFIER_MIDBUTTON, out[2].qualifier);
+}
+
+test "the wheel: its notches in x and y, the buttons down as its qualifiers" {
+    var m = Mouse{};
+    var out: [4]InputEvent = undefined;
+    _ = m.change(.{ .x = 5, .y = 6, .left = true, .right = false, .middle = false }, &out);
+    const turned = m.wheel(0, -2);
+    try testing.expectEqual(ie.IECLASS_RAWMOUSE, turned.class);
+    try testing.expectEqual(ie.IECODE_WHEEL, turned.code);
+    try testing.expectEqual(@as(i32, 0), turned.x);
+    try testing.expectEqual(@as(i32, -2), turned.y);
+    try testing.expectEqual(ie.IEQUALIFIER_LEFTBUTTON, turned.qualifier);
 }
 
 test "the queue: oldest first, linked, and full it drops the oldest" {

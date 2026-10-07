@@ -520,6 +520,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // An eighth of the view per notch along the bar, as a drag ends:
+        // the knob moved and the target told. At either end it is still
+        // taken - the wheel was meant for this bar.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = gc.wheelNotches(wh, own.vertical != 0);
+            if (notches == 0) return 0;
+            const per_notch: i64 = @max(own.visible / 8, 1);
+            const to: u32 = @intCast(@min(@max(@as(i64, own.top) + notches * per_notch, 0), @as(i64, lastTop(own))));
+            if (to == own.top) return 1;
+            own.top = to;
+            putCount(base, own, wh.gadget_info);
+            tell(base, own, o.?, wh.gadget_info, 0);
+            return 1;
+        },
         // The key moves the view on a line, and back with a Shift key
         // held, as one of the arrows would.
         gc.GM_KEY => {

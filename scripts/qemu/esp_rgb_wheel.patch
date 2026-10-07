@@ -1,0 +1,74 @@
+diff --git a/hw/display/esp_rgb.c b/hw/display/esp_rgb.c
+--- a/hw/display/esp_rgb.c
++++ b/hw/display/esp_rgb.c
+@@ -117,6 +117,13 @@
+             r = s->key_count;
+             break;
+ 
++        case A_RGB_WHEEL:
++            r = FIELD_DP32(r, RGB_WHEEL, Y, (uint16_t)(int16_t)s->wheel_y);
++            r = FIELD_DP32(r, RGB_WHEEL, X, (uint16_t)(int16_t)s->wheel_x);
++            s->wheel_y = 0;
++            s->wheel_x = 0;
++            break;
++
+         default:
+ #if RGB_WARNING
+             warn_report("[ESP RGB] Unsupported read to 0x%lx", (unsigned long) addr);
+@@ -323,6 +330,17 @@
+             s->pointer_right = btn->down;
+         } else if (btn->button == INPUT_BUTTON_MIDDLE) {
+             s->pointer_middle = btn->down;
++        } else if (btn->down) {
++            /* A wheel notch comes as a press and a release: counted once. */
++            if (btn->button == INPUT_BUTTON_WHEEL_UP && s->wheel_y > INT16_MIN) {
++                s->wheel_y--;
++            } else if (btn->button == INPUT_BUTTON_WHEEL_DOWN && s->wheel_y < INT16_MAX) {
++                s->wheel_y++;
++            } else if (btn->button == INPUT_BUTTON_WHEEL_LEFT && s->wheel_x > INT16_MIN) {
++                s->wheel_x--;
++            } else if (btn->button == INPUT_BUTTON_WHEEL_RIGHT && s->wheel_x < INT16_MAX) {
++                s->wheel_x++;
++            }
+         }
+         break;
+     default:
+diff --git a/include/hw/display/esp_rgb.h b/include/hw/display/esp_rgb.h
+--- a/include/hw/display/esp_rgb.h
++++ b/include/hw/display/esp_rgb.h
+@@ -62,6 +62,11 @@
+     uint32_t pointer_seq;
+     QemuInputHandlerState *pointer_handler;
+ 
++    /* Wheel notches since the guest last read RGB_WHEEL: down and right
++     * count up, up and left count down. */
++    int32_t wheel_y;
++    int32_t wheel_x;
++
+     /* Keys pressed and released in the window, oldest first, as Linux
+      * keycodes with bit 30 set for down. */
+     uint32_t keys[ESP_RGB_KEY_FIFO];
+@@ -70,7 +75,7 @@
+     QemuInputHandlerState *key_handler;
+ } ESPRgbState;
+ 
+-#define ESP_RGB_IO_SIZE (A_RGB_KEY_COUNT + 4)
++#define ESP_RGB_IO_SIZE (A_RGB_WHEEL + 4)
+ 
+ REG32(RGB_VERSION, 0x00)
+     FIELD(RGB_VERSION, MAJOR, 16, 16)
+@@ -122,4 +127,11 @@
+     FIELD(RGB_KEY, VALID, 31, 1)
+ 
+ /* How many key events wait. */
+-REG32(RGB_KEY_COUNT, 0x28)
+\ No newline at end of file
++REG32(RGB_KEY_COUNT, 0x28)
++
++/* The wheel's notches since the last read, which clears them: Y the
++ * vertical ones (down positive), X the horizontal (right positive), each
++ * a signed 16-bit count (minor version 7 and up). */
++REG32(RGB_WHEEL, 0x2c)
++    FIELD(RGB_WHEEL, Y, 0, 16)
++    FIELD(RGB_WHEEL, X, 16, 16)
+\ No newline at end of file

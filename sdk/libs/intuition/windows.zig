@@ -423,6 +423,29 @@ pub const IDCMP_CHANGEWINDOW: u32 = 0x0200_0000;
 /// the window told. Code is all ones, or the code a gadget answered
 /// GM_HELPTEST with (`GMR_HELPCODE`).
 pub const IDCMP_GADGETHELP: u32 = 0x0400_0000;
+/// The mouse's wheel turned over the window and no gadget under the
+/// pointer took it. `code` holds the notches, read with `wheelDown` and
+/// `wheelAcross`; `mouse_x` and `mouse_y` are where the pointer is.
+pub const IDCMP_MOUSEWHEEL: u32 = 0x0800_0000;
+
+/// IDCMP_MOUSEWHEEL's `code`: the notches down, up negative.
+pub fn wheelDown(code: u32) i16 {
+    return @bitCast(@as(u16, @truncate(code)));
+}
+
+/// The notches right, left negative.
+pub fn wheelAcross(code: u32) i16 {
+    return @bitCast(@as(u16, @truncate(code >> 16)));
+}
+
+/// The code for those notches, as intuition makes it.
+pub fn wheelCode(across: i32, down: i32) u32 {
+    const a: i16 = @intCast(@max(@min(across, wheel_max), wheel_min));
+    const d: i16 = @intCast(@max(@min(down, wheel_max), wheel_min));
+    return @as(u32, @as(u16, @bitCast(a))) << 16 | @as(u16, @bitCast(d));
+}
+const wheel_max = 0x7FFF;
+const wheel_min = -0x8000;
 /// A requester went up in it (`Request`, or a double-click of the menu
 /// button): `iaddress` the requester.
 pub const IDCMP_REQSET: u32 = 0x0000_0080;

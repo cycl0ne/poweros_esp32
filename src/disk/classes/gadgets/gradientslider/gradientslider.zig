@@ -462,6 +462,21 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             draw(base, classes.instData(Data, cl, o.?), o.?, r.rast_port, info, r.redraw == gc.GREDRAW_REDRAW);
             return 0;
         },
+        // Its skip per notch, the knob going the way the wheel turns.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = gc.wheelNotches(wh, own.vertical != 0);
+            if (notches == 0) return 0;
+            const per_notch: i64 = @max(own.skip, 1);
+            const was = own.current;
+            own.current = @intCast(@max(0, @min(@as(i64, own.current) + per_notch * notches, own.max)));
+            if (own.current != was) {
+                redraw(base, own, o.?, wh.gadget_info, false);
+                tell(base, own, o.?, wh.gadget_info, true);
+            }
+            return 1;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             if (in.event == null) return gc.GMR_NOREUSE;

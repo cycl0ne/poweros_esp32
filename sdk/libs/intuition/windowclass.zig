@@ -137,3 +137,8 @@ pub const WMHI_NEWPREFS: usize = 12 << 16;
 /// something about it changed. The low bits are what `ICSPECIAL_CODE`
 /// carried, and the attributes themselves are read from the gadget.
 pub const WMHI_IDCMPUPDATE: usize = 13 << 16;
+/// The wheel turned over the window and no gadget took it (the window
+/// asked for `IDCMP_MOUSEWHEEL`). The low bits are the notches down, up
+/// negative, as an i16's bits; the message's whole code - both directions,
+/// `windows.wheelDown` and `wheelAcross` - goes where `code` points.
+pub const WMHI_MOUSEWHEEL: usize = 14 << 16;

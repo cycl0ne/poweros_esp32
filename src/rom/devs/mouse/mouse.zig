@@ -2,16 +2,17 @@
 //! mouse.device: a mouse, as raw mouse events.
 //!
 //! What the mouse does is handed out as IECLASS_RAWMOUSE events: a move
-//! when the pointer goes somewhere, and an event for each button that goes
+//! when the pointer goes somewhere, an event for each button that goes
 //! down or up - left, right, middle - with the buttons' qualifiers as they
-//! are after it (`events.Mouse`). The device queues them until a
+//! are after it, and an IECODE_WHEEL event with the wheel's notches when it
+//! turned (`events.Mouse`). The device queues them until a
 //! MOUSE_READEVENT takes them, and MOUSE_READSTATE says where the pointer is
 //! and which buttons are down.
 //!
 //! The one mouse there is now is the emulator's: our QEMU build's display
-//! reports the pointer over its window, where it is in the window's pixels
-//! and which of its three buttons are down, and the device's task looks at
-//! it every 10 ms. That pointer is absolute, so its events carry no
+//! reports the pointer over its window, where it is in the window's pixels,
+//! which of its three buttons are down and how far its wheel turned, and
+//! the device's task looks at it every 10 ms. That pointer is absolute, so its events carry no
 //! IEQUALIFIER_RELATIVEMOUSE. It is the qemu board's mouse part; a board
 //! without one has no mouse.device in its ROM, and an open without the
 //! part fails. A mouse on a board later is a second backend handing
@@ -35,8 +36,9 @@ const qemu_rgb = sdk.hardware.qemu_rgb;
 
 pub const DEVICE_NAME = mouse.MOUSENAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "22.9.2026";
+/// 1: the wheel (IECODE_WHEEL).
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "07.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -74,6 +76,8 @@ const MouseBase = extern struct {
     timer_io: timer.TimeRequest = .{},
     /// The emulator's count of pointer events when it was last looked at.
     pointer_seq: u32 = 0,
+    /// Whether this QEMU gives the wheel (version 0.7 and up).
+    wheel: u8 = 0,
     /// What the mouse was, and the events not yet read.
     mouse: events.Mouse = .{},
     queue: events.Queue = .{},
@@ -136,6 +140,8 @@ fn bringUp(mb: *MouseBase) bool {
     mb.pointer_seq = p.seq;
     var out: [4]InputEvent = undefined;
     _ = mb.mouse.change(nowOf(p), &out);
+    mb.wheel = @intFromBool(qemu_rgb.hasWheel());
+    if (mb.wheel != 0) _ = qemu_rgb.wheel();
     return true;
 }
 
@@ -173,7 +179,9 @@ fn serveReads(mb: *MouseBase) void {
 /// What the emulator's pointer did since it was last looked at, as events.
 fn poll(mb: *MouseBase) void {
     const p = qemu_rgb.pointer();
-    if (p.seq == mb.pointer_seq) return;
+    const turned = if (mb.wheel != 0) qemu_rgb.wheel() else qemu_rgb.Wheel{ .x = 0, .y = 0 };
+    const wheeled = turned.x != 0 or turned.y != 0;
+    if (p.seq == mb.pointer_seq and !wheeled) return;
     mb.pointer_seq = p.seq;
     const time = now(mb);
     const sys = mb.sys_base;
@@ -184,6 +192,11 @@ fn poll(mb: *MouseBase) void {
     for (out[0..n]) |*e| {
         e.time = time;
         mb.queue.push(e.*);
+    }
+    if (wheeled) {
+        var e = mb.mouse.wheel(turned.x, turned.y);
+        e.time = time;
+        mb.queue.push(e);
     }
     serveReads(mb);
 }

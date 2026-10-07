@@ -91,7 +91,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   gradients, shadows and scaled pictures; layers.library; and
   intuition.library - screens, pulled down by their title bar to show
   the ones behind, windows, menus, requesters, and gadget classes in
-  layouts that fit any display. Everything is drawn from a
+  layouts that fit any display; the mouse wheel scrolls or steps
+  whatever is under the pointer. Everything is drawn from a
   style a screen carries, so the look changes with no program changed
   (the [styles guide](sdk/docs/guides/styles.md)). More gadget classes
   in `SYS:classes/gadgets/`: tabs, number fields, pop-up lists, progress
@@ -121,7 +122,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   a device from the shell, and `SYS:Programs/Battery` shows a battery a
   Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
 - **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
-  card, I2C, touch, keyboard, mouse, input, console, four-channel audio,
+  card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio,
   Telnet; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures.
@@ -136,7 +137,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 |---|---|---|
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and mouse, and an RS-485 port on its second serial port | runs |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, and an RS-485 port on its second serial port | runs |
 
 `C:ShowConfig` lists what the running board has.
 
@@ -156,7 +157,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 
 | Script | For |
 |---|---|
-| `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard and mouse, at 240 MHz (an older QEMU runs too, without the mouse pointer) |
+| `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/wifi.device` |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |

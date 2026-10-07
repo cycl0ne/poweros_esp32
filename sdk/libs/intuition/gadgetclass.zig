@@ -369,6 +369,14 @@ pub const GM_DOMAIN: MethodID = 7;
 /// the key that is its own (`keyIsFor`).
 pub const GM_KEY: MethodID = 8;
 
+/// `GpWheel`: the mouse's wheel turned with the pointer over you. intuition
+/// sends it to the gadget under the pointer in the window under it, active
+/// or not; a group (and so a layout) hands it to the member under the
+/// pointer. Answer non-zero when it moved something - a view, a knob, a
+/// value - and 0 to leave it to the window, which tells its program
+/// (`IDCMP_MOUSEWHEEL`). It never makes a gadget active.
+pub const GM_WHEEL: MethodID = 9;
+
 /// GM_DOMAIN's `which`: the smallest a gadget can be and still work, the
 /// size it looks right at, and the largest it is any use at.
 pub const GDOMAIN_MINIMUM: u32 = 0;
@@ -459,6 +467,29 @@ pub const GMR_VERIFY: usize = 1 << 3;
 pub const GMR_NEXTACTIVE: usize = 1 << 4;
 /// The same, backwards: shifted Tab.
 pub const GMR_PREVACTIVE: usize = 1 << 5;
+
+/// GM_WHEEL: the wheel turned over the gadget.
+pub const GpWheel = extern struct {
+    method_id: MethodID = GM_WHEEL,
+    gadget_info: ?*GadgetInfo = null,
+    /// Where the pointer is, relative to the gadget's box.
+    mouse: graphics.Point = .{},
+    /// The notches: `down` down (up negative), `across` right (left
+    /// negative). A wheel of one direction turned with Shift held comes as
+    /// `across`, so a gadget that moves only one way reads the one it has.
+    across: i32 = 0,
+    down: i32 = 0,
+    /// The qualifiers as they were.
+    qualifier: u32 = 0,
+};
+
+/// What a gadget that moves along one direction takes from a GM_WHEEL: its
+/// own direction's notches, or the other direction's when its own are 0 -
+/// a slider lying across turns with the plain wheel too.
+pub fn wheelNotches(w: *const GpWheel, vertical: bool) i32 {
+    const own = if (vertical) w.down else w.across;
+    return if (own != 0) own else if (vertical) w.across else w.down;
+}
 
 /// GM_KEY: the key that works a gadget was typed.
 pub const GpKey = extern struct {

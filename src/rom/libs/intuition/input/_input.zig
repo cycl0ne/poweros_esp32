@@ -175,9 +175,10 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     while (e) |ev| : (e = ev.next) {
         switch (ev.class) {
             // The pointer event after it came from a mouse, not a finger.
+            // The wheel is the one raw mouse event intuition's task wants.
             ie.IECLASS_RAWMOUSE => {
                 pointer.mouseSeen(ib);
-                continue;
+                if (ev.code != ie.IECODE_WHEEL) continue;
             },
             // The pointer follows at once, on its own task, while
             // intuition's may be busy.
@@ -505,6 +506,25 @@ fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
     return null;
 }
 
+/// The wheel turned: to the gadget under the pointer in the window under
+/// it, active or not (`GM_WHEEL`), and when none takes it to that window's
+/// program (`IDCMP_MOUSEWHEEL`). Shift turns a wheel of one direction
+/// across. A window behind a requester, and a panel something put over
+/// the windows, take nothing.
+fn wheel(ib: *IntuitionBase, e: *const InputEvent) void {
+    const st = stateOf(ib);
+    const s = screenAt(ib) orelse return;
+    if (overPanel(ib, s, st.x, st.y)) return;
+    const w = windowAt(ib, s, st.x, st.y) orelse return;
+    if (w.first_request != null) return;
+    const shifted = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0 and e.x == 0;
+    const across = if (shifted) e.y else e.x;
+    const down = if (shifted) 0 else e.y;
+    if (across == 0 and down == 0) return;
+    if (_gadget.wheelAt(ib, w, st.x - w.left, st.y - w.top, across, down, e.qualifier)) return;
+    if (w.idcmp & wn.IDCMP_MOUSEWHEEL != 0) _window.send(ib, w, wn.IDCMP_MOUSEWHEEL, wn.wheelCode(across, down));
+}
+
 fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
     const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
     return windowOfLayer(s, layer);
@@ -548,6 +568,16 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     }
     if (side(ib, e)) return;
     if (st.mode == .verify) return sizeVerifying(ib, e);
+    // The wheel goes to whatever is under the pointer, whether a gadget
+    // has the input or not; while a window or a screen is being dragged
+    // or sized it is passed over.
+    if (e.class == ie.IECLASS_RAWMOUSE and e.code == ie.IECODE_WHEEL) {
+        switch (st.mode) {
+            .drag, .size, .screen_drag, .screen_depth => {},
+            else => wheel(ib, e),
+        }
+        return;
+    }
     // A gadget with the input gets everything until it is done; a tick
     // still reaches the window as well.
     if (st.mode == .active) {

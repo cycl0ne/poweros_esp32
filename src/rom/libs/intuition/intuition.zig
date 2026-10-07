@@ -5496,6 +5496,91 @@ test "sliders: what stands where, in things and in fractions" {
     try testing.expectEqual(@as(u32, 45), pg.topOf(100, 10, pg.MAXPOT / 2));
 }
 
+test "the wheel: to the gadget under the pointer through a group, and else to the window" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const pg = intuition.propgclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A bar in a group at the window's left: a hundred things, sixteen in
+    // view, so a notch is two.
+    const bar = it.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 20 },
+        .{ .tag = gc.GA_ID, .data = 5 },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = pg.PGA_Total, .data = 100 },
+        .{ .tag = pg.PGA_Visible, .data = 16 },
+        .{ .tag = intuition.icclass.ICA_TARGET, .data = intuition.icclass.ICTARGET_IDCMP },
+        .{},
+    }).?;
+    const group = it.NewObjectTagList(null, classusr.GROUPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 20 },
+        .{},
+    }).?;
+    var add = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = bar };
+    try testing.expect(it.SendMessage(group, @ptrCast(&add)) != 0);
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(group) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_MOUSEWHEEL },
+        .{},
+    }).?;
+    var got: [8]intuition.IntuiMessage = undefined;
+    const wheelEvent = struct {
+        fn turn(base: *IntuitionBase, across: i32, down: i32, qualifier: u32) void {
+            const e = ie.InputEvent{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_WHEEL, .qualifier = qualifier, .x = across, .y = down };
+            _input.handle(base, &e);
+        }
+    }.turn;
+
+    // Over the bar, through the group: two notches down are four things,
+    // told to its target as a drag's end is, and the window hears no wheel.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 8, 12 + 10);
+    wheelEvent(ib, 0, 2, 0);
+    try testing.expectEqual(@as(usize, 4), getAttr(ib, bar, pg.PGA_Top));
+    const n = drainMessages(ib, w, &got);
+    try testing.expect(n >= 1);
+    for (got[0..@min(n, got.len)]) |m| try testing.expect(m.class != wn.IDCMP_MOUSEWHEEL);
+    // Up past the start it stops there.
+    wheelEvent(ib, 0, -9, 0);
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, bar, pg.PGA_Top));
+    _ = drainMessages(ib, w, &got);
+
+    // Over the window where no gadget is: to the program, the notches in
+    // the code; Shift turns them across.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 12 + 15);
+    wheelEvent(ib, 0, 3, 0);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_MOUSEWHEEL, got[0].class);
+    try testing.expectEqual(@as(i16, 3), wn.wheelDown(got[0].code));
+    try testing.expectEqual(@as(i16, 0), wn.wheelAcross(got[0].code));
+    wheelEvent(ib, 0, -1, ie.IEQUALIFIER_LSHIFT);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(i16, -1), wn.wheelAcross(got[0].code));
+    try testing.expectEqual(@as(i16, 0), wn.wheelDown(got[0].code));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(group); // the bar goes with it
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "sliders: dragged, paged, and set" {
     const ib = try setUp();
     defer kexec.deinit();

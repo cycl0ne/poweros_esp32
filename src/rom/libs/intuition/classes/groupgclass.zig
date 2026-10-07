@@ -288,6 +288,28 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return gc.GMKR_NOTHING;
         },
+        // To the member under the pointer, found by its box alone - a hit
+        // test would mark it as the member with the input - with the point
+        // in its own coordinates.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const p = own(cl, o.?);
+            const group = cornerOf(ib, o.?, wh.gadget_info);
+            const at_x = wh.mouse.x + group.left;
+            const at_y = wh.mouse.y + group.top;
+            var walk = Walk.over(ib, p);
+            while (walk.next()) |member| {
+                const b = cornerOf(ib, member, wh.gadget_info);
+                const in_x = at_x - b.left;
+                const in_y = at_y - b.top;
+                if (in_x < 0 or in_y < 0 or in_x >= b.width or in_y >= b.height) continue;
+                if (gadgetclass.gadgetOf(ib, member).flags & gadgetclass.GFLG_DISABLED != 0) return 0;
+                var one = wh.*;
+                one.mouse = .{ .x = in_x, .y = in_y };
+                return it.SendMessage(member, @ptrCast(&one));
+            }
+            return 0;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const p = own(cl, o.?);

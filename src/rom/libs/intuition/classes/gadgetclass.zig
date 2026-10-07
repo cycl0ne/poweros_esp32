@@ -584,6 +584,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         // A gadget with nothing of its own to do for a key does nothing:
         // the window then reports the key to the program as it came.
         gc.GM_KEY => return gc.GMKR_NOTHING,
+        // A gadget that moves nothing with the wheel leaves it to the
+        // window.
+        gc.GM_WHEEL => return 0,
         // Asked about a point already known to be in the box: it is this
         // gadget's, and it has nothing more particular to say about which
         // part of itself was pointed at.

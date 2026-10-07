@@ -179,10 +179,13 @@ pub const Data = struct {
     /// The font the widths were measured in, and its line's height.
     font: ?*graphics.TextFont = null,
     line_height: i32 = 8,
-    /// The last press, for a double one.
+    /// The last press, for the ones that follow it.
     last_secs: u32 = 0,
     last_micros: u32 = 0,
     last_press: u32 = 0xFFFF_FFFF,
+    /// The presses in a row at one place, each in the double-click time
+    /// of the one before: two select a word, three a line.
+    presses: u8 = 0,
 };
 
 // --- memory -----------------------------------------------------------------
@@ -589,6 +592,19 @@ fn typeIn(base: *gadgets.Base, own: *Data, bytes: []const u8, typing: bool) bool
     return replace(base, own, sel.from, sel.to, bytes, typing and sel.from == sel.to);
 }
 
+/// Return: a line feed, and the new line started with the spaces and tabs
+/// the line it breaks starts with, as far as the cursor - an indented line
+/// goes on indented. All one edit, so undo takes it back at once. An
+/// indentation longer than `bytes` holds is cut to it.
+fn newLine(base: *gadgets.Base, own: *Data) bool {
+    const indent = own.text.indentOf(selection(own).from);
+    var bytes: [256]u8 = undefined;
+    bytes[0] = '\n';
+    const count: u32 = @min(indent.to - indent.from, bytes.len - 1);
+    own.text.copyOut(indent.from, indent.from + count, bytes[1..].ptr);
+    return typeIn(base, own, bytes[0 .. count + 1], true);
+}
+
 fn undoLast(own: *Data) bool {
     const step = own.history.toUndo() orelse return false;
     own.text.remove(step.at, step.at + step.inserted_len);
@@ -746,7 +762,7 @@ fn key(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const i
                 did = replace(base, own, own.cursor, to, "", true);
             }
         },
-        RAW_RETURN, RAW_ENTER => did = typeIn(base, own, "\n", true),
+        RAW_RETURN, RAW_ENTER => did = newLine(base, own),
         RAW_TAB => did = typeIn(base, own, "\t", true),
         RAW_ESCAPE => {
             moveTo(own, own.cursor, false, false);
@@ -808,18 +824,20 @@ fn posUnder(own: *const Data, parts: Parts, x: i32, y: i32) u32 {
 }
 
 /// A press in the text: the cursor there, the selection made to it with
-/// Shift, a word with a second press.
+/// Shift, a word with a second press and its line with a third. A fourth
+/// starts again from one.
 fn pressAt(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const ie.InputEvent) void {
     const parts = partsOf(base, own, o, in.gadget_info);
     const pos = posUnder(own, parts, in.mouse.x, in.mouse.y);
-    const double = pos == own.last_press and base.intuition_base.DoubleClick(own.last_secs, own.last_micros, e.time.secs, e.time.micro);
-    own.last_press = if (double) 0xFFFF_FFFF else pos;
+    const follows = pos == own.last_press and base.intuition_base.DoubleClick(own.last_secs, own.last_micros, e.time.secs, e.time.micro);
+    own.presses = if (follows and own.presses < 3) own.presses + 1 else 1;
+    own.last_press = pos;
     own.last_secs = e.time.secs;
     own.last_micros = e.time.micro;
-    if (double) {
-        const word = own.text.wordAround(pos);
-        own.anchor = word.from;
-        moveTo(own, word.to, true, false);
+    if (own.presses > 1) {
+        const span = if (own.presses == 2) own.text.wordAround(pos) else own.text.lineAround(pos);
+        own.anchor = span.from;
+        moveTo(own, span.to, true, false);
         own.pressed = false;
     } else {
         moveTo(own, pos, e.qualifier & SHIFT != 0, false);
@@ -1070,6 +1088,33 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_RENDER => {
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
+        },
+        // Three rows a notch down the text, an eighth of the field a notch
+        // across it when rows do not wrap; the cursor stays where it is,
+        // as when a scroller moves the view.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            if (!own.ready) return 0;
+            const parts = partsOf(base, own, o.?, wh.gadget_info);
+            const was_top = own.top;
+            const was_left = own.left;
+            if (wh.down != 0) {
+                const to = @as(i64, own.top) + 3 * @as(i64, wh.down);
+                own.top = @intCast(@min(@max(to, 0), @as(i64, lastTop(own, parts.visible))));
+            }
+            if (wh.across != 0 and !own.wrap) {
+                const width: i64 = @max(parts.area.width, 1);
+                const widest: i64 = @as(i64, own.text.widest) + cursorRoom(&own.text);
+                const per_notch: i64 = @max(@divTrunc(width, 8), 1);
+                const to = @as(i64, own.left) + per_notch * wh.across;
+                own.left = @intCast(@min(@max(to, 0), @max(widest - width, 0)));
+            }
+            if (own.top != was_top or own.left != was_left) {
+                support.redraw(ib, o.?, wh.gadget_info);
+                tell(base, own, o.?, wh.gadget_info);
+            }
+            return 1;
         },
         // The key that works it gives it the keyboard.
         gc.GM_KEY => {

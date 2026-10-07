@@ -97,7 +97,8 @@ pub const Pointer = extern struct {
 /// qualifiers brought up to date by the buttons it carries, and for a mouse
 /// that says where it is the pointer after it, the same button, linked. A
 /// mouse that says only how far it went (IEQUALIFIER_RELATIVEMOUSE) has no
-/// pointer to give. Answers how many of `out` it filled.
+/// pointer to give, and neither has the wheel (IECODE_WHEEL), whose `x` and
+/// `y` are its notches. Answers how many of `out` it filled.
 pub fn mousePointer(e: *const InputEvent, qualifier: *u32, out: *[2]InputEvent) usize {
     qualifier.* = (qualifier.* & ~button_qualifiers) | (e.qualifier & button_qualifiers);
     const relative = e.qualifier & ie.IEQUALIFIER_RELATIVEMOUSE;
@@ -108,7 +109,7 @@ pub fn mousePointer(e: *const InputEvent, qualifier: *u32, out: *[2]InputEvent) 
         .x = e.x,
         .y = e.y,
     };
-    if (relative != 0) return 1;
+    if (relative != 0 or e.code == ie.IECODE_WHEEL) return 1;
     out[1] = .{
         .class = ie.IECLASS_NEWPOINTERPOS,
         .code = e.code,
@@ -268,4 +269,11 @@ test "mousePointer: the raw event, the qualifiers kept, and the pointer after it
     try testing.expectEqual(@as(usize, 1), mousePointer(&nudge, &qualifier, &out));
     try testing.expect(out[0].next == null);
     try testing.expectEqual(ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RELATIVEMOUSE, out[0].qualifier);
+
+    // The wheel: the raw event alone, its notches kept, Shift with it.
+    const turned = InputEvent{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_WHEEL, .x = 0, .y = 3 };
+    try testing.expectEqual(@as(usize, 1), mousePointer(&turned, &qualifier, &out));
+    try testing.expect(out[0].next == null);
+    try testing.expectEqual(@as(i32, 3), out[0].y);
+    try testing.expect(out[0].qualifier & ie.IEQUALIFIER_LSHIFT != 0);
 }

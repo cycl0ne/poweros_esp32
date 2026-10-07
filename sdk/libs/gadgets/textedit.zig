@@ -24,11 +24,14 @@
 //! cursor in place of what is selected; the cursor keys, Home and End,
 //! Page Up and Page Down move it - with Control, by a word and to the
 //! text's ends - and with Shift they select as they go. Backspace and Del
-//! take a character out, or what is selected; Return starts a line and
-//! Tab puts in a tab. A drag selects, scrolling the text when it goes past
-//! an edge; Shift with a press selects to there; a double press selects a
-//! word. On a board with no keyboard the on-screen one comes up while it
-//! is typed into.
+//! take a character out, or what is selected; Return starts a line,
+//! indented with the spaces and tabs the line before starts with, and Tab
+//! puts in a tab. A drag selects, scrolling the text when it goes past an
+//! edge; Shift with a press selects to there; a double press selects a
+//! word and a third press the whole line. The mouse wheel scrolls the
+//! text three rows a notch, and with Shift held across it when rows do
+//! not wrap. On a board with no keyboard the on-screen one comes up while
+//! it is typed into.
 //!
 //! Control-A selects everything, Control-Z takes the last change back and
 //! Control-Y puts it back again: undo goes back as far as memory allows,

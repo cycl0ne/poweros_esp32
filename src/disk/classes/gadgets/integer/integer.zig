@@ -365,6 +365,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // Its step per notch, up for more, as its arrows step it: the field
+        // shows it and the target is told.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = -gc.wheelNotches(wh, true);
+            if (notches == 0) return 0;
+            const was = own.number;
+            const to = @as(i64, own.number) + @as(i64, own.step) * notches;
+            own.number = @intCast(@max(@as(i64, own.min), @min(to, own.max)));
+            if (own.number != was) {
+                putNumber(base, own, wh.gadget_info);
+                // Drawn whole: the field is placed in it only as it draws.
+                support.redraw(ib, o.?, wh.gadget_info);
+                tell(base, own, o.?, wh.gadget_info, 0);
+            }
+            return 1;
+        },
         // The key gives the field the keyboard, as a press on it would.
         gc.GM_KEY => {
             const k: *gc.GpKey = @ptrCast(@alignCast(msg));

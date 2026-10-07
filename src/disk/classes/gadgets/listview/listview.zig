@@ -756,7 +756,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 .{},
             };
             own.frame = ib.NewObjectTagList(null, classusr.FRAMEICLASS, &frame_tags);
+            // The knob goes where the list is at once: the list glides
+            // on its own and draws its scroller with it, and a glide of
+            // the scroller's own would ask intuition to draw a part it
+            // never sees.
             const scroller_tags = [_]TagItem{
+                .{ .tag = gc.GA_Animate, .data = 0 },
                 .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
                 .{ .tag = sr.SCROLLER_Arrows, .data = own.scroll_width },
                 .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(obj) },
@@ -870,6 +875,16 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (r.redraw == gc.GREDRAW_STATE) return 0;
             render(base, cl, o.?, r);
             return 0;
+        },
+        // Three lines a notch, the scroller's knob going with them.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = gc.wheelNotches(wh, true);
+            if (notches == 0) return 0;
+            const to = @as(i64, own.top) + 3 * @as(i64, notches);
+            scrollTo(base, own, o.?, wh.gadget_info, @intCast(@max(to, 0)), true);
+            return 1;
         },
         // The key moves the selection down a line, and up with a Shift
         // key held, keeping the line it moves to in view. A read-only

@@ -33,6 +33,9 @@ pub const Memory = struct {
     free: *const fn (context: ?*anyopaque, memory: [*]u8) void,
 };
 
+/// A stretch of the text, from `from` up to `to`.
+pub const Span = struct { from: u32, to: u32 };
+
 /// How the text is laid out: each byte's width, where tabs stop, and the
 /// width rows wrap at (0: they do not).
 pub const Layout = struct {
@@ -257,6 +260,15 @@ pub const Text = struct {
     /// Where a line ends: at its line feed, or at the text's end.
     pub fn lineEnd(text: *const Text, line: u32) u32 {
         return if (line + 1 < text.lines.len) text.lines.get(line + 1) - 1 else text.length();
+    }
+
+    /// The spaces and tabs the line `pos` is in starts with, as far as
+    /// `pos`: what Return starts the next line with.
+    pub fn indentOf(text: *const Text, pos: u32) Span {
+        const from = text.lineStart(text.lineOf(pos));
+        var to = from;
+        while (to < pos and (text.byteAt(to) == ' ' or text.byteAt(to) == '\t')) to += 1;
+        return .{ .from = from, .to = to };
     }
 
     // --- rows ---------------------------------------------------------------
@@ -484,8 +496,8 @@ pub const Text = struct {
         return at;
     }
 
-    /// The word around `pos`, for a double press: from `from` to `to`.
-    pub fn wordAround(text: *const Text, pos: u32) struct { from: u32, to: u32 } {
+    /// The word around `pos`, for a double press.
+    pub fn wordAround(text: *const Text, pos: u32) Span {
         const len = text.length();
         var from = pos;
         var to = pos;
@@ -496,6 +508,15 @@ pub const Text = struct {
             to = pos + 1;
         }
         return .{ .from = from, .to = to };
+    }
+
+    /// The line around `pos`, for a third press: from its start to the
+    /// next one's, its line feed with it, so that cutting it leaves no
+    /// empty line behind.
+    pub fn lineAround(text: *const Text, pos: u32) Span {
+        const line = text.lineOf(pos);
+        const to = if (line + 1 < text.lines.len) text.lines.get(line + 1) else text.length();
+        return .{ .from = text.lineStart(line), .to = to };
     }
 
     fn lower(byte: u8) u8 {
@@ -671,6 +692,27 @@ test "words, and finding text forwards, backwards, in any case and round the end
     try testing.expectEqual(@as(?u32, 0), text.find(19, "Hello", true, false));
     try testing.expectEqual(@as(?u32, 12), text.find(0, "WORLD", false, true));
     try testing.expectEqual(@as(?u32, null), text.find(0, "WORLD", false, false));
+}
+
+test "a line for a third press, and the indentation Return carries on" {
+    var text = Text.init(test_memory).?;
+    defer text.deinit();
+    try testing.expect(text.setAll("top\n  \tin it\n    \nend"));
+    const second = text.lineAround(7);
+    try testing.expectEqual(@as(u32, 4), second.from);
+    try testing.expectEqual(@as(u32, 13), second.to);
+    const last = text.lineAround(19);
+    try testing.expectEqual(@as(u32, 18), last.from);
+    try testing.expectEqual(@as(u32, 21), last.to);
+    // The whole indentation from inside the line, and only what is
+    // before the cursor from inside the indentation.
+    const indented = text.indentOf(10);
+    try testing.expectEqual(@as(u32, 4), indented.from);
+    try testing.expectEqual(@as(u32, 7), indented.to);
+    try testing.expectEqual(@as(u32, 6), text.indentOf(6).to);
+    try testing.expectEqual(@as(u32, 17), text.indentOf(17).to);
+    const none = text.indentOf(2);
+    try testing.expectEqual(none.from, none.to);
 }
 
 test "a long text set at once, and many lines put in one edit" {

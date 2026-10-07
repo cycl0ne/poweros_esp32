@@ -85,8 +85,10 @@ pub const LIBRARY_VERSION = 0;
 /// and screens dragged by their bar. 30: an IntuiText is a tag list of
 /// IT_ tags - PrintIText, IntuiTextLength, itexticlass, GA_IntuiText,
 /// menu items, SYSREQ_ - with a style for each run (IT_Style). 31:
-/// GadgetStyleState, a gadget's transition for a class of its own.
-pub const LIBRARY_REVISION = 31;
+/// GadgetStyleState, a gadget's transition for a class of its own. 32:
+/// the mouse wheel - GM_WHEEL to the gadget under the pointer,
+/// IDCMP_MOUSEWHEEL and WMHI_MOUSEWHEEL to the window's program.
+pub const LIBRARY_REVISION = 32;
 const BUILD_DATE = "07.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

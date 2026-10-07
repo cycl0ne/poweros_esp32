@@ -469,6 +469,33 @@ pub fn hitList(ib: *IntuitionBase, w: *Window, first: ?*Object, x: i32, y: i32) 
     return .none;
 }
 
+/// The wheel turned at `x`, `y` in the window: `GM_WHEEL` to the gadget
+/// of the window's own whose box holds the point, the first on the list.
+/// Only the box decides, with no `GM_HITTEST`: a group's hit test marks the
+/// member it finds as the one with the input, which a turn of the wheel
+/// must not change under a gadget that has it. Whether a gadget took it.
+pub fn wheelAt(ib: *IntuitionBase, w: *Window, x: i32, y: i32, across: i32, down: i32, qualifier: u32) bool {
+    var next = w.gadgets;
+    while (next) |o| : (next = gadgetOf(ib, o).next) {
+        const g = gadgetOf(ib, o);
+        var gi = infoFor(ib, w, o);
+        const b = boxIn(g, gi.domain_width, gi.domain_height);
+        const at_x = x - gi.domain_left;
+        const at_y = y - gi.domain_top;
+        if (at_x < b.left or at_y < b.top or at_x >= b.left + b.width or at_y >= b.top + b.height) continue;
+        if (g.flags & gadgetclass.GFLG_DISABLED != 0) return false;
+        var msg = gc.GpWheel{
+            .gadget_info = &gi,
+            .mouse = .{ .x = at_x - b.left, .y = at_y - b.top },
+            .across = across,
+            .down = down,
+            .qualifier = qualifier,
+        };
+        return ib.iface().SendMessage(o, @ptrCast(&msg)) != 0;
+    }
+    return false;
+}
+
 /// The gadget a press in `o` is reported as, for what `flag` asks
 /// (`GACT_RELVERIFY`, `GACT_IMMEDIATE`, `GACT_ENDGADGET`): the innermost
 /// of `o` and the members of groups inside it that have the input which

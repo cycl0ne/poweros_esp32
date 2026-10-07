@@ -325,6 +325,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const dy: i64 = ht.mouse.y - ring.cy;
             return if (dx * dx + dy * dy <= @as(i64, ring.outer + 2) * (ring.outer + 2)) gc.GMR_GADGETHIT else 0;
         },
+        // A ring with a knob: about a thirty-second of its range per
+        // notch, up for more, the fill going there as a set one does.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = -gc.wheelNotches(wh, true);
+            if (notches == 0 or own.turn == 0) return 0;
+            const range: i64 = @as(i64, own.max) - own.min;
+            const per_notch: i64 = @max(@divTrunc(range, 32), 1);
+            const was = own.level;
+            own.level = @intCast(@max(@as(i64, own.min), @min(@as(i64, own.level) + per_notch * notches, own.max)));
+            if (own.level != was) {
+                if (!own.fill.towards(base, o.?, wh.gadget_info, own.level, fill_time)) support.redraw(ib, o.?, wh.gadget_info);
+                tell(base, own, o.?, wh.gadget_info, 0);
+            }
+            return 1;
+        },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);

@@ -2,7 +2,7 @@
 //! QEMU's virtual RGB display ("display.esp.rgb" in Espressif QEMU), the
 //! qemu board's display, keyboard and mouse parts: its registers, and the
 //! few steps each of its uses takes. Our QEMU build (scripts/build-qemu.sh)
-//! allows up to 1024x600 and adds the window's pointer and keys.
+//! allows up to 1024x600 and adds the window's pointer, its wheel and keys.
 
 const reg = @import("mmio.zig").reg;
 
@@ -15,6 +15,9 @@ const pointer_reg = regs + 0x1C;
 const pointer_seq_reg = regs + 0x20;
 const key_reg = regs + 0x24;
 const key_count_reg = regs + 0x28;
+/// scripts/qemu/esp_rgb_wheel.patch: the wheel's notches since the last
+/// read.
+const wheel_reg = regs + 0x2C;
 const win_size = regs + 0x04;
 const update_from = regs + 0x08;
 const update_to = regs + 0x0C;
@@ -102,4 +105,19 @@ pub fn key() ?Key {
 /// How many keys wait.
 pub fn keysWaiting() u32 {
     return reg(key_count_reg).*;
+}
+
+/// Whether this QEMU gives the wheel: version 0.7 or later.
+pub fn hasWheel() bool {
+    const v = reg(version_reg).*;
+    return (v >> 16) > 0 or (v & 0xFFFF) >= 7;
+}
+
+/// The wheel's notches since the last call, which takes them: `y` down
+/// positive, `x` right positive.
+pub const Wheel = struct { x: i16, y: i16 };
+
+pub fn wheel() Wheel {
+    const v = reg(wheel_reg).*;
+    return .{ .x = @bitCast(@as(u16, @truncate(v >> 16))), .y = @bitCast(@as(u16, @truncate(v))) };
 }

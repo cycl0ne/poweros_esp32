@@ -92,6 +92,11 @@ pub const IECODE_KEY_CODE_MASK: u32 = 0x7F;
 pub const IECODE_LBUTTON: u32 = 0x68;
 pub const IECODE_RBUTTON: u32 = 0x69;
 pub const IECODE_MBUTTON: u32 = 0x6A;
+/// The mouse's wheel turned: an IECLASS_RAWMOUSE event whose `y` is the
+/// notches down (up negative) and `x` the notches right (left negative) -
+/// counts, not a position, so it has no IECLASS_NEWPOINTERPOS after it.
+/// Its qualifiers are the keys held, so Shift with it means across.
+pub const IECODE_WHEEL: u32 = 0x6B;
 /// No button changed: the event is about the position.
 pub const IECODE_NOBUTTON: u32 = 0xFF;
 

@@ -238,6 +238,7 @@ repeats behind it, and every one is replied before the window closes.
 | `IDCMP_RAWKEY` | a key down or up | the raw key |
 | `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | it became, or stopped being, the active window | |
 | `IDCMP_IDCMPUPDATE` | a gadget told the window what changed | see [Telling the window](#telling-the-window) |
+| `IDCMP_MOUSEWHEEL` | the wheel turned over the window and no gadget took it | the notches, read with `wn.wheelDown` and `wn.wheelAcross` |
 
 `IDCMP_MOUSEBUTTONS`, `IDCMP_NEWPREFS` and `IDCMP_INTUITICKS` (ten a
 second while active) are the others. A gadget in `iaddress` is the
@@ -278,6 +279,7 @@ is nothing more. The message's whole `code` goes where `WmHandleInput`'s
 | `WMHI_NEWSIZE` | sized, with `IDCMP_NEWSIZE` | |
 | `WMHI_ACTIVE`, `WMHI_INACTIVE` | active or not, with `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | |
 | `WMHI_IDCMPUPDATE` | a gadget told the window, with `IDCMP_IDCMPUPDATE` | its `ICSPECIAL_CODE` |
+| `WMHI_MOUSEWHEEL` | the wheel, with `IDCMP_MOUSEWHEEL`, where no gadget took it | the notches down, as an `i16`'s bits; `code` has both directions |
 
 `WMHI_NEWPREFS`, `WMHI_DISKINSERTED` and `WMHI_DISKREMOVED` follow
 their classes too.
@@ -556,6 +558,39 @@ first (`WM_CLOSE`), which takes the bar out of it, and the bar disposed
 of after. `SYS:Programs/Notepad` has both bars this way, and
 `SYS:Programs/MultiView` has them round a picture
 ([Showing one](datatypes.md#showing-one)).
+
+### The wheel
+
+A mouse's wheel goes to the window the pointer is over, active or not,
+and in it to the gadget under the pointer, whether another gadget has
+the keyboard or not. intuition sends that gadget `GM_WHEEL`
+(`gc.GpWheel`): the notches `down` (up negative) and `across` (left
+negative), with the pointer in the gadget's own coordinates. A wheel of
+one direction turned with Shift held comes as `across`. A group, and so
+every layout, hands it on to the member under the pointer. A gadget that
+moves something answers non-zero; one that answers 0 - or a point with
+no gadget under it - leaves it to the window, which tells its program
+`IDCMP_MOUSEWHEEL` (a window object: `WMHI_MOUSEWHEEL`) if it asked.
+A window behind a requester takes no wheel.
+
+What a notch does in the classes that take it:
+
+| Class | A notch |
+|---|---|
+| `textedit.gadget` | three rows down the text, an eighth of the field across it when rows do not wrap |
+| `propgclass`, `scroller.gadget` | the knob an eighth of the view along the bar, the target told as at the end of a drag - so a bar in a window's border scrolls what it is joined to |
+| `listview.gadget` | three lines |
+| a data type object | an eighth of what shows, its target told the new tops - so MultiView's bars follow |
+| `integer.gadget` | its `INTEGER_Step`, up for more |
+| `slider.gadget`, `gradientslider.gadget` | about a thirty-second of the range (gradientslider: its skip), the knob going the way the wheel turns |
+| `arc.gadget` with a knob | about a thirty-second of the range, up for more |
+| `roller.gadget` | one choice, down for the next |
+
+A class of its own takes the wheel by answering `GM_WHEEL`;
+`gc.wheelNotches(msg, vertical)` gives a gadget that moves one way the
+notches for that way, or the other way's when its own are 0. It moves
+what it shows, draws it, and tells its target as it would after a key
+or a drag. It never becomes active for it.
 
 ## How a gadget is drawn again
 

@@ -447,6 +447,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             render(base, cl, o.?, @ptrCast(@alignCast(msg)));
             return 0;
         },
+        // About a thirty-second of its range per notch, the knob going the
+        // way the wheel turns, as a key steps it.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = gc.wheelNotches(wh, own.vertical != 0);
+            if (notches == 0) return 0;
+            const range: i64 = @as(i64, own.max) - own.min;
+            const per_notch: i64 = @max(@divTrunc(range, 32), 1);
+            const was = own.level;
+            own.level = @intCast(@max(@as(i64, own.min), @min(@as(i64, own.level) + per_notch * notches, own.max)));
+            if (own.level != was) {
+                putKnob(base, own, wh.gadget_info);
+                support.redraw(ib, o.?, wh.gadget_info);
+                tell(base, own, o.?, wh.gadget_info, 0);
+            }
+            return 1;
+        },
         // The key moves the knob one level on, and back with a Shift key
         // held.
         gc.GM_KEY => {

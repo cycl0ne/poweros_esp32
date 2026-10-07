@@ -21,7 +21,8 @@
 //!     the buttons', and for a mouse that says where it is an
 //!     IECLASS_NEWPOINTERPOS after it with the same button, linked
 //!     (`events.mousePointer`). A mouse that says only how far it went has
-//!     no pointer to give; its events go down the chain on their own;
+//!     no pointer to give, and neither has the wheel (IECODE_WHEEL, whose
+//!     `x` and `y` are notches); those go down the chain on their own;
 //!   - the repeat timer: the held key again with IEQUALIFIER_REPEAT, and the
 //!     period timer started;
 //!   - the tick: an IECLASS_TIMER event, ten times a second;

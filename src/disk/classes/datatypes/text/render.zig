@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The laid-out lines drawn into the box the object was given.
 //!
-//! Only the lines that show are drawn, and only the fragments of them
-//! that reach into the box across. A marked stretch is drawn the other
+//! Only the lines that show whole are drawn, and only the fragments of
+//! them that reach into the box across. A marked stretch is drawn the other
 //! way round - the fill pen behind, its text pen in front - which means
 //! a fragment the mark starts or ends inside is drawn in two or three
 //! pieces. Everything else is one call a fragment.
@@ -61,8 +61,13 @@ pub fn paint(base: *Base, own: *Data, info: *classusr.GadgetInfo, rp: *graphics.
     var n: u32 = 0;
     while (n < own.line_count) : (n += 1) {
         const line = lines[n];
-        if (line.top + line.height <= top) continue;
-        if (line.top - top >= box.height) break;
+        // Up and down a line is drawn whole or not at all: one the box's
+        // top or bottom edge cuts would be drawn past it, over whatever is
+        // there - the window's title, a gadget - since nothing narrows the
+        // drawing that way. A view that starts part of the way into a line
+        // shows ground where its cut-off lines would be.
+        if (line.top < top) continue;
+        if (line.top + line.height - top > box.height) break;
         const y = box.top + line.top - top;
         var f: u32 = 0;
         while (f < line.count) : (f += 1) {

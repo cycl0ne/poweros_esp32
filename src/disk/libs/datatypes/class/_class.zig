@@ -252,6 +252,16 @@ pub fn dataOf(db: *DataTypesBase, o: *Object) ?*Data {
     return @ptrFromInt(storage);
 }
 
+/// Where a view starts after `notches` of the wheel: an eighth of what
+/// shows per notch, kept between the start and the last place that still
+/// fills the view.
+fn wheeled(top: i32, visible: i32, total: i32, notches: i32) i32 {
+    if (notches == 0) return top;
+    const per_notch: i64 = @max(@divTrunc(visible, 8), 1);
+    const last: i64 = @max(@as(i64, total) - visible, 0);
+    return @intCast(@min(@max(@as(i64, top) + per_notch * notches, 0), last));
+}
+
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
     const db: *DataTypesBase = @ptrFromInt(cl.user_data);
@@ -308,6 +318,30 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             if (getAttr(own, get.attr_id, get.storage)) return 1;
             return ib.SendSuperMessage(cl, o, msg);
+        },
+        // The view moved an eighth of what shows per notch, as the bars
+        // beside it would move it: through the object's own update, so a
+        // class above this one sees it and it is drawn, and its target told
+        // the new tops, so the bars follow. An object that has nothing out
+        // of view leaves the wheel to the window.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const sp = &own.special;
+            const scrolls = sp.tot_vert > sp.vis_vert or sp.tot_horiz > sp.vis_horiz;
+            if (!scrolls) return 0;
+            const top_vert = wheeled(sp.top_vert, sp.vis_vert, sp.tot_vert, wh.down);
+            const top_horiz = wheeled(sp.top_horiz, sp.vis_horiz, sp.tot_horiz, wh.across);
+            if (top_vert == sp.top_vert and top_horiz == sp.top_horiz) return 1;
+            const tags = [_]utility.TagItem{
+                .{ .tag = dtc.DTA_TopVert, .data = @bitCast(@as(isize, top_vert)) },
+                .{ .tag = dtc.DTA_TopHoriz, .data = @bitCast(@as(isize, top_horiz)) },
+                .{},
+            };
+            var update = classusr.OpUpdate{ .method_id = classusr.OM_UPDATE, .attr_list = &tags, .gadget_info = wh.gadget_info, .flags = 0 };
+            _ = ib.SendMessage(o.?, @ptrCast(&update));
+            sdk.gadgets.support.notify(ib, o.?, wh.gadget_info, &tags, 0);
+            return 1;
         },
         // What the object would like to be, in pixels: its units are
         // what it counts in.

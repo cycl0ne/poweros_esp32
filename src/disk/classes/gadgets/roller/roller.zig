@@ -323,6 +323,22 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return gc.GMR_MEACTIVE;
         },
         gc.GM_HANDLEINPUT => return handle(base, classes.instData(Data, cl, o.?), o.?, @ptrCast(@alignCast(msg))),
+        // A choice per notch, down for the next, turned to as a key turns
+        // it.
+        gc.GM_WHEEL => {
+            const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            const notches = gc.wheelNotches(wh, true);
+            if (notches == 0 or own.count == 0) return 0;
+            const count: i64 = own.count;
+            var to = @as(i64, own.selected) + notches;
+            to = if (own.wrap != 0) @mod(to, count) else @max(@min(to, count - 1), 0);
+            if (to != own.selected) {
+                turnTo(base, own, o.?, wh.gadget_info, @intCast(to));
+                tell(base, own, o.?, wh.gadget_info, 0);
+            }
+            return 1;
+        },
         // The key turns it a row, back with a Shift key held.
         gc.GM_KEY => {
             const k: *gc.GpKey = @ptrCast(@alignCast(msg));
