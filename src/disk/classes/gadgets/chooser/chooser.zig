@@ -158,7 +158,7 @@ fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*cons
     const line = measure.lineHeight(base.graphics_base);
     measure.done(ib);
     const dri = if (gi) |info| info.draw_info else g.draw_info;
-    const inset = if (own.frame) |frame| support.frameInset(ib, frame, dri) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
+    const inset = if (own.frame) |frame| support.frameInset(ib, frame, dri, g.style) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
     const box = gc.Box{
         .width = widest + 2 * text_margin + mark_width + inset.width,
         .height = line + inset.height,
@@ -183,8 +183,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
     const pressed = own.layer != null;
-    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
-    const inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
+    if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
+    const inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info, gc.gadget(o).style) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
     const inner = gc.Box{
         .left = b.left + inset.left,
         .top = b.top + inset.top,
@@ -423,7 +423,7 @@ fn openPanel(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.Gadget
     for (0..own.count) |i| widest = @max(widest, measure.width(ib, own.labels.?[i].?));
     own.line_height = @max(measure.lineHeight(gb), 1);
     measure.done(ib);
-    own.inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
+    own.inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info, gc.gadget(o).style) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
 
     var screen_width: usize = 0;
     var screen_height: usize = 0;

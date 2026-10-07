@@ -295,14 +295,38 @@ pub fn inside(x: i32, y: i32, width: i32, height: i32) bool {
 }
 
 /// What a frame needs round a box: how far in from the frame's edges the
-/// box sits on each side, as a frame image's `IM_FRAMEBOX` answers it.
-pub fn frameInset(ib: *IntuitionBase, frame: *Object, draw_info: ?*intuition.DrawInfo) gc.Box {
+/// box sits on each side, as a frame image's `IM_FRAMEBOX` answers it, in
+/// the gadget's own style (`GA_Style`, null for the screen's) - the one it
+/// is drawn in, whose borders and padding it has.
+pub fn frameInset(ib: *IntuitionBase, frame: *Object, draw_info: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
     var contents = intuition.imageclass.Box{ .width = 100, .height = 100 };
     var box = intuition.imageclass.Box{};
-    var msg = intuition.imageclass.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = draw_info };
+    var msg = intuition.imageclass.ImpFrameBox{ .contents = &contents, .frame = &box, .draw_info = draw_info, .style = own_style };
     if (ib.SendMessage(frame, @ptrCast(&msg)) == 0) return .{ .left = 2, .top = 2, .width = 4, .height = 4 };
     // `width` and `height` here are what the frame adds in all.
     return .{ .left = -box.left, .top = -box.top, .width = box.width - 100, .height = box.height - 100 };
+}
+
+/// A gadget's own frame drawn round `box`: in the image state `state`, in
+/// the gadget's style, with its hover and focus, and part of the way into
+/// a new state while its style gives the change time (`STYLE_Transition`,
+/// through intuition's `GadgetStyleState`). `part` is the part the frame
+/// is drawn as - `style.PART_MAIN` for a button's, `ic.PART_FIELD` for a
+/// field's.
+pub fn drawGadgetFrame(ib: *IntuitionBase, o: *Object, frame: *Object, rp: *graphics.RastPort, box: gc.Box, state: u32, draw_info: ?*intuition.DrawInfo, part: u32) void {
+    const g = gc.gadget(o);
+    const states = intuition.imageclass.statesOfImage(state) | gc.styleStates(g.flags);
+    var draw = intuition.imageclass.ImpDraw{
+        .method_id = intuition.imageclass.IM_DRAWFRAME,
+        .rast_port = rp,
+        .offset = .{ .x = box.left, .y = box.top },
+        .state = state,
+        .draw_info = draw_info,
+        .dimensions = .{ .width = box.width, .height = box.height },
+        .style = g.style,
+        .style_state = ib.GadgetStyleState(o, draw_info, part, states),
+    };
+    _ = ib.SendMessage(frame, @ptrCast(&draw));
 }
 
 /// A frame image drawn round `box`, in a state.

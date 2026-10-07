@@ -463,12 +463,7 @@ pub fn lookFor(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*
 /// The state bits an image state stands for. `IDS_SELECTED` is pressed:
 /// an image is told it is selected, not why.
 pub fn statesOfImage(ids: u32) u32 {
-    return switch (ids) {
-        ic.IDS_SELECTED, ic.IDS_INACTIVESELECTED => style.STATE_PRESSED,
-        ic.IDS_DISABLED, ic.IDS_INACTIVEDISABLED => style.STATE_DISABLED,
-        ic.IDS_SELECTEDDISABLED => style.STATE_PRESSED | style.STATE_DISABLED,
-        else => style.STATE_NORMAL,
-    };
+    return ic.statesOfImage(ids);
 }
 
 // --- the system's default ---------------------------------------------------

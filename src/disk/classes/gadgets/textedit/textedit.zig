@@ -220,7 +220,7 @@ fn partsOf(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classu
     const down: i32 = if (own.wrap or !own.scrollers) 0 else @min(scroll_size, b.height);
     const frame = gc.Box{ .width = @max(b.width - across, 0), .height = @max(b.height - down, 0) };
     const dri = if (gi) |info| info.draw_info else g.draw_info;
-    const inset = support.frameInset(base.intuition_base, own.frame.?, dri);
+    const inset = support.frameInset(base.intuition_base, own.frame.?, dri, gc.gadget(o).style);
     const area = gc.Box{
         .left = inset.left + text_margin,
         .top = inset.top + 1,
@@ -430,7 +430,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         .draw_info = info.draw_info,
         .dimensions = .{ .width = parts.frame.width, .height = parts.frame.height },
         .style = g.style,
-        .style_state = gc.styleStates(g.flags) & ~sdk.intuition.style.STATE_FOCUSED,
+        .style_state = ib.GadgetStyleState(o, info.draw_info, ic.PART_FIELD, gc.styleStates(g.flags) & ~sdk.intuition.style.STATE_FOCUSED),
     };
     _ = ib.SendMessage(own.frame.?, @ptrCast(&frame_draw));
     const ground = support.background(ib, info.draw_info, g.style, ic.PART_FIELD);

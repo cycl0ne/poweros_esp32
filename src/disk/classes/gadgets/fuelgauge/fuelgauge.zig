@@ -218,14 +218,14 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
 }
 
 /// What the frame takes round the bar.
-fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo) gc.Box {
+fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
     const frame = own.frame orelse return .{};
-    return support.frameInset(base.intuition_base, frame, dri);
+    return support.frameInset(base.intuition_base, frame, dri, own_style);
 }
 
 /// The bar itself: the box in from the frame.
-fn barOf(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.DrawInfo) gc.Box {
-    const room = frameRoom(base, own, dri);
+fn barOf(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
+    const room = frameRoom(base, own, dri, own_style);
     return .{
         .left = b.left + room.left,
         .top = b.top + room.top,
@@ -293,12 +293,12 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const b = gc.boxFor(gc.gadget(o), info);
     const styled = support.pensFor(ib, info.draw_info, gc.gadget(o).style, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_INDICATOR);
     const pens: [*]const graphics.Pen = &styled;
-    const bar = barOf(base, own, b, info.draw_info);
+    const bar = barOf(base, own, b, info.draw_info, gc.gadget(o).style);
     const room = if (own.vertical != 0) bar.height else bar.width;
     const filled = filledIn(own, room);
     // The frame first: a frameiclass frame fills what it stands round, so
     // a bar drawn before it would be painted over.
-    if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
     if (own.vertical != 0) {
         support.fill(gb, rp, .{ .left = bar.left, .top = bar.top, .width = bar.width, .height = bar.height - filled }, pens[sc.BACKGROUNDPEN]);
         support.fill(gb, rp, .{ .left = bar.left, .top = bar.top + bar.height - filled, .width = bar.width, .height = filled }, pens[sc.FILLPEN]);
@@ -317,7 +317,7 @@ fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*cons
     const measure = support.Measure.of(ib, g, gi);
     const line = measure.lineHeight(base.graphics_base);
     measure.done(ib);
-    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
+    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
     const thickness = line + (if (own.vertical != 0) room.width else room.height);
     const ends = if (own.vertical != 0) room.height else room.width;
     const along: i32 = switch (which) {

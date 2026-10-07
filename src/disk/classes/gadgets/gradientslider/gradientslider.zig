@@ -222,7 +222,7 @@ fn draw(base: *gadgets.Base, own: *Data, o: *Object, rp: *graphics.RastPort, inf
 
     const coloured = own.pen_count > 0;
     if (whole) {
-        if (own.frame) |frame| support.drawFrame(base.intuition_base, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+        if (own.frame) |frame| support.drawGadgetFrame(base.intuition_base, o, frame, rp, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
         frameLines(gb, rp, at(b, layout.container), pens[sc.BACKGROUNDPEN]);
     }
     // What of the container the knob leaves, before it and after it.

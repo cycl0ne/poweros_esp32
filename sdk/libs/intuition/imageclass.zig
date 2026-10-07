@@ -201,6 +201,19 @@ pub const IDS_INACTIVESELECTED: u32 = 6;
 pub const IDS_INACTIVEDISABLED: u32 = 7;
 pub const IDS_SELECTEDDISABLED: u32 = 8;
 
+/// The style states (`style.STATE_`) an image state stands for: selected
+/// is pressed, disabled is disabled, and the rest are normal. What a class
+/// adds its gadget's hover and focus to (`gadgetclass.styleStates`) before
+/// it asks `GadgetStyleState`.
+pub fn statesOfImage(ids: u32) u32 {
+    return switch (ids) {
+        IDS_SELECTED, IDS_INACTIVESELECTED => style.STATE_PRESSED,
+        IDS_DISABLED, IDS_INACTIVEDISABLED => style.STATE_DISABLED,
+        IDS_SELECTEDDISABLED => style.STATE_PRESSED | style.STATE_DISABLED,
+        else => style.STATE_NORMAL,
+    };
+}
+
 /// A screen's pens and font, for images that draw in them
 /// (`screens.zig`).
 pub const DrawInfo = @import("screens.zig").DrawInfo;

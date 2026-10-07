@@ -222,16 +222,16 @@ const text_margin = 3;
 
 /// What the frame takes round the text, the text's margin included; none
 /// without a frame.
-fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo) gc.Box {
+fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
     const frame = if (own.border != 0) own.frame else null;
     const f = frame orelse return .{};
-    const inset = support.frameInset(base.intuition_base, f, dri);
+    const inset = support.frameInset(base.intuition_base, f, dri, own_style);
     return .{ .left = inset.left + text_margin, .top = inset.top, .width = inset.width + 2 * text_margin, .height = inset.height };
 }
 
 /// Where the text goes in the box: in from the frame, when it has one.
-fn inside(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.DrawInfo) gc.Box {
-    const room = frameRoom(base, own, dri);
+fn inside(base: *gadgets.Base, own: *const Data, b: gc.Box, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
+    const room = frameRoom(base, own, dri, own_style);
     return .{ .left = b.left + room.left, .top = b.top + room.top, .width = b.width - room.width, .height = b.height - room.height };
 }
 
@@ -267,7 +267,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         gb.SetRPAttrs(rp, &put_font);
     };
 
-    const area = inside(base, own, b, info.draw_info);
+    const area = inside(base, own, b, info.draw_info, gc.gadget(o).style);
     // The ground, and whatever the last text left past the box: its own
     // back pen, a framed box's background, or else the window's ground as
     // the window paints it - a text on its own is written on the window.
@@ -281,7 +281,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         if (own.overrun > 0) support.fill(gb, rp, past, back);
     }
     own.overrun = 0;
-    if (own.border != 0) if (own.frame) |frame| support.drawFrame(ib, frame, rp, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    if (own.border != 0) if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
 
     if (own.runs) |runs| {
         drawRuns(base, own, rp, runs, area, front);
@@ -390,7 +390,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
     defer measure.done(ib);
     var box = gc.Box{ .width = if (shown(base, own)) |text| measure.width(ib, text) else 0, .height = measure.lineHeight(base.graphics_base) };
     if (own.runs) |runs| {
-        const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
+        const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
         const measured = measureRuns(base, own, runs, own.font orelse measure.font, if (own.wrap != 0) g.given_width - room.width else 0x7FFF);
         const lines = gc.Box{ .width = measured.width + room.width, .height = @max(measured.height, 1) + room.height };
         return switch (which) {
@@ -405,7 +405,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
         box.height = font.image.height;
         if (shown(base, own)) |text| box.width = @intCast(textLen(text) * font.image.x_size);
     }
-    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
+    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
     box.width += room.width;
     box.height += room.height;
     return switch (which) {

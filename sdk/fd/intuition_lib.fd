@@ -402,4 +402,8 @@ void MoveScreen(*intuition.Screen screen, i32 dx, i32 dy)
 /// The screen put where the tags say on its display (SPOS_Top, SPOS_Left,
 /// SPOS_Relative, SPOS_ForceDrag), as far as it may go.
 void ScreenPositionTagList(*intuition.Screen screen, ?[*]const utility.TagItem tags)
+/// The style state to draw a gadget's part in now: `state`, or part of the
+/// way into it from the one before while its style gives the change time
+/// (STYLE_Transition) - a mixed state, the gadget drawn again as it goes.
+u32 GadgetStyleState(*intuition.Object gadget, ?*const intuition.DrawInfo draw_info, u32 part, u32 state)
 ##end

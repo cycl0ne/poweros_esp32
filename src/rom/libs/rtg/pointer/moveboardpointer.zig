@@ -35,7 +35,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// CONTEXT:
 /// - Waits: for the pointer's lock while another task changes the pointer,
 ///   and on a board that sends the rows the pointer left over a bus, for
-///   that. Made for an input handler, on every pointer event.
+///   that. Made to be called on every pointer event - from a task, never
+///   from an input handler, which may not wait.
 /// - Interrupts: no. A driver may send the rows the pointer left over a
 ///   bus.
 /// - Locks: takes rtg's pointer lock, a semaphore, for the moment it takes the

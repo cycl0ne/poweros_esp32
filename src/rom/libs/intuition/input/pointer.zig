@@ -11,12 +11,14 @@
 //! only when that changes. The board lays it over the picture on its way
 //! to the glass, so nothing that draws ever has to know about it.
 //!
-//! It moves in intuition's input handler, on input.device's task, as each
-//! event arrives: `MoveBoardPointer` waits only for rtg's pointer
-//! semaphore and, on a bus board, its send, and following it there
-//! rather than on intuition's own task keeps it moving while that task is
-//! busy dragging a window. The task sees the same event after and moves it
-//! to the same place, which the board takes as no move.
+//! It moves on a task of its own, "intuition pointer", which the input
+//! handler hands each position to as the event arrives: the handler
+//! stores it and signals, and the task makes the move. `MoveBoardPointer`
+//! may wait - for rtg's pointer semaphore, and on a bus board for the
+//! send - which an input handler may not; and a task of its own keeps the
+//! pointer moving while intuition's task is busy dragging a window.
+//! Intuition's task sees the same event after and moves it to the same
+//! place, which the board takes as no move.
 //!
 //! It is seen only once a mouse has been: until the handler finds an event
 //! from mouse.device (IECLASS_RAWMOUSE) in front of a pointer position, the
@@ -43,6 +45,7 @@
 //! `mouseSeen`, which the handler calls.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const rtg = sdk.rtg;
 const intuition = sdk.intuition;
 const Object = intuition.Object;
@@ -70,6 +73,26 @@ pub const State = extern struct {
     frame: u8 = 0,
     pad: u8 = 0,
 };
+
+/// The pointer's task, in intuition's base beside `State` - which starts
+/// afresh when the front screen's board changes, while the task runs on:
+/// the task, the signal the handler wakes it with (0 while there is
+/// none), and the newest position for it, under `place_lock`.
+pub const Mover = extern struct {
+    task: exec.Task = .{},
+    mask: u32 = 0,
+    place_x: i32 = 0,
+    place_y: i32 = 0,
+    place_lock: exec.Lock = .{},
+    /// Who started the task, told once it has its signal.
+    starter: ?*exec.Task = null,
+    start_signal: i32 = 0,
+};
+
+/// Above input.device's task and intuition's, so the pointer is where the
+/// newest event says before either goes on.
+const task_pri = 21;
+const task_stack = 8192;
 
 /// How many ticks `WA_PointerDelay` waits.
 pub const delay_ticks = 3;
@@ -352,12 +375,68 @@ pub fn followed(ib: *IntuitionBase) void {
     }
 }
 
-/// In the input handler: the pointer to where the event says. Never
-/// waits, takes no lock.
+/// In the input handler: the pointer to where the event says, handed to
+/// the pointer's task - the position stored under its spinlock and the
+/// task signalled. Never waits.
 pub fn moved(ib: *IntuitionBase, x: i32, y: i32) void {
-    const board = @as(*volatile ?*rtg.RtgBoard, &ib.pointer.board).* orelse return;
-    const rb = ib.rtg_base orelse return;
-    rb.MoveBoardPointer(board, x, y);
+    const st = &ib.pointer_mover;
+    if (st.mask == 0) return;
+    const sys = ib.sys_base;
+    sys.AcquireLock(&st.place_lock);
+    st.place_x = x;
+    st.place_y = y;
+    sys.ReleaseLock(&st.place_lock);
+    sys.Signal(&st.task, st.mask);
+}
+
+/// The pointer's task: the newest position the handler stored, put on the
+/// board each time it is woken. Moves that came while it was moving are
+/// one move, to the last of them.
+fn pointerTask(sys: *exec.ExecBase) callconv(.c) void {
+    const st: *Mover = @alignCast(@fieldParentPtr("task", sys.FindTask(null).?));
+    const ib: *IntuitionBase = @alignCast(@fieldParentPtr("pointer_mover", st));
+    const signal = sys.AllocSignal(-1);
+    if (signal >= 0) st.mask = @as(u32, 1) << @intCast(signal);
+    if (st.starter) |starter| {
+        st.starter = null;
+        sys.Signal(starter, @as(u32, 1) << @intCast(st.start_signal));
+    }
+    if (signal < 0) return;
+    while (true) {
+        _ = sys.Wait(st.mask);
+        sys.AcquireLock(&st.place_lock);
+        const x = st.place_x;
+        const y = st.place_y;
+        sys.ReleaseLock(&st.place_lock);
+        const board = @as(*volatile ?*rtg.RtgBoard, &ib.pointer.board).* orelse continue;
+        const rb = ib.rtg_base orelse continue;
+        rb.MoveBoardPointer(board, x, y);
+    }
+}
+
+/// The pointer's task started, before the input handler that feeds it is
+/// added. Without it - no memory, no signal - the handler leaves the
+/// pointer to intuition's task, which moves it on every event as well.
+pub fn start(ib: *IntuitionBase) void {
+    const st = &ib.pointer_mover;
+    const sys = ib.sys_base;
+    sys.InitLock(&st.place_lock, "intuition pointer", exec.LOCKORDER_DRIVER, 0);
+    const stack = sys.AllocMem(task_stack, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
+    const signal = sys.AllocSignal(-1);
+    if (signal < 0) {
+        sys.FreeMem(stack, task_stack);
+        return;
+    }
+    defer sys.FreeSignal(signal);
+    st.task = .{
+        .node = .{ .type = .task, .pri = task_pri, .name = "intuition pointer" },
+        .sp_lower = @intFromPtr(stack),
+        .sp_upper = @intFromPtr(stack) + task_stack,
+    };
+    st.starter = sys.FindTask(null);
+    st.start_signal = signal;
+    _ = sys.AddTask(&st.task, &pointerTask, null);
+    _ = sys.Wait(@as(u32, 1) << @intCast(signal));
 }
 
 /// In the input handler: an event came from a mouse. The task shows the

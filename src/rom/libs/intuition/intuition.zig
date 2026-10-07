@@ -78,6 +78,7 @@ test {
     _ = @import("intuition_base.zig");
     _ = @import("intuition_init.zig");
     _ = @import("intuition_lvo.zig");
+    _ = @import("style/gadgetstylestate.zig");
     _ = @import("boopsi/_boopsi.zig");
     _ = @import("boopsi/addclass.zig");
     _ = @import("boopsi/coercemessage.zig");
@@ -6278,6 +6279,8 @@ test "styles: without motion.library a gadget whose style takes time changes at 
     try testing.expectEqual(style.STATE_NORMAL, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_NORMAL));
     try testing.expectEqual(style.STATE_PRESSED, _transition.state(ib, button, null, style.PART_MAIN, style.STATE_PRESSED));
     try testing.expectEqual(style.STATE_PRESSED, _transition.shown(gc.gadget(button), style.STATE_PRESSED));
+    // A class of a program's own asks the same through the jump table.
+    try testing.expectEqual(style.STATE_NORMAL, it.GadgetStyleState(button, null, style.PART_MAIN, style.STATE_NORMAL));
     it.DisposeObject(button);
     try tearDown(ib);
 }

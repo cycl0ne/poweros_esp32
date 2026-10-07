@@ -279,7 +279,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const b = gc.boxFor(gc.gadget(o), info);
     const parts = partsOf(base, own, o, info);
     const frame = gc.Box{ .left = b.left + parts.frame.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height };
-    support.drawFrame(ib, own.frame.?, r.rast_port, frame, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    support.drawGadgetFrame(ib, o, own.frame.?, r.rast_port, frame, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
     _ = placeInner(base, own, o, info);
     support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));

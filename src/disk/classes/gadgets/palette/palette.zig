@@ -111,8 +111,8 @@ fn colours(own: *const Data, dri: ?*const intuition.DrawInfo) struct { pens: ?[*
 }
 
 /// The room the boxes share, relative to the gadget's box.
-fn room(base: *gadgets.Base, own: *const Data, size: gc.Box, dri: ?*intuition.DrawInfo) gc.Box {
-    const inset = support.frameInset(base.intuition_base, own.frame.?, dri);
+fn room(base: *gadgets.Base, own: *const Data, size: gc.Box, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
+    const inset = support.frameInset(base.intuition_base, own.frame.?, dri, own_style);
     return .{ .left = inset.left, .top = inset.top, .width = size.width - inset.width, .height = size.height - inset.height };
 }
 
@@ -151,10 +151,10 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const saved = support.Saved.of(gb, r.rast_port);
     defer saved.restore(gb, r.rast_port);
     const b = gc.boxFor(gc.gadget(o), info);
-    support.drawFrame(base.intuition_base, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    support.drawGadgetFrame(base.intuition_base, o, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
     const have = colours(own, info.draw_info);
     const pens = have.pens orelse return;
-    const inside = room(base, own, .{ .width = b.width, .height = b.height }, info.draw_info);
+    const inside = room(base, own, .{ .width = b.width, .height = b.height }, info.draw_info, gc.gadget(o).style);
     const area = gc.Box{ .left = b.left + inside.left, .top = b.top + inside.top, .width = inside.width, .height = inside.height };
     const ground = support.background(base.intuition_base, info.draw_info, gc.gadget(o).style, intuition.style.PART_MAIN);
     support.fill(gb, r.rast_port, area, ground);
@@ -174,7 +174,7 @@ fn pick(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, 
     const have = colours(own, info.draw_info);
     const pens = have.pens orelse return;
     const b = gc.boxFor(gc.gadget(o), info);
-    const inside = room(base, own, .{ .width = b.width, .height = b.height }, info.draw_info);
+    const inside = room(base, own, .{ .width = b.width, .height = b.height }, info.draw_info, gc.gadget(o).style);
     const area = gc.Box{ .left = b.left + inside.left, .top = b.top + inside.top, .width = inside.width, .height = inside.height };
     const grid = gridFor(have.count, area.width, area.height) orelse return;
     const rp = ib.ObtainGIRPort(gi) orelse return;
@@ -191,7 +191,7 @@ fn boxUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Ga
     const b = gc.boxFor(gc.gadget(o), gi);
     const dri: ?*intuition.DrawInfo = if (gi) |info| info.draw_info else null;
     const have = colours(own, dri);
-    const area = room(base, own, .{ .width = b.width, .height = b.height }, dri);
+    const area = room(base, own, .{ .width = b.width, .height = b.height }, dri, gc.gadget(o).style);
     const grid = gridFor(have.count, area.width, area.height) orelse return null;
     return boxAt(grid, area, x, y);
 }
@@ -231,7 +231,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem) bool {
 
 /// The size a grid of `count` boxes of `cell` needs, laid out nearest to
 /// square, in its frame.
-fn sizeFor(base: *gadgets.Base, own: *const Data, count: u32, cell_w: i32, cell_h: i32, dri: ?*intuition.DrawInfo) gc.Box {
+fn sizeFor(base: *gadgets.Base, own: *const Data, count: u32, cell_w: i32, cell_h: i32, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
     var columns: u32 = count;
     var d: u32 = 1;
     while (d <= count) : (d += 1) {
@@ -241,7 +241,7 @@ fn sizeFor(base: *gadgets.Base, own: *const Data, count: u32, cell_w: i32, cell_
         }
     }
     const rows = if (columns > 0) count / columns else 1;
-    const inset = support.frameInset(base.intuition_base, own.frame.?, dri);
+    const inset = support.frameInset(base.intuition_base, own.frame.?, dri, own_style);
     return .{
         .width = @as(i32, @intCast(columns)) * cell_w + inset.width,
         .height = @as(i32, @intCast(@max(rows, 1))) * cell_h + inset.height,
@@ -252,11 +252,11 @@ fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*cons
     const dri: ?*intuition.DrawInfo = if (gi) |info| info.draw_info else g.draw_info;
     const count = @max(colours(own, dri).count, 1);
     return switch (which) {
-        gc.GDOMAIN_MINIMUM => sizeFor(base, own, count, least_width + gap_x, least_height + gap_y, dri),
+        gc.GDOMAIN_MINIMUM => sizeFor(base, own, count, least_width + gap_x, least_height + gap_y, dri, g.style),
         gc.GDOMAIN_NOMINAL => if (own.sized != 0)
             .{ .width = g.given_width, .height = g.given_height }
         else
-            sizeFor(base, own, count, nominal_cell, nominal_cell, dri),
+            sizeFor(base, own, count, nominal_cell, nominal_cell, dri, g.style),
         else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = gc.GDOMAIN_UNLIMITED },
     };
 }

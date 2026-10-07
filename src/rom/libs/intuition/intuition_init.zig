@@ -84,9 +84,10 @@ pub const LIBRARY_VERSION = 0;
 /// MoveScreen, ScreenPositionTagList, SA_Top, SA_Draggable, SA_Exclusive -
 /// and screens dragged by their bar. 30: an IntuiText is a tag list of
 /// IT_ tags - PrintIText, IntuiTextLength, itexticlass, GA_IntuiText,
-/// menu items, SYSREQ_ - with a style for each run (IT_Style).
-pub const LIBRARY_REVISION = 30;
-const BUILD_DATE = "04.10.2026";
+/// menu items, SYSREQ_ - with a style for each run (IT_Style). 31:
+/// GadgetStyleState, a gadget's transition for a class of its own.
+pub const LIBRARY_REVISION = 31;
+const BUILD_DATE = "07.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -181,6 +182,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.active_window = null;
     ib.input = .{};
     ib.pointer = .{};
+    ib.pointer_mover = .{};
     @import("input/menus.zig").init(ib);
     @import("input/verify.zig").init(ib);
     // A second and a half, until there is a preference that says otherwise.

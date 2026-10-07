@@ -148,6 +148,7 @@ pub const LVO = struct {
     pub const SetScreenPens = libraries.lvo(123);
     pub const MoveScreen = libraries.lvo(124);
     pub const ScreenPositionTagList = libraries.lvo(125);
+    pub const GadgetStyleState = libraries.lvo(126);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -275,6 +276,7 @@ pub const Fn = struct {
     pub const SetScreenPens = *const fn (*IntuitionBase, ?*intuition.Screen, ?[*]const graphics.Pen) callconv(.c) void;
     pub const MoveScreen = *const fn (*IntuitionBase, *intuition.Screen, i32, i32) callconv(.c) void;
     pub const ScreenPositionTagList = *const fn (*IntuitionBase, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) void;
+    pub const GadgetStyleState = *const fn (*IntuitionBase, *intuition.Object, ?*const intuition.DrawInfo, u32, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1029,5 +1031,12 @@ pub const IntuitionBase = opaque {
     /// SPOS_Relative, SPOS_ForceDrag), as far as it may go.
     pub fn ScreenPositionTagList(self: *IntuitionBase, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) void {
         return libraries.call(self, LVO.ScreenPositionTagList, Fn.ScreenPositionTagList, .{ screen, tags });
+    }
+
+    /// The style state to draw a gadget's part in now: `state`, or part of the
+    /// way into it from the one before while its style gives the change time
+    /// (STYLE_Transition) - a mixed state, the gadget drawn again as it goes.
+    pub fn GadgetStyleState(self: *IntuitionBase, gadget: *intuition.Object, draw_info: ?*const intuition.DrawInfo, part: u32, state: u32) u32 {
+        return libraries.call(self, LVO.GadgetStyleState, Fn.GadgetStyleState, .{ gadget, draw_info, part, state });
     }
 };

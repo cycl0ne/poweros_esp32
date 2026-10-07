@@ -257,7 +257,7 @@ fn partsFor(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*co
     const sw: i32 = @intCast(own.scroll_width);
     const frame = gc.Box{ .width = @max(size.width - sw, 0), .height = size.height };
     const dri = if (gi) |info| info.draw_info else g.draw_info;
-    const inset = support.frameInset(base.intuition_base, own.frame.?, dri);
+    const inset = support.frameInset(base.intuition_base, own.frame.?, dri, g.style);
     // Lines that reach the frame's sides keep clear of its round corners:
     // a line at the very top or bottom would cut across them.
     const corner: i32 = if (dri) |d| corner: {
@@ -416,7 +416,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     defer saved.restore(gb, r.rast_port);
     const b = gc.boxFor(gc.gadget(o), info);
     const parts = partsOf(base, own, o, info);
-    support.drawFrame(ib, own.frame.?, r.rast_port, .{ .left = b.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height }, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    support.drawGadgetFrame(ib, o, own.frame.?, r.rast_port, .{ .left = b.left, .top = b.top, .width = parts.frame.width, .height = parts.frame.height }, ic.IDS_NORMAL, info.draw_info, ic.PART_FIELD);
     drawLines(base, own, o, r.rast_port, info, own.top, own.top + parts.visible);
     // The count in the scroller follows the size the list is drawn at.
     putScroller(base, own, o, null);
@@ -720,7 +720,7 @@ fn topShowing(own: *const Data, line: u32, visible: u32) u32 {
 
 fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, which: u32) gc.Box {
     const h = lineHeight(base, own, g, gi);
-    const inset = support.frameInset(base.intuition_base, own.frame.?, if (gi) |info| info.draw_info else g.draw_info);
+    const inset = support.frameInset(base.intuition_base, own.frame.?, if (gi) |info| info.draw_info else g.draw_info, g.style);
     const sw: i32 = @intCast(own.scroll_width);
     const across = inset.width + 2 * text_margin + sw;
     return switch (which) {

@@ -276,8 +276,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     // it.
     var inside = gc.Box{ .width = b.width, .height = b.height };
     if (own.frame) |frame| {
-        support.drawFrame(base.intuition_base, frame, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
-        const inset = support.frameInset(base.intuition_base, frame, info.draw_info);
+        support.drawGadgetFrame(base.intuition_base, o, frame, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
+        const inset = support.frameInset(base.intuition_base, frame, info.draw_info, gc.gadget(o).style);
         inside = .{ .left = inset.left, .top = inset.top, .width = b.width - inset.width, .height = b.height - inset.height };
     }
     putPicture(base, r.rast_port, picture, b, inside);

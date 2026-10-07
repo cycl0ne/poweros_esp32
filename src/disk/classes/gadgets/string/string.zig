@@ -101,8 +101,8 @@ fn numberKey(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
 }
 
 /// Where the line sits in the gadget's box: in from the ridge.
-fn innerAt(base: *gadgets.Base, own: *const Data, size: gc.Box, gi: ?*const classusr.GadgetInfo) gc.Box {
-    const inset = support.frameInset(base.intuition_base, own.frame.?, if (gi) |info| info.draw_info else null);
+fn innerAt(base: *gadgets.Base, own: *const Data, size: gc.Box, gi: ?*const classusr.GadgetInfo, own_style: ?*const intuition.Style) gc.Box {
+    const inset = support.frameInset(base.intuition_base, own.frame.?, if (gi) |info| info.draw_info else null, own_style);
     return .{ .left = inset.left, .top = inset.top, .width = size.width - inset.width, .height = size.height - inset.height };
 }
 
@@ -110,7 +110,7 @@ fn innerAt(base: *gadgets.Base, own: *const Data, size: gc.Box, gi: ?*const clas
 /// place there, relative to the box.
 fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) gc.Box {
     const b = gc.boxFor(gc.gadget(o), gi);
-    const at = innerAt(base, own, .{ .width = b.width, .height = b.height }, gi);
+    const at = innerAt(base, own, .{ .width = b.width, .height = b.height }, gi, gc.gadget(o).style);
     support.place(base.intuition_base, own.inner.?, .{ .left = b.left + at.left, .top = b.top + at.top, .width = at.width, .height = at.height });
     return at;
 }
@@ -120,7 +120,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const ib = base.intuition_base;
     const own = classes.instData(Data, cl, o);
     const b = gc.boxFor(gc.gadget(o), info);
-    support.drawFrame(ib, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
+    support.drawGadgetFrame(ib, o, own.frame.?, r.rast_port, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_GROUP);
     _ = placeInner(base, own, o, info);
     support.passMarks(o, own.inner.?);
     _ = ib.SendMessage(own.inner.?, @ptrCast(r));
@@ -229,7 +229,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             var inner_ask = gc.GpDomain{ .gadget_info = ask.gadget_info, .which = ask.which };
             _ = ib.SendMessage(own.inner.?, @ptrCast(&inner_ask));
-            const inset = support.frameInset(ib, own.frame.?, if (ask.gadget_info) |info| info.draw_info else null);
+            const inset = support.frameInset(ib, own.frame.?, if (ask.gadget_info) |info| info.draw_info else null, gc.gadget(o.?).style);
             const g = gc.gadget(o.?);
             var width = if (inner_ask.domain.width >= gc.GDOMAIN_UNLIMITED) gc.GDOMAIN_UNLIMITED else inner_ask.domain.width + inset.width;
             if (ask.which == gc.GDOMAIN_NOMINAL) width = @max(width, g.given_width);

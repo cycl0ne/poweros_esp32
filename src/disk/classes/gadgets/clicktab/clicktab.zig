@@ -201,9 +201,9 @@ fn wholeRow(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*co
 }
 
 /// What the frame takes round a tab's label.
-fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo) gc.Box {
+fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo, own_style: ?*const intuition.Style) gc.Box {
     const frame = own.frame orelse return .{ .left = 2, .top = 2, .width = 4, .height = 4 };
-    return support.frameInset(base.intuition_base, frame, dri);
+    return support.frameInset(base.intuition_base, frame, dri, own_style);
 }
 
 /// How wide each arrow is, and whether the row has any: it has them when
@@ -211,7 +211,7 @@ fn frameRoom(base: *gadgets.Base, own: *const Data, dri: ?*intuition.DrawInfo) g
 fn arrowsFor(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, width: i32) i32 {
     const whole = wholeRow(base, own, g, gi);
     if (whole.width <= width) return 0;
-    return whole.line + frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info).width;
+    return whole.line + frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style).width;
 }
 
 /// What the pointer is over: a tab, an arrow, or nothing.
@@ -362,7 +362,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
 /// the font with the lift above it.
 fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, which: u32) gc.Box {
     const whole = wholeRow(base, own, g, gi);
-    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info);
+    const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
     const height = whole.line + room.height + tab_lift;
     // The least it can be: one tab and the two arrows that reach the
     // rest.

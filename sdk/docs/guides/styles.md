@@ -365,6 +365,22 @@ A gadget made of a gadget of its own - a string field inside a frame -
 hands the marks on before the inner one draws: `support.passMarks(o,
 inner)`.
 
+**A change that takes time.** Where the style gives a state a
+`STYLE_Transition`, a gadget fades into it: `GadgetStyleState(gadget,
+dri, part, states)` answers the state to draw in - the states given, or
+part of the way into them while the change runs, the gadget drawn again
+at each step. A class asks it once per drawing, for the states the gadget
+is in as a whole, and hands the answer to its frame or to `DrawPart`.
+The disk's classes draw their own frame so, with
+`support.drawGadgetFrame(ib, o, frame, rp, box, ids, dri, part)`, and
+measure it with `support.frameInset` in the gadget's own style, the one
+it is drawn in.
+
+```zig
+const states = ic.statesOfImage(ids) | gc.styleStates(g.flags);
+draw.style_state = ib.GadgetStyleState(o, dri, style.PART_MAIN, states);
+```
+
 A hovered gadget is drawn again as the pointer comes and goes only when
 a style it is drawn from names the hovered state at all; under the
 default nothing is drawn for it. It is drawn with `GREDRAW_STATE`: a

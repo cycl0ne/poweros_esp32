@@ -179,7 +179,8 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
                 pointer.mouseSeen(ib);
                 continue;
             },
-            // The pointer follows here, while the task may be busy.
+            // The pointer follows at once, on its own task, while
+            // intuition's may be busy.
             ie.IECLASS_NEWPOINTERPOS => pointer.moved(ib, ev.x, ev.y),
             ie.IECLASS_RAWKEY, ie.IECLASS_TIMER => {},
             else => continue,
@@ -305,6 +306,8 @@ pub fn start(ib: *IntuitionBase) void {
     _ = sys.AddTask(&st.task, &inputTask, null);
     _ = sys.Wait(@as(u32, 1) << @intCast(signal));
     if (st.mask == 0) return;
+    // The pointer's own task, which the handler hands each move to.
+    pointer.start(ib);
 
     st.handler = .{
         .node = .{ .type = .interrupt, .pri = handler_pri, .name = "intuition.library" },

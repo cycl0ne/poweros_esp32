@@ -145,6 +145,7 @@ const QueueGadgetRefresh = @import("gadget/queuegadgetrefresh.zig").QueueGadgetR
 const SetScreenPens = @import("screen/setscreenpens.zig").SetScreenPens;
 const MoveScreen = @import("screen/movescreen.zig").MoveScreen;
 const ScreenPositionTagList = @import("screen/screenpositiontaglist.zig").ScreenPositionTagList;
+const GadgetStyleState = @import("style/gadgetstylestate.zig").GadgetStyleState;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -267,6 +268,7 @@ const contract_files = [_][]const u8{
     @embedFile("screen/setscreenpens.zig"),
     @embedFile("screen/movescreen.zig"),
     @embedFile("screen/screenpositiontaglist.zig"),
+    @embedFile("style/gadgetstylestate.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -635,6 +637,9 @@ fn lvoMoveScreen(ib: *IntuitionBase, screen: *intuition.Screen, dx: i32, dy: i32
 fn lvoScreenPositionTagList(ib: *IntuitionBase, screen: *intuition.Screen, tags: ?[*]const utility.TagItem) callconv(.c) void {
     ScreenPositionTagList(ib, @ptrCast(@alignCast(screen)), tags);
 }
+fn lvoGadgetStyleState(ib: *IntuitionBase, gadget: *Object, draw_info: ?*const intuition.DrawInfo, part: u32, state: u32) callconv(.c) u32 {
+    return GadgetStyleState(ib, gadget, draw_info, part, state);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -764,6 +769,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetScreenPens),
     vec(lvoMoveScreen),
     vec(lvoScreenPositionTagList),
+    vec(lvoGadgetStyleState),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

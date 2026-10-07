@@ -117,6 +117,8 @@ pub const IntuitionBase = extern struct {
     input: _input.State,
     /// The mouse pointer: the picture its board has, and whether it shows.
     pointer: @import("input/pointer.zig").State,
+    /// The task that moves it, which the input handler hands each move.
+    pointer_mover: @import("input/pointer.zig").Mover,
     /// The menu session: what it is waiting for, and what it shows.
     menu: _menus.State,
     /// The verify out to a window, and where its reply comes back.
