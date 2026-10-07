@@ -12,11 +12,16 @@ Espressif's QEMU. The ESP32-P4 is next.
 
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
+<p>
+<a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence, line numbers on"></a>
+<a href="docs/screenshots/README.md#cpu-load-sysprogramscpuload"><img src="docs/screenshots/cpuload.png" width="49%" alt="CPULoad: both cores, after a burst of C:test/Anim"></a>
+</p>
+
 ## Contents
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | the shell, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, QEMU, flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |

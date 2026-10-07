@@ -56,6 +56,28 @@ The machine comes up in a shell window. `Info` lists the mounted disks -
 the flash disk `DH0:` named `System`, and `RAM:` - and `Avail` the memory:
 internal SRAM and the 8 MiB of PSRAM. The blue block is the cursor.
 
+## Notepad: `SYS:Programs/Notepad`
+
+![Notepad with S:Startup-Sequence](notepad.png)
+
+`Notepad S:Startup-Sequence`: the boot script in a window that is all
+textedit.gadget, with line numbers - the cursor's line in black - and the
+scroll bars in the window's border. The menus open and save, undo, cut
+and paste, find and replace; View turns word wrap and the line numbers
+on and off. The mouse wheel scrolls it, a double press selects a word and
+a third the whole line, and Return keeps a line's indentation.
+
+## CPU load: `SYS:Programs/CPULoad`
+
+![CPULoad after a burst of C:test/Anim](cpuload.png)
+
+How busy each core is, from exec's own count of the time each one spends
+in tasks, idle and in interrupts: a bar per core for the last second, and
+a chart of the last two minutes. The rise in the middle is
+`Run C:test/Anim 250 WINDOW` - 250 frames in ten seconds, its window gone
+again when it ended - over the system's load at rest. QEMU runs both
+cores, so both are drawn.
+
 ## Fonts: `C:test/Fonts`
 
 ![Fonts](fonts.png)
