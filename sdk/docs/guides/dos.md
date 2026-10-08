@@ -593,18 +593,41 @@ the program opened (`src/rom/handler/con/window.zig` lists them all).
 One handle, `Open("CON:20/20/400/150/Output/CLOSE/WAIT", MODE_NEWFILE)`,
 reads and writes the window. `RAW:` is the same window, starting raw.
 `AUX:` is a console on the machine's console port - the USB port on the
-boards, UART0 in QEMU - which every Open of it shares.
+boards, UART0 in QEMU - which every Open of it shares. The same handler
+runs a console on any device that reads and writes a stream: a node
+whose startup is a FileSysStartupMsg naming the device and its unit, as
+`C:net/ShellServer` adds one for each connection (`TELNET<n>:` on
+telnet.device, `SSH<n>:` on ssh.device). Such a device's
+`IOERR_ENDOFSTREAM` - the peer gone, or its input ended - ends the
+console's input as Ctrl-\ does, raw or cooked.
+
+Each console writes the system's banner before the first thing written
+to it, so it stands above a shell's first prompt. A console set raw
+before anything was written gets none: it is a program's channel - one
+command run over SSH - not a terminal somebody reads.
 
 A console starts cooked: it edits a line, with a history and copy and
 paste, and a read answers once Return is pressed. Tab completes the
 file or directory name before the cursor, looked up from the reading
 program's current directory; when several names fit, it goes as far as
-they agree, and a second Tab lists them. `SetMode(fh, 1)` makes
+they agree, and a second Tab lists them - as wide as the window, or as
+the terminal at the line's other end when the device knows its size
+(serial.device's `SDCMD_TERMSIZE`, which ssh.device answers with the
+client's window), or 80 columns. `SetMode(fh, 1)` makes
 it raw - each byte as typed, without echo or editing - and
 `SetMode(fh, 0)` cooked again. `WaitForChar(fh, microseconds)` tells
 whether input comes within that time (a whole line, when cooked)
 without reading it. Ctrl-C to Ctrl-F raise their signals in either mode,
 and when raw the byte comes as well; Ctrl-\ is the end of the input.
+
+A console window speaks VT100 and the parts of xterm programs use:
+the cursor, 256 colours, scroll regions, the other screen, the mouse;
+its characters are Latin-1. Asked `CSI 18 t`, it answers its size as
+`CSI 8 ; rows ; columns t` in its input, and `CSI 6 n` with the cursor's
+place; on a console over a device the terminal at the other end
+answers, if it can. A program that wants the size reads the answer in
+raw mode, with WaitForChar giving up after a moment - which is how
+`C:net/SSH` sizes its terminal.
 
 ```zig
 const in = dl.Input() orelse return dos.RETURN_FAIL;

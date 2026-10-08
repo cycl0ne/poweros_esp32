@@ -5,7 +5,8 @@ interfaces it runs on, the devices that carry its frames, and what it takes
 to write one. The calls are in the reference:
 [bsdsocket](../autodocs/bsdsocket.md) and [tls](../autodocs/tls.md); the
 device requests are described in `sdk/devices/network.zig`,
-`sdk/devices/wireless.zig` and `sdk/devices/telnet.zig`.
+`sdk/devices/wireless.zig`, `sdk/devices/slip.zig`,
+`sdk/devices/telnet.zig` and `sdk/devices/ssh.zig`.
 
 - [The layers](#the-layers)
 - [Using sockets](#using-sockets)
@@ -20,7 +21,8 @@ device requests are described in `sdk/devices/network.zig`,
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
 - [A connection as a device: telnet.device](#a-connection-as-a-device-telnetdevice)
-- [SSH: ssh.device](#ssh-sshdevice)
+- [SSH: ssh.device](#ssh-sshdevice) - the server, the client
+  (`C:net/SSH`), the device
 - [Commands](#commands)
 
 ## The layers
@@ -531,8 +533,14 @@ connection to port 23.
 
 ## SSH: ssh.device
 
-`C:net/ShellServer SSH` serves SSH on port 22 instead: the connection is
-encrypted, and nobody gets in without logging in.
+SSH both ways: `C:net/ShellServer SSH` lets others in to a shell on this
+machine, and `C:net/SSH` takes this machine's console to a shell on
+another. Both are `DEVS:ssh.device`, one end of it each.
+
+### The server: ShellServer SSH
+
+`C:net/ShellServer SSH` serves SSH on port 22 instead of Telnet on 23:
+the connection is encrypted, and nobody gets in without logging in.
 
 - **Logins**: the password in `ENVARC:Sys/net/shellserver`, and the keys in
   `ENVARC:Sys/net/authorized_keys` - OpenSSH's lines, ssh-ed25519 keys (a

@@ -63,9 +63,11 @@ tags and constants, each with its doc comment.
 - [Datatypes](guides/datatypes.md) - what a file is to datatypes.library,
   working an object, pictures, text, animations, showing one in a
   window, and writing a class.
-- [Network](guides/network.md) - sockets, waiting on them, names, TLS,
-  interfaces and their files, the network device API, wireless devices,
-  writing a network driver, telnet.device, and the commands.
+- [Network](guides/network.md) - sockets, multicast groups, waiting on
+  them, names, TLS, interfaces and their files, the network device API,
+  wireless devices, SLIP over a serial line, writing a network driver,
+  telnet.device, SSH both ways (ShellServer SSH, `C:net/SSH`,
+  ssh.device), and the commands.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
   one, errors, when a change is seen, and `C:RDB`.
@@ -104,7 +106,7 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file and font requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
-| crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
+| crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
@@ -138,8 +140,10 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | rs485.device | `DEVS:` | the RS-485 port, in frames | [`rs485.zig`](../devices/rs485.zig) |
 | clipboard.device | `DEVS:` | what is cut, copied and pasted, a unit a clip | [`clipboard.zig`](../devices/clipboard.zig) |
 | telnet.device | `DEVS:` | a TCP connection as a stream, for a console | [`telnet.zig`](../devices/telnet.zig) |
+| ssh.device | `DEVS:` | an SSH connection as a stream, either end: the server's for a console, the client's for a shell elsewhere | [`ssh.zig`](../devices/ssh.zig), [`ssh/keys.zig`](../devices/ssh/keys.zig) |
 | openeth.device | `DEVS:networks/` | QEMU's Ethernet | [`network.zig`](../devices/network.zig) |
 | wifi.device | `DEVS:networks/` | the chip's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
+| slip.device | `DEVS:networks/` | IP over a serial line (SLIP), on any device with serial.device's API | [`network.zig`](../devices/network.zig), [`slip.zig`](../devices/slip.zig) |
 
 ## Resources
 
@@ -163,7 +167,7 @@ its device is used.
 | Handler | Where | Serves | Reference |
 |---|---|---|---|
 | ram-handler | ROM | `RAM:`, a file system in memory | dos.library |
-| con-handler | ROM | `CON:` and `RAW:`, a console in a window | dos.library |
+| con-handler | ROM | `CON:` and `RAW:`, a console in a window; `AUX:`, and a console on any stream device (ShellServer's `TELNET<n>:` and `SSH<n>:`) | dos.library |
 | pipe-handler | ROM | `PIPE:`, a pipe between two processes | dos.library |
 | nil-handler | ROM | `NIL:`, which swallows what is written | dos.library |
 | flashfs-handler | ROM | `DH0:` and every partition of type `FLS\0` | [`flashfs.zig`](../libs/dos/flashfs.zig) |
