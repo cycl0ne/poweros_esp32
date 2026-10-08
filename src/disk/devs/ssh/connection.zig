@@ -17,8 +17,9 @@
 //! the session id and the request. Six failures end the connection.
 //!
 //! **The channel**: one `session` channel; `pty-req` (the terminal's type
-//! and size), `env` (refused), then `shell` or `exec` (a command), which
-//! is when the session is ready. `signal` INT and `break` come as Ctrl-C.
+//! and size), `env` (refused), then `shell`, `exec` (a command) or
+//! `subsystem` (`sftp`: its name, for the opener to serve), which is when
+//! the session is ready. `signal` INT and `break` come as Ctrl-C.
 //! At the end: `exit-status`, EOF and CLOSE.
 
 const sdk = @import("sdk");
@@ -358,6 +359,15 @@ pub const Connection = struct {
             conn.kind = ssh.SSHSESSION_SHELL;
             conn.session_ready = true;
             ok = true;
+        } else if (wire.same(request, "subsystem") and !conn.session_ready) {
+            const name = reader.string();
+            if (!reader.bad and name.len > 0 and name.len < conn.command.len) {
+                @memcpy(conn.command[0..name.len], name);
+                conn.command[name.len] = 0;
+                conn.kind = ssh.SSHSESSION_SUBSYSTEM;
+                conn.session_ready = true;
+                ok = true;
+            }
         } else if (wire.same(request, "exec") and !conn.session_ready) {
             const command = reader.string();
             if (!reader.bad and command.len < conn.command.len) {

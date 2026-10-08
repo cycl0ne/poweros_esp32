@@ -21,8 +21,9 @@
 //!   SSHCMD_ACCEPT  io_Data: an SshAccept, the host key and who may log
 //!                  in. The protocol starts: the version, the key
 //!                  exchange, the login, the session channel. Answered
-//!                  once the client asks for a shell or a command, with
-//!                  what it asked for in the SshAccept; IOERR_ENDOFSTREAM
+//!                  once the client asks for a shell, a command or a
+//!                  subsystem (`sftp`), with what it asked for in the
+//!                  SshAccept; IOERR_ENDOFSTREAM
 //!                  when it went before that, or did not log in within
 //!                  two minutes.
 //!   CMD_READ       what the client typed, as soon as there is a byte,
@@ -57,9 +58,10 @@
 //!                  takes in its `methods` - and SSHCMD_LOGIN may come
 //!                  again with others. Either way, with the banner the
 //!                  server sent meanwhile, if it sent one.
-//!   SSHCMD_SESSION io_Data: an SshSession, a command or a shell, and a
-//!                  terminal. 0 once it runs, io_Actual 1 when it has the
-//!                  terminal; SSHERR_SESSION when the server refused it.
+//!   SSHCMD_SESSION io_Data: an SshSession, a command, a subsystem or a
+//!                  shell, and a terminal. 0 once it runs, io_Actual 1
+//!                  when it has the terminal; SSHERR_SESSION when the
+//!                  server refused it.
 //!   CMD_READ       what the session printed, its errors among it, as
 //!                  soon as there is a byte; IOERR_ENDOFSTREAM once the
 //!                  server has sent its end.
@@ -79,8 +81,8 @@
 //! key ssh-ed25519 (RFC 8709); aes256-gcm@openssh.com and
 //! aes128-gcm@openssh.com (RFC 5647); no compression. Logins by password
 //! and by ssh-ed25519 key. One session channel per connection, with a
-//! shell or one command; no forwarding, no sftp. The peer may renew the
-//! keys at any time.
+//! shell, one command or a subsystem; no forwarding. The peer may renew
+//! the keys at any time.
 
 const exec = @import("../libs/exec/exec.zig");
 
@@ -117,9 +119,11 @@ pub const SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE: u32 = 14;
 pub const SSHKEX_MLKEM768X25519: u32 = 1;
 pub const SSHKEX_CURVE25519: u32 = 2;
 
-/// SshAccept's `kind`: an interactive shell, or one command.
+/// SshAccept's `kind`: an interactive shell, one command, or a subsystem
+/// - `sftp` - named in `command`.
 pub const SSHSESSION_SHELL: u32 = 1;
 pub const SSHSESSION_EXEC: u32 = 2;
+pub const SSHSESSION_SUBSYSTEM: u32 = 3;
 
 /// The most public keys and the longest password an SshAccept takes.
 pub const SSH_KEYS_MAX = 16;
@@ -140,8 +144,9 @@ pub const SshAccept = extern struct {
     keys: [SSH_KEYS_MAX][32]u8 = @splat(@splat(0)),
     key_count: u32 = 0,
     /// Back: SSHSESSION_*, the user the client logged in as, the command
-    /// for SSHSESSION_EXEC, and its terminal - its type and size - when it
-    /// asked for one (`columns` 0 when not).
+    /// for SSHSESSION_EXEC or the subsystem's name for
+    /// SSHSESSION_SUBSYSTEM, and its terminal - its type and size - when
+    /// it asked for one (`columns` 0 when not).
     kind: u32 = 0,
     columns: u32 = 0,
     rows: u32 = 0,
@@ -181,15 +186,23 @@ pub const SshLogin = extern struct {
 
 /// What SSHCMD_SESSION is given.
 pub const SshSession = extern struct {
-    /// The command, NUL-terminated; empty for a shell.
+    /// The command, NUL-terminated; empty for a shell. With `subsystem`
+    /// 1, the subsystem's name instead (`sftp`).
     command: [512]u8 = @splat(0),
     /// The terminal's type ("xterm-256color"), NUL-terminated, and its
     /// size; an empty type for no terminal.
     terminal: [32]u8 = @splat(0),
     columns: u32 = 0,
     rows: u32 = 0,
+    subsystem: u32 = 0,
 };
 
 /// The host key's file, the authorized keys and the public key's line
 /// (sdk/devices/ssh/keys.zig).
 pub const keys = @import("ssh/keys.zig");
+/// SFTP, the file protocol of the `sftp` subsystem
+/// (sdk/devices/ssh/sftp.zig).
+pub const sftp = @import("ssh/sftp.zig");
+/// The client's way in: the connection, the host key checked, the login
+/// (sdk/devices/ssh/connect.zig).
+pub const connect = @import("ssh/connect.zig");

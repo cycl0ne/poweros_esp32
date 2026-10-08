@@ -17,6 +17,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const serial = sdk.devices.serial;
 const bsd = sdk.bsdsocket;
 const ExecBase = sdk.interface.exec.ExecBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
@@ -106,6 +107,12 @@ fn take(sys: *ExecBase, unit: *Unit, io: *exec.IOStdReq) void {
         exec.CMD_WRITE => write(sys, unit, io),
         exec.CMD_FLUSH => {
             abortReads(sys, unit);
+            answer(sys, io, 0);
+        },
+        serial.SDCMD_TERMSIZE => {
+            if (unit.filter.columns == 0 or unit.filter.rows == 0) return answer(sys, io, exec.IOERR_NOCMD);
+            io.actual = unit.filter.columns;
+            io.offset = unit.filter.rows;
             answer(sys, io, 0);
         },
         else => answer(sys, io, exec.IOERR_NOCMD),

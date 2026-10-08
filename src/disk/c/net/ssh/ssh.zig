@@ -9,22 +9,13 @@
 //! names the user too - on PORT (22), and logs in as USER, or as the
 //! variable USER says when neither names one.
 //!
-//! **The host key.** `ENVARC:Sys/net/known_hosts` holds the host keys
-//! seen before, a line each as OpenSSH writes them: the host's name
-//! (`[name]:port` for a port other than 22), `ssh-ed25519` and the key. A
-//! host not in it has its key's fingerprint shown, and is asked about:
-//! `yes` connects and keeps the key. A host whose key is not the one kept
-//! is refused - someone may be in between - until its line is taken out
-//! of the file.
-//!
-//! **The login**: with the key `ENVARC:Sys/net/id_ed25519` first, when
-//! there is one, and then with a password, asked for without its echo,
-//! three tries - asked for only when the server takes passwords. A banner
-//! the server sends is shown before the password is asked for: as
-//! Latin-1, the characters the console has not as `?`, and without its
-//! control characters, so it cannot work the console. `SSH KEYGEN` makes the key - an Ed25519 key, its seed and
-//! public half, 64 bytes - and writes its public line beside it in
-//! `id_ed25519.pub`, for the other machine's `authorized_keys`.
+//! **The host key and the login** are sdk/devices/ssh/connect.zig's: a
+//! host not in `ENVARC:Sys/net/known_hosts` is asked about, one whose key
+//! changed is refused; the login is with the key
+//! `ENVARC:Sys/net/id_ed25519`, then with a password asked for. `SSH
+//! KEYGEN` makes the key - an Ed25519 key, its seed and public half, 64
+//! bytes - and writes its public line beside it in `id_ed25519.pub`, for
+//! the other machine's `authorized_keys`.
 //!
 //! **The session.** Without COMMAND, a shell: the console runs raw, as a
 //! terminal of type xterm-256color whose size it tells the server - the
@@ -46,6 +37,7 @@ const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const ssh = sdk.devices.ssh;
 const ssh_keys = sdk.devices.ssh.keys;
+const connect = sdk.devices.ssh.connect;
 const timer = sdk.devices.timer;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -67,12 +59,9 @@ const arg_user = 2;
 const arg_keygen = 3;
 const arg_command = 4;
 
-const KEY_FILE = "ENVARC:Sys/net/id_ed25519";
-const KEY_PUB_FILE = "ENVARC:Sys/net/id_ed25519.pub";
-const KNOWN_HOSTS_FILE = "ENVARC:Sys/net/known_hosts";
+const KEY_FILE = connect.KEY_FILE;
+const KEY_PUB_FILE = connect.KEY_PUB_FILE;
 const TERMINAL = "xterm-256color";
-const port_default: u16 = 22;
-const password_tries = 3;
 /// How long the console has to say its size, and how often it is asked
 /// again.
 const size_answer_us = 300_000;
@@ -82,22 +71,9 @@ const columns_default = 80;
 const rows_default = 24;
 /// The question that asks a console its size.
 const SIZE_QUESTION = "\x1b[18t";
-const known_hosts_max = 16384;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_USAGE = "%s: HOST is needed\n";
-const MSG_NOUSER = "%s: no user: give USER, user@host, or set the variable USER\n";
-const MSG_NOHOST = "%s: can't find %s\n";
-const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
-const MSG_NODEVICE = "%s: can't open %s\n";
-const MSG_GONE = "%s: %s: %s\n";
-const MSG_BREAK = "%s: stopped\n";
-const MSG_UNKNOWN = "The host %s is not known. The fingerprint of its key is\n  %s (ED25519)\nConnect, and keep the key in %s (yes/no)? ";
-const MSG_KEPT = "%s: kept the key of %s\n";
-const MSG_CHANGED = "%s: the host key of %s is not the one kept in %s!\n  Its fingerprint now: %s\n  Someone may be in between. If the host has a new key, take its line out of the file.\n";
-const MSG_NOASK = "%s: the host %s is not known, and there is no console to ask\n";
-const MSG_PASSWORD = "%s@%s's password: ";
-const MSG_DENIED = "%s: permission denied (%s)\n";
 const MSG_REFUSED = "%s: the server refused the session\n";
 const MSG_CLOSED = "\nConnection to %s closed.\n";
 const MSG_KEY_EXISTS = "%s: %s is there already; delete it first to make a new key\n";
@@ -109,25 +85,16 @@ const MSG_KEY_FAILED = "%s: can't write %s\n";
 const State = struct {
     sys: *ExecBase,
     dl: *DosBase,
-    sb: *SocketBase,
-    cb: *CryptoBase,
-    host: [*:0]const u8,
-    /// The name known_hosts knows the host by.
-    host_name: [264]u8 = @splat(0),
-    host_name_length: usize = 0,
-    user: [64]u8 = @splat(0),
-    port: u16 = port_default,
+    /// The connection and the login, and the steps' request.
+    client: connect.Client,
 
     // --- the device --------------------------------------------------------
 
     reply_port: *exec.MsgPort,
-    /// The steps', the reads', the writes' and the status' requests.
-    io: *exec.IOStdReq,
+    /// The reads', the writes' and the status' requests.
     read_io: *exec.IOStdReq,
     write_io: *exec.IOStdReq,
     status_io: *exec.IOStdReq,
-    connect: ssh.SshConnect = .{},
-    login: ssh.SshLogin = .{},
     session: ssh.SshSession = .{},
 
     // --- the console -------------------------------------------------------
@@ -161,7 +128,6 @@ const State = struct {
     send_bytes: [2048]u8 = undefined,
     send_length: usize = 0,
     out_bytes: [4096]u8 = undefined,
-    known: [known_hosts_max]u8 = undefined,
 };
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -212,110 +178,44 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     st.* = .{
         .sys = sys,
         .dl = dl,
-        .sb = sb,
-        .cb = cb,
-        .host = given_host,
+        .client = .{
+            .sys = sys,
+            .dl = dl,
+            .sb = sb,
+            .cb = cb,
+            .program = COMMAND_NAME,
+            .input = dl.Input().?,
+            .output = dl.Output().?,
+            .reply_port = reply_port,
+            .io = requests[0],
+        },
         .reply_port = reply_port,
-        .io = requests[0],
         .read_io = requests[1],
         .write_io = requests[2],
         .status_io = requests[3],
         .input = dl.Input().?,
         .output = dl.Output().?,
     };
-    if (!names(st, given_host, dos.rdargs.string(argv[arg_user]))) return dos.RETURN_FAIL;
-    if (dos.rdargs.number(argv[arg_port])) |value| st.port = @truncate(@as(u32, @bitCast(value)));
+    const client = &st.client;
+    const given_user = dos.rdargs.string(argv[arg_user]);
+    if (!client.names(span(given_host), if (given_user) |user| span(user) else null)) return dos.RETURN_FAIL;
+    if (dos.rdargs.number(argv[arg_port])) |value| client.port = @truncate(@as(u32, @bitCast(value)));
     const command = dos.rdargs.string(argv[arg_command]);
     const result = run(st, command);
     _ = dl.Flush(st.output);
-    wipe(@as([*]u8, @ptrCast(&st.login))[0..@sizeOf(ssh.SshLogin)]);
+    client.stop();
     // A Ctrl-C typed into the raw console is the session's, not the
     // shell's.
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
     return result;
 }
 
-/// The host, the user and the name the host's key is kept under, from
-/// `user@host` and USER.
-fn names(st: *State, given_host: [*:0]const u8, given_user: ?[*:0]const u8) bool {
-    const dl = st.dl;
-    var host = given_host;
-    var length: usize = 0;
-    while (given_host[length] != 0) length += 1;
-    var user_length: usize = 0;
-    if (indexOf(given_host[0..length], '@')) |at| {
-        user_length = @min(at, st.user.len - 1);
-        @memcpy(st.user[0..user_length], given_host[0..user_length]);
-        host = given_host + at + 1;
-        length -= at + 1;
-    }
-    if (given_user) |user| {
-        user_length = 0;
-        while (user[user_length] != 0 and user_length < st.user.len - 1) : (user_length += 1) st.user[user_length] = user[user_length];
-    }
-    if (user_length == 0) {
-        const got = dl.GetVar("USER", &st.user, st.user.len, 0);
-        if (got > 0) user_length = @intCast(got);
-    }
-    if (user_length == 0) {
-        _ = Printf(dl, MSG_NOUSER, .{COMMAND_NAME});
-        return false;
-    }
-    st.user[user_length] = 0;
-    st.host = host;
-    if (length == 0) {
-        _ = Printf(dl, MSG_USAGE, .{COMMAND_NAME});
-        return false;
-    }
-    return true;
-}
-
-/// The name known_hosts keeps the key under: the host, lower case, and
-/// in brackets with the port when it is not 22.
-fn hostName(st: *State) void {
-    var at: usize = 0;
-    const bracket = st.port != port_default;
-    if (bracket) {
-        st.host_name[0] = '[';
-        at = 1;
-    }
-    var index: usize = 0;
-    while (st.host[index] != 0 and at < st.host_name.len - 10) : (index += 1) {
-        const char = st.host[index];
-        st.host_name[at] = if (char >= 'A' and char <= 'Z') char + 32 else char;
-        at += 1;
-    }
-    if (bracket) {
-        st.host_name[at] = ']';
-        st.host_name[at + 1] = ':';
-        at += 2;
-        at += decimal(st.port, st.host_name[at..]);
-    }
-    st.host_name[at] = 0;
-    st.host_name_length = at;
-}
-
 fn run(st: *State, command: ?[*:0]const u8) i32 {
-    const sys = st.sys;
     const dl = st.dl;
-    hostName(st);
-    const id = connectSocket(st) orelse return dos.RETURN_FAIL;
-    if (sys.OpenDevice(ssh.SSHNAME, @bitCast(id), &st.io.req, 0) != 0) {
-        _ = Printf(dl, MSG_NODEVICE, .{ COMMAND_NAME, ssh.SSHNAME });
-        const back = st.sb.ObtainSocket(id, bsd.PF_UNSPEC, bsd.SOCK_STREAM, 0);
-        if (back >= 0) _ = st.sb.CloseSocket(back);
-        return dos.RETURN_FAIL;
-    }
-    // Closing the device closes the connection.
-    defer sys.CloseDevice(&st.io.req);
-    for ([_]*exec.IOStdReq{ st.read_io, st.write_io, st.status_io }) |io| {
-        io.req.device = st.io.req.device;
-        io.req.unit = st.io.req.unit;
-    }
-
-    if (step(st, ssh.SSHCMD_CONNECT, &st.connect, @sizeOf(ssh.SshConnect)) != 0) return gone(st);
-    if (!hostKnown(st)) return dos.RETURN_FAIL;
-    if (!logIn(st)) return dos.RETURN_FAIL;
+    const client = &st.client;
+    // Stopping the client closes the connection.
+    if (!client.start()) return dos.RETURN_FAIL;
+    for ([_]*exec.IOStdReq{ st.read_io, st.write_io, st.status_io }) |io| client.share(io);
 
     // The session: a terminal for a shell on a console.
     const interactive = dl.IsInteractive(st.input);
@@ -338,334 +238,22 @@ fn run(st: *State, command: ?[*:0]const u8) i32 {
         st.session.columns = st.columns;
         st.session.rows = st.rows;
     }
-    switch (step(st, ssh.SSHCMD_SESSION, &st.session, @sizeOf(ssh.SshSession))) {
+    switch (client.step(ssh.SSHCMD_SESSION, &st.session, @sizeOf(ssh.SshSession))) {
         0 => {},
         ssh.SSHERR_SESSION => {
             _ = Printf(dl, MSG_REFUSED, .{COMMAND_NAME});
             return dos.RETURN_FAIL;
         },
-        else => return gone(st),
+        else => {
+            client.gone();
+            return dos.RETURN_FAIL;
+        },
     }
     const terminal = st.raw;
     _ = dl.Flush(st.output);
     const status = pump(st);
-    if (terminal) _ = Printf(dl, MSG_CLOSED, .{st.host});
+    if (terminal) _ = Printf(dl, MSG_CLOSED, .{@as([*:0]const u8, &client.host)});
     return status;
-}
-
-/// A TCP connection to the host, left with the stack for ssh.device: its
-/// id, or null, said why.
-fn connectSocket(st: *State) ?i32 {
-    const sb = st.sb;
-    const hints: bsd.addrinfo = .{ .ai_socktype = bsd.SOCK_STREAM };
-    var list: ?*bsd.addrinfo = null;
-    if (sb.GetAddrInfo(st.host, null, &hints, &list) != 0 or list == null) {
-        _ = Printf(st.dl, MSG_NOHOST, .{ COMMAND_NAME, st.host });
-        return null;
-    }
-    defer sb.FreeAddrInfo(list.?);
-    const target = list.?;
-    // The port into whichever sockaddr it is: both have it at offset 2.
-    @as(*align(1) u16, @ptrCast(@as([*]u8, @ptrCast(target.ai_addr.?)) + 2)).* = bsd.htons(st.port);
-    const socket = sb.Socket(target.ai_family, bsd.SOCK_STREAM, 0);
-    if (socket < 0) return socketFailed(st, "Socket");
-    if (sb.Connect(socket, target.ai_addr.?, target.ai_addrlen) < 0) {
-        _ = socketFailed(st, "Connect");
-        _ = sb.CloseSocket(socket);
-        return null;
-    }
-    const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
-    if (id < 0) {
-        _ = socketFailed(st, "ReleaseSocket");
-        _ = sb.CloseSocket(socket);
-        return null;
-    }
-    return id;
-}
-
-fn socketFailed(st: *State, what: [*:0]const u8) ?i32 {
-    _ = Printf(st.dl, MSG_FAILED, .{ COMMAND_NAME, what, bsd.errnoText(st.sb, st.sb.Errno()), st.sb.Errno() });
-    return null;
-}
-
-/// One of the client's steps: sent, and waited for - or stopped with
-/// Ctrl-C. Its io_Error.
-fn step(st: *State, command: u16, data: *anyopaque, length: usize) i8 {
-    const sys = st.sys;
-    const io = st.io;
-    io.req.command = command;
-    io.data = data;
-    io.length = length;
-    sys.SendIO(&io.req);
-    while (sys.CheckIO(&io.req) == null) {
-        const got = sys.Wait(st.reply_port.sigMask() | exec.SIGBREAKF_CTRL_C);
-        if (got & exec.SIGBREAKF_CTRL_C != 0 and sys.CheckIO(&io.req) == null) {
-            _ = sys.AbortIO(&io.req);
-            _ = sys.WaitIO(&io.req);
-            _ = Printf(st.dl, MSG_BREAK, .{COMMAND_NAME});
-            io.req.err = exec.IOERR_ABORTED;
-            return io.req.err;
-        }
-    }
-    _ = sys.WaitIO(&io.req);
-    return io.req.err;
-}
-
-/// The connection gone during a step: why, said.
-fn gone(st: *State) i32 {
-    if (st.io.req.err == exec.IOERR_ENDOFSTREAM) {
-        _ = Printf(st.dl, MSG_GONE, .{ COMMAND_NAME, st.host, reasonText(st.io.actual) });
-    }
-    return dos.RETURN_FAIL;
-}
-
-fn reasonText(reason: u64) [*:0]const u8 {
-    return switch (reason) {
-        ssh.SSH_DISCONNECT_KEY_EXCHANGE_FAILED => "the key exchange failed",
-        ssh.SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED => "not an SSH server",
-        ssh.SSH_DISCONNECT_HOST_KEY_NOT_VERIFIABLE => "the host key changed",
-        ssh.SSH_DISCONNECT_CONNECTION_LOST => "connection lost",
-        ssh.SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE => "too many login tries",
-        ssh.SSH_DISCONNECT_MAC_ERROR => "a packet came altered",
-        ssh.SSH_DISCONNECT_SERVICE_NOT_AVAILABLE => "the server has no login",
-        ssh.SSH_DISCONNECT_BY_APPLICATION => "closed by the server",
-        else => "protocol error",
-    };
-}
-
-// --- the host key ---------------------------------------------------------------
-
-const Known = enum { known, unknown, changed };
-
-/// Whether the host's key may be trusted: kept before, or kept now that
-/// the console said yes.
-fn hostKnown(st: *State) bool {
-    const dl = st.dl;
-    const key = &st.connect.host_public;
-    var print: [ssh_keys.fingerprint_bytes + 1]u8 = @splat(0);
-    _ = ssh_keys.fingerprint(st.cb, key, print[0..ssh_keys.fingerprint_bytes]);
-    const name: [*:0]const u8 = @ptrCast(&st.host_name);
-    switch (lookUp(st, key)) {
-        .known => return true,
-        .changed => {
-            _ = Printf(dl, MSG_CHANGED, .{ COMMAND_NAME, name, KNOWN_HOSTS_FILE, @as([*:0]const u8, @ptrCast(&print)) });
-            return false;
-        },
-        .unknown => {},
-    }
-    if (!dl.IsInteractive(st.input)) {
-        _ = Printf(dl, MSG_NOASK, .{ COMMAND_NAME, name });
-        return false;
-    }
-    _ = Printf(dl, MSG_UNKNOWN, .{ name, @as([*:0]const u8, @ptrCast(&print)), KNOWN_HOSTS_FILE });
-    _ = dl.Flush(st.output);
-    var answer: [16]u8 = undefined;
-    const got = dl.Read(st.input, &answer, answer.len);
-    if (got < 3 or !same(answer[0..3], "yes")) return false;
-    keep(st, key);
-    return true;
-}
-
-/// The host's line in known_hosts: the same key, another key, or none.
-fn lookUp(st: *State, key: *const [32]u8) Known {
-    const dl = st.dl;
-    const file = dl.Open(KNOWN_HOSTS_FILE, dos.MODE_OLDFILE) orelse return .unknown;
-    defer _ = dl.Close(file);
-    const got = dl.Read(file, &st.known, st.known.len);
-    if (got <= 0) return .unknown;
-    const name = st.host_name[0..st.host_name_length];
-    var found: Known = .unknown;
-    var lines = Lines{ .text = st.known[0..@intCast(got)] };
-    while (lines.next()) |line| {
-        var at: usize = 0;
-        while (at < line.len and (line[at] == ' ' or line[at] == '\t')) at += 1;
-        const names_start = at;
-        while (at < line.len and line[at] != ' ' and line[at] != '\t') at += 1;
-        if (!listHas(line[names_start..at], name)) continue;
-        const kept = ssh_keys.authorizedKey(line[at..]) orelse continue;
-        if (same(&kept, key)) return .known;
-        found = .changed;
-    }
-    return found;
-}
-
-/// Whether the comma-separated `list` holds `name`, case aside.
-fn listHas(list: []const u8, name: []const u8) bool {
-    var start: usize = 0;
-    while (start <= list.len) {
-        var end = start;
-        while (end < list.len and list[end] != ',') end += 1;
-        const each = list[start..end];
-        if (each.len == name.len) {
-            const equal = for (each, name) |a, b| {
-                const lower = if (a >= 'A' and a <= 'Z') a + 32 else a;
-                if (lower != b) break false;
-            } else true;
-            if (equal) return true;
-        }
-        start = end + 1;
-    }
-    return false;
-}
-
-/// The host's key added to known_hosts.
-fn keep(st: *State, key: *const [32]u8) void {
-    const dl = st.dl;
-    var line: [ssh_keys.fingerprint_bytes + 400]u8 = undefined;
-    const name_length = st.host_name_length;
-    @memcpy(line[0..name_length], st.host_name[0..name_length]);
-    line[name_length] = ' ';
-    const length = name_length + 1 + ssh_keys.publicLine(key, "", line[name_length + 1 ..]);
-    const file = dl.Open(KNOWN_HOSTS_FILE, dos.MODE_READWRITE) orelse dl.Open(KNOWN_HOSTS_FILE, dos.MODE_NEWFILE) orelse return;
-    defer _ = dl.Close(file);
-    _ = dl.Seek(file, 0, dos.OFFSET_END);
-    if (dl.Write(file, &line, @intCast(length)) == length) {
-        _ = Printf(dl, MSG_KEPT, .{ COMMAND_NAME, @as([*:0]const u8, @ptrCast(&st.host_name)) });
-    }
-}
-
-// --- the login --------------------------------------------------------------------
-
-/// Logged in: with the key, if there is one - or with nothing, to hear
-/// what the server takes - then with passwords asked for. False, said
-/// why, when not.
-fn logIn(st: *State) bool {
-    const dl = st.dl;
-    const login = &st.login;
-    login.user = st.user;
-    if (dl.Open(KEY_FILE, dos.MODE_OLDFILE)) |file| {
-        var bytes: [ssh_keys.host_file_bytes]u8 = undefined;
-        if (dl.Read(file, &bytes, bytes.len) == bytes.len) {
-            login.key_seed = bytes[0..32].*;
-            login.key_public = bytes[32..64].*;
-            login.key_given = 1;
-        }
-        wipe(&bytes);
-        _ = dl.Close(file);
-    }
-    var tries: u32 = 0;
-    while (true) {
-        const result = step(st, ssh.SSHCMD_LOGIN, login, @sizeOf(ssh.SshLogin));
-        showBanner(st);
-        switch (result) {
-            0 => return true,
-            ssh.SSHERR_LOGIN => {},
-            exec.IOERR_ABORTED => return false,
-            else => {
-                _ = gone(st);
-                return false;
-            },
-        }
-        wipe(&login.password);
-        login.password_length = 0;
-        login.key_given = 0;
-        const methods = sliceTo(&login.methods);
-        if (!hasMethod(methods, "password") or tries == password_tries or !dl.IsInteractive(st.input)) {
-            _ = Printf(dl, MSG_DENIED, .{ COMMAND_NAME, @as([*:0]const u8, @ptrCast(&login.methods)) });
-            return false;
-        }
-        tries += 1;
-        if (!askPassword(st)) return false;
-    }
-}
-
-/// The banner the last SSHCMD_LOGIN brought, if any, shown as the
-/// console can show it: UTF-8 taken to Latin-1, a character Latin-1 has
-/// not as `?`, the control characters left out but for tabs and line
-/// ends.
-fn showBanner(st: *State) void {
-    const dl = st.dl;
-    const text = sliceTo(&st.login.banner);
-    if (text.len == 0) return;
-    _ = dl.Flush(st.output);
-    var shown: [256]u8 = undefined;
-    var length: usize = 0;
-    var last: u8 = '\n';
-    var at: usize = 0;
-    while (at < text.len) {
-        const decoded = decodeUtf8(text[at..]);
-        at += decoded.length;
-        const char = decoded.char;
-        if (char != '\t' and char != '\n' and (char < 0x20 or (char >= 0x7F and char < 0xA0))) continue;
-        last = if (char <= 0xFF) @intCast(char) else '?';
-        shown[length] = last;
-        length += 1;
-        if (length == shown.len) {
-            _ = dl.Write(st.output, &shown, @intCast(length));
-            length = 0;
-        }
-    }
-    if (last != '\n') {
-        shown[length] = '\n';
-        length += 1;
-    }
-    _ = dl.Write(st.output, &shown, @intCast(length));
-    st.login.banner[0] = 0;
-}
-
-const Decoded = struct { char: u32, length: usize };
-
-/// The character UTF-8 starts `bytes` with, and how many bytes it takes;
-/// `?` for a byte that starts none.
-fn decodeUtf8(bytes: []const u8) Decoded {
-    const lead = bytes[0];
-    const extra: usize = switch (lead) {
-        0x00...0x7F => return .{ .char = lead, .length = 1 },
-        0xC2...0xDF => 1,
-        0xE0...0xEF => 2,
-        0xF0...0xF4 => 3,
-        else => return .{ .char = '?', .length = 1 },
-    };
-    if (bytes.len <= extra) return .{ .char = '?', .length = 1 };
-    var char: u32 = lead & (@as(u8, 0x3F) >> @intCast(extra));
-    for (bytes[1 .. 1 + extra]) |byte| {
-        if (byte & 0xC0 != 0x80) return .{ .char = '?', .length = 1 };
-        char = char << 6 | (byte & 0x3F);
-    }
-    return .{ .char = char, .length = 1 + extra };
-}
-
-fn hasMethod(methods: []const u8, method: []const u8) bool {
-    var start: usize = 0;
-    while (start < methods.len) {
-        var end = start;
-        while (end < methods.len and methods[end] != ',') end += 1;
-        if (same(methods[start..end], method)) return true;
-        start = end + 1;
-    }
-    return false;
-}
-
-/// The password, typed without its echo into the login: false when the
-/// input ended or Ctrl-C came.
-fn askPassword(st: *State) bool {
-    const dl = st.dl;
-    const input = st.input;
-    if (!dl.IsInteractive(input)) return false;
-    _ = Printf(dl, MSG_PASSWORD, .{ @as([*:0]const u8, @ptrCast(&st.user)), st.host });
-    _ = dl.Flush(st.output);
-    _ = dl.SetMode(input, 1);
-    defer _ = dl.SetMode(input, 0);
-    const login = &st.login;
-    var length: usize = 0;
-    while (true) {
-        var char: [1]u8 = undefined;
-        if (dl.Read(input, &char, 1) != 1 or char[0] == 3 or char[0] == 0x1C) {
-            wipe(&login.password);
-            _ = dl.Write(st.output, "\n", 1);
-            return false;
-        }
-        if (char[0] == '\r' or char[0] == '\n') break;
-        if (char[0] == 8 or char[0] == 127) {
-            if (length > 0) length -= 1;
-        } else if (length < login.password.len and char[0] >= ' ') {
-            login.password[length] = char[0];
-            length += 1;
-        }
-    }
-    _ = dl.Write(st.output, "\n", 1);
-    login.password_length = @intCast(length);
-    return true;
 }
 
 // --- the session ------------------------------------------------------------------
@@ -893,7 +481,7 @@ fn push(st: *State, byte: u8) void {
 /// only kept, for SSHCMD_SESSION.
 fn tellSize(st: *State) void {
     if (st.session.terminal[0] == 0 or st.session.columns == 0) return;
-    const io = st.io;
+    const io = st.client.io;
     io.req.command = ssh.SSHCMD_WINDOW;
     io.length = st.columns;
     io.offset = st.rows;
@@ -969,52 +557,11 @@ fn keygen(dl: *DosBase, sb: *SocketBase, cb: *CryptoBase) i32 {
 
 // --- small things -------------------------------------------------------------------
 
-const Lines = struct {
-    text: []const u8,
-    at: usize = 0,
+const sliceTo = connect.sliceTo;
+const wipe = connect.wipe;
 
-    fn next(lines: *Lines) ?[]const u8 {
-        if (lines.at >= lines.text.len) return null;
-        const line_start = lines.at;
-        while (lines.at < lines.text.len and lines.text[lines.at] != '\n') lines.at += 1;
-        const line = lines.text[line_start..lines.at];
-        lines.at += 1;
-        return line;
-    }
-};
-
-fn indexOf(text: []const u8, char: u8) ?usize {
-    for (text, 0..) |each, index| if (each == char) return index;
-    return null;
-}
-
-fn same(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| if (x != y) return false;
-    return true;
-}
-
-fn sliceTo(bytes: []const u8) []const u8 {
-    return bytes[0 .. indexOf(bytes, 0) orelse bytes.len];
-}
-
-/// `value` in decimal into `into`: how many digits.
-fn decimal(value: u32, into: []u8) usize {
-    var digits: [10]u8 = undefined;
-    var count: usize = 0;
-    var rest = value;
-    while (true) {
-        digits[count] = '0' + @as(u8, @intCast(rest % 10));
-        count += 1;
-        rest /= 10;
-        if (rest == 0) break;
-    }
-    for (0..count) |index| into[index] = digits[count - 1 - index];
-    return count;
-}
-
-/// A secret cleared where the compiler cannot skip it.
-fn wipe(bytes: []u8) void {
-    const volatile_bytes: []volatile u8 = bytes;
-    for (volatile_bytes) |*byte| byte.* = 0;
+fn span(text: [*:0]const u8) []const u8 {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return text[0..length];
 }

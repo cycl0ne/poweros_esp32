@@ -21,7 +21,10 @@
 //! half beside it in `ssh_host_key.pub` and its fingerprint printed, for
 //! the client's first connection to be checked against. A client may
 //! also ask for one command instead of a shell (`ssh host list`): it runs,
-//! and its return code is the exit status.
+//! and its return code is the exit status. Or it asks for the `sftp`
+//! subsystem - `sftp` and `scp` do - and the session serves the files of
+//! every mounted volume (sftp.zig): `/` holds the devices and the
+//! assigns, `/SYS/C/List` is `SYS:C/List`, and a session starts in `/SYS`.
 //!
 //! **A session.** Each connection's socket is left with the stack
 //! (ReleaseSocket) and a process of its own is started for it, which:
@@ -53,9 +56,10 @@ const ssh = sdk.devices.ssh;
 const ssh_keys = sdk.devices.ssh.keys;
 const crypto = sdk.crypto;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const sftp = @import("sftp.zig");
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.4 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.5 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S,SSH/S";
@@ -73,6 +77,8 @@ const ssh_port_default: u16 = 22;
 const HOST_KEY_FILE = "ENVARC:Sys/net/ssh_host_key";
 const HOST_KEY_PUB_FILE = "ENVARC:Sys/net/ssh_host_key.pub";
 const AUTHORIZED_KEYS_FILE = "ENVARC:Sys/net/authorized_keys";
+/// Where an SFTP session starts.
+const SFTP_HOME = "/SYS";
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
@@ -317,6 +323,11 @@ fn sessionEntry(sys: *ExecBase) callconv(.c) void {
     var login: ?Login = null;
     if (session.ssh) login = Login.open(sys, session) orelse return;
     defer if (login) |*held| held.close(sys);
+    if (session.ssh and session.accept.kind == ssh.SSHSESSION_SUBSYSTEM) {
+        // No console: the subsystem speaks on the session's own unit.
+        const held = &login.?;
+        return held.exit(sys, subsystem(sys, dl, session, held));
+    }
 
     const node = dl.MakeDosEntry(&session.name, dos.DLT_DEVICE) orelse return;
     node.misc.handler.handler = "con-handler";
@@ -373,6 +384,34 @@ fn sessionEntry(sys: *ExecBase) callconv(.c) void {
     _ = dl.Close(output);
     _ = dl.Close(input);
     if (login) |*held| held.exit(sys, if (status < 0) 127 else @intCast(status));
+}
+
+/// A subsystem the client asked for: `sftp` served until the client
+/// ends, any other refused. The exit status.
+fn subsystem(sys: *ExecBase, dl: *DosBase, session: *Session, login: *Login) u32 {
+    const name: [*:0]const u8 = @ptrCast(&session.accept.command);
+    if (!sameName(name, "sftp")) return 1;
+    const memory = sys.AllocVec(@sizeOf(sftp.Server), exec.MEMF_ANY) orelse return 1;
+    defer sys.FreeVec(memory);
+    const server: *sftp.Server = @ptrCast(@alignCast(memory));
+    const user: [*:0]const u8 = @ptrCast(&session.accept.user);
+    server.init(sys, dl, user[0..lengthOf(user)], SFTP_HOME);
+    defer server.deinit();
+    server.serve(login.io);
+    return 0;
+}
+
+fn sameName(name: [*:0]const u8, wanted: []const u8) bool {
+    for (wanted, 0..) |char, index| {
+        if (name[index] != char) return false;
+    }
+    return name[wanted.len] == 0;
+}
+
+fn lengthOf(name: [*:0]const u8) usize {
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    return length;
 }
 
 /// The session's own opening of ssh.device: the login waited for, and at

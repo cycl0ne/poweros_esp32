@@ -67,8 +67,8 @@ tags and constants, each with its doc comment.
 - [Network](guides/network.md) - sockets, multicast groups, waiting on
   them, names, TLS, interfaces and their files, the network device API,
   wireless devices, SLIP over a serial line, writing a network driver,
-  telnet.device, SSH both ways (ShellServer SSH, `C:net/SSH`,
-  ssh.device), a packet filter and the packet hooks under it, and the
+  telnet.device, SSH both ways (ShellServer SSH with sftp and scp,
+  `C:net/SSH`, `C:net/SCP`, ssh.device), a packet filter and the packet hooks under it, and the
   commands.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh

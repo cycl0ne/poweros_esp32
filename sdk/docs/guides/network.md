@@ -22,8 +22,8 @@ device requests are described in `sdk/devices/network.zig`,
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
 - [A connection as a device: telnet.device](#a-connection-as-a-device-telnetdevice)
-- [SSH: ssh.device](#ssh-sshdevice) - the server, the client
-  (`C:net/SSH`), the device
+- [SSH: ssh.device](#ssh-sshdevice) - the server, its files over sftp
+  and scp, the client (`C:net/SSH`), copying (`C:net/SCP`), the device
 - [A packet filter](#a-packet-filter) - its rules, `C:net/Filter`, and
   the packet hooks it is built on
 - [Commands](#commands)
@@ -309,8 +309,8 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/shellserver` | `C:net/ShellServer`'s password, its first line (Telnet and SSH) |
 | `ENVARC:Sys/net/authorized_keys` | the ssh-ed25519 keys that may log in over SSH, OpenSSH's lines |
 | `ENVARC:Sys/net/ssh_host_key` | the SSH host key, made at the first start; `.pub` beside it |
-| `ENVARC:Sys/net/id_ed25519` | `C:net/SSH`'s key for logins, made by `SSH KEYGEN`; `.pub` beside it |
-| `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` has seen, OpenSSH's lines |
+| `ENVARC:Sys/net/id_ed25519` | the key `C:net/SSH` and `C:net/SCP` log in with, made by `SSH KEYGEN`; `.pub` beside it |
+| `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
@@ -532,14 +532,18 @@ with `ReleaseSocket(fd, UNIQUE_ID)`, and opening the device with that id
 as the unit takes the socket over. `CMD_READ` answers as soon as there is
 a byte, the Telnet commands taken out; `CMD_WRITE` sends; an interrupt
 from the peer comes as Ctrl-C, and a closed connection as
-`IOERR_ENDOFSTREAM`. `C:net/ShellServer` is built on it: a shell for each
-connection to port 23.
+`IOERR_ENDOFSTREAM`. The client's window size, when it tells it (NAWS,
+RFC 1073) - again each time the window changes - is what
+serial.device's `SDCMD_TERMSIZE` answers, so the console lists Tab's
+names as wide as the window. `C:net/ShellServer` is built on it: a shell
+for each connection to port 23.
 
 ## SSH: ssh.device
 
-SSH both ways: `C:net/ShellServer SSH` lets others in to a shell on this
-machine, and `C:net/SSH` takes this machine's console to a shell on
-another. Both are `DEVS:ssh.device`, one end of it each.
+SSH both ways: `C:net/ShellServer SSH` lets others in to a shell and to
+the files on this machine, and `C:net/SSH` takes this machine's console
+to a shell on another, `C:net/SCP` copies files to and from it. They are
+`DEVS:ssh.device`, one end of it each.
 
 ### The server: ShellServer SSH
 
@@ -559,7 +563,8 @@ the connection is encrypted, and nobody gets in without logging in.
 - **What a client may ask for**: a shell (`ssh machine`), with a
   terminal, or one command (`ssh machine list SYS:`), which runs with its
   input and output as they are - piped input reaches it, and the client
-  ends with the command's return code. No port forwarding, no sftp or scp.
+  ends with the command's return code - or the files, with `sftp` and
+  `scp` (below). No port forwarding.
 - **What it speaks**: key exchange mlkem768x25519-sha256 - ML-KEM-768
   and X25519 together, which a quantum computer cannot undo, what OpenSSH
   10 asks for - or curve25519-sha256 for a client without it, each with
@@ -568,6 +573,35 @@ the connection is encrypted, and nobody gets in without logging in.
 - **The terminal's size**: what the client's window is, it tells, and
   tells again when the window changes; the console lists Tab's names as
   wide as it is.
+
+### Files: sftp and scp
+
+A client that asks for the `sftp` subsystem - `sftp`, and `scp`, which
+speaks SFTP too - gets the files of every mounted volume, in one tree:
+
+```
+sftp -P 2222 claus@localhost       ; in QEMU, -Dssh=2222
+sftp> ls /                          ; C  DEVS  DH0  ENV  LIBS  RAM  S  SYS ...
+sftp> get /SYS/C/List
+scp -P 2222 notes.txt claus@localhost:/RAM/
+scp -r -P 2222 claus@localhost:/SYS/S saved-s
+```
+
+- **Names**: `/` holds the mounted file systems' devices and the
+  assigns, each a directory; `/SYS/C/List` is `SYS:C/List`. A session
+  starts in `/SYS`, so a name without a leading `/` is from there.
+- **What it does**: read and write files anywhere in them, make and
+  remove directories, rename, list with `ls -l`'s lines, and set a
+  file's time and its read, write and execute bits (`chmod`). A new file
+  gets the protection any new file gets, whatever the client's copy
+  had, so a program brought from a PC stays runnable.
+- **Times** are the clock's local time turned into UTC by the zone in
+  `ENVARC:Sys/timezone`, and back.
+- SFTP version 3, as OpenSSH speaks it; up to 16 files and directories
+  open at once in a session. No links. A file past 2 GiB (exFAT) is read
+  and written front to back, as `get` and `put` do; a jump within it
+  past 2 GiB, or cutting it there, fails: dos.library's `Seek` and
+  `SetFileSize` take 32-bit positions.
 
 ### The client: C:net/SSH
 
@@ -604,6 +638,33 @@ SSH claus@10.0.0.5 PORT 2222 list SYS:   ; one command
   curve25519-sha256 with a server without it; ssh-ed25519 host keys;
   AES-GCM.
 
+### Copying: C:net/SCP
+
+`C:net/SCP FROM TO` copies a file, or with `ALL` a directory and all in
+it, between this machine and another, over SFTP as `scp` does - to any
+SSH server with the `sftp` subsystem, ShellServer SSH among them.
+
+```
+SCP claus@server.example:notes.txt RAM:      ; there to here
+SCP SYS:S/Startup-Sequence claus@10.0.0.5:/tmp/
+SCP RAM:photos claus@10.0.0.5:backup ALL PORT 2222
+```
+
+- **Which side is which**: `user@host:path` is the other machine's, and
+  so is `host:path` when no device, volume or assign here is called
+  `host`; an IPv6 address goes in brackets (`[fe80::1]:path`). The path
+  there is from the home directory unless it starts at `/`; empty, it is
+  the home directory. The other name is one here.
+- **Where it goes**: to TO, or into TO under its own name when TO is a
+  directory. A file there is replaced; each file copied is listed with
+  its size, unless `QUIET`.
+- **The connection** is as for `C:net/SSH`: the same host keys in
+  `known_hosts`, the same key and password for the login, `PORT` and
+  `USER` alike.
+- Four reads or writes of 32 KiB are in flight at once, so the round
+  trips overlap. Ctrl-C stops it; the return code is 10 when something
+  could not be copied, 20 when there was no connection.
+
 ### The device
 
 `DEVS:ssh.device` is the protocol (`sdk/devices/ssh.zig`), either end of
@@ -611,22 +672,31 @@ it. As with telnet.device, a unit is a connection, its number the id the
 socket was released under, and the first command decides which end it
 is. On the server's end, the first opener's `SSHCMD_ACCEPT` hands it the
 host key and the logins and is answered once the client has logged in
-and asked for its session - shell or command, the user, the terminal.
-Then a console opens the same unit and reads and writes the session, and
-asks the terminal's size with serial.device's `SDCMD_TERMSIZE`;
-`SSHCMD_EXIT` tells the client the exit status and closes the channel.
+and asked for its session - shell, command or subsystem, the user, the
+terminal. Then a console opens the same unit and reads and writes the
+session, and asks the terminal's size with serial.device's
+`SDCMD_TERMSIZE` - or, for a subsystem, the opener speaks it on its own
+request; `SSHCMD_EXIT` tells the client the exit status and closes the
+channel.
 
 On the client's end the steps are commands, each answered once the
 server has answered it: `SSHCMD_CONNECT` (the key exchange; the host key
 comes back, for the caller to judge before anything secret is sent),
 `SSHCMD_LOGIN` (a key, a password, both, or neither to ask; `SSHERR_LOGIN`
 with the ways the server still takes; the server's banner, if it sent
-one), `SSHCMD_SESSION` (a shell or a command, with a
+one), `SSHCMD_SESSION` (a shell, a command or a subsystem, with a
 terminal or without). Then `CMD_READ` and `CMD_WRITE` carry the session,
 `SSHCMD_WINDOW` tells a new size, `SSHCMD_EOF` ends the session's input,
 and `SSHCMD_STATUS` is answered with the exit status once it is over.
 When the connection goes first, a step's answer is `IOERR_ENDOFSTREAM`
 with the reason in `io_Actual`.
+
+A program on the client's end starts with `sdk/devices/ssh/connect.zig`,
+as `C:net/SSH` and `C:net/SCP` do: its `Client` makes the connection,
+checks the host key against `known_hosts`, asking the first time, and
+logs in with the key or a password; the program then asks for its
+session. `sdk/devices/ssh/sftp.zig` is SFTP's packets and attributes,
+for either end.
 
 In QEMU, `-Dssh=2222` forwards a host port to port 22 (qemu-display does
 unless told otherwise): `ssh -p 2222 localhost`. The host is `10.0.2.2`
@@ -743,7 +813,8 @@ bsdsocket.library only for the length of a call, keeps its hooks in.
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
 | `C:net/PacketCapture` | an interface's frames into a pcap file; `FILTERED` only what the filter stopped |
 | `C:net/Filter` | the packet filter's rules loaded (`LOAD`), shown with their counts (`SHOW`), its exchanges (`FLOWS`), taken out (`OFF`) |
-| `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server |
+| `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server, with sftp and scp for the files |
 | `C:net/SSH` | a shell or a command on another machine over SSH; `KEYGEN` makes the key for logins |
+| `C:net/SCP` | files to and from another machine over SSH (SFTP); `ALL` for a directory |
 | `C:net/Net` | a network device spoken to directly |
 | `C:test/BsdSockTest` | bsdsocket.library against the BSD socket API |

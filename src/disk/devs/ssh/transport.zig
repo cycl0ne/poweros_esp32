@@ -220,9 +220,33 @@ pub const Transport = struct {
         return t.out.len - t.out_length >= reply_room;
     }
 
-    /// Whether a packet may be whole and there is room for its answer.
+    /// Whether a packet is whole and there is room for its answer: more
+    /// to do before the peer sends more.
     pub fn processable(t: *const Transport) bool {
-        return t.phase != .ended and t.in_length > 0 and t.roomForReply();
+        return t.whole() and t.roomForReply();
+    }
+
+    /// Whether the input holds what `next` takes whole: the version line
+    /// while it is awaited, then a packet - or a length `next` refuses.
+    /// A packet's start alone waits for the rest from the connection.
+    fn whole(t: *const Transport) bool {
+        switch (t.phase) {
+            .ended => return false,
+            .version => {
+                if (t.in_length >= version_max) return true;
+                for (t.in[0..t.in_length]) |byte| {
+                    if (byte == '\n') return true;
+                }
+                return false;
+            },
+            .packets => {
+                if (t.in_length < 4) return false;
+                const length = wire.get32(t.in[0..4]);
+                if (length < 5 or length > packet_max) return true;
+                const total: usize = 4 + @as(usize, length) + (if (t.receiving.on) tag_bytes else 0);
+                return t.in_length >= total;
+            },
+        }
     }
 
     /// The next whole message, opened; null when none is whole. It stays

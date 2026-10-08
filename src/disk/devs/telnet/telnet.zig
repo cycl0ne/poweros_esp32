@@ -14,6 +14,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const serial = sdk.devices.serial;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _telnet = @import("_telnet.zig");
 const TelnetBase = _telnet.TelnetBase;
@@ -22,8 +23,8 @@ const unit_file = @import("unit.zig");
 
 pub const DEVICE_NAME = _telnet.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "25.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "08.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -40,7 +41,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const base = _telnet.telnetBase(dev);
     io.err = 0;
     switch (io.command) {
-        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH => {
+        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH, serial.SDCMD_TERMSIZE => {
             // It will be replied, so it needs a reply port, and it is not
             // quick I/O.
             if (io.message.reply_port == null) {

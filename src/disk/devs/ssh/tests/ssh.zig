@@ -896,3 +896,93 @@ test "the client: the server renews the keys; a message held meanwhile; a change
     try testing.expectEqual(transport.reason_host_key_not_verifiable, client.transport.reason);
     try testing.expect(client.sessionEnded());
 }
+
+test "the client asks for a subsystem: the server's opener is told its name" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    pair.pump();
+    pair.login(true, "");
+    var request: ssh.SshSession = .{ .subsystem = 1 };
+    @memcpy(request.command[0..4], "sftp");
+    pair.client.session(&request);
+    pair.pump();
+    try testing.expectEqual(client_file.Step.running, pair.client.step);
+    try testing.expectEqual(ssh.SSHSESSION_SUBSYSTEM, rig.server.kind);
+    try testing.expectEqualStrings("sftp", std.mem.sliceTo(&rig.server.command, 0));
+    try testing.expectEqual(@as(u32, 0), rig.server.columns);
+}
+
+test "the client: much more than a window to the server, small answers back in between" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const server = rig.server;
+    const client = pair.client;
+    pair.pump();
+    pair.login(true, "");
+    var request: ssh.SshSession = .{ .subsystem = 1 };
+    @memcpy(request.command[0..4], "sftp");
+    client.session(&request);
+    pair.pump();
+
+    const total = 300 * 1024;
+    const many = try testing.allocator.alloc(u8, total);
+    defer testing.allocator.free(many);
+    for (many, 0..) |*byte, index| byte.* = @truncate(index * 13 + index / 251);
+    const back = try testing.allocator.alloc(u8, total);
+    defer testing.allocator.free(back);
+    var sent: usize = 0;
+    var got: usize = 0;
+    var answered: usize = 0;
+    var answers: [64]u8 = undefined;
+    var rounds: usize = 0;
+    while (got < total) : (rounds += 1) {
+        try testing.expect(rounds < 100_000);
+        if (sent < total) sent += client.write(many[sent..@min(sent + 33 * 1024, total)]);
+        pair.pump();
+        const count = server.read(back[got..@min(got + 34 * 1024, total)]);
+        got += count;
+        // An answer for every 32 KiB taken.
+        while (answered + 32 * 1024 <= got) : (answered += 32 * 1024) _ = server.write("status: 28 bytes of answer.");
+        pair.pump();
+        _ = client.read(&answers);
+    }
+    try testing.expectEqualSlices(u8, many, back);
+}
+
+test "a packet come in part waits for the rest: nothing to process until it is whole" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const server = rig.server;
+    const client = pair.client;
+    pair.pump();
+    pair.login(true, "");
+    pair.session("", "");
+    try testing.expect(!server.transport.processable());
+
+    var text: [100]u8 = undefined;
+    for (&text, 0..) |*byte, index| byte.* = @truncate('a' + index % 26);
+    try testing.expectEqual(text.len, client.write(&text));
+    const bytes = client.transport.pending();
+    try testing.expect(bytes.len > 10);
+    // Ten bytes of the packet: in the input, but not a packet yet.
+    server.transport.feed(bytes[0..10]);
+    client.transport.sent(10);
+    try testing.expect(!server.transport.processable());
+    server.process();
+    try testing.expectEqual(@as(usize, 0), server.read(&text));
+    // The rest: whole now.
+    const rest = client.transport.pending();
+    server.transport.feed(rest);
+    client.transport.sent(rest.len);
+    try testing.expect(server.transport.processable());
+    pair.pump();
+    var back: [100]u8 = undefined;
+    try testing.expectEqual(back.len, server.read(&back));
+    try testing.expectEqualSlices(u8, &text, &back);
+}

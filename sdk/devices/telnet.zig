@@ -18,10 +18,14 @@
 //!               the stack has taken them. IOERR_ENDOFSTREAM when the
 //!               connection has gone.
 //!   CMD_FLUSH   every read waiting is answered with IOERR_ABORTED.
+//!   SDCMD_TERMSIZE io_Actual, io_Offset: the client's window's columns
+//!               and rows, as it last said them (NAWS, RFC 1073);
+//!               IOERR_NOCMD while it has said none.
 //!
 //! Anything else is IOERR_NOCMD. On opening, the unit offers to echo and
 //! to go without go-ahead (WILL ECHO, WILL SUPPRESS-GO-AHEAD, DO
 //! SUPPRESS-GO-AHEAD), so a client sends each key as it is typed and
-//! shows only what comes back; every other option is refused.
+//! shows only what comes back, and asks for the window's size (DO NAWS);
+//! every other option is refused.
 
 pub const TELNETNAME = "telnet.device";

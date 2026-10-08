@@ -64,7 +64,7 @@
 //! running may be changing its directory, and nothing would read the line
 //! yet anyway. A list of names is as wide as the window's console, or as
 //! the terminal at a line's other end when the line knows it
-//! (SDCMD_TERMSIZE: an SSH client's window), or 80 characters.
+//! (SDCMD_TERMSIZE: an SSH or Telnet client's window), or 80 characters.
 //!
 //! **A stream that ends.** A device read answered with IOERR_ENDOFSTREAM
 //! - a network connection whose peer has gone, or whose client sent the
@@ -570,7 +570,7 @@ const DeviceIo = struct {
 
     /// How wide the terminal is: the window's console as it is now; on a
     /// line, what the line knows of the terminal at its other end
-    /// (SDCMD_TERMSIZE - an SSH client's window); else 80 characters.
+    /// (SDCMD_TERMSIZE - an SSH or Telnet client's window); else 80 characters.
     fn columns(io: *DeviceIo) usize {
         const u = &io.units[0];
         if (!u.open) return 80;

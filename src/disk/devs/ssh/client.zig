@@ -25,7 +25,7 @@
 //!
 //! **The session.** One `session` channel; a terminal asked for with its
 //! type and size (`pty-req`; a refusal leaves the session without one),
-//! then `shell`, or `exec` with a command. Its errors come with its data.
+//! then `shell`, `exec` with a command, or `subsystem` with a name. Its errors come with its data.
 //! The window may change (`window-change`); our input may end (EOF). The
 //! server's `exit-status` is kept, and `exit-signal` is a status of 255;
 //! the session is over when the server closes the channel.
@@ -117,6 +117,8 @@ pub const Client = struct {
 
     command: [512]u8 = @splat(0),
     command_length: usize = 0,
+    /// The command is a subsystem's name.
+    subsystem: bool = false,
     terminal: [32]u8 = @splat(0),
     terminal_length: usize = 0,
     columns: u32 = 0,
@@ -429,6 +431,7 @@ pub const Client = struct {
         @memcpy(client.terminal[0..client.terminal_length], given.terminal[0..client.terminal_length]);
         client.columns = given.columns;
         client.rows = given.rows;
+        client.subsystem = given.subsystem != 0 and client.command_length > 0;
         var bytes: [64]u8 = undefined;
         var writer = Writer{ .bytes = &bytes };
         writer.byte(msg.msg_channel_open);
@@ -513,7 +516,7 @@ pub const Client = struct {
         var bytes: [600]u8 = undefined;
         var writer = Writer{ .bytes = &bytes };
         if (client.command_length > 0) {
-            client.requestHeadChannel(&writer, "exec", true);
+            client.requestHeadChannel(&writer, if (client.subsystem) "subsystem" else "exec", true);
             writer.string(client.command[0..client.command_length]);
         } else {
             client.requestHeadChannel(&writer, "shell", true);
