@@ -3,9 +3,12 @@
 //! as the client: the version lines, the key exchange - the client works
 //! out K and H itself, checks the host's signature and makes its own
 //! keys - the login by password and by key, the session channel both
-//! ways, a second key exchange, and a packet tampered with. Beside them
-//! SSH's wire types, and the key text checked against what OpenSSH's
-//! ssh-keygen wrote for a key of its own.
+//! ways, a second key exchange, and a packet tampered with. Then the
+//! client's end (`client.zig`) against the server's, back to back: both
+//! logins, a shell and a command, the window, the exit status, keys the
+//! server renews and a host key that changes. Beside them SSH's wire
+//! types, and the key text checked against what OpenSSH's ssh-keygen
+//! wrote for a key of its own.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -17,8 +20,10 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const crypto_init = @import("../../../libs/crypto/crypto_init.zig");
 const kexec = @import("host_rom").exec;
 const connection = @import("../connection.zig");
+const transport = @import("../transport.zig");
+const channel_file = @import("../channel.zig");
 const Connection = connection.Connection;
-const Direction = connection.Direction;
+const Direction = transport.Direction;
 const wire = @import("../wire.zig");
 
 const testing = std.testing;
@@ -38,9 +43,9 @@ test "mpints as RFC 4251 writes them, and name-lists" {
     writer.mpint(&.{ 0, 0x80 });
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 2, 0, 0x80 }, writer.written());
 
-    try testing.expectEqualStrings("mlkem768x25519-sha256", wire.choose("mlkem768x25519-sha256,curve25519-sha256,ext-info-c", connection.kex_names).?);
-    try testing.expectEqualStrings("curve25519-sha256", wire.choose("sntrup761x25519-sha512,curve25519-sha256", connection.kex_names).?);
-    try testing.expect(wire.choose("diffie-hellman-group14-sha256", connection.kex_names) == null);
+    try testing.expectEqualStrings("mlkem768x25519-sha256", wire.choose("mlkem768x25519-sha256,curve25519-sha256,ext-info-c", transport.kex_names).?);
+    try testing.expectEqualStrings("curve25519-sha256", wire.choose("sntrup761x25519-sha512,curve25519-sha256", transport.kex_names).?);
+    try testing.expect(wire.choose("diffie-hellman-group14-sha256", transport.kex_names) == null);
     try testing.expect(wire.hasName("a,kex-strict-c-v00@openssh.com", "kex-strict-c-v00@openssh.com"));
     try testing.expect(!wire.hasName("kex-strict-c-v00@openssh.comx", "kex-strict-c-v00@openssh.com"));
 
@@ -101,7 +106,7 @@ const Rig = struct {
         const cb: *CryptoBase = @ptrCast(sys.OpenLibrary(crypto.CRYPTONAME, 1) orelse return error.NoBase);
         const rig = try testing.allocator.create(Rig);
         rig.* = .{ .sys = sys, .library = @ptrCast(@alignCast(made)), .cb = cb, .server = try testing.allocator.create(Connection), .accept = .{}, .user_seed = undefined, .user_public = undefined };
-        rig.server.* = .{ .cb = cb };
+        rig.server.init(cb);
         var length: u32 = 32;
         _ = cb.MakeKeyPair(crypto.CURVE_ED25519, &rig.accept.host_seed, &rig.accept.host_public, &length);
         _ = cb.MakeKeyPair(crypto.CURVE_ED25519, &rig.user_seed, &rig.user_public, &length);
@@ -143,12 +148,12 @@ const Client = struct {
         const server = client.rig.server;
         while (true) {
             server.process();
-            const bytes = server.pending();
+            const bytes = server.transport.pending();
             if (bytes.len == 0) break;
             @memcpy(client.received[client.received_length..][0..bytes.len], bytes);
             client.received_length += bytes.len;
-            server.sent(bytes.len);
-            if (!server.processable()) break;
+            server.transport.sent(bytes.len);
+            if (!server.transport.processable()) break;
         }
     }
 
@@ -182,7 +187,7 @@ const Client = struct {
             advance(&client.sending);
             total += 16;
         }
-        client.rig.server.feed(packet[0..total]);
+        client.rig.server.transport.feed(packet[0..total]);
         client.pump();
     }
 
@@ -232,7 +237,7 @@ const Client = struct {
         const cb = client.rig.cb;
         var bytes: [512]u8 = undefined;
         var kexinit = wire.Writer{ .bytes = &bytes };
-        kexinit.byte(connection.msg_kexinit);
+        kexinit.byte(transport.msg_kexinit);
         kexinit.raw(&([_]u8{7} ** 16));
         kexinit.string(if (client.hybrid) "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com" else "curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com");
         kexinit.string("ssh-ed25519");
@@ -248,7 +253,7 @@ const Client = struct {
         kexinit.uint32(0);
         client.send(kexinit.written());
         if (!first) {
-            const theirs = try client.expect(connection.msg_kexinit);
+            const theirs = try client.expect(transport.msg_kexinit);
             @memcpy(client.server_kexinit[0..theirs.len], theirs);
             client.server_kexinit_length = theirs.len;
         }
@@ -268,11 +273,11 @@ const Client = struct {
         }
         var init_bytes: [1300]u8 = undefined;
         var init = wire.Writer{ .bytes = &init_bytes };
-        init.byte(connection.msg_kex_ecdh_init);
+        init.byte(transport.msg_kex_ecdh_init);
         init.string(client_blob);
         client.send(init.written());
 
-        var reply = wire.Reader{ .bytes = try client.expect(connection.msg_kex_ecdh_reply), .at = 1 };
+        var reply = wire.Reader{ .bytes = try client.expect(transport.msg_kex_ecdh_reply), .at = 1 };
         const host_blob = reply.string();
         const server_blob = reply.string();
         const server_share = server_blob[server_blob.len - 32 ..];
@@ -303,7 +308,7 @@ const Client = struct {
 
         var hash = Sha256.init(.{});
         hashString(&hash, client_version);
-        hashString(&hash, connection.version);
+        hashString(&hash, transport.version);
         hashString(&hash, kexinit.written());
         hashString(&hash, client.server_kexinit[0..client.server_kexinit_length]);
         hashString(&hash, host_blob);
@@ -316,7 +321,7 @@ const Client = struct {
         const host_key: crypto.PublicKey = .{ .point = crypto.Bytes.of(&client.rig.accept.host_public) };
         try testing.expectEqual(crypto.CRYPTOERR_OK, cb.VerifySignature(crypto.SIG_ED25519, &host_key, &crypto.Bytes.of(&exchange_hash), &crypto.Bytes.of(signature)));
 
-        _ = try client.expect(connection.msg_newkeys);
+        _ = try client.expect(transport.msg_newkeys);
         var sending: Direction = .{ .on = true, .key_length = 16 };
         var receiving: Direction = .{ .on = true, .key_length = 32 };
         derive(shared.written(), &exchange_hash, 'A', &client.session_id, &sending.nonce);
@@ -324,7 +329,7 @@ const Client = struct {
         derive(shared.written(), &exchange_hash, 'B', &client.session_id, &receiving.nonce);
         derive(shared.written(), &exchange_hash, 'D', &client.session_id, &receiving.key);
         client.receiving = receiving;
-        client.send(&.{connection.msg_newkeys});
+        client.send(&.{transport.msg_newkeys});
         client.sending = sending;
     }
 
@@ -334,29 +339,29 @@ const Client = struct {
         const server = client.rig.server;
         server.start(&client.rig.accept);
         client.pump();
-        const banner = connection.version ++ "\r\n";
+        const banner = transport.version ++ "\r\n";
         try testing.expectEqualStrings(banner, client.received[0..banner.len]);
         std.mem.copyForwards(u8, client.received[0 .. client.received_length - banner.len], client.received[banner.len..client.received_length]);
         client.received_length -= banner.len;
-        const theirs = try client.expect(connection.msg_kexinit);
+        const theirs = try client.expect(transport.msg_kexinit);
         @memcpy(client.server_kexinit[0..theirs.len], theirs);
         client.server_kexinit_length = theirs.len;
-        server.feed(client_version ++ "\r\n");
+        server.transport.feed(client_version ++ "\r\n");
         try client.exchange(true);
-        try testing.expect(server.strict);
+        try testing.expect(server.transport.strict);
 
         var bytes: [64]u8 = undefined;
         var request = wire.Writer{ .bytes = &bytes };
-        request.byte(connection.msg_service_request);
+        request.byte(transport.msg_service_request);
         request.string("ssh-userauth");
         client.send(request.written());
-        _ = try client.expect(connection.msg_service_accept);
+        _ = try client.expect(transport.msg_service_accept);
     }
 
     fn passwordLogin(client: *Client, given: []const u8) void {
         var bytes: [128]u8 = undefined;
         var writer = wire.Writer{ .bytes = &bytes };
-        writer.byte(connection.msg_userauth_request);
+        writer.byte(transport.msg_userauth_request);
         writer.string("claus");
         writer.string("ssh-connection");
         writer.string("password");
@@ -370,17 +375,17 @@ const Client = struct {
     fn session(client: *Client, request: []const u8, command: []const u8) !void {
         var bytes: [256]u8 = undefined;
         var writer = wire.Writer{ .bytes = &bytes };
-        writer.byte(connection.msg_channel_open);
+        writer.byte(transport.msg_channel_open);
         writer.string("session");
         writer.uint32(7);
         writer.uint32(1 << 20);
         writer.uint32(32768);
         client.send(writer.written());
-        var confirmation = wire.Reader{ .bytes = try client.expect(connection.msg_channel_open_confirmation), .at = 1 };
+        var confirmation = wire.Reader{ .bytes = try client.expect(transport.msg_channel_open_confirmation), .at = 1 };
         try testing.expectEqual(@as(u32, 7), confirmation.uint32());
 
         writer = .{ .bytes = &bytes };
-        writer.byte(connection.msg_channel_request);
+        writer.byte(transport.msg_channel_request);
         writer.uint32(0);
         writer.string("pty-req");
         writer.boolean(true);
@@ -391,22 +396,22 @@ const Client = struct {
         writer.uint32(0);
         writer.string("");
         client.send(writer.written());
-        _ = try client.expect(connection.msg_channel_success);
+        _ = try client.expect(transport.msg_channel_success);
 
         writer = .{ .bytes = &bytes };
-        writer.byte(connection.msg_channel_request);
+        writer.byte(transport.msg_channel_request);
         writer.uint32(0);
         writer.string(request);
         writer.boolean(true);
         if (command.len > 0) writer.string(command);
         client.send(writer.written());
-        _ = try client.expect(connection.msg_channel_success);
+        _ = try client.expect(transport.msg_channel_success);
     }
 
     fn data(client: *Client, text: []const u8) void {
         var bytes: [256]u8 = undefined;
         var writer = wire.Writer{ .bytes = &bytes };
-        writer.byte(connection.msg_channel_data);
+        writer.byte(transport.msg_channel_data);
         writer.uint32(0);
         writer.string(text);
         client.send(writer.written());
@@ -460,18 +465,18 @@ test "a login by password, a shell, data both ways, an interrupt, the exit" {
     // logs in.
     var bytes: [128]u8 = undefined;
     var none = wire.Writer{ .bytes = &bytes };
-    none.byte(connection.msg_userauth_request);
+    none.byte(transport.msg_userauth_request);
     none.string("claus");
     none.string("ssh-connection");
     none.string("none");
     client.send(none.written());
-    var failure = wire.Reader{ .bytes = try client.expect(connection.msg_userauth_failure), .at = 1 };
+    var failure = wire.Reader{ .bytes = try client.expect(transport.msg_userauth_failure), .at = 1 };
     try testing.expectEqualStrings("publickey,password", failure.string());
     client.passwordLogin("guess");
-    _ = try client.expect(connection.msg_userauth_failure);
+    _ = try client.expect(transport.msg_userauth_failure);
     try testing.expect(!server.authenticated);
     client.passwordLogin(password);
-    _ = try client.expect(connection.msg_userauth_success);
+    _ = try client.expect(transport.msg_userauth_success);
     try testing.expectEqualStrings("claus", std.mem.sliceTo(&server.user, 0));
 
     try client.session("shell", "");
@@ -486,7 +491,7 @@ test "a login by password, a shell, data both ways, an interrupt, the exit" {
     try testing.expectEqual(@as(usize, 4), server.read(&typed));
     try testing.expectEqualStrings("dir\r", typed[0..4]);
     var signal = wire.Writer{ .bytes = &bytes };
-    signal.byte(connection.msg_channel_request);
+    signal.byte(transport.msg_channel_request);
     signal.uint32(0);
     signal.string("signal");
     signal.boolean(false);
@@ -498,18 +503,18 @@ test "a login by password, a shell, data both ways, an interrupt, the exit" {
     // Out: what the shell writes, as channel data to the client's channel.
     try testing.expectEqual(@as(usize, 5), server.write("hello"));
     client.pump();
-    var output = wire.Reader{ .bytes = try client.expect(connection.msg_channel_data), .at = 1 };
+    var output = wire.Reader{ .bytes = try client.expect(transport.msg_channel_data), .at = 1 };
     try testing.expectEqual(@as(u32, 7), output.uint32());
     try testing.expectEqualStrings("hello", output.string());
 
     // Reading a ring's half gives the window back.
-    var many: [connection.ring_bytes / 2]u8 = @splat('x');
+    var many: [channel_file.ring_bytes / 2]u8 = @splat('x');
     var at: usize = 0;
     while (at < many.len) : (at += 200) client.data(many[at..@min(many.len, at + 200)]);
-    var drained: [connection.ring_bytes]u8 = undefined;
+    var drained: [channel_file.ring_bytes]u8 = undefined;
     try testing.expectEqual(many.len, server.read(&drained));
     client.pump();
-    var adjust = wire.Reader{ .bytes = try client.expect(connection.msg_channel_window_adjust), .at = 1 };
+    var adjust = wire.Reader{ .bytes = try client.expect(transport.msg_channel_window_adjust), .at = 1 };
     _ = adjust.uint32();
     try testing.expect(adjust.uint32() >= many.len);
 
@@ -517,17 +522,17 @@ test "a login by password, a shell, data both ways, an interrupt, the exit" {
     // input.
     server.exit(5);
     client.pump();
-    var status = wire.Reader{ .bytes = try client.expect(connection.msg_channel_request), .at = 1 };
+    var status = wire.Reader{ .bytes = try client.expect(transport.msg_channel_request), .at = 1 };
     _ = status.uint32();
     try testing.expectEqualStrings("exit-status", status.string());
     _ = status.boolean();
     try testing.expectEqual(@as(u32, 5), status.uint32());
-    _ = try client.expect(connection.msg_channel_eof);
-    _ = try client.expect(connection.msg_channel_close);
+    _ = try client.expect(transport.msg_channel_eof);
+    _ = try client.expect(transport.msg_channel_close);
     try testing.expectEqual(@as(usize, 0), server.write("late"));
-    var close = [_]u8{ connection.msg_channel_close, 0, 0, 0, 0 };
+    var close = [_]u8{ transport.msg_channel_close, 0, 0, 0, 0 };
     client.send(&close);
-    try testing.expect(server.input_ended);
+    try testing.expect(server.inputEnded());
 }
 
 test "a login by key: asked about, then signed; a command" {
@@ -542,7 +547,7 @@ test "a login by key: asked about, then signed; a command" {
     var bytes: [512]u8 = undefined;
     // Asked about: PK_OK. A key nobody gave: failure.
     var query = wire.Writer{ .bytes = &bytes };
-    query.byte(connection.msg_userauth_request);
+    query.byte(transport.msg_userauth_request);
     query.string("claus");
     query.string("ssh-connection");
     query.string("publickey");
@@ -550,13 +555,13 @@ test "a login by key: asked about, then signed; a command" {
     query.string("ssh-ed25519");
     query.string(&key_blob);
     client.send(query.written());
-    _ = try client.expect(connection.msg_userauth_pk_ok);
+    _ = try client.expect(transport.msg_userauth_pk_ok);
 
     // Signed, over the session id and the request.
     var signed_bytes: [512]u8 = undefined;
     var signed = wire.Writer{ .bytes = &signed_bytes };
     signed.string(&client.session_id);
-    signed.byte(connection.msg_userauth_request);
+    signed.byte(transport.msg_userauth_request);
     signed.string("claus");
     signed.string("ssh-connection");
     signed.string("publickey");
@@ -570,7 +575,7 @@ test "a login by key: asked about, then signed; a command" {
     wrong[0] ^= 1;
     for ([_]*const [64]u8{ &wrong, &signature }, 0..) |each, round| {
         var request = wire.Writer{ .bytes = &bytes };
-        request.byte(connection.msg_userauth_request);
+        request.byte(transport.msg_userauth_request);
         request.string("claus");
         request.string("ssh-connection");
         request.string("publickey");
@@ -583,7 +588,7 @@ test "a login by key: asked about, then signed; a command" {
         blob.string(each);
         request.string(blob.written());
         client.send(request.written());
-        _ = try client.expect(if (round == 0) connection.msg_userauth_failure else connection.msg_userauth_success);
+        _ = try client.expect(if (round == 0) transport.msg_userauth_failure else transport.msg_userauth_success);
     }
     try testing.expect(server.authenticated);
 
@@ -599,9 +604,9 @@ test "a client without ML-KEM gets curve25519-sha256" {
     defer testing.allocator.destroy(client);
     client.hybrid = false;
     try client.connect();
-    try testing.expect(!rig.server.hybrid);
+    try testing.expect(!rig.server.transport.hybrid);
     client.passwordLogin(password);
-    _ = try client.expect(connection.msg_userauth_success);
+    _ = try client.expect(transport.msg_userauth_success);
 }
 
 test "six failed logins end the connection" {
@@ -611,8 +616,8 @@ test "six failed logins end the connection" {
     defer testing.allocator.destroy(client);
     try client.connect();
     for (0..connection.tries_max) |_| client.passwordLogin("wrong");
-    try testing.expect(rig.server.ended());
-    try testing.expectEqual(connection.reason_no_more_auth_methods, rig.server.reason);
+    try testing.expect(rig.server.transport.ended());
+    try testing.expectEqual(transport.reason_no_more_auth_methods, rig.server.transport.reason);
 }
 
 test "the client exchanges keys again in the middle; a packet tampered with ends it" {
@@ -622,32 +627,272 @@ test "the client exchanges keys again in the middle; a packet tampered with ends
     defer testing.allocator.destroy(client);
     const server = rig.server;
     try client.connect();
-    try testing.expect(server.hybrid);
+    try testing.expect(server.transport.hybrid);
     client.passwordLogin(password);
-    _ = try client.expect(connection.msg_userauth_success);
+    _ = try client.expect(transport.msg_userauth_success);
     try client.session("shell", "");
-    const first_id = server.session_id;
+    const first_id = server.transport.session_id;
 
     // Again: the session id stays, the keys change, data goes on.
     try client.exchange(false);
-    try testing.expectEqualSlices(u8, &first_id, &server.session_id);
+    try testing.expectEqualSlices(u8, &first_id, &server.transport.session_id);
     client.data("after");
     var typed: [16]u8 = undefined;
     try testing.expectEqual(@as(usize, 5), server.read(&typed));
     try testing.expectEqual(@as(usize, 2), server.write("ok"));
     client.pump();
-    _ = try client.expect(connection.msg_channel_data);
+    _ = try client.expect(transport.msg_channel_data);
 
     // One bit of a sealed packet turned: the tag does not match.
     var bytes: [32]u8 = undefined;
     var writer = wire.Writer{ .bytes = &bytes };
-    writer.byte(connection.msg_channel_data);
+    writer.byte(transport.msg_channel_data);
     writer.uint32(0);
     writer.string("x");
     const before = client.sending;
     client.sending.key[0] ^= 1;
     client.send(writer.written());
     client.sending = before;
-    try testing.expect(server.ended());
-    try testing.expectEqual(connection.reason_mac_error, server.reason);
+    try testing.expect(server.transport.ended());
+    try testing.expectEqual(transport.reason_mac_error, server.transport.reason);
+}
+
+// --- the client against the server -----------------------------------------------
+
+const client_file = @import("../client.zig");
+const SshClient = client_file.Client;
+
+/// Both ends of ssh.device, joined.
+const Pair = struct {
+    rig: *Rig,
+    client: *SshClient,
+
+    fn init(rig: *Rig) !Pair {
+        const client = try testing.allocator.create(SshClient);
+        client.init(rig.cb);
+        rig.server.start(&rig.accept);
+        client.start();
+        return .{ .rig = rig, .client = client };
+    }
+
+    fn deinit(pair: *Pair) void {
+        testing.allocator.destroy(pair.client);
+    }
+
+    /// What each end has to say moved to the other, until neither has
+    /// more.
+    fn pump(pair: *Pair) void {
+        const server = &pair.rig.server.transport;
+        const client = &pair.client.transport;
+        while (true) {
+            pair.rig.server.process();
+            pair.client.process();
+            var moved = false;
+            for ([_][2]*transport.Transport{ .{ server, client }, .{ client, server } }) |ends| {
+                const bytes = ends[0].pending();
+                const count = @min(bytes.len, ends[1].inRoom());
+                if (count == 0) continue;
+                ends[1].feed(bytes[0..count]);
+                ends[0].sent(count);
+                moved = true;
+            }
+            if (!moved) break;
+        }
+    }
+
+    fn login(pair: *Pair, with_key: bool, given_password: []const u8) void {
+        var request: ssh.SshLogin = .{};
+        @memcpy(request.user[0..5], "claus");
+        if (with_key) {
+            request.key_seed = pair.rig.user_seed;
+            request.key_public = pair.rig.user_public;
+            request.key_given = 1;
+        }
+        @memcpy(request.password[0..given_password.len], given_password);
+        request.password_length = @intCast(given_password.len);
+        pair.client.login(&request);
+        pair.pump();
+    }
+
+    fn session(pair: *Pair, command: []const u8, terminal: []const u8) void {
+        var request: ssh.SshSession = .{ .columns = 100, .rows = 30 };
+        @memcpy(request.command[0..command.len], command);
+        @memcpy(request.terminal[0..terminal.len], terminal);
+        pair.client.session(&request);
+        pair.pump();
+    }
+};
+
+test "the client: the hybrid exchange, a key login, a shell, data both ways, the window, the exit status" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const server = rig.server;
+    const client = pair.client;
+    pair.pump();
+    try testing.expectEqual(client_file.Step.connected, client.step);
+    try testing.expectEqual(rig.accept.host_public, client.host_public);
+    try testing.expect(client.transport.hybrid and server.transport.hybrid);
+    try testing.expect(client.transport.strict and server.transport.strict);
+    try testing.expectEqualSlices(u8, &server.transport.session_id, &client.transport.session_id);
+
+    pair.login(true, "");
+    try testing.expectEqual(client_file.Step.logged_in, client.step);
+    try testing.expect(server.authenticated);
+    try testing.expectEqualStrings("claus", std.mem.sliceTo(&server.user, 0));
+
+    pair.session("", "xterm-256color");
+    try testing.expectEqual(client_file.Step.running, client.step);
+    try testing.expect(client.has_terminal);
+    try testing.expectEqual(ssh.SSHSESSION_SHELL, server.kind);
+    try testing.expectEqual(@as(u32, 100), server.columns);
+    try testing.expectEqualStrings("xterm-256color", std.mem.sliceTo(&server.terminal, 0));
+
+    try testing.expectEqual(@as(usize, 4), client.write("dir\r"));
+    pair.pump();
+    var typed: [16]u8 = undefined;
+    try testing.expectEqual(@as(usize, 4), server.read(&typed));
+    try testing.expectEqualStrings("dir\r", typed[0..4]);
+    try testing.expectEqual(@as(usize, 5), server.write("hello"));
+    pair.pump();
+    try testing.expectEqual(@as(usize, 5), client.read(&typed));
+    try testing.expectEqualStrings("hello", typed[0..5]);
+
+    // More than a window's worth goes, as the reader gives it back.
+    var sent: usize = 0;
+    var got: usize = 0;
+    var many: [3 * channel_file.ring_bytes]u8 = undefined;
+    for (&many, 0..) |*byte, index| byte.* = @truncate(index * 7);
+    var back: [3 * channel_file.ring_bytes]u8 = undefined;
+    while (got < many.len) {
+        if (sent < many.len) sent += server.write(many[sent..]);
+        pair.pump();
+        got += client.read(back[got..]);
+    }
+    try testing.expectEqualSlices(u8, &many, &back);
+
+    client.windowChange(120, 40);
+    pair.pump();
+    try testing.expectEqual(@as(u32, 120), server.columns);
+    try testing.expectEqual(@as(u32, 40), server.rows);
+
+    client.endInput();
+    pair.pump();
+    try testing.expect(server.inputEnded());
+    try testing.expect(!client.sessionEnded());
+    server.exit(7);
+    pair.pump();
+    try testing.expect(client.sessionEnded());
+    try testing.expect(client.inputEnded());
+    try testing.expect(client.status_given);
+    try testing.expectEqual(@as(u32, 7), client.exit_status);
+}
+
+test "the client: a key refused, then the password; a command without a terminal" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    // Only the password will do.
+    rig.accept.key_count = 0;
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const client = pair.client;
+    pair.pump();
+
+    pair.login(true, "guess");
+    try testing.expectEqual(client_file.Step.refused, client.step);
+    var methods: [32]u8 = undefined;
+    client.methodsLeft(&methods);
+    try testing.expectEqualStrings("password", std.mem.sliceTo(&methods, 0));
+    try testing.expectEqual(@as(u32, 2), rig.server.failures);
+
+    pair.login(false, password);
+    try testing.expectEqual(client_file.Step.logged_in, client.step);
+    // The password is not kept.
+    try testing.expectEqual(@as(usize, 0), client.password_length);
+
+    pair.session("list sys:", "");
+    try testing.expectEqual(client_file.Step.running, client.step);
+    try testing.expect(!client.has_terminal);
+    try testing.expectEqual(ssh.SSHSESSION_EXEC, rig.server.kind);
+    try testing.expectEqualStrings("list sys:", std.mem.sliceTo(&rig.server.command, 0));
+    try testing.expectEqual(@as(u32, 0), rig.server.columns);
+}
+
+test "the client: with neither key nor password it asks what the server takes; a banner comes back once" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const client = pair.client;
+    pair.pump();
+
+    var request: ssh.SshLogin = .{};
+    @memcpy(request.user[0..5], "claus");
+    client.login(&request);
+    // The server's banner, ahead of its answer.
+    const text = "Authorised users only.\r\n\x1b[2Jbye\r\n";
+    var bytes: [128]u8 = undefined;
+    var banner = wire.Writer{ .bytes = &bytes };
+    banner.byte(transport.msg_userauth_banner);
+    banner.string(text);
+    banner.string("");
+    rig.server.transport.send(banner.written());
+    pair.pump();
+    try testing.expectEqual(client_file.Step.refused, client.step);
+    var methods: [32]u8 = undefined;
+    client.methodsLeft(&methods);
+    try testing.expectEqualStrings("publickey,password", std.mem.sliceTo(&methods, 0));
+    // Asking is no failed try.
+    try testing.expectEqual(@as(u32, 0), rig.server.failures);
+    var kept: [ssh.SSH_BANNER_MAX]u8 = undefined;
+    client.takeBanner(&kept);
+    try testing.expectEqualStrings(text, std.mem.sliceTo(&kept, 0));
+    client.takeBanner(&kept);
+    try testing.expectEqual(@as(u8, 0), kept[0]);
+
+    pair.login(false, password);
+    try testing.expectEqual(client_file.Step.logged_in, client.step);
+}
+
+test "the client: the server renews the keys; a message held meanwhile; a changed host key ends it" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const server = rig.server;
+    const client = pair.client;
+    pair.pump();
+    pair.login(true, "");
+    pair.session("", "vt100");
+    try testing.expectEqual(client_file.Step.running, client.step);
+    const first_id = client.transport.session_id;
+
+    // The server begins; the client answers, and while the exchange runs
+    // the window's change waits.
+    server.transport.renew();
+    const kexinit = server.transport.pending();
+    client.transport.feed(kexinit);
+    server.transport.sent(kexinit.len);
+    client.process();
+    try testing.expectEqual(transport.KexState.exchanging, client.transport.kex);
+    client.windowChange(90, 20);
+    try testing.expect(client.transport.held_length > 0);
+    pair.pump();
+    try testing.expectEqual(transport.KexState.idle, client.transport.kex);
+    try testing.expectEqual(@as(u32, 90), server.columns);
+    try testing.expectEqualSlices(u8, &first_id, &client.transport.session_id);
+    try testing.expectEqual(@as(usize, 2), server.write("ok"));
+    pair.pump();
+    var typed: [4]u8 = undefined;
+    try testing.expectEqual(@as(usize, 2), client.read(&typed));
+
+    // Again, with another host key: the client will not have it.
+    var length: u32 = 32;
+    _ = rig.cb.MakeKeyPair(crypto.CURVE_ED25519, &server.host_seed, &server.host_public, &length);
+    server.transport.renew();
+    pair.pump();
+    try testing.expect(client.transport.ended());
+    try testing.expectEqual(transport.reason_host_key_not_verifiable, client.transport.reason);
+    try testing.expect(client.sessionEnded());
 }

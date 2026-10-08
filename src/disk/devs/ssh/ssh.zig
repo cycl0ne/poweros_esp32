@@ -4,10 +4,11 @@
 //! ShellServer opens it.
 //!
 //! **A unit is a connection**, its number the id a socket was left under.
-//! The first OpenDevice makes the unit: its protocol's state
-//! (`connection.zig`), crypto.library opened for it, and its task
-//! (`unit.zig`), which takes the socket and answers once it has it;
-//! without it the open fails. Later opens of the same number - the
+//! The first OpenDevice makes the unit: the memory for its protocol's
+//! state - the server's end (`connection.zig`) or the client's
+//! (`client.zig`), which the first command decides - crypto.library
+//! opened for it, and its task (`unit.zig`), which takes the socket and
+//! answers once it has it; without it the open fails. Later opens of the same number - the
 //! console's - share the unit. The last CloseDevice ends the task and with
 //! it the connection, and frees the unit. Requests go to the task:
 //! BeginIO only queues them.
@@ -24,11 +25,10 @@ const _ssh = @import("_ssh.zig");
 const SshBase = _ssh.SshBase;
 const Unit = _ssh.Unit;
 const unit_file = @import("unit.zig");
-const Connection = @import("connection.zig").Connection;
 
 pub const DEVICE_NAME = _ssh.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "08.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -47,7 +47,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const base = _ssh.sshBase(dev);
     io.err = 0;
     switch (io.command) {
-        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH, ssh.SSHCMD_ACCEPT, ssh.SSHCMD_EXIT, serial.SDCMD_TERMSIZE => {
+        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH, ssh.SSHCMD_ACCEPT, ssh.SSHCMD_EXIT, serial.SDCMD_TERMSIZE, ssh.SSHCMD_CONNECT, ssh.SSHCMD_LOGIN, ssh.SSHCMD_SESSION, ssh.SSHCMD_EOF, ssh.SSHCMD_WINDOW, ssh.SSHCMD_STATUS => {
             // It will be replied, so it needs a reply port, and it is not
             // quick I/O.
             if (io.message.reply_port == null) {
@@ -63,7 +63,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 }
 
 /// A request the task has not taken yet, a read waiting for data, a
-/// write waiting for the window or an accept waiting for the session is
+/// write waiting for the window or a command waiting for its step is
 /// answered as aborted; a write being sent cannot be stopped.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const sys = _ssh.sshBase(dev).sys_base;
@@ -76,9 +76,9 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     }
     sys.AcquireLock(&unit.lock);
     var found = false;
-    if (unit.accept) |waiting| {
+    if (unit.waiting) |waiting| {
         if (&waiting.req == io) {
-            unit.accept = null;
+            unit.waiting = null;
             found = true;
         }
     }
@@ -133,38 +133,37 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
 fn makeUnit(sys: *ExecBase, base: *SshBase, id: i32) ?*Unit {
     const crypto_lib = sys.OpenLibrary(crypto.CRYPTONAME, 1) orelse return null;
     const cb: *CryptoBase = @ptrCast(crypto_lib);
-    const connection_memory = sys.AllocVec(@sizeOf(Connection), exec.MEMF_ANY) orelse {
+    // Made by the first command, as whichever end it asks for.
+    const protocol = sys.AllocVec(_ssh.protocol_bytes, exec.MEMF_ANY) orelse {
         sys.CloseLibrary(crypto_lib);
         return null;
     };
-    const conn: *Connection = @ptrCast(@alignCast(connection_memory));
-    conn.* = .{ .cb = cb };
-    const memory = sys.AllocVec(@sizeOf(Unit), exec.MEMF_CLEAR) orelse return giveBack(sys, crypto_lib, connection_memory, null, null);
+    const memory = sys.AllocVec(@sizeOf(Unit), exec.MEMF_CLEAR) orelse return giveBack(sys, crypto_lib, protocol, null, null);
     const unit: *Unit = @ptrCast(@alignCast(memory));
-    unit.* = .{ .base = base, .id = id, .crypto = cb, .connection = conn };
+    unit.* = .{ .base = base, .id = id, .crypto = cb, .protocol = protocol };
     // PA_IGNORE until the task has a signal for it.
     unit.unit.msg_port = .{ .flags = exec.PA_IGNORE };
     unit.unit.msg_port.msg_list.init(.message);
     unit.reads.init(.message);
     unit.writes.init(.message);
     sys.InitLock(&unit.lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
-    const stack = sys.AllocVec(stack_size, exec.MEMF_CLEAR) orelse return giveBack(sys, crypto_lib, connection_memory, memory, null);
+    const stack = sys.AllocVec(stack_size, exec.MEMF_CLEAR) orelse return giveBack(sys, crypto_lib, protocol, memory, null);
     unit.stack = stack;
     unit.task = .{
         .node = .{ .type = .task, .pri = task_pri, .name = DEVICE_NAME },
         .sp_lower = @intFromPtr(stack),
         .sp_upper = @intFromPtr(stack) + stack_size,
     };
-    if (!runTask(sys, unit, null) or unit.socket < 0) return giveBack(sys, crypto_lib, connection_memory, memory, stack);
+    if (!runTask(sys, unit, null) or unit.socket < 0) return giveBack(sys, crypto_lib, protocol, memory, stack);
     sys.AddTail(&base.units, &unit.link);
     return unit;
 }
 
 /// What makeUnit took, given back: null, for it to answer.
-fn giveBack(sys: *ExecBase, crypto_lib: *exec.Library, connection_memory: *anyopaque, memory: ?*anyopaque, stack: ?*anyopaque) ?*Unit {
+fn giveBack(sys: *ExecBase, crypto_lib: *exec.Library, protocol: *anyopaque, memory: ?*anyopaque, stack: ?*anyopaque) ?*Unit {
     if (stack) |taken| sys.FreeVec(taken);
     if (memory) |taken| sys.FreeVec(taken);
-    sys.FreeVec(connection_memory);
+    sys.FreeVec(protocol);
     sys.CloseLibrary(crypto_lib);
     return null;
 }
@@ -214,7 +213,7 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     if (runTask(sys, unit, unit.quit_mask)) {
         const crypto_lib = unit.crypto.lib();
         sys.FreeVec(unit.stack);
-        sys.FreeVec(unit.connection);
+        sys.FreeVec(unit.protocol);
         sys.FreeVec(unit);
         sys.CloseLibrary(crypto_lib);
     }

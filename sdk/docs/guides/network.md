@@ -304,6 +304,8 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/shellserver` | `C:net/ShellServer`'s password, its first line (Telnet and SSH) |
 | `ENVARC:Sys/net/authorized_keys` | the ssh-ed25519 keys that may log in over SSH, OpenSSH's lines |
 | `ENVARC:Sys/net/ssh_host_key` | the SSH host key, made at the first start; `.pub` beside it |
+| `ENVARC:Sys/net/id_ed25519` | `C:net/SSH`'s key for logins, made by `SSH KEYGEN`; `.pub` beside it |
+| `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` has seen, OpenSSH's lines |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
@@ -554,17 +556,68 @@ encrypted, and nobody gets in without logging in.
   tells again when the window changes; the console lists Tab's names as
   wide as it is.
 
-`DEVS:ssh.device` is the protocol (`sdk/devices/ssh.zig`). As with
-telnet.device, a unit is a connection, its number the id the socket was
-released under; the first opener's `SSHCMD_ACCEPT` hands it the host key
-and the logins and is answered once the client has logged in and asked
-for its session - shell or command, the user, the terminal. Then a console
-opens the same unit and reads and writes the session, and asks the
-terminal's size with serial.device's `SDCMD_TERMSIZE`; `SSHCMD_EXIT` tells
-the client the exit status and closes the channel.
+### The client: C:net/SSH
+
+`C:net/SSH` is the other end: a shell, or one command, on another
+machine - another PowerOS one, a PC, a server.
+
+```
+SSH KEYGEN                         ; once: the key for logins
+SSH claus@server.example           ; a shell
+SSH claus@10.0.0.5 PORT 2222 list SYS:   ; one command
+```
+
+- **The host key**: the first connection to a host shows its key's
+  fingerprint and asks; `yes` keeps the key in
+  `ENVARC:Sys/net/known_hosts`. From then on a host must show the same
+  key, or the connection is refused - someone may be in between. When a
+  host has been given a new key, take its line out of the file.
+- **The login**: the key `ENVARC:Sys/net/id_ed25519` first, when there
+  is one, then a password, asked for without its echo. `SSH KEYGEN` makes
+  the key and prints its public line, also in `id_ed25519.pub`: the line
+  goes into the other machine's `~/.ssh/authorized_keys` (or
+  `ENVARC:Sys/net/authorized_keys` on a PowerOS one). The user is
+  `user@host`, or `USER`, or the variable `USER`. A banner the server
+  shows at the login comes first, as Latin-1 and without its control
+  characters; the password is asked for only when the server takes one.
+- **A shell** runs on a terminal of type xterm-256color the size of the
+  console, which the console says when asked and keeps saying as its
+  window changes; every key goes to the shell, Ctrl-C too. `~.` at the
+  start of a line ends the connection.
+- **A command** runs without a terminal: lines typed go to it, Ctrl-\
+  ends its input, Ctrl-C the connection; input from a file goes to it as
+  it is. The return code is the command's exit status.
+- It speaks what ShellServer speaks: mlkem768x25519-sha256, or
+  curve25519-sha256 with a server without it; ssh-ed25519 host keys;
+  AES-GCM.
+
+### The device
+
+`DEVS:ssh.device` is the protocol (`sdk/devices/ssh.zig`), either end of
+it. As with telnet.device, a unit is a connection, its number the id the
+socket was released under, and the first command decides which end it
+is. On the server's end, the first opener's `SSHCMD_ACCEPT` hands it the
+host key and the logins and is answered once the client has logged in
+and asked for its session - shell or command, the user, the terminal.
+Then a console opens the same unit and reads and writes the session, and
+asks the terminal's size with serial.device's `SDCMD_TERMSIZE`;
+`SSHCMD_EXIT` tells the client the exit status and closes the channel.
+
+On the client's end the steps are commands, each answered once the
+server has answered it: `SSHCMD_CONNECT` (the key exchange; the host key
+comes back, for the caller to judge before anything secret is sent),
+`SSHCMD_LOGIN` (a key, a password, both, or neither to ask; `SSHERR_LOGIN`
+with the ways the server still takes; the server's banner, if it sent
+one), `SSHCMD_SESSION` (a shell or a command, with a
+terminal or without). Then `CMD_READ` and `CMD_WRITE` carry the session,
+`SSHCMD_WINDOW` tells a new size, `SSHCMD_EOF` ends the session's input,
+and `SSHCMD_STATUS` is answered with the exit status once it is over.
+When the connection goes first, a step's answer is `IOERR_ENDOFSTREAM`
+with the reason in `io_Actual`.
 
 In QEMU, `-Dssh=2222` forwards a host port to port 22 (qemu-display does
-unless told otherwise): `ssh -p 2222 localhost`.
+unless told otherwise): `ssh -p 2222 localhost`. The host is `10.0.2.2`
+from inside: `SSH user@10.0.2.2` reaches the PC's own sshd.
 
 ## Commands
 
@@ -581,5 +634,6 @@ unless told otherwise): `ssh -p 2222 localhost`.
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
 | `C:net/PacketCapture` | an interface's frames into a pcap file |
 | `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server |
+| `C:net/SSH` | a shell or a command on another machine over SSH; `KEYGEN` makes the key for logins |
 | `C:net/Net` | a network device spoken to directly |
 | `C:test/BsdSockTest` | bsdsocket.library against the BSD socket API |
