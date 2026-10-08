@@ -126,6 +126,7 @@ const modules = [_]Program{
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
+    .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };

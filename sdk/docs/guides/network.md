@@ -20,6 +20,7 @@ device requests are described in `sdk/devices/network.zig`,
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
 - [A connection as a device: telnet.device](#a-connection-as-a-device-telnetdevice)
+- [SSH: ssh.device](#ssh-sshdevice)
 - [Commands](#commands)
 
 ## The layers
@@ -300,6 +301,9 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/timeserver` | where `C:net/TimeSync` asks the time, when DHCP names no server |
 | `ENVARC:Sys/net/networks/<network>` | a Wi-Fi network's passphrase, its first line |
 | `ENVARC:Sys/net/syslog` | a syslog server: `S:Network-Startup` starts `C:Log SYSLOG` to it |
+| `ENVARC:Sys/net/shellserver` | `C:net/ShellServer`'s password, its first line (Telnet and SSH) |
+| `ENVARC:Sys/net/authorized_keys` | the ssh-ed25519 keys that may log in over SSH, OpenSSH's lines |
+| `ENVARC:Sys/net/ssh_host_key` | the SSH host key, made at the first start; `.pub` beside it |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
@@ -523,6 +527,40 @@ from the peer comes as Ctrl-C, and a closed connection as
 `IOERR_ENDOFSTREAM`. `C:net/ShellServer` is built on it: a shell for each
 connection to port 23.
 
+## SSH: ssh.device
+
+`C:net/ShellServer SSH` serves SSH on port 22 instead: the connection is
+encrypted, and nobody gets in without logging in.
+
+- **Logins**: the password in `ENVARC:Sys/net/shellserver`, and the keys in
+  `ENVARC:Sys/net/authorized_keys` - OpenSSH's lines, ssh-ed25519 keys (a
+  PC's `~/.ssh/id_ed25519.pub` copied in as it is). With neither,
+  ShellServer will not start. Six failed tries end a connection, and a
+  client has two minutes to log in.
+- **The host key** is made at the first start, in
+  `ENVARC:Sys/net/ssh_host_key`, with its public half beside it in
+  `ssh_host_key.pub`; ShellServer prints its fingerprint, which the client
+  shows on its first connection - the two should be the same.
+- **What a client may ask for**: a shell (`ssh machine`), with a
+  terminal, or one command (`ssh machine list SYS:`), which runs with its
+  input and output as they are - piped input reaches it, and the client
+  ends with the command's return code. No port forwarding, no sftp or scp.
+- **What it speaks**: key exchange curve25519-sha256 with OpenSSH's strict
+  exchange, the host key ssh-ed25519, aes256-gcm or aes128-gcm, no
+  compression. OpenSSH 10 asks for a post-quantum key exchange and warns
+  without one (`WarnWeakCrypto no` silences it).
+
+`DEVS:ssh.device` is the protocol (`sdk/devices/ssh.zig`). As with
+telnet.device, a unit is a connection, its number the id the socket was
+released under; the first opener's `SSHCMD_ACCEPT` hands it the host key
+and the logins and is answered once the client has logged in and asked
+for its session - shell or command, the user, the terminal. Then a console
+opens the same unit and reads and writes the session; `SSHCMD_EXIT` tells
+the client the exit status and closes the channel.
+
+In QEMU, `-Dssh=2222` forwards a host port to port 22 (qemu-display does
+unless told otherwise): `ssh -p 2222 localhost`.
+
 ## Commands
 
 | Command | Does |
@@ -537,6 +575,6 @@ connection to port 23.
 | `C:net/HTTPGet` | a file over HTTP or HTTPS; `NOVERIFY` leaves a test server's certificate unchecked |
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
 | `C:net/PacketCapture` | an interface's frames into a pcap file |
-| `C:net/ShellServer` | a shell for each connection to a TCP port |
+| `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server |
 | `C:net/Net` | a network device spoken to directly |
 | `C:test/BsdSockTest` | bsdsocket.library against the BSD socket API |

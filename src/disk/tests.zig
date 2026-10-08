@@ -13,6 +13,7 @@ test {
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/openeth.zig");
     _ = @import("devs/networks/tests/slip.zig");
+    _ = @import("devs/ssh/tests/ssh.zig");
     _ = @import("devs/networks/wifi/tests/wifi.zig");
     _ = @import("devs/networks/wifi/tests/wpa.zig");
     _ = @import("devs/networks/wifi/tests/ie.zig");

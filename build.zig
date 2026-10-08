@@ -13,8 +13,10 @@ const flash_size = 16 * 1024 * 1024;
 /// Where the disk starts unless `-Ddisk-offset` says otherwise, in KiB:
 /// the kernel image starts at offset 0 and has this much room to grow in.
 const default_disk_offset_kib = 2048;
-/// The host port qemu-display forwards to the machine's Telnet port, 23.
+/// The host ports qemu-display forwards to the machine's Telnet port, 23,
+/// and its SSH port, 22.
 const display_telnet_port: u16 = 2323;
+const display_ssh_port: u16 = 2222;
 /// An MMU page: the disk's start has to be one, since flash.device maps
 /// the disk into the data window a page at a time.
 const mmu_page = 64 * 1024;
@@ -97,15 +99,17 @@ pub fn build(b: *std.Build) void {
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
     const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
-    const network = qemuNetwork(b, net, net_dump, telnet);
+    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
+    const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
     const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
     const slip_line = b.option([]const u8, "slip", "Give the qemu steps' UART1 (serial.device unit 1, a SLIP line) to this QEMU serial backend, such as tcp::5021,server,nowait; not with -Drs485");
     if (rs485 != null and slip_line != null) std.debug.panic("-Drs485 and -Dslip: both are UART1", .{});
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
     // The display is the one a person sits at: `telnet localhost 2323`
-    // reaches a ShellServer in it without asking for the port.
-    const display_network = qemuNetwork(b, net, net_dump, telnet orelse display_telnet_port);
+    // and `ssh -p 2222 localhost` reach a ShellServer in it without asking
+    // for the port.
+    const display_network = qemuNetwork(b, net, net_dump, telnet orelse display_telnet_port, ssh_port orelse display_ssh_port);
     const disk_offset = disk_offset_kib * 1024;
     if (disk_offset % mmu_page != 0 or disk_offset == 0 or disk_offset >= flash_size) {
         std.debug.panic("-Ddisk-offset={d}: the disk has to start on a 64 KiB page inside the {d} KiB of flash", .{ disk_offset_kib, flash_size / 1024 });
@@ -799,16 +803,20 @@ fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, net
 /// network) or `none`; `dump` writes every frame to a pcap file, which
 /// needs the backend to have a name, so it makes the user network explicit.
 /// `telnet` forwards that host port to the machine's port 23, where
-/// C:net/ShellServer listens; 0 is none. Only qemu-display has one unless
-/// asked (2323): a fixed host port keeps a second QEMU from starting, and
-/// the display is the run a person sits at.
-fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16) []const []const u8 {
+/// C:net/ShellServer listens, and `ssh_port` one to port 22, where
+/// ShellServer SSH does; 0 is none. Only qemu-display has them unless
+/// asked (2323, 2222): a fixed host port keeps a second QEMU from
+/// starting, and the display is the run a person sits at.
+fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
     if (net) |backend| {
         if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
     }
-    const forwarded: ?u16 = if (telnet) |port| (if (port == 0) null else port) else null;
-    if (net == null and dump == null and forwarded == null) return &.{};
-    const forward = if (forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:23", .{port}) else "";
+    const telnet_forwarded: ?u16 = if (telnet) |port| (if (port == 0) null else port) else null;
+    const ssh_forwarded: ?u16 = if (ssh_port) |port| (if (port == 0) null else port) else null;
+    if (net == null and dump == null and telnet_forwarded == null and ssh_forwarded == null) return &.{};
+    const telnet_forward = if (telnet_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:23", .{port}) else "";
+    const ssh_forward = if (ssh_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:22", .{port}) else "";
+    const forward = b.fmt("{s}{s}", .{ telnet_forward, ssh_forward });
     const nic = b.fmt("{s},id=net0,model=open_eth{s}", .{ net orelse "user", if (net == null) forward else "" });
     const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });

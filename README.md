@@ -123,8 +123,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
   multicast with IGMP and MLD) on QEMU's Ethernet, the chip's Wi-Fi
-  (WPA2) and SLIP over a serial line, and a shell over Telnet
-  (`C:net/ShellServer`);
+  (WPA2) and SLIP over a serial line, and a shell over Telnet or SSH
+  (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys);
   `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
   `https://`. See the [network guide](sdk/docs/guides/network.md).
 - **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
@@ -133,7 +133,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
 - **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
   card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio,
-  Telnet; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
+  Telnet, SSH; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures.
 - **Boards are data:** which parts are fitted and how they are wired is a
@@ -193,6 +193,7 @@ More build steps and options:
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
+| `-Dssh=2222` | forward that host port to the machine's port 22 (`C:net/ShellServer SSH`); qemu-display forwards 2222 itself |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
 | `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |

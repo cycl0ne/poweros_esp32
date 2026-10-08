@@ -66,8 +66,9 @@
 //! characters on a serial terminal, whose width nobody tells.
 //!
 //! **A stream that ends.** A device read answered with IOERR_ENDOFSTREAM
-//! - a network connection whose peer has gone - is the end of the input,
-//! as Ctrl-\ is: no read goes out again, and what waits to read gets 0.
+//! - a network connection whose peer has gone, or whose client sent the
+//! end of its input - is the end of the input, as Ctrl-\ is, in raw mode
+//! too: no read goes out again, and what waits to read gets 0.
 //!
 //! Ctrl-C to Ctrl-F signal the CHANGE_SIGNAL task, else the last reader's,
 //! and the last writer's if another.
@@ -86,7 +87,10 @@
 //!
 //! **The banner** (`src/rom/release.zig`) goes out before a console's first
 //! write. Each console has its own, so it stands above the first thing
-//! written to it - which for a shell is its first prompt.
+//! written to it - which for a shell is its first prompt. A console in raw
+//! mode at its first write gets none: set raw before anything was written,
+//! it is a program's channel (one command run over SSH), not a terminal
+//! somebody reads.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -113,8 +117,8 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 1;
-const BUILD_DATE = "07.10.2026";
+const HANDLER_REVISION = 2;
+const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -306,7 +310,7 @@ pub fn Handler(comptime Io: type) type {
             h.ed.waiting = h.read_count > 0;
             if (!h.banner_done) {
                 h.banner_done = true;
-                h.ed.write(release.BANNER);
+                if (!h.ed.raw) h.ed.write(release.BANNER);
             }
             if (a.length > 0) {
                 h.ed.write(a.buffer.?[0..@intCast(a.length)]);
@@ -412,6 +416,15 @@ pub fn Handler(comptime Io: type) type {
             }
             h.serve();
             // The key may have been the one that lets held output go.
+            h.writeHeld();
+        }
+
+        /// The terminal has ended - its stream, its window: the end of the
+        /// input, in raw mode as much as in cooked.
+        pub fn terminalEnded(h: *Self) void {
+            h.ed.inputEnded();
+            h.ed.flush();
+            h.serve();
             h.writeHeld();
         }
 
@@ -852,7 +865,7 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         }
         if (st.io.windowClosed()) {
             any = true;
-            h.input(editor.END_OF_INPUT);
+            h.terminalEnded();
         }
         for (&st.io.units) |*u| {
             if (!u.open or u.ended or sb.CheckIO(&u.read.io_ser.req) == null) continue;
@@ -860,7 +873,7 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
             const err = sb.WaitIO(&u.read.io_ser.req);
             if (err == exec.IOERR_ENDOFSTREAM) {
                 u.ended = true;
-                h.input(editor.END_OF_INPUT);
+                h.terminalEnded();
                 continue;
             }
             const got = err == 0 and u.read.io_ser.actual == 1;
@@ -1289,6 +1302,37 @@ test "the handler: opens, pending READs, partial lines, END" {
     var end2 = DosPacket.init(.end, .{ .file = .{ .fh = &other } });
     h.packet(&end2);
     try testing.expectEqual(@as(u32, 1), io.closed); // the last: devices closed
+}
+
+test "a console set raw before its first write gets no banner" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    var fh: dos.FileHandle = .{};
+    var find = DosPacket.init(.findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = "*" } });
+    h.packet(&find);
+    var mode = DosPacket.init(.screen_mode, .{ .screen_mode = .{ .mode = 1 } });
+    h.packet(&mode);
+    var write = DosPacket.init(.write, .{ .io = .{ .fh = &fh, .buffer = @constCast("out"), .length = 3 } });
+    io.clear();
+    h.packet(&write);
+    try testing.expectEqualStrings("out", io.text());
+    // The terminal ends: a raw READ gets what is there, then the end.
+    h.ed.key('x');
+    h.terminalEnded();
+    var buffer: [8]u8 = undefined;
+    var reader_port: MsgPort = .{};
+    var read = DosPacket.init(.read, .{ .io = .{ .fh = &fh, .buffer = &buffer, .length = buffer.len } });
+    read.port = &reader_port;
+    h.packet(&read);
+    try testing.expectEqual(@as(isize, 1), read.res1);
+    h.packet(&read);
+    try testing.expectEqual(@as(isize, 0), read.res1);
+    // Cooked again later: still none, the first write is past.
+    mode = DosPacket.init(.screen_mode, .{ .screen_mode = .{ .mode = 0 } });
+    h.packet(&mode);
+    io.clear();
+    h.packet(&write);
+    try testing.expectEqualStrings("out", io.text());
 }
 
 test "the handler: DIE waits for the last handle, then ends it unanswered until it is gone" {

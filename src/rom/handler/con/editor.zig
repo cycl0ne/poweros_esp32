@@ -889,6 +889,17 @@ pub const Editor = struct {
         ed.scan = null;
     }
 
+    /// The terminal itself has ended - its connection gone, its window
+    /// closed: the end of the input in either mode, cooked as Ctrl-\ is,
+    /// raw after what is there.
+    pub fn inputEnded(ed: *Editor) void {
+        if (ed.raw) {
+            ed.eof = true;
+            return;
+        }
+        ed.endOfInput();
+    }
+
     /// Ctrl-\: what was typed goes to the reader without a LF, then the end.
     fn endOfInput(ed: *Editor) void {
         ed.moveRight(ed.len - ed.cursor);
