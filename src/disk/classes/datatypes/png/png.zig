@@ -10,7 +10,7 @@
 //! Every colour kind and every depth the format defines is read, and
 //! both ways of laying the rows out. What a pixel is written as in the
 //! file - one bit, a palette number, sixteen bits a channel - is all
-//! gone by the time it leaves `decode.zig`: a row arrives here as red,
+//! gone by the time it leaves the decoder (`sdk.datatypes.png`): a row arrives here as red,
 //! green, blue and coverage, and the coverage is what decides whether
 //! the picture is later drawn mixed into what is under it.
 //!
@@ -32,8 +32,8 @@ const datatypes = sdk.datatypes;
 const subclass = datatypes.subclass;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
-const inflate = @import("inflate.zig");
-const decode = @import("decode.zig");
+const inflate = datatypes.png.inflate;
+const decode = datatypes.png.decode;
 const Class = classes.Class;
 const Object = classes.Object;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;

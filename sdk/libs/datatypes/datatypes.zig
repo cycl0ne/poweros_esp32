@@ -228,3 +228,10 @@ pub const animationclass = @import("animationclass.zig");
 pub const textclass = @import("textclass.zig");
 /// What every format's class does that is not format work.
 pub const subclass = @import("subclass.zig");
+/// A PNG file read: its chunks, its header, its rows unpacked and turned
+/// into colour (sdk/libs/datatypes/png/). png.datatype and icon.library
+/// both read PNGs with it.
+pub const png = struct {
+    pub const decode = @import("png/decode.zig");
+    pub const inflate = @import("png/inflate.zig");
+};

@@ -43,7 +43,7 @@ const tests = [_][]const u8{
     "diskfont",    "colorwheel", "tapedeck",    "pointer", "crypto",
     "bsdsocktest", "asl",        "settings",    "iff",     "datatypes",
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
-    "cores",       "scroll",     "listbrowser", "notify",
+    "cores",       "scroll",     "listbrowser", "notify",  "icon",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -71,6 +71,7 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
+    .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },

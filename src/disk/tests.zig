@@ -41,6 +41,7 @@ test {
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
+    _ = @import("libs/icon/tests/icon.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("libs/asl/tests/asl.zig");
@@ -73,8 +74,7 @@ test {
     _ = @import("devs/handlers/fat/tests/fs.zig");
     _ = @import("devs/handlers/fat/tests/exfat_dir.zig");
     _ = @import("devs/handlers/fat/tests/exfat_fs.zig");
-    _ = @import("classes/datatypes/png/inflate.zig");
-    _ = @import("classes/datatypes/png/decode.zig");
+    _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");
     _ = @import("libs/modbus/protocol/pdu.zig");

@@ -45,6 +45,9 @@ pub const tls = @import("libs/tls/tls.zig");
 pub const modbus = @import("libs/modbus/modbus.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.
 pub const filter = @import("libs/filter/filter.zig");
+/// Icons: the picture a file is shown with and its fields, through
+/// icon.library.
+pub const icon = @import("libs/icon/icon.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

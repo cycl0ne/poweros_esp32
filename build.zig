@@ -433,6 +433,23 @@ pub fn build(b: *std.Build) void {
     check_modchart.addFileArg(disk_module_list);
     check_modchart.has_side_effects = true;
     test_step.dependOn(&check_modchart.step);
+    // tools/mkicon, which makes the disk's icons from pictures: it runs
+    // once on a default icon's picture with every field, reads back what
+    // it wrote, and fails if any of it does not read.
+    const mkicon = b.addExecutable(.{
+        .name = "mkicon",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkicon/mkicon.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    mkicon.root_module.addImport("sdk", sdk);
+    const try_mkicon = b.addRunArtifact(mkicon);
+    try_mkicon.addFileArg(b.path("src/disk/libs/icon/images/drawer.png"));
+    _ = try_mkicon.addOutputFileArg("Work.info");
+    try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
+    test_step.dependOn(&try_mkicon.step);
     // Every program and module on the disk compiles: the disk image is
     // made from all of them.
     test_step.dependOn(&make_disk.step);

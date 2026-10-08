@@ -92,6 +92,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   (animated GIF, Lottie). `SYS:Programs/MultiView` shows any of them;
   `LIBS:iffparse.library` and `DEVS:clipboard.device` carry IFF between
   programs. See the [datatypes guide](sdk/docs/guides/datatypes.md).
+- **Icons:** `LIBS:icon.library` reads and writes icons - a PNG beside
+  the file, its fields in a chunk of its own, so any paint program makes
+  one - and gives a file without an icon the default that fits it: a
+  disk, a drawer, a program, a document, by its datatype's group. See the
+  [icons guide](sdk/docs/guides/icons.md).
 - **Graphics and windows:** rtg.library for the displays;
   graphics.library with smooth curves and lines, rounded rectangles,
   gradients, shadows and scaled pictures; layers.library; and
@@ -213,7 +218,7 @@ src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, the autodocs, the module charts, checks
+tools/         build helpers: mkfs, ressize, mkicon, the autodocs, the module charts, checks
 scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts, certificates), a serial terminal
 ```
 

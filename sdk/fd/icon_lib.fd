@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MIT
+//! icon.library's functions: icons read, written and freed, the default
+//! icon of each kind, and the tool types. Open it with
+//! OpenLibrary("icon.library", 1).
+//!
+//! The table is this library's own: it starts at the first slot after
+//! the standard four and holds only what is here.
+##include libs/icon/icon as icon
+##basetype IconBase
+##name icon.library
+##bias 4
+##public
+/// `<name>.info` read. A null name makes an empty icon to fill in. Null
+/// when there is no such icon or it cannot be read, with IoErr saying why.
+?*icon.DiskObject GetDiskObject(?[*:0]const u8 name)
+/// `<name>.info` written from `object`: true, or false with IoErr saying
+/// why.
+bool PutDiskObject([*:0]const u8 name, *const icon.DiskObject object)
+/// An icon given back: what the library made for it freed. Null does
+/// nothing.
+void FreeDiskObject(?*icon.DiskObject object)
+/// `name`'s icon, or else the default icon that fits what `name` is.
+?*icon.DiskObject GetDiskObjectNew([*:0]const u8 name)
+/// `<name>.info` deleted: true, also when there was none.
+bool DeleteDiskObject([*:0]const u8 name)
+/// The default icon of a kind (WBDISK to WBGARBAGE), without a place.
+?*icon.DiskObject GetDefDiskObject(u32 kind)
+/// `object` made the default icon of its kind.
+bool PutDefDiskObject(*const icon.DiskObject object)
+/// The value of the tool type `name` in `types`: what follows its `=`,
+/// an empty string for one without, null when it is not there.
+?[*:0]const u8 FindToolType(?[*]const ?[*:0]const u8 types, [*:0]const u8 name)
+/// Whether `value` names `wanted` among its alternatives, `|` between
+/// them, in any case.
+bool MatchToolValue([*:0]const u8 value, [*:0]const u8 wanted)
+/// The name for a copy of `name` written into `into` (256 bytes):
+/// `Copy_of_x`, then `Copy_2_of_x`. `into` back.
+[*:0]u8 BumpRevision([*]u8 into, [*:0]const u8 name)
+##end
