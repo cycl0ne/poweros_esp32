@@ -121,8 +121,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   by `SYS:Programs/FontView`. See the
   [fonts guide](sdk/docs/guides/fonts.md).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
-  UDP, IPv4 and IPv6, DHCP, DNS) on QEMU's Ethernet and the chip's Wi-Fi
-  (WPA2), and a shell over Telnet (`C:net/ShellServer`);
+  UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
+  multicast with IGMP and MLD) on QEMU's Ethernet, the chip's Wi-Fi
+  (WPA2) and SLIP over a serial line, and a shell over Telnet
+  (`C:net/ShellServer`);
   `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
   `https://`. See the [network guide](sdk/docs/guides/network.md).
 - **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
@@ -192,6 +194,7 @@ More build steps and options:
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
+| `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
 
 ## Repository layout

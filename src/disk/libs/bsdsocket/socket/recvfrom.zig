@@ -2,14 +2,9 @@
 //! RecvFrom: the next datagram in, and who sent it.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const SocketBase = _base.SocketBase;
-const Frame = @import("../frame/_frame.zig").Frame;
-const _socket = @import("_socket.zig");
-const _lock = @import("../lock/_lock.zig");
-const tcp_user = @import("../tcp/user.zig");
 
 /// The next datagram waiting on the socket, into `buffer`, and the address
 /// it came from; for a stream socket, what has come on its connection.
@@ -69,7 +64,7 @@ const tcp_user = @import("../tcp/user.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `Recv`, `SendTo`, `WaitSelect`, `IoctlSocket`
+/// `Recv`, `RecvMsg`, `SendTo`, `WaitSelect`, `IoctlSocket`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -79,65 +74,9 @@ const tcp_user = @import("../tcp/user.zig");
 /// const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
 /// ```
 pub fn RecvFrom(sb: *SocketBase, descriptor: i32, buffer: *anyopaque, length: u32, flags: u32, from: ?*bsd.sockaddr, from_length: ?*u32) i32 {
-    const sys = sb.sys_base;
-    const stack = sb.stack;
-    // The timer is stopped after the lock is let go: stopping it waits
-    // for its request to come back.
-    defer _socket.stopTimer(sb);
-    var held = _lock.take(stack);
-    defer _lock.give(stack, held);
-    // A readiness signal from before this call says nothing about it.
-    _ = sys.SetSignal(0, sb.ready_mask);
-    while (true) {
-        const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "RecvFrom");
-        if (flags & bsd.MSG_OOB != 0) {
-            if (socket.socket_type != bsd.SOCK_STREAM) return _socket.fail(sb, bsd.EOPNOTSUPP, "RecvFrom");
-            switch (tcp_user.receiveUrgent(socket, flags & bsd.MSG_PEEK != 0)) {
-                .errno => |errno| return _socket.fail(sb, errno, "RecvFrom"),
-                .byte => |byte| {
-                    if (length == 0) return 0;
-                    @as([*]u8, @ptrCast(buffer))[0] = byte;
-                    return 1;
-                },
-            }
-        }
-        if (socket.pending_error != 0) {
-            const errno = socket.pending_error;
-            socket.pending_error = 0;
-            return _socket.fail(sb, errno, "RecvFrom");
-        }
-        if (socket.socket_type == bsd.SOCK_STREAM) {
-            if (tcp_user.unconnected(socket)) return _socket.fail(sb, bsd.ENOTCONN, "RecvFrom");
-            const into: [*]u8 = @ptrCast(buffer);
-            if (tcp_user.receive(stack, socket, into[0..length], flags & bsd.MSG_PEEK != 0)) |taken| {
-                if (from) |address| _socket.addressOut(stack, socket, socket.remote_address, socket.remote_port, socket.scope, address, from_length.?);
-                return @intCast(taken);
-            }
-        } else if (socket.receive.first()) |node| {
-            const frame: *Frame = @fieldParentPtr("node", node);
-            const data = frame.bytes();
-            const taken: u32 = @min(length, @as(u32, @intCast(data.len)));
-            const into: [*]u8 = @ptrCast(buffer);
-            @memcpy(into[0..taken], data[0..taken]);
-            if (from) |address| _socket.addressOut(stack, socket, frame.from_address, frame.from_port, frame.from_interface, address, from_length.?);
-            if (flags & bsd.MSG_PEEK == 0) {
-                sys.Remove(node);
-                socket.receive_bytes -= frame.cost();
-                stack.frames.give(sys, frame);
-            }
-            return @intCast(taken);
-        }
-        if (socket.flags & _socket.nonblocking != 0 or flags & bsd.MSG_DONTWAIT != 0) {
-            return _socket.fail(sb, bsd.EWOULDBLOCK, "RecvFrom");
-        }
-        if (sb.timer_armed == 0 and !_socket.isZero(socket.receive_timeout)) {
-            _ = _socket.startTimer(sb, socket.receive_timeout);
-        }
-        var came: u32 = 0;
-        switch (_socket.wait(sb, &held, 0, &came)) {
-            .broken => return _socket.fail(sb, bsd.EINTR, "RecvFrom"),
-            .timed_out => return _socket.fail(sb, bsd.EWOULDBLOCK, "RecvFrom"),
-            .changed, .signalled => {},
-        }
-    }
+    var vector = [_]bsd.iovec{.{ .iov_base = buffer, .iov_len = length }};
+    var message: bsd.msghdr = .{ .msg_name = from, .msg_namelen = if (from_length) |room| room.* else 0, .msg_iov = &vector, .msg_iovlen = 1 };
+    const got = _base.iface(sb).RecvMsg(descriptor, &message, flags);
+    if (from_length) |size| size.* = message.msg_namelen;
+    return got;
 }

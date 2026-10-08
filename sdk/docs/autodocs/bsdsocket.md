@@ -12,12 +12,12 @@ Generated from the source by `./zig build autodoc`.
 - [Accept](#accept) - The next connection a listener took, as a socket of the caller's own, and the address it came from.
 - [AddDomainNameServer](#adddomainnameserver) - A name server added to the ones the resolver asks.
 - [AddInterfaceTagList](#addinterfacetaglist) - An interface on a network device, up and with its routes.
-- [AddRouteTagList](#addroutetaglist) - A route added: to a net or a host through a gateway, or the default route.
+- [AddRouteTagList](#addroutetaglist) - A route added: to a net or a host through a gateway, or the default route; IPv4 or IPv6.
 - [Bind](#bind) - The local address and port a socket takes datagrams on and sends from.
 - [CloseSocket](#closesocket) - The socket closed and its descriptor free for the next Socket.
-- [ConfigureInterfaceTagList](#configureinterfacetaglist) - A running interface changed: its address, its net, the default route through it, its MTU, whether its device is on its link.
+- [ConfigureInterfaceTagList](#configureinterfacetaglist) - A running interface changed: its address, its net, the default route through it, its MTU, its IPv6 address, its privacy addresses, whether its device is on its link.
 - [Connect](#connect) - A connection opened to the peer, for a stream socket; for a datagram socket, the peer it sends to by default and the only one it takes datagrams from.
-- [DeleteRouteTagList](#deleteroutetaglist) - A route taken away: the one to a net or host, or the default route.
+- [DeleteRouteTagList](#deleteroutetaglist) - A route taken away: the one to a net or host, or the default route; IPv4 or IPv6.
 - [Errno](#errno) - The error number of the opener's last call that failed.
 - [FreeAddrInfo](#freeaddrinfo) - A list GetAddrInfo made, given back whole.
 - [GetAddrInfo](#getaddrinfo) - The addresses of `node` for `service`, as a list of `addrinfo` ready for Socket and Connect (or Bind).
@@ -44,6 +44,7 @@ Generated from the source by `./zig build autodoc`.
 - [QueryInterfaceTagList](#queryinterfacetaglist) - What an interface is, each answer where its tag points.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
 - [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from; for a stream socket, what has come on its connection.
+- [RecvMsg](#recvmsg) - The next datagram waiting on the socket, spread over `message`'s buffers in turn, the address it came from, and control messages about it; for a stream socket, what has come on its connection.
 - [ReleaseInterfaceList](#releaseinterfacelist) - A list of interface names freed.
 - [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
 - [RemoveDomainNameServer](#removedomainnameserver) - A name server taken off the ones the resolver asks.
@@ -208,12 +209,14 @@ fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const T
   with the device; `IFA_IPv6` (`IFIPV6_AUTO` unless given, or
   `IFIPV6_OFF`), `IFA_InterfaceID` (`IFID_STABLE` unless given, or
   `IFID_EUI64`) and `IFA_StableSecret`: whether the interface speaks
-  IPv6, and how its addresses end; `IFA_Address6`, `IFA_Prefix6` and
+  IPv6, and how its addresses end; `IFA_PrivacyAddresses`: a temporary
+  address beside each from a router's prefix; `IFA_Address6`, `IFA_Prefix6` and
   `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
   and a router for the default route (`IFIPV6_FIXED` takes no address
   from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
   `IFA_NameServer6` (the same, IPv6), `IFA_Domain`, `IFA_TCPSendSpace`,
-  `IFA_TCPRecvSpace`.
+  `IFA_TCPRecvSpace`. `IFA_DeviceTags`: a tag list the device is
+  opened with beside the stack's own (slip.device's serial line).
 
 **RESULT**
 
@@ -221,7 +224,8 @@ fn AddInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const T
 `EADDRINUSE` (the name is taken, or the device's unit has an
 interface already), `ENOBUFS` (no interface free),
 `ENXIO` (the device would not open, or would not go on line),
-`EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
+`EPFNOSUPPORT` (the device's link is neither Ethernet nor SLIP),
+`EINVAL` also for DHCP on a SLIP line, `ENOMEM`.
 
 **BEHAVIOR**
 
@@ -256,7 +260,9 @@ the library stays in memory. The tags are read and not kept.
 
 **NOTES**
 
-Only Ethernet links for now.
+Ethernet links and SLIP lines (sdk/devices/slip.zig). A line has no
+addresses and no ARP: whatever the routes send out of it goes to the
+other end.
 
 **BUGS**
 
@@ -280,7 +286,7 @@ if (sb.AddInterfaceTagList("eth0", &tags) < 0) return sb.Errno();
 
 ## AddRouteTagList
 
-A route added: to a net or a host through a gateway, or the default route.
+A route added: to a net or a host through a gateway, or the default route; IPv4 or IPv6.
 
 **SYNOPSIS**
 
@@ -294,21 +300,33 @@ fn AddRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
 
 **INPUTS**
 
-- `tags` - `RTA_DefaultGateway` alone; or `RTA_Destination`,
-  `RTA_NetMask` (a host unless given) and `RTA_Gateway`. Addresses in
-  network order.
+- `tags` - IPv4: `RTA_DefaultGateway` alone; or `RTA_Destination`,
+  `RTA_NetMask` (a host unless given) and `RTA_Gateway`, addresses in
+  network order. IPv6: `RTA_DefaultGateway6`; or `RTA_Destination6`,
+  `RTA_PrefixLength6` (128 unless given) and `RTA_Gateway6` (none for
+  a prefix on the link); and `RTA_Interface` with either - each address
+  a pointer to an `in6_addr`.
 
 **RESULT**
 
-0, or -1 with Errno(): `EINVAL` (no destination or no gateway),
-`ENETUNREACH` (the gateway is on no interface's net), `ENOBUFS` (the
-route list is full).
+0, or -1 with Errno(): `EINVAL` (no destination or no gateway, a
+prefix longer than 128, a group as the gateway, an interface that does
+not speak IPv6, or an IPv6 prefix on the link without its interface),
+`ENETUNREACH` (the gateway is on no interface's net or link), `ENXIO`
+(no interface of that name), `ENOBUFS` (the route list is full).
 
 **BEHAVIOR**
 
 A route goes out of the interface whose net holds its gateway. A
 default route replaces the one there was. Of the routes that hold an
 address, the one with the longest netmask is taken.
+
+An IPv6 route goes out of `RTA_Interface`, or of the interface its
+router is on the link of - for a link-local router the first interface
+that speaks IPv6. It stays until DeleteRouteTagList or until its
+interface goes; a default route is one more beside those routers
+advertise, and is taken as they are (`NETSTATUS_ROUTES6` shows them
+all).
 
 **CONTEXT**
 
@@ -338,6 +356,15 @@ None known.
 ```zig
 const tags = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway, .data = sb.Inet_Addr("10.0.2.2") }, .{} };
 _ = sb.AddRouteTagList(&tags);
+
+var router: bsd.in6_addr = .{};
+_ = sb.Inet_PtoN(bsd.AF_INET6, "fe80::1", &router);
+const tags6 = [_]TagItem{
+    .{ .tag = bsd.RTA_DefaultGateway6, .data = @intFromPtr(&router) },
+    .{ .tag = bsd.RTA_Interface, .data = @intFromPtr("eth0") },
+    .{},
+};
+_ = sb.AddRouteTagList(&tags6);
 ```
 
 ## Bind
@@ -473,7 +500,7 @@ defer _ = sb.CloseSocket(socket);
 
 ## ConfigureInterfaceTagList
 
-A running interface changed: its address, its net, the default route through it, its MTU, whether its device is on its link.
+A running interface changed: its address, its net, the default route through it, its MTU, its IPv6 address, its privacy addresses, whether its device is on its link.
 
 **SYNOPSIS**
 
@@ -489,14 +516,18 @@ fn ConfigureInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]c
 
 - `name` - the interface, as it was added.
 - `tags` - `IFA_Address`, `IFA_NetMask` (network order), `IFA_Gateway`
-  (made the default route), `IFA_MTU`, `IFA_State` (`IFSTATE_UP` set
-  or clear). What is not given stays.
+  (made the default route), `IFA_MTU`, `IFA_Address6` with
+  `IFA_Prefix6` (64 unless given), `IFA_PrivacyAddresses` (not 0 for
+  on), `IFA_State` (`IFSTATE_UP` set or clear). What is not given
+  stays.
 
 **RESULT**
 
-0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, or
-a gateway on no interface's net), `EIO` (the device would not go on
-or off its link), `ENOMEM`.
+0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, a
+gateway on no interface's net, an IPv6 address on an interface that
+does not speak IPv6, or one that is a group), `ENOBUFS` (the interface
+holds as many IPv6 addresses as it can), `EIO` (the device would not go
+on or off its link), `ENOMEM`.
 
 **BEHAVIOR**
 
@@ -511,6 +542,16 @@ it keeps its address and routes. With `IFSTATE_UP` the device gets
 S2_ONLINE and the interface is up again; if its address is DHCP's,
 the lease is renewed at once, since the link may be another one now.
 A device already in the state asked for is left as it is.
+
+`IFA_Address6` replaces the IPv6 address given by hand - by it, or
+by AddInterfaceTagList's - and the route to its prefix on the link
+(none for a prefix of 128); the new one is checked for a duplicate
+before it is used. `::` takes the address away. The link-local address
+and those from routers' prefixes and from DHCPv6 stay.
+
+`IFA_PrivacyAddresses` turned on makes a temporary address for each
+prefix at once; turned off, every temporary address goes, and with it
+what was connected from it.
 
 **CONTEXT**
 
@@ -621,7 +662,7 @@ if (sb.Connect(socket, peer.anyConst(), @sizeOf(bsd.sockaddr_in)) < 0) return sb
 
 ## DeleteRouteTagList
 
-A route taken away: the one to a net or host, or the default route.
+A route taken away: the one to a net or host, or the default route; IPv4 or IPv6.
 
 **SYNOPSIS**
 
@@ -635,17 +676,26 @@ fn DeleteRouteTagList(base: *SocketBase, tags: ?[*]const TagItem) i32
 
 **INPUTS**
 
-- `tags` - `RTA_Destination` and `RTA_NetMask` (a host unless given);
-  or `RTA_DefaultGateway`, with any value, for the default route.
+- `tags` - IPv4: `RTA_Destination` and `RTA_NetMask` (a host unless
+  given); or `RTA_DefaultGateway`, with any value, for the default
+  route. IPv6: `RTA_Destination6` and `RTA_PrefixLength6` (128 unless
+  given), with `RTA_Gateway6` and `RTA_Interface` if only the route
+  through that router or on that interface is meant; or
+  `RTA_DefaultGateway6`, a router's address for the default route
+  through it, 0 for every default route.
 
 **RESULT**
 
-0, or -1 with Errno(): `EINVAL` (no destination), `ENXIO` (there is no
-such route).
+0, or -1 with Errno(): `EINVAL` (no destination, a prefix longer than
+128), `ENXIO` (there is no such route, or no interface of that name).
 
 **BEHAVIOR**
 
 The route is found by its destination and netmask, as it was added.
+IPv6 routes are found by their prefix - and router and interface when
+they are given - and every one that fits goes, whether it was added
+by hand or a router advertised it; an advertised one comes back with
+the router's next advertisement.
 
 **CONTEXT**
 
@@ -1413,10 +1463,11 @@ fn GetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *a
 **INPUTS**
 
 - `socket` - a descriptor from Socket.
-- `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
-- `option` - any SetSockOpt takes, and `SO_ERROR` (the socket's
-  pending error, which reading clears) and `SO_TYPE` (its SOCK_*), each
-  an i32.
+- `level` - `SOL_SOCKET`, `IPPROTO_TCP`, `IPPROTO_IP` or
+  `IPPROTO_IPV6`.
+- `option` - any SetSockOpt takes but the memberships, and `SO_ERROR`
+  (the socket's pending error, which reading clears) and `SO_TYPE` (its
+  SOCK_*), each an i32.
 - `value` - where the value goes.
 - `value_length` - in, the room at `value`; out, the value's size.
 
@@ -1427,7 +1478,10 @@ room).
 
 **BEHAVIOR**
 
-The flags answer 1 or 0.
+The flags answer 1 or 0. `IP_MULTICAST_TTL` and `IP_MULTICAST_LOOP`
+answer a u8 when `value_length` says there is room for no more, an
+i32 else; `IP_MULTICAST_IF` the interface's address as an `in_addr`,
+`INADDR_ANY` when none was named.
 
 **CONTEXT**
 
@@ -2333,7 +2387,7 @@ None known.
 
 **SEE ALSO**
 
-`Recv`, `SendTo`, `WaitSelect`, `IoctlSocket`
+`Recv`, `RecvMsg`, `SendTo`, `WaitSelect`, `IoctlSocket`
 
 **EXAMPLES**
 
@@ -2342,6 +2396,89 @@ var buffer: [512]u8 = undefined;
 var from: bsd.sockaddr_in = .{};
 var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
+```
+
+## RecvMsg
+
+The next datagram waiting on the socket, spread over `message`'s buffers in turn, the address it came from, and control messages about it; for a stream socket, what has come on its connection.
+
+**SYNOPSIS**
+
+```zig
+fn RecvMsg(base: *SocketBase, socket: i32, message: *msghdr, flags: u32) i32
+```
+
+**SINCE**
+
+1.3. LVO -212.
+
+**INPUTS**
+
+- `socket` - a descriptor from Socket.
+- `message` - `msg_iov` and `msg_iovlen`, the buffers; `msg_name` and
+  `msg_namelen`, where the sender's address goes and its room (null
+  and 0 for none); `msg_control` and `msg_controllen`, room for control
+  messages (null and 0 for none).
+- `flags` - as RecvFrom's: `MSG_PEEK`, `MSG_DONTWAIT`, `MSG_OOB`.
+
+**RESULT**
+
+The bytes put in the buffers - 0 at the end of a stream - or -1 with
+Errno(), as RecvFrom; `EINVAL` as well for buffers whose sizes add up
+past 2 GiB. `msg_namelen` is the address's size, `msg_controllen` the
+bytes of control messages written, and `msg_flags` holds `MSG_TRUNC`
+when a datagram was longer than the buffers and `MSG_CTRUNC` when a
+control message did not fit.
+
+**BEHAVIOR**
+
+A datagram fills the first buffer, then the next, and what is left
+when they are full is lost. With `IPV6_RECVHOPLIMIT` set on the
+socket, an IPv6 datagram - UDP, or ICMPv6 on a raw socket - comes with
+a control message of level `IPPROTO_IPV6` and type `IPV6_HOPLIMIT`:
+the hop limit it arrived with, an i32. Waiting is as RecvFrom's.
+
+**CONTEXT**
+
+- Waits: yes, unless the socket does not wait.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; it must be the one that opened the base,
+  whose signals the wait is on.
+
+**OWNERSHIP**
+
+The datagram is copied into the buffers and its frame given back;
+`message` and what it points to stay the caller's.
+
+**NOTES**
+
+`sdk.bsdsocket.cmsgFirst`, `cmsgNext` and `cmsgData` walk the control
+messages; `cmsgSpace` says how much room one takes.
+
+**BUGS**
+
+A stream socket read with `MSG_PEEK` fills only the first buffer.
+
+**SEE ALSO**
+
+`RecvFrom`, `SetSockOpt`, `WaitSelect`
+
+**EXAMPLES**
+
+```zig
+var data: [512]u8 = undefined;
+var vector = [_]bsd.iovec{.{ .iov_base = &data, .iov_len = data.len }};
+var control: [64]u8 align(4) = undefined;
+var message: bsd.msghdr = .{ .msg_iov = &vector, .msg_iovlen = 1, .msg_control = &control, .msg_controllen = control.len };
+const got = sb.RecvMsg(socket, &message, 0);
+var next = bsd.cmsgFirst(&message);
+while (next) |cmsg| : (next = bsd.cmsgNext(&message, cmsg)) {
+    if (cmsg.cmsg_level == bsd.IPPROTO_IPV6 and cmsg.cmsg_type == bsd.IPV6_HOPLIMIT) {
+        const hops = @as(*align(1) const i32, @ptrCast(bsd.cmsgData(cmsg))).*;
+        _ = hops;
+    }
+}
 ```
 
 ## ReleaseInterfaceList
@@ -2860,7 +2997,8 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
 **INPUTS**
 
 - `socket` - a descriptor from Socket.
-- `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
+- `level` - `SOL_SOCKET`, `IPPROTO_TCP`, `IPPROTO_IP` or
+  `IPPROTO_IPV6`.
 - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
@@ -2868,6 +3006,13 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
+  `IPPROTO_IP`, on a socket that speaks IPv4,
+  `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (an `ip_mreq`: a group, on
+  the interface of an address or on the route's with `INADDR_ANY`),
+  `IP_MULTICAST_IF` (an `in_addr`, an interface's address or
+  `INADDR_ANY` for the route's), `IP_MULTICAST_TTL` (a u8 or an i32,
+  -1 for 1) and `IP_MULTICAST_LOOP` (a u8 or an i32, 0 to keep this
+  machine's own members from getting a copy); at level
   `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
   for IPv6 only; before Bind), `IPV6_UNICAST_HOPS` (an i32, the hop
   limit its packets go with, -1 for the interface's),
@@ -2875,7 +3020,8 @@ fn SetSockOpt(base: *SocketBase, socket: i32, level: i32, option: i32, value: *c
   interface by index or on the route's with 0), `IPV6_MULTICAST_IF` (a
   u32 index, 0 for the route's), `IPV6_MULTICAST_HOPS` (an i32, -1 for
   1) and `IPV6_MULTICAST_LOOP` (an i32, 0 to keep this machine's own
-  members from getting a copy).
+  members from getting a copy), `IPV6_RECVHOPLIMIT` (an i32, not 0 for
+  RecvMsg to say each datagram's hop limit).
 - `value` - the option's value.
 - `value_length` - its size.
 
@@ -2886,7 +3032,7 @@ option there is not, or one that can only be read), `EINVAL` (a value
 of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound, a
 group that is no group), `ENXIO` (no interface of that index),
 `EADDRINUSE` (in the group already), `EADDRNOTAVAIL` (not in the group
-to leave, or no route to it), `ETOOMANYREFS` (the socket is in as many
+to leave, no route to it, or no interface with that address), `ETOOMANYREFS` (the socket is in as many
 groups as it can be), `ENOBUFS` (so is the interface).
 
 **BEHAVIOR**
@@ -2905,6 +3051,13 @@ and changes nothing for a datagram socket, which never waits to send.
 socket can always send. `SO_BINDTODEVICE` holds a capture socket to
 one interface, or with an empty name to every one again; a name there
 is no interface of is `ENXIO`.
+
+A group joined on an interface is joined on its device and reported to
+the link's routers (IGMP for IPv4, MLD for IPv6) by the first socket in
+it, and left by the last; CloseSocket leaves every group the socket is
+in. IP_MULTICAST_TTL and IPV6_MULTICAST_HOPS are one setting, and so
+are the two loops and the two multicast interfaces: an `PF_INET6`
+socket that speaks both families sends to groups of either with it.
 
 **CONTEXT**
 

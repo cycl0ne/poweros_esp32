@@ -207,6 +207,8 @@ fn sendFrom(stack: *StackBase, interface: *Interface, sender_address: u32, opera
 /// A gratuitous question for the interface's own address, when it comes
 /// up: every station's cache learns where it is.
 pub fn announce(stack: *StackBase, interface: *Interface) void {
+    // A line between two ends has no ARP.
+    if (interface.no_arp != 0) return;
     send(stack, interface, request, &broadcast, &(@as([6]u8, @splat(0))), interface.address);
     stack.arp.requests_sent += 1;
 }

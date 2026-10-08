@@ -158,12 +158,33 @@ pub const SOCK_RAW: i32 = 3;
 /// Protocols.
 pub const IPPROTO_IP: i32 = 0;
 pub const IPPROTO_ICMP: i32 = 1;
+pub const IPPROTO_IGMP: i32 = 2;
 pub const IPPROTO_TCP: i32 = 6;
 pub const IPPROTO_UDP: i32 = 17;
 /// IPv6's own: its options' level, ICMPv6, and "no next header".
 pub const IPPROTO_IPV6: i32 = 41;
 pub const IPPROTO_ICMPV6: i32 = 58;
 pub const IPPROTO_NONE: i32 = 59;
+
+/// IPPROTO_IP's options, on a socket that speaks IPv4. The interface a
+/// datagram to a group goes out of (an in_addr, its address;
+/// INADDR_ANY for the route's), its time to live (1 unless set), and
+/// whether this machine's own members of the group get a copy (1 unless
+/// 0) - the last two a u8 or an i32.
+pub const IP_MULTICAST_IF: i32 = 9;
+pub const IP_MULTICAST_TTL: i32 = 10;
+pub const IP_MULTICAST_LOOP: i32 = 11;
+/// A group joined, or left, on an interface: an ip_mreq.
+pub const IP_ADD_MEMBERSHIP: i32 = 12;
+pub const IP_DROP_MEMBERSHIP: i32 = 13;
+
+/// struct ip_mreq: a group, and the interface to be in it on (its
+/// address; INADDR_ANY for the one a packet to the group would go out
+/// of), both in network order.
+pub const ip_mreq = extern struct {
+    imr_multiaddr: in_addr = .{},
+    imr_interface: in_addr = .{},
+};
 
 /// IPPROTO_IPV6's options. Each takes an i32.
 /// The hop limit of unicast packets the socket sends; -1: the interface's.
@@ -188,6 +209,10 @@ pub const ipv6_mreq = extern struct {
 /// An AF_INET6 socket that takes IPv6 only; 0 lets it take IPv4 as
 /// mapped addresses (::ffff:a.b.c.d) as well, the default.
 pub const IPV6_V6ONLY: i32 = 27;
+/// An i32, not 0: RecvMsg says the hop limit each IPv6 datagram came
+/// with, as an IPV6_HOPLIMIT control message (an i32).
+pub const IPV6_RECVHOPLIMIT: i32 = 37;
+pub const IPV6_HOPLIMIT: i32 = 47;
 
 /// Flags of the send and receive calls: urgent data on a stream socket
 /// (out of band), look at what is there without taking it, and do not
@@ -195,6 +220,75 @@ pub const IPV6_V6ONLY: i32 = 27;
 pub const MSG_OOB: u32 = 0x1;
 pub const MSG_PEEK: u32 = 0x2;
 pub const MSG_DONTWAIT: u32 = 0x80;
+/// RecvMsg's `msg_flags`: the datagram was longer than the buffers, and
+/// what was cut off is lost; the control messages did not all fit.
+pub const MSG_TRUNC: u32 = 0x10;
+pub const MSG_CTRUNC: u32 = 0x20;
+
+/// struct iovec: one buffer of several a datagram is read into.
+pub const iovec = extern struct {
+    iov_base: ?*anyopaque = null,
+    iov_len: u32 = 0,
+};
+
+/// struct msghdr: what RecvMsg reads into - where the sender's address
+/// goes, the buffers the data is spread over in turn, and the room for
+/// control messages - and what it says of the datagram (`msg_flags`).
+pub const msghdr = extern struct {
+    /// A sockaddr for the sender, or null; in, its room, out, its size.
+    msg_name: ?*anyopaque = null,
+    msg_namelen: u32 = 0,
+    msg_iov: ?[*]iovec = null,
+    msg_iovlen: u32 = 0,
+    /// Room for control messages (cmsghdr, each followed by its data), or
+    /// null; in, its size, out, how much of it was filled.
+    msg_control: ?*anyopaque = null,
+    msg_controllen: u32 = 0,
+    /// MSG_TRUNC, MSG_CTRUNC.
+    msg_flags: u32 = 0,
+};
+
+/// struct cmsghdr: a control message's header - its length, the header
+/// counted, and its level and type (IPPROTO_IPV6, IPV6_HOPLIMIT) - with
+/// its data behind it at `cmsgData`.
+pub const cmsghdr = extern struct {
+    cmsg_len: u32 = 0,
+    cmsg_level: i32 = 0,
+    cmsg_type: i32 = 0,
+};
+
+/// A length rounded up to where the next control message may start.
+pub fn cmsgAlign(length: u32) u32 {
+    return (length + 3) & ~@as(u32, 3);
+}
+
+/// CMSG_LEN: a control message's `cmsg_len` for `data_length` bytes of
+/// data; CMSG_SPACE: the room it takes, padding included.
+pub fn cmsgLen(data_length: u32) u32 {
+    return cmsgAlign(@sizeOf(cmsghdr)) + data_length;
+}
+pub fn cmsgSpace(data_length: u32) u32 {
+    return cmsgAlign(@sizeOf(cmsghdr)) + cmsgAlign(data_length);
+}
+
+/// CMSG_FIRSTHDR: the first control message RecvMsg wrote, or null.
+pub fn cmsgFirst(message: *const msghdr) ?*cmsghdr {
+    if (message.msg_controllen < @sizeOf(cmsghdr)) return null;
+    return @ptrCast(@alignCast(message.msg_control orelse return null));
+}
+
+/// CMSG_NXTHDR: the control message after `current`, or null.
+pub fn cmsgNext(message: *const msghdr, current: *const cmsghdr) ?*cmsghdr {
+    const start = @intFromPtr(message.msg_control orelse return null);
+    const next = @intFromPtr(current) + cmsgAlign(current.cmsg_len);
+    if (next + @sizeOf(cmsghdr) > start + message.msg_controllen) return null;
+    return @ptrFromInt(next);
+}
+
+/// CMSG_DATA: where a control message's data starts.
+pub fn cmsgData(current: *cmsghdr) [*]u8 {
+    return @as([*]u8, @ptrCast(current)) + cmsgAlign(@sizeOf(cmsghdr));
+}
 
 /// SetSockOpt's and GetSockOpt's level for the socket's own options.
 pub const SOL_SOCKET: i32 = 0xFFFF;
@@ -447,6 +541,16 @@ pub const IFA_Gateway6: u32 = IFA_Dummy + 20;
 /// ti_Data: a pointer to an in6_addr, an IPv6 name server to ask; may be
 /// given more than once. IFA_NameServer's IPv6 twin, stack-wide as it is.
 pub const IFA_NameServer6: u32 = IFA_Dummy + 21;
+/// ti_Data: not 0 for privacy addresses (RFC 8981): beside each address
+/// from a router's prefix, a temporary one ending in random bits, which
+/// connections going out are made from, and which a new one replaces
+/// each day. Off unless given; ConfigureInterfaceTagList turns it on and
+/// off on a running interface.
+pub const IFA_PrivacyAddresses: u32 = IFA_Dummy + 22;
+/// ti_Data: a tag list handed to the network device with its OpenDevice,
+/// beside the stack's own: what that device needs to be told - the serial
+/// line of slip.device (sdk/devices/slip.zig).
+pub const IFA_DeviceTags: u32 = IFA_Dummy + 23;
 
 pub const IFCONFIGURE_FIXED: u32 = 0;
 pub const IFCONFIGURE_DHCP: u32 = 1;
@@ -500,7 +604,7 @@ pub const IFSTATE_LINKLOCAL: u32 = 1 << 4;
 
 /// ConfigureInterfaceTagList takes the IFA_ tags that make sense on a
 /// running interface: IFA_Address, IFA_NetMask, IFA_Gateway, IFA_MTU,
-/// IFA_State.
+/// IFA_State, IFA_Address6 with IFA_Prefix6, IFA_PrivacyAddresses.
 /// AddRouteTagList's and DeleteRouteTagList's tags, addresses in network
 /// order.
 pub const RTA_Dummy: u32 = TAG_USER + 0xB4000;
@@ -512,6 +616,19 @@ pub const RTA_NetMask: u32 = RTA_Dummy + 2;
 pub const RTA_Gateway: u32 = RTA_Dummy + 3;
 /// The default route, through this gateway.
 pub const RTA_DefaultGateway: u32 = RTA_Dummy + 4;
+/// IPv6 routes, each ti_Data a pointer to an in6_addr: the prefix the
+/// route is to, with its length (a u32; 128, one host, unless given),
+/// and the router on the link packets go through (none: the prefix is on
+/// the link itself).
+pub const RTA_Destination6: u32 = RTA_Dummy + 5;
+pub const RTA_PrefixLength6: u32 = RTA_Dummy + 6;
+pub const RTA_Gateway6: u32 = RTA_Dummy + 7;
+/// An IPv6 default route, through this router.
+pub const RTA_DefaultGateway6: u32 = RTA_Dummy + 8;
+/// ti_Data: the name of the interface an IPv6 route is on, a C string:
+/// needed for a prefix on the link; for a router, the interface it is
+/// found on unless given.
+pub const RTA_Interface: u32 = RTA_Dummy + 9;
 
 /// ObtainInterfaceList's nodes: each interface's name, in a list that is
 /// the caller's until ReleaseInterfaceList.
@@ -737,6 +854,11 @@ pub const NetCounts = extern struct {
     nd_dropped: u32 = 0,
     nd_duplicates: u32 = 0,
     mld_reports_sent: u32 = 0,
+    /// IGMP: messages in, the ones too short or with a bad checksum, and
+    /// reports and leaves sent.
+    igmp_received: u32 = 0,
+    igmp_bad: u32 = 0,
+    igmp_reports_sent: u32 = 0,
 };
 
 /// A route: addresses in network order.
@@ -827,9 +949,10 @@ pub const Address6Info = extern struct {
     prefix_length: u8 = 0,
     /// ADDR6_*.
     state: u8 = 0,
-    /// Made from a router's prefix.
+    /// Made from a router's prefix; and a temporary address, its ending
+    /// random (IFA_PrivacyAddresses).
     autoconf: u8 = 0,
-    pad: u8 = 0,
+    temporary: u8 = 0,
     /// The seconds it stays preferred and valid, or LIFETIME_INFINITE.
     preferred_s: u32 = LIFETIME_INFINITE,
     valid_s: u32 = LIFETIME_INFINITE,
@@ -837,7 +960,9 @@ pub const Address6Info = extern struct {
     /// The interface's last router advertisement's M and O flags
     /// (RA_MANAGED, RA_OTHER), on every entry of it.
     router_flags: u8 = 0,
-    pad2: [3]u8 = .{ 0, 0, 0 },
+    /// Given by DHCPv6.
+    dhcp: u8 = 0,
+    pad2: [2]u8 = .{ 0, 0 },
 };
 
 /// A router advertisement's flags: addresses (M) or other settings (O)

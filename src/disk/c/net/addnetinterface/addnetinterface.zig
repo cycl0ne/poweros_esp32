@@ -29,6 +29,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
+const slip = sdk.devices.slip;
 const wireless = sdk.devices.wireless;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -39,7 +40,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.3 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.4 (07.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -63,6 +64,7 @@ const MSG_ADDRESS = "%s: '%s' is not an address, in %s, line %u column %u\n";
 const MSG_CONFIGURE = "%s: Configure is DHCP or FIXED, not '%s', in %s, line %u column %u\n";
 const MSG_IPV6 = "%s: IPv6 is AUTO, FIXED or OFF, not '%s', in %s, line %u column %u\n";
 const MSG_INTERFACEID = "%s: InterfaceID is STABLE or EUI64, not '%s', in %s, line %u column %u\n";
+const MSG_YESNO = "%s: PrivacyAddresses is YES or NO, not '%s', in %s, line %u column %u\n";
 const MSG_MISSING = "%s: %s says nothing about its %s\n";
 const MSG_FAILED = "%s: %s could not be added: %s (errno %d)\n";
 const MSG_UP = "%s: %s/%u on %s\n";
@@ -162,7 +164,7 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
     var tags: [40]TagItem = @splat(.{});
     var count: usize = 0;
     const add = struct {
-        fn one(list: *[40]TagItem, index: *usize, tag: u32, data: usize) void {
+        fn one(list: []TagItem, index: *usize, tag: u32, data: usize) void {
             list[index.*] = .{ .tag = tag, .data = data };
             index.* += 1;
         }
@@ -182,6 +184,14 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
     if (config.tcp_recv_space != 0) add(&tags, &count, bsd.IFA_TCPRecvSpace, config.tcp_recv_space);
     add(&tags, &count, bsd.IFA_IPv6, config.ipv6);
     add(&tags, &count, bsd.IFA_InterfaceID, config.interface_id);
+    if (config.privacy_addresses) add(&tags, &count, bsd.IFA_PrivacyAddresses, 1);
+    // What the device itself is told: a SLIP line's serial line.
+    var device_tags: [4]TagItem = @splat(.{});
+    var device_count: usize = 0;
+    if (config.serial_device[0] != 0) add(&device_tags, &device_count, slip.SLIP_SerialDevice, @intFromPtr(&config.serial_device));
+    if (config.serial_unit) |serial_unit| add(&device_tags, &device_count, slip.SLIP_SerialUnit, serial_unit);
+    if (config.baud != 0) add(&device_tags, &device_count, slip.SLIP_Baud, config.baud);
+    if (device_count > 0) add(&tags, &count, bsd.IFA_DeviceTags, @intFromPtr(&device_tags));
     var secret: [bsd.IFSECRET_BYTES]u8 = @splat(0);
     if (config.ipv6 != bsd.IFIPV6_OFF and config.interface_id == bsd.IFID_STABLE and stableSecret(sys, dl, &secret)) {
         add(&tags, &count, bsd.IFA_StableSecret, @intFromPtr(&secret));
@@ -283,6 +293,7 @@ fn say(dl: *DosBase, found: config_file.Problem, file: [*:0]const u8) void {
         .configure => Printf(dl, MSG_CONFIGURE, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .ipv6 => Printf(dl, MSG_IPV6, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .interface_id => Printf(dl, MSG_INTERFACEID, .{ COMMAND_NAME, token, file, found.line, found.column }),
+        .yes_no => Printf(dl, MSG_YESNO, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .missing => Printf(dl, MSG_MISSING, .{ COMMAND_NAME, file, token }),
         .none => 0,
     };

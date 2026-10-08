@@ -41,6 +41,7 @@ const If_IndexToName = @import("netif/if_indextoname.zig").If_IndexToName;
 const GetAddrInfo = @import("names/getaddrinfo.zig").GetAddrInfo;
 const FreeAddrInfo = @import("names/freeaddrinfo.zig").FreeAddrInfo;
 const GetNameInfo = @import("names/getnameinfo.zig").GetNameInfo;
+const RecvMsg = @import("socket/recvmsg.zig").RecvMsg;
 const Inet_Addr = @import("socket/inet_addr.zig").Inet_Addr;
 const SocketBaseTagList = @import("socket/socketbasetaglist.zig").SocketBaseTagList;
 const AddInterfaceTagList = @import("netif/addinterfacetaglist.zig").AddInterfaceTagList;
@@ -136,6 +137,7 @@ const contract_files = [_][]const u8{
     @embedFile("names/getaddrinfo.zig"),
     @embedFile("names/freeaddrinfo.zig"),
     @embedFile("names/getnameinfo.zig"),
+    @embedFile("socket/recvmsg.zig"),
 };
 
 fn lvoSocket(sb: *SocketBase, domain: i32, socket_type: i32, protocol: i32) callconv(.c) i32 {
@@ -279,6 +281,10 @@ fn lvoFreeAddrInfo(sb: *SocketBase, list: *bsd.addrinfo) callconv(.c) void {
 fn lvoGetNameInfo(sb: *SocketBase, address: *const bsd.sockaddr, address_length: u32, host: ?[*]u8, host_length: u32, service: ?[*]u8, service_length: u32, flags: i32) callconv(.c) i32 {
     return GetNameInfo(sb, address, address_length, host, host_length, service, service_length, flags);
 }
+
+fn lvoRecvMsg(sb: *SocketBase, socket: i32, message: *bsd.msghdr, flags: u32) callconv(.c) i32 {
+    return RecvMsg(sb, socket, message, flags);
+}
 fn lvoGetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) callconv(.c) i32 {
     return GetNetworkStatistics(sb, kind, buffer, size);
 }
@@ -338,6 +344,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetAddrInfo),
     vec(lvoFreeAddrInfo),
     vec(lvoGetNameInfo),
+    vec(lvoRecvMsg),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -23,6 +23,11 @@
 //! unknown. A frame sent to a group nobody here joined, which the
 //! hardware's hash filter let through, is dropped unless the unit is
 //! promiscuous.
+//!
+//! **Two framings** (`Framing`): Ethernet's, a header with two addresses
+//! and a type before the packet; or a point-to-point line's - SLIP - where
+//! a frame is the packet alone, its type read from its version (IPv4,
+//! IPv6), and the link has no addresses at all.
 
 const exec = @import("../../libs/exec/exec.zig");
 const net = @import("../network.zig");
@@ -32,6 +37,16 @@ const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 const TagItem = @import("../../libs/utility/tagitem.zig").TagItem;
 const Hook = @import("../../libs/utility/hooks.zig").Hook;
 const ethernet = @import("ethernet.zig");
+
+/// What a link's frames are: Ethernet's, or a point-to-point line's bare
+/// packets. A Link says `pub const framing = .point_to_point`, with its
+/// `wire_type` (S2WireType_*) and `mtu`, for the second; Ethernet is what
+/// it is without.
+pub const Framing = enum { ethernet, point_to_point };
+
+/// The packet types a point-to-point frame's version gives.
+pub const type_ipv4: u32 = 0x0800;
+pub const type_ipv6: u32 = 0x86DD;
 
 /// How many packet types S2_TRACKTYPE can count at once, and how many
 /// multicast groups the unit can join.
@@ -115,6 +130,13 @@ fn fail(req: *net.IOSana2Req, err: i8, wire_error: u32) void {
 pub fn Unit(comptime Link: type) type {
     return extern struct {
         const Self = @This();
+        const framing: Framing = if (@hasDecl(Link, "framing")) Link.framing else .ethernet;
+        const point = framing == .point_to_point;
+        /// The most bytes of one packet, and of one frame on the link.
+        const mtu: u32 = if (point) Link.mtu else ethernet.mtu;
+        const frame_max: u32 = if (point) Link.mtu else ethernet.frame_max;
+        /// What stands in front of the packet in a frame.
+        const header_bytes: u32 = if (point) 0 else ethernet.header_bytes;
 
         sys: *ExecBase,
         link: *Link,
@@ -309,12 +331,13 @@ pub fn Unit(comptime Link: type) type {
             if (unit.online == 0) return unit.answer(req, net.S2ERR_OUTOFSERVICE, unit.offlineError());
             if (openerOf(req) == null) return unit.answer(req, net.S2ERR_BAD_ARGUMENT, net.S2WERR_BUFF_ERROR);
             if (req.req.flags & net.SANA2IOF_RAW != 0) {
-                if (req.data_length < ethernet.header_bytes or req.data_length > ethernet.frame_max) {
+                if (req.data_length < @max(header_bytes, 1) or req.data_length > frame_max) {
                     return unit.answer(req, net.S2ERR_MTU_EXCEEDED, net.S2WERR_GENERIC_ERROR);
                 }
             } else {
-                if (req.data_length > ethernet.mtu) return unit.answer(req, net.S2ERR_MTU_EXCEEDED, net.S2WERR_GENERIC_ERROR);
-                if (req.req.command == net.S2_MULTICAST and !ethernet.isGroup(req.dst_addr[0..ethernet.address_bytes])) {
+                if (req.data_length > mtu) return unit.answer(req, net.S2ERR_MTU_EXCEEDED, net.S2WERR_GENERIC_ERROR);
+                // A line between two ends sends every packet to the other.
+                if (!point and req.req.command == net.S2_MULTICAST and !ethernet.isGroup(req.dst_addr[0..ethernet.address_bytes])) {
                     return unit.answer(req, net.S2ERR_BAD_ADDRESS, net.S2WERR_BAD_MULTICAST);
                 }
             }
@@ -382,11 +405,11 @@ pub fn Unit(comptime Link: type) type {
             const full: net.Sana2DeviceQuery = .{
                 .size_available = room,
                 .size_supplied = supplied,
-                .addr_field_size = ethernet.address_bits,
-                .mtu = ethernet.mtu,
+                .addr_field_size = if (point) 0 else ethernet.address_bits,
+                .mtu = mtu,
                 .bps = Link.bps,
-                .hardware_type = net.S2WireType_Ethernet,
-                .raw_mtu = ethernet.frame_max,
+                .hardware_type = if (point) Link.wire_type else net.S2WireType_Ethernet,
+                .raw_mtu = frame_max,
             };
             const from: [*]const u8 = @ptrCast(&full);
             const to: [*]u8 = @ptrCast(into);
@@ -547,6 +570,15 @@ pub fn Unit(comptime Link: type) type {
         /// A frame the hardware received, without its checksum: handed to
         /// the reads that want it.
         pub fn receive(unit: *Self, frame: []const u8) void {
+            if (point) {
+                if (frame.len == 0 or frame.len > frame_max) return unit.damaged();
+                const packet_type: u32 = switch (frame[0] >> 4) {
+                    4 => type_ipv4,
+                    6 => type_ipv6,
+                    else => return unit.damaged(),
+                };
+                return unit.deliver(frame, packet_type, null, 0);
+            }
             const header = ethernet.parse(frame) orelse return unit.damaged();
             if (frame.len > ethernet.frame_max) return unit.damaged();
             var flags: u8 = 0;
@@ -556,8 +588,13 @@ pub fn Unit(comptime Link: type) type {
                 if (unit.promiscuous == 0 and unit.findGroup(&header.dst) == null) return;
                 flags = net.SANA2IOF_MCAST;
             }
+            unit.deliver(frame, header.type, &header, flags);
+        }
+
+        /// A frame of `packet_type` - behind `header` on Ethernet - to the
+        /// first read of its type of each opener, or to the orphan reads.
+        fn deliver(unit: *Self, frame: []const u8, packet_type: u32, header: ?*const ethernet.Header, flags: u8) void {
             unit.stats.packets_received += 1;
-            const packet_type: u32 = header.type;
             const sys = unit.sys;
             var taken: exec.List = .{};
             taken.init(.message);
@@ -583,14 +620,14 @@ pub fn Unit(comptime Link: type) type {
                     tracked.stats.packets_dropped += 1;
                 } else {
                     tracked.stats.packets_received += 1;
-                    tracked.stats.bytes_received += frame.len - ethernet.header_bytes;
+                    tracked.stats.bytes_received += frame.len - header_bytes;
                 }
             }
             if (taken.isEmpty()) {
                 unit.stats.unknown_types_received += 1;
                 return;
             }
-            while (sys.RemHead(&taken)) |node| unit.answerRead(requestOf(node), frame, &header, flags);
+            while (sys.RemHead(&taken)) |node| unit.answerRead(requestOf(node), frame, packet_type, header, flags);
         }
 
         /// A frame too short or too long to be one, or one the hardware
@@ -623,14 +660,16 @@ pub fn Unit(comptime Link: type) type {
             return null;
         }
 
-        fn answerRead(unit: *Self, req: *net.IOSana2Req, frame: []const u8, header: *const ethernet.Header, flags: u8) void {
-            const data = if (req.req.flags & net.SANA2IOF_RAW != 0) frame else frame[ethernet.header_bytes..];
+        fn answerRead(unit: *Self, req: *net.IOSana2Req, frame: []const u8, packet_type: u32, header: ?*const ethernet.Header, flags: u8) void {
+            const data = if (req.req.flags & net.SANA2IOF_RAW != 0) frame else frame[header_bytes..];
             req.data_length = @intCast(data.len);
-            req.packet_type = header.type;
+            req.packet_type = packet_type;
             req.src_addr = @splat(0);
             req.dst_addr = @splat(0);
-            req.src_addr[0..ethernet.address_bytes].* = header.src;
-            req.dst_addr[0..ethernet.address_bytes].* = header.dst;
+            if (header) |ether| {
+                req.src_addr[0..ethernet.address_bytes].* = ether.src;
+                req.dst_addr[0..ethernet.address_bytes].* = ether.dst;
+            }
             req.req.flags = (req.req.flags & ~(net.SANA2IOF_BCAST | net.SANA2IOF_MCAST)) | flags;
             const opener = openerOf(req).?;
             if (!opener.copy_to.?(req.data, data.ptr, req.data_length)) {
@@ -652,15 +691,16 @@ pub fn Unit(comptime Link: type) type {
             return requestOf(node);
         }
 
-        /// `req`'s frame, built into `into` (`ethernet.frame_max` bytes):
+        /// `req`'s frame, built into `into` (the link's largest frame):
         /// its length, or 0 if the opener's copy call failed, in which case
-        /// the request has been answered.
+        /// the request has been answered. A point-to-point frame is the
+        /// packet as it is.
         pub fn buildFrame(unit: *Self, req: *net.IOSana2Req, into: []u8) u32 {
             const opener = openerOf(req).?;
             const copy = opener.copy_from.?;
             var length = req.data_length;
             var ok: bool = undefined;
-            if (req.req.flags & net.SANA2IOF_RAW != 0) {
+            if (point or req.req.flags & net.SANA2IOF_RAW != 0) {
                 ok = copy(into.ptr, req.data, length);
             } else {
                 const dst: *const ethernet.Address = if (req.req.command == net.S2_BROADCAST)

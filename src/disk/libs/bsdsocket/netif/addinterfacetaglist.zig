@@ -41,19 +41,22 @@ const Address = @import("../ip6/address.zig").Address;
 ///   with the device; `IFA_IPv6` (`IFIPV6_AUTO` unless given, or
 ///   `IFIPV6_OFF`), `IFA_InterfaceID` (`IFID_STABLE` unless given, or
 ///   `IFID_EUI64`) and `IFA_StableSecret`: whether the interface speaks
-///   IPv6, and how its addresses end; `IFA_Address6`, `IFA_Prefix6` and
+///   IPv6, and how its addresses end; `IFA_PrivacyAddresses`: a temporary
+///   address beside each from a router's prefix; `IFA_Address6`, `IFA_Prefix6` and
 ///   `IFA_Gateway6`: an IPv6 address of its own, its prefix on the link
 ///   and a router for the default route (`IFIPV6_FIXED` takes no address
 ///   from a router's prefix). Stack-wide: `IFA_NameServer` (any number),
 ///   `IFA_NameServer6` (the same, IPv6), `IFA_Domain`, `IFA_TCPSendSpace`,
-///   `IFA_TCPRecvSpace`.
+///   `IFA_TCPRecvSpace`. `IFA_DeviceTags`: a tag list the device is
+///   opened with beside the stack's own (slip.device's serial line).
 ///
 /// RESULT:
 /// 0, or -1 with Errno(): `EINVAL` (a tag missing or a name too long),
 /// `EADDRINUSE` (the name is taken, or the device's unit has an
 /// interface already), `ENOBUFS` (no interface free),
 /// `ENXIO` (the device would not open, or would not go on line),
-/// `EPFNOSUPPORT` (the device's link is not Ethernet), `ENOMEM`.
+/// `EPFNOSUPPORT` (the device's link is neither Ethernet nor SLIP),
+/// `EINVAL` also for DHCP on a SLIP line, `ENOMEM`.
 ///
 /// BEHAVIOR:
 /// The device is opened with the stack's copy calls, asked what its link
@@ -84,7 +87,9 @@ const Address = @import("../ip6/address.zig").Address;
 /// the library stays in memory. The tags are read and not kept.
 ///
 /// NOTES:
-/// Only Ethernet links for now.
+/// Ethernet links and SLIP lines (sdk/devices/slip.zig). A line has no
+/// addresses and no ARP: whatever the routes send out of it goes to the
+/// other end.
 ///
 /// BUGS:
 /// None known.
@@ -122,6 +127,8 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     const gateway6: ?*align(1) const bsd.in6_addr = @ptrFromInt(ub.GetTagData(bsd.IFA_Gateway6, 0, tags));
     const identifier: u8 = if (ub.GetTagData(bsd.IFA_InterfaceID, bsd.IFID_STABLE, tags) == bsd.IFID_EUI64) bsd.IFID_EUI64 else bsd.IFID_STABLE;
     const given_secret: ?[*]const u8 = @ptrFromInt(ub.GetTagData(bsd.IFA_StableSecret, 0, tags));
+    const privacy = ub.GetTagData(bsd.IFA_PrivacyAddresses, 0, tags) != 0;
+    const device_tags: ?[*]const utility.TagItem = @ptrFromInt(ub.GetTagData(bsd.IFA_DeviceTags, 0, tags));
     var name_length: usize = 0;
     while (name[name_length] != 0) name_length += 1;
     var device_length: usize = 0;
@@ -148,7 +155,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         sys.FreeMem(memory, @sizeOf(device.Device));
         return _socket.fail(sb, bsd.ENOMEM, "AddInterfaceTagList");
     };
-    const refused = open(stack, link, device_name.?, unit, port);
+    const refused = open(stack, link, device_name.?, unit, port, device_tags, dhcp);
     sys.DeleteMsgPort(port);
     link.opened.req.message.reply_port = null;
     if (refused != 0) {
@@ -178,6 +185,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         .mtu = if (mtu != 0) @min(mtu, link.mtu) else link.mtu,
         .used = 1,
         .up = 1,
+        .no_arp = link.point_to_point,
         .dhcp = @intFromBool(dhcp),
         .hardware = link.station,
         .transmit = &device.transmit,
@@ -194,12 +202,14 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     // the device can join their groups.
     slot.ip6.enabled = @intFromBool(ipv6);
     slot.ip6.autoconf = @intFromBool(ipv6_mode != bsd.IFIPV6_FIXED);
+    slot.ip6.privacy = @intFromBool(privacy);
     link.interface = slot;
     if (address != 0) _ = _route.add(stack, address, netmask, 0, slot);
     if (gateway != 0) _ = _route.setDefault(stack, gateway);
     // The interface keeps the library, so the task and the code stay.
     @import("../task/_task.zig").holdLibrary(stack, 1);
     device.start(stack, link, &stack.port);
+    @import("../igmp/_igmp.zig").start(stack, slot);
     if (ipv6) {
         _ip6.start(stack, slot);
         if (address6) |given| {
@@ -272,11 +282,14 @@ fn settings(stack: *StackBase, tags: ?[*]const utility.TagItem) void {
     }
 }
 
-/// The device opened with the stack's copy calls, asked what it is, and
-/// on line: 0, or the errno that says why not.
-fn open(stack: *StackBase, link: *device.Device, device_name: [*:0]const u8, unit: u32, port: *exec.MsgPort) i32 {
+/// The device opened with the stack's copy calls - and `device_tags`
+/// behind them - asked what it is, and on line: 0, or the errno that says
+/// why not. An Ethernet link, or a line between two ends, which cannot
+/// have DHCP.
+fn open(stack: *StackBase, link: *device.Device, device_name: [*:0]const u8, unit: u32, port: *exec.MsgPort, device_tags: ?[*]const utility.TagItem, dhcp: bool) i32 {
     const sys = stack.sys_base;
-    const buffers = device.bufferTags();
+    var buffers = device.bufferTags();
+    if (device_tags) |more| buffers[2] = .{ .tag = utility.TAG_MORE, .data = @intFromPtr(more) };
     const req = &link.opened;
     req.* = .{};
     req.req.message.reply_port = port;
@@ -287,10 +300,18 @@ fn open(stack: *StackBase, link: *device.Device, device_name: [*:0]const u8, uni
     var query: net.Sana2DeviceQuery = .{ .size_available = @sizeOf(net.Sana2DeviceQuery) };
     req.req.command = net.S2_DEVICEQUERY;
     req.stat_data = &query;
-    if (sys.DoIO(&req.req) != 0 or query.hardware_type != net.S2WireType_Ethernet or query.addr_field_size != 48) {
+    const asked = sys.DoIO(&req.req) == 0;
+    const ethernet = query.hardware_type == net.S2WireType_Ethernet and query.addr_field_size == 48;
+    const line = query.hardware_type == net.S2WireType_SLIP and query.addr_field_size == 0;
+    if (!asked or !(ethernet or line)) {
         sys.CloseDevice(&req.req);
         return bsd.EPFNOSUPPORT;
     }
+    if (line and dhcp) {
+        sys.CloseDevice(&req.req);
+        return bsd.EINVAL;
+    }
+    link.point_to_point = @intFromBool(line);
     link.mtu = query.mtu;
     link.bps_low = @truncate(query.bps);
     link.bps_high = @truncate(query.bps >> 32);

@@ -23,6 +23,7 @@ const _icmp = @import("../icmp/_icmp.zig");
 const _ip6 = @import("../ip6/_ip6.zig");
 const _icmp6 = @import("../icmp6/_icmp6.zig");
 const _route6 = @import("../route6/_route6.zig");
+const _igmp = @import("../igmp/_igmp.zig");
 const Address = @import("../ip6/address.zig").Address;
 
 /// A packet as it reaches a transport: who sent it and to whom, what it
@@ -74,8 +75,16 @@ pub const Path = struct {
 /// the interface an IPv6 link-local or link-scope destination is on - the
 /// one a packet from it came in on - and without it the first interface
 /// that speaks IPv6 is taken. Any other IPv6 destination goes by the
-/// IPv6 routes (`route6/`).
+/// IPv6 routes (`route6/`). An IPv4 group is sent on the link of `scope`,
+/// or of the route to it, or of the first interface up, to the group
+/// itself.
 pub fn route(stack: *StackBase, destination: Address, scope: ?*Interface) ?Path {
+    if (destination.isV4() and _igmp.isGroup(destination.v4())) {
+        const routed = if (_route.lookup(stack, destination.v4())) |hop| hop.interface else null;
+        const interface = scope orelse routed orelse firstUp(stack) orelse return null;
+        if (interface.up == 0) return null;
+        return .{ .interface = interface, .next_hop = destination, .mtu = interface.mtu };
+    }
     if (destination.isV4()) {
         const hop = _route.lookup(stack, destination.v4()) orelse return null;
         return .{ .interface = hop.interface, .next_hop = Address.fromV4(hop.next_hop), .mtu = hop.interface.mtu };
@@ -102,6 +111,14 @@ fn speaks6(interface: *const Interface) bool {
     return interface.used != 0 and interface.up != 0 and interface.ip6.enabled != 0;
 }
 
+/// The first interface on a link that is up.
+fn firstUp(stack: *StackBase) ?*Interface {
+    for (&stack.interfaces) |*interface| {
+        if (interface.used != 0 and interface.up != 0 and interface.loopback == 0) return interface;
+    }
+    return null;
+}
+
 /// The first interface on a link that speaks IPv6.
 fn firstLink(stack: *StackBase) ?*Interface {
     for (&stack.interfaces) |*interface| {
@@ -117,7 +134,8 @@ fn pathOn(stack: *StackBase, interface: *Interface, next_hop: Address, destinati
 /// The address a packet to `destination` over `path` goes from, when its
 /// socket is bound to none; for IPv6 the one RFC 6724 would pick among
 /// the interface's: of the destination's scope, preferred before
-/// deprecated, then the one sharing the most leading bits with it.
+/// deprecated, a temporary one before another (privacy addresses), then
+/// the one sharing the most leading bits with it.
 pub fn sourceFor(path: Path, destination: Address) ?Address {
     if (destination.isV4()) {
         return Address.fromV4(if (path.interface.loopback != 0) bsd.INADDR_LOOPBACK else path.interface.address);
@@ -129,7 +147,8 @@ pub fn sourceFor(path: Path, destination: Address) ?Address {
     for (&path.interface.ip6.addresses) |*entry| {
         if (!entry.usable()) continue;
         if (entry.address.isLinkLocal() != link_scope) continue;
-        const score: u32 = @as(u32, if (entry.state == .preferred) 256 else 0) + entry.address.commonBits(destination) + 1;
+        const score: u32 = @as(u32, if (entry.state == .preferred) 512 else 0) + @as(u32, if (entry.temporary != 0) 256 else 0) +
+            entry.address.commonBits(destination) + 1;
         if (score > best_score) {
             best = entry.address;
             best_score = score;
@@ -144,6 +163,17 @@ pub fn headerBytes(destination: Address) u32 {
     return if (destination.isV4()) _ip.header_bytes else 40;
 }
 
+/// Whether `address` is a group, of either family.
+pub fn isGroup(address: Address) bool {
+    return if (address.isV4()) _igmp.isGroup(address.v4()) else address.isMulticast();
+}
+
+/// Whether sockets of this machine joined `group` on `interface`.
+pub fn hasMembers(interface: *Interface, group: Address) bool {
+    if (group.isV4()) return _igmp.socketGroup(interface, group.v4()) != null;
+    return _ip6.socketGroup(interface, group) != null;
+}
+
 /// Whether `destination` is one every station on its net answers to:
 /// IPv4's limited broadcast, or the path's interface's. IPv6 has none.
 pub fn isBroadcast(destination: Address, path: Path) bool {
@@ -153,16 +183,18 @@ pub fn isBroadcast(destination: Address, path: Path) bool {
 }
 
 /// `frame`, holding a transport's header and data, sent from `source` to
-/// `destination` over `path`, with `hop_limit` for IPv6 (0: the
-/// interface's, or 1 for a group). The frame goes with it. 0, or the
-/// errno of a packet that could not go.
+/// `destination` over `path`, with `hop_limit` for IPv6 and for an IPv4
+/// group (0: the interface's, or 1 for a group); an IPv4 packet to one
+/// station goes with a time to live of 64. The frame goes with it. 0, or
+/// the errno of a packet that could not go.
 pub fn output(stack: *StackBase, frame: *Frame, source: Address, destination: Address, protocol: u8, path: Path, hop_limit: u8) i32 {
     if (source.isV4() != destination.isV4()) {
         stack.frames.give(stack.sys_base, frame);
         return bsd.ENETUNREACH;
     }
     if (destination.isV4()) {
-        return _ip.output(stack, frame, source.v4(), destination.v4(), protocol, .{ .interface = path.interface, .next_hop = path.next_hop.v4() });
+        const ttl: u8 = if (_igmp.isGroup(destination.v4())) hop_limit else 0;
+        return _ip.outputWith(stack, frame, source.v4(), destination.v4(), protocol, .{ .interface = path.interface, .next_hop = path.next_hop.v4() }, .{ .ttl = ttl });
     }
     // A group hears a packet on its own link only, unless asked.
     const hops: u8 = if (hop_limit != 0) hop_limit else if (destination.isMulticast()) 1 else path.interface.ip6.hop_limit;

@@ -21,10 +21,11 @@ const _tcp = @import("../tcp/_tcp.zig");
 ///
 /// INPUTS:
 /// - `socket` - a descriptor from Socket.
-/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
-/// - `option` - any SetSockOpt takes, and `SO_ERROR` (the socket's
-///   pending error, which reading clears) and `SO_TYPE` (its SOCK_*), each
-///   an i32.
+/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP`, `IPPROTO_IP` or
+///   `IPPROTO_IPV6`.
+/// - `option` - any SetSockOpt takes but the memberships, and `SO_ERROR`
+///   (the socket's pending error, which reading clears) and `SO_TYPE` (its
+///   SOCK_*), each an i32.
 /// - `value` - where the value goes.
 /// - `value_length` - in, the room at `value`; out, the value's size.
 ///
@@ -33,7 +34,10 @@ const _tcp = @import("../tcp/_tcp.zig");
 /// room).
 ///
 /// BEHAVIOR:
-/// The flags answer 1 or 0.
+/// The flags answer 1 or 0. `IP_MULTICAST_TTL` and `IP_MULTICAST_LOOP`
+/// answer a u8 when `value_length` says there is room for no more, an
+/// i32 else; `IP_MULTICAST_IF` the interface's address as an `in_addr`,
+/// `INADDR_ANY` when none was named.
 ///
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
@@ -69,8 +73,28 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         value_length.* = @sizeOf(i32);
         return 0;
     }
+    if (level == bsd.IPPROTO_IP and (socket.family == bsd.AF_INET or socket.v6only == 0) and
+        (option == bsd.IP_MULTICAST_IF or option == bsd.IP_MULTICAST_TTL or option == bsd.IP_MULTICAST_LOOP))
+    {
+        if (value_length.* < 1 or (option == bsd.IP_MULTICAST_IF and value_length.* < @sizeOf(bsd.in_addr))) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
+        if (option == bsd.IP_MULTICAST_IF) {
+            const address: u32 = if (socket.multicast_interface) |interface| interface.address else bsd.INADDR_ANY;
+            @as(*align(1) bsd.in_addr, @ptrCast(value)).* = .{ .s_addr = bsd.htonl(address) };
+            value_length.* = @sizeOf(bsd.in_addr);
+            return 0;
+        }
+        const number: u8 = if (option == bsd.IP_MULTICAST_LOOP) @intFromBool(socket.multicast_no_loop == 0) else if (socket.multicast_hops == 0) 1 else socket.multicast_hops;
+        if (value_length.* < @sizeOf(i32)) {
+            @as(*u8, @ptrCast(value)).* = number;
+            value_length.* = 1;
+        } else {
+            @as(*align(1) i32, @ptrCast(value)).* = number;
+            value_length.* = @sizeOf(i32);
+        }
+        return 0;
+    }
     if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_V6ONLY or option == bsd.IPV6_UNICAST_HOPS or
-        option == bsd.IPV6_MULTICAST_IF or option == bsd.IPV6_MULTICAST_HOPS or option == bsd.IPV6_MULTICAST_LOOP))
+        option == bsd.IPV6_MULTICAST_IF or option == bsd.IPV6_MULTICAST_HOPS or option == bsd.IPV6_MULTICAST_LOOP or option == bsd.IPV6_RECVHOPLIMIT))
     {
         if (value_length.* < @sizeOf(i32)) return _socket.fail(sb, bsd.EINVAL, "GetSockOpt");
         @as(*align(1) i32, @ptrCast(value)).* = switch (option) {
@@ -78,6 +102,7 @@ pub fn GetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
             bsd.IPV6_UNICAST_HOPS => if (socket.hop_limit == 0) -1 else socket.hop_limit,
             bsd.IPV6_MULTICAST_IF => if (socket.multicast_interface) |interface| @bitCast(@import("../netif/_netif.zig").index(sb.stack, interface)) else 0,
             bsd.IPV6_MULTICAST_HOPS => if (socket.multicast_hops == 0) 1 else socket.multicast_hops,
+            bsd.IPV6_RECVHOPLIMIT => socket.receive_hop_limit,
             else => @intFromBool(socket.multicast_no_loop == 0),
         };
         value_length.* = @sizeOf(i32);

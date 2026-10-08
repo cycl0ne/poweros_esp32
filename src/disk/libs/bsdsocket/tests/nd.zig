@@ -136,6 +136,18 @@ const Rig = struct {
         }
     }
 
+    /// Time moved on by `us` at once, each timer run at its deadline: for
+    /// days, which `pass` would take too long over.
+    fn leap(rig: *Rig, us: u64) void {
+        const end = rig.stack.fixed_time + us;
+        while (_timer.earliest(rig.stack)) |due| {
+            if (due > end) break;
+            rig.stack.fixed_time = @max(due, rig.stack.fixed_time);
+            _timer.run(rig.stack, rig.stack.fixed_time);
+        }
+        rig.stack.fixed_time = end;
+    }
+
     /// An ICMPv6 message from the network with `hop_limit`, its checksum
     /// made.
     fn arrive(rig: *Rig, source: Address, destination: Address, hop_limit: u8, body: []const u8) void {
@@ -713,5 +725,272 @@ test "sockets in a group: joined, reported, each given what comes, and left" {
     }
     try testing.expect(left);
     _ = sb.CloseSocket(one);
+    try rig.deinit();
+}
+
+// --- privacy addresses -----------------------------------------------------------
+
+const privacy = @import("../nd/privacy.zig");
+
+/// The temporary addresses of the interface, in their slots' order, and
+/// how many.
+fn temporaries(rig: *Rig, into: *[_ip6.addresses_max]*_ip6.InterfaceAddress) usize {
+    var found: usize = 0;
+    for (&rig.interface.ip6.addresses) |*entry| {
+        if (entry.state == .unused or entry.temporary == 0) continue;
+        into[found] = entry;
+        found += 1;
+    }
+    return found;
+}
+
+/// The temporary address that is neither deprecated nor followed by a
+/// newer one yet.
+fn currentTemporary(rig: *Rig) ?*_ip6.InterfaceAddress {
+    var found: [_ip6.addresses_max]*_ip6.InterfaceAddress = undefined;
+    for (found[0..temporaries(rig, &found)]) |entry| {
+        if (entry.renewed == 0 and (entry.state == .preferred or entry.state == .tentative)) return entry;
+    }
+    return null;
+}
+
+const day_us: u64 = 24 * 60 * 60 * 1_000_000;
+
+test "privacy addresses: a temporary address beside the stable one, which connections going out take" {
+    var rig = try Rig.init();
+    rig.interface.ip6.privacy = 1;
+    rig.ready();
+    const made_at = rig.stack.fixed_time;
+    advertise(&rig, 1800, 7 * 86400, 7 * 86400);
+    const stable = _ip6.addressOf(rig.interface, global).?;
+    try testing.expectEqual(@as(u8, 0), stable.temporary);
+    const temporary = currentTemporary(&rig).?;
+    try testing.expectEqual(_ip6.AddressState.tentative, temporary.state);
+    try testing.expectEqual(@as(u8, 1), temporary.autoconf);
+    try testing.expect(temporary.address.inPrefix(global, 64));
+    try testing.expect(!temporary.address.eql(global));
+    // Valid for two days, preferred for one less up to 0.4 of one.
+    try testing.expectEqual(made_at + 2 * day_us, temporary.valid_until);
+    try testing.expect(temporary.preferred_until <= made_at + day_us);
+    try testing.expect(temporary.preferred_until >= made_at + day_us * 6 / 10);
+    // Both checked; then the temporary one is the source going out, the
+    // link-local one still on the link.
+    rig.pass(2_100_000);
+    try testing.expectEqual(_ip6.AddressState.preferred, stable.state);
+    try testing.expectEqual(_ip6.AddressState.preferred, temporary.state);
+    const far = address("2001:db8:2::1");
+    try testing.expect(_inet.sourceFor(_inet.route(rig.stack, far, null).?, far).?.eql(temporary.address));
+    try testing.expect(_inet.sourceFor(_inet.route(rig.stack, gateway, rig.interface).?, gateway).?.eql(own));
+    // NetStatus sees which it is.
+    var infos: [_ip6.addresses_max]bsd.Address6Info = undefined;
+    const listed = rig.sb.GetNetworkStatistics(bsd.NETSTATUS_ADDRESSES6, &infos, @sizeOf(@TypeOf(infos)));
+    var marked: u32 = 0;
+    for (infos[0..@intCast(listed)]) |*info| {
+        if (info.temporary != 0) {
+            marked += 1;
+            try testing.expect(std.mem.eql(u8, &info.address.s6_addr, &temporary.address.bytes));
+        }
+    }
+    try testing.expectEqual(@as(u32, 1), marked);
+    // The prefix advertised again: still the one.
+    advertise(&rig, 1800, 7 * 86400, 7 * 86400);
+    var all: [_ip6.addresses_max]*_ip6.InterfaceAddress = undefined;
+    try testing.expectEqual(@as(usize, 1), temporaries(&rig, &all));
+    try rig.deinit();
+}
+
+test "a temporary address is followed by a new one before it is deprecated, and goes when it ends" {
+    var rig = try Rig.init();
+    rig.interface.ip6.privacy = 1;
+    rig.ready();
+    advertise(&rig, 1800, 0xFFFF_FFFF, 0xFFFF_FFFF);
+    rig.pass(2_100_000);
+    const first = currentTemporary(&rig).?;
+    const first_address = first.address;
+    const first_preferred = first.preferred_until;
+    const first_valid = first.valid_until;
+    // Just before it stops being preferred, the next one is made.
+    rig.leap(first_preferred - privacy.regenerate_us + 1 - rig.stack.fixed_time);
+    var all: [_ip6.addresses_max]*_ip6.InterfaceAddress = undefined;
+    try testing.expectEqual(@as(usize, 2), temporaries(&rig, &all));
+    try testing.expectEqual(@as(u8, 1), first.renewed);
+    rig.pass(2_100_000);
+    const second = currentTemporary(&rig).?;
+    try testing.expect(second != first);
+    try testing.expect(!second.address.eql(first_address));
+    try testing.expectEqual(_ip6.AddressState.preferred, second.state);
+    // Then the first is deprecated, and the second taken - on the link,
+    // since the router's day as a default is long over.
+    rig.leap(first_preferred + 1 - rig.stack.fixed_time);
+    try testing.expectEqual(_ip6.AddressState.deprecated, first.state);
+    const near = address("2001:db8:1::5");
+    try testing.expect(_inet.sourceFor(_inet.route(rig.stack, near, null).?, near).?.eql(second.address));
+    // Valid two days from its making, then gone; the stable one stays.
+    rig.leap(first_valid + 1 - rig.stack.fixed_time);
+    try testing.expect(_ip6.addressOf(rig.interface, first_address) == null);
+    try testing.expect(_ip6.addressOf(rig.interface, global) != null);
+    try testing.expect(currentTemporary(&rig) != null);
+    try rig.deinit();
+}
+
+test "a temporary address keeps to its prefix's lifetimes; turned off it goes, on it comes" {
+    var rig = try Rig.init();
+    rig.interface.ip6.privacy = 1;
+    rig.ready();
+    advertise(&rig, 1800, 3600, 1800);
+    rig.pass(2_100_000);
+    const stable = _ip6.addressOf(rig.interface, global).?;
+    const temporary = currentTemporary(&rig).?;
+    try testing.expectEqual(stable.preferred_until, temporary.preferred_until);
+    try testing.expectEqual(stable.valid_until, temporary.valid_until);
+    // A prefix about to stop being preferred makes none.
+    advertise(&rig, 1800, 3600, 3);
+    var all: [_ip6.addresses_max]*_ip6.InterfaceAddress = undefined;
+    try testing.expectEqual(@as(usize, 1), temporaries(&rig, &all));
+
+    const off = [_]sdk.utility.TagItem{ .{ .tag = bsd.IFA_PrivacyAddresses, .data = 0 }, .{} };
+    try testing.expectEqual(@as(i32, 0), rig.sb.ConfigureInterfaceTagList("test", &off));
+    try testing.expectEqual(@as(usize, 0), temporaries(&rig, &all));
+    const far = address("2001:db8:2::1");
+    try testing.expect(_inet.sourceFor(_inet.route(rig.stack, far, null).?, far).?.eql(global));
+    advertise(&rig, 1800, 3600, 1800);
+    try testing.expectEqual(@as(usize, 0), temporaries(&rig, &all));
+    const on = [_]sdk.utility.TagItem{ .{ .tag = bsd.IFA_PrivacyAddresses, .data = 1 }, .{} };
+    try testing.expectEqual(@as(i32, 0), rig.sb.ConfigureInterfaceTagList("test", &on));
+    try testing.expectEqual(@as(usize, 1), temporaries(&rig, &all));
+    try rig.deinit();
+}
+
+test "a temporary address another station has is made again with new bits, three times" {
+    var rig = try Rig.init();
+    rig.interface.ip6.privacy = 1;
+    rig.ready();
+    advertise(&rig, 1800, 86400, 86400);
+    const temporary = currentTemporary(&rig).?;
+    for (1..4) |tries| {
+        const taken = temporary.address;
+        rig.nd(peer, Address.all_nodes, _nd.neighbor_advertisement, _nd.flag_override, taken, _nd.option_target, peer_hardware);
+        try testing.expectEqual(_ip6.AddressState.tentative, temporary.state);
+        try testing.expectEqual(@as(u8, @intCast(tries)), temporary.counter);
+        try testing.expect(!temporary.address.eql(taken));
+        try testing.expect(temporary.address.inPrefix(global, 64));
+    }
+    // The fourth time: kept as a duplicate, and the prefix gets no other.
+    rig.nd(peer, Address.all_nodes, _nd.neighbor_advertisement, _nd.flag_override, temporary.address, _nd.option_target, peer_hardware);
+    try testing.expectEqual(_ip6.AddressState.duplicate, temporary.state);
+    advertise(&rig, 1800, 86400, 86400);
+    var all: [_ip6.addresses_max]*_ip6.InterfaceAddress = undefined;
+    try testing.expectEqual(@as(usize, 1), temporaries(&rig, &all));
+    try testing.expect(currentTemporary(&rig) == null);
+    // The stable one is unharmed.
+    rig.pass(2_100_000);
+    try testing.expectEqual(_ip6.AddressState.preferred, _ip6.addressOf(rig.interface, global).?.state);
+    try rig.deinit();
+}
+
+// --- addresses and routes set by hand ---------------------------------------------
+
+fn in6(text: []const u8) bsd.in6_addr {
+    return .{ .s6_addr = parse(text).?.bytes };
+}
+
+test "IPv6 routes by hand: through a router, on the link, a default, and taken away" {
+    var rig = try Rig.init();
+    rig.ready();
+    const sb = rig.sb;
+    const TagItem = sdk.utility.TagItem;
+    // Through a link-local router, its interface the one link there is.
+    const net9 = in6("2001:db8:9::");
+    const router9 = in6("fe80::9");
+    const through = [_]TagItem{
+        .{ .tag = bsd.RTA_Destination6, .data = @intFromPtr(&net9) },
+        .{ .tag = bsd.RTA_PrefixLength6, .data = 48 },
+        .{ .tag = bsd.RTA_Gateway6, .data = @intFromPtr(&router9) },
+        .{},
+    };
+    try testing.expectEqual(@as(i32, 0), sb.AddRouteTagList(&through));
+    const in_net9 = address("2001:db8:9:1::5");
+    const path = _inet.route(rig.stack, in_net9, null).?;
+    try testing.expect(path.next_hop.eql(address("fe80::9")));
+    try testing.expectEqual(rig.interface, path.interface);
+    // On the link: it needs its interface.
+    const net8 = in6("2001:db8:8::");
+    var on_link = [_]TagItem{
+        .{ .tag = bsd.RTA_Destination6, .data = @intFromPtr(&net8) },
+        .{ .tag = bsd.RTA_PrefixLength6, .data = 64 },
+        .{},
+        .{},
+    };
+    try testing.expectEqual(@as(i32, -1), sb.AddRouteTagList(&on_link));
+    try testing.expectEqual(bsd.EINVAL, sb.Errno());
+    on_link[2] = .{ .tag = bsd.RTA_Interface, .data = @intFromPtr("nothere") };
+    try testing.expectEqual(@as(i32, -1), sb.AddRouteTagList(&on_link));
+    try testing.expectEqual(bsd.ENXIO, sb.Errno());
+    on_link[2] = .{ .tag = bsd.RTA_Interface, .data = @intFromPtr("test") };
+    try testing.expectEqual(@as(i32, 0), sb.AddRouteTagList(&on_link));
+    const in_net8 = address("2001:db8:8::5");
+    try testing.expect(_inet.route(rig.stack, in_net8, null).?.next_hop.eql(in_net8));
+    // A default route; nowhere else to go before it.
+    const far = address("2001:db8:2::1");
+    try testing.expect(_inet.route(rig.stack, far, null) == null);
+    const router7 = in6("fe80::7");
+    const default = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway6, .data = @intFromPtr(&router7) }, .{ .tag = bsd.RTA_Interface, .data = @intFromPtr("test") }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.AddRouteTagList(&default));
+    try testing.expect(_inet.route(rig.stack, far, null).?.next_hop.eql(address("fe80::7")));
+    // A group is no router.
+    const group = in6("ff02::1");
+    const bad = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway6, .data = @intFromPtr(&group) }, .{} };
+    try testing.expectEqual(@as(i32, -1), sb.AddRouteTagList(&bad));
+
+    // Taken away: by prefix, then every default route.
+    const delete9 = [_]TagItem{ .{ .tag = bsd.RTA_Destination6, .data = @intFromPtr(&net9) }, .{ .tag = bsd.RTA_PrefixLength6, .data = 48 }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.DeleteRouteTagList(&delete9));
+    try testing.expect(_inet.route(rig.stack, in_net9, null).?.next_hop.eql(address("fe80::7")));
+    try testing.expectEqual(@as(i32, -1), sb.DeleteRouteTagList(&delete9));
+    try testing.expectEqual(bsd.ENXIO, sb.Errno());
+    const defaults = [_]TagItem{ .{ .tag = bsd.RTA_DefaultGateway6, .data = 0 }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.DeleteRouteTagList(&defaults));
+    try testing.expect(_inet.route(rig.stack, far, null) == null);
+    try rig.deinit();
+}
+
+test "an IPv6 address given at run time replaces the one given before" {
+    var rig = try Rig.init();
+    rig.ready();
+    const sb = rig.sb;
+    const TagItem = sdk.utility.TagItem;
+    const first = in6("2001:db8:5::7");
+    const set_first = [_]TagItem{ .{ .tag = bsd.IFA_Address6, .data = @intFromPtr(&first) }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("test", &set_first));
+    const made = _ip6.addressOf(rig.interface, address("2001:db8:5::7")).?;
+    try testing.expectEqual(_ip6.AddressState.tentative, made.state);
+    try testing.expectEqual(@as(u8, 64), made.prefix_length);
+    rig.pass(2_100_000);
+    try testing.expectEqual(_ip6.AddressState.preferred, made.state);
+    const near = address("2001:db8:5::9");
+    try testing.expect(_inet.route(rig.stack, near, null).?.next_hop.eql(near));
+    try testing.expect(_inet.sourceFor(_inet.route(rig.stack, near, null).?, near).?.eql(address("2001:db8:5::7")));
+    // Given again as it is: left alone, still preferred.
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("test", &set_first));
+    try testing.expectEqual(_ip6.AddressState.preferred, made.state);
+
+    // Another, a host of its own: the first and its prefix go.
+    const second = in6("2001:db8:6::1");
+    const set_second = [_]TagItem{ .{ .tag = bsd.IFA_Address6, .data = @intFromPtr(&second) }, .{ .tag = bsd.IFA_Prefix6, .data = 128 }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("test", &set_second));
+    try testing.expect(_ip6.addressOf(rig.interface, address("2001:db8:5::7")) == null);
+    try testing.expect(_inet.route(rig.stack, near, null) == null);
+    try testing.expect(_ip6.addressOf(rig.interface, address("2001:db8:6::1")) != null);
+    // `::`: none any more; the link-local one stays.
+    const none = in6("::");
+    const clear = [_]TagItem{ .{ .tag = bsd.IFA_Address6, .data = @intFromPtr(&none) }, .{} };
+    try testing.expectEqual(@as(i32, 0), sb.ConfigureInterfaceTagList("test", &clear));
+    try testing.expect(_ip6.addressOf(rig.interface, address("2001:db8:6::1")) == null);
+    try testing.expect(_ip6.linkLocal(rig.interface) != null);
+    // A group is no address.
+    const group = in6("ff02::1");
+    const bad = [_]TagItem{ .{ .tag = bsd.IFA_Address6, .data = @intFromPtr(&group) }, .{} };
+    try testing.expectEqual(@as(i32, -1), sb.ConfigureInterfaceTagList("test", &bad));
+    try testing.expectEqual(bsd.EINVAL, sb.Errno());
     try rig.deinit();
 }

@@ -20,7 +20,9 @@
 //! RDNSS option (RFC 8106) for their lifetime, and the first domain of a
 //! DNSSL option for its lifetime - where a name without dots is looked
 //! for when no domain was given by hand or by DHCP; and its M and O
-//! flags, kept for NetStatus. A prefix that is link-local is passed over.
+//! flags, kept for NetStatus and handed to the DHCPv6 client
+//! (`dhcp6/_dhcp6.zig`), which keeps what it is given in the same name
+//! server list. A prefix that is link-local is passed over.
 //!
 //! **A redirect** is taken only from the router that is the current next
 //! hop for its destination; its target is link-local, or the destination
@@ -197,6 +199,7 @@ pub fn advertised(stack: *StackBase, interface: *Interface, bytes: []const u8, p
         }
     }
     if (_nd.find(stack, interface, packet.source)) |entry| entry.router = 1;
+    @import("../dhcp6/_dhcp6.zig").advertised(stack, interface, routers.flags);
 }
 
 fn prefix(stack: *StackBase, interface: *Interface, option: []const u8, now: u64) void {
@@ -221,23 +224,29 @@ fn servers(routers: *Routers, option: []const u8, now: u64) void {
     var at: usize = 8;
     while (at + 16 <= option.len) : (at += 16) {
         const server: Address = .{ .bytes = option[at..][0..16].* };
-        const slot = for (&routers.servers, 0..) |*held, index| {
-            if (held.eql(server)) break index;
-        } else for (&routers.servers, routers.servers_until, 0..) |*held, held_until, index| {
-            if (held.isUnspecified() or (held_until != 0 and held_until <= now)) break index;
-        } else continue;
-        if (lifetime_s == 0) {
-            routers.servers[slot] = .{};
-            routers.servers_until[slot] = 0;
-        } else {
-            routers.servers[slot] = server;
-            routers.servers_until[slot] = until(now, lifetime_s);
-        }
+        keepServer(routers, server, until(now, lifetime_s), lifetime_s == 0, now);
     }
 }
 
-/// A DNSSL option's first domain - labels, each its length and its
-/// bytes, to an empty one - kept dotted for the option's lifetime; a
+/// `server` kept among `routers`' name servers until `held_until` (0 for
+/// ever) - in its own slot, a free one, or one whose time is over - or,
+/// with `remove`, taken out. DHCPv6 keeps its servers here too.
+pub fn keepServer(routers: *Routers, server: Address, held_until: u64, remove: bool, now: u64) void {
+    const slot = for (&routers.servers, 0..) |*held, index| {
+        if (held.eql(server)) break index;
+    } else for (&routers.servers, routers.servers_until, 0..) |*held, held_end, index| {
+        if (held.isUnspecified() or (held_end != 0 and held_end <= now)) break index;
+    } else return;
+    if (remove) {
+        routers.servers[slot] = .{};
+        routers.servers_until[slot] = 0;
+    } else {
+        routers.servers[slot] = server;
+        routers.servers_until[slot] = held_until;
+    }
+}
+
+/// A DNSSL option's first domain, kept for the option's lifetime; a
 /// lifetime of 0 takes it away.
 fn searchDomain(routers: *Routers, option: []const u8, now: u64) void {
     const lifetime_s = _ip.get32(option, 4);
@@ -245,23 +254,31 @@ fn searchDomain(routers: *Routers, option: []const u8, now: u64) void {
         routers.domain = @splat(0);
         return;
     }
+    keepDomain(routers, option[8..], until(now, lifetime_s));
+}
+
+/// The first domain of `labels` - each its length and its bytes, to an
+/// empty one - kept dotted as the search domain until `held_until` (0 for
+/// ever); nothing changes when it is malformed. DHCPv6's domain list
+/// comes here too.
+pub fn keepDomain(routers: *Routers, labels: []const u8, held_until: u64) void {
     var text: [64]u8 = @splat(0);
     var written: usize = 0;
-    var at: usize = 8;
-    while (at < option.len) {
-        const length = option[at];
+    var at: usize = 0;
+    while (at < labels.len) {
+        const length = labels[at];
         if (length == 0) break;
-        if (length > 63 or at + 1 + length > option.len) return;
+        if (length > 63 or at + 1 + length > labels.len) return;
         const dot: usize = @intFromBool(written > 0);
         if (written + dot + length >= text.len) return;
         if (dot != 0) text[written] = '.';
-        @memcpy(text[written + dot ..][0..length], option[at + 1 ..][0..length]);
+        @memcpy(text[written + dot ..][0..length], labels[at + 1 ..][0..length]);
         written += dot + length;
         at += 1 + length;
     }
     if (written == 0) return;
     routers.domain = text;
-    routers.domain_until = until(now, lifetime_s);
+    routers.domain_until = held_until;
 }
 
 /// The search domain a router named on `interface`, while it is valid.

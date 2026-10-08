@@ -7,7 +7,8 @@
 //! link header. An interface on a network device (`device.zig`) has an
 //! Ethernet address, and sends through its `transmit`: an IPv4 packet for
 //! a station on its net goes to the Ethernet address ARP finds for it, a
-//! broadcast to every station; an IPv6 packet for a group goes to the
+//! broadcast to every station, one for a group to the group's Ethernet
+//! address (RFC 1112, 6.4); an IPv6 packet for a group goes to the
 //! group's Ethernet address (RFC 2464, 7), one for a neighbor to the
 //! address Neighbor Discovery finds for it.
 //!
@@ -25,6 +26,7 @@ const _arp = @import("../arp/_arp.zig");
 const _timer = @import("../timer/_timer.zig");
 const _capture = @import("../capture/_capture.zig");
 const _ip6 = @import("../ip6/_ip6.zig");
+const _igmp = @import("../igmp/_igmp.zig");
 const Address = @import("../ip6/address.zig").Address;
 
 /// Hands `frame` to the link, to the station `to`, as a packet of
@@ -66,6 +68,8 @@ pub const Interface = extern struct {
     dropped: u32 = 0,
     /// Its IPv6: whether it speaks it, and its addresses.
     ip6: _ip6.Link = .{},
+    /// The IPv4 groups it is in, and their reports.
+    igmp: _igmp.Igmp = .{},
 
     /// Whether `address` is on the interface's own net.
     pub fn holds(interface: *const Interface, address: u32) bool {
@@ -176,6 +180,10 @@ pub fn output(stack: *StackBase, interface: *Interface, frame: *Frame, next_hop:
     if (interface.no_arp != 0) return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
     if (next_hop == bsd.INADDR_BROADCAST or next_hop == interface.broadcast) {
         return transmit(stack, interface, frame, &_arp.broadcast, _ip.ethertype);
+    }
+    if (_igmp.isGroup(next_hop)) {
+        const group = _igmp.groupStation(next_hop);
+        return transmit(stack, interface, frame, &group, _ip.ethertype);
     }
     return _arp.resolve(stack, interface, next_hop, frame, _timer.clock(stack));
 }

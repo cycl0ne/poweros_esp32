@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! ConfigureInterfaceTagList: a running interface's address, net, gateway
-//! or MTU changed, or its device taken off its link and put back.
+//! ConfigureInterfaceTagList: a running interface's address, net, gateway,
+//! MTU, IPv6 address or privacy addresses changed, or its device taken off
+//! its link and put back.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -16,9 +17,13 @@ const Interface = _netif.Interface;
 const _route = @import("../route/_route.zig");
 const _arp = @import("../arp/_arp.zig");
 const device = @import("device.zig");
+const _ip6 = @import("../ip6/_ip6.zig");
+const _route6 = @import("../route6/_route6.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 /// A running interface changed: its address, its net, the default route
-/// through it, its MTU, whether its device is on its link.
+/// through it, its MTU, its IPv6 address, its privacy addresses, whether
+/// its device is on its link.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -30,13 +35,17 @@ const device = @import("device.zig");
 /// INPUTS:
 /// - `name` - the interface, as it was added.
 /// - `tags` - `IFA_Address`, `IFA_NetMask` (network order), `IFA_Gateway`
-///   (made the default route), `IFA_MTU`, `IFA_State` (`IFSTATE_UP` set
-///   or clear). What is not given stays.
+///   (made the default route), `IFA_MTU`, `IFA_Address6` with
+///   `IFA_Prefix6` (64 unless given), `IFA_PrivacyAddresses` (not 0 for
+///   on), `IFA_State` (`IFSTATE_UP` set or clear). What is not given
+///   stays.
 ///
 /// RESULT:
-/// 0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, or
-/// a gateway on no interface's net), `EIO` (the device would not go on
-/// or off its link), `ENOMEM`.
+/// 0, or -1 with Errno(): `ENXIO` (no such interface), `EINVAL` (lo0, a
+/// gateway on no interface's net, an IPv6 address on an interface that
+/// does not speak IPv6, or one that is a group), `ENOBUFS` (the interface
+/// holds as many IPv6 addresses as it can), `EIO` (the device would not go
+/// on or off its link), `ENOMEM`.
 ///
 /// BEHAVIOR:
 /// A new address or netmask replaces the route to the interface's own
@@ -50,6 +59,16 @@ const device = @import("device.zig");
 /// S2_ONLINE and the interface is up again; if its address is DHCP's,
 /// the lease is renewed at once, since the link may be another one now.
 /// A device already in the state asked for is left as it is.
+///
+/// `IFA_Address6` replaces the IPv6 address given by hand - by it, or
+/// by AddInterfaceTagList's - and the route to its prefix on the link
+/// (none for a prefix of 128); the new one is checked for a duplicate
+/// before it is used. `::` takes the address away. The link-local address
+/// and those from routers' prefixes and from DHCPv6 stay.
+///
+/// `IFA_PrivacyAddresses` turned on makes a temporary address for each
+/// prefix at once; turned off, every temporary address goes, and with it
+/// what was connected from it.
 ///
 /// CONTEXT:
 /// - Waits: for the stack's lock, and for the device with `IFA_State`.
@@ -93,6 +112,14 @@ pub fn ConfigureInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*
     if (ub.FindTagItem(bsd.IFA_Gateway, tags)) |item| {
         if (!_route.setDefault(stack, bsd.ntohl(@truncate(item.data)))) return _socket.fail(sb, bsd.EINVAL, "ConfigureInterfaceTagList");
     }
+    if (ub.FindTagItem(bsd.IFA_Address6, tags)) |item| {
+        const length: u8 = @intCast(@min(ub.GetTagData(bsd.IFA_Prefix6, 64, tags), 128));
+        const errno = setAddress6(stack, interface, @ptrFromInt(item.data), length);
+        if (errno != 0) return _socket.fail(sb, errno, "ConfigureInterfaceTagList");
+    }
+    if (ub.FindTagItem(bsd.IFA_PrivacyAddresses, tags)) |item| {
+        if (interface.ip6.enabled != 0) @import("../nd/privacy.zig").set(stack, interface, item.data != 0, @import("../timer/_timer.zig").clock(stack));
+    }
     if (ub.FindTagItem(bsd.IFA_State, tags)) |item| {
         const errno = setState(stack, interface, item.data & bsd.IFSTATE_UP != 0);
         if (errno != 0) return _socket.fail(sb, errno, "ConfigureInterfaceTagList");
@@ -122,6 +149,26 @@ fn setState(stack: *StackBase, interface: *Interface, online: bool) i32 {
     device.setLink(stack, link, online);
     // The stack task sends the reads that waited.
     stack.rethink();
+    return 0;
+}
+
+/// The IPv6 address given by hand on `interface` replaced by `given`/
+/// `length` and its prefix's route - or only taken away, for none or
+/// `::`: 0, or the errno. Under the lock.
+fn setAddress6(stack: *StackBase, interface: *Interface, given: ?*align(1) const bsd.in6_addr, length: u8) i32 {
+    if (interface.ip6.enabled == 0) return bsd.EINVAL;
+    const wanted: Address = if (given) |address| .{ .bytes = address.s6_addr } else Address.any;
+    if (wanted.isMulticast()) return bsd.EINVAL;
+    for (&interface.ip6.addresses) |*entry| {
+        if (entry.state == .unused or entry.autoconf != 0 or entry.dhcp6 != 0 or entry.address.isLinkLocal()) continue;
+        // Given again as it is: nothing changes.
+        if (entry.address.eql(wanted) and entry.prefix_length == length) return 0;
+        if (entry.prefix_length < 128) _ = _route6.remove(stack, interface, entry.address, entry.prefix_length, Address.any);
+        _ip6.removeAddress(stack, entry);
+    }
+    if (wanted.isUnspecified()) return 0;
+    _ = _ip6.addAddress(stack, interface, wanted, length, .tentative) orelse return bsd.ENOBUFS;
+    if (length < 128) _ = _route6.set(stack, interface, wanted, length, Address.any, .manual, 0);
     return 0;
 }
 

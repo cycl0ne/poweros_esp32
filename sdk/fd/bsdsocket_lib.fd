@@ -136,4 +136,7 @@ void FreeAddrInfo(*bsd.addrinfo list)
 /// A sockaddr as a host's name and a service's, GetAddrInfo's reverse: 0,
 /// or an EAI_* code.
 i32 GetNameInfo(*const bsd.sockaddr address, u32 address_length, ?[*]u8 host, u32 host_length, ?[*]u8 service, u32 service_length, i32 flags)
+/// The next datagram in, spread over `message`'s buffers, with its sender
+/// and control messages: the bytes read, or -1.
+i32 RecvMsg(i32 socket, *bsd.msghdr message, u32 flags)
 ##end

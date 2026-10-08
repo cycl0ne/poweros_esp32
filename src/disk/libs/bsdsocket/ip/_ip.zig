@@ -6,13 +6,18 @@
 //! **In**: the version is 4, the header at least 20 bytes and inside the
 //! packet, the total length at least the header and at most the packet
 //! (a link may pad behind it, which is cut off), the header's checksum
-//! right, and the destination this machine. Anything else is dropped and
-//! counted. Fragments are put back together (`reassembly.zig`) before
-//! they go further. This machine forwards nothing.
+//! right, and the destination this machine - one of its addresses, a
+//! broadcast, or a group the interface it came in on is in
+//! (`igmp/_igmp.zig`). Anything else is dropped and counted. Fragments
+//! are put back together (`reassembly.zig`) before they go further. This
+//! machine forwards nothing.
 //!
 //! **Out**: a header of 20 bytes without options, the identification
 //! counted up, don't-fragment set - a packet larger than the interface's
-//! MTU is refused before it gets here - and a time to live of 64.
+//! MTU is refused before it gets here - and a time to live of 64, or 1 to
+//! a group. A packet to a group goes to the group's own station on the
+//! link, never through a gateway. IGMP's carry the router alert option
+//! (RFC 2113) as well, and the precedence of internetwork control.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -27,6 +32,7 @@ const _icmp = @import("../icmp/_icmp.zig");
 const _tcp_input = @import("../tcp/input.zig");
 const reassembly = @import("reassembly.zig");
 const _inet = @import("../inet/_inet.zig");
+const _igmp = @import("../igmp/_igmp.zig");
 
 pub const header_bytes = 20;
 /// IPv4's EtherType, the packet type a network device reads it by.
@@ -121,7 +127,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
         .header_length = header_length,
         .identification = get16(packet, 4),
     };
-    if (!_netif.isOurs(stack, header.destination)) return drop(stack, frame, &stack.counts.ip_not_ours);
+    const ours = if (_igmp.isGroup(header.destination)) _igmp.isOurs(interface, header.destination) else _netif.isOurs(stack, header.destination);
+    if (!ours) return drop(stack, frame, &stack.counts.ip_not_ours);
     frame.trim(total);
     const fragment = get16(packet, 6);
     if (fragment & (flag_more_fragments | offset_mask) != 0) {
@@ -133,6 +140,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
         @as(u8, @intCast(bsd.IPPROTO_UDP)) => _udp.input(stack, interface, frame, _inet.Packet.fromV4(header)),
         @as(u8, @intCast(bsd.IPPROTO_ICMP)) => _icmp.input(stack, interface, frame, header),
         @as(u8, @intCast(bsd.IPPROTO_TCP)) => _tcp_input.input(stack, interface, frame, _inet.Packet.fromV4(header)),
+        _igmp.protocol => _igmp.input(stack, interface, frame),
         else => {
             stack.counts.ip_unknown_protocol += 1;
             stack.frames.give(sys, frame);
@@ -145,23 +153,45 @@ fn drop(stack: *StackBase, frame: *Frame, count: *u32) void {
     stack.frames.give(stack.sys_base, frame);
 }
 
+/// What a header may carry beyond the usual.
+pub const Options = struct {
+    /// The time to live; 0 for the default - 64, or 1 to a group.
+    ttl: u8 = 0,
+    /// The router alert option and the precedence of internetwork
+    /// control, for IGMP.
+    router_alert: bool = false,
+};
+
+/// The router alert option: "every router looks at this one".
+const router_alert_option = [4]u8{ 0x94, 0x04, 0, 0 };
+/// The type of service of internetwork control.
+const tos_internetwork_control: u8 = 0xC0;
+
 /// `frame`, holding a transport's header and data, given an IPv4 header
 /// and sent on its way by `hop`. The frame goes with it. 0, or the errno
 /// of a packet that could not go.
 pub fn output(stack: *StackBase, frame: *Frame, source: u32, destination: u32, protocol: u8, hop: _route.Hop) i32 {
-    const header = frame.push(header_bytes);
-    header[0] = 0x45;
-    header[1] = 0;
+    return outputWith(stack, frame, source, destination, protocol, hop, .{});
+}
+
+/// `output` with a header that carries `options`.
+pub fn outputWith(stack: *StackBase, frame: *Frame, source: u32, destination: u32, protocol: u8, hop: _route.Hop, options: Options) i32 {
+    const group = _igmp.isGroup(destination);
+    const length: u32 = if (options.router_alert) header_bytes + router_alert_option.len else header_bytes;
+    const header = frame.push(length);
+    header[0] = 0x40 | @as(u8, @intCast(length / 4));
+    header[1] = if (options.router_alert) tos_internetwork_control else 0;
     put16(header, 2, @intCast(frame.length));
     put16(header, 4, stack.ip_id);
     stack.ip_id +%= 1;
     put16(header, 6, flag_dont_fragment);
-    header[8] = default_ttl;
+    header[8] = if (options.ttl != 0) options.ttl else if (group) 1 else default_ttl;
     header[9] = protocol;
     put16(header, 10, 0);
     put32(header, 12, source);
     put32(header, 16, destination);
+    if (options.router_alert) header[header_bytes..][0..router_alert_option.len].* = router_alert_option;
     put16(header, 10, finish(sum(0, header)));
     stack.counts.ip_sent += 1;
-    return _netif.output(stack, hop.interface, frame, hop.next_hop);
+    return _netif.output(stack, hop.interface, frame, if (group) destination else hop.next_hop);
 }

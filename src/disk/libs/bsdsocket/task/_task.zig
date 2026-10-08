@@ -223,8 +223,9 @@ fn remove(stack: *StackBase, interface: *Interface) void {
     {
         const held = _lock.take(stack);
         defer _lock.give(stack, held);
-        // The lease given back while the device still sends.
+        // The leases given back while the device still sends.
         @import("../dhcp/_dhcp.zig").stop(stack, interface);
+        @import("../dhcp6/_dhcp6.zig").giveBack(stack, interface);
         link.going = 1;
         interface.up = 0;
         // A capture socket held to it sees nothing more.
@@ -238,6 +239,7 @@ fn remove(stack: *StackBase, interface: *Interface) void {
         }
         _route.removeAll(stack, interface);
         _arp.forget(stack, interface);
+        @import("../igmp/_igmp.zig").stop(stack, interface);
         @import("../ip6/_ip6.zig").stop(stack, interface);
     }
     device.drain(stack, link);

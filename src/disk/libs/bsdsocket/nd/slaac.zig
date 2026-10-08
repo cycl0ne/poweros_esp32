@@ -16,6 +16,9 @@
 //! same prefix sets them again, but a valid lifetime is cut short only
 //! down to two hours, so a forged advertisement cannot take an address
 //! away at once (RFC 4862, 5.5.3 e).
+//!
+//! With privacy addresses on, each such address has temporary ones beside
+//! it (`privacy.zig`), which follow its lifetimes.
 
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
@@ -25,14 +28,16 @@ const _timer = @import("../timer/_timer.zig");
 const Timer = _timer.Timer;
 const _ip6 = @import("../ip6/_ip6.zig");
 const router = @import("router.zig");
+const privacy = @import("privacy.zig");
 const Address = @import("../ip6/address.zig").Address;
 
 pub const two_hours_us: u64 = 2 * 60 * 60 * 1_000_000;
 
-/// The address `address_prefix` made on `interface`, if it made one.
-fn fromPrefix(interface: *Interface, address_prefix: Address) ?*_ip6.InterfaceAddress {
+/// The address `address_prefix` made on `interface`, if it made one -
+/// not a temporary one.
+pub fn fromPrefix(interface: *Interface, address_prefix: Address) ?*_ip6.InterfaceAddress {
     for (&interface.ip6.addresses) |*entry| {
-        if (entry.state == .unused or entry.autoconf == 0) continue;
+        if (entry.state == .unused or entry.autoconf == 0 or entry.temporary != 0) continue;
         if (entry.address.inPrefix(address_prefix, 64)) return entry;
     }
     return null;
@@ -57,7 +62,8 @@ pub fn prefix(stack: *StackBase, interface: *Interface, address_prefix: Address,
             entry.valid_until = now + two_hours_us;
         }
         if (entry.state == .deprecated and preferred_s != 0) entry.state = .preferred;
-        return schedule(stack, entry, now);
+        schedule(stack, entry, now);
+        return privacy.refresh(stack, interface, entry, now);
     }
     if (valid_s == 0) return;
     const bytes = address_prefix.bytes[0..8].*;
@@ -66,23 +72,34 @@ pub fn prefix(stack: *StackBase, interface: *Interface, address_prefix: Address,
     entry.autoconf = 1;
     entry.preferred_until = preferred_until;
     entry.valid_until = router.until(now, valid_s);
+    privacy.refresh(stack, interface, entry, now);
 }
 
-/// `entry`'s timer set for the next end of one of its lifetimes; nothing
-/// for a tentative address, which is scheduled once it is checked.
+/// `entry`'s timer set for the next end of one of its lifetimes - or,
+/// for a temporary address, for the time to make the one after it;
+/// nothing for a tentative address, which is scheduled once it is
+/// checked.
 pub fn schedule(stack: *StackBase, entry: *_ip6.InterfaceAddress, now: u64) void {
     if (!entry.usable()) return;
     var next: u64 = 0;
     if (entry.state == .preferred and entry.preferred_until != 0) next = entry.preferred_until;
+    if (renewing(entry)) next = entry.preferred_until -| privacy.regenerate_us;
     if (entry.valid_until != 0 and (next == 0 or entry.valid_until < next)) next = entry.valid_until;
     entry.timer.fire = &expired;
     if (next == 0) return _timer.cancel(stack, &entry.timer);
     _ = _timer.set(stack, &entry.timer, @max(next, now));
 }
 
+/// Whether `entry` is a temporary address whose follower is still to
+/// make.
+fn renewing(entry: *const _ip6.InterfaceAddress) bool {
+    return entry.temporary != 0 and entry.renewed == 0 and entry.state == .preferred and entry.preferred_until != 0;
+}
+
 fn expired(stack: *StackBase, fired: *Timer, now: u64) void {
     const entry: *_ip6.InterfaceAddress = @fieldParentPtr("timer", fired);
     if (entry.valid_until != 0 and entry.valid_until <= now) return _ip6.removeAddress(stack, entry);
+    if (renewing(entry) and entry.preferred_until -| privacy.regenerate_us <= now) privacy.renew(stack, entry, now);
     if (entry.state == .preferred and entry.preferred_until != 0 and entry.preferred_until <= now) entry.state = .deprecated;
     schedule(stack, entry, now);
 }

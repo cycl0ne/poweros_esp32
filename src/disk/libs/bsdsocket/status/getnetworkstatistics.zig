@@ -232,6 +232,8 @@ fn addresses6(stack: *StackBase, buffer: ?*anyopaque, size: u32) i32 {
                 .prefix_length = entry.prefix_length,
                 .state = state,
                 .autoconf = entry.autoconf,
+                .temporary = entry.temporary,
+                .dhcp = entry.dhcp6,
                 .preferred_s = if (entry.state == .deprecated) 0 else secondsLeft(entry.preferred_until, now),
                 .valid_s = secondsLeft(entry.valid_until, now),
                 .interface = interface.name,

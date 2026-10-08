@@ -58,6 +58,10 @@ const run_time = [_][2][]const u8{
     // The device an interface's file in DEVS:NetInterfaces/ names.
     .{ "bsdsocket.library", "openeth.device" },
     .{ "bsdsocket.library", "wifi.device" },
+    .{ "bsdsocket.library", "slip.device" },
+    // The serial line a SLIP interface's file names.
+    .{ "slip.device", "serial.device" },
+    .{ "slip.device", "usbserial.device" },
     // A session runs over the caller's bsdsocket.library base.
     .{ "tls.library", "bsdsocket.library" },
     // The class a file's type names.

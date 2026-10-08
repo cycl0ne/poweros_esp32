@@ -110,6 +110,22 @@ pub fn remove(stack: *StackBase, interface: *Interface, destination: Address, le
     return true;
 }
 
+/// Every live route to `destination`/`length` taken away - only those
+/// through `gateway` and on `interface` when they are given: how many.
+pub fn removeMatching(stack: *StackBase, interface: ?*Interface, destination: Address, length: u8, gateway: ?Address) u32 {
+    const now = _timer.clock(stack);
+    const wanted = masked(destination, length);
+    var removed: u32 = 0;
+    for (&stack.routes6.routes) |*route| {
+        if (!route.live(now) or route.prefix_length != length or !route.destination.eql(wanted)) continue;
+        if (interface) |only| if (route.interface != only) continue;
+        if (gateway) |through| if (!route.gateway.eql(through)) continue;
+        route.origin = .free;
+        removed += 1;
+    }
+    return removed;
+}
+
 /// Every route on `interface` gone, when the interface goes.
 pub fn removeAll(stack: *StackBase, interface: *Interface) void {
     for (&stack.routes6.routes) |*route| {

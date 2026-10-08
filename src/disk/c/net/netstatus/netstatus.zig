@@ -23,7 +23,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "NetStatus";
-const VERSION_STRING = "\x00$VER: NetStatus 1.1 (27.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: NetStatus 1.2 (07.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACES/S,ROUTES/S,SOCKETS/S,ARP/S,NEIGHBORS/S,COUNTS/S,ALL/S";
@@ -169,7 +169,10 @@ fn addresses6(dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, table: []const
             bsd.ADDR6_DUPLICATE => "duplicate",
             else => "?",
         };
-        _ = Printf(dl, "         %s/%u %s%s", .{ text6(sb, &entry.address, &address_text), @as(u32, entry.prefix_length), state, @as([*:0]const u8, if (entry.autoconf != 0) " autoconf" else "") });
+        _ = Printf(dl, "         %s/%u %s%s%s", .{
+            text6(sb, &entry.address, &address_text),                                                             @as(u32, entry.prefix_length), state, @as([*:0]const u8, if (entry.autoconf != 0) " autoconf" else ""),
+            @as([*:0]const u8, if (entry.temporary != 0) " temporary" else if (entry.dhcp != 0) " dhcp" else ""),
+        });
         if (entry.valid_s != bsd.LIFETIME_INFINITE) {
             _ = Printf(dl, ", preferred %s, valid %s", .{ lifetime(entry.preferred_s, &preferred_text), lifetime(entry.valid_s, &valid_text) });
         }
@@ -237,10 +240,20 @@ fn interfaces(dl: *DosBase, sb: *SocketBase, first: *bool) bool {
         });
         addresses6(dl, sb, name, table6[0..shown6]);
         const link = device orelse continue;
-        _ = Printf(dl, "         %02x:%02x:%02x:%02x:%02x:%02x on %s unit %u, %ld Mbit/s", .{
-            hardware[0], hardware[1], hardware[2],       hardware[3], hardware[4], hardware[5],
-            link,        unit,        speed / 1_000_000,
-        });
+        // A line between two ends has no address of its own.
+        const station = for (hardware) |octet| {
+            if (octet != 0) break true;
+        } else false;
+        if (station) {
+            _ = Printf(dl, "         %02x:%02x:%02x:%02x:%02x:%02x on %s unit %u", .{ hardware[0], hardware[1], hardware[2], hardware[3], hardware[4], hardware[5], link, unit });
+        } else {
+            _ = Printf(dl, "         a line on %s unit %u", .{ link, unit });
+        }
+        if (speed >= 1_000_000) {
+            _ = Printf(dl, ", %ld Mbit/s", .{speed / 1_000_000});
+        } else {
+            _ = Printf(dl, ", %ld bit/s", .{speed});
+        }
         if (gateway != 0) {
             var gateway_text: [16]u8 = undefined;
             _ = Printf(dl, ", gateway %s", .{dotted(gateway, &gateway_text)});
@@ -566,4 +579,5 @@ fn counts(dl: *DosBase, sb: *SocketBase, first: *bool) void {
     _ = Printf(dl, "ND:   %u solicitations, %u advertisements sent; %u bad, %u packets dropped, %u duplicates; MLD: %u reports\n", .{
         all.nd_solicits_sent, all.nd_adverts_sent, all.nd_bad, all.nd_dropped, all.nd_duplicates, all.mld_reports_sent,
     });
+    _ = Printf(dl, "IGMP: %u received, %u bad, %u reports sent\n", .{ all.igmp_received, all.igmp_bad, all.igmp_reports_sent });
 }

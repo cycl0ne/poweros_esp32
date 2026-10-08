@@ -66,6 +66,7 @@ pub const LVO = struct {
     pub const GetAddrInfo = libraries.lvo(49);
     pub const FreeAddrInfo = libraries.lvo(50);
     pub const GetNameInfo = libraries.lvo(51);
+    pub const RecvMsg = libraries.lvo(52);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -119,6 +120,7 @@ pub const Fn = struct {
     pub const GetAddrInfo = *const fn (*SocketBase, ?[*:0]const u8, ?[*:0]const u8, ?*const bsd.addrinfo, *?*bsd.addrinfo) callconv(.c) i32;
     pub const FreeAddrInfo = *const fn (*SocketBase, *bsd.addrinfo) callconv(.c) void;
     pub const GetNameInfo = *const fn (*SocketBase, *const bsd.sockaddr, u32, ?[*]u8, u32, ?[*]u8, u32, i32) callconv(.c) i32;
+    pub const RecvMsg = *const fn (*SocketBase, i32, *bsd.msghdr, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -396,5 +398,11 @@ pub const SocketBase = opaque {
     /// or an EAI_* code.
     pub fn GetNameInfo(self: *SocketBase, address: *const bsd.sockaddr, address_length: u32, host: ?[*]u8, host_length: u32, service: ?[*]u8, service_length: u32, flags: i32) i32 {
         return libraries.call(self, LVO.GetNameInfo, Fn.GetNameInfo, .{ address, address_length, host, host_length, service, service_length, flags });
+    }
+
+    /// The next datagram in, spread over `message`'s buffers, with its sender
+    /// and control messages: the bytes read, or -1.
+    pub fn RecvMsg(self: *SocketBase, socket: i32, message: *bsd.msghdr, flags: u32) i32 {
+        return libraries.call(self, LVO.RecvMsg, Fn.RecvMsg, .{ socket, message, flags });
     }
 };

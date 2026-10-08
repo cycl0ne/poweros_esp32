@@ -12,6 +12,9 @@
 //! frame is given back when the write is answered. So a received packet
 //! is copied once, and the stack never touches the device's memory.
 //!
+//! A line between two ends (SLIP) has no ARP, and none of its reads are
+//! ARP's.
+//!
 //! **A bounded number in flight.** `reads` reads and `writes` writes per
 //! interface, set from the link's speed; a packet that finds every write
 //! in flight waits in the interface's queue, up to `queue_max`, and
@@ -63,7 +66,7 @@ pub const writes_max = 16;
 pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };
 
 /// The Ethernet groups one interface can be in.
-pub const groups_max = 8;
+pub const groups_max = 24;
 
 /// A group: how many ask for it, and whether the device has it.
 pub const Group = extern struct {
@@ -102,7 +105,8 @@ pub const Device = extern struct {
     /// The device is off its link; the S2_ONEVENT is out.
     offline: u8 = 0,
     event_armed: u8 = 0,
-    pad: u8 = 0,
+    /// A line between two ends (SLIP): no addresses, no ARP.
+    point_to_point: u8 = 0,
     /// What the device said its link is: the most bytes of one packet,
     /// its speed, and the Ethernet address it runs with.
     mtu: u32 = 0,
@@ -185,7 +189,8 @@ pub fn start(stack: *StackBase, device: *Device, port: *exec.MsgPort) void {
             // is lost: a burst - a TCP window's segments, a packet's
             // fragments - needs as many waiting as it has frames.
             const place = index % 8;
-            request.kind = if (place == 7) .read_arp else if (place % 2 == 1 and device.interface.ip6.enabled != 0) .read_ip6 else .read_ip;
+            const arp = place == 7 and device.point_to_point == 0;
+            request.kind = if (arp) .read_arp else if (place % 2 == 1 and device.interface.ip6.enabled != 0) .read_ip6 else .read_ip;
             read(stack, request);
         } else {
             request.kind = .write;

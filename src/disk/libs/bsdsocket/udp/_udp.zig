@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! UDP (RFC 768): datagrams to and from ports.
 //!
-//! **To a group** (IPv6 multicast), a datagram goes to every socket bound
-//! to its port that is in the group on the interface it came in on, each
-//! a copy of its own; when a socket sends to a group its interface is in,
-//! this machine's members get a copy too, unless IPV6_MULTICAST_LOOP says
-//! no. A datagram to a group goes out with the socket's multicast hop
-//! limit (1 unless set) and of its multicast interface, if it named one.
+//! **To a group** (IPv4 or IPv6 multicast), a datagram goes to every
+//! socket bound to its port that is in the group on the interface it came
+//! in on, each a copy of its own; when a socket sends to a group its
+//! interface is in, this machine's members get a copy too, unless
+//! IP_MULTICAST_LOOP or IPV6_MULTICAST_LOOP says no. A datagram to a group
+//! goes out with the socket's multicast hop limit or time to live (1
+//! unless set) and of its multicast interface, if it named one.
 //!
 //! **In**: the header inside the packet, its length at least the header
 //! and at most the packet, and its checksum right unless it is 0, which
@@ -37,10 +38,10 @@ const _ip = @import("../ip/_ip.zig");
 const _socket = @import("../socket/_socket.zig");
 const _icmp = @import("../icmp/_icmp.zig");
 const _dhcp = @import("../dhcp/_dhcp.zig");
+const _dhcp6 = @import("../dhcp6/_dhcp6.zig");
 const Socket = _socket.Socket;
 const Address = @import("../ip6/address.zig").Address;
 const _inet = @import("../inet/_inet.zig");
-const _ip6 = @import("../ip6/_ip6.zig");
 const Packet = _inet.Packet;
 
 pub const header_bytes = 8;
@@ -68,7 +69,12 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
     {
         return stack.frames.give(stack.sys_base, frame);
     }
-    if (!packet.source.isV4() and packet.destination.isMulticast()) {
+    if (!packet.source.isV4() and destination_port == _dhcp6.client_port and source_port == _dhcp6.server_port and
+        _dhcp6.input(stack, interface, datagram[header_bytes..length]))
+    {
+        return stack.frames.give(stack.sys_base, frame);
+    }
+    if (_inet.isGroup(packet.destination)) {
         return toGroup(stack, interface, frame, packet, length, source_port, destination_port);
     }
     const socket = find(stack, packet.destination, destination_port, packet.source, source_port) orelse {
@@ -84,6 +90,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
     frame.from_address = packet.source;
     frame.from_interface = interface;
     frame.from_port = source_port;
+    frame.hop_limit = packet.hop_limit;
     sys.AddTail(&socket.receive, &frame.node);
     socket.receive_bytes += frame.cost();
     stack.counts.udp_received += 1;
@@ -91,13 +98,14 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
 }
 
 /// A copy of a datagram to a group, from its UDP header on, handed to
-/// this machine's members as if it had come in on `interface`.
-fn loopBack(stack: *StackBase, frame: *Frame, source: Address, destination: Address, interface: *Interface) void {
+/// this machine's members as if it had come in on `interface` with
+/// `hop_limit`.
+fn loopBack(stack: *StackBase, frame: *Frame, source: Address, destination: Address, interface: *Interface, hop_limit: u8) void {
     const sys = stack.sys_base;
     const copy = (if (frame.length <= _frame.buffer_bytes - _frame.headroom) stack.frames.take(sys) else stack.frames.takeLarge(sys, _frame.headroom + frame.length)) orelse return;
     @memcpy(copy.room()[copy.start..][0..frame.length], frame.bytes());
     copy.length = frame.length;
-    input(stack, interface, copy, .{ .source = source, .destination = destination, .protocol = protocol, .header_length = 0, .arrived = interface });
+    input(stack, interface, copy, .{ .source = source, .destination = destination, .protocol = protocol, .header_length = 0, .hop_limit = hop_limit, .arrived = interface });
 }
 
 /// A datagram to a group, to each member socket bound to its port on the
@@ -117,18 +125,20 @@ fn toGroup(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pack
             const copy = (if (frame.length <= _frame.buffer_bytes - _frame.headroom) stack.frames.take(sys) else stack.frames.takeLarge(sys, _frame.headroom + frame.length)) orelse break;
             @memcpy(copy.room()[copy.start..][0..frame.length], frame.bytes());
             copy.length = frame.length;
-            queue(stack, earlier, copy, packet.source, source_port, interface);
+            queue(stack, earlier, copy, packet, source_port, interface);
         }
         last = socket;
     }
     const socket = last orelse return drop(stack, frame, &stack.counts.udp_no_port);
-    queue(stack, socket, frame, packet.source, source_port, interface);
+    queue(stack, socket, frame, packet, source_port, interface);
 }
 
 /// A datagram, its header off, into `socket`'s queue - or dropped when
 /// the queue is full.
-fn queue(stack: *StackBase, socket: *Socket, frame: *Frame, source: Address, source_port: u16, interface: *Interface) void {
+fn queue(stack: *StackBase, socket: *Socket, frame: *Frame, packet: Packet, source_port: u16, interface: *Interface) void {
     if (!_socket.hasRoom(socket, frame.cost())) return drop(stack, frame, &stack.counts.udp_full);
+    const source = packet.source;
+    frame.hop_limit = packet.hop_limit;
     frame.from_address = source;
     frame.from_port = source_port;
     frame.from_interface = interface;
@@ -173,7 +183,7 @@ pub fn find(stack: *StackBase, local_address: Address, local_port: u16, remote_a
 /// destination on `scope` (the socket's own when null): 0, or the errno
 /// that says why not.
 pub fn output(stack: *StackBase, socket: *Socket, destination: Address, port: u16, scope: ?*Interface, data: []const u8) i32 {
-    const group = !destination.isV4() and destination.isMulticast();
+    const group = _inet.isGroup(destination);
     const named = scope orelse (if (group) socket.multicast_interface orelse socket.scope else socket.scope);
     const path = _inet.route(stack, destination, named) orelse return bsd.ENETUNREACH;
     // IPv4 sends nothing in fragments; IPv6 does, from a frame of its own
@@ -203,7 +213,9 @@ pub fn output(stack: *StackBase, socket: *Socket, destination: Address, port: u1
     if (group) {
         // This machine's own members of the group, on the interface it
         // goes out of, get it as the link would bring it back.
-        if (socket.multicast_no_loop == 0 and _ip6.socketGroup(path.interface, destination) != null) loopBack(stack, frame, source, destination, path.interface);
+        if (socket.multicast_no_loop == 0 and _inet.hasMembers(path.interface, destination)) {
+            loopBack(stack, frame, source, destination, path.interface, if (socket.multicast_hops == 0) 1 else socket.multicast_hops);
+        }
         return _inet.output(stack, frame, source, destination, protocol, path, socket.multicast_hops);
     }
     return _inet.output(stack, frame, source, destination, protocol, path, socket.hop_limit);

@@ -2,7 +2,7 @@
 //! Udp: a datagram sent, and its echo waited for, through
 //! bsdsocket.library. Built against the SDK only.
 //!
-//!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S
+//!   Udp TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S,JOIN/S
 //!
 //! It sends TEXT ("hello") to TO:PORT (127.0.0.1:7) - TO an IPv4 or an
 //! IPv6 address - and prints what comes back within two seconds, and
@@ -17,7 +17,10 @@
 //! and GATEWAY (10.0.2.2) - the addresses QEMU's user network gives - unless
 //! it is there already. REMOVE takes `eth0` down again and sends nothing.
 //! PING sends an ICMP echo request with TEXT to an IPv4 TO through a raw
-//! socket instead, and prints the echo that comes back.
+//! socket instead, and prints the echo that comes back. JOIN takes TO for
+//! a group - `224.0.0.251`, `ff02::fb` - that the socket joins on PORT
+//! before it sends: everything that comes to the group within the two
+//! seconds is printed, this machine's own datagram first.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -29,10 +32,10 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Udp";
-const VERSION_STRING = "\x00$VER: Udp 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Udp 1.3 (07.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S";
+const template = "TO/K,PORT/K/N,TEXT/K,DEVICE/K,ADDRESS/K,GATEWAY/K,REMOVE/S,PING/S,JOIN/S";
 const arg_to = 0;
 const arg_port = 1;
 const arg_text = 2;
@@ -41,6 +44,7 @@ const arg_address = 4;
 const arg_gateway = 5;
 const arg_remove = 6;
 const arg_ping = 7;
+const arg_join = 8;
 
 const MSG_NOLIBRARY = "Can't open %s\n";
 const MSG_BADADDRESS = "%s is not an address\n";
@@ -122,6 +126,17 @@ fn addInterface(sb: *SocketBase, argv: []const usize) i32 {
     return if (sb.Errno() == bsd.EADDRINUSE) 0 else -1;
 }
 
+/// `socket`, bound to the group's port, joined to the group `to`: an
+/// IPv4 one mapped, as `address`, or an IPv6 one. 0, or -1.
+fn join(sb: *SocketBase, socket: i32, to: *const bsd.sockaddr_in6, is_v4: bool, address: u32) i32 {
+    if (is_v4) {
+        const request: bsd.ip_mreq = .{ .imr_multiaddr = .{ .s_addr = address } };
+        return sb.SetSockOpt(socket, bsd.IPPROTO_IP, bsd.IP_ADD_MEMBERSHIP, &request, @sizeOf(bsd.ip_mreq));
+    }
+    const request: bsd.ipv6_mreq = .{ .ipv6mr_multiaddr = to.sin6_addr };
+    return sb.SetSockOpt(socket, bsd.IPPROTO_IPV6, bsd.IPV6_JOIN_GROUP, &request, @sizeOf(bsd.ipv6_mreq));
+}
+
 fn failed(dl: *DosBase, sb: *SocketBase, what: [*:0]const u8) i32 {
     _ = Printf(dl, MSG_FAILED, .{ what, bsd.errnoText(sb, sb.Errno()), sb.Errno() });
     return dos.RETURN_ERROR;
@@ -134,7 +149,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [8]usize = @splat(0);
+    var argv: [9]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -204,6 +219,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const socket = sb.Socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
     if (socket < 0) return failed(dl, sb, "Socket");
     defer _ = sb.CloseSocket(socket);
+    const joined = argv[arg_join] != 0;
+    if (joined) {
+        const on: i32 = 1;
+        _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_REUSEADDR, &on, @sizeOf(i32));
+        const here: bsd.sockaddr_in6 = .{ .sin6_port = to6.sin6_port };
+        if (sb.Bind(socket, here.anyConst(), @sizeOf(bsd.sockaddr_in6)) < 0) return failed(dl, sb, "Bind");
+        if (join(sb, socket, &to6, is_v4, address) < 0) return failed(dl, sb, "SetSockOpt");
+    }
     const sent = sb.SendTo(socket, text, text_length, 0, to6.anyConst(), @sizeOf(bsd.sockaddr_in6));
     if (sent < 0) return failed(dl, sb, "SendTo");
     _ = Printf(dl, MSG_SENT, .{ sent, to_text, @as(u32, port) });
@@ -212,6 +235,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
     var buffer: [512]u8 = undefined;
     var patience: bsd.timeval = .{ .secs = patience_secs };
+    var answers: u32 = 0;
     while (true) {
         var read: bsd.fd_set = .{};
         read.set(socket);
@@ -226,6 +250,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return failed(dl, sb, "WaitSelect");
         }
         if (ready == 0) {
+            if (answers > 0) return dos.RETURN_OK;
             _ = Printf(dl, MSG_NOANSWER, .{});
             return dos.RETURN_WARN;
         }
@@ -246,7 +271,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             var from_text: [bsd.INET6_ADDRSTRLEN]u8 = @splat(0);
             _ = sb.Inet_NtoP(bsd.AF_INET6, &from.sin6_addr, &from_text, from_text.len);
             _ = Printf(dl, MSG_ANSWER, .{ @as([*:0]const u8, @ptrCast(&from_text)), @as(u32, bsd.ntohs(from.sin6_port)), @as([*:0]const u8, @ptrCast(&buffer)) });
-            return dos.RETURN_OK;
+            // In a group, whatever else comes to it is waited for too.
+            if (!joined) return dos.RETURN_OK;
+            answers += 1;
         }
     }
 }

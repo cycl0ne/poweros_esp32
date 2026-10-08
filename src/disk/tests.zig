@@ -12,6 +12,7 @@ test {
     _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/openeth.zig");
+    _ = @import("devs/networks/tests/slip.zig");
     _ = @import("devs/networks/wifi/tests/wifi.zig");
     _ = @import("devs/networks/wifi/tests/wpa.zig");
     _ = @import("devs/networks/wifi/tests/ie.zig");
@@ -27,6 +28,8 @@ test {
     _ = @import("libs/bsdsocket/tests/address.zig");
     _ = @import("libs/bsdsocket/tests/ip6.zig");
     _ = @import("libs/bsdsocket/tests/nd.zig");
+    _ = @import("libs/bsdsocket/tests/igmp.zig");
+    _ = @import("libs/bsdsocket/tests/dhcp6.zig");
     _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
     _ = @import("libs/crypto/tests/keys.zig");

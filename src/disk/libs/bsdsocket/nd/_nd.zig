@@ -35,9 +35,10 @@
 //! nonce (RFC 7527) so that a link which echoes it back is not taken for
 //! another station, and when a second passes without an advertisement
 //! for the address or another station's solicitation for it, it is
-//! `preferred`. A duplicate stable address is made again with the next
-//! counter (RFC 7217), up to three times; any other duplicate is never
-//! used.
+//! `preferred`. A duplicate stable address of the interface's own making
+//! is made anew with the next counter (RFC 7217), a duplicate temporary
+//! one with new random bits (RFC 8981), each up to three times; one
+//! DHCPv6 gave is declined; any other duplicate is never used.
 //!
 //! Everything here runs under the stack's lock; `now` is the caller's.
 
@@ -541,18 +542,35 @@ fn checkFire(stack: *StackBase, fired: *Timer, now: u64) void {
     _ = _timer.set(stack, &own.timer, now + interface.ip6.retrans_us);
 }
 
-/// Another station has `own`: a stable address made again with the next
-/// counter, anything else never used.
+/// Another station has `own`: a stable address of the interface's own
+/// making is made anew with the next counter, a temporary one with new
+/// random bits, one from DHCPv6 is declined and let go, and anything
+/// else - one given by hand - is never used.
 fn duplicate(stack: *StackBase, own: *_ip6.InterfaceAddress, now: u64) void {
     _ = now;
     stack.counts.nd_duplicates += 1;
     const interface = own.interface.?;
     _timer.cancel(stack, &own.timer);
     mld.leaveGroup(stack, interface, own.address.solicitedNode());
-    if (interface.ip6.identifier == bsd.IFID_STABLE and stack.crypto != null and own.counter < idgen_retries) {
+    if (own.dhcp6 != 0) {
+        @import("../dhcp6/_dhcp6.zig").duplicate(stack, own);
+        own.state = .unused;
+        return;
+    }
+    // Only an address the interface made itself is made again; one given
+    // by hand stays the one given.
+    const made_here = own.temporary == 0 and (own.autoconf != 0 or own.address.isLinkLocal());
+    if (made_here and interface.ip6.identifier == bsd.IFID_STABLE and stack.crypto != null and own.counter < idgen_retries) {
         own.counter += 1;
         const prefix = own.address.bytes[0..8].*;
         own.address = _ip6.addressFor(stack, interface, &prefix, own.counter);
+        mld.joinGroup(stack, interface, own.address.solicitedNode());
+        return check(stack, own, dad_delay_us);
+    }
+    if (own.temporary != 0 and own.counter < idgen_retries) {
+        own.counter += 1;
+        const prefix = own.address.bytes[0..8].*;
+        own.address = @import("privacy.zig").randomAddress(stack, interface, &prefix);
         mld.joinGroup(stack, interface, own.address.solicitedNode());
         return check(stack, own, dad_delay_us);
     }

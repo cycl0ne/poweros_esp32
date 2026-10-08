@@ -9,7 +9,11 @@ const SocketBase = _base.SocketBase;
 const _socket = @import("_socket.zig");
 const _lock = @import("../lock/_lock.zig");
 const _netif = @import("../netif/_netif.zig");
+const Interface = _netif.Interface;
 const _tcp = @import("../tcp/_tcp.zig");
+const _inet = @import("../inet/_inet.zig");
+const _igmp = @import("../igmp/_igmp.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 /// The most a socket may buffer: SO_RCVBUF and SO_SNDBUF are held to it.
 const buffer_max: u32 = 256 * 1024;
@@ -25,7 +29,8 @@ const buffer_max: u32 = 256 * 1024;
 ///
 /// INPUTS:
 /// - `socket` - a descriptor from Socket.
-/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP` or `IPPROTO_IPV6`.
+/// - `level` - `SOL_SOCKET`, `IPPROTO_TCP`, `IPPROTO_IP` or
+///   `IPPROTO_IPV6`.
 /// - `option` - `SO_REUSEADDR`, `SO_BROADCAST` (an i32, not 0 for on),
 ///   `SO_RCVBUF`, `SO_SNDBUF` (an i32 of bytes), `SO_RCVTIMEO`,
 ///   `SO_SNDTIMEO` (a timeval; zero waits for ever), `SO_EVENTMASK` (an
@@ -33,6 +38,13 @@ const buffer_max: u32 = 256 * 1024;
 ///   `SO_KEEPALIVE` (an i32, a stream socket only), `SO_LINGER` (a
 ///   `linger`), `SO_BINDTODEVICE` (an interface's name, a capture socket
 ///   only); at level `IPPROTO_TCP`, `TCP_NODELAY` (an i32); at level
+///   `IPPROTO_IP`, on a socket that speaks IPv4,
+///   `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (an `ip_mreq`: a group, on
+///   the interface of an address or on the route's with `INADDR_ANY`),
+///   `IP_MULTICAST_IF` (an `in_addr`, an interface's address or
+///   `INADDR_ANY` for the route's), `IP_MULTICAST_TTL` (a u8 or an i32,
+///   -1 for 1) and `IP_MULTICAST_LOOP` (a u8 or an i32, 0 to keep this
+///   machine's own members from getting a copy); at level
 ///   `IPPROTO_IPV6`, on a `PF_INET6` socket, `IPV6_V6ONLY` (an i32, not 0
 ///   for IPv6 only; before Bind), `IPV6_UNICAST_HOPS` (an i32, the hop
 ///   limit its packets go with, -1 for the interface's),
@@ -40,7 +52,8 @@ const buffer_max: u32 = 256 * 1024;
 ///   interface by index or on the route's with 0), `IPV6_MULTICAST_IF` (a
 ///   u32 index, 0 for the route's), `IPV6_MULTICAST_HOPS` (an i32, -1 for
 ///   1) and `IPV6_MULTICAST_LOOP` (an i32, 0 to keep this machine's own
-///   members from getting a copy).
+///   members from getting a copy), `IPV6_RECVHOPLIMIT` (an i32, not 0 for
+///   RecvMsg to say each datagram's hop limit).
 /// - `value` - the option's value.
 /// - `value_length` - its size.
 ///
@@ -50,7 +63,7 @@ const buffer_max: u32 = 256 * 1024;
 /// of the wrong size, a hop limit out of range, IPV6_V6ONLY once bound, a
 /// group that is no group), `ENXIO` (no interface of that index),
 /// `EADDRINUSE` (in the group already), `EADDRNOTAVAIL` (not in the group
-/// to leave, or no route to it), `ETOOMANYREFS` (the socket is in as many
+/// to leave, no route to it, or no interface with that address), `ETOOMANYREFS` (the socket is in as many
 /// groups as it can be), `ENOBUFS` (so is the interface).
 ///
 /// BEHAVIOR:
@@ -68,6 +81,13 @@ const buffer_max: u32 = 256 * 1024;
 /// socket can always send. `SO_BINDTODEVICE` holds a capture socket to
 /// one interface, or with an empty name to every one again; a name there
 /// is no interface of is `ENXIO`.
+///
+/// A group joined on an interface is joined on its device and reported to
+/// the link's routers (IGMP for IPv4, MLD for IPv6) by the first socket in
+/// it, and left by the last; CloseSocket leaves every group the socket is
+/// in. IP_MULTICAST_TTL and IPV6_MULTICAST_HOPS are one setting, and so
+/// are the two loops and the two multicast interfaces: an `PF_INET6`
+/// socket that speaks both families sends to groups of either with it.
 ///
 /// CONTEXT:
 /// - Waits: only for the stack's lock.
@@ -102,6 +122,11 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
         if (@as(*align(1) const i32, @ptrCast(value)).* != 0) tcb.flags |= _tcp.no_delay else tcb.flags &= ~_tcp.no_delay;
         return 0;
     }
+    if (level == bsd.IPPROTO_IP and (socket.family == bsd.AF_INET or socket.v6only == 0)) {
+        const refused = ipOption(sb, socket, option, value, value_length);
+        if (refused != 0) return _socket.fail(sb, refused, "SetSockOpt");
+        return 0;
+    }
     if (level == bsd.IPPROTO_IPV6 and socket.family == bsd.AF_INET6 and (option == bsd.IPV6_JOIN_GROUP or option == bsd.IPV6_LEAVE_GROUP)) {
         if (value_length < @sizeOf(bsd.ipv6_mreq)) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
         const request = @as(*align(1) const bsd.ipv6_mreq, @ptrCast(value)).*;
@@ -124,6 +149,7 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
                 socket.multicast_hops = if (number <= 0) 0 else @intCast(number);
             },
             bsd.IPV6_MULTICAST_LOOP => socket.multicast_no_loop = @intFromBool(number == 0),
+            bsd.IPV6_RECVHOPLIMIT => socket.receive_hop_limit = @intFromBool(number != 0),
             bsd.IPV6_V6ONLY => {
                 if (socket.flags & _socket.bound != 0) return _socket.fail(sb, bsd.EINVAL, "SetSockOpt");
                 socket.v6only = @intFromBool(number != 0);
@@ -218,18 +244,21 @@ fn bytesOf(number: i32) u32 {
 /// A group joined or left, as an ipv6_mreq asks: 0, or the errno.
 fn membership(sb: *SocketBase, socket: *_socket.Socket, join: bool, request: bsd.ipv6_mreq) i32 {
     const stack = sb.stack;
-    const Address = @import("../ip6/address.zig").Address;
     const group: Address = .{ .bytes = request.ipv6mr_multiaddr.s6_addr };
     if (!group.isMulticast()) return bsd.EINVAL;
     const interface = if (request.ipv6mr_interface != 0)
         (_netif.byIndex(stack, request.ipv6mr_interface) orelse return bsd.ENXIO)
     else
-        ((@import("../inet/_inet.zig").route(stack, group, null) orelse return bsd.EADDRNOTAVAIL).interface);
-    const _ip6 = @import("../ip6/_ip6.zig");
+        ((_inet.route(stack, group, null) orelse return bsd.EADDRNOTAVAIL).interface);
+    return joinOrLeave(stack, socket, join, group, interface);
+}
+
+/// `socket` in `group` on `interface`, or out of it: 0, or the errno.
+fn joinOrLeave(stack: *_base.StackBase, socket: *_socket.Socket, join: bool, group: Address, interface: *Interface) i32 {
     if (!join) {
         for (&socket.groups) |*member| {
             if (member.interface == interface and member.group.eql(group)) {
-                _ip6.leaveSocketGroup(stack, interface, group);
+                _socket.leaveGroup(stack, interface, group);
                 member.* = .{};
                 return 0;
             }
@@ -239,9 +268,53 @@ fn membership(sb: *SocketBase, socket: *_socket.Socket, join: bool, request: bsd
     if (_socket.isMember(socket, group, interface)) return bsd.EADDRINUSE;
     for (&socket.groups) |*member| {
         if (member.interface != null) continue;
-        if (!_ip6.joinSocketGroup(stack, interface, group)) return bsd.ENOBUFS;
+        if (!_socket.joinGroup(stack, interface, group)) return bsd.ENOBUFS;
         member.* = .{ .group = group, .interface = interface };
         return 0;
     }
     return bsd.ETOOMANYREFS;
+}
+
+/// One of IPPROTO_IP's options set: 0, or the errno.
+fn ipOption(sb: *SocketBase, socket: *_socket.Socket, option: i32, value: *const anyopaque, value_length: u32) i32 {
+    const stack = sb.stack;
+    switch (option) {
+        bsd.IP_ADD_MEMBERSHIP, bsd.IP_DROP_MEMBERSHIP => {
+            if (value_length < @sizeOf(bsd.ip_mreq)) return bsd.EINVAL;
+            const request = @as(*align(1) const bsd.ip_mreq, @ptrCast(value)).*;
+            const group = bsd.ntohl(request.imr_multiaddr.s_addr);
+            if (!_igmp.isGroup(group)) return bsd.EINVAL;
+            const interface = interfaceAt(stack, bsd.ntohl(request.imr_interface.s_addr), group) orelse return bsd.EADDRNOTAVAIL;
+            return joinOrLeave(stack, socket, option == bsd.IP_ADD_MEMBERSHIP, Address.fromV4(group), interface);
+        },
+        bsd.IP_MULTICAST_IF => {
+            if (value_length < @sizeOf(bsd.in_addr)) return bsd.EINVAL;
+            const address = bsd.ntohl(@as(*align(1) const bsd.in_addr, @ptrCast(value)).s_addr);
+            socket.multicast_interface = if (address == bsd.INADDR_ANY) null else (_netif.owning(stack, address) orelse return bsd.EADDRNOTAVAIL);
+        },
+        bsd.IP_MULTICAST_TTL, bsd.IP_MULTICAST_LOOP => {
+            // A u8, as BSD has them, or an i32.
+            const number: i32 = if (value_length >= @sizeOf(i32))
+                @as(*align(1) const i32, @ptrCast(value)).*
+            else if (value_length == 1)
+                @as(*const u8, @ptrCast(value)).*
+            else
+                return bsd.EINVAL;
+            if (option == bsd.IP_MULTICAST_LOOP) {
+                socket.multicast_no_loop = @intFromBool(number == 0);
+                return 0;
+            }
+            if (number < -1 or number > 255) return bsd.EINVAL;
+            socket.multicast_hops = if (number <= 0) 0 else @intCast(number);
+        },
+        else => return bsd.ENOPROTOOPT,
+    }
+    return 0;
+}
+
+/// The interface whose address is `address`, or for INADDR_ANY the one a
+/// packet to `group` goes out of.
+fn interfaceAt(stack: *_base.StackBase, address: u32, group: u32) ?*Interface {
+    if (address != bsd.INADDR_ANY) return _netif.owning(stack, address);
+    return (_inet.route(stack, Address.fromV4(group), null) orelse return null).interface;
 }

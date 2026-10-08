@@ -9,6 +9,7 @@ device requests are described in `sdk/devices/network.zig`,
 
 - [The layers](#the-layers)
 - [Using sockets](#using-sockets)
+- [Groups: multicast](#groups-multicast)
 - [Waiting: WaitSelect and signals](#waiting-waitselect-and-signals)
 - [Names and addresses](#names-and-addresses)
 - [TLS: a secure connection](#tls-a-secure-connection)
@@ -16,6 +17,7 @@ device requests are described in `sdk/devices/network.zig`,
 - [Configuration files](#configuration-files)
 - [The network device API](#the-network-device-api)
 - [Wireless devices](#wireless-devices)
+- [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
 - [A connection as a device: telnet.device](#a-connection-as-a-device-telnetdevice)
 - [Commands](#commands)
@@ -26,9 +28,11 @@ device requests are described in `sdk/devices/network.zig`,
  program           Socket, Connect, Send, Recv, WaitSelect, GetAddrInfo ...
     |
  bsdsocket.library the stack: TCP, UDP, IPv4, IPv6, ICMP, ARP, neighbour
-    |              discovery, DHCP, routes, names - interfaces eth0, wlan0, lo0
+    |              discovery, IGMP, MLD, DHCP, DHCPv6, routes, names - interfaces
+    |              eth0, wlan0, lo0
     |  IOSana2Req (CMD_READ, CMD_WRITE, S2_ONEVENT ...)
- network device    DEVS:networks/openeth.device, DEVS:networks/wifi.device
+ network device    DEVS:networks/openeth.device, DEVS:networks/wifi.device,
+    |              DEVS:networks/slip.device
     |
  hardware          a MAC's rings and interrupts, a radio's libraries
 ```
@@ -71,7 +75,9 @@ const got = sb.Recv(fd, &reply, reply.len, 0);
   records what goes by.
 - **The calls** are the BSD ones: `Socket`, `Bind`, `Listen`, `Accept`,
   `Connect`, `Send`/`SendTo`, `Recv`/`RecvFrom` (`MSG_PEEK`,
-  `MSG_DONTWAIT`, `MSG_OOB`), `Shutdown`, `CloseSocket`, `GetSockName`,
+  `MSG_DONTWAIT`, `MSG_OOB`), `RecvMsg` (several buffers, and control
+  messages: `IPV6_RECVHOPLIMIT` gives each IPv6 datagram's hop limit,
+  walked with `cmsgFirst`/`cmsgNext`/`cmsgData`), `Shutdown`, `CloseSocket`, `GetSockName`,
   `GetPeerName`, `SetSockOpt`/`GetSockOpt`, `IoctlSocket` (`FIONBIO`,
   `SIOCATMARK`).
 - **Errors:** a call that fails answers -1; `Errno()` gives the reason, and
@@ -86,11 +92,46 @@ const got = sb.Recv(fd, &reply, reply.len, 0);
   and back, IPv4 and IPv6.
 - **Options:** `SO_REUSEADDR`, `SO_KEEPALIVE`, `SO_BROADCAST`,
   `SO_LINGER`, `SO_SNDBUF`, `SO_RCVBUF`, `SO_SNDTIMEO`, `SO_RCVTIMEO`,
-  `SO_ERROR`, `SO_TYPE`, `SO_BINDTODEVICE`, `TCP_NODELAY`, and the
-  `IPV6_*` ones for hop limits, multicast groups and `IPV6_V6ONLY`.
+  `SO_ERROR`, `SO_TYPE`, `SO_BINDTODEVICE`, `TCP_NODELAY`, the `IP_*`
+  ones for multicast groups, and the `IPV6_*` ones for hop limits,
+  multicast groups and `IPV6_V6ONLY`.
 
 Every call runs on the caller's own task; a call that waits (a `Recv` with
 nothing there, an `Accept` with no connection) waits there too.
+
+## Groups: multicast
+
+A datagram socket joins a group to get what is sent to it - mDNS's
+`224.0.0.251` and `ff02::fb`, SSDP's `239.255.255.250`:
+
+```zig
+var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(5353) };
+_ = sb.Bind(fd, @ptrCast(&here), @sizeOf(bsd.sockaddr_in));
+const request: bsd.ip_mreq = .{
+    .imr_multiaddr = .{ .s_addr = sb.Inet_Addr("224.0.0.251") },
+    .imr_interface = .{ .s_addr = bsd.INADDR_ANY }, // the route's interface
+};
+_ = sb.SetSockOpt(fd, bsd.IPPROTO_IP, bsd.IP_ADD_MEMBERSHIP, &request, @sizeOf(bsd.ip_mreq));
+```
+
+`IPV6_JOIN_GROUP` with an `ipv6_mreq` does the same for an IPv6 group, on
+an interface named by its index (`If_NameToIndex`). The first socket in a
+group joins it on the interface's device and tells the link's routers -
+and the switches that listen - with IGMP (IPv4) or MLD (IPv6), and answers
+their queries for as long as it stays; the last one out says it left.
+`IP_DROP_MEMBERSHIP` and `IPV6_LEAVE_GROUP` leave, and so does
+`CloseSocket`. A socket is in up to 4 groups, an interface in up to 8 of
+each family that sockets joined.
+
+What comes to a group goes to every socket in it that is bound to its
+port, each a copy of its own. Sent to a group, a datagram stays on the
+link (a time to live, or hop limit, of 1) unless `IP_MULTICAST_TTL` or
+`IPV6_MULTICAST_HOPS` says otherwise; goes out of the interface
+`IP_MULTICAST_IF` or `IPV6_MULTICAST_IF` names, or the route's; and
+reaches this machine's own members too, unless `IP_MULTICAST_LOOP` or
+`IPV6_MULTICAST_LOOP` is 0. A `PF_INET6` socket that speaks IPv4 takes
+both families' options, and the two of each pair are one setting.
+`C:net/NetStatus COUNTS` shows the IGMP and MLD reports sent.
 
 ## Waiting: WaitSelect and signals
 
@@ -126,7 +167,7 @@ goes the other way. A name is looked for in order:
 
 1. `ENVARC:Sys/net/hosts`: an address, then its names.
 2. The name servers: those DHCP gave, those in an interface file, those a
-   router's advertisement named, or, with none of those,
+   router's advertisement or DHCPv6 named, or, with none of those,
    `ENVARC:Sys/net/nameservers`.
 
 `GetHostByName`, `GetHostByAddr`, `Inet_Addr` and `Inet_NtoA` remain for
@@ -228,20 +269,25 @@ behind it are:
 
 | Call | Does |
 |---|---|
-| `AddInterfaceTagList(name, tags)` | opens the device and brings the interface up: `IFA_Device`, `IFA_Unit`, `IFA_Configure` (`IFCONFIGURE_DHCP` or fixed with `IFA_Address`, `IFA_NetMask`, `IFA_Gateway`), `IFA_NameServer`, `IFA_Domain`, `IFA_MTU`, `IFA_Reads`/`IFA_Writes`, `IFA_TCPSendSpace`/`IFA_TCPRecvSpace`, and for IPv6 `IFA_IPv6`, `IFA_InterfaceID`, `IFA_Address6`, `IFA_Prefix6`, `IFA_Gateway6`, `IFA_NameServer6` |
-| `ConfigureInterfaceTagList` | changes what it runs with, or `IFA_State` online and offline |
+| `AddInterfaceTagList(name, tags)` | opens the device and brings the interface up: `IFA_Device`, `IFA_Unit`, `IFA_Configure` (`IFCONFIGURE_DHCP` or fixed with `IFA_Address`, `IFA_NetMask`, `IFA_Gateway`), `IFA_NameServer`, `IFA_Domain`, `IFA_MTU`, `IFA_Reads`/`IFA_Writes`, `IFA_TCPSendSpace`/`IFA_TCPRecvSpace`, and for IPv6 `IFA_IPv6`, `IFA_InterfaceID`, `IFA_PrivacyAddresses`, `IFA_Address6`, `IFA_Prefix6`, `IFA_Gateway6`, `IFA_NameServer6` |
+| `ConfigureInterfaceTagList` | changes what it runs with - its IPv6 address too (`IFA_Address6`) - `IFA_PrivacyAddresses` on or off, or `IFA_State` online and offline |
 | `QueryInterfaceTagList` | reads it back: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Gateway`, `IFQ_MTU`, `IFQ_State`, `IFQ_HardwareAddress`, `IFQ_Speed`, the packet counts, the device and unit, and a time server DHCP named |
 | `ObtainInterfaceList` / `ReleaseInterfaceList` | the names of all of them |
 | `RemoveInterface` | takes one down and closes its device |
-| `AddRouteTagList` / `DeleteRouteTagList` | routes: `RTA_Destination`, `RTA_NetMask`, `RTA_Gateway`, `RTA_DefaultGateway` |
+| `AddRouteTagList` / `DeleteRouteTagList` | routes: `RTA_Destination`, `RTA_NetMask`, `RTA_Gateway`, `RTA_DefaultGateway`; IPv6 ones with `RTA_Destination6`, `RTA_PrefixLength6`, `RTA_Gateway6`, `RTA_DefaultGateway6`, `RTA_Interface` |
 | `AddDomainNameServer` / `RemoveDomainNameServer` | name servers, stack-wide |
 | `GetNetworkStatistics` | what the stack holds, by kind: `NETSTATUS_COUNTS` (its packet counts), `ROUTES`, `SOCKETS`, `ARP`, `ADDRESSES6`, `ROUTES6`, `NEIGHBORS`, `NAMESERVERS` |
 
 With DHCP, `AddInterfaceTagList` answers at once and the address comes
 when the server answers; `IFQ_State` and `IFQ_Address` show when it has.
 IPv6 takes a link-local address at once, and addresses from routers'
-prefixes as they are advertised. How many reads and writes the stack
-keeps with the device grows with the link's speed unless the file says.
+prefixes as they are advertised. A router whose advertisement sets the M
+flag hands out addresses by DHCPv6: the stack asks for them, renews and
+gives them back, each one alone (`/128`, NetStatus marks it `dhcp`); one
+that sets only the O flag has its name servers and search domain there,
+which the stack asks for and asks again after the server's refresh time.
+How many reads and writes the stack keeps with the device grows with the
+link's speed unless the file says.
 
 ## Configuration files
 
@@ -278,6 +324,20 @@ Configure  = DHCP
 | `IPv6` | `AUTO` (the default), `FIXED` (link-local and `Address6` only) or `OFF` |
 | `InterfaceID` | `STABLE` (the default, from `ENVARC:Sys/net/ipv6-secret`) or `EUI64` |
 | `Address6`, `Prefix6`, `Gateway6` | a fixed IPv6 address, its prefix length, and an IPv6 router |
+| `PrivacyAddresses` | `YES`: temporary addresses (below); `NO`, the default |
+| `SerialDevice`, `SerialUnit`, `Baud` | the serial line under `slip.device` (below) |
+
+**Privacy addresses** (RFC 8981): an address made from a router's prefix
+ends the same on that network at every boot, so whatever the machine
+connects to can tell it is the same machine. With `PrivacyAddresses = YES`
+the interface has, beside each such address, a temporary one in the same
+prefix whose last 64 bits are random. Connections going out are made from
+it; what comes in is answered from the address it came to. A temporary
+address stays preferred for about a day - each for a random part less, so
+the machines on a link do not all change at once - and is valid for two;
+a few seconds before it stops being preferred a new one is made, and the
+old one lasts for the connections it still has. `C:net/NetStatus` marks
+them `temporary`.
 
 A keyword not in the table is an error, reported with its line and
 column. A board without the file's device skips the interface; with
@@ -351,6 +411,39 @@ its passphrase read from `ENVARC:Sys/net/networks/<network>`.
 
 `DEVS:networks/wifi.device` is the chip's radio as such a unit; its build
 and inside are described in `docs/wifi.md`.
+
+## A serial line: slip.device
+
+`DEVS:networks/slip.device` carries IP over a serial line (SLIP, RFC
+1055) to whatever is at the other end - a PC with `slattach`, another
+board. A frame is the packet itself, so the link has no addresses and no
+ARP: whatever the routes send out of it goes to the other end. It has no
+DHCP either; the address is given:
+
+```
+/* DEVS:NetInterfaces/SL0 */
+Device       = networks/slip.device
+Address      = 192.168.7.2
+SerialDevice = serial.device
+SerialUnit   = 1
+Baud         = 115200
+IPv6         = OFF
+```
+
+The serial line is any device with serial.device's API - a UART of
+serial.device, or usbserial.device's unit 0 - opened when the interface
+comes up and given back when it goes; without the three keywords it is
+serial.device's unit 1 at 115200 baud. Each of the device's two units is a
+line of its own. The MTU is 1006 bytes, RFC 1055's; the other end should
+say the same (`slattach -p slip -s 115200 /dev/ttyUSB0`, then
+`ip addr add 192.168.7.1 peer 192.168.7.2 dev sl0` and `ip link set sl0
+up mtu 1006` on Linux). A program opening the device itself names the
+line with the tags of `sdk/devices/slip.zig` in its open's tag list;
+AddInterfaceTagList hands them on from `IFA_DeviceTags`.
+
+In QEMU, `-Dslip=tcp::5021,server,nowait` puts the emulator's UART1 -
+serial.device's unit 1 - on a TCP port for a program on the host to be the
+other end.
 
 ## Writing a network driver
 
@@ -442,7 +535,7 @@ connection to port 23.
 | `C:net/HostName` | the machine's name, shown or set; `SAVE` keeps it |
 | `C:net/TimeSync` | the clock from a time server |
 | `C:net/HTTPGet` | a file over HTTP or HTTPS; `NOVERIFY` leaves a test server's certificate unchecked |
-| `C:net/Tcp`, `Udp` | a connection or a datagram by hand |
+| `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
 | `C:net/PacketCapture` | an interface's frames into a pcap file |
 | `C:net/ShellServer` | a shell for each connection to a TCP port |
 | `C:net/Net` | a network device spoken to directly |

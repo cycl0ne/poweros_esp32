@@ -42,7 +42,9 @@ pub const Frame = extern struct {
     /// IPv6's sixteen bytes, an IPv4 sender mapped.
     from_address: Address = .{},
     from_port: u16 = 0,
-    pad0: u16 = 0,
+    /// The hop limit an IPv6 datagram came with, for IPV6_RECVHOPLIMIT.
+    hop_limit: u8 = 0,
+    pad0: u8 = 0,
     /// The interface it came in on, which a link-local sender's address
     /// needs.
     from_interface: ?*Interface = null,

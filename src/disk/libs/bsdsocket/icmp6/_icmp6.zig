@@ -257,6 +257,7 @@ fn deliverRaw(stack: *StackBase, frame: *Frame, packet: _inet.Packet) void {
         copy.length = frame.length;
         copy.from_address = packet.source;
         copy.from_interface = packet.arrived;
+        copy.hop_limit = packet.hop_limit;
         sys.AddTail(&socket.receive, &copy.node);
         socket.receive_bytes += copy.cost();
         _socket.wake(socket, bsd.FD_READ);

@@ -44,9 +44,12 @@
 //! are the interface identifier, as the interface is set to make it -
 //! stable (RFC 7217: SHA-256 over the prefix, the link's address, a
 //! counter and the stable secret, through crypto.library) or the link's
-//! EUI-64. Without crypto.library the EUI-64 is taken. Every address but
-//! lo0's `::1` is tentative until Neighbor Discovery has checked that no
-//! other station has it (`nd/_nd.zig`).
+//! EUI-64. Without crypto.library the EUI-64 is taken. With privacy
+//! addresses on, each address made from a router's prefix has temporary
+//! ones beside it, ending in random bits (`nd/privacy.zig`). Every address
+//! but lo0's `::1` is tentative until Neighbor Discovery has checked that
+//! no other station has it (`nd/_nd.zig`). A router may also ask for
+//! addresses or settings from DHCPv6 (`dhcp6/_dhcp6.zig`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -70,6 +73,7 @@ const mld = @import("../nd/mld.zig");
 const router = @import("../nd/router.zig");
 const slaac = @import("../nd/slaac.zig");
 const _route6 = @import("../route6/_route6.zig");
+const _dhcp6 = @import("../dhcp6/_dhcp6.zig");
 pub const Address = @import("address.zig").Address;
 
 pub const header_bytes = 40;
@@ -89,9 +93,10 @@ pub const protocol_icmp6: u8 = 58;
 
 // --- an interface's addresses ------------------------------------------------------
 
-/// The IPv6 addresses one interface holds: its link-local one and one
-/// per prefix its routers give.
-pub const addresses_max = 4;
+/// The IPv6 addresses one interface holds: its link-local one, one per
+/// prefix its routers give, and with privacy addresses the temporary ones
+/// of each prefix, the current one and those still valid.
+pub const addresses_max = 8;
 
 pub const AddressState = enum(u8) {
     unused,
@@ -114,13 +119,23 @@ pub const InterfaceAddress = extern struct {
     /// identifiers were tried before it.
     checks_left: u8 = 0,
     counter: u8 = 0,
-    pad: u8 = 0,
+    /// A temporary address (`nd/privacy.zig`), and whether the one to
+    /// follow it has been made.
+    temporary: u8 = 0,
     /// The nonce its duplicate check carries.
     nonce: [6]u8 = @splat(0),
+    renewed: u8 = 0,
+    /// Given by DHCPv6 (`dhcp6/_dhcp6.zig`).
+    dhcp6: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
     /// When it stops being preferred and stops being valid, on the
     /// stack's clock; 0 for never.
     preferred_until: u64 align(4) = 0,
     valid_until: u64 align(4) = 0,
+    /// A temporary address's own ends, which no router's longer lifetime
+    /// moves.
+    temporary_preferred_until: u64 align(4) = 0,
+    temporary_valid_until: u64 align(4) = 0,
     /// Its next duplicate check, or the end of its lifetime.
     timer: Timer = .{},
     /// The interface it is on.
@@ -149,6 +164,10 @@ pub const Link = extern struct {
     hop_limit: u8 = default_hop_limit,
     /// Addresses are made from routers' prefixes (IFIPV6_AUTO).
     autoconf: u8 = 1,
+    /// A temporary address beside each made from a prefix
+    /// (IFA_PrivacyAddresses).
+    privacy: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
     /// Neighbor Discovery's base reachable time and retransmission
     /// interval, which a router may set.
     reachable_us: u32 = _nd.reachable_us,
@@ -160,6 +179,7 @@ pub const Link = extern struct {
     groups: [socket_groups_max]Joined = @splat(.{}),
     mld: mld.Mld = .{},
     routers: router.Routers = .{},
+    dhcp6: _dhcp6.Client = .{},
 
     /// The most bytes of IPv6 one packet on the link may have: the
     /// interface's MTU, or less when a router says so.
@@ -357,6 +377,7 @@ pub fn start(stack: *StackBase, interface: *Interface) void {
         return;
     }
     mld.start(stack, interface);
+    _dhcp6.start(stack, interface);
     const address = addressFor(stack, interface, &link_local_prefix, 0);
     _ = addAddress(stack, interface, address, 64, .tentative);
 }
@@ -371,6 +392,7 @@ pub fn stop(stack: *StackBase, interface: *Interface) void {
     interface.ip6.groups = @splat(.{});
     @import("../socket/_socket.zig").forgetInterface(stack, interface);
     mld.stop(stack, interface);
+    _dhcp6.stop(stack, interface);
     router.stop(stack, interface);
     _route6.removeAll(stack, interface);
     interface.ip6.enabled = 0;

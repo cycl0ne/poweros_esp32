@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of AF_INET6 sockets, over lo0 (`::1` and `127.0.0.1`):
 //! datagrams both ways, one socket taking both families, IPV6_V6ONLY,
-//! which binds clash, a connection, a raw ICMPv6 echo, and the interface
-//! indexes a scope names.
+//! which binds clash, a connection, a raw ICMPv6 echo, the interface
+//! indexes a scope names, and RecvMsg.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -426,5 +426,107 @@ test "names the other way: GetHostByAddr for IPv6, GetNameInfo, the PTR question
     var small: [4]u8 = undefined;
     try testing.expectEqual(bsd.EAI_OVERFLOW, sb.GetNameInfo(far.anyConst(), @sizeOf(bsd.sockaddr_in6), &small, small.len, null, 0, bsd.NI_NUMERICHOST));
     try testing.expectEqual(bsd.EAI_FAMILY, sb.GetNameInfo(far.anyConst(), 8, &name, name.len, null, 0, 0));
+    try rig.deinit();
+}
+
+test "RecvMsg: a datagram over several buffers, its sender, its hop limit, and what did not fit" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const receiver = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    const sender = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    var bound = any6(7000);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(receiver, bound.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    var here = loopback6(7000);
+    const on: i32 = 1;
+    try testing.expectEqual(@as(i32, 0), sb.SetSockOpt(receiver, bsd.IPPROTO_IPV6, bsd.IPV6_RECVHOPLIMIT, &on, @sizeOf(i32)));
+    var read: i32 = 0;
+    var size: u32 = @sizeOf(i32);
+    try testing.expectEqual(@as(i32, 0), sb.GetSockOpt(receiver, bsd.IPPROTO_IPV6, bsd.IPV6_RECVHOPLIMIT, &read, &size));
+    try testing.expectEqual(@as(i32, 1), read);
+
+    // Eleven bytes into five and three: eight read, the rest lost.
+    _ = sb.SendTo(sender, "hello world", 11, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    var first: [5]u8 = undefined;
+    var second: [3]u8 = undefined;
+    var vectors = [_]bsd.iovec{ .{ .iov_base = &first, .iov_len = first.len }, .{ .iov_base = &second, .iov_len = second.len } };
+    var from: bsd.sockaddr_in6 = .{};
+    var control: [32]u8 align(4) = undefined;
+    var message: bsd.msghdr = .{
+        .msg_name = &from,
+        .msg_namelen = @sizeOf(bsd.sockaddr_in6),
+        .msg_iov = &vectors,
+        .msg_iovlen = 2,
+        .msg_control = &control,
+        .msg_controllen = control.len,
+    };
+    try testing.expectEqual(@as(i32, 8), sb.RecvMsg(receiver, &message, 0));
+    try testing.expectEqualStrings("hello", &first);
+    try testing.expectEqualStrings(" wo", &second);
+    try testing.expectEqual(bsd.MSG_TRUNC, message.msg_flags);
+    try testing.expectEqual(@as(u32, @sizeOf(bsd.sockaddr_in6)), message.msg_namelen);
+    try testing.expect(std.mem.eql(u8, &from.sin6_addr.s6_addr, &bsd.in6addr_loopback.s6_addr));
+    // The hop limit it came with: lo0's, 64.
+    try testing.expectEqual(bsd.cmsgSpace(@sizeOf(i32)), message.msg_controllen);
+    const cmsg = bsd.cmsgFirst(&message).?;
+    try testing.expectEqual(bsd.IPPROTO_IPV6, cmsg.cmsg_level);
+    try testing.expectEqual(bsd.IPV6_HOPLIMIT, cmsg.cmsg_type);
+    try testing.expectEqual(bsd.cmsgLen(@sizeOf(i32)), cmsg.cmsg_len);
+    try testing.expectEqual(@as(i32, 64), @as(*align(1) const i32, @ptrCast(bsd.cmsgData(cmsg))).*);
+    try testing.expect(bsd.cmsgNext(&message, cmsg) == null);
+
+    // Too little room for it: said, and nothing written.
+    _ = sb.SendTo(sender, "again", 5, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    message = .{ .msg_iov = &vectors, .msg_iovlen = 2, .msg_control = &control, .msg_controllen = 8 };
+    try testing.expectEqual(@as(i32, 5), sb.RecvMsg(receiver, &message, 0));
+    try testing.expectEqual(bsd.MSG_CTRUNC, message.msg_flags);
+    try testing.expectEqual(@as(u32, 0), message.msg_controllen);
+    try testing.expect(bsd.cmsgFirst(&message) == null);
+
+    // IPv4, mapped: no hop limit to tell.
+    const sender4 = try rig.socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    var to4 = loopback4(7000);
+    _ = sb.SendTo(sender4, "four", 4, 0, to4.anyConst(), @sizeOf(bsd.sockaddr_in));
+    message = .{ .msg_iov = &vectors, .msg_iovlen = 1, .msg_control = &control, .msg_controllen = control.len };
+    try testing.expectEqual(@as(i32, 4), sb.RecvMsg(receiver, &message, 0));
+    try testing.expectEqual(@as(u32, 0), message.msg_controllen);
+    try testing.expectEqual(@as(u32, 0), message.msg_flags);
+
+    // Nothing there, and the socket does not wait.
+    try testing.expectEqual(@as(i32, -1), sb.RecvMsg(receiver, &message, 0));
+    try testing.expectEqual(bsd.EWOULDBLOCK, sb.Errno());
+    _ = sb.CloseSocket(sender4);
+    _ = sb.CloseSocket(sender);
+    _ = sb.CloseSocket(receiver);
+    try rig.deinit();
+}
+
+test "RecvMsg on a stream fills its buffers in turn" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const listener = try rig.socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
+    var here = loopback6(7001);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    try testing.expectEqual(@as(i32, 0), sb.Listen(listener, 1));
+    const client = try rig.socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
+    _ = sb.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    rig.pass(100_000);
+    const server = sb.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+    try testing.expectEqual(@as(i32, 10), sb.Send(client, "0123456789", 10, 0));
+    rig.pass(100_000);
+    var first: [4]u8 = undefined;
+    var second: [4]u8 = undefined;
+    var vectors = [_]bsd.iovec{ .{ .iov_base = &first, .iov_len = first.len }, .{ .iov_base = &second, .iov_len = second.len } };
+    var message: bsd.msghdr = .{ .msg_iov = &vectors, .msg_iovlen = 2 };
+    try testing.expectEqual(@as(i32, 8), sb.RecvMsg(server, &message, 0));
+    try testing.expectEqualStrings("0123", &first);
+    try testing.expectEqualStrings("4567", &second);
+    try testing.expectEqual(@as(i32, 2), sb.RecvMsg(server, &message, 0));
+    try testing.expectEqualStrings("89", first[0..2]);
+    _ = sb.CloseSocket(client);
+    _ = sb.CloseSocket(server);
+    _ = sb.CloseSocket(listener);
+    // TIME_WAIT waited out.
+    rig.pass(4 * @import("../tcp/_tcp.zig").msl_us);
     try rig.deinit();
 }

@@ -11,7 +11,8 @@
 //! 1472 over IPv4, and 8000 over IPv6, which sends what the link does not
 //! take in fragments) and INTERVAL seconds apart (1). Each
 //! answer is printed with its size, its sender, its sequence number, its
-//! time to live (IPv4) and the round trip in milliseconds; a request with
+//! time to live (IPv4) or hop limit (IPv6, which RecvMsg says with
+//! IPV6_RECVHOPLIMIT) and the round trip in milliseconds; a request with
 //! no answer in TIMEOUT seconds (1), and an error about one, are printed
 //! too. At the end, or at Ctrl-C: how many went, how many came back, and
 //! the shortest, mean and longest round trip.
@@ -37,7 +38,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Ping";
-const VERSION_STRING = "\x00$VER: Ping 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Ping 1.3 (07.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HOST/A,COUNT/K/N,SIZE/K/N,INTERVAL/K/N,TIMEOUT/K/N,INET6=-6/S";
@@ -53,7 +54,7 @@ const MSG_NOHOST = "%s: %s: no such host\n";
 const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
 const MSG_START = "PING %s (%s): %u data bytes\n";
 const MSG_REPLY = "%u bytes from %s: seq=%u ttl=%u time=%u.%03u ms\n";
-const MSG_REPLY6 = "%u bytes from %s: seq=%u time=%u.%03u ms\n";
+const MSG_REPLY6 = "%u bytes from %s: seq=%u hlim=%u time=%u.%03u ms\n";
 const MSG_NOIPV6 = "%s: %s: no IPv6 address\n";
 const MSG_LOST = "No answer to seq=%u\n";
 const MSG_ERROR = "From %s: %s, seq=%u\n";
@@ -152,6 +153,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const raw = if (target.six) sb.Socket(bsd.PF_INET6, bsd.SOCK_RAW, bsd.IPPROTO_ICMPV6) else sb.Socket(bsd.PF_INET, bsd.SOCK_RAW, bsd.IPPROTO_ICMP);
     if (raw < 0) return failed(dl, sb, "Socket");
     defer _ = sb.CloseSocket(raw);
+    if (target.six) {
+        const on: i32 = 1;
+        _ = sb.SetSockOpt(raw, bsd.IPPROTO_IPV6, bsd.IPV6_RECVHOPLIMIT, &on, @sizeOf(i32));
+    }
 
     _ = Printf(dl, MSG_START, .{ host, target.textZ(), size });
     const identifier: u16 = @truncate(@intFromPtr(sys.FindTask(null)) >> 2);
@@ -383,11 +388,27 @@ fn answer6(dl: *DosBase, sb: *SocketBase, raw: i32, buffer: []u8, clock: Clock, 
         }
         if (ready == 0) continue;
         var from: bsd.sockaddr_in6 = .{};
-        var from_length: u32 = @sizeOf(bsd.sockaddr_in6);
-        const got = sb.RecvFrom(raw, buffer.ptr, @intCast(buffer.len), 0, from.any(), &from_length);
+        var vector = [_]bsd.iovec{.{ .iov_base = buffer.ptr, .iov_len = @intCast(buffer.len) }};
+        var control: [32]u8 align(4) = undefined;
+        var message: bsd.msghdr = .{
+            .msg_name = &from,
+            .msg_namelen = @sizeOf(bsd.sockaddr_in6),
+            .msg_iov = &vector,
+            .msg_iovlen = 1,
+            .msg_control = &control,
+            .msg_controllen = control.len,
+        };
+        const got = sb.RecvMsg(raw, &message, 0);
         const arrived = clock.now();
         if (got < header_bytes) continue;
         const icmp = buffer[0..@intCast(got)];
+        var hop_limit: u32 = 0;
+        var next = bsd.cmsgFirst(&message);
+        while (next) |cmsg| : (next = bsd.cmsgNext(&message, cmsg)) {
+            if (cmsg.cmsg_level == bsd.IPPROTO_IPV6 and cmsg.cmsg_type == bsd.IPV6_HOPLIMIT) {
+                hop_limit = @bitCast(@as(*align(1) const i32, @ptrCast(bsd.cmsgData(cmsg))).*);
+            }
+        }
         var from_text: [bsd.INET6_ADDRSTRLEN]u8 = @splat(0);
         _ = sb.Inet_NtoP(bsd.AF_INET6, &from.sin6_addr, &from_text, from_text.len);
         const sender: [*:0]const u8 = @ptrCast(&from_text);
@@ -396,7 +417,7 @@ fn answer6(dl: *DosBase, sb: *SocketBase, raw: i32, buffer: []u8, clock: Clock, 
                 if (get16(icmp, 4) != identifier or get16(icmp, 6) != sequence) continue;
                 const micros: u32 = @intCast(@min(arrived -| sent_at, 0xFFFF_FFFF));
                 tally.add(micros);
-                _ = Printf(dl, MSG_REPLY6, .{ @as(u32, @intCast(icmp.len)), sender, @as(u32, sequence), micros / 1000, micros % 1000 });
+                _ = Printf(dl, MSG_REPLY6, .{ @as(u32, @intCast(icmp.len)), sender, @as(u32, sequence), hop_limit, micros / 1000, micros % 1000 });
                 return .answered;
             },
             unreachable6, too_big6, time_exceeded6 => {

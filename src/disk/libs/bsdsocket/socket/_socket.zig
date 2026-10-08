@@ -76,18 +76,20 @@ pub const Socket = extern struct {
     protocol: i32 = 0,
     /// AF_INET or AF_INET6; an AF_INET6 socket that takes IPv6 only
     /// (IPV6_V6ONLY); the hop limit its packets go with
-    /// (IPV6_UNICAST_HOPS), 0 for the interface's.
+    /// (IPV6_UNICAST_HOPS), 0 for the interface's; whether RecvMsg says
+    /// the hop limit a datagram came with (IPV6_RECVHOPLIMIT).
     family: u8 = bsd.AF_INET,
     v6only: u8 = 0,
     hop_limit: u8 = 0,
-    pad: u8 = 0,
+    receive_hop_limit: u8 = 0,
     /// The interface a link-local peer is on, when it was named or a
     /// connection came in on it.
     scope: ?*Interface = null,
-    /// The IPv6 groups it is in, each on an interface; where a datagram
-    /// to a group goes out (null: the route's), its hop limit (0: 1), and
-    /// whether this machine's own members are left without a copy - all
-    /// zero to start with, which is what a socket wants.
+    /// The groups it is in, IPv4 ones mapped, each on an interface; where
+    /// a datagram to a group goes out (null: the route's), its hop limit or
+    /// time to live (0: 1), and whether this machine's own members are left
+    /// without a copy - all zero to start with, which is what a socket
+    /// wants.
     groups: [groups_max]Membership = @splat(.{}),
     multicast_interface: ?*Interface = null,
     multicast_hops: u8 = 0,
@@ -143,9 +145,22 @@ pub fn isMember(socket: *const Socket, group: Address, interface: *const Interfa
 pub fn leaveAll(stack: *StackBase, socket: *Socket) void {
     for (&socket.groups) |*member| {
         const interface = member.interface orelse continue;
-        @import("../ip6/_ip6.zig").leaveSocketGroup(stack, interface, member.group);
+        leaveGroup(stack, interface, member.group);
         member.* = .{};
     }
+}
+
+/// One socket fewer in `group` on `interface`, whichever family it is.
+pub fn leaveGroup(stack: *StackBase, interface: *Interface, group: Address) void {
+    if (group.isV4()) return @import("../igmp/_igmp.zig").leaveSocketGroup(stack, interface, group.v4());
+    @import("../ip6/_ip6.zig").leaveSocketGroup(stack, interface, group);
+}
+
+/// One more socket in `group` on `interface`, whichever family it is;
+/// false when the interface is in as many groups as it can be.
+pub fn joinGroup(stack: *StackBase, interface: *Interface, group: Address) bool {
+    if (group.isV4()) return @import("../igmp/_igmp.zig").joinSocketGroup(stack, interface, group.v4());
+    return @import("../ip6/_ip6.zig").joinSocketGroup(stack, interface, group);
 }
 
 /// `interface` is going: no socket keeps a pointer to it. Under the lock.
