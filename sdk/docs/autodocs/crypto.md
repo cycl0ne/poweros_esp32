@@ -10,6 +10,8 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [Decapsulate](#decapsulate) - Takes the secret out of a ciphertext Encapsulate made for one's own public key.
+- [Encapsulate](#encapsulate) - Makes a secret for the owner of a public key, and the ciphertext that gives it to them: they take it out with Decapsulate, and nobody else can.
 - [FinishHash](#finishhash) - Ends a hash and writes its digest.
 - [FinishHmac](#finishhmac) - Ends an HMAC and writes the MAC.
 - [HkdfExpand](#hkdfexpand) - Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
@@ -17,6 +19,7 @@ Generated from the source by `./zig build autodoc`.
 - [InitCipher](#initcipher) - Sets up a context for AES in one mode, with a key and an IV.
 - [InitHash](#inithash) - Sets up a context for a new hash of one algorithm.
 - [InitHmac](#inithmac) - Sets up a context for a new HMAC with one hash algorithm and a key.
+- [KemKeyPair](#kemkeypair) - Makes a key pair for a key encapsulation mechanism: a public key that others encapsulate secrets to, and the private key that takes them out again.
 - [MakeKeyPair](#makekeypair) - Makes a key pair on a curve: a private key from the chip's random number generator, and the public key that goes with it.
 - [ModExp](#modexp) - Raises a number to a power modulo another.
 - [OpenGcm](#opengcm) - Checks a message's AES-GCM tag and, if it is right, decrypts it.
@@ -28,6 +31,139 @@ Generated from the source by `./zig build autodoc`.
 - [UpdateHash](#updatehash) - Adds bytes to a hash under way.
 - [UpdateHmac](#updatehmac) - Adds bytes to an HMAC under way.
 - [VerifySignature](#verifysignature) - Checks a signature with a public key: RSA in both its encodings, ECDSA on P-256 and P-384, and Ed25519.
+
+## Decapsulate
+
+Takes the secret out of a ciphertext Encapsulate made for one's own public key.
+
+**SYNOPSIS**
+
+```zig
+fn Decapsulate(cb: *CryptoBase, kem: u32, private_key: *const anyopaque, ciphertext: *const Bytes, secret: *anyopaque) i32
+```
+
+**SINCE**
+
+1.2. LVO -100.
+
+**INPUTS**
+
+- `kem`: KEM_MLKEM768.
+- `private_key`: one's own, MLKEM768_PRIVATE bytes, from KemKeyPair.
+- `ciphertext`: as it came: MLKEM768_CIPHERTEXT bytes.
+- `secret`: room for KEM_SECRET bytes (32).
+
+**RESULT**
+
+CRYPTOERR_OK, with the secret written; CRYPTOERR_ALGORITHM for another
+`kem`; CRYPTOERR_LENGTH for a ciphertext of the wrong length;
+CRYPTOERR_KEY for a private key whose stored hash is not that of its
+public key - nothing written for these.
+
+**BEHAVIOR**
+
+ML-KEM-768 (FIPS 203), ML-KEM.Decaps_internal: the message decrypted,
+encrypted again, and the secret it gives answered when the ciphertext
+is the same; when it is not - a ciphertext that was tampered with - a
+secret from z and the ciphertext instead, which the other side does
+not have (implicit rejection). Which of the two it was takes the same
+time either way, and is not told: a wrong ciphertext shows only in
+what the secret then fails to open.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do; it takes about 5 KiB of the caller's stack.
+
+**OWNERSHIP**
+
+The secret is the caller's: use it, then overwrite it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`KemKeyPair`, `Encapsulate`
+
+**EXAMPLES**
+
+```zig
+var secret: [crypto.KEM_SECRET]u8 = undefined;
+_ = cb.Decapsulate(crypto.KEM_MLKEM768, &private_key, &crypto.Bytes.of(ciphertext), &secret);
+```
+
+## Encapsulate
+
+Makes a secret for the owner of a public key, and the ciphertext that gives it to them: they take it out with Decapsulate, and nobody else can.
+
+**SYNOPSIS**
+
+```zig
+fn Encapsulate(cb: *CryptoBase, kem: u32, public_key: *const Bytes, ciphertext: *anyopaque, secret: *anyopaque) i32
+```
+
+**SINCE**
+
+1.2. LVO -96.
+
+**INPUTS**
+
+- `kem`: KEM_MLKEM768.
+- `public_key`: the owner's, as it came: MLKEM768_PUBLIC bytes.
+- `ciphertext`: room for MLKEM768_CIPHERTEXT bytes (1088).
+- `secret`: room for KEM_SECRET bytes (32).
+
+**RESULT**
+
+CRYPTOERR_OK, with both written; CRYPTOERR_ALGORITHM for another
+`kem`; CRYPTOERR_KEY for a public key of the wrong length or one that
+is no key - a coefficient of its encoding not below q - with nothing
+written.
+
+**BEHAVIOR**
+
+ML-KEM-768 (FIPS 203): the key is checked (7.2), the message m comes
+from RandomBytes, and the secret and the ciphertext from it as
+ML-KEM.Encaps_internal makes them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do; it takes about 4 KiB of the caller's stack.
+
+**OWNERSHIP**
+
+The secret is the caller's: use it, then overwrite it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`KemKeyPair`, `Decapsulate`
+
+**EXAMPLES**
+
+```zig
+var ciphertext: [crypto.MLKEM768_CIPHERTEXT]u8 = undefined;
+var secret: [crypto.KEM_SECRET]u8 = undefined;
+if (cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(their_key), &ciphertext, &secret) != crypto.CRYPTOERR_OK) return error.BadKey;
+```
 
 ## FinishHash
 
@@ -500,6 +636,70 @@ var mac: [crypto.DIGEST_MAX]u8 = undefined;
 _ = cb.InitHmac(&context, crypto.HASH_SHA256, key.ptr, key.len);
 cb.UpdateHmac(&context, message.ptr, message.len);
 const length = cb.FinishHmac(&context, &mac);
+```
+
+## KemKeyPair
+
+Makes a key pair for a key encapsulation mechanism: a public key that others encapsulate secrets to, and the private key that takes them out again.
+
+**SYNOPSIS**
+
+```zig
+fn KemKeyPair(cb: *CryptoBase, kem: u32, public_key: *anyopaque, private_key: *anyopaque) i32
+```
+
+**SINCE**
+
+1.2. LVO -92.
+
+**INPUTS**
+
+- `kem`: KEM_MLKEM768.
+- `public_key`: room for MLKEM768_PUBLIC bytes (1184).
+- `private_key`: room for MLKEM768_PRIVATE bytes (2400).
+
+**RESULT**
+
+CRYPTOERR_OK, with both keys written; CRYPTOERR_ALGORITHM for another
+`kem`, with nothing written.
+
+**BEHAVIOR**
+
+ML-KEM-768 (FIPS 203): the seeds d and z come from RandomBytes, and
+the keys from them as ML-KEM.KeyGen_internal makes them - the public
+key the encoded t̂ and ρ, the private key K-PKE's own, the public key,
+its SHA3-256 and z.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do; it takes about 4 KiB of the caller's stack.
+
+**OWNERSHIP**
+
+Both keys are the caller's; the private key is to be overwritten once
+it is done with.
+
+**NOTES**
+
+The keys are as good as `RandomBytes`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Encapsulate`, `Decapsulate`, `RandomBytes`
+
+**EXAMPLES**
+
+```zig
+var public_key: [crypto.MLKEM768_PUBLIC]u8 = undefined;
+var private_key: [crypto.MLKEM768_PRIVATE]u8 = undefined;
+_ = cb.KemKeyPair(crypto.KEM_MLKEM768, &public_key, &private_key);
 ```
 
 ## MakeKeyPair

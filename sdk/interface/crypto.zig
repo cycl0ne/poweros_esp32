@@ -34,6 +34,9 @@ pub const LVO = struct {
     pub const SharedSecret = libraries.lvo(19);
     pub const VerifySignature = libraries.lvo(20);
     pub const Sign = libraries.lvo(21);
+    pub const KemKeyPair = libraries.lvo(22);
+    pub const Encapsulate = libraries.lvo(23);
+    pub const Decapsulate = libraries.lvo(24);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -57,6 +60,9 @@ pub const Fn = struct {
     pub const SharedSecret = *const fn (*CryptoBase, u32, *const anyopaque, *const crypto.Bytes, *anyopaque) callconv(.c) i32;
     pub const VerifySignature = *const fn (*CryptoBase, u32, *const crypto.PublicKey, *const crypto.Bytes, *const crypto.Bytes) callconv(.c) i32;
     pub const Sign = *const fn (*CryptoBase, u32, *const anyopaque, *const crypto.Bytes, *anyopaque) callconv(.c) i32;
+    pub const KemKeyPair = *const fn (*CryptoBase, u32, *anyopaque, *anyopaque) callconv(.c) i32;
+    pub const Encapsulate = *const fn (*CryptoBase, u32, *const crypto.Bytes, *anyopaque, *anyopaque) callconv(.c) i32;
+    pub const Decapsulate = *const fn (*CryptoBase, u32, *const anyopaque, *const crypto.Bytes, *anyopaque) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -163,5 +169,23 @@ pub const CryptoBase = opaque {
     /// the signature into `signature`.
     pub fn Sign(self: *CryptoBase, algorithm: u32, private_key: *const anyopaque, message: *const crypto.Bytes, signature: *anyopaque) i32 {
         return libraries.call(self, LVO.Sign, Fn.Sign, .{ algorithm, private_key, message, signature });
+    }
+
+    /// A key pair of `kem` (KEM_*): the public key into `public_key`, the
+    /// private key into `private_key`.
+    pub fn KemKeyPair(self: *CryptoBase, kem: u32, public_key: *anyopaque, private_key: *anyopaque) i32 {
+        return libraries.call(self, LVO.KemKeyPair, Fn.KemKeyPair, .{ kem, public_key, private_key });
+    }
+
+    /// A new secret for the owner of `public_key`, into `secret`, and the
+    /// ciphertext that carries it to them, into `ciphertext`.
+    pub fn Encapsulate(self: *CryptoBase, kem: u32, public_key: *const crypto.Bytes, ciphertext: *anyopaque, secret: *anyopaque) i32 {
+        return libraries.call(self, LVO.Encapsulate, Fn.Encapsulate, .{ kem, public_key, ciphertext, secret });
+    }
+
+    /// The secret `ciphertext` carries to the owner of `private_key`, into
+    /// `secret`.
+    pub fn Decapsulate(self: *CryptoBase, kem: u32, private_key: *const anyopaque, ciphertext: *const crypto.Bytes, secret: *anyopaque) i32 {
+        return libraries.call(self, LVO.Decapsulate, Fn.Decapsulate, .{ kem, private_key, ciphertext, secret });
     }
 };

@@ -545,17 +545,22 @@ encrypted, and nobody gets in without logging in.
   terminal, or one command (`ssh machine list SYS:`), which runs with its
   input and output as they are - piped input reaches it, and the client
   ends with the command's return code. No port forwarding, no sftp or scp.
-- **What it speaks**: key exchange curve25519-sha256 with OpenSSH's strict
-  exchange, the host key ssh-ed25519, aes256-gcm or aes128-gcm, no
-  compression. OpenSSH 10 asks for a post-quantum key exchange and warns
-  without one (`WarnWeakCrypto no` silences it).
+- **What it speaks**: key exchange mlkem768x25519-sha256 - ML-KEM-768
+  and X25519 together, which a quantum computer cannot undo, what OpenSSH
+  10 asks for - or curve25519-sha256 for a client without it, each with
+  OpenSSH's strict exchange; the host key ssh-ed25519, aes256-gcm or
+  aes128-gcm, no compression.
+- **The terminal's size**: what the client's window is, it tells, and
+  tells again when the window changes; the console lists Tab's names as
+  wide as it is.
 
 `DEVS:ssh.device` is the protocol (`sdk/devices/ssh.zig`). As with
 telnet.device, a unit is a connection, its number the id the socket was
 released under; the first opener's `SSHCMD_ACCEPT` hands it the host key
 and the logins and is answered once the client has logged in and asked
 for its session - shell or command, the user, the terminal. Then a console
-opens the same unit and reads and writes the session; `SSHCMD_EXIT` tells
+opens the same unit and reads and writes the session, and asks the
+terminal's size with serial.device's `SDCMD_TERMSIZE`; `SSHCMD_EXIT` tells
 the client the exit status and closes the channel.
 
 In QEMU, `-Dssh=2222` forwards a host port to port 22 (qemu-display does

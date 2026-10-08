@@ -289,3 +289,17 @@ pub const PublicKey = extern struct {
     exponent: Bytes = .{},
     point: Bytes = .{},
 };
+
+// --- key encapsulation --------------------------------------------------------
+
+/// The key encapsulation mechanisms, for KemKeyPair, Encapsulate and
+/// Decapsulate. ML-KEM-768 (FIPS 203): a public key - the encapsulation
+/// key - of 1184 bytes, a private key - the decapsulation key, in FIPS
+/// 203's form - of 2400, a ciphertext of 1088, a shared secret of 32.
+pub const KEM_MLKEM768: u32 = 1;
+
+pub const MLKEM768_PUBLIC: u32 = 1184;
+pub const MLKEM768_PRIVATE: u32 = 2400;
+pub const MLKEM768_CIPHERTEXT: u32 = 1088;
+/// Every KEM's shared secret.
+pub const KEM_SECRET: u32 = 32;

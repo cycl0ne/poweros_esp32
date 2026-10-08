@@ -16,6 +16,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ssh = sdk.devices.ssh;
+const serial = sdk.devices.serial;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
@@ -27,7 +28,7 @@ const Connection = @import("connection.zig").Connection;
 
 pub const DEVICE_NAME = _ssh.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "08.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -37,8 +38,8 @@ const DEVICE_VERSION_STRING =
 const vec = exec.libraries.vec;
 
 /// bsdsocket.library's and crypto.library's calls run on the task's
-/// stack, the curves' among them.
-const stack_size = 16384;
+/// stack, the curves' and ML-KEM's among them.
+const stack_size = 24576;
 /// Above the shells it serves, as the other devices' tasks are.
 const task_pri = 5;
 
@@ -46,7 +47,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const base = _ssh.sshBase(dev);
     io.err = 0;
     switch (io.command) {
-        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH, ssh.SSHCMD_ACCEPT, ssh.SSHCMD_EXIT => {
+        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_FLUSH, ssh.SSHCMD_ACCEPT, ssh.SSHCMD_EXIT, serial.SDCMD_TERMSIZE => {
             // It will be replied, so it needs a reply port, and it is not
             // quick I/O.
             if (io.message.reply_port == null) {

@@ -38,7 +38,8 @@ test "mpints as RFC 4251 writes them, and name-lists" {
     writer.mpint(&.{ 0, 0x80 });
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 2, 0, 0x80 }, writer.written());
 
-    try testing.expectEqualStrings("curve25519-sha256", wire.choose("mlkem768x25519-sha256,curve25519-sha256,ext-info-c", connection.kex_names).?);
+    try testing.expectEqualStrings("mlkem768x25519-sha256", wire.choose("mlkem768x25519-sha256,curve25519-sha256,ext-info-c", connection.kex_names).?);
+    try testing.expectEqualStrings("curve25519-sha256", wire.choose("sntrup761x25519-sha512,curve25519-sha256", connection.kex_names).?);
     try testing.expect(wire.choose("diffie-hellman-group14-sha256", connection.kex_names) == null);
     try testing.expect(wire.hasName("a,kex-strict-c-v00@openssh.com", "kex-strict-c-v00@openssh.com"));
     try testing.expect(!wire.hasName("kex-strict-c-v00@openssh.comx", "kex-strict-c-v00@openssh.com"));
@@ -133,6 +134,8 @@ const Client = struct {
     session_id: [32]u8 = undefined,
     server_kexinit: [1024]u8 = undefined,
     server_kexinit_length: usize = 0,
+    /// The exchange it offers: ML-KEM-768 with X25519, or X25519 alone.
+    hybrid: bool = true,
 
     /// What the server has to send, moved over, after it took what it
     /// was given.
@@ -231,7 +234,7 @@ const Client = struct {
         var kexinit = wire.Writer{ .bytes = &bytes };
         kexinit.byte(connection.msg_kexinit);
         kexinit.raw(&([_]u8{7} ** 16));
-        kexinit.string("mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com");
+        kexinit.string(if (client.hybrid) "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com" else "curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com");
         kexinit.string("ssh-ed25519");
         kexinit.string("chacha20-poly1305@openssh.com,aes128-gcm@openssh.com");
         kexinit.string("aes256-gcm@openssh.com");
@@ -254,15 +257,25 @@ const Client = struct {
         var public: [32]u8 = undefined;
         var length: u32 = 32;
         _ = cb.MakeKeyPair(crypto.CURVE_X25519, &private, &public, &length);
-        var init_bytes: [64]u8 = undefined;
+        // Hybrid: the ML-KEM encapsulation key in front of the share.
+        var kem_private: [crypto.MLKEM768_PRIVATE]u8 = undefined;
+        var client_bytes: [crypto.MLKEM768_PUBLIC + 32]u8 = undefined;
+        var client_blob: []const u8 = &public;
+        if (client.hybrid) {
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.KemKeyPair(crypto.KEM_MLKEM768, client_bytes[0..crypto.MLKEM768_PUBLIC], &kem_private));
+            client_bytes[crypto.MLKEM768_PUBLIC..].* = public;
+            client_blob = &client_bytes;
+        }
+        var init_bytes: [1300]u8 = undefined;
         var init = wire.Writer{ .bytes = &init_bytes };
         init.byte(connection.msg_kex_ecdh_init);
-        init.string(&public);
+        init.string(client_blob);
         client.send(init.written());
 
         var reply = wire.Reader{ .bytes = try client.expect(connection.msg_kex_ecdh_reply), .at = 1 };
         const host_blob = reply.string();
-        const server_share = reply.string();
+        const server_blob = reply.string();
+        const server_share = server_blob[server_blob.len - 32 ..];
         var signature_blob = wire.Reader{ .bytes = reply.string() };
         try testing.expect(!reply.bad);
         try testing.expectEqualSlices(u8, &ssh_keys.blob(&client.rig.accept.host_public), host_blob);
@@ -274,7 +287,19 @@ const Client = struct {
         try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SharedSecret(crypto.CURVE_X25519, &private, &crypto.Bytes.of(server_share), &secret));
         var shared_bytes: [37]u8 = undefined;
         var shared = wire.Writer{ .bytes = &shared_bytes };
-        shared.mpint(&secret);
+        if (client.hybrid) {
+            try testing.expectEqual(@as(usize, crypto.MLKEM768_CIPHERTEXT + 32), server_blob.len);
+            var kem_secret: [32]u8 = undefined;
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.Decapsulate(crypto.KEM_MLKEM768, &kem_private, &crypto.Bytes.of(server_blob[0..crypto.MLKEM768_CIPHERTEXT]), &kem_secret));
+            var combined: [32]u8 = undefined;
+            var both = Sha256.init(.{});
+            both.update(&kem_secret);
+            both.update(&secret);
+            both.final(&combined);
+            shared.string(&combined);
+        } else {
+            shared.mpint(&secret);
+        }
 
         var hash = Sha256.init(.{});
         hashString(&hash, client_version);
@@ -282,8 +307,8 @@ const Client = struct {
         hashString(&hash, kexinit.written());
         hashString(&hash, client.server_kexinit[0..client.server_kexinit_length]);
         hashString(&hash, host_blob);
-        hashString(&hash, &public);
-        hashString(&hash, server_share);
+        hashString(&hash, client_blob);
+        hashString(&hash, server_blob);
         hash.update(shared.written());
         var exchange_hash: [32]u8 = undefined;
         hash.final(&exchange_hash);
@@ -567,6 +592,18 @@ test "a login by key: asked about, then signed; a command" {
     try testing.expectEqualStrings("list sys:", std.mem.sliceTo(&server.command, 0));
 }
 
+test "a client without ML-KEM gets curve25519-sha256" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    const client = try newClient(rig);
+    defer testing.allocator.destroy(client);
+    client.hybrid = false;
+    try client.connect();
+    try testing.expect(!rig.server.hybrid);
+    client.passwordLogin(password);
+    _ = try client.expect(connection.msg_userauth_success);
+}
+
 test "six failed logins end the connection" {
     const rig = try Rig.init();
     defer rig.deinit();
@@ -585,6 +622,7 @@ test "the client exchanges keys again in the middle; a packet tampered with ends
     defer testing.allocator.destroy(client);
     const server = rig.server;
     try client.connect();
+    try testing.expect(server.hybrid);
     client.passwordLogin(password);
     _ = try client.expect(connection.msg_userauth_success);
     try client.session("shell", "");

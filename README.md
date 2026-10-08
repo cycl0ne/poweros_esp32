@@ -124,7 +124,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
   multicast with IGMP and MLD) on QEMU's Ethernet, the chip's Wi-Fi
   (WPA2) and SLIP over a serial line, and a shell over Telnet or SSH
-  (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys);
+  (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys and a
+  post-quantum key exchange);
   `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
   `https://`. See the [network guide](sdk/docs/guides/network.md).
 - **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
@@ -135,7 +136,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio,
   Telnet, SSH; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
-  ECDSA and Ed25519 signatures.
+  ECDSA and Ed25519 signatures, ML-KEM-768.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 

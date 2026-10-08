@@ -21,6 +21,11 @@
 //!   SDCMD_QUERY      io_Actual: the bytes waiting; io_Status: the lines.
 //!   SDCMD_BREAK      holds the line low for io_BrkTime µs.
 //!   SDCMD_SETPARAMS  sets the parameters in the IOExtSer.
+//!   SDCMD_TERMSIZE   io_Actual: the columns of the terminal at the line's
+//!                    other end, io_Offset: its rows - for a line that
+//!                    knows them, as ssh.device does from its client;
+//!                    serial.device's UARTs do not, and answer it with
+//!                    IOERR_NOCMD.
 //!
 //! A request that has to wait needs a reply port; without one it fails
 //! with IOERR_NOREPLYPORT.
@@ -123,6 +128,7 @@ pub const IO_STATF_XOFFREAD: u16 = 1 << IO_STATB_XOFFREAD;
 pub const SDCMD_QUERY: u16 = exec.CMD_NONSTD;
 pub const SDCMD_BREAK: u16 = exec.CMD_NONSTD + 1;
 pub const SDCMD_SETPARAMS: u16 = exec.CMD_NONSTD + 2;
+pub const SDCMD_TERMSIZE: u16 = exec.CMD_NONSTD + 3;
 
 /// io_Error values of serial.device (serial.h's SerErr_*).
 pub const SerErr_DevBusy: i8 = 1;

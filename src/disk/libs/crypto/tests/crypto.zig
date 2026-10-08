@@ -360,3 +360,109 @@ test "RandomBytes fills what it is given, and no more" {
     try testing.expect(differs);
     for (buffer[32..]) |byte| try testing.expectEqual(@as(u8, 0xAA), byte);
 }
+
+// --- Keccak and ML-KEM ----------------------------------------------------------
+//
+// The KEM's expected values come from a reference written from FIPS 203
+// and checked against OpenSSL 3.6's ML-KEM-768 (its keys from the same
+// seeds, and its decapsulation of the reference's ciphertexts); the hashes
+// from Python's hashlib.
+
+const keccak = @import("../kem/keccak.zig");
+const _kem = @import("../kem/_kem.zig");
+
+fn sha256Of(bytes: []const u8) [32]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    return digest;
+}
+
+test "SHA3-256, SHA3-512, SHAKE128 and SHAKE256 as FIPS 202 has them" {
+    var d256: [32]u8 = undefined;
+    keccak.digest256(&.{""}, &d256);
+    try testing.expectEqual(hex("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"), d256);
+    keccak.digest256(&.{ "a", "bc" }, &d256);
+    try testing.expectEqual(hex("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"), d256);
+    var d512: [64]u8 = undefined;
+    keccak.digest512(&.{"abc"}, &d512);
+    try testing.expectEqual(hex("b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0"), d512);
+    // Two blocks of input for SHA3-512's rate of 72.
+    const long: [200]u8 = @splat(0xa3);
+    keccak.digest512(&.{&long}, &d512);
+    try testing.expectEqual(hex("e76dfad22084a8b1467fcf2ffa58361bec7628edf5f3fdc0e4805dc48caeeca81b7c13c30adf52a3659584739a2df46be589c51ca1a4a8416df6545a1ce8ba00"), d512);
+    var shake: keccak.Sponge = keccak.Sponge.shake(keccak.rate_shake128);
+    shake.absorb("abc");
+    shake.finish();
+    var out32: [32]u8 = undefined;
+    shake.squeeze(&out32);
+    try testing.expectEqual(hex("5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8"), out32);
+    // Squeezed past one block, in pieces.
+    shake = keccak.Sponge.shake(keccak.rate_shake128);
+    shake.absorb(&long);
+    shake.finish();
+    var out400: [400]u8 = undefined;
+    shake.squeeze(out400[0..7]);
+    shake.squeeze(out400[7..300]);
+    shake.squeeze(out400[300..]);
+    try testing.expectEqual(hex("0b8283799c358aa6db89a3ee94005439756bd4850a971347dee32352727b220b"), sha256Of(&out400));
+    var out64: [64]u8 = undefined;
+    keccak.shake256(&.{"abc"}, &out64);
+    try testing.expectEqual(hex("483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4"), out64);
+}
+
+test "ML-KEM-768: keys, a ciphertext and its secret from fixed seeds, and a tampered one" {
+    var seeds: [64]u8 = undefined;
+    for (&seeds, 0..) |*byte, index| byte.* = @intCast(index);
+    var ek: [_kem.public_bytes]u8 = undefined;
+    var dk: [_kem.private_bytes]u8 = undefined;
+    _kem.keyGen(seeds[0..32], seeds[32..64], &ek, &dk);
+    try testing.expectEqualSlices(u8, &hex("298aa10d423c8dda"), ek[0..8]);
+    try testing.expectEqual(hex("0b7934c83125c788995e2ba6bd761e33046b3e40571be53e023309a29f398cc9"), sha256Of(&ek));
+    try testing.expectEqual(hex("dac268bde6a8dd238e9887117d6b664e7a7a9350ad6b7c08a948e504809572a5"), sha256Of(&dk));
+    try testing.expect(_kem.keyValid(&ek));
+    try testing.expect(_kem.privateValid(&dk));
+
+    var m: [32]u8 = undefined;
+    for (&m, 0..) |*byte, index| byte.* = @intCast(100 + index);
+    var c: [_kem.ciphertext_bytes]u8 = undefined;
+    var secret: [32]u8 = undefined;
+    _kem.encapsulate(&ek, &m, &c, &secret);
+    try testing.expectEqual(hex("57fe559432dbb3c5547c73f155820622f7efdd532e4330360a36ebf7d2ddec55"), sha256Of(&c));
+    const expected = hex("c5a74110c158acbaf9c01deb86fa6cc10c14533feda54bec1fdd000d61f07e4e");
+    try testing.expectEqual(expected, secret);
+    var taken: [32]u8 = undefined;
+    _kem.decapsulate(&dk, &c, &taken);
+    try testing.expectEqual(expected, taken);
+    // One bit of the ciphertext turned: the secret from z instead.
+    c[5] ^= 1;
+    _kem.decapsulate(&dk, &c, &taken);
+    try testing.expectEqual(hex("29cc94733ef520f7254d378103a269d52e0417606ae5e707355c75fa7bad93de"), taken);
+}
+
+test "KemKeyPair, Encapsulate, Decapsulate: the same secret both ends, and what is refused" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var public_key: [crypto.MLKEM768_PUBLIC]u8 = undefined;
+    var private_key: [crypto.MLKEM768_PRIVATE]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.KemKeyPair(crypto.KEM_MLKEM768, &public_key, &private_key));
+    var ciphertext: [crypto.MLKEM768_CIPHERTEXT]u8 = undefined;
+    var sent: [crypto.KEM_SECRET]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(&public_key), &ciphertext, &sent));
+    var received: [crypto.KEM_SECRET]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.Decapsulate(crypto.KEM_MLKEM768, &private_key, &crypto.Bytes.of(&ciphertext), &received));
+    try testing.expectEqual(sent, received);
+
+    try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.KemKeyPair(7, &public_key, &private_key));
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(public_key[0..100]), &ciphertext, &sent));
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.Decapsulate(crypto.KEM_MLKEM768, &private_key, &crypto.Bytes.of(ciphertext[0..1000]), &received));
+    // A coefficient of 4095 is no key.
+    var bad_key = public_key;
+    bad_key[0] = 0xFF;
+    bad_key[1] |= 0x0F;
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(&bad_key), &ciphertext, &sent));
+    // A private key whose public half was changed.
+    var bad_private = private_key;
+    bad_private[1152 + 10] ^= 1;
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.Decapsulate(crypto.KEM_MLKEM768, &bad_private, &crypto.Bytes.of(&ciphertext), &received));
+}

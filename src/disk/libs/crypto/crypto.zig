@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! crypto.library: random bytes, SHA hashes, HMAC, AES in ECB, CBC, CTR
-//! and GCM, and modular exponentiation, on the disk in LIBS:.
+//! crypto.library: random bytes, SHA hashes, HMAC, HKDF, AES in ECB,
+//! CBC, CTR and GCM, modular exponentiation, key agreement and signatures
+//! on X25519, Ed25519, P-256 and P-384, RSA signatures, and key
+//! encapsulation with ML-KEM-768, on the disk in LIBS:.
 //!
 //! The work is done by the chip's engines - SHA, AES and RSA's big-number
 //! unit - fed by the CPU; the library adds the modes, the padding and the
@@ -11,7 +13,9 @@
 //!
 //! The jump table is crypto_lvo.zig, the ROM tag, init and expunge
 //! crypto_init.zig, the base crypto_base.zig. Each call is a file under
-//! its area: `random/`, `hash/`, `hmac/`, `cipher/`, `gcm/`, `bignum/`.
+//! its area: `random/`, `hash/`, `hmac/`, `cipher/`, `gcm/`, `bignum/`,
+//! `kdf/`, `curve/`, `signature/` (on `math/`), and `kem/` - ML-KEM and
+//! the Keccak it is built on, done by the CPU alone.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

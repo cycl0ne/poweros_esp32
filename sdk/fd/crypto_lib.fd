@@ -52,4 +52,13 @@ i32 VerifySignature(u32 algorithm, *const crypto.PublicKey key, *const crypto.By
 /// `message` signed with `private_key`, with `algorithm` (SIG_ED25519):
 /// the signature into `signature`.
 i32 Sign(u32 algorithm, *const anyopaque private_key, *const crypto.Bytes message, *anyopaque signature)
+/// A key pair of `kem` (KEM_*): the public key into `public_key`, the
+/// private key into `private_key`.
+i32 KemKeyPair(u32 kem, *anyopaque public_key, *anyopaque private_key)
+/// A new secret for the owner of `public_key`, into `secret`, and the
+/// ciphertext that carries it to them, into `ciphertext`.
+i32 Encapsulate(u32 kem, *const crypto.Bytes public_key, *anyopaque ciphertext, *anyopaque secret)
+/// The secret `ciphertext` carries to the owner of `private_key`, into
+/// `secret`.
+i32 Decapsulate(u32 kem, *const anyopaque private_key, *const crypto.Bytes ciphertext, *anyopaque secret)
 ##end

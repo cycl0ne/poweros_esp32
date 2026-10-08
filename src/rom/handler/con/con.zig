@@ -62,8 +62,9 @@
 //! current directory, borrowed for the look - with no requester for a
 //! volume that is not there. Only while a READ waits: a program that is
 //! running may be changing its directory, and nothing would read the line
-//! yet anyway. A list of names is as wide as the window's console, or 80
-//! characters on a serial terminal, whose width nobody tells.
+//! yet anyway. A list of names is as wide as the window's console, or as
+//! the terminal at a line's other end when the line knows it
+//! (SDCMD_TERMSIZE: an SSH client's window), or 80 characters.
 //!
 //! **A stream that ends.** A device read answered with IOERR_ENDOFSTREAM
 //! - a network connection whose peer has gone, or whose client sent the
@@ -117,7 +118,7 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 2;
+const HANDLER_REVISION = 3;
 const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -567,15 +568,24 @@ const DeviceIo = struct {
         return true;
     }
 
-    /// How wide the terminal is: the window's console as it is now, 80
-    /// characters on a port.
+    /// How wide the terminal is: the window's console as it is now; on a
+    /// line, what the line knows of the terminal at its other end
+    /// (SDCMD_TERMSIZE - an SSH client's window); else 80 characters.
     fn columns(io: *DeviceIo) usize {
         const u = &io.units[0];
-        if (io.inWindow() and u.open) {
+        if (!u.open) return 80;
+        if (io.inWindow()) {
             if (u.read.io_ser.req.unit) |unit| {
                 const console: *const con.ConUnit = @ptrCast(@alignCast(unit));
                 if (console.max_x > 0) return @intCast(console.max_x + 1);
             }
+            return 80;
+        }
+        var ask = u.write;
+        ask.io_ser.req.command = serial.SDCMD_TERMSIZE;
+        ask.io_ser.actual = 0;
+        if (io.sys.DoIO(&ask.io_ser.req) == 0 and ask.io_ser.actual >= 20 and ask.io_ser.actual <= 1000) {
+            return @intCast(ask.io_ser.actual);
         }
         return 80;
     }

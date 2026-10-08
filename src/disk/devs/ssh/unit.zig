@@ -24,6 +24,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const ssh = sdk.devices.ssh;
+const serial = sdk.devices.serial;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
@@ -141,6 +142,13 @@ fn take(sys: *ExecBase, unit: *Unit, io: *exec.IOStdReq) void {
         },
         exec.CMD_FLUSH => {
             abortList(sys, unit, &unit.reads);
+            answer(sys, io, 0);
+        },
+        serial.SDCMD_TERMSIZE => {
+            const conn = unit.connection;
+            if (conn.columns == 0) return answer(sys, io, exec.IOERR_NOCMD);
+            io.actual = conn.columns;
+            io.offset = conn.rows;
             answer(sys, io, 0);
         },
         else => answer(sys, io, exec.IOERR_NOCMD),

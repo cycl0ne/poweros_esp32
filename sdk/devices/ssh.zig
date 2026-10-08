@@ -9,7 +9,8 @@
 //! OpenDevice takes the socket with ObtainSocket; later ones - the
 //! console's - share the unit, and the last CloseDevice closes the
 //! connection. Requests are IOStdReqs (an IOExtSer, which a console opens
-//! with, is one too).
+//! with, is one too); the device's own commands are numbered clear of
+//! serial.device's, which a console may ask.
 //!
 //!   SSHCMD_ACCEPT  io_Data: an SshAccept, the host key and who may log
 //!                  in. The protocol starts: the version, the key
@@ -27,10 +28,15 @@
 //!                  connection has gone.
 //!   SSHCMD_EXIT    io_Length: the exit status. The status is told, the
 //!                  channel ended and closed; the client goes.
+//!   SDCMD_TERMSIZE io_Actual, io_Offset: the client's terminal's columns
+//!                  and rows, as it said them and as its window changed;
+//!                  IOERR_NOCMD when it asked for no terminal.
 //!   CMD_FLUSH      every read waiting is answered with IOERR_ABORTED.
 //!
-//! **What it speaks**: key exchange curve25519-sha256 (RFC 8731), with
-//! OpenSSH's strict key exchange; host key ssh-ed25519 (RFC 8709);
+//! **What it speaks**: key exchange mlkem768x25519-sha256 - ML-KEM-768
+//! with X25519, safe from a quantum computer - or curve25519-sha256 (RFC
+//! 8731), with OpenSSH's strict key exchange; host key ssh-ed25519 (RFC
+//! 8709);
 //! aes256-gcm@openssh.com and aes128-gcm@openssh.com (RFC 5647); no
 //! compression. Logins by password and by ssh-ed25519 key. One session
 //! channel per connection, with a shell or one command; no forwarding,
@@ -40,9 +46,9 @@ const exec = @import("../libs/exec/exec.zig");
 
 pub const SSHNAME = "ssh.device";
 
-/// The device's own commands.
-pub const SSHCMD_ACCEPT: u16 = exec.CMD_NONSTD + 0;
-pub const SSHCMD_EXIT: u16 = exec.CMD_NONSTD + 1;
+/// The device's own commands, past serial.device's.
+pub const SSHCMD_ACCEPT: u16 = exec.CMD_NONSTD + 16;
+pub const SSHCMD_EXIT: u16 = exec.CMD_NONSTD + 17;
 
 /// SshAccept's `kind`: an interactive shell, or one command.
 pub const SSHSESSION_SHELL: u32 = 1;

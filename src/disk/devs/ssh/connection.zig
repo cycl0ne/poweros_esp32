@@ -7,11 +7,14 @@
 //! **The transport.** The version lines first, each end's sent at once;
 //! then packets, each its length, a padding length, the message and at
 //! least four bytes of random padding. The key exchange is
-//! curve25519-sha256 (RFC 8731): the exchange hash H over both version
-//! lines, both KEXINIT messages, the host key, both X25519 shares and the
-//! shared secret K; H signed with the Ed25519 host key; the first H the
-//! session id; each direction's key and nonce made from K, H, a letter and
-//! the session id (RFC 4253, 7.2). From NEWKEYS on, packets are sealed
+//! mlkem768x25519-sha256 when the client has it - ML-KEM-768 and X25519
+//! together: the client's encapsulation key and X25519 share, our ML-KEM
+//! ciphertext and X25519 share, and K the SHA-256 of the two secrets, as a
+//! string - or else curve25519-sha256 (RFC 8731), K the X25519 secret as
+//! an mpint. The exchange hash H over both version lines, both KEXINIT
+//! messages, the host key, both sides' shares and K; H signed with the
+//! Ed25519 host key; the first H the session id; each direction's key and
+//! nonce made from K, H, a letter and the session id (RFC 4253, 7.2). From NEWKEYS on, packets are sealed
 //! with AES-GCM (RFC 5647): the length stays in clear and is
 //! authenticated, the rest is encrypted, a 16-byte tag follows, and the
 //! nonce's last eight bytes count the packets. With OpenSSH's strict key
@@ -85,7 +88,9 @@ pub const reason_no_more_auth_methods: u32 = 14;
 
 /// What this end offers: the key exchanges, and among them the mark that
 /// it does the strict exchange.
-pub const kex_names = "curve25519-sha256,curve25519-sha256@libssh.org";
+pub const kex_names = hybrid_kex ++ ",curve25519-sha256,curve25519-sha256@libssh.org";
+/// ML-KEM-768 with X25519, the exchange a quantum computer cannot undo.
+pub const hybrid_kex = "mlkem768x25519-sha256";
 pub const kex_algorithms = kex_names ++ ",kex-strict-s-v00@openssh.com";
 pub const host_key_algorithms = ssh_keys.key_type;
 pub const ciphers = "aes256-gcm@openssh.com,aes128-gcm@openssh.com";
@@ -163,6 +168,8 @@ pub const Connection = struct {
     exchange: crypto.HashContext = .{},
     /// The key length the KEXINITs chose for what we send.
     sending_key_length: u32 = 32,
+    /// The exchange chosen is the hybrid one.
+    hybrid: bool = false,
     strict: bool = false,
     /// The first exchange is done; the next packet from a wrong guess is
     /// to be dropped.
@@ -511,6 +518,7 @@ pub const Connection = struct {
         {
             return conn.disconnect(reason_key_exchange_failed, "no algorithms in common");
         }
+        conn.hybrid = wire.same(kex_name.?, hybrid_kex);
         conn.next_receiving.key_length = if (wire.same(cipher_in.?, "aes256-gcm@openssh.com")) 32 else 16;
         conn.sending_key_length = if (wire.same(cipher_out.?, "aes256-gcm@openssh.com")) 32 else 16;
         conn.skip_guess = guessed and (!wire.same(wire.first(kex_list), kex_name.?) or !wire.same(wire.first(host_key_list), host_key_algorithms));
@@ -523,16 +531,19 @@ pub const Connection = struct {
         conn.kex = .exchanging;
     }
 
-    /// The client's share: ours made, K and H, H signed, the reply and
+    /// The client's shares: ours made, K and H, H signed, the reply and
     /// NEWKEYS sent, and our direction's keys on.
     fn ecdhInit(conn: *Connection, reader: *Reader) void {
         if (conn.kex != .exchanging) return conn.disconnect(reason_protocol_error, "unexpected KEX_ECDH_INIT");
-        const client_share = reader.string();
+        // Hybrid: the ML-KEM encapsulation key, then the X25519 share.
+        const client_blob = reader.string();
         if (conn.skip_guess) {
             conn.skip_guess = false;
             return;
         }
-        if (reader.bad or client_share.len != 32) return conn.disconnect(reason_key_exchange_failed, "bad share");
+        const blob_length: usize = if (conn.hybrid) crypto.MLKEM768_PUBLIC + 32 else 32;
+        if (reader.bad or client_blob.len != blob_length) return conn.disconnect(reason_key_exchange_failed, "bad share");
+        const client_share = client_blob[client_blob.len - 32 ..];
         const cb = conn.cb;
         var private: [32]u8 = undefined;
         var public: [32]u8 = undefined;
@@ -547,13 +558,35 @@ pub const Connection = struct {
         }
         var shared_bytes: [37]u8 = undefined;
         var shared = Writer{ .bytes = &shared_bytes };
-        shared.mpint(&secret);
         defer @memset(&shared_bytes, 0);
+        // What we answer with: the ML-KEM ciphertext, then our X25519
+        // share; or the share alone.
+        var server_bytes: [crypto.MLKEM768_CIPHERTEXT + 32]u8 = undefined;
+        var server_blob: []const u8 = &public;
+        if (conn.hybrid) {
+            var kem_secret: [crypto.KEM_SECRET]u8 = undefined;
+            defer @memset(&kem_secret, 0);
+            if (cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(client_blob[0..crypto.MLKEM768_PUBLIC]), &server_bytes, &kem_secret) != crypto.CRYPTOERR_OK) {
+                return conn.disconnect(reason_key_exchange_failed, "bad ML-KEM key");
+            }
+            server_bytes[crypto.MLKEM768_CIPHERTEXT..].* = public;
+            server_blob = &server_bytes;
+            var combined: [32]u8 = undefined;
+            defer @memset(&combined, 0);
+            var context: crypto.HashContext = .{};
+            _ = cb.InitHash(&context, crypto.HASH_SHA256);
+            cb.UpdateHash(&context, &kem_secret, kem_secret.len);
+            cb.UpdateHash(&context, &secret, secret.len);
+            _ = cb.FinishHash(&context, &combined);
+            shared.string(&combined);
+        } else {
+            shared.mpint(&secret);
+        }
 
         const host_blob = ssh_keys.blob(&conn.host_public);
         conn.hashString(&host_blob);
-        conn.hashString(client_share);
-        conn.hashString(&public);
+        conn.hashString(client_blob);
+        conn.hashString(server_blob);
         cb.UpdateHash(&conn.exchange, shared.written().ptr, @intCast(shared.at));
         var exchange_hash: [32]u8 = undefined;
         _ = cb.FinishHash(&conn.exchange, &exchange_hash);
@@ -563,11 +596,11 @@ pub const Connection = struct {
         if (cb.Sign(crypto.SIG_ED25519, &conn.host_seed, &crypto.Bytes.of(&exchange_hash), &signature) != crypto.CRYPTOERR_OK) {
             return conn.disconnect(reason_key_exchange_failed, "cannot sign");
         }
-        var reply_bytes: [256]u8 = undefined;
+        var reply_bytes: [1400]u8 = undefined;
         var reply = Writer{ .bytes = &reply_bytes };
         reply.byte(msg_kex_ecdh_reply);
         reply.string(&host_blob);
-        reply.string(&public);
+        reply.string(server_blob);
         var signature_blob_bytes: [4 + 11 + 4 + 64]u8 = undefined;
         var signature_blob = Writer{ .bytes = &signature_blob_bytes };
         signature_blob.string(ssh_keys.key_type);
@@ -593,12 +626,13 @@ pub const Connection = struct {
         conn.kex = .finishing;
     }
 
-    /// RFC 4253, 7.2: HASH(K || H || letter || session_id), as many bytes
-    /// of it as `into` holds (no key here is longer than one SHA-256).
-    fn derive(conn: *Connection, shared_mpint: []const u8, exchange_hash: *const [32]u8, letter: u8, into: []u8) void {
+    /// RFC 4253, 7.2: HASH(K || H || letter || session_id), K as the
+    /// exchange encodes it, as many bytes of it as `into` holds (no key
+    /// here is longer than one SHA-256).
+    fn derive(conn: *Connection, shared_encoded: []const u8, exchange_hash: *const [32]u8, letter: u8, into: []u8) void {
         var context: crypto.HashContext = .{};
         _ = conn.cb.InitHash(&context, crypto.HASH_SHA256);
-        conn.cb.UpdateHash(&context, shared_mpint.ptr, @intCast(shared_mpint.len));
+        conn.cb.UpdateHash(&context, shared_encoded.ptr, @intCast(shared_encoded.len));
         conn.cb.UpdateHash(&context, exchange_hash, 32);
         conn.cb.UpdateHash(&context, &letter, 1);
         conn.cb.UpdateHash(&context, &conn.session_id, 32);
