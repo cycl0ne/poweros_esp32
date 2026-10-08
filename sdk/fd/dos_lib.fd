@@ -462,4 +462,11 @@ void UnLoadSeg(?*dos.SegList seg_list)
 /// the handler's port, or null. A code it has no question for is not
 /// asked about and answers true.
 bool ErrorReport(i32 code, u32 report_type, usize arg, ?*exec.MsgPort device)
+// Notification
+/// Watch `request`'s name: the program is told of every change, by a
+/// message or a signal, until EndNotify. False with IoErr() when the
+/// handler cannot watch.
+bool StartNotify(*dos.notify.NotifyRequest request)
+/// End a watch StartNotify began.
+void EndNotify(*dos.notify.NotifyRequest request)
 ##end

@@ -196,6 +196,14 @@ test "the cache keeps an answer for its time, within its bounds" {
     try testing.expectEqual(@as(i32, 0), sb.GetHostName(&name, name.len));
     try testing.expectEqualStrings("bench", std.mem.sliceTo(&name, 0));
     try testing.expectEqual(@as(i32, -1), sb.GetHostName(&name, 3));
+    // The file changed, as the stack task is told: its name wins over
+    // SetHostName's; a file that names none changes nothing.
+    _names.takeHostName(stack, "# changed\nboard2\n");
+    try testing.expectEqual(@as(i32, 0), sb.GetHostName(&name, name.len));
+    try testing.expectEqualStrings("board2", std.mem.sliceTo(&name, 0));
+    _names.takeHostName(stack, "# nothing\n");
+    try testing.expectEqual(@as(i32, 0), sb.GetHostName(&name, name.len));
+    try testing.expectEqualStrings("board2", std.mem.sliceTo(&name, 0));
     sys.CloseLibrary(sb.lib());
     _ = sys.RemLibrary(lib);
     try utility_library.tearDown(kub);

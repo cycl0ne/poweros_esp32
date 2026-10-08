@@ -13,6 +13,10 @@
 //! volume. A medium with no file system on it is not an error: the handler
 //! stays, answers ERROR_NOT_A_DOS_DISK, and waits for ACTION_FORMAT, so the
 //! medium can be formatted from the running system.
+//!
+//! Notification's watchers (`dos.notify.Watchers`) are the process's: the
+//! file system tells them of its changes, and their replies come to a
+//! port of their own, which the process waits on beside its packets.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -29,8 +33,8 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 1;
-const BUILD_DATE = "27.9.2026";
+const HANDLER_REVISION = 2;
+const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -131,6 +135,8 @@ const State = struct {
     /// The volume node is to be made again - after a format - once the
     /// device list can be had.
     renew: bool = false,
+    /// Who watches what, when there was memory for its port.
+    watchers: dos.notify.Watchers = undefined,
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -174,6 +180,7 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
 
     st.fs = FileSystem.init(&st.media, &me.msg_port);
     st.fs.buffers = st.buffers;
+    if (st.watchers.init(sb)) st.fs.watchers = &st.watchers;
     if (st.fs.mount()) |_| {
         st.mounted = true;
         addVolume(sb, dl, st);
@@ -185,10 +192,18 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
     if (node) |n| n.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
-    while (dl.WaitPkt()) |pkt| {
-        const reply = serve(st, pkt);
-        dl.ReplyPkt(pkt, reply.res1, reply.res2);
-        if (st.renew) renewVolume(sb, dl, st);
+    // Packets on the process's port; the watchers' replies on theirs.
+    const packets = &me.msg_port;
+    const replies: u32 = if (st.fs.watchers) |watchers| watchers.signals() else 0;
+    while (true) {
+        if (st.fs.watchers) |watchers| watchers.collect();
+        while (sb.GetMsg(packets)) |message| {
+            const pkt = DosPacket.fromMessage(message);
+            const reply = serve(st, pkt);
+            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+            if (st.renew) renewVolume(sb, dl, st);
+        }
+        _ = sb.Wait(packets.sigMask() | replies);
     }
 }
 

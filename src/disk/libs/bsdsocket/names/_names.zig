@@ -52,23 +52,53 @@ pub fn loadHostName(sb: *SocketBase) void {
     // A look before the file is read; whether it is set is decided again
     // under the stack's lock below.
     if (@as(*volatile u32, &stack.hostname_set).* != 0) return;
-    const sys = sb.sys_base;
-    // Room for a comment above the name as long as the file's own.
-    var text: [1024]u8 = undefined;
-    const got: usize = read: {
-        const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse break :read 0;
-        defer sys.CloseLibrary(lib);
-        const dl: *DosBase = @ptrCast(lib);
-        const file = dl.Open(bsd.HOSTNAME_FILE, dos.MODE_OLDFILE) orelse break :read 0;
-        defer _ = dl.Close(file);
-        const length = dl.Read(file, &text, text.len);
-        break :read if (length > 0) @intCast(length) else 0;
-    };
+    var text: [hostname_file_max]u8 = undefined;
+    const got = readHostNameFile(stack, &text);
     const held = _lock.take(stack);
     defer _lock.give(stack, held);
     if (stack.hostname_set != 0) return;
     stack.hostname_set = 1;
     const name = hostNameIn(text[0..got]) orelse return;
+    setName(stack, name);
+}
+
+/// The most of the hostname file read: room for a comment above the name
+/// as long as the file's own.
+const hostname_file_max = 1024;
+
+/// The hostname file's text into `into`: how many bytes; 0 with no file.
+/// Without the stack's lock: it waits for the file.
+fn readHostNameFile(stack: *StackBase, into: *[hostname_file_max]u8) usize {
+    const sys = stack.sys_base;
+    const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return 0;
+    defer sys.CloseLibrary(lib);
+    const dl: *DosBase = @ptrCast(lib);
+    const file = dl.Open(bsd.HOSTNAME_FILE, dos.MODE_OLDFILE) orelse return 0;
+    defer _ = dl.Close(file);
+    const length = dl.Read(file, into, into.len);
+    return if (length > 0) @intCast(length) else 0;
+}
+
+/// The hostname file changed: its name taken, in the place of the one in
+/// force, SetHostName's too. On the stack task, which watches the file. A
+/// file gone, or one that names no name, changes nothing.
+pub fn reloadHostName(stack: *StackBase) void {
+    var text: [hostname_file_max]u8 = undefined;
+    const got = readHostNameFile(stack, &text);
+    const held = _lock.take(stack);
+    defer _lock.give(stack, held);
+    takeHostName(stack, text[0..got]);
+}
+
+/// The name in a hostname file's `text` in force, if it names one. Under
+/// the lock.
+pub fn takeHostName(stack: *StackBase, text: []const u8) void {
+    const name = hostNameIn(text) orelse return;
+    stack.hostname_set = 1;
+    setName(stack, name);
+}
+
+fn setName(stack: *StackBase, name: []const u8) void {
     @memcpy(stack.hostname[0..name.len], name);
     @memset(stack.hostname[name.len..], 0);
 }

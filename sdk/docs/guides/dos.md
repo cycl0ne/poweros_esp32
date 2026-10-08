@@ -22,6 +22,7 @@ command, from `build.zig` to the shell.
 - [Processes](#processes)
 - [Running commands and shells](#running-commands-and-shells)
 - [Variables](#variables)
+- [Being told of a change](#being-told-of-a-change)
 - [The device list and assigns](#the-device-list-and-assigns)
 - [Handlers and packets](#handlers-and-packets)
 - [Disks at boot](#disks-at-boot)
@@ -482,6 +483,60 @@ if (dl.GetVar("Editor", &value, value.len, dos.LV_VAR) >= 0) {
 In the shell, `Set`, `Get` and `Unset` work on local variables;
 `Setenv`, `Getenv` and `Unsetenv` on global ones.
 
+## Being told of a change
+
+A program that keeps something a file says - a setting in `ENV:` or
+`ENVARC:` - can be told when the file changes, instead of reading it
+again and again. It fills in a `dos.notify.NotifyRequest` and hands it
+to `StartNotify`; the request is the program's, and stays where it is
+until `EndNotify`.
+
+```zig
+const notify = dos.notify;
+var request: notify.NotifyRequest = .{
+    .name = "ENVARC:Sys/net/hostname",
+    .flags = notify.NRF_SEND_MESSAGE,
+    .port = port,
+};
+if (!dl.StartNotify(&request)) return; // IoErr(): the handler cannot watch
+defer dl.EndNotify(&request);
+while (true) {
+    _ = sys.WaitPort(port);
+    while (sys.GetMsg(port)) |message| {
+        sys.ReplyMsg(message); // a NotifyMessage; its `request` says which
+        // ... read the file again
+    }
+}
+```
+
+- **How it is told**: `NRF_SEND_MESSAGE` puts a `NotifyMessage` on
+  `port` - `class` `NOTIFY_CLASS`, `code` `NOTIFY_CODE`, `request` the
+  request - which the program replies; `NRF_SEND_SIGNAL` signals `task`
+  with `signal_number`, for a program that only needs to know that
+  something changed. With `NRF_WAIT_REPLY` no second message comes while
+  one is out, and a change meanwhile is told once it is replied.
+  `NRF_NOTIFY_INITIAL` tells once at the start when the object is there.
+- **What is a change**: a file - a handle that wrote to it closed (not
+  each write, so a file half written is never reported), deleted,
+  renamed away or onto, its protection, comment, date or owner set. A
+  directory - an entry in it made, deleted, renamed, or closed after
+  writing.
+- **A name that is not there yet** is watched until it appears; a watch
+  follows the object it found until that is deleted or renamed, and then
+  waits for the name again.
+- **Where**: dos writes the handler's own path into `full_name` - an
+  assign's directory written out, so `ENV:Sys/x` is `Ram Disk:ENV/Sys/x`
+  - and the handler keeps the request. RAM: and the flash file system
+  watch, so `ENV:` and `ENVARC:` can be watched; `StartNotify` fails with
+  `ERROR_ACTION_NOT_KNOWN` on a handler that does not. Of a
+  multi-directory assign, the first directory is watched.
+- **The end**: `EndNotify` takes back the request's messages still on the
+  port; reply the ones already taken, before or after.
+
+`C:test/Notify NAME/M` watches names and prints each change.
+bsdsocket.library watches `ENVARC:Sys/net/hostname` this way, so a new
+name in the file is in force at once.
+
 ## The device list and assigns
 
 dos keeps one list of names. Each node is a `DosList`: its `name`
@@ -559,7 +614,15 @@ in `args.raw[2]`. The handler puts its process's `msg_port` in the
 node's `task` and replies, and from then on takes packets with `WaitPkt`
 and answers each with `ReplyPkt` - `ERROR_ACTION_NOT_KNOWN` in `res2`
 for an action it does not do. A file system also adds a `DLT_VOLUME`
-node for the disk it serves. `src/rom/handler/nil/nil.zig` is the
+node for the disk it serves.
+
+A file system that watches answers `ACTION_ADD_NOTIFY` and
+`ACTION_REMOVE_NOTIFY` (the request in `args.raw[0]`) with a
+`dos.notify.Watchers`: it hands the watchers the node a request's
+`full_name` names, or none, and tells them as nodes change, are made,
+renamed or go (`changed`, `adopt`, `orphan`). The watchers send the
+messages and take them back on a port of their own, which the handler
+waits on beside its packets and empties with `collect`. `src/rom/handler/nil/nil.zig` is the
 smallest whole handler, with the `exec.ResidentHandler` tag dos finds it
 by; `src/disk/devs/handlers/fat/` is one that is loaded from `HANDLERS:`.
 

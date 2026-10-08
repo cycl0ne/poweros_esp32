@@ -48,6 +48,7 @@ const FileHandle = dos.FileHandle;
 const FileInfoBlock = dos.FileInfoBlock;
 const DosPacket = dos.DosPacket;
 const MsgPort = exec.MsgPort;
+const notify = dos.notify;
 
 const max_name = flashfs.max_name;
 const max_comment = flashfs.max_comment;
@@ -259,6 +260,9 @@ pub fn FileSystem(comptime Media: type) type {
         /// ACTION_MORE_CACHE has to answer with something, and this is the
         /// truth about what was asked for.
         buffers: u32 = 0,
+        /// Who watches what (notification), when the handler has given
+        /// them; without, ADD_NOTIFY is refused.
+        watchers: ?*notify.Watchers = null,
 
         pub fn init(media: *Media, port: ?*MsgPort) Fs {
             return .{ .media = media, .vol = Volume.init(media), .port = port };
@@ -285,6 +289,35 @@ pub fn FileSystem(comptime Media: type) type {
                 fs.buckets = &.{};
             }
             fs.vol.deinit();
+        }
+
+        // --- notification -------------------------------------------------
+
+        /// A node changed: its watchers told.
+        fn changed(fs: *Fs, n: *Node) void {
+            if (fs.watchers) |watchers| watchers.changed(n);
+        }
+
+        /// A node gone from where it was: its watchers wait for its name.
+        fn orphaned(fs: *Fs, n: *Node) void {
+            if (fs.watchers) |watchers| watchers.orphan(n);
+        }
+
+        /// A node come to be where it is: the watchers of its name take it,
+        /// told with `tell`.
+        fn appeared(fs: *Fs, n: *Node, tell: bool) void {
+            const watchers = fs.watchers orelse return;
+            var path: [dos.path_max]u8 = undefined;
+            watchers.adopt(n, notify.nodePath(n, &path), tell);
+        }
+
+        /// ADD_NOTIFY: the request watched on the node its path names, or
+        /// on its name until one does.
+        fn addNotify(fs: *Fs, request: *notify.NotifyRequest) Error!void {
+            const watchers = fs.watchers orelse return error.NoMemory;
+            const full = request.full_name orelse return error.InvalidName;
+            const n: ?*Node = fs.locate(0, full) catch null;
+            if (!watchers.add(request, n)) return error.NoMemory;
         }
 
         // --- memory -------------------------------------------------------
@@ -392,6 +425,7 @@ pub fn FileSystem(comptime Media: type) type {
         /// it goes. Refused while anything is locked, as a format must be.
         pub fn reformat(fs: *Fs, label: []const u8) Error!void {
             if (fs.locks != null) return error.InUse;
+            if (fs.watchers) |watchers| watchers.orphanAll();
             for (fs.buckets) |head| {
                 var n = head;
                 while (n) |it| {
@@ -939,6 +973,10 @@ pub fn FileSystem(comptime Media: type) type {
             spot.dir.date = n.date;
             fs.writeMeta(spot.dir) catch {};
             l.modified = true;
+            // A file is told of when it is closed, and its directory with
+            // it; a directory now.
+            fs.appeared(n, n.isDir());
+            if (n.isDir()) fs.changed(spot.dir);
             return l;
         }
 
@@ -950,6 +988,8 @@ pub fn FileSystem(comptime Media: type) type {
             if (fs.isLocked(n)) return error.InUse;
             try fs.writeKill(n);
             const parent = n.parent;
+            fs.changed(n);
+            fs.orphaned(n);
             fs.unhang(n);
             fs.cutTo(n, 0);
             fs.forget(n);
@@ -958,6 +998,7 @@ pub fn FileSystem(comptime Media: type) type {
                 p.delcount +%= 1;
                 p.date = fs.media.now();
                 fs.writeMeta(p) catch {};
+                fs.changed(p);
             }
         }
 
@@ -1079,13 +1120,19 @@ pub fn FileSystem(comptime Media: type) type {
         fn close(fs: *Fs, args: dos.FileHandleArgs) Error!void {
             const l = try fs.fileOf(args.fh);
             const n = l.node();
-            if (l.modified) {
+            const written = l.modified;
+            if (written) {
                 n.date = fs.media.now();
                 try fs.writeMeta(n);
             }
             fs.freeLock(l);
             args.fh.?.key = null;
             fs.vol.flush() catch |e| return fromVolume(e);
+            // Told once it is on the medium.
+            if (written) {
+                fs.changed(n);
+                if (n.parent) |p| fs.changed(p);
+            }
         }
 
         /// SET_FILE_SIZE: the file cut or grown; handles past the new end
@@ -1192,8 +1239,8 @@ pub fn FileSystem(comptime Media: type) type {
             if (!n.isDir()) return error.NoMoreEntries;
             var from: ?*Node = if (fib.disk_key == n.inode) n else fs.byInode(@truncate(fib.disk_key));
             if (from != n) {
-                const changed = if (l) |it| it.delcount != n.delcount else true;
-                if (from == null or (changed and !contains(n, from.?))) from = n;
+                const left = if (l) |it| it.delcount != n.delcount else true;
+                if (from == null or (left and !contains(n, from.?))) from = n;
             }
             if (l) |it| it.delcount = n.delcount;
             const entry = (if (from == n) n.children else from.?.next) orelse return error.NoMoreEntries;
@@ -1219,11 +1266,19 @@ pub fn FileSystem(comptime Media: type) type {
             }
             if (fs.otherLock(from, null, true)) return error.InUse;
             const old_parent = from.parent;
+            // Told it went, then let go: its watchers wait for its old name.
+            fs.changed(from);
+            fs.orphaned(from);
             fs.unhang(from);
             from.parent = spot.dir;
             from.next = spot.dir.children;
             spot.dir.children = from;
             from.name = spot.name;
+            defer {
+                fs.appeared(from, true);
+                if (old_parent) |p| fs.changed(p);
+                if (spot.dir != old_parent) fs.changed(spot.dir);
+            }
             try fs.writeMeta(from);
             if (old_parent) |p| p.delcount +%= 1;
             spot.dir.date = fs.media.now();
@@ -1251,6 +1306,7 @@ pub fn FileSystem(comptime Media: type) type {
                 },
             }
             try fs.writeMeta(n);
+            fs.changed(n);
         }
 
         /// INFO and DISK_INFO: the volume's sectors, and how many of them
@@ -1418,6 +1474,14 @@ pub fn FileSystem(comptime Media: type) type {
                     // no buffers to add to: it answers with the number the
                     // mountlist gave it and keeps it.
                     return .{ .res1 = @intCast(fs.buffers), .res2 = 0 };
+                },
+                .add_notify => {
+                    fs.addNotify(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
+                    return yes();
+                },
+                .remove_notify => {
+                    if (fs.watchers) |watchers| _ = watchers.remove(@ptrFromInt(ptrArg(a[0])));
+                    return yes();
                 },
                 .is_filesystem => return yes(),
                 .die => return no(error.InUse), // it stays, as RAM: does

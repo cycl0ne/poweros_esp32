@@ -17,7 +17,7 @@
 //! SET_DATE, SET_OWNER, FINDINPUT, FINDOUTPUT, FINDUPDATE, READ, WRITE,
 //! SEEK, SET_FILE_SIZE, END, PARENT_FH, COPY_DIR_FH, FH_FROM_LOCK,
 //! CHANGE_MODE, EXAMINE_OBJECT, EXAMINE_NEXT, EXAMINE_FH, INFO, DISK_INFO,
-//! IS_FILESYSTEM and FLUSH (not EXAMINE_ALL: dos does ExAll through
+//! ADD_NOTIFY, REMOVE_NOTIFY, IS_FILESYSTEM and FLUSH (not EXAMINE_ALL: dos does ExAll through
 //! EXAMINE_OBJECT/NEXT);
 //! DIE is refused (it never ends); the rest are ERROR_ACTION_NOT_KNOWN.
 //! Packets about an open file carry its FileHandle, whose key is the lock.
@@ -31,7 +31,17 @@
 //! SET_DATE is now; SET_FILE_SIZE moves the handles past the new end back
 //! to it; INFO counts free memory as free space and refuses a bad lock
 //! with ERROR_INVALID_LOCK; a name with ':' is refused. No hard or soft
-//! links, notification or record locks yet.
+//! links or record locks yet.
+//!
+//! **Notification** (ADD_NOTIFY, REMOVE_NOTIFY): the requests are kept by
+//! a `dos.notify.Watchers`, keyed by node. A file is told of when a
+//! handle that wrote to it is closed - a new one too, which is always
+//! closed - when it is deleted or renamed, and when a property changes;
+//! its directory when an entry is made (a file: at its close), deleted,
+//! renamed or closed after writing. A name not there is watched until a
+//! node is made or renamed to it. The watchers' replies
+//! come to a port of their own, which the process waits on beside its
+//! packets.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -45,11 +55,12 @@ const FileLock = dos.FileLock;
 const FileHandle = dos.FileHandle;
 const FileInfoBlock = dos.FileInfoBlock;
 const MsgPort = exec.MsgPort;
+const notify = dos.notify;
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "15.9.2026";
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -220,6 +231,8 @@ pub const RamDisk = struct {
     locks: ?*RamLock = null,
     /// The data blocks there are, for INFO.
     blocks: u64 align(4) = 0,
+    /// Who watches what (notification); null when there was no memory.
+    watchers: ?*notify.Watchers = null,
 
     pub fn init(sys: *ExecBase, dl: *DosLib, ub: *UtilityBase, port: ?*MsgPort) Error!RamDisk {
         var disk: RamDisk = .{ .sys = sys, .dl = dl, .ub = ub, .port = port, .root = undefined };
@@ -227,6 +240,9 @@ pub const RamDisk = struct {
         root.* = .{ .kind = dos.ST_ROOT, .date = disk.now() };
         @memcpy(root.name[0..VOLUME_NAME.len], VOLUME_NAME);
         disk.root = root;
+        if (disk.alloc(notify.Watchers)) |watchers| {
+            if (watchers.init(sys)) disk.watchers = watchers else disk.free(watchers);
+        }
         return disk;
     }
 
@@ -237,6 +253,50 @@ pub const RamDisk = struct {
             disk.free(l);
         }
         disk.freeTree(disk.root);
+        if (disk.watchers) |watchers| {
+            watchers.deinit();
+            disk.free(watchers);
+        }
+    }
+
+    // --- notification ---
+
+    /// The watchers' signal, for the process's Wait.
+    pub fn notifySignals(disk: *RamDisk) u32 {
+        const watchers = disk.watchers orelse return 0;
+        return watchers.signals();
+    }
+
+    /// The watchers' messages that came back.
+    pub fn collectReplies(disk: *RamDisk) void {
+        if (disk.watchers) |watchers| watchers.collect();
+    }
+
+    /// A node changed: its watchers told.
+    fn changed(disk: *RamDisk, n: *Node) void {
+        if (disk.watchers) |watchers| watchers.changed(n);
+    }
+
+    /// A node gone from where it was: its watchers wait for its name.
+    fn orphaned(disk: *RamDisk, n: *Node) void {
+        if (disk.watchers) |watchers| watchers.orphan(n);
+    }
+
+    /// A node come to be where it is: the watchers of its name take it,
+    /// told with `tell`.
+    fn appeared(disk: *RamDisk, n: *Node, tell: bool) void {
+        const watchers = disk.watchers orelse return;
+        var path: [dos.path_max]u8 = undefined;
+        watchers.adopt(n, notify.nodePath(n, &path), tell);
+    }
+
+    /// ADD_NOTIFY: the request watched on the node its path names, or on
+    /// its name until one does.
+    fn addNotify(disk: *RamDisk, request: *notify.NotifyRequest) Error!void {
+        const watchers = disk.watchers orelse return error.NoMemory;
+        const full = request.full_name orelse return error.InvalidName;
+        const n: ?*Node = disk.locate(0, full) catch null;
+        if (!watchers.add(request, n)) return error.NoMemory;
     }
 
     fn alloc(disk: *RamDisk, comptime T: type) ?*T {
@@ -400,6 +460,10 @@ pub const RamDisk = struct {
         place.dir.children = n;
         place.dir.date = n.date;
         l.modified = true;
+        // A file is told of when it is closed, and its directory with it,
+        // so a new file is told once, whole; a directory now.
+        disk.appeared(n, n.isDir());
+        if (n.isDir()) disk.changed(place.dir);
         return l;
     }
 
@@ -426,8 +490,12 @@ pub const RamDisk = struct {
         if (n.isDir() and n.children != null) return error.NotEmpty;
         if (n.protection & dos.FIBF_DELETE != 0) return error.DeleteProtected;
         if (disk.isLocked(n)) return error.InUse;
+        const parent = n.parent.?;
+        disk.changed(n);
+        disk.orphaned(n);
         disk.unlink(n);
         disk.freeNode(n);
+        disk.changed(parent);
     }
 
     // --- files ---
@@ -561,12 +629,19 @@ pub const RamDisk = struct {
         return old;
     }
 
-    /// END: the file dated if written to, and its lock freed.
+    /// END: the file dated if written to, its watchers and its
+    /// directory's told, and its lock freed.
     fn close(disk: *RamDisk, args: dos.FileHandleArgs) Error!void {
         const l = try disk.fileOf(args.fh);
-        if (l.modified) l.node().date = disk.now();
+        const n = l.node();
+        const written = l.modified;
+        if (written) n.date = disk.now();
         disk.freeLock(l);
         args.fh.?.key = null;
+        if (written) {
+            disk.changed(n);
+            if (n.parent) |parent| disk.changed(parent);
+        }
     }
 
     // --- examine ---
@@ -620,8 +695,8 @@ pub const RamDisk = struct {
         if (!n.isDir()) return error.NoMoreEntries;
         var from: ?*Node = @ptrFromInt(fib.disk_key);
         if (from != n) {
-            const changed = if (l) |it| it.delcount != n.delcount else true;
-            if (from == null or (changed and !contains(n, from.?))) from = n;
+            const left = if (l) |it| it.delcount != n.delcount else true;
+            if (from == null or (left and !contains(n, from.?))) from = n;
         }
         if (l) |it| it.delcount = n.delcount;
         const entry = (if (from == n) n.children else from.?.next) orelse return error.NoMoreEntries;
@@ -658,12 +733,19 @@ pub const RamDisk = struct {
             if (it == from) return error.InUse;
         }
         if (disk.otherLock(from, null, true)) return error.InUse;
+        const old_parent = from.parent.?;
+        // Told it went, then let go: its watchers wait for its old name.
+        disk.changed(from);
+        disk.orphaned(from);
         disk.unlink(from);
         from.parent = place.dir;
         from.next = place.dir.children;
         place.dir.children = from;
         from.name = place.name;
         place.dir.date = disk.now();
+        disk.appeared(from, true);
+        disk.changed(old_parent);
+        if (place.dir != old_parent) disk.changed(place.dir);
     }
 
     /// SET_PROTECT, SET_COMMENT, SET_DATE and SET_OWNER on (lock, name).
@@ -680,6 +762,7 @@ pub const RamDisk = struct {
             },
             else => try disk.setComment(n, @ptrFromInt(ptrArg(args.value))),
         }
+        disk.changed(n);
     }
 
     /// A copy of the comment, or none for "".
@@ -920,6 +1003,14 @@ pub const RamDisk = struct {
                 disk.info(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
                 return yes();
             },
+            .add_notify => {
+                disk.addNotify(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
+                return yes();
+            },
+            .remove_notify => {
+                if (disk.watchers) |watchers| _ = watchers.remove(@ptrFromInt(ptrArg(a[0])));
+                return yes();
+            },
             .is_filesystem, .flush => return yes(),
             .die => return no(error.InUse), // it stays
             else => return .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_ACTION_NOT_KNOWN },
@@ -954,9 +1045,16 @@ pub fn ramHandler(sb: *ExecBase) callconv(.c) void {
     const device: ?*dos.DosList = @ptrFromInt(ptrArg(startup.args.raw[2]));
     if (device) |d| d.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
-    while (dl.WaitPkt()) |pkt| {
-        const reply = disk.answer(pkt);
-        dl.ReplyPkt(pkt, reply.res1, reply.res2);
+    // Packets on the process's port; the watchers' replies on theirs.
+    const port = &me.msg_port;
+    while (true) {
+        disk.collectReplies();
+        while (sb.GetMsg(port)) |message| {
+            const pkt = DosPacket.fromMessage(message);
+            const reply = disk.answer(pkt);
+            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+        }
+        _ = sb.Wait(port.sigMask() | disk.notifySignals());
     }
 }
 
@@ -1143,6 +1241,120 @@ test "RAM: examine: the object, the entries, a delete in between" {
     try testing.expectEqual(dos.ERROR_NO_MORE_ENTRIES, send(&disk, .examine_next, .{ dir, arg(&fib), 0, 0 }).res2);
     _ = send(&disk, .free_lock, .{ dir, 0, 0, 0 });
 
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+/// What came on a watcher's port: how many messages, each about `request`,
+/// replied.
+fn told(sys: *ExecBase, port: *MsgPort, request: *notify.NotifyRequest) !usize {
+    var count: usize = 0;
+    while (sys.GetMsg(port)) |message| {
+        const got: *notify.NotifyMessage = @fieldParentPtr("message", message);
+        try testing.expectEqual(notify.NOTIFY_CLASS, got.class);
+        try testing.expectEqual(notify.NOTIFY_CODE, got.code);
+        try testing.expectEqual(request, got.request.?);
+        sys.ReplyMsg(message);
+        count += 1;
+    }
+    return count;
+}
+
+/// A file written and closed, through packets.
+fn writeFile(disk: *RamDisk, name: [*:0]const u8, text: []const u8) !void {
+    var out: FileHandle = .{};
+    try testing.expectEqual(yes(), send(disk, .findoutput, .{ arg(&out), 0, arg(name), 0 }));
+    _ = send(disk, .write, .{ arg(&out), arg(text.ptr), @intCast(text.len), 0 });
+    try testing.expectEqual(yes(), send(disk, .end, .{ arg(&out), 0, 0, 0 }));
+}
+
+test "RAM: notification: a file and its directory told, a name not there yet, wait-reply, ended" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    const sys = db.sys_base;
+    var disk = try diskFor(db);
+    const port = sys.CreateMsgPort().?;
+    const full_file: [*:0]u8 = @constCast("Ram Disk:ENV/Sys/hostname");
+    const full_dir: [*:0]u8 = @constCast("RAM:ENV/Sys");
+    var file_watch: notify.NotifyRequest = .{ .full_name = full_file, .flags = notify.NRF_SEND_MESSAGE, .port = port };
+    var dir_watch: notify.NotifyRequest = .{ .full_name = full_dir, .flags = notify.NRF_SEND_MESSAGE | notify.NRF_NOTIFY_INITIAL, .port = port };
+    // Neither is there yet.
+    try testing.expectEqual(yes(), send(&disk, .add_notify, .{ arg(&file_watch), 0, 0, 0 }));
+    try testing.expectEqual(yes(), send(&disk, .add_notify, .{ arg(&dir_watch), 0, 0, 0 }));
+    try testing.expectEqual(@as(usize, 0), try told(sys, port, &file_watch));
+
+    // The directories made: the directory's watcher told it is there.
+    _ = send(&disk, .free_lock, .{ try lockOf(send(&disk, .create_dir, .{ 0, arg("RAM:ENV"), 0, 0 })), 0, 0, 0 });
+    _ = send(&disk, .free_lock, .{ try lockOf(send(&disk, .create_dir, .{ 0, arg("RAM:ENV/Sys"), 0, 0 })), 0, 0, 0 });
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &dir_watch));
+    disk.collectReplies();
+
+    // The file written: its watcher once, at the close, and the
+    // directory's.
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "board");
+    var both: usize = 0;
+    while (sys.GetMsg(port)) |message| {
+        sys.ReplyMsg(message);
+        both += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), both);
+    disk.collectReplies();
+    try testing.expectEqual(@as(u32, 0), file_watch.msg_count);
+
+    // A property: the file's watcher alone.
+    try testing.expectEqual(yes(), send(&disk, .set_comment, .{ 0, arg("RAM:ENV/Sys/hostname"), arg("named"), 0 }));
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+
+    // Wait-reply: two changes, one message, the second told once the
+    // first comes back.
+    try testing.expectEqual(yes(), send(&disk, .remove_notify, .{ arg(&dir_watch), 0, 0, 0 }));
+    file_watch.flags |= notify.NRF_WAIT_REPLY;
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "one");
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "two");
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+
+    // Deleted: told, and watched by name again; made again, told at the
+    // close.
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:ENV/Sys/hostname"), 0, 0 }));
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+    try writeFile(&disk, "RAM:env/sys/HOSTNAME", "back");
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+
+    // Renamed away: told, and let go; another file renamed onto the name:
+    // taken, and told.
+    try testing.expectEqual(yes(), send(&disk, .rename_object, .{ 0, arg("RAM:ENV/Sys/hostname"), 0, arg("RAM:ENV/old") }));
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+    try writeFile(&disk, "RAM:ENV/old", "x");
+    try testing.expectEqual(@as(usize, 0), try told(sys, port, &file_watch));
+    try writeFile(&disk, "RAM:ENV/new", "y");
+    try testing.expectEqual(yes(), send(&disk, .rename_object, .{ 0, arg("RAM:ENV/new"), 0, arg("RAM:ENV/Sys/hostname") }));
+    try testing.expectEqual(@as(usize, 1), try told(sys, port, &file_watch));
+    disk.collectReplies();
+
+    // Ended with a message still on the port: taken back, nothing left.
+    file_watch.flags &= ~notify.NRF_WAIT_REPLY;
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "z");
+    try testing.expectEqual(yes(), send(&disk, .remove_notify, .{ arg(&file_watch), 0, 0, 0 }));
+    try testing.expect(sys.GetMsg(port) == null);
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "after");
+    try testing.expect(sys.GetMsg(port) == null);
+
+    // A signal instead of a message.
+    var signal_watch: notify.NotifyRequest = .{ .full_name = full_file, .flags = notify.NRF_SEND_SIGNAL, .task = sys.FindTask(null), .signal_number = 20 };
+    try testing.expectEqual(yes(), send(&disk, .add_notify, .{ arg(&signal_watch), 0, 0, 0 }));
+    _ = sys.SetSignal(0, 1 << 20);
+    try writeFile(&disk, "RAM:ENV/Sys/hostname", "signal");
+    try testing.expect(sys.SetSignal(0, 1 << 20) & (1 << 20) != 0);
+    try testing.expectEqual(yes(), send(&disk, .remove_notify, .{ arg(&signal_watch), 0, 0, 0 }));
+
+    sys.DeleteMsgPort(port);
     disk.deinit();
     try kdos.testTearDown(db);
 }

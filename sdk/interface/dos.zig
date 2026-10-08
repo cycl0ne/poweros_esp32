@@ -152,6 +152,8 @@ pub const LVO = struct {
     pub const LoadSeg = libraries.lvo(135);
     pub const UnLoadSeg = libraries.lvo(136);
     pub const ErrorReport = libraries.lvo(137);
+    pub const StartNotify = libraries.lvo(138);
+    pub const EndNotify = libraries.lvo(139);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -291,6 +293,8 @@ pub const Fn = struct {
     pub const LoadSeg = *const fn (*DosBase, [*:0]const u8) callconv(.c) ?*dos.SegList;
     pub const UnLoadSeg = *const fn (*DosBase, ?*dos.SegList) callconv(.c) void;
     pub const ErrorReport = *const fn (*DosBase, i32, u32, usize, ?*exec.MsgPort) callconv(.c) bool;
+    pub const StartNotify = *const fn (*DosBase, *dos.notify.NotifyRequest) callconv(.c) bool;
+    pub const EndNotify = *const fn (*DosBase, *dos.notify.NotifyRequest) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1124,5 +1128,17 @@ pub const DosBase = opaque {
     /// asked about and answers true.
     pub fn ErrorReport(self: *DosBase, code: i32, report_type: u32, arg: usize, device: ?*exec.MsgPort) bool {
         return libraries.call(self, LVO.ErrorReport, Fn.ErrorReport, .{ code, report_type, arg, device });
+    }
+
+    /// Watch `request`'s name: the program is told of every change, by a
+    /// message or a signal, until EndNotify. False with IoErr() when the
+    /// handler cannot watch.
+    pub fn StartNotify(self: *DosBase, request: *dos.notify.NotifyRequest) bool {
+        return libraries.call(self, LVO.StartNotify, Fn.StartNotify, .{request});
+    }
+
+    /// End a watch StartNotify began.
+    pub fn EndNotify(self: *DosBase, request: *dos.notify.NotifyRequest) void {
+        return libraries.call(self, LVO.EndNotify, Fn.EndNotify, .{request});
     }
 };

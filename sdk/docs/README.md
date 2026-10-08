@@ -39,8 +39,9 @@ tags and constants, each with its doc comment.
   device of one's own.
 - [dos.library](guides/dos.md) - files, buffered reading and writing,
   names and paths, locks and directories, patterns, command arguments,
-  errors and Ctrl-C, processes, running commands, variables, the device
-  list and assigns, handlers and packets, disks at boot, and consoles.
+  errors and Ctrl-C, processes, running commands, variables, being told
+  of a change (notification), the device list and assigns, handlers and
+  packets, disks at boot, and consoles.
 - [utility.library](guides/utility.md) - tag lists, pack tables, hooks,
   dates, arithmetic, strings and case, patterns, named objects, unique
   numbers, and comparing records.

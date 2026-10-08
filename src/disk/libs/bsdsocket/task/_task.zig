@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! The stack task: a process that keeps the reads on every network device
 //! outstanding, takes what the devices answer, and runs the timers. It
-//! spends its life in one Wait on four signals - the devices' answers,
-//! commands, a changed deadline, its timer - and does nothing else, so
-//! an idle network costs nothing.
+//! spends its life in one Wait on five signals - the devices' answers,
+//! commands, a changed deadline, its timer, the hostname file changed -
+//! and does nothing else, so an idle network costs nothing.
+//!
+//! **The hostname file** (`HOSTNAME_FILE`) is watched while it runs
+//! (StartNotify, a signal): when it changes, the name in it is taken at
+//! once, in the place of SetHostName's too.
 //!
 //! **Its life.** It is started when there is work only it can do: the
 //! first interface on a device, or the first stream socket, whose timers
@@ -34,6 +38,7 @@ const device = @import("../netif/device.zig");
 const _route = @import("../route/_route.zig");
 const _arp = @import("../arp/_arp.zig");
 const _socket = @import("../socket/_socket.zig");
+const _names = @import("../names/_names.zig");
 
 const task_name = "bsdsocket.library";
 const stack_bytes = 8192;
@@ -145,11 +150,23 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
     stack.task = me;
     started(stack);
 
-    const wake = stack.port.sigMask() | stack.commands.sigMask() | stack.rethink_mask | timer_port.?.sigMask();
+    // The hostname file watched, told by a signal of the task's own.
+    const name_signal = sys.AllocSignal(-1);
+    var name_watch: dos.notify.NotifyRequest = .{
+        .name = bsd.HOSTNAME_FILE,
+        .flags = dos.notify.NRF_SEND_SIGNAL,
+        .task = me,
+        .signal_number = if (name_signal >= 0) @intCast(name_signal) else 0,
+    };
+    const watching = name_signal >= 0 and stack.dos.?.StartNotify(&name_watch);
+    const name_mask: u32 = if (watching) @as(u32, 1) << @intCast(name_signal) else 0;
+
+    const wake = stack.port.sigMask() | stack.commands.sigMask() | stack.rethink_mask | timer_port.?.sigMask() | name_mask;
     var armed = false;
     var armed_for: u64 = 0;
     while (true) {
-        _ = sys.Wait(wake);
+        const woken = sys.Wait(wake);
+        if (woken & name_mask != 0) _names.reloadHostName(stack);
         if (armed and sys.CheckIO(&clock.node) != null) {
             _ = sys.WaitIO(&clock.node);
             armed = false;
@@ -208,6 +225,8 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
         }
         sys.CloseDevice(&clock.node);
         sys.DeleteMsgPort(timer_port);
+        if (watching) stack.dos.?.EndNotify(&name_watch);
+        if (name_signal >= 0) sys.FreeSignal(name_signal);
         // The library's count the task holds is dos's to give back, once
         // this code has returned.
         return;

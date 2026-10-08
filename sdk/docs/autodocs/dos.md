@@ -36,6 +36,7 @@ Generated from the source by `./zig build autodoc`.
 - [DoPkt](#dopkt) - Sends a packet to a handler and waits for it to come back.
 - [DupLock](#duplock) - Makes another shared lock on the object a lock is on.
 - [DupLockFromFH](#duplockfromfh) - Gives a shared lock on an open file.
+- [EndNotify](#endnotify) - Ends a watch: the program is told of the object no more.
 - [ErrorOutput](#erroroutput) - Returns the running process's error stream (pr_CES).
 - [ErrorReport](#errorreport) - Asks the user about an error, and answers whether to give up.
 - [ExAll](#exall) - Reads entries of a directory into a buffer, as many as fit.
@@ -130,6 +131,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetVBuf](#setvbuf) - Sets a file handle's buffering and buffer.
 - [SetVar](#setvar) - Sets or deletes a local variable or alias, or a global variable.
 - [SplitName](#splitname) - Copies one component of a path into a buffer.
+- [StartNotify](#startnotify) - Starts watching a file or a directory: the program is told whenever it changes.
 - [StrToDate](#strtodate) - Reads a date and a time from text into a DateStamp.
 - [StrToLong](#strtolong) - Reads a decimal number from the start of a string.
 - [SystemTagList](#systemtaglist) - Runs a command line, or an interactive shell, in a new shell process.
@@ -1708,6 +1710,66 @@ None known.
 ```zig
 const l = dos_lib.DupLockFromFH(fh) orelse return dos_lib.IoErr();
 defer dos_lib.UnLock(l);
+```
+
+## EndNotify
+
+Ends a watch: the program is told of the object no more.
+
+**SYNOPSIS**
+
+```zig
+fn EndNotify(db: *DosBase, request: *NotifyRequest) void
+```
+
+**SINCE**
+
+1.3. LVO -560.
+
+**INPUTS**
+
+- `request` - one StartNotify took.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The handler drops the request and takes back its messages still on
+the program's port; one the program has taken already it frees when it
+is replied - so reply what was taken, before or after. dos frees the
+request's `full_name`. A request StartNotify did not take is left
+alone.
+
+**CONTEXT**
+
+- Waits: yes, for the handler's answer.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`request` is the program's to free, or to start again.
+
+**NOTES**
+
+No signal comes after EndNotify returns; one sent before may still be
+set.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartNotify`
+
+**EXAMPLES**
+
+```zig
+dos_lib.EndNotify(&request);
 ```
 
 ## ErrorOutput
@@ -7346,6 +7408,91 @@ while (pos >= 0) {
     pos = dos_lib.SplitName("dir/sub/file", '/', &part, pos, part.len);
     // part holds "dir", then "sub", then "file"
 }
+```
+
+## StartNotify
+
+Starts watching a file or a directory: the program is told whenever it changes.
+
+**SYNOPSIS**
+
+```zig
+fn StartNotify(db: *DosBase, request: *NotifyRequest) bool
+```
+
+**SINCE**
+
+1.3. LVO -556.
+
+**INPUTS**
+
+- `request` - filled in by the program: `name`, the object; `flags`,
+  `NRF_SEND_MESSAGE` with `port`, or `NRF_SEND_SIGNAL` with `task` and
+  `signal_number`, and `NRF_WAIT_REPLY`, `NRF_NOTIFY_INITIAL` as it
+  wants; `user_data` as it likes.
+
+**RESULT**
+
+True when the object's handler has the request; false with IoErr() -
+ERROR_ACTION_NOT_KNOWN from a handler that cannot watch,
+ERROR_DEVICE_NOT_MOUNTED, ERROR_NO_FREE_STORE.
+
+**BEHAVIOR**
+
+The name need not be there yet: it is watched until it appears. dos
+writes the handler's own path into `full_name` - an assign's
+directory written out, a relative name made whole from the current
+directory - and sends the request to the handler, which keeps it:
+
+- a file is changed when a handle that wrote to it is closed (not at
+  each write), when it is created, deleted or renamed away or onto,
+  and when its protection, comment, date or owner change;
+- a directory is changed when an entry in it is created, deleted,
+  renamed, or closed after writing.
+
+A change is told as the request asks: a NotifyMessage on `port` -
+`class` NOTIFY_CLASS, `code` NOTIFY_CODE, `request` the request - which
+the program replies; and a signal to `task`. With `NRF_WAIT_REPLY` no
+message follows while one is out, and a change meanwhile is told once
+it is replied. With `NRF_NOTIFY_INITIAL` an object already there is
+told of once at the start.
+
+RAM: and the flash file system watch; other handlers may not. Of a
+multi-directory assign, the first directory is watched.
+
+**CONTEXT**
+
+- Waits: yes, for the handler's answer.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; a process gets IoErr().
+
+**OWNERSHIP**
+
+`request` stays the program's, and where it is, until EndNotify;
+`name` too. `full_name` is dos's until then. A NotifyMessage is the
+handler's: the program replies it, and keeps nothing of it.
+
+**NOTES**
+
+A watch follows the object it found: renamed away or deleted, the
+object is let go, and the name is watched again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EndNotify`, `sdk.dos.notify`
+
+**EXAMPLES**
+
+```zig
+var request: dos.notify.NotifyRequest = .{ .name = "ENVARC:Sys/net/hostname", .flags = dos.notify.NRF_SEND_MESSAGE, .port = port };
+if (!dos_lib.StartNotify(&request)) return;
+defer dos_lib.EndNotify(&request);
+// ... a NotifyMessage on `port`: read the file again, then ReplyMsg it.
 ```
 
 ## StrToDate

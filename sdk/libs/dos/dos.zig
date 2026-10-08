@@ -24,6 +24,7 @@ pub const fat = @import("fat.zig");
 pub const workfile = @import("workfile.zig");
 /// Keyword files: the mountlist format, read a token at a time.
 pub const keywords = @import("keywords.zig");
+pub const notify = @import("notify.zig");
 
 /// The library's name, for OpenLibrary.
 pub const DOSNAME = "dos.library";

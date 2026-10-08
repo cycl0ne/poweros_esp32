@@ -13,8 +13,10 @@
 //! **With SSH** it speaks SSH (ssh.device) instead of Telnet: the
 //! connection is encrypted, and the client logs in with the password of
 //! `ENVARC:Sys/net/shellserver` or with a key of
-//! `ENVARC:Sys/net/authorized_keys` (OpenSSH's lines; ssh-ed25519 keys) -
-//! with neither there, ShellServer does not start. The host key is
+//! `ENVARC:Sys/net/authorized_keys` (OpenSSH's lines; ssh-ed25519 keys),
+//! both read again for each connection, so a key added or a password
+//! changed counts for the next one - with neither there at the start,
+//! ShellServer does not start. The host key is
 //! `ENVARC:Sys/net/ssh_host_key`, made at the first start, its public
 //! half beside it in `ssh_host_key.pub` and its fingerprint printed, for
 //! the client's first connection to be checked against. A client may
@@ -53,7 +55,7 @@ const crypto = sdk.crypto;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.3 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.4 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S,SSH/S";
@@ -241,6 +243,9 @@ fn start(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, server: *Server, id: i32
     session.id = id;
     session.ssh = server.ssh;
     session.accept = server.credentials;
+    // The logins as the files are now: a key or a password changed counts
+    // for the next connection, with no restart.
+    if (server.ssh) readLogins(dl, &session.accept);
     // Comes back once the session is gone: the server's to free.
     const ended: *exec.Message = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(exec.Message), exec.MEMF_CLEAR) orelse {
         sys.FreeVec(memory);
@@ -428,8 +433,7 @@ fn sshCredentials(sys: *ExecBase, dl: *DosBase, server: *Server) bool {
     const cb: *CryptoBase = @ptrCast(lib);
     const credentials = &server.credentials;
     if (!hostKey(dl, cb, credentials)) return false;
-    if (firstLine(dl, &credentials.password)) |length| credentials.password_length = @intCast(length);
-    readAuthorizedKeys(dl, credentials);
+    readLogins(dl, credentials);
     if (credentials.password_length == 0 and credentials.key_count == 0) {
         _ = Printf(dl, MSG_NOLOGIN, .{ COMMAND_NAME, PASSWORD_FILE, AUTHORIZED_KEYS_FILE });
         return false;
@@ -482,6 +486,15 @@ fn hostKey(dl: *DosBase, cb: *CryptoBase, credentials: *ssh.SshAccept) bool {
         _ = Printf(dl, MSG_HOSTKEY, .{ COMMAND_NAME, @as([*:0]const u8, @ptrCast(&print)), HOST_KEY_PUB_FILE });
     }
     return true;
+}
+
+/// The password and the keys, read afresh into `credentials`.
+fn readLogins(dl: *DosBase, credentials: *ssh.SshAccept) void {
+    @memset(&credentials.password, 0);
+    credentials.password_length = 0;
+    credentials.key_count = 0;
+    if (firstLine(dl, &credentials.password)) |length| credentials.password_length = @intCast(length);
+    readAuthorizedKeys(dl, credentials);
 }
 
 /// The ssh-ed25519 keys of the authorized keys file, as many as are

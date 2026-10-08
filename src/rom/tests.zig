@@ -38,5 +38,6 @@ test {
     _ = @import("handler/flashfs/volume.zig");
     _ = @import("handler/flashfs/disk.zig");
     _ = @import("handler/flashfs/flashfs.zig");
+    _ = @import("handler/flashfs/tests/notify.zig");
     _ = @import("shell/shell.zig");
 }

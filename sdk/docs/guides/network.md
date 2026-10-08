@@ -300,7 +300,7 @@ link's speed unless the file says.
 | File | Holds |
 |---|---|
 | `DEVS:NetInterfaces/<NAME>` | one interface: `AddNetInterface NAME` brings it up as `<name>` in lower case |
-| `ENVARC:Sys/net/hostname` | the machine's name, sent to DHCP servers; "poweros" without it |
+| `ENVARC:Sys/net/hostname` | the machine's name, sent to DHCP servers; "poweros" without it; a new name in it is in force at once while the network runs |
 | `ENVARC:Sys/net/hosts` | names known without asking: an address, then its names |
 | `ENVARC:Sys/net/nameservers` | name servers to ask when the network names none |
 | `ENVARC:Sys/net/timeserver` | where `C:net/TimeSync` asks the time, when DHCP names no server |
@@ -548,8 +548,9 @@ the connection is encrypted, and nobody gets in without logging in.
 
 - **Logins**: the password in `ENVARC:Sys/net/shellserver`, and the keys in
   `ENVARC:Sys/net/authorized_keys` - OpenSSH's lines, ssh-ed25519 keys (a
-  PC's `~/.ssh/id_ed25519.pub` copied in as it is). With neither,
-  ShellServer will not start. Six failed tries end a connection, and a
+  PC's `~/.ssh/id_ed25519.pub` copied in as it is) - read again for each
+  connection, so a key added counts for the next login. With neither at
+  its start, ShellServer will not start. Six failed tries end a connection, and a
   client has two minutes to log in.
 - **The host key** is made at the first start, in
   `ENVARC:Sys/net/ssh_host_key`, with its public half beside it in

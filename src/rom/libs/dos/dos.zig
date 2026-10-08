@@ -1453,6 +1453,57 @@ test "the CLI's names: prompt, program name, directory name; too long; no CLI" {
     try tearDown(db);
 }
 
+test "StartNotify: an assign's and a relative name written out, told through dos, EndNotify" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    const sys = db.sys_base;
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    dl.UnLock(dl.CreateDir("RAMT:ENV").?);
+    dl.UnLock(dl.CreateDir("RAMT:ENV/Sys").?);
+    try testing.expect(dl.AssignLock("TENV", dl.Lock("RAMT:ENV", dos.SHARED_LOCK)));
+    const port = sys.CreateMsgPort().?;
+
+    var request: dos.notify.NotifyRequest = .{ .name = "TENV:Sys/hostname", .flags = dos.notify.NRF_SEND_MESSAGE, .port = port };
+    try testing.expect(dl.StartNotify(&request));
+    try testing.expectEqualStrings("Ram Disk:ENV/Sys/hostname", std.mem.span(request.full_name.?));
+    try testing.expectEqual(@as(?*MsgPort, &RamFs.port), request.handler);
+    try makeFile(dl, "TENV:Sys/hostname", 5);
+    const message = sys.GetMsg(port).?;
+    const told: *dos.notify.NotifyMessage = @fieldParentPtr("message", message);
+    try testing.expectEqual(&request, told.request.?);
+    try testing.expect(sys.GetMsg(port) == null);
+    sys.ReplyMsg(message);
+    RamFs.disk.collectReplies();
+    try testing.expectEqual(@as(u32, 0), request.msg_count);
+    dl.EndNotify(&request);
+    try testing.expect(request.full_name == null);
+    try makeFile(dl, "TENV:Sys/hostname", 6);
+    try testing.expect(sys.GetMsg(port) == null);
+
+    // Relative to the current directory; a device's own name as it is.
+    const env = dl.Lock("RAMT:ENV", dos.SHARED_LOCK).?;
+    const old = dl.CurrentDir(env);
+    var relative: dos.notify.NotifyRequest = .{ .name = "Sys/x", .flags = dos.notify.NRF_SEND_MESSAGE, .port = port };
+    try testing.expect(dl.StartNotify(&relative));
+    try testing.expectEqualStrings("Ram Disk:ENV/Sys/x", std.mem.span(relative.full_name.?));
+    dl.EndNotify(&relative);
+    _ = dl.CurrentDir(old);
+    dl.UnLock(env);
+    var device: dos.notify.NotifyRequest = .{ .name = "RAMT:ENV", .flags = dos.notify.NRF_SEND_MESSAGE, .port = port };
+    try testing.expect(dl.StartNotify(&device));
+    try testing.expectEqualStrings("RAMT:ENV", std.mem.span(device.full_name.?));
+    dl.EndNotify(&device);
+
+    sys.DeleteMsgPort(port);
+    try testing.expect(dl.AssignLock("TENV", null));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
 test "NameFromLock, and GetCurrentDirName without a CLI, on a RAM: disk" {
     const db = try setUp();
     defer kexec.deinit();
