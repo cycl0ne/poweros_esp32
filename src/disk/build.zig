@@ -45,7 +45,7 @@ const tests = [_][]const u8{
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "filter" };
 
 /// Programs with windows, in SYS:Programs: started by their full name or
 /// from a shell there, not on the command path.
@@ -70,6 +70,7 @@ const modules = [_]Program{
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
+    .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },

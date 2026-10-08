@@ -9,8 +9,9 @@
 //! M and O flags) - state and packets, and each device's link; the IPv4
 //! and the IPv6 routes, and the name servers asked; every socket with its
 //! addresses, TCP state, queued bytes and the task it belongs to; the ARP
-//! cache; the IPv6 neighbor cache; the stack's counters. With none, the
-//! interfaces and the routes; ALL is every table.
+//! cache; the IPv6 neighbor cache; the stack's counters, what packet
+//! hooks stopped among them. With none, the interfaces and the routes;
+//! ALL is every table.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -23,7 +24,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "NetStatus";
-const VERSION_STRING = "\x00$VER: NetStatus 1.2 (07.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: NetStatus 1.3 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACES/S,ROUTES/S,SOCKETS/S,ARP/S,NEIGHBORS/S,COUNTS/S,ALL/S";
@@ -560,7 +561,7 @@ fn counts(dl: *DosBase, sb: *SocketBase, first: *bool) void {
         all.ip_received, all.ip_sent, all.ip_bad_header, all.ip_bad_checksum, all.ip_not_ours, all.ip_unknown_protocol,
     });
     _ = Printf(dl, "      fragments: %u received, %u reassembled, %u dropped\n", .{ all.ip_fragments, all.ip_reassembled, all.ip_reassembly_dropped });
-    _ = Printf(dl, "ICMP: %u received, %u bad, %u echoes answered, %u errors sent\n", .{ all.icmp_received, all.icmp_bad, all.icmp_echoes_answered, all.icmp_errors_sent });
+    _ = Printf(dl, "ICMP: %u received, %u bad, %u echoes answered, %u errors sent, %u held back\n", .{ all.icmp_received, all.icmp_bad, all.icmp_echoes_answered, all.icmp_errors_sent, all.icmp_errors_limited });
     _ = Printf(dl, "UDP:  %ld received, %ld sent; %u bad, %u to no port, %u queue full\n", .{ all.udp_received, all.udp_sent, all.udp_bad, all.udp_no_port, all.udp_full });
     _ = Printf(dl, "TCP:  %ld received, %ld sent, %ld predicted; %u bad, %u resets sent, %u backlog full\n", .{
         all.tcp_received, all.tcp_sent, all.tcp_predicted, all.tcp_bad, all.tcp_resets_sent, all.tcp_backlog_full,
@@ -580,4 +581,5 @@ fn counts(dl: *DosBase, sb: *SocketBase, first: *bool) void {
         all.nd_solicits_sent, all.nd_adverts_sent, all.nd_bad, all.nd_dropped, all.nd_duplicates, all.mld_reports_sent,
     });
     _ = Printf(dl, "IGMP: %u received, %u bad, %u reports sent\n", .{ all.igmp_received, all.igmp_bad, all.igmp_reports_sent });
+    _ = Printf(dl, "Hooks: %u packets dropped, %u refused\n", .{ all.hook_dropped, all.hook_refused });
 }

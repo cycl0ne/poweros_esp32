@@ -30,6 +30,7 @@ test {
     _ = @import("libs/bsdsocket/tests/ip6.zig");
     _ = @import("libs/bsdsocket/tests/nd.zig");
     _ = @import("libs/bsdsocket/tests/igmp.zig");
+    _ = @import("libs/bsdsocket/tests/hook.zig");
     _ = @import("libs/bsdsocket/tests/dhcp6.zig");
     _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
@@ -39,6 +40,7 @@ test {
     _ = @import("libs/tls/tls_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
+    _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("libs/asl/tests/asl.zig");

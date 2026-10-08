@@ -139,4 +139,9 @@ i32 GetNameInfo(*const bsd.sockaddr address, u32 address_length, ?[*]u8 host, u3
 /// The next datagram in, spread over `message`'s buffers, with its sender
 /// and control messages: the bytes read, or -1.
 i32 RecvMsg(i32 socket, *bsd.msghdr message, u32 flags)
+/// `hook` put in the chain that sees every packet coming in, or going
+/// out, and decides what becomes of it: 0, or -1 (errno ENOMEM, EINVAL).
+i32 AddPacketHook(*utility.Hook hook, ?[*]const utility.TagItem tags)
+/// `hook` taken out of its chain; when this returns it is called no more.
+void RemPacketHook(*utility.Hook hook)
 ##end

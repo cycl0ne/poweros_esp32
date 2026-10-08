@@ -32,6 +32,9 @@ const _route = @import("../route/_route.zig");
 const _ip = @import("../ip/_ip.zig");
 const _udp = @import("../udp/_udp.zig");
 const _socket = @import("../socket/_socket.zig");
+const _hook = @import("../hook/_hook.zig");
+const _icmp6 = @import("../icmp6/_icmp6.zig");
+const _timer = @import("../timer/_timer.zig");
 const Socket = _socket.Socket;
 
 pub const header_bytes = 8;
@@ -54,13 +57,25 @@ fn isError(kind: u8) bool {
 /// An ICMP message that came in, the frame starting at it; `header` is
 /// the IPv4 header in front of it.
 pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _ip.Header) void {
-    _ = interface;
     const sys = stack.sys_base;
     stack.counts.icmp_received += 1;
     const message = frame.bytes();
     if (message.len < header_bytes or _ip.finish(_ip.sum(0, message)) != 0) {
         stack.counts.icmp_bad += 1;
         return stack.frames.give(sys, frame);
+    }
+    // The packet hooks: a message they stop is not answered either.
+    if (!stack.hooks_in.isEmpty()) {
+        const seen: _hook.Seen = .{
+            .interface = interface,
+            .source = Address.fromV4(header.source),
+            .destination = Address.fromV4(header.destination),
+            .protocol = protocol,
+            .data = message,
+            .frame = frame,
+            .header_length = header.header_length,
+        };
+        if (_hook.ask(stack, bsd.PH_IN, seen) != .pass) return stack.frames.give(sys, frame);
     }
     deliverRaw(stack, frame, header);
     switch (message[0]) {
@@ -157,6 +172,7 @@ pub fn sendUnreachable(stack: *StackBase, frame: *Frame, header: _ip.Header, cod
         if (behind.len == 0 or isError(behind[0])) return;
     }
     const hop = _route.lookup(stack, header.source) orelse return;
+    if (!allowed(stack)) return;
     const quoted_length: u32 = @min(@as(u32, @intCast(packet.len)), header.header_length + 8);
     const answer = stack.frames.take(stack.sys_base) orelse return;
     const message = answer.room()[answer.start..][0 .. header_bytes + quoted_length];
@@ -169,6 +185,26 @@ pub fn sendUnreachable(stack: *StackBase, frame: *Frame, header: _ip.Header, cod
     _ip.put16(message, 2, _ip.finish(_ip.sum(0, message)));
     stack.counts.icmp_errors_sent += 1;
     _ = _ip.output(stack, answer, header.destination, header.source, protocol, hop);
+}
+
+/// Whether the rate limit lets one more error go now: ICMPv6's burst and
+/// refill.
+fn allowed(stack: *StackBase) bool {
+    const limit = &stack.icmp_limit;
+    const now = _timer.clock(stack);
+    if (now > limit.refilled) {
+        const earned = (now - limit.refilled) / _icmp6.refill_us;
+        if (earned > 0) {
+            limit.tokens = @intCast(@min(@as(u64, _icmp6.burst), limit.tokens + earned));
+            limit.refilled += earned * _icmp6.refill_us;
+        }
+    }
+    if (limit.tokens == 0) {
+        stack.counts.icmp_errors_limited += 1;
+        return false;
+    }
+    limit.tokens -= 1;
+    return true;
 }
 
 /// `data`, an ICMP message a raw socket was given, sent to `destination`:

@@ -2,12 +2,16 @@
 //! PacketCapture: the frames an interface sends and takes, into a pcap
 //! file Wireshark and tcpdump read. Built against the SDK only.
 //!
-//!   PacketCapture INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S
+//!   PacketCapture INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S,FILTERED/S
 //!
 //! INTERFACE is eth0, ETH0 or lo0. Frames are written to TO until COUNT
 //! of them, TIME seconds, or Ctrl-C; SNAPLEN cuts each at that many bytes
 //! (all of it unless given). At the end, unless QUIET: how many frames,
 //! and how many the capture had no room for.
+//!
+//! With FILTERED, only the packets that came in and a packet hook - a
+//! firewall - dropped or refused: each the IP packet behind a four-byte
+//! address family, which is how to see which rule bites.
 //!
 //! The frames come from a capture socket (PF_PACKET) held to the
 //! interface. The file is pcap with microsecond stamps, in the chip's byte
@@ -28,16 +32,17 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "PacketCapture";
-const VERSION_STRING = "\x00$VER: PacketCapture 1.1 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: PacketCapture 1.2 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S";
+const template = "INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S,FILTERED/S";
 const arg_interface = 0;
 const arg_to = 1;
 const arg_count = 2;
 const arg_time = 3;
 const arg_snaplen = 4;
 const arg_quiet = 5;
+const arg_filtered = 6;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOINTERFACE = "%s: no interface %s\n";
@@ -79,7 +84,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [6]usize = @splat(0);
+    var argv: [7]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -90,6 +95,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const seconds = number(argv[arg_time], 0);
     const snaplen = @min(number(argv[arg_snaplen], snaplen_most), snaplen_most);
     const quiet = argv[arg_quiet] != 0;
+    const filtered = argv[arg_filtered] != 0;
 
     // The interface's name as the stack has it: in lower case.
     const given: [*:0]const u8 = @ptrFromInt(argv[arg_interface]);
@@ -113,7 +119,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NOINTERFACE, .{ COMMAND_NAME, @as([*:0]const u8, &name) });
         return dos.RETURN_ERROR;
     }
-    const link: u32 = if (state & bsd.IFSTATE_LOOPBACK != 0) bsd.CAPTURE_LINK_NULL else bsd.CAPTURE_LINK_ETHERNET;
+    const link: u32 = if (filtered or state & bsd.IFSTATE_LOOPBACK != 0) bsd.CAPTURE_LINK_NULL else bsd.CAPTURE_LINK_ETHERNET;
 
     const capture = sb.Socket(bsd.PF_PACKET, bsd.SOCK_RAW, 0);
     if (capture < 0) return failed(dl, sb, "Socket");
@@ -167,6 +173,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         if (got < capture_bytes) continue;
         const seen: *align(1) const bsd.CaptureHeader = @ptrCast(buffer.ptr);
+        // A packet a hook stopped comes as a second copy: kept with
+        // FILTERED, and only then.
+        if ((seen.flags & bsd.CAPTURE_FILTERED != 0) != filtered) continue;
         const frame = buffer[capture_bytes..@intCast(got)];
         const kept: u32 = @min(@as(u32, @intCast(frame.len)), snaplen);
         const record: RecordHeader = .{

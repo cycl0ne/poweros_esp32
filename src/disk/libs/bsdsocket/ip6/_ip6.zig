@@ -74,6 +74,7 @@ const router = @import("../nd/router.zig");
 const slaac = @import("../nd/slaac.zig");
 const _route6 = @import("../route6/_route6.zig");
 const _dhcp6 = @import("../dhcp6/_dhcp6.zig");
+const _hook = @import("../hook/_hook.zig");
 pub const Address = @import("address.zig").Address;
 
 pub const header_bytes = 40;
@@ -623,8 +624,16 @@ fn options(header: []const u8, destination: Address) Verdict {
 
 /// `frame`, holding what `next_header` names, given an IPv6 header and
 /// sent on its way by `path` with `hop_limit`. The frame goes with it. 0,
-/// or the errno of a packet that could not go.
+/// or the errno of a packet that could not go - EPERM when a packet hook
+/// stopped it.
 pub fn output(stack: *StackBase, frame: *Frame, source: Address, destination: Address, next_header: u8, hop_limit: u8, path: _inet.Path) i32 {
+    if (!stack.hooks_out.isEmpty()) {
+        const seen: _hook.Seen = .{ .interface = path.interface, .source = source, .destination = destination, .protocol = next_header, .data = frame.bytes() };
+        if (_hook.ask(stack, bsd.PH_OUT, seen) != .pass) {
+            stack.frames.give(stack.sys_base, frame);
+            return bsd.EPERM;
+        }
+    }
     if (frame.length + header_bytes > path.mtu) return fragmentOut(stack, frame, source, destination, next_header, hop_limit, path);
     prepend(stack, frame, source, destination, next_header, hop_limit);
     return _netif.output6(stack, path.interface, frame, path.next_hop);

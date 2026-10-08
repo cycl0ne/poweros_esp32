@@ -126,7 +126,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   (WPA2) and SLIP over a serial line, and a shell over Telnet or SSH
   (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys and a
   post-quantum key exchange) - and the other way, `C:net/SSH` for a
-  shell or a command on another machine;
+  shell or a command on another machine; a packet filter
+  (`LIBS:filter.library`, `C:net/Filter`) with rules per interface and
+  state for what this machine starts;
   `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
   `https://`. See the [network guide](sdk/docs/guides/network.md).
 - **Modbus:** `LIBS:modbus.library` asks devices and answers as one,

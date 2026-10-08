@@ -859,6 +859,11 @@ pub const NetCounts = extern struct {
     igmp_received: u32 = 0,
     igmp_bad: u32 = 0,
     igmp_reports_sent: u32 = 0,
+    /// Packets a packet hook dropped, and refused (AddPacketHook).
+    hook_dropped: u32 = 0,
+    hook_refused: u32 = 0,
+    /// ICMPv4 errors the rate limit held back.
+    icmp_errors_limited: u32 = 0,
 };
 
 /// A route: addresses in network order.
@@ -1034,7 +1039,8 @@ pub const CAPTURE_OUT: u8 = 1;
 
 /// CaptureHeader's `link`: what the frame behind it starts with. The
 /// values are pcap's LINKTYPE_ numbers. NULL is a 4-byte address family
-/// in the chip's order, then the IP packet: what lo0 carries.
+/// in the chip's order (AF_INET or AF_INET6), then the IP packet: what lo0
+/// carries, and what a packet hook stopped is shown as.
 pub const CAPTURE_LINK_NULL: u8 = 0;
 /// A 14-byte Ethernet header: destination, source, type.
 pub const CAPTURE_LINK_ETHERNET: u8 = 1;
@@ -1053,7 +1059,91 @@ pub const CaptureHeader = extern struct {
     direction: u8 = CAPTURE_IN,
     /// CAPTURE_LINK_*.
     link: u8 = CAPTURE_LINK_ETHERNET,
-    pad: [2]u8 = .{ 0, 0 },
+    /// CAPTURE_FILTERED, or 0.
+    flags: u8 = 0,
+    pad: u8 = 0,
     /// The interface it went through.
     interface: [IFNAMSIZ]u8 = @splat(0),
+};
+
+/// CaptureHeader's `flags`: a packet that came in and a packet hook
+/// dropped or refused - a second copy, the IP packet behind a NULL link
+/// header, beside the frame as it came off the link.
+pub const CAPTURE_FILTERED: u8 = 1 << 0;
+
+// --- packet hooks ------------------------------------------------------------------
+
+/// AddPacketHook's tags.
+pub const PH_Dummy: u32 = TAG_USER + 0xB6000;
+/// Which way the hook looks: PH_IN (the default) or PH_OUT.
+pub const PH_Direction: u32 = PH_Dummy + 1;
+/// Its place in the chain, -128..127, the highest called first; 0 when
+/// not given. Hooks of one priority are called in the order they came.
+pub const PH_Priority: u32 = PH_Dummy + 2;
+/// The interface it looks at, its name ("wlan0"), even one not there yet;
+/// every interface when not given.
+pub const PH_Interface: u32 = PH_Dummy + 3;
+/// TRUE: the hook stays when the base that added it is closed, until a
+/// RemPacketHook from any base. For a library that adds its hook during
+/// one call on its caller's task and takes it out during another, and
+/// whose code stays while the hook is in.
+pub const PH_Keep: u32 = PH_Dummy + 4;
+
+pub const PH_IN: u32 = 0;
+pub const PH_OUT: u32 = 1;
+
+/// What a packet hook answers, as its `h_Entry`'s result: the packet goes
+/// on; it is dropped and nothing said; it is refused - a TCP segment
+/// answered with a reset, a UDP datagram with a port unreachable, anything
+/// else dropped. A packet going out is only passed or dropped.
+pub const PACKET_PASS: u32 = 0;
+pub const PACKET_DROP: u32 = 1;
+pub const PACKET_REFUSE: u32 = 2;
+
+/// PacketView's `belongs`: what the stack found the packet is for when it
+/// came in - nothing, a TCP connection's segment, a SYN or anything else
+/// for a listening socket, a datagram for a socket bound to its port or a
+/// member of its group. Going out, it is always NONE.
+pub const PACKET_BELONGS_NONE: u8 = 0;
+pub const PACKET_BELONGS_CONNECTION: u8 = 1;
+pub const PACKET_BELONGS_LISTENER: u8 = 2;
+pub const PACKET_BELONGS_BOUND: u8 = 3;
+
+/// TCP's flags, as PacketView's `tcp_flags` has them.
+pub const TH_FIN: u8 = 0x01;
+pub const TH_SYN: u8 = 0x02;
+pub const TH_RST: u8 = 0x04;
+pub const TH_PUSH: u8 = 0x08;
+pub const TH_ACK: u8 = 0x10;
+pub const TH_URG: u8 = 0x20;
+
+/// What a packet hook is shown: a packet's parts, read from its headers,
+/// and its transport's bytes. Valid only during the call, and read-only.
+pub const PacketView = extern struct {
+    /// PH_IN or PH_OUT.
+    direction: u8 = 0,
+    /// AF_INET or AF_INET6.
+    family: u8 = 0,
+    /// IPPROTO_TCP, IPPROTO_UDP, IPPROTO_ICMP or IPPROTO_ICMPV6.
+    protocol: u8 = 0,
+    /// PACKET_BELONGS_*.
+    belongs: u8 = 0,
+    /// TCP: the segment's TH_* flags.
+    tcp_flags: u8 = 0,
+    /// ICMP and ICMPv6: the message's type and code.
+    icmp_type: u8 = 0,
+    icmp_code: u8 = 0,
+    pad: u8 = 0,
+    /// TCP and UDP: the ports, in the chip's order; 0 otherwise.
+    source_port: u16 = 0,
+    destination_port: u16 = 0,
+    /// The interface, by If_NameToIndex's number and by name.
+    interface_index: u32 = 0,
+    interface: [IFNAMSIZ]u8 = @splat(0),
+    /// The addresses; IPv4's as IPv4-mapped IPv6 (::ffff:a.b.c.d).
+    source: in6_addr = .{},
+    destination: in6_addr = .{},
+    /// The transport's header and what it carries, `length` bytes.
+    data: ?[*]const u8 = null,
+    length: u32 = 0,
 };

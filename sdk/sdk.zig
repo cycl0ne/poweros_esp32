@@ -43,6 +43,8 @@ pub const rdb = @import("libs/rdb/rdb.zig");
 pub const tls = @import("libs/tls/tls.zig");
 /// Modbus over RTU and TCP, client and server, through modbus.library.
 pub const modbus = @import("libs/modbus/modbus.zig");
+/// A packet filter on the stack's packet hooks, through filter.library.
+pub const filter = @import("libs/filter/filter.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

@@ -12,6 +12,7 @@ Generated from the source by `./zig build autodoc`.
 - [Accept](#accept) - The next connection a listener took, as a socket of the caller's own, and the address it came from.
 - [AddDomainNameServer](#adddomainnameserver) - A name server added to the ones the resolver asks.
 - [AddInterfaceTagList](#addinterfacetaglist) - An interface on a network device, up and with its routes.
+- [AddPacketHook](#addpackethook) - Puts `hook` in front of the stack: it is shown every packet coming in (or going out) and answers what becomes of it.
 - [AddRouteTagList](#addroutetaglist) - A route added: to a net or a host through a gateway, or the default route; IPv4 or IPv6.
 - [Bind](#bind) - The local address and port a socket takes datagrams on and sends from.
 - [CloseSocket](#closesocket) - The socket closed and its descriptor free for the next Socket.
@@ -47,6 +48,7 @@ Generated from the source by `./zig build autodoc`.
 - [RecvMsg](#recvmsg) - The next datagram waiting on the socket, spread over `message`'s buffers in turn, the address it came from, and control messages about it; for a stream socket, what has come on its connection.
 - [ReleaseInterfaceList](#releaseinterfacelist) - A list of interface names freed.
 - [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
+- [RemPacketHook](#rempackethook) - Takes `hook` out of the chain AddPacketHook put it in.
 - [RemoveDomainNameServer](#removedomainnameserver) - A name server taken off the ones the resolver asks.
 - [RemoveInterface](#removeinterface) - The interface called `name` taken down: off the routes, its device closed, its slot free.
 - [Send](#send) - A datagram of `length` bytes to the peer the socket is connected to.
@@ -282,6 +284,104 @@ const tags = [_]TagItem{
     .{},
 };
 if (sb.AddInterfaceTagList("eth0", &tags) < 0) return sb.Errno();
+```
+
+## AddPacketHook
+
+Puts `hook` in front of the stack: it is shown every packet coming in (or going out) and answers what becomes of it.
+
+**SYNOPSIS**
+
+```zig
+fn AddPacketHook(base: *SocketBase, hook: *Hook, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.4. LVO -216.
+
+**INPUTS**
+
+- `hook` - a utility.library Hook. Its `h_Entry` is called with the
+  hook, a `*const PacketView` as the object and no message, and answers
+  `PACKET_PASS`, `PACKET_DROP` or `PACKET_REFUSE`.
+- `tags` - `PH_Direction` (`PH_IN`, the default, or `PH_OUT`),
+  `PH_Priority` (-128..127, 0 when not given), `PH_Interface` (a name;
+  every interface when not given), `PH_Keep` (TRUE: the hook stays
+  when this base is closed).
+
+**RESULT**
+
+0; -1 with Errno() `ENOMEM` when there is no memory for it, `EINVAL`
+for a hook already in a chain, a direction there is not, or an
+interface name longer than IFNAMSIZ - 1.
+
+**BEHAVIOR**
+
+Coming in, a TCP segment, a UDP datagram, or an ICMP or ICMPv6 message
+is shown after its checksum is checked and the stack has looked up what
+it is for (`belongs`), before it is delivered or answered. Going out,
+it is shown before its IP header goes on. The hooks of a chain are
+asked from the highest priority down, those of one priority in the
+order they came; the first answer that is not `PACKET_PASS` decides,
+and another answer counts as a pass. `PACKET_DROP` drops the packet
+and says nothing. `PACKET_REFUSE` answers a TCP segment with a reset
+and a UDP datagram with a port unreachable (ICMP's rate limit holds),
+and drops anything else. Going out it is a drop: a datagram's send
+fails with `EPERM`, and a TCP segment is lost as the network might lose
+it, so a connection that cannot send times out. What was stopped is
+counted in `NetCounts`
+(`hook_dropped`, `hook_refused`), and a packet coming in is copied to
+every capture socket marked `CAPTURE_FILTERED`.
+
+Never shown: anything on a loopback interface, IGMP, ICMPv4's errors
+(types 3, 11, 12), ICMPv6's errors (1-4), Neighbor Discovery and MLD,
+and the messages of this machine's DHCP and DHCPv6 client - so that no
+hook can cut an interface off.
+
+**CONTEXT**
+
+- Waits: for the stack's lock.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+The hook itself runs under the stack's lock, on whichever task holds
+it - the stack's for a packet coming in, the sender's for one going
+out: it may not wait, call bsdsocket.library or touch a file, and
+should be quick, since every packet waits for it.
+
+**OWNERSHIP**
+
+`hook` stays the caller's and must stay where it is until
+RemPacketHook, or until this base is closed, which takes it out too -
+unless `PH_Keep` keeps it, and then only RemPacketHook does.
+`tags` is read during the call only. The PacketView and the bytes it
+points to are the stack's and valid only while the hook runs.
+
+**NOTES**
+
+A firewall is a module of its own built on this: the stack names no
+firewall and keeps no rules.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemPacketHook`, `sdk.bsdsocket.PacketView`, `GetNetworkStatistics`
+
+**EXAMPLES**
+
+```zig
+fn noTelnet(_: *utility.Hook, object: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize {
+    const view: *const bsd.PacketView = @ptrCast(@alignCast(object.?));
+    if (view.protocol == bsd.IPPROTO_TCP and view.destination_port == 23) return bsd.PACKET_REFUSE;
+    return bsd.PACKET_PASS;
+}
+var hook: utility.Hook = .{ .entry = &noTelnet };
+_ = sb.AddPacketHook(&hook, &[_]utility.TagItem{ .{ .tag = bsd.PH_Interface, .data = @intFromPtr("wlan0") }, .{} });
 ```
 
 ## AddRouteTagList
@@ -2598,6 +2698,64 @@ None known.
 ```zig
 const id = sb.ReleaseSocket(socket, bsd.UNIQUE_ID);
 // ... hand `id` to the task that will serve it
+```
+
+## RemPacketHook
+
+Takes `hook` out of the chain AddPacketHook put it in.
+
+**SYNOPSIS**
+
+```zig
+fn RemPacketHook(base: *SocketBase, hook: *Hook) void
+```
+
+**SINCE**
+
+1.4. LVO -220.
+
+**INPUTS**
+
+- `hook` - a hook AddPacketHook took; one in no chain is left alone.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The hook is taken out under the stack's lock, which every packet is
+handled under: when the call returns, the hook is not running and is
+not called again, so its code may go.
+
+**CONTEXT**
+
+- Waits: for the stack's lock.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`hook` is the caller's again. Any base may take out a hook, not only
+the one that added it.
+
+**NOTES**
+
+Closing the base that added a hook takes it out as well.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddPacketHook`
+
+**EXAMPLES**
+
+```zig
+sb.RemPacketHook(&hook);
 ```
 
 ## RemoveDomainNameServer

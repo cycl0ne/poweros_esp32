@@ -38,6 +38,7 @@ const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const Frame = @import("../frame/_frame.zig").Frame;
 const _netif = @import("../netif/_netif.zig");
+const _hook = @import("../hook/_hook.zig");
 const Interface = _netif.Interface;
 const _ip = @import("../ip/_ip.zig");
 const _route = @import("../route/_route.zig");
@@ -73,7 +74,6 @@ const Segment = struct {
 /// A TCP segment that came in, the frame starting at it; `header` is the
 /// IPv4 header in front of it.
 pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _inet.Packet) void {
-    _ = interface;
     const sys = stack.sys_base;
     defer stack.frames.give(sys, frame);
     stack.counts.tcp_received += 1;
@@ -98,7 +98,21 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
         .data = data,
         .length = @as(u32, @intCast(data.len)) + @intFromBool(flags & _tcp.SYN != 0) + @intFromBool(flags & _tcp.FIN != 0),
     };
-    const socket = _tcp.find(stack, header.destination, seg.destination_port, header.source, seg.source_port) orelse {
+    const found = _tcp.find(stack, header.destination, seg.destination_port, header.source, seg.source_port);
+    // The packet hooks first: a port one drops stays silent.
+    if (!stack.hooks_in.isEmpty()) {
+        const belongs = if (found) |socket|
+            (if (_tcp.of(socket).state == .listen) bsd.PACKET_BELONGS_LISTENER else bsd.PACKET_BELONGS_CONNECTION)
+        else
+            bsd.PACKET_BELONGS_NONE;
+        const seen: _hook.Seen = .{ .interface = interface, .source = header.source, .destination = header.destination, .protocol = protocol, .belongs = belongs, .data = bytes, .frame = frame, .header_length = header.header_length };
+        switch (_hook.ask(stack, bsd.PH_IN, seen)) {
+            .pass => {},
+            .drop => return,
+            .refuse => return output.sendReset(stack, header, seg.destination_port, seg.source_port, seg.seq, seg.ack, seg.length, seg.flags),
+        }
+    }
+    const socket = found orelse {
         return output.sendReset(stack, header, seg.destination_port, seg.source_port, seg.seq, seg.ack, seg.length, seg.flags);
     };
     const tcb = _tcp.of(socket);

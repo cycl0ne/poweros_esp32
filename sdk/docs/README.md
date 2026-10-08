@@ -67,7 +67,8 @@ tags and constants, each with its doc comment.
   them, names, TLS, interfaces and their files, the network device API,
   wireless devices, SLIP over a serial line, writing a network driver,
   telnet.device, SSH both ways (ShellServer SSH, `C:net/SSH`,
-  ssh.device), and the commands.
+  ssh.device), a packet filter and the packet hooks under it, and the
+  commands.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
   one, errors, when a change is seen, and `C:RDB`.
@@ -105,9 +106,10 @@ first time something opens it.
 | keymap.library | ROM | raw keys into characters | [md](autodocs/keymap.md) · [doc](autodocs/keymap.doc) |
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file and font requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
-| bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
+| bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
+| filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |

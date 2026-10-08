@@ -33,6 +33,8 @@ const _tcp_input = @import("../tcp/input.zig");
 const reassembly = @import("reassembly.zig");
 const _inet = @import("../inet/_inet.zig");
 const _igmp = @import("../igmp/_igmp.zig");
+const _hook = @import("../hook/_hook.zig");
+const Address = @import("../ip6/address.zig").Address;
 
 pub const header_bytes = 20;
 /// IPv4's EtherType, the packet type a network device reads it by.
@@ -174,8 +176,16 @@ pub fn output(stack: *StackBase, frame: *Frame, source: u32, destination: u32, p
     return outputWith(stack, frame, source, destination, protocol, hop, .{});
 }
 
-/// `output` with a header that carries `options`.
+/// `output` with a header that carries `options`. A packet hook that
+/// stops it makes it EPERM.
 pub fn outputWith(stack: *StackBase, frame: *Frame, source: u32, destination: u32, protocol: u8, hop: _route.Hop, options: Options) i32 {
+    if (!stack.hooks_out.isEmpty()) {
+        const seen: _hook.Seen = .{ .interface = hop.interface, .source = Address.fromV4(source), .destination = Address.fromV4(destination), .protocol = protocol, .data = frame.bytes() };
+        if (_hook.ask(stack, bsd.PH_OUT, seen) != .pass) {
+            stack.frames.give(stack.sys_base, frame);
+            return bsd.EPERM;
+        }
+    }
     const group = _igmp.isGroup(destination);
     const length: u32 = if (options.router_alert) header_bytes + router_alert_option.len else header_bytes;
     const header = frame.push(length);

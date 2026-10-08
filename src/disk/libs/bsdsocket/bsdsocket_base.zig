@@ -77,6 +77,12 @@ pub const StackBase = extern struct {
     /// rate limit has left.
     path_mtus: _ip6.PathMtus = .{},
     icmp6_limit: _icmp6.Limit = .{},
+    /// ICMPv4's errors' rate limit, the same as ICMPv6's.
+    icmp_limit: _icmp6.Limit = .{},
+    /// The packet hooks (AddPacketHook), coming in and going out: a
+    /// PacketHook each, by priority.
+    hooks_in: exec.List = .{},
+    hooks_out: exec.List = .{},
     /// crypto.library, for IPv6's stable interface identifiers: opened
     /// with the first interface that makes them.
     crypto: ?*CryptoBase = null,

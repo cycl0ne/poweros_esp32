@@ -157,6 +157,7 @@ flowchart TB
     m_dos_library["dos.library"]
     m_expander_resource["expander.resource"]
     m_fat_handler["fat-handler"]
+    m_filter_library["filter.library"]
     m_flash_device["flash.device"]
     m_gadget_classes["gadget classes"]
     m_gpio_resource["gpio.resource"]
@@ -201,6 +202,8 @@ flowchart TB
     m_diskfont_library --> m_truetype_library
     m_fat_handler --> m_dos_library
     m_fat_handler -.-> m_sdcard_device
+    m_filter_library --> m_bsdsocket_library
+    m_filter_library --> m_timer_device
     m_iffparse_library --> m_clipboard_device
     m_iffparse_library --> m_dos_library
     m_modbus_library --> m_bsdsocket_library
@@ -230,7 +233,7 @@ flowchart TB
     m_wifi_device --> m_timer_device
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_asl_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_iffparse_library,m_modbus_library,m_rdb_library,m_tls_library,m_truetype_library lib
+    class m_asl_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_filter_library,m_iffparse_library,m_modbus_library,m_rdb_library,m_tls_library,m_truetype_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_clipboard_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_wifi_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827

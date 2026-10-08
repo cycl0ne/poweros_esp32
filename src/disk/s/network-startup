@@ -6,6 +6,12 @@
 ; on, stops nothing here.
 FailAt 21
 
+; The packet filter, when ENVARC:Sys/net/filter holds rules: in force
+; before any interface comes up.
+If EXISTS ENVARC:Sys/net/filter
+  C:net/Filter LOAD QUIET
+EndIf
+
 ; Every interface in DEVS:NetInterfaces/, and a DHCP address waited for:
 ; ten seconds at the most.
 C:net/AddNetInterface ALL QUIET

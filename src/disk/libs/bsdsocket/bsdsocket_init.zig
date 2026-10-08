@@ -18,11 +18,13 @@ const _arp = @import("arp/_arp.zig");
 const reassembly = @import("ip/reassembly.zig");
 const reassembly6 = @import("ip6/reassembly.zig");
 const bsdsocket_lvo = @import("bsdsocket_lvo.zig");
+const _lock = @import("lock/_lock.zig");
+const _hook = @import("hook/_hook.zig");
 
 pub const LIBRARY_NAME = bsd.SOCKETNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
-const BUILD_DATE = "07.10.2026";
+pub const LIBRARY_REVISION = 4;
+const BUILD_DATE = "08.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -42,6 +44,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&stack.start_lock);
     stack.sockets.init(.unknown);
     stack.loopback_queue.init(.unknown);
+    stack.hooks_in.init(.unknown);
+    stack.hooks_out.init(.unknown);
     stack.frames.init();
     _arp.init(stack);
     @import("nd/_nd.zig").init(stack);
@@ -93,6 +97,14 @@ fn open(lib: *exec.Library, version: u32) callconv(.c) ?*exec.Library {
     return copy;
 }
 
+/// The packet hooks the base added, taken out under the stack's lock:
+/// once it is closed, nothing of its is called.
+fn removeHooks(sb: *SocketBase) void {
+    const held = _lock.take(sb.stack);
+    defer _lock.give(sb.stack, held);
+    _hook.removeOwned(sb.stack, sb);
+}
+
 fn freeCopy(sb: *SocketBase) ?*exec.Library {
     const lib = &sb.lib;
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
@@ -116,6 +128,7 @@ fn close(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const sb = _base.socketBase(lib);
     const stack = sb.stack;
     const sys = sb.sys_base;
+    removeHooks(sb);
     _socket.destroyAll(sb);
     _socket.closeTimer(sb);
     sys.FreeSignal(sb.ready_signal);

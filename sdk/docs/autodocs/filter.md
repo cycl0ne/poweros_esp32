@@ -1,0 +1,269 @@
+# filter.library
+
+filter.library's functions: a packet filter on bsdsocket.library's
+packet hooks, its rules loaded as text (the rule language is in
+sdk.filter). Open it with OpenLibrary("filter.library", 1).
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [ClearFilterRules](#clearfilterrules) - Takes the rules out of force: every packet passes again.
+- [GetFilterFlows](#getfilterflows) - Hands back the exchanges this machine began whose answers pass without a rule: the UDP datagrams and the echoes it sent, while they live.
+- [GetFilterRules](#getfilterrules) - Hands back the rules and the defaults in force, in the order of their lines, each with how many packets it decided.
+- [LoadFilterRules](#loadfilterrules) - Parses `text` as rules and puts them in force in place of the old ones.
+
+## ClearFilterRules
+
+Takes the rules out of force: every packet passes again.
+
+**SYNOPSIS**
+
+```zig
+fn ClearFilterRules(base: *FilterBase) void
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The hooks are taken out of bsdsocket.library's chains first, so when
+the call returns neither runs; then the rules and the noted exchanges
+are thrown away. With no rules in force it does nothing.
+
+**CONTEXT**
+
+- Waits: yes - for bsdsocket.library's lock.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do: bsdsocket.library is opened on it for the
+  length of the call.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+With the hooks out, the library may be expunged once nobody has it
+open.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LoadFilterRules`
+
+**EXAMPLES**
+
+```zig
+fb.ClearFilterRules();
+```
+
+## GetFilterFlows
+
+Hands back the exchanges this machine began whose answers pass without a rule: the UDP datagrams and the echoes it sent, while they live.
+
+**SYNOPSIS**
+
+```zig
+fn GetFilterFlows(base: *FilterBase, into: ?[*]FilterFlowInfo, count: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `into` - room for `count` FilterFlowInfo; may be null when `count`
+  is 0.
+
+**RESULT**
+
+How many there are, even when `into` held fewer; 0 with no rules in
+force.
+
+**BEHAVIOR**
+
+As many as fit are written, in no order: the protocol, this machine's
+end and the other's, and how long since the last packet. An exchange
+lives 60 seconds after its last packet, an echo 10.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`into` is the caller's.
+
+**NOTES**
+
+TCP connections are not among them: the stack tells the filter which
+segments are a connection's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetFilterRules`, `sdk.filter`
+
+**EXAMPLES**
+
+```zig
+var flows: [64]filter.FilterFlowInfo = undefined;
+const total = fb.GetFilterFlows(&flows, flows.len);
+```
+
+## GetFilterRules
+
+Hands back the rules and the defaults in force, in the order of their lines, each with how many packets it decided.
+
+**SYNOPSIS**
+
+```zig
+fn GetFilterRules(base: *FilterBase, into: ?[*]FilterRuleInfo, count: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `into` - room for `count` FilterRuleInfo; may be null when `count`
+  is 0.
+
+**RESULT**
+
+How many rules and defaults there are, even when `into` held fewer; 0
+with no rules in force.
+
+**BEHAVIOR**
+
+As many as fit are written, in the order of their lines: `kind` says a
+rule from a default, `action` what it does, `text` is the line as
+written, without its comment.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`into` is the caller's.
+
+**NOTES**
+
+Counts start at 0 with each load.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LoadFilterRules`, `GetFilterFlows`
+
+**EXAMPLES**
+
+```zig
+var rules: [32]filter.FilterRuleInfo = undefined;
+const total = fb.GetFilterRules(&rules, rules.len);
+for (rules[0..@min(total, rules.len)]) |rule| _ = rule.hits;
+```
+
+## LoadFilterRules
+
+Parses `text` as rules and puts them in force in place of the old ones.
+
+**SYNOPSIS**
+
+```zig
+fn LoadFilterRules(base: *FilterBase, text: [*]const u8, length: u32, err: ?*FilterError) u32
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `text` - the rules, `length` bytes, a line each, as `sdk.filter`
+  describes them; lines end with LF (a CR before it is a space).
+- `err` - where a failure is said, or null.
+
+**RESULT**
+
+`FILTERERR_OK`; or `FILTERERR_SYNTAX` (a word not understood, or one
+that does not fit the rest of its rule), `FILTERERR_TWICE` (a match
+given twice in a rule, or a second default for one interface),
+`FILTERERR_NOMEM`, `FILTERERR_NOSTACK` (bsdsocket.library could not be
+opened, or took no hook) - with the line, the column and the word in
+`err` for the first two.
+
+**BEHAVIOR**
+
+The whole text is parsed first: a failure leaves the rules in force as
+they were. Then, the first time, the library's two hooks go into
+bsdsocket.library's chains (AddPacketHook, PH_Keep); and the new rules
+take the old ones' place at once, between one packet and the next.
+Their counts start at 0. Empty text is a rule set with no rules: what
+the noted exchanges and the stack's connections do not pass, passes
+anyway.
+
+**CONTEXT**
+
+- Waits: yes - for memory, and for bsdsocket.library's lock.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do: bsdsocket.library is opened on it for the
+  length of the call.
+
+**OWNERSHIP**
+
+`text` is read during the call only; the rules are the library's.
+
+**NOTES**
+
+While rules are in force the library stays in memory: bsdsocket.library
+calls it for every packet. ClearFilterRules lets it go.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ClearFilterRules`, `GetFilterRules`, `sdk.filter`
+
+**EXAMPLES**
+
+```zig
+const rules = "default in on wlan0 block\npass in on wlan0 proto tcp from 192.168.1.0/24 to port 23\n";
+var err: filter.FilterError = .{};
+if (fb.LoadFilterRules(rules, rules.len, &err) != filter.FILTERERR_OK) {
+    // err.line, err.column, err.word
+}
+```

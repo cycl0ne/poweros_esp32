@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+//! filter.library's functions: a packet filter on bsdsocket.library's
+//! packet hooks, its rules loaded as text (the rule language is in
+//! sdk.filter). Open it with OpenLibrary("filter.library", 1).
+##include libs/filter/filter as filter
+##basetype FilterBase
+##name filter.library
+##bias 4
+##public
+/// The rules in `text` (`length` bytes) parsed and put in force in place
+/// of the old ones - the hooks added the first time: FILTERERR_OK, or why
+/// not, with where in `err` (the old rules stay then).
+u32 LoadFilterRules([*]const u8 text, u32 length, ?*filter.FilterError err)
+/// The rules taken out of force and the hooks with them: every packet
+/// passes again.
+void ClearFilterRules()
+/// The rules and defaults in force, with their counts, into `into` (room
+/// for `count`): how many there are.
+u32 GetFilterRules(?[*]filter.FilterRuleInfo into, u32 count)
+/// The exchanges whose answers pass without a rule, into `into` (room for
+/// `count`): how many there are.
+u32 GetFilterFlows(?[*]filter.FilterFlowInfo into, u32 count)
+##end

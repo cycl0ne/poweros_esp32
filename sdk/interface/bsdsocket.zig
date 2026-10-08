@@ -67,6 +67,8 @@ pub const LVO = struct {
     pub const FreeAddrInfo = libraries.lvo(50);
     pub const GetNameInfo = libraries.lvo(51);
     pub const RecvMsg = libraries.lvo(52);
+    pub const AddPacketHook = libraries.lvo(53);
+    pub const RemPacketHook = libraries.lvo(54);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -121,6 +123,8 @@ pub const Fn = struct {
     pub const FreeAddrInfo = *const fn (*SocketBase, *bsd.addrinfo) callconv(.c) void;
     pub const GetNameInfo = *const fn (*SocketBase, *const bsd.sockaddr, u32, ?[*]u8, u32, ?[*]u8, u32, i32) callconv(.c) i32;
     pub const RecvMsg = *const fn (*SocketBase, i32, *bsd.msghdr, u32) callconv(.c) i32;
+    pub const AddPacketHook = *const fn (*SocketBase, *utility.Hook, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const RemPacketHook = *const fn (*SocketBase, *utility.Hook) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -404,5 +408,16 @@ pub const SocketBase = opaque {
     /// and control messages: the bytes read, or -1.
     pub fn RecvMsg(self: *SocketBase, socket: i32, message: *bsd.msghdr, flags: u32) i32 {
         return libraries.call(self, LVO.RecvMsg, Fn.RecvMsg, .{ socket, message, flags });
+    }
+
+    /// `hook` put in the chain that sees every packet coming in, or going
+    /// out, and decides what becomes of it: 0, or -1 (errno ENOMEM, EINVAL).
+    pub fn AddPacketHook(self: *SocketBase, hook: *utility.Hook, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.AddPacketHook, Fn.AddPacketHook, .{ hook, tags });
+    }
+
+    /// `hook` taken out of its chain; when this returns it is called no more.
+    pub fn RemPacketHook(self: *SocketBase, hook: *utility.Hook) void {
+        return libraries.call(self, LVO.RemPacketHook, Fn.RemPacketHook, .{hook});
     }
 };

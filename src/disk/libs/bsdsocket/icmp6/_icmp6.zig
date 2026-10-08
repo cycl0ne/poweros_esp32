@@ -48,6 +48,7 @@ const _tcp = @import("../tcp/_tcp.zig");
 const _nd = @import("../nd/_nd.zig");
 const mld = @import("../nd/mld.zig");
 const Address = @import("../ip6/address.zig").Address;
+const _hook = @import("../hook/_hook.zig");
 
 pub const header_bytes = 8;
 const protocol = _ip6.protocol_icmp6;
@@ -86,6 +87,19 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: _i
     if (message.len < 4 or _ip.finish(_ip.sum(_inet.pseudoSum(packet.source, packet.destination, protocol, @intCast(message.len)), message)) != 0) {
         stack.counts.icmp6_bad += 1;
         return stack.frames.give(sys, frame);
+    }
+    // The packet hooks: a message they stop is not answered either.
+    if (!stack.hooks_in.isEmpty()) {
+        const seen: _hook.Seen = .{
+            .interface = interface,
+            .source = packet.source,
+            .destination = packet.destination,
+            .protocol = protocol,
+            .data = message,
+            .frame = frame,
+            .header_length = packet.header_length,
+        };
+        if (_hook.ask(stack, bsd.PH_IN, seen) != .pass) return stack.frames.give(sys, frame);
     }
     deliverRaw(stack, frame, packet);
     switch (message[0]) {

@@ -3,7 +3,8 @@
 How the machine talks to a network: the TCP/IP stack a program uses, the
 interfaces it runs on, the devices that carry its frames, and what it takes
 to write one. The calls are in the reference:
-[bsdsocket](../autodocs/bsdsocket.md) and [tls](../autodocs/tls.md); the
+[bsdsocket](../autodocs/bsdsocket.md), [tls](../autodocs/tls.md) and
+[filter](../autodocs/filter.md); the
 device requests are described in `sdk/devices/network.zig`,
 `sdk/devices/wireless.zig`, `sdk/devices/slip.zig`,
 `sdk/devices/telnet.zig` and `sdk/devices/ssh.zig`.
@@ -23,6 +24,8 @@ device requests are described in `sdk/devices/network.zig`,
 - [A connection as a device: telnet.device](#a-connection-as-a-device-telnetdevice)
 - [SSH: ssh.device](#ssh-sshdevice) - the server, the client
   (`C:net/SSH`), the device
+- [A packet filter](#a-packet-filter) - its rules, `C:net/Filter`, and
+  the packet hooks it is built on
 - [Commands](#commands)
 
 ## The layers
@@ -308,6 +311,7 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/ssh_host_key` | the SSH host key, made at the first start; `.pub` beside it |
 | `ENVARC:Sys/net/id_ed25519` | `C:net/SSH`'s key for logins, made by `SSH KEYGEN`; `.pub` beside it |
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` has seen, OpenSSH's lines |
+| `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
@@ -627,6 +631,102 @@ In QEMU, `-Dssh=2222` forwards a host port to port 22 (qemu-display does
 unless told otherwise): `ssh -p 2222 localhost`. The host is `10.0.2.2`
 from inside: `SSH user@10.0.2.2` reaches the PC's own sshd.
 
+## A packet filter
+
+Every program that binds a socket listens on every interface: a shell
+on port 23, Modbus on 502. A packet filter lets a port be open on one
+interface and shut on another, or open to one subnet only, without a
+program learning to check who it talks to. It is a library of its own,
+`LIBS:filter.library`, loaded only when there are rules; the stack names
+no filter and keeps no rules.
+
+**Rules** are a file, `ENVARC:Sys/net/filter`, a line each, read top
+down - the first rule that matches decides:
+
+```
+# '#' to the line's end is a comment
+default in on wlan0 block
+pass   in on wlan0 proto tcp from 192.168.1.0/24 to port 23
+pass   in on wlan0 proto tcp from 192.168.1.50 to port 502
+pass   in proto icmp type echo
+refuse in on eth0 proto udp to port 161
+```
+
+- **The action**: `pass`; `block`, dropped and nothing said, so the
+  sender waits and gives up; `refuse`, answered at once - a TCP reset,
+  or a port unreachable for UDP (anything else is dropped). Then `in`:
+  the rules are about what comes in.
+- **The matches**, each at most once, in any order: `on <interface>`;
+  `inet` or `inet6`; `proto tcp|udp|icmp|icmp6`; `from` and `to`, each
+  an address with a prefix length (`10.0.0.0/8`, `fd00::/8`), a single
+  address, `any`, or nothing, and maybe `port <n>` or `port <n>-<m>`;
+  `type echo`, `type echo-reply` or `type <number>` for ICMP; `flags S`
+  for a TCP segment that opens a connection. An IPv4 address matches
+  IPv4 packets and an IPv6 one IPv6.
+- **`default in on <interface> pass|block|refuse`** is what a packet on
+  that interface gets when no rule matched; without `on`, every
+  interface no other default names. An interface no default names is
+  open, so a filter written for Wi-Fi leaves the cable alone.
+
+**What passes before any rule**: a segment of a TCP connection the
+stack has - one this machine opened, or one a rule let in - and an
+answer to a UDP datagram or an echo this machine sent: its DNS, its
+time server, its ping. A UDP exchange is kept 60 seconds after its last
+packet, an echo 10. So `default in on wlan0 block` with a `pass` for
+each port that should be reachable is a whole configuration: everything
+this machine starts still works. **What always passes**, whatever the
+rules say, so that no rule can cut an interface off: lo0, ARP, IGMP,
+ICMP's errors (unreachable, time exceeded, parameter problem) and
+ICMPv6's, Neighbor Discovery, MLD, and this machine's own DHCP and
+DHCPv6.
+
+**C:net/Filter** puts them in force: `Filter LOAD` reads the file (or
+`FROM` another) and takes the old rules' place at once; a line it does
+not understand loads nothing and is said with its line, column and word.
+`Filter SHOW` lists the rules with how many packets each decided,
+`Filter FLOWS` the exchanges whose answers pass, `Filter OFF` takes the
+rules out. `S:Network-Startup` runs `Filter LOAD QUIET` before it brings
+up an interface, when the file is there.
+
+**Seeing it work**: the counts in `Filter SHOW`; `NetStatus COUNTS`, whose
+`Hooks` line counts what was dropped and refused; and
+`PacketCapture eth0 TO RAM:f.pcap FILTERED`, which keeps only what came
+in and was stopped - which shows the rule that bites.
+
+### Packet hooks
+
+The filter is built on two calls of bsdsocket.library a program may use
+for a filter or a logger of its own. `AddPacketHook(hook, tags)` puts a
+utility.library Hook in a chain - `PH_Direction` `PH_IN` or `PH_OUT`,
+`PH_Priority`, `PH_Interface` - and the hook is called with a
+`PacketView` for every TCP segment, UDP datagram and ICMP message: the
+interface, the family, the addresses (IPv4's mapped), the protocol, the
+ports or the ICMP type, the TCP flags, the transport's bytes, and coming
+in, what the stack found it is for (`PACKET_BELONGS_CONNECTION`,
+`_LISTENER`, `_BOUND`, `_NONE`). It answers `PACKET_PASS`, `PACKET_DROP`
+or `PACKET_REFUSE`; the first answer that is not a pass decides.
+
+```zig
+fn noTelnetFromWiFi(_: *utility.Hook, object: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize {
+    const view: *const bsd.PacketView = @ptrCast(@alignCast(object.?));
+    if (view.protocol == bsd.IPPROTO_TCP and view.destination_port == 23) return bsd.PACKET_REFUSE;
+    return bsd.PACKET_PASS;
+}
+
+var hook: utility.Hook = .{ .entry = &noTelnetFromWiFi };
+_ = sb.AddPacketHook(&hook, &[_]utility.TagItem{ .{ .tag = bsd.PH_Interface, .data = @intFromPtr("wlan0") }, .{} });
+// ... and before the code goes:
+sb.RemPacketHook(&hook);
+```
+
+A hook runs under the stack's lock, on whichever task holds it - the
+stack's for what comes in, the sender's for what goes out - so it may
+not wait, call bsdsocket.library or touch a file, and every packet
+waits for it. RemPacketHook returns once it is not running. A hook goes
+with the base that added it, unless `PH_Keep` keeps it until a
+RemPacketHook from any base: how filter.library, which opens
+bsdsocket.library only for the length of a call, keeps its hooks in.
+
 ## Commands
 
 | Command | Does |
@@ -640,7 +740,8 @@ from inside: `SSH user@10.0.2.2` reaches the PC's own sshd.
 | `C:net/TimeSync` | the clock from a time server |
 | `C:net/HTTPGet` | a file over HTTP or HTTPS; `NOVERIFY` leaves a test server's certificate unchecked |
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
-| `C:net/PacketCapture` | an interface's frames into a pcap file |
+| `C:net/PacketCapture` | an interface's frames into a pcap file; `FILTERED` only what the filter stopped |
+| `C:net/Filter` | the packet filter's rules loaded (`LOAD`), shown with their counts (`SHOW`), its exchanges (`FLOWS`), taken out (`OFF`) |
 | `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server |
 | `C:net/SSH` | a shell or a command on another machine over SSH; `KEYGEN` makes the key for logins |
 | `C:net/Net` | a network device spoken to directly |

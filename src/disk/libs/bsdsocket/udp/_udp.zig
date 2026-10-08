@@ -43,6 +43,7 @@ const Socket = _socket.Socket;
 const Address = @import("../ip6/address.zig").Address;
 const _inet = @import("../inet/_inet.zig");
 const Packet = _inet.Packet;
+const _hook = @import("../hook/_hook.zig");
 
 pub const header_bytes = 8;
 const protocol: u8 = @intCast(bsd.IPPROTO_UDP);
@@ -75,9 +76,20 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
         return stack.frames.give(stack.sys_base, frame);
     }
     if (_inet.isGroup(packet.destination)) {
+        if (asked(stack, interface, frame, packet, datagram[0..length], bsd.PACKET_BELONGS_BOUND) != .pass) return stack.frames.give(sys, frame);
         return toGroup(stack, interface, frame, packet, length, source_port, destination_port);
     }
-    const socket = find(stack, packet.destination, destination_port, packet.source, source_port) orelse {
+    const found = find(stack, packet.destination, destination_port, packet.source, source_port);
+    switch (asked(stack, interface, frame, packet, datagram[0..length], if (found != null) bsd.PACKET_BELONGS_BOUND else bsd.PACKET_BELONGS_NONE)) {
+        .pass => {},
+        .drop => return stack.frames.give(sys, frame),
+        .refuse => {
+            _ = frame.push(packet.header_length);
+            _inet.sendUnreachable(stack, interface, frame, packet, .port);
+            return stack.frames.give(sys, frame);
+        },
+    }
+    const socket = found orelse {
         // Nobody is bound there: the sender is told, unless it sent to
         // many.
         _ = frame.push(packet.header_length);
@@ -95,6 +107,23 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
     socket.receive_bytes += frame.cost();
     stack.counts.udp_received += 1;
     _socket.wake(socket, bsd.FD_READ);
+}
+
+/// What the packet hooks say of a datagram that came in. A copy of this
+/// machine's own datagram to a group, looped back to its members, has no
+/// IP header in front and is not asked about.
+fn asked(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Packet, datagram: []const u8, belongs: u8) _hook.Verdict {
+    if (stack.hooks_in.isEmpty() or packet.header_length == 0) return .pass;
+    return _hook.ask(stack, bsd.PH_IN, .{
+        .interface = interface,
+        .source = packet.source,
+        .destination = packet.destination,
+        .protocol = protocol,
+        .belongs = belongs,
+        .data = datagram,
+        .frame = frame,
+        .header_length = packet.header_length,
+    });
 }
 
 /// A copy of a datagram to a group, from its UDP header on, handed to

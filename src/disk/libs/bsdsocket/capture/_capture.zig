@@ -4,7 +4,8 @@
 //! starts with a CaptureHeader - when, which way, how long, which
 //! interface - and then the frame with its link header: Ethernet's made
 //! again from the addresses the device gave with the packet, or lo0's
-//! four-byte address family.
+//! four-byte address family. A packet a packet hook stopped comes a
+//! second time, as lo0's would, marked CAPTURE_FILTERED.
 //!
 //! **Taking nothing from the stack.** A copy comes from the frame pool,
 //! and a socket holds `queue_max` of them at the most - small frames are
@@ -30,10 +31,12 @@ const header_bytes = @sizeOf(bsd.CaptureHeader);
 const ethernet_bytes = 14;
 const null_bytes = 4;
 
-/// How a frame is framed for the capture: its link header's fields.
+/// How a frame is framed for the capture: its link header's fields; the
+/// address family alone, for lo0 and for a packet a hook stopped.
 pub const Link = union(enum) {
     ethernet: struct { to: *const [6]u8, from: *const [6]u8, packet_type: u16 },
     loopback,
+    filtered,
 };
 
 /// `packet`, going `direction` through `interface`, copied to every
@@ -60,7 +63,7 @@ pub fn tap(stack: *StackBase, interface: *Interface, packet: []const u8, directi
             when = _timer.date(stack);
             break :blk when.?;
         };
-        const link_bytes: u32 = if (link == .loopback) null_bytes else ethernet_bytes;
+        const link_bytes: u32 = if (link == .ethernet) ethernet_bytes else null_bytes;
         const whole: u32 = link_bytes + @as(u32, @intCast(packet.len));
         // The header goes in the headroom, the frame behind it; a frame
         // longer than the buffer is cut.
@@ -73,7 +76,8 @@ pub fn tap(stack: *StackBase, interface: *Interface, packet: []const u8, directi
             .length = whole,
             .dropped = socket.capture_dropped,
             .direction = direction,
-            .link = if (link == .loopback) bsd.CAPTURE_LINK_NULL else bsd.CAPTURE_LINK_ETHERNET,
+            .link = if (link == .ethernet) bsd.CAPTURE_LINK_ETHERNET else bsd.CAPTURE_LINK_NULL,
+            .flags = if (link == .filtered) bsd.CAPTURE_FILTERED else 0,
             .interface = interface.name,
         };
         socket.capture_dropped = 0;
@@ -87,8 +91,8 @@ pub fn tap(stack: *StackBase, interface: *Interface, packet: []const u8, directi
                 linked[12] = @truncate(fields.packet_type >> 8);
                 linked[13] = @truncate(fields.packet_type);
             },
-            .loopback => {
-                const family: u32 = bsd.AF_INET;
+            .loopback, .filtered => {
+                const family: u32 = if (packet.len > 0 and packet[0] >> 4 == 6) bsd.AF_INET6 else bsd.AF_INET;
                 linked[0..4].* = @bitCast(family);
             },
         }
