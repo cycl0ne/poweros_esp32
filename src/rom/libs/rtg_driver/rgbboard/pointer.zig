@@ -18,8 +18,10 @@
 //! owed - the refill interrupt came first - it lays it itself, the copy
 //! being over by then.
 //!
-//! The lay is a masked copy of at most `RTG_POINTER_MAX` rows of a stretch,
-//! from internal memory into internal memory. It runs from IRAM, where no
+//! The lay is a masked copy of at most a stretch's rows, from internal
+//! memory into internal memory. The overlay - a dragged icon, up to
+//! `RTG_OVERLAY_MAX` wide - is laid the same way first, the pointer over
+//! it. It runs from IRAM, where no
 //! flash read can stand it still, with runtime safety off like the rest of
 //! the stream's code.
 //!
@@ -34,12 +36,16 @@ const dmares = sdk.resources.dma;
 const panel_feed = @import("panel.zig");
 const Panel = panel_feed.Panel;
 
-/// Whether the pointer is to be laid into a copy of stretch `stretch`.
+/// Whether the pointer or the overlay is to be laid into a copy of
+/// stretch `stretch`.
 pub fn crosses(panel: *Panel, stretch: u32) bool {
-    if (!panel.pointer_shown) return false;
-    const image = panel.pointer orelse return false;
     const lines: i32 = @intCast(panel.config.bounce_lines);
     const first = @as(i32, @intCast(stretch)) * lines;
+    if (panel.overlay) |overlay| {
+        if (panel.overlay_top < first + lines and panel.overlay_top + @as(i32, @intCast(overlay.height)) > first) return true;
+    }
+    if (!panel.pointer_shown) return false;
+    const image = panel.pointer orelse return false;
     return panel.pointer_top < first + lines and panel.pointer_top + @as(i32, @intCast(image.height)) > first;
 }
 
@@ -64,16 +70,24 @@ pub fn copyServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     return 1;
 }
 
-/// The pointer over the part of the last stretch copied that it crosses,
-/// in the buffer that stretch was copied into.
+/// The overlay, then the pointer over it, over the part of the last
+/// stretch copied that each crosses, in the buffer that stretch was copied
+/// into.
 noinline fn lay(panel: *Panel) linksection(".iram.text") void {
     @setRuntimeSafety(false);
-    const image = panel.pointer orelse return;
+    if (panel.overlay) |overlay| layImage(panel, overlay, panel.overlay_left, panel.overlay_top);
+    if (panel.pointer_shown) {
+        if (panel.pointer) |image| layImage(panel, image, panel.pointer_left, panel.pointer_top);
+    }
+}
+
+/// One image over the part of the last stretch copied that it crosses: a
+/// masked copy of at most a stretch's rows.
+noinline fn layImage(panel: *Panel, image: *const rtg.RtgPointerImage, left: i32, top: i32) linksection(".iram.text") void {
+    @setRuntimeSafety(false);
     const width: i32 = @intCast(panel.config.setup.width);
     const lines: i32 = @intCast(panel.config.bounce_lines);
     const first = @as(i32, @intCast(panel.copy_stretch)) * lines;
-    const top = panel.pointer_top;
-    const left = panel.pointer_left;
     const y0 = @max(top, first);
     const y1 = @min(top + @as(i32, @intCast(image.height)), first + lines);
     const x0 = @max(left, 0);
@@ -118,4 +132,21 @@ pub fn showPointer(panel: *Panel, show: bool) i32 {
     panel.pointer_shown = show;
     panel.sys.Enable();
     return err.RTGERR_OK;
+}
+
+pub fn setOverlay(panel: *Panel, image: ?*const rtg.RtgPointerImage) i32 {
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    panel.sys.Disable();
+    panel.overlay = image;
+    panel.sys.Enable();
+    return err.RTGERR_OK;
+}
+
+pub fn moveOverlay(panel: *Panel, left: i32, top: i32) void {
+    panel.sys.Disable();
+    panel.overlay_left = left;
+    panel.overlay_top = top;
+    panel.sys.Enable();
 }

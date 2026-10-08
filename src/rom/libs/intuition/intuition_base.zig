@@ -119,6 +119,8 @@ pub const IntuitionBase = extern struct {
     pointer: @import("input/pointer.zig").State,
     /// The task that moves it, which the input handler hands each move.
     pointer_mover: @import("input/pointer.zig").Mover,
+    /// The drag on, if one is: the picture laid over the display.
+    drag: @import("input/drag.zig").State,
     /// The menu session: what it is waiting for, and what it shows.
     menu: _menus.State,
     /// The verify out to a window, and where its reply comes back.

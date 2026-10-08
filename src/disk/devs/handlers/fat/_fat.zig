@@ -287,6 +287,24 @@ pub fn same(ub: *UtilityBase, one: []const u8, other: []const u8) bool {
     return true;
 }
 
+/// Whether a watch's request is for this volume: the volume part of its
+/// name is the volume's or the device's, or there is none. A watch named
+/// on another card's volume waits for that card.
+pub fn watchedHere(ub: *UtilityBase, request: *const dos.notify.NotifyRequest, volume: []const u8, device: []const u8) bool {
+    const named = dos.notify.Watchers.volumeOf(request);
+    return named.len == 0 or same(ub, named, volume) or same(ub, named, device);
+}
+
+/// Whether a path's last part is `name`, case aside; "" stands for any.
+pub fn endsIn(ub: *UtilityBase, path: []const u8, name: []const u8) bool {
+    if (name.len == 0) return true;
+    var end = path.len;
+    while (end > 0 and path[end - 1] == '/') end -= 1;
+    var start = end;
+    while (start > 0 and path[start - 1] != '/') start -= 1;
+    return same(ub, path[start..end], name);
+}
+
 /// Whether a name may be given to a new entry at all: a length both
 /// formats hold, no control characters, none of the characters a PC
 /// reserves, and not ending in a dot or a space - a PC drops those, and

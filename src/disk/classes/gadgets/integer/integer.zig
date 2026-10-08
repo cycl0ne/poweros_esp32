@@ -37,7 +37,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = ig.INTEGER_CLASS,
     .version = 1,
-    .date = "28.09.2026",
+    .revision = 1,
+    .date = "08.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -87,11 +88,15 @@ fn clamp(own: *Data) void {
     own.number = @max(own.min, @min(own.number, own.max));
 }
 
-/// The field told the number, drawn at once in a window.
-fn putNumber(base: *gadgets.Base, own: *const Data, gi: ?*classusr.GadgetInfo) void {
+/// The field told the number, and in a window the gadget drawn again
+/// whole: the field is in no window's list, so a redraw it asks for
+/// itself is never drawn, and it is placed in the gadget only as that
+/// draws.
+fn putNumber(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const tags = [_]TagItem{ .{ .tag = gc.STRINGA_LongVal, .data = @bitCast(@as(isize, own.number)) }, .{} };
-    var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &tags, .gadget_info = gi };
+    var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &tags };
     _ = base.intuition_base.SendMessage(own.inner.?, @ptrCast(&set));
+    support.redraw(base.intuition_base, o, gi);
 }
 
 /// The target told the number.
@@ -222,7 +227,7 @@ fn step(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) 
     const moved: i64 = if (own.held == UP) @as(i64, own.number) + own.step else @as(i64, own.number) - own.step;
     own.number = @intCast(@max(@as(i64, own.min), @min(moved, own.max)));
     if (own.number == was) return;
-    putNumber(base, own, gi);
+    putNumber(base, own, o, gi);
     tell(base, own, o, gi, classusr.OPUF_INTERIM);
 }
 
@@ -318,15 +323,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (update.flags & classusr.OPUF_INTERIM == 0) {
                     const typed = own.number;
                     clamp(own);
-                    if (own.number != typed) putNumber(base, own, update.gadget_info);
+                    if (own.number != typed) putNumber(base, own, o.?, update.gadget_info);
                 }
                 tell(base, own, o.?, update.gadget_info, update.flags);
                 return 0;
             };
             var changed = ib.SendSuperMessage(cl, o, msg);
             if (setAttrs(base, own, set.attr_list, false)) {
-                // Drawn by the field itself when it is in a window.
-                putNumber(base, own, set.gadget_info);
+                putNumber(base, own, o.?, set.gadget_info);
                 changed = 1;
             }
             if (ub.FindTagItem(gc.GA_Disabled, set.attr_list)) |item| {
@@ -376,9 +380,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const to = @as(i64, own.number) + @as(i64, own.step) * notches;
             own.number = @intCast(@max(@as(i64, own.min), @min(to, own.max)));
             if (own.number != was) {
-                putNumber(base, own, wh.gadget_info);
-                // Drawn whole: the field is placed in it only as it draws.
-                support.redraw(ib, o.?, wh.gadget_info);
+                putNumber(base, own, o.?, wh.gadget_info);
                 tell(base, own, o.?, wh.gadget_info, 0);
                 return gc.wheelVerify(wh, own.number);
             }
@@ -426,7 +428,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (e.class == ie.IECLASS_NEWPOINTERPOS and e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
                 own.held = NONE;
                 own.over = 0;
-                redrawArrows(base, own, o.?, in.gadget_info);
+                // Drawn whole once it is let go: what was drawn while it
+                // was held has the field in the look of a gadget pressed.
+                support.redraw(ib, o.?, in.gadget_info);
                 tell(base, own, o.?, in.gadget_info, 0);
                 in.termination.* = own.number;
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
@@ -439,7 +443,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (own.held != NONE) {
                 own.held = NONE;
                 own.over = 0;
-                redrawArrows(base, own, o.?, gone.gadget_info);
+                support.redraw(ib, o.?, gone.gadget_info);
             }
             _ = placeInner(base, own, o.?, gone.gadget_info);
             return ib.SendMessage(own.inner.?, msg);

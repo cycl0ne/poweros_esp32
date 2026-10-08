@@ -41,6 +41,8 @@ const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
 const FreeBitMap = @import("bitmap/freebitmap.zig").FreeBitMap;
 const ShowBitMap = @import("display/showbitmap.zig").ShowBitMap;
 const ShowBitMapBands = @import("display/showbitmapbands.zig").ShowBitMapBands;
+const SetBoardOverlay = @import("pointer/setboardoverlay.zig").SetBoardOverlay;
+const MoveBoardOverlay = @import("pointer/moveboardoverlay.zig").MoveBoardOverlay;
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
 const RefreshBitMap = @import("bitmap/refreshbitmap.zig").RefreshBitMap;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
@@ -125,6 +127,8 @@ const contract_files = [_][]const u8{
     @embedFile("bitmap/freebitmap.zig"),
     @embedFile("display/showbitmap.zig"),
     @embedFile("display/showbitmapbands.zig"),
+    @embedFile("pointer/setboardoverlay.zig"),
+    @embedFile("pointer/moveboardoverlay.zig"),
     @embedFile("display/boarddisplaybitmap.zig"),
     @embedFile("bitmap/refreshbitmap.zig"),
     @embedFile("display/waitvblank.zig"),
@@ -321,6 +325,12 @@ fn lvoShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) callconv(
 fn lvoShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
     return ShowBitMapBands(rb, board, bands, count);
 }
+fn lvoSetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) callconv(.c) i32 {
+    return SetBoardOverlay(rb, board, image, hot_x, hot_y);
+}
+fn lvoMoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) callconv(.c) void {
+    return MoveBoardOverlay(rb, board, x, y);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -383,6 +393,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMoveBoardPointer),
     vec(lvoShowBoardPointer),
     vec(lvoShowBitMapBands),
+    vec(lvoSetBoardOverlay),
+    vec(lvoMoveBoardOverlay),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -390,7 +402,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 58), vectors.len);
+    try testing.expectEqual(@as(usize, 60), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The system's settings as files in ENV:Sys and ENVARC:Sys: their forms
-//! (`style`, `font`, `intuition`, `palette`) - each read, checked and written back by
-//! the one definition every command and editor uses - and reading and
-//! writing a whole file.
+//! (`style`, `font`, `intuition`, `palette`, `anvil`) - each read, checked
+//! and written back by the one definition every command and editor uses -
+//! and reading and writing a whole file.
 //!
 //! A setting is in force from ENV:, which is in RAM; ENVARC: keeps it
 //! across a boot, and S:Startup-Sequence copies it to ENV: and hands it to
@@ -13,6 +13,7 @@ pub const style = @import("style.zig");
 pub const font = @import("font.zig");
 pub const intuition = @import("intuition.zig");
 pub const palette = @import("palette.zig");
+pub const anvil = @import("anvil.zig");
 
 const dos = @import("../dos/dos.zig");
 const DosBase = @import("../../interface/dos.zig").DosBase;

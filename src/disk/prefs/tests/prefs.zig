@@ -61,6 +61,10 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     var out: [128]u8 = undefined;
     try testing.expectEqualStrings("SCREEN=go.font/10P DEFAULT=go.font/9P", out[0..prefs.font.write(&fonts, &out)]);
     try testing.expect(prefs.font.parse("SCREEN=go.font", &fonts) != null);
+    // The desktop's icons have a font of their own, written last.
+    try testing.expect(prefs.font.parse("ICON=go.font/12 FIXED=go-mono.font/16", &fonts) == null);
+    try testing.expectEqualStrings("go.font/12", fonts.get(.icon).?);
+    try testing.expectEqualStrings("FIXED=go-mono.font/16 ICON=go.font/12", out[0..prefs.font.write(&fonts, &out)]);
 
     var settings: prefs.intuition.Settings = .{};
     try testing.expect(prefs.intuition.parse("DOUBLECLICK=400 KEYBOARD=always", &settings) == null);
@@ -85,7 +89,47 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expect(prefs.intuition.parse("OFFSCREEN=MAYBE", &settings) != null);
 }
 
+test "anvil.prefs: a line read, its picture quoted, written back" {
+    var settings: prefs.anvil.Settings = .{};
+    try testing.expect(prefs.anvil.parse("ground=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" place=scaled ICONSIZE=64 VIEW=name", &settings) == null);
+    try testing.expect(settings.ground_given);
+    try testing.expect(settings.shaded());
+    try testing.expectEqual(@as(u32, 0xFF3A_5F8A), settings.top);
+    try testing.expectEqual(@as(u32, 0xFF14_253A), settings.bottom);
+    try testing.expectEqualStrings("SYS:Prefs/Sea Side.png", settings.pictureName().?);
+    try testing.expectEqual(prefs.anvil.Place.scaled, settings.place);
+    try testing.expectEqual(@as(u32, 64), settings.icon_size);
+    try testing.expectEqual(prefs.anvil.View.name, settings.view);
+    var out: [224]u8 = undefined;
+    const written = out[0..prefs.anvil.write(&settings, &out)];
+    try testing.expectEqualStrings("GROUND=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" PLACE=SCALED ICONSIZE=64 VIEW=NAME", written);
+    var again: prefs.anvil.Settings = .{};
+    try testing.expect(prefs.anvil.parse(written, &again) == null);
+    try testing.expectEqualSlices(u8, std.mem.asBytes(&settings), std.mem.asBytes(&again));
+
+    // One colour, no picture, and what is left out kept.
+    var plain: prefs.anvil.Settings = .{};
+    try testing.expect(prefs.anvil.parse("GROUND=#336699 PICTURE=NONE", &plain) == null);
+    try testing.expect(!plain.shaded());
+    try testing.expect(plain.pictureName() == null);
+    try testing.expectEqualStrings("GROUND=#336699 PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON", out[0..prefs.anvil.write(&plain, &out)]);
+    // Left out entirely, the ground is the screen's pen and is not written.
+    try testing.expectEqualStrings("PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON", out[0..prefs.anvil.write(&prefs.anvil.Settings{}, &out)]);
+    try testing.expectEqual(@as(?[2]u32, null), prefs.anvil.groundOf("#33669"));
+    try testing.expectEqual(@as(?[2]u32, .{ 0xFF33_6699, 0xFF00_0000 }), prefs.anvil.groundOf("#336699..#000000"));
+
+    // What is wrong is said.
+    try testing.expect(prefs.anvil.parse("ICONSIZE=8", &plain) != null);
+    try testing.expect(prefs.anvil.parse("ICONSIZE=300", &plain) != null);
+    try testing.expect(prefs.anvil.parse("PLACE=STRETCHED", &plain) != null);
+    try testing.expect(prefs.anvil.parse("VIEW=TYPE", &plain) != null);
+    try testing.expect(prefs.anvil.parse("GROUND=blue", &plain) != null);
+    try testing.expect(prefs.anvil.parse("PICTURE=\"open", &plain) != null);
+    try testing.expect(prefs.anvil.parse("WALLPAPER=x", &plain) != null);
+}
+
 test "the settings files of a fresh disk: the explanation the SDK writes" {
+    try testing.expectEqualStrings(prefs.anvil.header, @embedFile("../env-archive/Sys/anvil.prefs"));
     try testing.expectEqualStrings(prefs.style.header, @embedFile("../env-archive/Sys/style.prefs"));
     try testing.expectEqualStrings(prefs.intuition.header, @embedFile("../env-archive/Sys/intuition.prefs"));
     try testing.expectEqualStrings(prefs.palette.header, @embedFile("../env-archive/Sys/palette.prefs"));

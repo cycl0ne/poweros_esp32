@@ -91,7 +91,9 @@
 //! written to it - which for a shell is its first prompt. A console in raw
 //! mode at its first write gets none: set raw before anything was written,
 //! it is a program's channel (one command run over SSH), not a terminal
-//! somebody reads.
+//! somebody reads. Nor does one that nothing opened for reading: the
+//! window a program started from the desktop prints into is its output,
+//! not a shell's.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -118,7 +120,7 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 3;
+const HANDLER_REVISION = 4;
 const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -164,6 +166,10 @@ pub fn Handler(comptime Io: type) type {
         terminal_open: bool = false,
         /// The banner has gone out; it goes before the node's first write.
         banner_done: bool = false,
+        /// A handle that reads was opened here: the console is a terminal
+        /// a shell or a person answers, and the banner stands above it. One
+        /// only ever written to is a program's output and gets none.
+        read_opened: bool = false,
         opens: u32 = 0,
         reads: [max_reads]*DosPacket = undefined,
         read_count: usize = 0,
@@ -311,7 +317,7 @@ pub fn Handler(comptime Io: type) type {
             h.ed.waiting = h.read_count > 0;
             if (!h.banner_done) {
                 h.banner_done = true;
-                if (!h.ed.raw) h.ed.write(release.BANNER);
+                if (!h.ed.raw and h.read_opened) h.ed.write(release.BANNER);
             }
             if (a.length > 0) {
                 h.ed.write(a.buffer.?[0..@intCast(a.length)]);
@@ -326,6 +332,7 @@ pub fn Handler(comptime Io: type) type {
             fh.interactive = true;
             fh.key = fh;
             h.opens += 1;
+            if (pkt.getAction() != .findoutput) h.read_opened = true;
             h.io.reply(pkt, dos.DOSTRUE, 0);
         }
 
@@ -1312,6 +1319,18 @@ test "the handler: opens, pending READs, partial lines, END" {
     var end2 = DosPacket.init(.end, .{ .file = .{ .fh = &other } });
     h.packet(&end2);
     try testing.expectEqual(@as(u32, 1), io.closed); // the last: devices closed
+}
+
+test "a console only written to gets no banner: a program's output, not a terminal" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    var fh: dos.FileHandle = .{};
+    var find = DosPacket.init(.findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = "CON:" } });
+    h.packet(&find);
+    var write = DosPacket.init(.write, .{ .io = .{ .fh = &fh, .buffer = @constCast("out\n"), .length = 4 } });
+    io.clear();
+    h.packet(&write);
+    try testing.expectEqualStrings("out\r\n", io.text());
 }
 
 test "a console set raw before its first write gets no banner" {

@@ -7952,6 +7952,152 @@ test "menus: the menu button shows the strip, the pointer highlights, letting go
     try tearDown(ib);
 }
 
+/// A pointer event a finger made, as input.device marks it.
+fn fingerEvent(ib: *IntuitionBase, code: u32, x: i32, y: i32) void {
+    const ie = sdk.devices.inputevent;
+    const e: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .subclass = ie.IESUBCLASS_FINGER, .code = code, .x = x, .y = y };
+    _input.handle(ib, &e);
+}
+
+fn fingerTap(ib: *IntuitionBase, x: i32, y: i32) void {
+    const ie = sdk.devices.inputevent;
+    fingerEvent(ib, ie.IECODE_LBUTTON, x, y);
+    fingerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, x, y);
+}
+
+test "menus by a finger: a tap on the bar opens them and they stay, a tap picks, one elsewhere closes them" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const mn = intuition.menus;
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+    var strip: TestMenus = undefined;
+    strip.make();
+    const w = try menuWindow(ib, wn.IDCMP_MENUPICK | wn.IDCMP_MOUSEBUTTONS, &.{});
+    _ = it.SetMenuStrip(w, &strip.menus[0]);
+    var got: [4]intuition.IntuiMessage = undefined;
+
+    // A tap on the bar over Project: its panel, and the menus stay.
+    fingerTap(ib, 10, 5);
+    try testing.expectEqual(_menus.Stage.shown, ib.menu.stage);
+    try testing.expectEqual(@as(u32, 0), mn.MENUNUM(ib.menu.drawn));
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // A tap on another title: its panel instead, still up.
+    fingerTap(ib, 40, 5);
+    try testing.expectEqual(_menus.Stage.shown, ib.menu.stage);
+    try testing.expectEqual(@as(u32, 1), mn.MENUNUM(ib.menu.drawn));
+    // Back to Project, and a finger down on Save highlights it; lifted
+    // there, Save is picked and the menus close.
+    fingerTap(ib, 10, 5);
+    fingerEvent(ib, ie.IECODE_LBUTTON, 20, 25);
+    try testing.expect(strip.items[TestMenus.save].flags & mn.HIGHITEM != 0);
+    try testing.expectEqual(_menus.Stage.shown, ib.menu.stage);
+    fingerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 20, 25);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_MENUPICK, got[0].class);
+    try testing.expectEqual(mn.FULLMENUNUM(0, 1, mn.NOSUB), got[0].code);
+
+    // A tap anywhere else: closed, nothing picked.
+    fingerTap(ib, 10, 5);
+    fingerTap(ib, 90, 60);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(mn.MENUNULL, got[0].code);
+
+    // A finger dragged along the bar past its wobble pulls the screen
+    // down, and opens nothing; a mouse's click there opens nothing either.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    fingerEvent(ib, ie.IECODE_LBUTTON, 10, 5);
+    fingerEvent(ib, ie.IECODE_NOBUTTON, 10, 25);
+    fingerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 10, 25);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    try testing.expectEqual(@as(usize, 20), screenAttr(ib, screen, intuition.screens.SA_Top));
+    it.MoveScreen(screen, 0, -20);
+    pointerEvent(ib, ie.IECODE_LBUTTON, 10, 5);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 10, 5);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    // A window that traps the menu button gets no menus from a tap.
+    const kw: *_window.Window = @ptrCast(@alignCast(w));
+    kw.flags |= _window.WF_RMBTRAP;
+    fingerTap(ib, 10, 5);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    kw.flags &= ~_window.WF_RMBTRAP;
+
+    it.ClearMenuStrip(w);
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a finger's window drag waits out its wobble; a mouse's moves at once" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 128, 64, .rgb565);
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 40 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 24 },
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("Wobble") },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const left = struct {
+        fn of(base: *IntuitionBase, window: *intuition.Window) i32 {
+            return @truncate(@as(isize, @bitCast(windowAttr(base, window, wn.WA_Left))));
+        }
+    }.of;
+
+    // A finger on the title bar rolls five pixels: nothing moves.
+    fingerEvent(ib, ie.IECODE_LBUTTON, 60, 11);
+    fingerEvent(ib, ie.IECODE_NOBUTTON, 65, 13);
+    try testing.expectEqual(@as(i32, 40), left(ib, w));
+    // Past the wobble it follows, from where it came down.
+    fingerEvent(ib, ie.IECODE_NOBUTTON, 75, 11);
+    try testing.expectEqual(@as(i32, 55), left(ib, w));
+    fingerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 75, 11);
+    // A finger lifted inside its wobble leaves it where it was.
+    fingerEvent(ib, ie.IECODE_LBUTTON, 70, 11);
+    fingerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 74, 11);
+    try testing.expectEqual(@as(i32, 55), left(ib, w));
+    // A mouse moves it by a pixel.
+    pointerEvent(ib, ie.IECODE_LBUTTON, 70, 11);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 71, 11);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 71, 11);
+    try testing.expectEqual(@as(i32, 56), left(ib, w));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "DoubleTap: within the double-click time and near, of a mouse or a finger" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const it = ib.iface();
+    const first = intuition.Tap{ .seconds = 10, .micros = 0, .x = 100, .y = 50 };
+    try testing.expect(it.DoubleTap(&first, &.{ .seconds = 10, .micros = 200_000, .x = 100, .y = 50 }));
+    // A finger's second tap a few pixels off.
+    try testing.expect(it.DoubleTap(&first, &.{ .seconds = 10, .micros = 200_000, .x = 112, .y = 41 }));
+    // Too far, across or down.
+    try testing.expect(!it.DoubleTap(&first, &.{ .seconds = 10, .micros = 200_000, .x = 117, .y = 50 }));
+    try testing.expect(!it.DoubleTap(&first, &.{ .seconds = 10, .micros = 200_000, .x = 100, .y = 33 }));
+    // Too late, and before the first.
+    try testing.expect(!it.DoubleTap(&first, &.{ .seconds = 20, .micros = 0, .x = 100, .y = 50 }));
+    try testing.expect(!it.DoubleTap(&first, &.{ .seconds = 9, .micros = 0, .x = 100, .y = 50 }));
+    try tearDown(ib);
+}
+
 test "menus: subitems, checkmarks, excluding each other, and picking several by dragging" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -8863,6 +9009,72 @@ test "the pointer: seen once a mouse is, the active window's, busy now or after 
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a drag: the picture on the board following the pointer, the window under the drop, flown back, ended by a close" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const log = &display.state.log;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 2 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 24 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 34 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 24 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{},
+    }).?;
+    pointerEvent(ib, ie.IECODE_LBUTTON, 10, 20);
+
+    // A four by four picture, held at its middle.
+    var pixels: [16]u32 = @splat(0x00FF00FF);
+    const picture = sdk.rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 4, .height = 4, .pitch = 16, .format = .rgba32 };
+    try testing.expect(it.BeginDrag(w, &picture, 2, 2));
+    try testing.expectEqual(@as(u32, 4), log.overlay_image.?.width);
+    try testing.expectEqual(@as(i32, 8), log.overlay_left);
+    try testing.expectEqual(@as(i32, 18), log.overlay_top);
+    try testing.expect(!it.BeginDrag(other, &picture, 0, 0)); // one at a time
+
+    // It goes where the pointer goes, by itself.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 25);
+    try testing.expectEqual(@as(i32, 38), log.overlay_left);
+    try testing.expectEqual(@as(i32, 23), log.overlay_top);
+    // Let go over the other window: that is the answer, the picture gone.
+    try testing.expectEqual(other, it.EndDrag(w, 0).?);
+    try testing.expect(log.overlay_image == null);
+    try testing.expect(it.EndDrag(w, 0) == null); // no drag now
+
+    // Flown back: the last place it is put is where it began.
+    try testing.expect(it.BeginDrag(w, &picture, 2, 2));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 62, 38);
+    try testing.expect(it.EndDrag(w, intuition.DRAGF_FLYBACK) == null); // over no window
+    try testing.expectEqual(@as(i32, 38), log.overlay_left);
+    try testing.expectEqual(@as(i32, 23), log.overlay_top);
+    try testing.expect(log.overlay_image == null);
+
+    // A window closed while it drags ends the drag.
+    try testing.expect(it.BeginDrag(w, &picture, 0, 0));
+    it.CloseWindow(w);
+    try testing.expect(log.overlay_image == null);
+    try testing.expect(it.BeginDrag(other, &picture, 0, 0));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 25);
+    try testing.expectEqual(other, it.EndDrag(other, 0).?);
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, other, wn.WA_Screen));
+    it.CloseWindow(other);
     try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);

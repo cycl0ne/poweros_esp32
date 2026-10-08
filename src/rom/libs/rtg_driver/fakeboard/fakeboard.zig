@@ -76,6 +76,12 @@ pub const Log = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The overlay the same way: the image last given and its top left.
+    overlay_sets: u32 = 0,
+    overlay_moves: u32 = 0,
+    overlay_image: ?*const rtg.RtgPointerImage = null,
+    overlay_left: i32 = 0,
+    overlay_top: i32 = 0,
     /// The bands last shown, as the driver got them, and how often bands
     /// were.
     bands_shown: u32 = 0,
@@ -305,6 +311,21 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
+fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.overlay_sets += 1;
+    log.overlay_image = image;
+    return err.RTGERR_OK;
+}
+
+fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const log = &stateOfBoard(board).log;
+    log.overlay_moves += 1;
+    log.overlay_left = left;
+    log.overlay_top = top;
+}
+
 /// rgb565 only: what a board's engine would do, done by hand so the tests
 /// can compare bytes.
 fn rows16(bitmap: *rtg.RtgBitMap, y: u32) []u16 {
@@ -403,6 +424,8 @@ const full_ops = rtg.RtgBoardOps{
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,
+    .set_overlay = &setOverlay,
+    .move_overlay = &moveOverlay,
 };
 
 /// A board with no engine: it can be shown and refreshed and no more.

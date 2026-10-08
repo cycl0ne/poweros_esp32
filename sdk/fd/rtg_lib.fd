@@ -170,4 +170,12 @@ i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
 /// Show several buffers at once, each in a band of display lines: a
 /// screen pulled down shows the one behind above it.
 i32 ShowBitMapBands(*rtg.RtgBoard board, [*]const rtg.RtgBand bands, u32 count)
+/// A second image laid over the picture under the pointer - a dragged
+/// icon - converted once with its coverage dithered into a mask; it
+/// follows the pointer, its pixel (hot_x, hot_y) at the pointer's point.
+/// Null takes it away. RTGERR_NOT_SUPPORTED without RTGBC_OVERLAY.
+i32 SetBoardOverlay(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u32 hot_y)
+/// Put the overlay's point at (x, y), and keep it there rather than with
+/// the pointer.
+void MoveBoardOverlay(*rtg.RtgBoard board, i32 x, i32 y)
 ##end

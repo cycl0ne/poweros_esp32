@@ -24,7 +24,8 @@
 //! puts back the pointer's old rectangle from the shown buffer and lays it
 //! at the new one, so it costs the pointer's size and not the picture's.
 //! With no pointer shown the window reads the shown buffer itself, as it
-//! always did, and nothing is copied.
+//! always did, and nothing is copied. The overlay - a dragged icon - is
+//! laid the same way, under the pointer.
 //!
 //! Several buffers shown at once, in bands of lines - a screen pulled down
 //! over the one behind - are composed the same way: each row of the
@@ -56,8 +57,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 1;
-const BUILD_DATE = "25.9.2026";
+const REVISION = 2;
+const BUILD_DATE = "08.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -106,6 +107,11 @@ const Screen = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The overlay (a dragged icon): its image, laid under the pointer
+    /// whenever there is one, and where its top left is.
+    overlay: ?*const rtg.RtgPointerImage = null,
+    overlay_left: i32 = 0,
+    overlay_top: i32 = 0,
     /// The bands shown, from the top: one, the shown buffer at its own
     /// origin, unless a screen is pulled down. With more than one the
     /// window is fed from the composed frame, each row from its band.
@@ -176,10 +182,11 @@ fn present(screen: *Screen) void {
 // --- the pointer, in the composed frame -----------------------------------
 
 /// Whether the window is fed from the composed frame: a pointer with an
-/// image is shown over a picture, or the picture is several in bands.
+/// image is shown over a picture, there is an overlay, or the picture is
+/// several in bands.
 fn composing(screen: *Screen) bool {
     if (screen.composed == null or screen.showing == null) return false;
-    return screen.band_count > 1 or (screen.pointer_shown and screen.pointer != null);
+    return screen.band_count > 1 or (screen.pointer_shown and screen.pointer != null) or screen.overlay != null;
 }
 
 /// Where display row `y` comes from: its band's buffer, that buffer's row
@@ -221,14 +228,17 @@ fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i3
     return .{ .x0 = @intCast(x0), .y0 = @intCast(y0), .x1 = @intCast(x1), .y1 = @intCast(y1) };
 }
 
-/// The picture back where the pointer was: its rectangle copied from the
-/// shown buffer.
+/// The picture back where both images are: their rectangles copied from
+/// the shown buffer.
 fn restore(screen: *Screen) void {
-    const image = screen.pointer orelse return;
-    // Where the pointer is, read once: the input task may move it while
-    // this runs.
-    const left = screen.pointer_left;
-    const top = screen.pointer_top;
+    // Where they are, read once: the input task may move them while this
+    // runs.
+    restoreImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
+    restoreImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+}
+
+fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
+    const image = given orelse return;
     const clip = clipOf(screen, image, left, top) orelse return;
     const composed = screen.composed orelse return;
     const pitch = screen.width * bytes_per_pixel;
@@ -240,14 +250,17 @@ fn restore(screen: *Screen) void {
     }
 }
 
-/// The pointer laid over the composed frame: a masked copy of its image,
-/// cut to the picture.
+/// The images laid over the composed frame: the overlay, then the pointer
+/// over it when it is shown.
 fn lay(screen: *Screen) void {
-    const image = screen.pointer orelse return;
-    // Where the pointer is, read once: the input task may move it while
-    // this runs, and the rows below are worked out from these.
-    const left = screen.pointer_left;
-    const top = screen.pointer_top;
+    layImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
+    if (screen.pointer_shown) layImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+}
+
+/// One image laid over the composed frame: a masked copy, cut to the
+/// picture.
+fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
+    const image = given orelse return;
     const clip = clipOf(screen, image, left, top) orelse return;
     const composed = screen.composed orelse return;
     if (image.format != .rgb565) return;
@@ -265,7 +278,7 @@ fn lay(screen: *Screen) void {
     }
 }
 
-/// The whole picture into the composed frame, with the pointer over it:
+/// The whole picture into the composed frame, with the images over it:
 /// when composing starts, and when another buffer is shown.
 fn rebuild(screen: *Screen) void {
     if (!composing(screen)) return;
@@ -273,32 +286,48 @@ fn rebuild(screen: *Screen) void {
     lay(screen);
 }
 
-fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    const screen = screenOf(board);
-    if (image) |one| {
-        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
+/// A change to either image: both rectangles put back, the change made,
+/// both laid again - they may overlap, and the one under must not be
+/// left with a hole the other's restore cut. The frame is rebuilt when
+/// composing starts or stops with it.
+fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anytype) void {
     const was = composing(screen);
     if (was) restore(screen);
-    screen.pointer = image;
+    apply(screen, arg);
     if (!was) {
         rebuild(screen);
     } else if (composing(screen)) {
         lay(screen);
     }
     present(screen);
+}
+
+fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    change(screen, struct {
+        fn apply(on: *Screen, given: anytype) void {
+            on.pointer = given;
+        }
+    }.apply, image);
     return err.RTGERR_OK;
 }
 
 fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
-    const on = composing(screen);
-    if (on) restore(screen);
-    screen.pointer_left = left;
-    screen.pointer_top = top;
-    if (!on) return;
-    lay(screen);
-    present(screen);
+    if (!composing(screen)) {
+        screen.pointer_left = left;
+        screen.pointer_top = top;
+        return;
+    }
+    change(screen, struct {
+        fn apply(on: *Screen, place: anytype) void {
+            on.pointer_left = place[0];
+            on.pointer_top = place[1];
+        }
+    }.apply, .{ left, top });
 }
 
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
@@ -307,6 +336,34 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     rebuild(screen);
     present(screen);
     return err.RTGERR_OK;
+}
+
+fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    change(screen, struct {
+        fn apply(on: *Screen, given: anytype) void {
+            on.overlay = given;
+        }
+    }.apply, image);
+    return err.RTGERR_OK;
+}
+
+fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const screen = screenOf(board);
+    if (!composing(screen)) {
+        screen.overlay_left = left;
+        screen.overlay_top = top;
+        return;
+    }
+    change(screen, struct {
+        fn apply(on: *Screen, place: anytype) void {
+            on.overlay_left = place[0];
+            on.overlay_top = place[1];
+        }
+    }.apply, .{ left, top });
 }
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
@@ -499,6 +556,8 @@ const pointer_ops = rtg.boards.RtgBoardOps{
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,
     .show_bands = &showBands,
+    .set_overlay = &setOverlay,
+    .move_overlay = &moveOverlay,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

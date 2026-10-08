@@ -382,6 +382,15 @@ pub fn Directory(comptime Media: type) type {
             }
         }
 
+        /// One entry written at `index`, as it is: the volume label's, which
+        /// is no set and has no checksum.
+        pub fn writeEntry(self: *Self, dir: Dir, index: u32, entry: *const [entry_bytes]u8) Error!void {
+            var place: Place = .{};
+            const spot = try self.spotOf(dir, index, &place) orelse return error.MediumFailed;
+            const block = self.cache.getForWrite(spot.block) catch return error.MediumFailed;
+            @memcpy(block[spot.at..][0..entry_bytes], entry);
+        }
+
         /// A set taken out of use, its entries left for the next one to
         /// reuse.
         pub fn erase(self: *Self, dir: Dir, index: u32, count: u32) Error!void {

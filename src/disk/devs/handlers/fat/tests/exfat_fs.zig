@@ -23,6 +23,7 @@ const dos = sdk.dos;
 const fat = dos.fat;
 
 const testing = std.testing;
+const notify_course = @import("_notify.zig");
 const TestMedia = @import("../testmedia.zig").TestMedia;
 const testvolume = @import("../exfat/testvolume.zig");
 const fixture = @import("../exfat/testfixture.zig");
@@ -82,12 +83,12 @@ const Rig = struct {
         testing.expectEqual(@as(usize, 0), left) catch @panic("the file system did not give back all it took");
     }
 
-    fn send(rig: *Rig, action: dos.ActionCode, args: [4]isize) Answer {
+    pub fn send(rig: *Rig, action: dos.ActionCode, args: [4]isize) Answer {
         var pkt = DosPacket.init(action, .{ .raw = args ++ [3]isize{ 0, 0, 0 } });
         return rig.fs.answer(&pkt);
     }
 
-    fn sendArgs(rig: *Rig, action: dos.ActionCode, args: dos.PacketArgs) Answer {
+    pub fn sendArgs(rig: *Rig, action: dos.ActionCode, args: dos.PacketArgs) Answer {
         var pkt = DosPacket.init(action, args);
         return rig.fs.answer(&pkt);
     }
@@ -101,7 +102,7 @@ const Rig = struct {
         _ = rig.send(.free_lock, .{ lockValue(held), 0, 0, 0 });
     }
 
-    fn mkdir(rig: *Rig, name: [*:0]const u8) !void {
+    pub fn mkdir(rig: *Rig, name: [*:0]const u8) !void {
         const made = rig.send(.create_dir, .{ 0, @bitCast(@intFromPtr(name)), dos.EXCLUSIVE_LOCK, 0 });
         try testing.expect(made.res1 != 0);
         _ = rig.send(.free_lock, .{ made.res1, 0, 0, 0 });
@@ -132,7 +133,7 @@ const Rig = struct {
         try testing.expectEqual(dos.DOSTRUE, rig.sendArgs(.end, .{ .file = .{ .fh = fh } }).res1);
     }
 
-    fn writeFile(rig: *Rig, name: [*:0]const u8, bytes: []const u8) !void {
+    pub fn writeFile(rig: *Rig, name: [*:0]const u8, bytes: []const u8) !void {
         var fh: FileHandle = undefined;
         try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, name).res1);
         try testing.expectEqual(@as(isize, @intCast(bytes.len)), rig.write(&fh, bytes));
@@ -228,6 +229,20 @@ test "a label names the volume" {
     try rig.init(.{ .label = "HOLIDAY" });
     defer rig.deinit();
     try testing.expectEqualStrings("HOLIDAY", rig.fs.volumeName());
+}
+
+test "a volume renamed: its label entry made, then written over, kept when mounted again" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try testing.expectEqual(dos.DOSTRUE, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Photos")), 0, 0, 0 }).res1);
+    try testing.expectEqualStrings("Photos", rig.fs.volumeName());
+    try rig.remount();
+    try testing.expectEqualStrings("Photos", rig.fs.volumeName());
+    try testing.expectEqual(dos.DOSTRUE, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Holiday")), 0, 0, 0 }).res1);
+    try rig.remount();
+    try testing.expectEqualStrings("Holiday", rig.fs.volumeName());
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Twelve chars")), 0, 0, 0 }).res2);
 }
 
 test "files and directories come back after mounting again" {
@@ -413,6 +428,19 @@ test "deleting: a file, an empty directory, and what may not be deleted" {
     try testing.expectEqual(dos.DOSTRUE, rig.delete("file").res1);
     try testing.expectEqual(free, try rig.freeClusters());
     try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, rig.delete("file").res2);
+}
+
+test "a file locked in a directory is in use, from wherever it is named" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try rig.mkdir("Dir");
+    try rig.mkdir("Dir/Sub");
+    try rig.writeFile("Dir/Sub/inside", "x");
+    const held = rig.lock("Dir/Sub/inside", dos.SHARED_LOCK);
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, rig.delete("Dir/Sub/inside").res2);
+    rig.unlock(held);
+    try testing.expectEqual(dos.DOSTRUE, rig.delete("Dir/Sub/inside").res1);
 }
 
 test "renaming in place, to a long name, and into another directory" {
@@ -785,4 +813,11 @@ test "a volume this made, written out for fsck.exfat if asked" {
         try testing.expect(volume.media.read(volume.first + at, 1, image[at * 512 ..][0..512]));
     }
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = image });
+}
+
+test "notification: names watched before they are there, told of each change, through a card taken out and back" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try notify_course.course(&rig, &rig.media.changes);
 }

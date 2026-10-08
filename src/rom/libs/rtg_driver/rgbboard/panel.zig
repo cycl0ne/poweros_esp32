@@ -142,6 +142,11 @@ pub const Panel = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The overlay (a dragged icon), laid the same way under the pointer
+    /// whenever there is one: its image and where its top left is.
+    overlay: ?*const rtg.RtgPointerImage = null,
+    overlay_left: i32 = 0,
+    overlay_top: i32 = 0,
     /// The copy last started - into which buffer, of which stretch - and
     /// whether the pointer is owed to it when it ends; the copy channel's
     /// interrupt that lays it.

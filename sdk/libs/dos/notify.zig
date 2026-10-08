@@ -188,6 +188,14 @@ pub const Watchers = struct {
         return true;
     }
 
+    /// The key a request's watch is on: null while it waits for its
+    /// name, and for a request it has not - for a handler that holds its
+    /// keys for its watches and lets go of them when one is removed.
+    pub fn keyOf(w: *Watchers, request: *NotifyRequest) ?*anyopaque {
+        const watch = w.find(request) orelse return null;
+        return watch.key;
+    }
+
     fn find(w: *Watchers, request: *NotifyRequest) ?*Watch {
         var it = w.watches.iterator();
         while (it.next()) |node| {
@@ -236,6 +244,34 @@ pub const Watchers = struct {
             watch.key = key;
             if (tell_them) w.tell(watch);
         }
+    }
+
+    /// For a handler that finds its objects by name, with nothing in
+    /// memory for an object nobody holds - so no path to give `adopt`:
+    /// every watch waiting for its name looks for it again, after something
+    /// came to be - made, renamed, a medium put in. `find` is given each
+    /// waiting request and answers the key of the object its name names
+    /// now, or null; the one watch it answers for takes that key, and with
+    /// `tell_them` is told.
+    pub fn settle(w: *Watchers, context: anytype, comptime find_key: fn (@TypeOf(context), *NotifyRequest) ?*anyopaque, tell_them: bool) void {
+        var it = w.watches.iterator();
+        while (it.next()) |node| {
+            const watch: *Watch = @fieldParentPtr("node", node);
+            if (watch.key != null) continue;
+            watch.key = find_key(context, watch.request) orelse continue;
+            if (tell_them) w.tell(watch);
+        }
+    }
+
+    /// The part of a request's full name before its `:` - the volume or
+    /// the device it was named on; empty without one.
+    pub fn volumeOf(request: *const NotifyRequest) []const u8 {
+        const full = request.full_name orelse return &.{};
+        var length: usize = 0;
+        while (full[length] != 0) : (length += 1) {
+            if (full[length] == ':') return full[0..length];
+        }
+        return &.{};
     }
 
     /// The replies come back: each message freed, and a change held back

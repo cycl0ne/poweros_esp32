@@ -25,6 +25,9 @@ pub const workfile = @import("workfile.zig");
 /// Keyword files: the mountlist format, read a token at a time.
 pub const keywords = @import("keywords.zig");
 pub const notify = @import("notify.zig");
+/// A handler's side of ACTION_RENAME_DISK: its volume node renamed in
+/// place (sdk/libs/dos/volumename.zig).
+pub const volumename = @import("volumename.zig");
 
 /// The library's name, for OpenLibrary.
 pub const DOSNAME = "dos.library";
@@ -289,6 +292,7 @@ pub const InhibitArgs = dosextens.InhibitArgs;
 pub const CacheArgs = dosextens.CacheArgs;
 pub const ScreenModeArgs = dosextens.ScreenModeArgs;
 pub const Process = dosextens.Process;
+pub const WBArg = dosextens.WBArg;
 pub const PktWaitFn = dosextens.PktWaitFn;
 pub const ExitFn = dosextens.ExitFn;
 pub const PRF_FREESEGLIST = dosextens.PRF_FREESEGLIST;
@@ -428,6 +432,8 @@ pub const NP_UserData = dostags.NP_UserData;
 pub const NP_Affinity = dostags.NP_Affinity;
 pub const NP_EndMsg = dostags.NP_EndMsg;
 pub const NP_HoldLibrary = dostags.NP_HoldLibrary;
+pub const NP_ArgList = dostags.NP_ArgList;
+pub const NP_NumArgs = dostags.NP_NumArgs;
 
 // Buffered I/O (stdio.zig).
 pub const BufferState = dosextens.BufferState;

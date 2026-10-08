@@ -34,6 +34,12 @@
 //! IDCMP_MENUHELP with what was under the pointer. The windows sent
 //! `MENUWAITING` are sent IDCMP_MOUSEBUTTONS `MENUUP`.
 //!
+//! **By a tap.** A finger tapped on a screen's bar (`tapBar`) opens the
+//! same session without a button held: the menus stay up, the finger
+//! highlights what it is over, and lifted over an item picks it - over a
+//! title its panel stays open, anywhere else the menus close with nothing
+//! picked.
+//!
 //! Everything here runs under the screen list's semaphore, and so does
 //! every call that changes a window's menus. A program that changes the
 //! strip of a window whose menus are shown ends the session first.
@@ -131,7 +137,10 @@ pub const State = extern struct {
     options: u32 = mn.MENUNULL,
     /// The select button is held: every item passed over is picked.
     drag_select: u8 = 0,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// Opened by a tap on the bar: the menus stay until a tap picks an
+    /// item or closes them.
+    sticky: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
     /// The titles, over the bar, and the two panels.
     strip: ?*layers.Layer = null,
     items: Panel = .{},
@@ -187,6 +196,21 @@ pub fn menuButton(ib: *IntuitionBase) void {
     }
     st.window = ib.active_window;
     startVerify(ib, ib.active_window.?, .menus, mn.MENUHOT);
+}
+
+/// A finger tapped a screen's bar: the active window's menus, as the menu
+/// button would show them, unless it traps that button or has none - and
+/// they stay up, a tap on an item picking it and one anywhere else closing
+/// them.
+pub fn tapBar(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const active = ib.active_window orelse return;
+    if (st.stage != .idle) return;
+    if (active.flags & _window.WF_RMBTRAP != 0) return;
+    const lent = active.menu_lend orelse active;
+    if (lent.menu_strip == null) return;
+    menuButton(ib);
+    if (st.stage != .idle) st.sticky = 1;
 }
 
 /// A key to the active window: true when it was the right-Amiga shortcut of
@@ -353,6 +377,7 @@ fn finish(ib: *IntuitionBase) void {
     st.window = null;
     st.after = null;
     st.drag_select = 0;
+    st.sticky = 0;
     if (st.lending_return) |back| {
         st.lending_return = null;
         ib.iface().ActivateWindow(@ptrCast(back));
@@ -467,6 +492,12 @@ fn shown(ib: *IntuitionBase, e: *const InputEvent) void {
         ie.IECLASS_TIMER => if (ib.active_window) |w| _window.tick(ib, w),
         ie.IECLASS_NEWPOINTERPOS => {
             getMenu(ib);
+            // Opened by a tap: a finger lifted over an item picks it, over
+            // a title leaves its panel open, anywhere else closes them.
+            if (st.sticky != 0) {
+                if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) tapped(ib);
+                return;
+            }
             if (st.drag_select != 0) updateOptions(ib, &st.options, true);
             switch (e.code) {
                 ie.IECODE_LBUTTON => {
@@ -491,6 +522,30 @@ fn shown(ib: *IntuitionBase, e: *const InputEvent) void {
         },
         else => {},
     }
+}
+
+/// A finger lifted while menus opened by a tap are up: over an item that
+/// can be picked - one without subitems, or a subitem - it is picked and
+/// the menus close; over a title, a panel or an item that opens subitems
+/// they stay; anywhere else they close with nothing picked.
+fn tapped(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const w = st.window orelse return;
+    const x = ib.input.x;
+    const y = ib.input.y;
+    if (mn.ITEMNUM(st.selected) != mn.NOITEM) {
+        const item = _menu.grabItem(_menu.grabMenu(w.menu_strip, mn.MENUNUM(st.selected)), st.selected);
+        const opens_subitems = if (item) |entry| entry.sub_item != null else false;
+        if (!opens_subitems or mn.SUBNUM(st.selected) != mn.NOSUB) {
+            updateOptions(ib, &st.options, false);
+            return end(ib, .pick);
+        }
+        return;
+    }
+    if (hitMenu(ib) != mn.NOMENU) return;
+    if (st.items.layer != null and st.items.box().contains(x, y)) return;
+    if (st.subs.layer != null and st.subs.box().contains(x, y)) return;
+    end(ib, .cancelled);
 }
 
 /// The menus taken down, the window told how the session ended, and every

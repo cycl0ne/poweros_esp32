@@ -873,6 +873,12 @@ test "a board whose pixels go out as they are written will not turn" {
     try tearDown(rb);
 }
 
+/// A pixel written 0xRRGGBBAA as rgba32 lays it out in memory: red,
+/// green, blue and alpha, a byte each.
+fn rgba(value: u32) u32 {
+    return @byteSwap(value);
+}
+
 test "the pointer: converted once, placed by its point, shown and hidden" {
     const rb = try setUp();
     defer kexec.deinit();
@@ -885,7 +891,7 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
 
     // Three by two, rgba32: a red pixel, a clear one, a green one, and a
     // row of blue with a half-clear pixel in the middle.
-    var pixels = [_]u32{ 0xFF0000FF, 0x12345600, 0x00FF00FF, 0x0000FFFF, 0x0000FF7F, 0x0000FFFF };
+    var pixels = [_]u32{ rgba(0xFF0000FF), rgba(0x12345600), rgba(0x00FF00FF), rgba(0x0000FFFF), rgba(0x0000FF7F), rgba(0x0000FFFF) };
     const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 3, .height = 2, .pitch = 12, .format = .rgba32 };
 
     // Placed before there is an image: the image arrives there.
@@ -944,6 +950,72 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
     try tearDown(rb);
 }
 
+test "the overlay: its coverage dithered, following the pointer, placed on its own, freed with the board" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_OVERLAY != 0);
+
+    // Eight by four, rgba32: a row of full coverage, a row of none, two
+    // rows at half.
+    var pixels: [32]u32 = undefined;
+    for (&pixels, 0..) |*pixel, i| pixel.* = rgba(switch (i / 8) {
+        0 => 0xFF0000FF,
+        1 => 0xFF000000,
+        else => 0x00FF0080,
+    });
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 8, .height = 4, .pitch = 32, .format = .rgba32 };
+
+    base(rb).MoveBoardPointer(board, 100, 50);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &image, 4, 2));
+    const made = fk.log.overlay_image.?;
+    try testing.expectEqual(made, board.overlay.?);
+    for (0..8) |x| {
+        try testing.expect(made.opaqueAt(@intCast(x), 0)); // full: every pixel
+        try testing.expect(!made.opaqueAt(@intCast(x), 1)); // none: no pixel
+    }
+    var half: u32 = 0;
+    for (2..4) |y| for (0..8) |x| {
+        if (made.opaqueAt(@intCast(x), @intCast(y))) half += 1;
+    };
+    try testing.expectEqual(@as(u32, 8), half); // half: half of them, as dots
+    // Its point at the pointer's, and with the pointer when it moves.
+    try testing.expectEqual(@as(i32, 96), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 48), fk.log.overlay_top);
+    base(rb).MoveBoardPointer(board, 110, 60);
+    try testing.expectEqual(@as(i32, 106), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 58), fk.log.overlay_top);
+
+    // Placed on its own, it stays when the pointer moves on.
+    base(rb).MoveBoardOverlay(board, 20, 30);
+    try testing.expectEqual(@as(i32, 16), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 28), fk.log.overlay_top);
+    const moves = fk.log.overlay_moves;
+    base(rb).MoveBoardPointer(board, 200, 200);
+    try testing.expectEqual(moves, fk.log.overlay_moves);
+    base(rb).MoveBoardOverlay(board, 20, 30); // the same place: no move
+    try testing.expectEqual(moves, fk.log.overlay_moves);
+
+    // A new image follows the pointer again; too large is refused and the
+    // one there stays.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &image, 0, 0));
+    try testing.expectEqual(@as(i32, 200), fk.log.overlay_left);
+    const huge = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = rtg.boards.RTG_OVERLAY_MAX + 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).SetBoardOverlay(board, &huge, 0, 0));
+    try testing.expect(board.overlay != null);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, null, 0, 0));
+    try testing.expect(board.overlay == null and fk.log.overlay_image == null);
+
+    // One still set when the board goes is freed with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &image, 0, 0));
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "a board with no pointer says so" {
     const rb = try setUp();
     defer kexec.deinit();
@@ -956,6 +1028,7 @@ test "a board with no pointer says so" {
     const image = rtg.Surface{ .pixels = @ptrCast(&pixel), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardPointer(board, &image, 0, 0));
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardOverlay(board, &image, 0, 0));
     base(rb).MoveBoardPointer(board, 3, 3);
     base(rb).DeleteBoard(board);
     try tearDown(rb);

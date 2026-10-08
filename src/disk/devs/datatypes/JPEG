@@ -1,1 +1,1 @@
-NAME=JPEG BASE=jpeg GROUP=pict ID=JPEG MASK=\xff\xd8\xff PATTERN=#?.(jpg|jpeg) PRI=5
+NAME=JPEG BASE=jpeg GROUP=pict ID=JPEG MASK=\xff\xd8\xff PATTERN=#?.(jpg|jpeg) PRI=5 BROWSE=SYS:Programs/MultiView

@@ -17,6 +17,7 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 
 const testing = std.testing;
+const notify_course = @import("_notify.zig");
 
 /// A lock as a packet argument.
 fn lockValue(held: ?*FileLock) isize {
@@ -56,12 +57,12 @@ const Rig = struct {
         kexec.deinit();
     }
 
-    fn send(rig: *Rig, action: dos.ActionCode, args: [4]isize) Answer {
+    pub fn send(rig: *Rig, action: dos.ActionCode, args: [4]isize) Answer {
         var pkt = DosPacket.init(action, .{ .raw = args ++ [3]isize{ 0, 0, 0 } });
         return rig.fs.answer(&pkt);
     }
 
-    fn sendArgs(rig: *Rig, action: dos.ActionCode, args: dos.PacketArgs) Answer {
+    pub fn sendArgs(rig: *Rig, action: dos.ActionCode, args: dos.PacketArgs) Answer {
         var pkt = DosPacket.init(action, args);
         return rig.fs.answer(&pkt);
     }
@@ -75,7 +76,7 @@ const Rig = struct {
         _ = rig.send(.free_lock, .{ lockValue(held), 0, 0, 0 });
     }
 
-    fn mkdir(rig: *Rig, name: [*:0]const u8) !void {
+    pub fn mkdir(rig: *Rig, name: [*:0]const u8) !void {
         const made = rig.send(.create_dir, .{ 0, @bitCast(@intFromPtr(name)), dos.EXCLUSIVE_LOCK, 0 });
         try testing.expect(made.res1 != 0);
         _ = rig.send(.free_lock, .{ made.res1, 0, 0, 0 });
@@ -98,7 +99,7 @@ const Rig = struct {
         try testing.expectEqual(dos.DOSTRUE, rig.sendArgs(.end, .{ .file = .{ .fh = fh } }).res1);
     }
 
-    fn writeFile(rig: *Rig, name: [*:0]const u8, bytes: []const u8) !void {
+    pub fn writeFile(rig: *Rig, name: [*:0]const u8, bytes: []const u8) !void {
         var fh: FileHandle = undefined;
         try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, name).res1);
         try testing.expectEqual(@as(isize, @intCast(bytes.len)), rig.write(&fh, bytes));
@@ -162,6 +163,22 @@ test "a label in the root directory names the volume" {
     try rig.init(.{ .label = "HOLIDAY" });
     defer rig.deinit();
     try testing.expectEqualStrings("HOLIDAY", rig.fs.volumeName());
+}
+
+test "a volume renamed: the label entry made, upper case, kept when mounted again" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try testing.expectEqual(dos.DOSTRUE, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Photos")), 0, 0, 0 }).res1);
+    try testing.expectEqualStrings("PHOTOS", rig.fs.volumeName());
+    try rig.remount();
+    try testing.expectEqualStrings("PHOTOS", rig.fs.volumeName());
+    // Written over the second time, and what a label cannot be refused.
+    try testing.expectEqual(dos.DOSTRUE, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Holiday 26")), 0, 0, 0 }).res1);
+    try rig.remount();
+    try testing.expectEqualStrings("HOLIDAY 26", rig.fs.volumeName());
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("Twelve chars")), 0, 0, 0 }).res2);
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, rig.send(.rename_disk, .{ @bitCast(@intFromPtr("a.b")), 0, 0, 0 }).res2);
 }
 
 test "files and directories come back after mounting again" {
@@ -468,4 +485,11 @@ test "clusters past the 4 GiB mark of a 64 GB card" {
     defer testing.allocator.free(back);
     try testing.expectEqual(out.len, try rig.readFile("far", back));
     try testing.expectEqualSlices(u8, out, back);
+}
+
+test "notification: names watched before they are there, told of each change, through a card taken out and back" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try notify_course.course(&rig, &rig.volume.media.changes);
 }

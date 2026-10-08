@@ -87,6 +87,31 @@ pub fn multi(slot: usize) []const [*:0]const u8 {
     return @ptrCast(array[0..n]);
 }
 
+/// `name` in quotes, written into `into` as ReadArgs reads it back - a
+/// quote as `*"`, a star as `**`, a line's end as `*N` - so a command line
+/// made of names holds any name whole. How many bytes that took, or null
+/// when `into` is too small.
+pub fn quote(into: []u8, name: []const u8) ?usize {
+    var at: usize = 0;
+    if (into.len < 2) return null;
+    into[at] = '"';
+    at += 1;
+    for (name) |char| {
+        const plain = [1]u8{char};
+        const escaped: []const u8 = switch (char) {
+            '"' => "*\"",
+            '*' => "**",
+            '\n' => "*N",
+            else => &plain,
+        };
+        if (at + escaped.len + 1 > into.len) return null;
+        @memcpy(into[at..][0..escaped.len], escaped);
+        at += escaped.len;
+    }
+    into[at] = '"';
+    return at + 1;
+}
+
 /// A /M/N slot's numbers: the i-th, as `multi` counts them.
 pub fn multiNumber(slot: usize, i: usize) i32 {
     const array: [*]const *const i32 = @ptrFromInt(slot);

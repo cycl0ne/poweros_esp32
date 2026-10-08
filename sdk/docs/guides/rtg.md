@@ -312,6 +312,23 @@ other.
 intuition drives all three from the mouse; a program sets its window's
 pointer with `SetWindowPointerA` and leaves the board to intuition.
 
+A board with `RTGBC_OVERLAY` lays a second image the same way, under the
+pointer: a dragged icon.
+
+- `SetBoardOverlay(board, image, hot_x, hot_y)` takes a surface with an
+  alpha channel of up to `RTG_OVERLAY_MAX` (160) each way and converts it
+  once, its coverage dithered into the one-bit mask by a 4x4 ordered
+  pattern, so a soft edge or a see-through picture keeps its look as
+  dots. It follows the pointer, its point at the pointer's point, and is
+  shown whether the pointer is or not. Null takes it away.
+- `MoveBoardOverlay(board, x, y)` puts it somewhere of its own; it stays
+  there until it is moved again or given a new image.
+
+intuition's `BeginDrag` and `EndDrag` are how a program drags.
+
+A 32-bit surface's bytes are its channels in the order its format names
+them: `rgba32` is red, green, blue, alpha, a byte each.
+
 ## Events
 
 ```zig

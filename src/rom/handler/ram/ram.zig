@@ -59,7 +59,7 @@ const notify = dos.notify;
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 1;
+const HANDLER_REVISION = 2;
 const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -233,6 +233,8 @@ pub const RamDisk = struct {
     blocks: u64 align(4) = 0,
     /// Who watches what (notification); null when there was no memory.
     watchers: ?*notify.Watchers = null,
+    /// The volume's name after ACTION_RENAME_DISK, for its node.
+    label: dos.volumename.VolumeName = .{},
 
     pub fn init(sys: *ExecBase, dl: *DosLib, ub: *UtilityBase, port: ?*MsgPort) Error!RamDisk {
         var disk: RamDisk = .{ .sys = sys, .dl = dl, .ub = ub, .port = port, .root = undefined };
@@ -904,6 +906,18 @@ pub const RamDisk = struct {
         };
     }
 
+    /// The volume renamed: the root's name, and the node's at the next
+    /// chance (`label.apply`).
+    fn relabel(disk: *RamDisk, given: ?[*:0]const u8) Error!void {
+        const name = given orelse return error.InvalidName;
+        var len: usize = 0;
+        while (name[len] != 0) len += 1;
+        if (!dos.volumename.valid(name[0..len]) or len >= disk.root.name.len) return error.InvalidName;
+        @memset(&disk.root.name, 0);
+        @memcpy(disk.root.name[0..len], name[0..len]);
+        disk.label.set(name[0..len]);
+    }
+
     // --- packets ---
 
     /// The answer to one packet (all but STARTUP, which the process takes).
@@ -1003,6 +1017,10 @@ pub const RamDisk = struct {
                 disk.info(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
                 return yes();
             },
+            .rename_disk => {
+                disk.relabel(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
+                return yes();
+            },
             .add_notify => {
                 disk.addNotify(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);
                 return yes();
@@ -1053,6 +1071,7 @@ pub fn ramHandler(sb: *ExecBase) callconv(.c) void {
             const pkt = DosPacket.fromMessage(message);
             const reply = disk.answer(pkt);
             dl.ReplyPkt(pkt, reply.res1, reply.res2);
+            disk.label.apply(@ptrCast(dl), disk.volume);
         }
         _ = sb.Wait(port.sigMask() | disk.notifySignals());
     }

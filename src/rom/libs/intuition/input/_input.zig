@@ -75,7 +75,13 @@ const ring_size = 64;
 /// `screen_depth` the depth gadget in a screen's title bar pressed,
 /// `sys_gadget` a gadget standing for the window's close, depth or zoom
 /// gadget (`GA_SysGadget`) held.
-const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth, sys_gadget, screen_drag };
+/// `bar` is a finger on a screen's bar that cannot be dragged, waiting to
+/// be lifted: a tap there opens the menus.
+const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, screen_depth, sys_gadget, screen_drag, bar };
+
+/// How far a finger may wobble before what it pressed starts to move: a
+/// finger lands on an area, not a point, and rolls as it is lifted.
+pub const TOUCH_SLOP = 8;
 
 /// Where on a window a point is.
 pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, size };
@@ -124,7 +130,14 @@ pub const State = extern struct {
     box_height: i32 = 0,
     /// The pressed gadget is drawn pressed: the pointer is over it.
     over: u8 = 0,
-    pad2: [3]u8 = .{ 0, 0, 0 },
+    /// The press was a finger's (IESUBCLASS_FINGER); and it has not yet
+    /// gone past its wobble from where it came down, `press_disp_x` and
+    /// `press_disp_y` on the display.
+    finger: u8 = 0,
+    slop: u8 = 0,
+    pad2: [1]u8 = .{0},
+    press_disp_x: i32 = 0,
+    press_disp_y: i32 = 0,
     /// The window's own gadget that has the input, in `mode` active.
     active: ?*Object = null,
     /// The screen whose depth gadget is pressed, in `mode` screen_depth,
@@ -486,7 +499,7 @@ pub fn forgetScreen(ib: *IntuitionBase, s: *Screen) void {
     if (st.on == s) st.on = null;
     if (st.screen == s) {
         st.screen = null;
-        if (st.mode == .screen_drag or st.mode == .screen_depth) st.mode = .none;
+        if (st.mode == .screen_drag or st.mode == .screen_depth or st.mode == .bar) st.mode = .none;
     }
 }
 
@@ -525,7 +538,8 @@ fn wheel(ib: *IntuitionBase, e: *const InputEvent) void {
     if (w.idcmp & wn.IDCMP_MOUSEWHEEL != 0) _window.send(ib, w, wn.IDCMP_MOUSEWHEEL, wn.wheelCode(across, down));
 }
 
-fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
+/// The frontmost window at (x, y) on `s`, if a window is there.
+pub fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
     const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
     return windowOfLayer(s, layer);
 }
@@ -573,7 +587,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     // or sized it is passed over.
     if (e.class == ie.IECLASS_RAWMOUSE and e.code == ie.IECODE_WHEEL) {
         switch (st.mode) {
-            .drag, .size, .screen_drag, .screen_depth => {},
+            .drag, .size, .screen_drag, .screen_depth, .bar => {},
             else => wheel(ib, e),
         }
         return;
@@ -887,6 +901,10 @@ fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
 
 fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     const st = stateOf(ib);
+    st.finger = @intFromBool(e.subclass == ie.IESUBCLASS_FINGER);
+    st.slop = st.finger;
+    st.press_disp_x = st.disp_x;
+    st.press_disp_y = st.disp_y;
     const s = screenAt(ib) orelse return;
     // The screen's depth gadget, where no window covers it: pressed until
     // the button goes up.
@@ -898,13 +916,18 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
         return;
     }
     // Its bar, where no window covers it: the screen dragged down its
-    // display, or back up, while the button is held.
-    if (_kscreen.onBar(ib, s, st.x, st.y) and s.draggable and !s.exclusive) {
-        st.mode = .screen_drag;
-        st.screen = s;
-        st.grab_y = st.disp_y;
-        st.box_top = s.top;
-        return;
+    // display, or back up, while the button is held. A finger there may
+    // be a tap instead, which opens the menus: a bar that cannot be
+    // dragged still waits for the finger to lift.
+    if (_kscreen.onBar(ib, s, st.x, st.y)) {
+        const can_drag = s.draggable and !s.exclusive;
+        if (can_drag or st.finger != 0) {
+            st.mode = if (can_drag) .screen_drag else .bar;
+            st.screen = s;
+            st.grab_y = st.disp_y;
+            st.box_top = s.top;
+            return;
+        }
     }
     const w = windowAt(ib, s, st.x, st.y) orelse return;
     if (ib.active_window != w) ib.iface().ActivateWindow(@ptrCast(w));
@@ -998,6 +1021,15 @@ fn gadgetOf(part: Part) _window.Gadget {
 
 fn moved(ib: *IntuitionBase) void {
     const st = stateOf(ib);
+    // A finger moves what it pressed only once it has gone past its
+    // wobble; from then on it follows from where it came down.
+    if (st.slop != 0) switch (st.mode) {
+        .drag, .size, .screen_drag, .bar => {
+            if (@abs(st.disp_x - st.press_disp_x) <= TOUCH_SLOP and @abs(st.disp_y - st.press_disp_y) <= TOUCH_SLOP) return;
+            st.slop = 0;
+        },
+        else => {},
+    };
     switch (st.mode) {
         .drag => if (st.window) |w| ib.iface().ChangeWindowBox(
             @ptrCast(w),
@@ -1275,10 +1307,15 @@ fn release(ib: *IntuitionBase) void {
     // faster than they were handled.
     if (st.mode == .drag or st.mode == .size or st.mode == .screen_drag) moved(ib);
     const mode = st.mode;
+    // A finger lifted inside its wobble was a tap.
+    const tapped = st.finger != 0 and st.slop != 0;
     st.mode = .none;
+    st.slop = 0;
     if (mode == .screen_depth) return releaseScreenDepth(ib);
-    if (mode == .screen_drag) {
+    if (mode == .screen_drag or mode == .bar) {
         st.screen = null;
+        // A tap on the bar: the menus, which stay until a tap ends them.
+        if (tapped) menus.tapBar(ib);
         return;
     }
     const w = st.window orelse return;

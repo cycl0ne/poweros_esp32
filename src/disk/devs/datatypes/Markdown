@@ -1,1 +1,1 @@
-NAME=Markdown BASE=markdown GROUP=text ID=MD PATTERN=#?.(md|markdown) TYPE=ASCII PRI=10
+NAME=Markdown BASE=markdown GROUP=text ID=MD PATTERN=#?.(md|markdown) TYPE=ASCII PRI=10 BROWSE=SYS:Programs/MultiView EDIT=SYS:Programs/Notepad

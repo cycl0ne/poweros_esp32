@@ -245,6 +245,30 @@ second while active) are the others. A gadget in `iaddress` is the
 program's and outlives the message, so its ID may be read after the
 reply: `GetAttr(gc.GA_ID, gadget, &id)`.
 
+### Dragging a picture
+
+`BeginDrag(window, picture, hot_x, hot_y)` takes a picture along with
+the pointer - an icon picked up, a few drawn together - over every
+window until `EndDrag`. The display lays it over its picture on the way
+to the glass, as it lays the pointer: windows go on drawing under it and
+nothing waits. Its coverage shows as a pattern of dots, so a soft edge
+keeps its look; a picture is at most `RTG_OVERLAY_MAX` (160) pixels each
+way, and it shows on a touch panel too, where the pointer does not.
+
+```zig
+// The button went down on an icon: take hold of it where it was pressed.
+const picture = rtg.Surface{ .pixels = pixels, .width = 48, .height = 48, .pitch = 48 * 4, .format = .rgba32 };
+dragging = ib.BeginDrag(window, &picture, press_x, press_y);
+// ... SELECTUP: let go.
+const target = ib.EndDrag(window, if (taken) 0 else intuition.DRAGF_FLYBACK);
+```
+
+`EndDrag` answers the window under the pointer - the program's own,
+another program's, or null over the screen's ground - and with
+`DRAGF_FLYBACK` first flies the picture back to where it was taken
+from. One drag at a time; a window closed while it drags ends it.
+`C:test/Drag` drags the five default icons.
+
 ## A window object
 
 A window object (`classusr.WINDOWCLASS`, as in
@@ -722,6 +746,28 @@ wc.WMHI_MENUPICK => {
     }
 },
 ```
+
+### By a finger
+
+On a touch panel there is no menu button. A tap on the screen's bar - a
+finger down and lifted where it came down - opens the active window's
+menus, and they stay: a tap on a title opens its panel, a finger lifted
+over an item picks it and closes the menus, and a tap anywhere else
+closes them with `MENUNULL`. The program hears nothing it would not hear
+from the button. A window with `WA_RMBTrap` gets no menus by a tap
+either, and a finger dragged along the bar past its wobble pulls the
+screen down as before.
+
+A finger's pointer events say they are one: input.device marks the
+`IECLASS_NEWPOINTERPOS` it makes for the pointer finger with
+`IESUBCLASS_FINGER`. intuition lets a finger's press on a drag bar or a
+size gadget wobble `TOUCH_SLOP` (8) pixels before it moves anything. A
+program that wants a double click by place as well as by time - the same
+word of a line of text, where a finger's second tap lands a character
+off - asks `DoubleTap` with both presses as `Tap`s; one that compares what
+was pressed (a row, an icon) needs only `DoubleClick`.
+`C:test/Tap X Y` taps at a place, `TOX TOY` drags there, for a display
+with no touch panel; `C:test/Tap DEMO` opens a screen with menus to tap.
 
 ## Requesters
 

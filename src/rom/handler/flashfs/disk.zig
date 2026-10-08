@@ -421,6 +421,25 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.makeRoot();
         }
 
+        /// The volume's name: the root's, which is the superblock's until
+        /// a rename writes the root's record with another.
+        pub fn volumeName(fs: *const Fs) []const u8 {
+            return fs.root.nameSlice();
+        }
+
+        /// ACTION_RENAME_DISK: the root's record written again with the new
+        /// name. The log keeps it like any other record, so a power cut
+        /// leaves the old name or the new one; the superblock is not
+        /// touched, since rewriting it would erase the only copy of it.
+        pub fn relabel(fs: *Fs, name: []const u8) Error!void {
+            if (!dos.volumename.valid(name) or name.len > flashfs.max_volume_name) return error.InvalidName;
+            const root = fs.root;
+            @memset(&root.name, 0);
+            @memcpy(root.name[0..name.len], name);
+            try fs.writeMeta(root);
+            fs.vol.flush() catch |e| return fromVolume(e);
+        }
+
         /// ACTION_FORMAT on a volume that is already mounted: everything on
         /// it goes. Refused while anything is locked, as a format must be.
         pub fn reformat(fs: *Fs, label: []const u8) Error!void {
@@ -1464,6 +1483,12 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.vol.flush() catch |e| return no(fromVolume(e));
                     return yes();
                 },
+                .rename_disk => {
+                    const given: ?[*:0]const u8 = @ptrFromInt(ptrArg(a[0]));
+                    const name = given orelse return no(error.InvalidName);
+                    fs.relabel(std.mem.span(name)) catch |e| return no(e);
+                    return yes();
+                },
                 .format => {
                     const label: ?[*:0]const u8 = @ptrFromInt(ptrArg(a[0]));
                     fs.reformat(if (label) |l| std.mem.span(l) else "Empty") catch |e| return no(e);
@@ -1547,6 +1572,32 @@ test "a formatted volume has an empty root" {
     try testing.expectEqual(dos.ST_ROOT, fib.dir_entry_type);
     try testing.expectEqual(dos.DOSFALSE, sendArgs(&fs, .examine_next, .{ .examine = .{ .lock = null, .fib = &fib } }).res1);
     fs.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+test "a volume renamed: the root's record, kept when mounted again, the superblock left alone" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = MemMedia.init(&store, test_sector, test_page);
+    var fs = TestFs.init(&media, null);
+    try fs.format("System");
+    try writeFile(&fs, "hello", "one");
+    try testing.expectEqual(dos.DOSTRUE, send(&fs, .rename_disk, .{ @bitCast(@intFromPtr("Work Disk")), 0, 0, 0 }).res1);
+    try testing.expectEqualStrings("Work Disk", fs.volumeName());
+    try testing.expectEqualStrings("System", fs.vol.name());
+    // Names a volume cannot have.
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(&fs, .rename_disk, .{ @bitCast(@intFromPtr("a:b")), 0, 0, 0 }).res2);
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, send(&fs, .rename_disk, .{ @bitCast(@intFromPtr("")), 0, 0, 0 }).res2);
+    fs.deinit();
+
+    var again = TestFs.init(&media, null);
+    try again.mount();
+    try testing.expectEqualStrings("Work Disk", again.volumeName());
+    var fib: FileInfoBlock = undefined;
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&again, .examine_object, .{ .examine = .{ .lock = null, .fib = &fib } }).res1);
+    try testing.expectEqualStrings("Work Disk", std.mem.sliceTo(&fib.file_name, 0));
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqualStrings("one", buffer[0..try readFile(&again, "hello", &buffer)]);
+    again.deinit();
     try testing.expectEqual(@as(usize, 0), media.live);
 }
 

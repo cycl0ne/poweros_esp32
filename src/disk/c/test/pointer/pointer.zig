@@ -33,7 +33,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Pointer";
-const VERSION_STRING = "\x00$VER: Pointer 1.1 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Pointer 1.1 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DELAY/S,HIDE/S";
@@ -50,20 +50,23 @@ const MSG_HIDDEN = "The left window hides the pointer; clicks in it are still he
 const MSG_CLICK = "Click at %ld,%ld with no pointer\n";
 
 /// A crosshair 15 pixels each way, black lines edged in white, its point
-/// in the middle - rgba32, the alpha 0 where the picture shows through.
+/// in the middle - rgba32, red, green, blue and alpha a byte each, the
+/// alpha 0 where the picture shows through.
 const side = 15;
-const crosshair: [side * side]u32 = blk: {
-    var pixels: [side * side]u32 = @splat(0);
+const crosshair: [side * side * 4]u8 = blk: {
+    var pixels: [side * side * 4]u8 = @splat(0);
     const middle = side / 2;
+    const white = [4]u8{ 0xFF, 0xFF, 0xFF, 0xFF };
+    const black = [4]u8{ 0x00, 0x00, 0x00, 0xFF };
     for (0..side) |i| {
         for ([_]usize{ middle - 1, middle + 1 }) |edge| {
-            pixels[edge * side + i] = 0xFFFFFFFF;
-            pixels[i * side + edge] = 0xFFFFFFFF;
+            pixels[(edge * side + i) * 4 ..][0..4].* = white;
+            pixels[(i * side + edge) * 4 ..][0..4].* = white;
         }
     }
     for (0..side) |i| {
-        pixels[middle * side + i] = 0x000000FF;
-        pixels[i * side + middle] = 0x000000FF;
+        pixels[(middle * side + i) * 4 ..][0..4].* = black;
+        pixels[(i * side + middle) * 4 ..][0..4].* = black;
     }
     break :blk pixels;
 };

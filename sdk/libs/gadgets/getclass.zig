@@ -529,7 +529,10 @@ pub fn Library(comptime spec: Spec) type {
 
         // --- the attributes -------------------------------------------------
 
-        fn setAttrs(base: *Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
+        /// `typing` for the field's word of a key typed while it is still
+        /// being edited: what it holds is taken once it is done with, as
+        /// setting its text back would move its cursor to the start.
+        fn setAttrs(base: *Base, own: *Data, tags: ?[*]const TagItem, new: bool, typing: bool) bool {
             const ub = base.utility_base;
             var changed = false;
             var state = tags;
@@ -556,7 +559,7 @@ pub fn Library(comptime spec: Spec) type {
                     own.save_mode = @intFromBool(item.data != 0);
                 } else if (item.tag == sixthValue(spec) and spec.kind == .file) {
                     own.drawers_only = @intFromBool(item.data != 0);
-                } else if (item.tag == gc.STRINGA_TextVal and !new) {
+                } else if (item.tag == gc.STRINGA_TextVal and !new and !typing) {
                     // The field said what was typed in it.
                     takeTyped(base, own);
                     changed = true;
@@ -630,7 +633,7 @@ pub fn Library(comptime spec: Spec) type {
                         ib.DisposeObject(obj);
                         return 0;
                     }
-                    _ = setAttrs(base, own, new.attr_list, true);
+                    _ = setAttrs(base, own, new.attr_list, true, false);
                     refresh(base, own);
                     return made;
                 },
@@ -649,7 +652,9 @@ pub fn Library(comptime spec: Spec) type {
                     const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
                     const own = classes.instData(Data, cl, o.?);
                     var changed = ib.SendSuperMessage(cl, o, msg);
-                    if (setAttrs(base, own, set.attr_list, false)) changed = 1;
+                    const typing = msg.method_id == classusr.OM_UPDATE and
+                        @as(*classusr.OpUpdate, @ptrCast(@alignCast(msg))).flags & classusr.OPUF_INTERIM != 0;
+                    if (setAttrs(base, own, set.attr_list, false, typing)) changed = 1;
                     if (changed != 0 and msg.method_id == classusr.OM_UPDATE and set.gadget_info != null) {
                         support.redraw(ib, o.?, set.gadget_info);
                     }
@@ -749,7 +754,8 @@ pub fn Library(comptime spec: Spec) type {
         pub const Made = @import("classlibrary.zig").ClassLibrary(.{
             .name = spec.name,
             .version = 1,
-            .date = "29.09.2026",
+            .revision = 1,
+            .date = "08.10.2026",
             .super = classusr.GADGETCLASS,
             .Instance = Data,
             .dispatch = Self.dispatch,

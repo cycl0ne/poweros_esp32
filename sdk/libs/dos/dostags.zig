@@ -58,6 +58,13 @@ pub const NP_EndMsg = NP_Dummy + 28;
 /// so the library cannot go while its code still runs. Null (the
 /// default): none.
 pub const NP_HoldLibrary = NP_Dummy + 29;
+/// The files the new process is started with: a `[*]const WBArg`, the
+/// program itself first, and NP_NumArgs how many. CreateNewProc copies
+/// them - each lock duplicated, each name copied - and the copy is the
+/// process's, freed when it ends; the caller keeps its own. GetArgList
+/// reads them.
+pub const NP_ArgList = NP_Dummy + 30;
+pub const NP_NumArgs = NP_Dummy + 31;
 
 // SystemTagList's tags.
 pub const SYS_Dummy = TAG_USER + 32;

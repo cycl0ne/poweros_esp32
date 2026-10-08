@@ -23,6 +23,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddGList](#addglist) - Puts gadgets into a window.
 - [AllocScreenBuffer](#allocscreenbuffer) - Makes one more buffer for a screen to show.
 - [AutoRequestTagList](#autorequesttaglist) - Asks with two buttons made from IntuiTexts and waits.
+- [BeginDrag](#begindrag) - Starts dragging a picture with the pointer, over every window.
 - [BeginRefresh](#beginrefresh) - Begins redrawing what a window lost.
 - [BuildEasyRequestArgs](#buildeasyrequestargs) - Opens a requester and hands it back to be answered.
 - [BuildSysRequestTagList](#buildsysrequesttaglist) - A two-button requester from IntuiTexts, handed back.
@@ -40,11 +41,13 @@ Generated from the source by `./zig build autodoc`.
 - [DisposeObject](#disposeobject) - Frees an object.
 - [DoGadgetMethodA](#dogadgetmethoda) - Sends a gadget a method with its window's GadgetInfo.
 - [DoubleClick](#doubleclick) - Whether two moments are close enough to be a double-click.
+- [DoubleTap](#doubletap) - Whether two presses are close enough in time and in place to be a double click - of a mouse or a finger.
 - [DrawBorder](#drawborder) - Draws a Border and the Borders linked after it.
 - [DrawImage](#drawimage) - Draws an image.
 - [DrawImageState](#drawimagestate) - Draws an image in a state.
 - [DrawPart](#drawpart) - Draws a part of a gadget in a state, from its style.
 - [EasyRequestArgs](#easyrequestargs) - Asks something in a requester and waits for the answer.
+- [EndDrag](#enddrag) - Ends a drag `BeginDrag` started, and says which window it ended over.
 - [EndRefresh](#endrefresh) - Ends a redraw begun with BeginRefresh.
 - [EndRequest](#endrequest) - Takes a requester down.
 - [EraseImage](#eraseimage) - Erases what an image covers.
@@ -540,6 +543,85 @@ const save = ib.AutoRequestTagList(window, &[_]TagItem{
     .{ .tag = SYSREQ_Negative, .data = @intFromPtr(&no) },
     .{},
 });
+```
+
+## BeginDrag
+
+Starts dragging a picture with the pointer, over every window.
+
+**SYNOPSIS**
+
+```zig
+fn BeginDrag(ib: *IntuitionBase, window: *Window, image: *const rtg.Surface, hot_x: u32, hot_y: u32) bool
+```
+
+**SINCE**
+
+0.34. LVO -512.
+
+**INPUTS**
+
+- `window` - the window the drag starts in: its screen is where the
+  picture is shown.
+- `image` - the picture: a surface in `rgba32`, `bgra32` or
+  `argb1555`, at most `RTG_OVERLAY_MAX` pixels each way - an icon, or
+  a few drawn together.
+- `hot_x`, `hot_y` - the pixel of the picture that sits at the
+  pointer's point: where it was taken hold of.
+
+**RESULT**
+
+True while the picture follows the pointer; false when another drag
+is on, the display cannot lay a picture over itself, or the picture
+will not do (too large, no alpha).
+
+**BEHAVIOR**
+
+The display lays the picture over everything on the way to the glass,
+under the pointer, as it lays the pointer: windows go on drawing under
+it, nothing waits for it, and it moves with every pointer move without
+the program doing anything. Its coverage is shown as a pattern of
+dots, so a soft edge or a picture made see-through keeps its look. It
+is shown on a touch panel too, where the pointer itself is not. The
+program goes on hearing the pointer as before - `IDCMP_MOUSEMOVE` with
+`WFLG_REPORTMOUSE`, the button let go as `IDCMP_MOUSEBUTTONS` - and
+ends the drag with `EndDrag` when it is let go.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and while the display
+  converts the picture.
+- Interrupts: no. It allocates.
+- Locks: none needed; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The picture is read and not kept: it may be freed when the call
+returns.
+
+**NOTES**
+
+One drag at a time on the whole system. A window closed while it
+drags ends the drag.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EndDrag`, rtg.library's `SetBoardOverlay`
+
+**EXAMPLES**
+
+```zig
+const picture = rtg.Surface{ .pixels = icon.pixels, .width = icon.width, .height = icon.height, .pitch = icon.width * 4, .format = .rgba32 };
+if (ib.BeginDrag(window, &picture, 24, 24)) {
+    // ... until the button is let go ...
+    const target = ib.EndDrag(window, 0);
+    _ = target;
+}
 ```
 
 ## BeginRefresh
@@ -1670,6 +1752,72 @@ None known.
 if (ib.DoubleClick(last_secs, last_micros, msg.seconds, msg.micros)) open(item);
 ```
 
+## DoubleTap
+
+Whether two presses are close enough in time and in place to be a double click - of a mouse or a finger.
+
+**SYNOPSIS**
+
+```zig
+fn DoubleTap(ib: *IntuitionBase, first: *const intuition.Tap, second: *const intuition.Tap) bool
+```
+
+**SINCE**
+
+0.34. LVO -520.
+
+**INPUTS**
+
+- `first`, `second` - each press: its time, as an IntuiMessage's
+  `seconds` and `micros` carry it, and where it was, in any coordinates
+  so long as both are in the same.
+
+**RESULT**
+
+True when the second came within the double-click time of the first
+(`DoubleClick`) and within `DOUBLETAP_DISTANCE` pixels of it, across
+and down.
+
+**BEHAVIOR**
+
+The time is `DoubleClick`'s, from the preferences. The place allows
+for a finger: two taps of one land a few pixels apart, so a program
+that wanted the very same pixel - or the same character of a line of
+text - would never see a finger's double tap; and two presses far
+apart are two clicks, however quick.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+A program comparing what was pressed - the same row of a list, the
+same icon - needs only `DoubleClick`; one comparing where uses this.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DoubleClick`
+
+**EXAMPLES**
+
+```zig
+const now = intuition.Tap{ .seconds = msg.seconds, .micros = msg.micros, .x = msg.mouse_x, .y = msg.mouse_y };
+if (ib.DoubleTap(&last, &now)) selectWord();
+last = now;
+```
+
 ## DrawBorder
 
 Draws a Border and the Borders linked after it.
@@ -2044,6 +2192,77 @@ None known.
 const ask = EasyStruct{ .text_format = "Delete %s?", .gadget_format = "Delete|Cancel" };
 const stream = sdk.exec.fmtStream(.{name});
 if (ib.EasyRequestArgs(window, &ask, null, &stream) == 1) delete(name);
+```
+
+## EndDrag
+
+Ends a drag `BeginDrag` started, and says which window it ended over.
+
+**SYNOPSIS**
+
+```zig
+fn EndDrag(ib: *IntuitionBase, window: *Window, flags: u32) ?*Window
+```
+
+**SINCE**
+
+0.34. LVO -516.
+
+**INPUTS**
+
+- `window` - the window that began the drag.
+- `flags` - `DRAGF_FLYBACK` to fly the picture back to where the drag
+  began before it goes - a drop that was not taken; 0 to take it away
+  where it is.
+
+**RESULT**
+
+The window under the pointer, where the drop is - the frontmost there,
+which may be `window` itself or another program's; null when the
+pointer is over no window (the screen's own ground or title bar), or
+when `window` was not dragging.
+
+**BEHAVIOR**
+
+With `DRAGF_FLYBACK` the picture leaves the pointer and moves back to
+where it was taken hold of in a fifth of a second, easing in as it
+arrives, the call returning once it has. Then it is taken off the
+display. The window under the pointer is looked for on `window`'s
+screen, at the pointer's place when the call is made; the point in it
+is the pointer's place less the window's corner, which
+`GetWindowAttrs` gives.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore; with `DRAGF_FLYBACK` for the
+  fifth of a second it flies.
+- Interrupts: no.
+- Locks: none needed; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The window answered is not the caller's: it may close at any time, and
+a program that tells it of the drop does so through its own channels
+(an AppWindow's port), not by touching it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BeginDrag`, rtg.library's `MoveBoardOverlay`
+
+**EXAMPLES**
+
+```zig
+const target = ib.EndDrag(window, if (taken) 0 else intuition.DRAGF_FLYBACK);
+if (target == window) {} // dropped in its own window
 ```
 
 ## EndRefresh

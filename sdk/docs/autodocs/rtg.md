@@ -39,6 +39,7 @@ Generated from the source by `./zig build autodoc`.
 - [InvertRect](#invertrect) - Complements every pixel of a rectangle with the board's engine.
 - [LockRtgDrivers](#lockrtgdrivers) - Holds the driver list still, so it can be walked.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
+- [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [NextBoardMode](#nextboardmode) - Walks a board's modes.
@@ -54,6 +55,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetBoardDisplay](#setboarddisplay) - Switches a board's display on or off.
 - [SetBoardGap](#setboardgap) - Sets the offset added to every coordinate a board sends.
 - [SetBoardMode](#setboardmode) - Puts a board in a mode.
+- [SetBoardOverlay](#setboardoverlay) - Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
 - [SetBoardPointer](#setboardpointer) - Gives a board the image its pointer is drawn with.
 - [ShowBitMap](#showbitmap) - Shows a buffer on a board's display.
 - [ShowBitMapBands](#showbitmapbands) - Shows several of a board's buffers at once, each in a band of display lines.
@@ -1572,6 +1574,70 @@ None known.
 _ = rb.MirrorBoard(board, true, false);
 ```
 
+## MoveBoardOverlay
+
+Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
+
+**SYNOPSIS**
+
+```zig
+fn MoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
+```
+
+**SINCE**
+
+1.3. LVO -240.
+
+**INPUTS**
+
+- `board` - the board.
+- `x`, `y` - where the overlay's point goes, in the coordinates a
+  caller draws in. Anywhere: the part of the image off the picture is
+  not shown.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The overlay stops following the pointer and stands at (x, y) until it
+is moved again or `SetBoardOverlay` gives it a new image, which makes
+it follow the pointer once more. A board without an overlay keeps the
+place for one set later. Nothing is done for the same place twice.
+
+**CONTEXT**
+
+- Waits: for the pointer's lock while another task moves the pointer,
+  and on a board that sends rows over a bus, for that. From a task,
+  never from an input handler.
+- Interrupts: no.
+- Locks: takes rtg's pointer lock, a semaphore; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+How a dragged icon that was not taken flies back to where it came
+from, a step at a time.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetBoardOverlay`, `MoveBoardPointer`
+
+**EXAMPLES**
+
+```zig
+rb.MoveBoardOverlay(board, start_x, start_y);
+```
+
 ## MoveBoardPointer
 
 Puts the pointer's point at a place on the picture.
@@ -1601,7 +1667,8 @@ None.
 The position is kept whether or not the board has a pointer, an image
 or the pointer shown, so an image set or shown later appears where the
 pointer is. The image's point is put here, which is its hot spot and
-not its corner. Nothing is done for the same place twice.
+not its corner. Nothing is done for the same place twice. An overlay
+that follows the pointer (SetBoardOverlay) moves with it.
 
 A board that turns its picture itself (`MirrorBoard`, `SwapBoardAxes`,
 `SetBoardGap`) turns the pointer with it: the driver lays the pointer
@@ -2401,6 +2468,87 @@ None known.
 
 ```zig
 if (rb.SetBoardMode(board, null) != rtg.errors.RTGERR_OK) return error.NoMode;
+```
+
+## SetBoardOverlay
+
+Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
+
+**SYNOPSIS**
+
+```zig
+fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32
+```
+
+**SINCE**
+
+1.3. LVO -236.
+
+**INPUTS**
+
+- `board` - the board.
+- `image` - a surface in `rgba32`, `bgra32` or `argb1555`, at most
+  `RTG_OVERLAY_MAX` pixels each way; null takes the overlay away.
+- `hot_x`, `hot_y` - the pixel of the image that is its point, inside
+  it: the one that sits at the pointer's point.
+
+**RESULT**
+
+`RTGERR_OK`; `RTGERR_NOT_SUPPORTED` for a board without
+`RTGBC_OVERLAY`; `RTGERR_BAD_FORMAT` for an image with no alpha, or a
+board whose format a pixel is not whole bytes of; `RTGERR_BAD_ARG` for
+an image too large, empty, or with its point outside it;
+`RTGERR_NO_MEMORY`; or what the driver answered. On any failure the
+board keeps the overlay it had.
+
+**BEHAVIOR**
+
+The image is converted here and not again, as SetBoardPointer's is:
+every pixel into the board's format, and its coverage into a mask of
+one bit a pixel - dithered by a 4x4 ordered pattern rather than cut in
+half, so a soft edge, a shadow or an image made see-through keeps its
+look as a pattern of dots. The board lays it over the picture on the
+way to the glass, under the pointer, the picture never holding it; it
+is shown whether the pointer is or not, so a finger dragging on a
+touch panel, where the pointer is hidden, sees it. Its point is put at
+the pointer's, and it follows the pointer's moves until
+`MoveBoardOverlay` puts it somewhere of its own.
+
+**CONTEXT**
+
+- Waits: for rtg's pointer lock while another task moves the pointer,
+  and for a driver that sends the rows over a bus.
+- Interrupts: no. It allocates.
+- Locks: takes rtg's pointer lock while the driver changes images; no
+  spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller's image is read and not kept. The converted one is the
+library's - in internal memory for a driver whose interrupts read it -
+freed by the next SetBoardOverlay or by DeleteBoard.
+
+**NOTES**
+
+intuition's `BeginDrag` and `EndDrag` are how a program drags: they
+set the overlay on the right board and take it away again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MoveBoardOverlay`, `SetBoardPointer`, `MoveBoardPointer`
+
+**EXAMPLES**
+
+```zig
+if (rb.SetBoardOverlay(board, &icon_surface, 24, 24) == rtg.errors.RTGERR_OK) {
+    // ... the pointer moves; the icon with it ...
+    _ = rb.SetBoardOverlay(board, null, 0, 0);
+}
 ```
 
 ## SetBoardPointer

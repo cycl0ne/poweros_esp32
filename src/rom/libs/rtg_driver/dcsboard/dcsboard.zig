@@ -30,7 +30,8 @@
 //! The pointer is laid into each band after it is turned round and before
 //! it goes, so the picture in PSRAM never holds it. Moving it sends the
 //! rows it left and the rows it came to, which the picture supplies again
-//! with the pointer in its new place.
+//! with the pointer in its new place. The overlay - a dragged icon - is
+//! laid and moved the same way, under the pointer.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -52,8 +53,8 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 1;
-const BUILD_DATE = "25.9.2026";
+const REVISION = 2;
+const BUILD_DATE = "08.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -139,6 +140,11 @@ const Panel = struct {
     pointer_left: i32 = 0,
     pointer_top: i32 = 0,
     pointer_shown: bool = false,
+    /// The overlay (a dragged icon): its image, laid under the pointer
+    /// whenever there is one, and where its top left is.
+    overlay: ?*const rtg.RtgPointerImage = null,
+    overlay_left: i32 = 0,
+    overlay_top: i32 = 0,
 
     /// What the controller is sent from: the bands of the picture shown,
     /// one for a single buffer, none before the first.
@@ -560,8 +566,10 @@ fn oneBand(
     return writeBand(panel, rb, columns, lines, band, count * row_bytes);
 }
 
-/// The pointer over a band, if one is shown.
+/// The overlay over a band, if there is one, and the pointer over that,
+/// if one is shown.
 fn layPointer(panel: *Panel, into: []u8, band: sequence.Band) void {
+    if (panel.overlay) |overlay| sequence.layPointer(into, band, overlay, panel.overlay_left, panel.overlay_top);
     if (!panel.pointer_shown) return;
     const image = panel.pointer orelse return;
     sequence.layPointer(into, band, image, panel.pointer_left, panel.pointer_top);
@@ -616,6 +624,36 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     panel.pointer_shown = show;
     sendPointerRows(board, panel.pointer, panel.pointer_top);
     return err.RTGERR_OK;
+}
+
+fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
+    const panel = panelOf(board);
+    if (image) |one| {
+        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    }
+    const old = panel.overlay;
+    panel.overlay = image;
+    sendPointerRows(board, old, panel.overlay_top);
+    sendPointerRows(board, image, panel.overlay_top);
+    return err.RTGERR_OK;
+}
+
+/// The rows it left and the rows it came to, as the pointer's.
+fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
+    const panel = panelOf(board);
+    const old_top = panel.overlay_top;
+    panel.overlay_left = left;
+    panel.overlay_top = top;
+    const image = panel.overlay orelse return;
+    const height: i32 = @intCast(image.height);
+    if (top < old_top + height and old_top < top + height) {
+        const first = @max(@min(top, old_top), 0);
+        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(panel.height)));
+        if (first < end) _ = send(panel, @intCast(first), @intCast(end - first));
+        return;
+    }
+    sendPointerRows(board, image, old_top);
+    sendPointerRows(board, image, top);
 }
 
 /// How often a band whose transfer ran dry is sent again before its rows
@@ -739,6 +777,8 @@ const ops = rtg.RtgBoardOps{
     .control = &control,
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
+    .set_overlay = &setOverlay,
+    .move_overlay = &moveOverlay,
     .show_pointer = &showPointer,
 };
 

@@ -161,6 +161,8 @@ const UnLoadSeg = @import("program/unloadseg.zig").UnLoadSeg;
 const ErrorReport = @import("error/errorreport.zig").ErrorReport;
 const StartNotify = @import("notify/startnotify.zig").StartNotify;
 const EndNotify = @import("notify/endnotify.zig").EndNotify;
+const GetArgList = @import("process/getarglist.zig").GetArgList;
+const Relabel = @import("lock/relabel.zig").Relabel;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -328,6 +330,8 @@ const contract_files = [_][]const u8{
     @embedFile("error/errorreport.zig"),
     @embedFile("notify/startnotify.zig"),
     @embedFile("notify/endnotify.zig"),
+    @embedFile("process/getarglist.zig"),
+    @embedFile("lock/relabel.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -738,6 +742,12 @@ fn lvoStartNotify(db: *DosBase, request: *dos.notify.NotifyRequest) callconv(.c)
 fn lvoEndNotify(db: *DosBase, request: *dos.notify.NotifyRequest) callconv(.c) void {
     return EndNotify(db, request);
 }
+fn lvoGetArgList(db: *DosBase, num_args: ?*u32) callconv(.c) ?[*]const dos.WBArg {
+    return GetArgList(db, num_args);
+}
+fn lvoRelabel(db: *DosBase, drive: [*:0]const u8, name: [*:0]const u8) callconv(.c) bool {
+    return Relabel(db, drive, name);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -882,6 +892,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoErrorReport),
     vec(lvoStartNotify),
     vec(lvoEndNotify),
+    vec(lvoGetArgList),
+    vec(lvoRelabel),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -889,7 +901,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 140), vectors.len);
+    try testing.expectEqual(@as(usize, 142), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

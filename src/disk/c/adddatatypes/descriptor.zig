@@ -20,8 +20,9 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 
-/// What one descriptor file says.
-const descriptor_template = "NAME/A,BASE/A,GROUP/A,ID,PATTERN,MASK,PRI/N,TYPE,RECOGNISE/S,CASE/S,DIR/S";
+/// What one descriptor file says. INFO, BROWSE, EDIT, PRINT and MAIL
+/// each name the program that does that with a file of this kind.
+const descriptor_template = "NAME/A,BASE/A,GROUP/A,ID,PATTERN,MASK,PRI/N,TYPE,RECOGNISE/S,CASE/S,DIR/S,INFO/K,BROWSE/K,EDIT/K,PRINT/K,MAIL/K";
 const d_name = 0;
 const d_base = 1;
 const d_group = 2;
@@ -33,6 +34,9 @@ const d_type = 7;
 const d_recognise = 8;
 const d_case = 9;
 const d_dir = 10;
+/// The tools' slots, in the order of their `TW_` numbers from TW_INFO.
+const d_first_tool = 11;
+const tool_kinds = [_]u16{ datatypes.TW_INFO, datatypes.TW_BROWSE, datatypes.TW_EDIT, datatypes.TW_PRINT, datatypes.TW_MAIL };
 
 /// Four characters as the number they make, short names padded with
 /// spaces.
@@ -113,7 +117,7 @@ pub fn kindOf(text: ?[*:0]const u8) u16 {
 /// everything the header points at. Null when the file does not say
 /// what it must.
 pub fn readDescriptor(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, text: []u8) ?*datatypes.DataType {
-    var argv: [11]usize = @splat(0);
+    var argv: [16]usize = @splat(0);
     var rda = dos.RDArgs{
         .source = .{ .buffer = text.ptr, .length = @intCast(text.len) },
         .flags = dos.RDAF_NOPROMPT,
@@ -134,7 +138,19 @@ pub fn readDescriptor(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, text: []u8
     // an end marker.
     const pattern_room = if (pattern) |p| 2 * textLen(p) + 3 else 0;
     const mask_room = if (mask) |m| textLen(m) else 0;
+    // The tools: a node each, after the header, and the program's name
+    // with the other strings.
+    var tool_count: usize = 0;
+    var tool_text: usize = 0;
+    for (0..tool_kinds.len) |i| {
+        const program: ?[*:0]const u8 = @ptrFromInt(argv[d_first_tool + i]);
+        if (program) |p| {
+            tool_count += 1;
+            tool_text += textLen(p) + 1;
+        }
+    }
     const size = @sizeOf(datatypes.DataType) + @sizeOf(datatypes.DataTypeHeader) +
+        tool_count * @sizeOf(datatypes.ToolNode) + tool_text +
         name_len + base_len + pattern_room + 2 * mask_room;
     const memory = sys.AllocVec(size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const dt: *datatypes.DataType = @ptrCast(@alignCast(memory));
@@ -144,6 +160,22 @@ pub fn readDescriptor(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, text: []u8
     var at = @intFromPtr(memory) + @sizeOf(datatypes.DataType);
     const header: *datatypes.DataTypeHeader = @ptrFromInt(at);
     at += @sizeOf(datatypes.DataTypeHeader);
+    const tool_nodes: [*]datatypes.ToolNode = @ptrFromInt(at);
+    at += tool_count * @sizeOf(datatypes.ToolNode);
+    var made_tools: usize = 0;
+    for (tool_kinds, 0..) |which, i| {
+        if (argv[d_first_tool + i] == 0) continue;
+        const program: [*:0]const u8 = @ptrFromInt(argv[d_first_tool + i]);
+        const program_len = textLen(program) + 1;
+        const copy: [*]u8 = @ptrFromInt(at);
+        @memcpy(copy[0..program_len], program[0..program_len]);
+        at += program_len;
+        const node = &tool_nodes[made_tools];
+        node.* = .{ .tool = .{ .which = which, .flags = datatypes.TF_SHELL, .program = @ptrCast(copy) } };
+        node.node.name = @ptrCast(copy);
+        sys.AddTail(&dt.tools, &node.node);
+        made_tools += 1;
+    }
     const name_copy: [*]u8 = @ptrFromInt(at);
     @memcpy(name_copy[0..name_len], name[0..name_len]);
     at += name_len;

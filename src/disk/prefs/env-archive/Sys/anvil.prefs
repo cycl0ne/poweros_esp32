@@ -1,0 +1,18 @@
+# ENVARC:Sys/anvil.prefs - the desktop's settings, which the desktop
+# reads when it starts and follows while it runs. One line:
+#
+# GROUND    the desktop's colour, #RRGGBB, or two, #top..#bottom,
+#           shaded from the top to the bottom. Left out, the
+#           screen's background pen.
+# PICTURE   a picture over the ground, any format datatypes read;
+#           a name with spaces in it in quotes. NONE for none.
+# PLACE     how the picture covers the desktop: TILED, CENTRED, or
+#           SCALED to cover it with its proportions kept.
+# ICONSIZE  the most pixels an icon is shown at each way, 16 to 256;
+#           a larger one is scaled down.
+# VIEW      how a drawer with no view of its own is shown: ICON,
+#           NAME, DATE or SIZE.
+#
+# One left out keeps the desktop's own. These are its own:
+#
+# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON

@@ -15,6 +15,7 @@
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
 ##include libs/intuition/intuition as intuition
+##include libs/rtg/rtg as rtg
 ##basetype IntuitionBase
 ##name intuition.library
 ##bias 4
@@ -406,4 +407,13 @@ void ScreenPositionTagList(*intuition.Screen screen, ?[*]const utility.TagItem t
 /// way into it from the one before while its style gives the change time
 /// (STYLE_Transition) - a mixed state, the gadget drawn again as it goes.
 u32 GadgetStyleState(*intuition.Object gadget, ?*const intuition.DrawInfo draw_info, u32 part, u32 state)
+/// Start dragging a picture with the pointer, laid by the display over
+/// everything under the pointer: true while it follows. One drag at a time.
+bool BeginDrag(*intuition.Window window, *const rtg.Surface image, u32 hot_x, u32 hot_y)
+/// End the drag `window` began - flying the picture back first with
+/// DRAGF_FLYBACK - and answer the window under the pointer, or null.
+?*intuition.Window EndDrag(*intuition.Window window, u32 flags)
+/// Whether two presses are a double click by place as well as time: within
+/// the double-click time and within DOUBLETAP_DISTANCE pixels each way.
+bool DoubleTap(*const intuition.Tap first, *const intuition.Tap second)
 ##end

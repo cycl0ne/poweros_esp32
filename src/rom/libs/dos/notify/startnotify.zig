@@ -50,8 +50,8 @@ const NotifyRequest = dos.notify.NotifyRequest;
 /// it is replied. With `NRF_NOTIFY_INITIAL` an object already there is
 /// told of once at the start.
 ///
-/// RAM: and the flash file system watch; other handlers may not. Of a
-/// multi-directory assign, the first directory is watched.
+/// RAM:, the flash file system and fat-handler watch; other handlers may
+/// not. Of a multi-directory assign, the first directory is watched.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer.

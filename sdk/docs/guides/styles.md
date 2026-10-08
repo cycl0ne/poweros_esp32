@@ -393,6 +393,6 @@ by its class as it goes active and inactive, which it does anyway.
 | Command | What it does |
 |---------|--------------|
 | `C:SetPrefs` | hands the style, the pens, the fonts and intuition's settings from the files in `ENV:Sys` - or `FROM` another directory - to intuition in one `SetPrefs`; `RESET` back to what the system starts with; `SHOW` prints the pens, the fonts and the settings in force (the style can be set, not read back) |
-| `SYS:Programs/Prefs` | edits the style, the screens' pens, the fonts and intuition's settings in a window; Save, Use, Cancel |
+| `SYS:Programs/Prefs` | edits the style, the screens' pens, the fonts, the desktop's settings and intuition's in a window; Save, Use, Cancel |
 | `C:test/Styles` | a public screen in a style of its own, made the default public screen; `DARK` with dark pens and a style to match |
 | `C:test/Gadgets`, `C:test/Layout`, `C:test/ListView` | windows of gadgets to look at in either |

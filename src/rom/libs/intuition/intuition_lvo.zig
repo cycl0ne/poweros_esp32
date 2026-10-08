@@ -146,6 +146,9 @@ const SetScreenPens = @import("screen/setscreenpens.zig").SetScreenPens;
 const MoveScreen = @import("screen/movescreen.zig").MoveScreen;
 const ScreenPositionTagList = @import("screen/screenpositiontaglist.zig").ScreenPositionTagList;
 const GadgetStyleState = @import("style/gadgetstylestate.zig").GadgetStyleState;
+const BeginDrag = @import("input/begindrag.zig").BeginDrag;
+const EndDrag = @import("input/enddrag.zig").EndDrag;
+const DoubleTap = @import("input/doubletap.zig").DoubleTap;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -269,6 +272,9 @@ const contract_files = [_][]const u8{
     @embedFile("screen/movescreen.zig"),
     @embedFile("screen/screenpositiontaglist.zig"),
     @embedFile("style/gadgetstylestate.zig"),
+    @embedFile("input/begindrag.zig"),
+    @embedFile("input/enddrag.zig"),
+    @embedFile("input/doubletap.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -640,6 +646,15 @@ fn lvoScreenPositionTagList(ib: *IntuitionBase, screen: *intuition.Screen, tags:
 fn lvoGadgetStyleState(ib: *IntuitionBase, gadget: *Object, draw_info: ?*const intuition.DrawInfo, part: u32, state: u32) callconv(.c) u32 {
     return GadgetStyleState(ib, gadget, draw_info, part, state);
 }
+fn lvoBeginDrag(ib: *IntuitionBase, window: *intuition.Window, image: *const sdk.rtg.Surface, hot_x: u32, hot_y: u32) callconv(.c) bool {
+    return BeginDrag(ib, @ptrCast(@alignCast(window)), image, hot_x, hot_y);
+}
+fn lvoEndDrag(ib: *IntuitionBase, window: *intuition.Window, flags: u32) callconv(.c) ?*intuition.Window {
+    return @ptrCast(EndDrag(ib, @ptrCast(@alignCast(window)), flags));
+}
+fn lvoDoubleTap(ib: *IntuitionBase, first: *const intuition.Tap, second: *const intuition.Tap) callconv(.c) bool {
+    return DoubleTap(ib, first, second);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -770,6 +785,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMoveScreen),
     vec(lvoScreenPositionTagList),
     vec(lvoGadgetStyleState),
+    vec(lvoBeginDrag),
+    vec(lvoEndDrag),
+    vec(lvoDoubleTap),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

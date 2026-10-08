@@ -154,6 +154,8 @@ pub const LVO = struct {
     pub const ErrorReport = libraries.lvo(137);
     pub const StartNotify = libraries.lvo(138);
     pub const EndNotify = libraries.lvo(139);
+    pub const GetArgList = libraries.lvo(140);
+    pub const Relabel = libraries.lvo(141);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -295,6 +297,8 @@ pub const Fn = struct {
     pub const ErrorReport = *const fn (*DosBase, i32, u32, usize, ?*exec.MsgPort) callconv(.c) bool;
     pub const StartNotify = *const fn (*DosBase, *dos.notify.NotifyRequest) callconv(.c) bool;
     pub const EndNotify = *const fn (*DosBase, *dos.notify.NotifyRequest) callconv(.c) void;
+    pub const GetArgList = *const fn (*DosBase, ?*u32) callconv(.c) ?[*]const dos.WBArg;
+    pub const Relabel = *const fn (*DosBase, [*:0]const u8, [*:0]const u8) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1140,5 +1144,18 @@ pub const DosBase = opaque {
     /// End a watch StartNotify began.
     pub fn EndNotify(self: *DosBase, request: *dos.notify.NotifyRequest) void {
         return libraries.call(self, LVO.EndNotify, Fn.EndNotify, .{request});
+    }
+
+    /// The running process's files from NP_ArgList - the program itself
+    /// first, each a lock and a name - with their count in `num_args`; null
+    /// and 0 for one started without them.
+    pub fn GetArgList(self: *DosBase, num_args: ?*u32) ?[*]const dos.WBArg {
+        return libraries.call(self, LVO.GetArgList, Fn.GetArgList, .{num_args});
+    }
+
+    /// The volume in `drive` (with its colon) given the name `name` (without),
+    /// when its file system can: true, or false with IoErr.
+    pub fn Relabel(self: *DosBase, drive: [*:0]const u8, name: [*:0]const u8) bool {
+        return libraries.call(self, LVO.Relabel, Fn.Relabel, .{ drive, name });
     }
 };

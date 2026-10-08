@@ -284,6 +284,29 @@ pub fn Directory(comptime Media: type) type {
             return into[0..0];
         }
 
+        /// The volume's label set: the root directory's label entry
+        /// written over, or one made in a free entry when it has none.
+        /// `short` is the eleven bytes as the entry holds them.
+        pub fn setLabel(self: *Self, short: *const [fat.ent_name_bytes]u8) Error!void {
+            var cursor = Cursor.at(self.geo.root_cluster);
+            var index: u32 = 0;
+            while (index < max_entries) : (index += 1) {
+                const entry = try self.raw(&cursor, index) orelse break;
+                if (entry[0] == _fat.entry_end) break;
+                if (entry[0] == _fat.entry_erased or fat.isLongName(entry)) continue;
+                if (entry[fat.ent_attr] & _fat.ATTR_VOLUME_LABEL == 0) continue;
+                const writable = try self.rawForWrite(&cursor, index);
+                @memcpy(writable[0..fat.ent_name_bytes], short);
+                return;
+            }
+            const free = try self.freeRun(self.geo.root_cluster, 1);
+            var root = Cursor.at(self.geo.root_cluster);
+            const entry = try self.rawForWrite(&root, free);
+            @memset(entry, 0);
+            @memcpy(entry[0..fat.ent_name_bytes], short);
+            entry[fat.ent_attr] = _fat.ATTR_VOLUME_LABEL;
+        }
+
         // --- making and removing entries ----------------------------------
 
         /// Whether any entry of directory `first` has these eleven bytes

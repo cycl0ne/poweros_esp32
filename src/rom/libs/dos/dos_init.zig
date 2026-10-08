@@ -24,7 +24,7 @@ const segment = @import("program/_program.zig");
 /// What the library is on exec's list as, and its version.
 pub const LIBRARY_NAME = sdk.dos.DOSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "08.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

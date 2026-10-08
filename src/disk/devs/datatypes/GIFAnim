@@ -1,1 +1,1 @@
-NAME="GIF Animation" BASE=gifanim GROUP=anim ID=GIFA MASK=GIF8?a PATTERN=#?.gif PRI=6 RECOGNISE
+NAME="GIF Animation" BASE=gifanim GROUP=anim ID=GIFA MASK=GIF8?a PATTERN=#?.gif PRI=6 RECOGNISE BROWSE=SYS:Programs/MultiView

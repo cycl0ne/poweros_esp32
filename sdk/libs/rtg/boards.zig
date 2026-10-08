@@ -172,6 +172,9 @@ pub const RTGBC_GAP: u32 = 1 << 11;
 /// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
 /// picture holding it.
 pub const RTGBC_POINTER: u32 = 1 << 12;
+/// It lays a second image over the picture the same way, under the
+/// pointer (SetBoardOverlay, MoveBoardOverlay): a dragged icon.
+pub const RTGBC_OVERLAY: u32 = 1 << 13;
 pub const RTGBC_FILL_RECT: u32 = 1 << 16;
 pub const RTGBC_COPY_RECT: u32 = 1 << 17;
 pub const RTGBC_INVERT_RECT: u32 = 1 << 18;
@@ -263,6 +266,11 @@ pub const RtgPointerImage = extern struct {
 /// in from an interrupt, and the time that takes has to stay small.
 pub const RTG_POINTER_MAX: u32 = 64;
 
+/// The largest overlay SetBoardOverlay takes, each way: a driver lays it
+/// as it lays the pointer, from an interrupt on some boards, and keeps it
+/// where that interrupt reads it.
+pub const RTG_OVERLAY_MAX: u32 = 160;
+
 /// A board. What the driver keeps for itself is `instance`, which the
 /// library allocates, clears and frees with the handle.
 pub const RtgBoard = extern struct {
@@ -295,6 +303,14 @@ pub const RtgBoard = extern struct {
     pointer: ?*RtgPointerImage = null,
     pointer_x: i32 = 0,
     pointer_y: i32 = 0,
+    /// The overlay: the image SetBoardOverlay made, or null; where its
+    /// point is; and whether it follows the pointer (until
+    /// MoveBoardOverlay puts it somewhere of its own). The library's.
+    overlay: ?*RtgPointerImage = null,
+    overlay_x: i32 = 0,
+    overlay_y: i32 = 0,
+    overlay_follows: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
 };
 
 /// What a driver fills in. Every slot may be null; a null slot is an
@@ -382,6 +398,15 @@ pub const RtgBoardOps = extern struct {
     /// next band's, the last to the display's bottom. The library has
     /// checked them (`ShowBitMapBands`); the driver keeps its own copy.
     show_bands: ?*const fn (*RtgBoard, [*]const RtgBand, u32) callconv(.c) i32 = null,
+
+    // --- a second image over the picture, laid as the pointer is but
+    // under it, and shown whether the pointer is or not. A board fills in
+    // both or neither. ---
+
+    /// Take this image from now on, or none for null; as set_pointer.
+    set_overlay: ?*const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32 = null,
+    /// The image's top left is now at (x, y); as move_pointer.
+    move_overlay: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
 };
 
 /// Part of the display shown from a buffer: from display line `line`

@@ -447,6 +447,17 @@ pub const CommandLineInterface = extern struct {
     module: ?*anyopaque = null,
 };
 
+/// A file a program was started with: a lock on the drawer it is in and
+/// its name there - or, for a drawer or a volume, a lock on itself and an
+/// empty name. A launcher hands a list of them to the program it starts
+/// (NP_ArgList), the program itself first, and the program reads them
+/// with GetArgList; asl's file requester answers a multi-select in the
+/// same shape.
+pub const WBArg = extern struct {
+    lock: ?*FileLock = null,
+    name: ?[*:0]const u8 = null,
+};
+
 pub const Process = extern struct {
     /// pr_Task: ln_Type is NT_PROCESS.
     task: Task = .{ .node = .{ .type = .process } },
@@ -504,6 +515,11 @@ pub const Process = extern struct {
     /// NP_HoldLibrary: a library whose code the process runs, closed by
     /// dos once that code has returned.
     held_library: ?*Library = null,
+    /// NP_ArgList, NP_NumArgs: the files the process was started with -
+    /// its own copy, in one block, each lock its own. Freed when it ends;
+    /// GetArgList hands them to its code.
+    arg_list: ?[*]WBArg = null,
+    num_args: u32 = 0,
 };
 
 /// dol_Type: what a DosList node is.

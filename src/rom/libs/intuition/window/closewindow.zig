@@ -75,6 +75,7 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     }
     @import("../requester/_requester.zig").takeAll(ib, w);
     @import("../input/_input.zig").forget(ib, w);
+    @import("../input/drag.zig").forget(ib, w);
     _gadget.detach(ib, w);
     ib.sys_base.Remove(@ptrCast(&w.node));
     dropPort(ib, w);

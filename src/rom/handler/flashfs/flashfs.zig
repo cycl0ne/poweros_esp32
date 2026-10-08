@@ -33,7 +33,7 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 2;
+const HANDLER_REVISION = 3;
 const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -135,6 +135,8 @@ const State = struct {
     /// The volume node is to be made again - after a format - once the
     /// device list can be had.
     renew: bool = false,
+    /// The volume's name after ACTION_RENAME_DISK, for its node.
+    label: dos.volumename.VolumeName = .{},
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
 };
@@ -202,6 +204,7 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
             const reply = serve(st, pkt);
             dl.ReplyPkt(pkt, reply.res1, reply.res2);
             if (st.renew) renewVolume(sb, dl, st);
+            st.label.apply(dl, st.volume);
         }
         _ = sb.Wait(packets.sigMask() | replies);
     }
@@ -259,8 +262,9 @@ fn serve(st: *State, pkt: *DosPacket) disk.Answer {
     }
     const reply = st.fs.answer(pkt);
     // A format renames the volume, so its node is made again, once the
-    // packet is answered.
+    // packet is answered; a rename keeps the node and gives it the name.
     if (action == .format and reply.res1 != dos.DOSFALSE) st.renew = true;
+    if (action == .rename_disk and reply.res1 != dos.DOSFALSE) st.label.set(st.fs.volumeName());
     return reply;
 }
 
@@ -283,7 +287,7 @@ fn renewVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
 fn addVolume(sb: *ExecBase, dl: *DosBase, st: *State) void {
     _ = sb;
     var name: [flashfs.max_volume_name + 1:0]u8 = @splat(0);
-    const label = st.fs.vol.name();
+    const label = st.fs.volumeName();
     const len = @min(label.len, flashfs.max_volume_name);
     @memcpy(name[0..len], label[0..len]);
     const entry = dl.MakeDosEntry(if (len == 0) DEFAULT_LABEL else &name, dos.DLT_VOLUME) orelse return;

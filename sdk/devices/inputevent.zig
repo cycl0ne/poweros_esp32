@@ -72,6 +72,11 @@ pub const IECODE_REFRESHWINDOW: u32 = 0x03;
 /// (IECODE_LBUTTON, with IECODE_UP_PREFIX when it was let go) or
 /// IECODE_NOBUTTON when only the position changed.
 pub const IECLASS_NEWPOINTERPOS: u32 = 0x13;
+/// IECLASS_NEWPOINTERPOS's `subclass` when a finger moved the pointer
+/// rather than a mouse: a program that treats the two differently - a
+/// drag that waits out a finger's wobble, menus opened by a tap - looks
+/// here. 0 is a mouse's, or a program's own event.
+pub const IESUBCLASS_FINGER: u32 = 1;
 /// A finger on a touch panel: `subclass` is TOUCH_DOWN, TOUCH_MOVE or
 /// TOUCH_UP (devices/touch), `code` the contact's id, `x` and `y` where it
 /// is in the panel's pixels. Every finger is reported this way; the first

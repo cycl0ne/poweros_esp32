@@ -28,6 +28,11 @@
 //!   short one; a lookup matches either.
 //! - **No comments, no owner.** The format has nowhere to put either, so
 //!   SET_COMMENT and SET_OWNER answer ERROR_ACTION_NOT_KNOWN.
+//! - **A watch holds its object's key** (notification): the key a lock
+//!   would have, kept while it is watched without making the object in
+//!   use. With nothing in memory for an object nobody holds, a watch
+//!   waiting for its name looks for it again by its path when an entry
+//!   is made or renamed under that name, and when a volume is mounted.
 //! - **A file is at most 4 GiB less a byte**, the size field's width.
 
 const std = @import("std");
@@ -35,6 +40,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const fat = dos.fat;
+const notify = dos.notify;
 const _fat = @import("../_fat.zig");
 const cache_area = @import("../cache.zig");
 const layout = @import("layout.zig");
@@ -64,8 +70,10 @@ const max_size: u64 = 0xFFFF_FFFF;
 /// One object on the volume, however many locks are on it.
 const Key = struct {
     next: ?*Key = null,
-    /// Locks and open files using it.
+    /// Locks and open files using it, and watches on it. A watch keeps
+    /// the key but does not make the object in use.
     locks: u32 = 0,
+    watched: u32 = 0,
     is_root: bool = false,
     /// Its directory's first cluster and its number there, and where its
     /// entry lies - meaningless for the root.
@@ -163,6 +171,11 @@ pub fn FileSystem(comptime Media: type) type {
         port: ?*MsgPort = null,
         /// The volume's DosList node (fl_Volume of its locks).
         volume_node: ?*dos.DosList = null,
+        /// Who watches what (notification), when the handler has given
+        /// it watchers, and the device's name, which a watch may be
+        /// named on as well as the volume's.
+        watchers: ?*notify.Watchers = null,
+        device_name: []const u8 = "",
 
         geo: Geometry = undefined,
         cache: Cache = undefined,
@@ -249,6 +262,7 @@ pub fn FileSystem(comptime Media: type) type {
             fs.root_key = root;
             fs.mounted = true;
             fs.nameVolume() catch {};
+            fs.arrive("", true);
         }
 
         /// Where the volume starts: block 0 if it is a boot sector itself,
@@ -285,6 +299,7 @@ pub fn FileSystem(comptime Media: type) type {
         /// medium that has changed, where whatever is held belongs to a
         /// card that is no longer there and would damage the one that is.
         fn release(fs: *Fs, write_back: bool) void {
+            fs.forsakeAll();
             if (fs.mounted) {
                 if (write_back) {
                     fs.table.flush() catch {};
@@ -368,6 +383,30 @@ pub fn FileSystem(comptime Media: type) type {
             return fs.name_buf[0..fs.name_len];
         }
 
+        /// ACTION_RENAME_DISK: the label in the root directory's label
+        /// entry and in the boot sector, as eleven characters in upper
+        /// case with spaces after them - what a PC reads. A name with a
+        /// character a label cannot hold, or longer than eleven, is
+        /// refused.
+        fn relabel(fs: *Fs, name: []const u8) Error!void {
+            if (name.len == 0 or name.len > fat.ent_name_bytes or !dos.volumename.valid(name)) return error.InvalidName;
+            var short: [fat.ent_name_bytes]u8 = @splat(' ');
+            for (name, 0..) |char, at| {
+                switch (char) {
+                    '"', '*', '+', ',', '.', ';', '<', '=', '>', '?', '[', '\\', ']', '|' => return error.InvalidName,
+                    else => {},
+                }
+                if (char > 0x7E) return error.InvalidName;
+                short[at] = if (char >= 'a' and char <= 'z') char - 32 else char;
+            }
+            if (!fs.media.writable()) return error.WriteProtected;
+            try fs.dirs.setLabel(&short);
+            const boot = fs.cache.getForWrite(fs.geo.first) catch return error.MediumFailed;
+            @memcpy(boot[fat.bpb_volume_label..][0..fat.bpb_volume_label_bytes], &short);
+            fs.geo.label = short;
+            try fs.nameVolume();
+        }
+
         // --- keys and locks -----------------------------------------------------
 
         fn rootKey(fs: *Fs) Error!*Key {
@@ -377,10 +416,7 @@ pub fn FileSystem(comptime Media: type) type {
         /// The key of an object, the one already there if it has one.
         fn keyOf(fs: *Fs, object: *const Object) Error!*Key {
             if (object.is_root) return fs.rootKey();
-            var it = fs.keys;
-            while (it) |other| : (it = other.next) {
-                if (!other.stale and other.dir == object.dir and other.index == object.found.index) return other;
-            }
+            if (fs.keyAt(object.dir, object.found.index)) |other| return other;
             const key = fs.alloc(Key) orelse return error.NoMemory;
             key.* = .{
                 .next = fs.keys,
@@ -395,13 +431,20 @@ pub fn FileSystem(comptime Media: type) type {
             return key;
         }
 
-        /// The key of an object if it has one: whether it is locked.
-        fn existingKey(fs: *Fs, dir: u32, index: u32) ?*Key {
+        /// The key of an object if it has one: whether it is locked or
+        /// watched.
+        fn keyAt(fs: *Fs, dir: u32, index: u32) ?*Key {
             var it = fs.keys;
             while (it) |other| : (it = other.next) {
-                if (!other.stale and other.locks != 0 and other.dir == dir and other.index == index) return other;
+                if (!other.stale and other.dir == dir and other.index == index) return other;
             }
             return null;
+        }
+
+        /// A key nothing locks or watches any more freed; the root's stays
+        /// with the volume.
+        fn letGo(fs: *Fs, key: *Key) void {
+            if (key.locks == 0 and key.watched == 0) fs.dropKey(key);
         }
 
         fn dropKey(fs: *Fs, key: *Key) void {
@@ -498,7 +541,7 @@ pub fn FileSystem(comptime Media: type) type {
             const key = lock.key();
             fs.free(lock);
             key.locks -= 1;
-            if (key.locks == 0 and key != fs.root_key) fs.dropKey(key);
+            fs.letGo(key);
         }
 
         /// Whether a lock but `l` is on the key (with `exclusive_only`, an
@@ -510,6 +553,104 @@ pub fn FileSystem(comptime Media: type) type {
                 if (!exclusive_only or other.lock.access == dos.EXCLUSIVE_LOCK) return true;
             }
             return false;
+        }
+
+        // --- notification -----------------------------------------------------
+
+        /// An object changed: its watchers told.
+        fn tell(fs: *Fs, key: *Key) void {
+            if (key.watched == 0) return;
+            if (fs.watchers) |watchers| watchers.changed(key);
+        }
+
+        /// A directory, by its first cluster, changed: its watchers told.
+        /// A watched directory has a key to find.
+        fn tellDir(fs: *Fs, cluster: u32) void {
+            if (cluster == fs.geo.root_cluster) {
+                if (fs.root_key) |root| fs.tell(root);
+                return;
+            }
+            var it = fs.keys;
+            while (it) |key| : (it = key.next) {
+                if (!key.stale and key.isDir() and key.first == cluster) fs.tell(key);
+            }
+        }
+
+        /// An object gone from where it was - deleted, renamed away: its
+        /// watches wait for its name again, and its key is let go of.
+        fn forsake(fs: *Fs, key: *Key) void {
+            if (key.watched == 0) return;
+            if (fs.watchers) |watchers| watchers.orphan(key);
+            key.watched = 0;
+            fs.letGo(key);
+        }
+
+        /// The volume gone: every watch on it waits for its name, on the
+        /// card that comes next.
+        fn forsakeAll(fs: *Fs) void {
+            if (fs.root_key) |root| fs.forsake(root);
+            var it = fs.keys;
+            while (it) |key| {
+                it = key.next;
+                fs.forsake(key);
+            }
+        }
+
+        /// Something came to be under `name` - made, or renamed there - or,
+        /// with "", a volume was mounted: the watches waiting for such a
+        /// name look for it again, and with `tell_them` those that find it
+        /// are told.
+        fn arrive(fs: *Fs, name: []const u8, tell_them: bool) void {
+            const watchers = fs.watchers orelse return;
+            watchers.settle(Arrival{ .fs = fs, .name = name }, Arrival.find, tell_them);
+        }
+
+        const Arrival = struct {
+            fs: *Fs,
+            name: []const u8,
+
+            fn find(arrival: Arrival, request: *notify.NotifyRequest) ?*anyopaque {
+                const fs = arrival.fs;
+                if (!_fat.endsIn(fs.ub, notify.Watchers.pathOf(request), arrival.name)) return null;
+                return fs.watchKey(request);
+            }
+        };
+
+        /// The key of the object a request names, held for its watch; null
+        /// when it is not there, or the request names another volume.
+        fn watchKey(fs: *Fs, request: *notify.NotifyRequest) ?*Key {
+            if (!fs.mounted) return null;
+            if (!_fat.watchedHere(fs.ub, request, fs.volumeName(), fs.device_name)) return null;
+            const full = request.full_name orelse return null;
+            var object: Object = .{};
+            fs.locate(0, full, &object) catch return null;
+            const key = fs.keyOf(&object) catch return null;
+            key.watched += 1;
+            return key;
+        }
+
+        /// ADD_NOTIFY: the request watched on the object its name names,
+        /// or on its name until one does.
+        fn addNotify(fs: *Fs, request: *notify.NotifyRequest) Error!void {
+            const watchers = fs.watchers orelse return error.NoMemory;
+            const key = fs.watchKey(request);
+            if (watchers.add(request, key)) return;
+            if (key) |held| {
+                held.watched -= 1;
+                fs.letGo(held);
+            }
+            return error.NoMemory;
+        }
+
+        /// REMOVE_NOTIFY: the request's watch dropped, and its key let go.
+        fn removeNotify(fs: *Fs, request: *notify.NotifyRequest) void {
+            const watchers = fs.watchers orelse return;
+            const held: ?*Key = @ptrCast(@alignCast(watchers.keyOf(request)));
+            if (!watchers.remove(request)) return;
+            if (held) |key| {
+                key.watched -= 1;
+                fs.letGo(key);
+            }
         }
 
         // --- names ----------------------------------------------------------------
@@ -640,6 +781,10 @@ pub fn FileSystem(comptime Media: type) type {
             const key = try fs.keyOf(&object);
             const lock = try fs.getLock(key, access);
             if (!directory) lock.modified = true;
+            // A file is told of when it is closed, and its directory with
+            // it; a directory now.
+            fs.arrive(spot.name, directory);
+            if (directory) fs.tellDir(spot.dir);
             return lock;
         }
 
@@ -649,10 +794,17 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.locate(dir_arg, path, &object);
             if (object.is_root) return error.WrongType;
             const found = &object.found;
-            if (fs.existingKey(object.dir, found.index) != null) return error.InUse;
+            const key = fs.keyAt(object.dir, found.index);
+            if (key) |held| if (held.locks != 0) return error.InUse;
             if (_fat.protectionOf(found.attr) & dos.FIBF_DELETE != 0) return error.DeleteProtected;
             if (found.isDir() and !try fs.dirs.empty(fs.clusterOfDir(found))) return error.NotEmpty;
             try fs.dirs.erase(object.dir, found);
+            // Told it went, then let go: its watches wait for its name.
+            if (key) |gone| {
+                fs.tell(gone);
+                fs.forsake(gone);
+            }
+            fs.tellDir(object.dir);
             if (fs.geo.usable(found.cluster)) try fs.table.freeChain(found.cluster);
         }
 
@@ -889,6 +1041,10 @@ pub fn FileSystem(comptime Media: type) type {
             const lock = try fs.fileOf(args.fh);
             const key = lock.key();
             if (lock.modified and fs.media.writable()) try fs.syncKey(key, fs.now());
+            if (lock.modified) {
+                fs.tell(key);
+                fs.tellDir(key.dir);
+            }
             fs.freeLock(lock);
             args.fh.?.key = null;
         }
@@ -1021,7 +1177,7 @@ pub fn FileSystem(comptime Media: type) type {
             var found: Found = .{};
             if (!try fs.dirs.next(&cursor, &index, &found)) return error.NoMoreEntries;
             // An object that is open reports the size it has now.
-            const size = if (fs.existingKey(dir, found.index)) |open_key| open_key.size else found.size;
+            const size = if (fs.keyAt(dir, found.index)) |open_key| open_key.size else found.size;
             fs.fillFound(fib, &found, size, index);
         }
 
@@ -1057,7 +1213,7 @@ pub fn FileSystem(comptime Media: type) type {
                 if (target.dir != from.dir or there.index != from.found.index) return error.Exists;
             }
             if (from.found.isDir() and try fs.within(target.dir, fs.clusterOfDir(&from.found))) return error.InUse;
-            const key = fs.existingKey(from.dir, from.found.index);
+            const key = fs.keyAt(from.dir, from.found.index);
             if (key) |other| if (fs.otherLock(other, null, true)) return error.InUse;
 
             // The entry's bytes past its name - attributes, dates, cluster,
@@ -1077,12 +1233,18 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.dirs.erase(from.dir, &from.found);
             if (from.found.isDir() and target.dir != from.dir) try fs.dirs.setParent(fs.clusterOfDir(&from.found), target.dir);
 
-            // Its locks follow it to where it is now.
+            // Its locks follow it to where it is now; its watches are told
+            // it went, and wait for its old name.
             if (key) |other| {
                 other.dir = target.dir;
                 other.index = made.index;
                 other.spot = made.spot;
+                fs.tell(other);
+                fs.forsake(other);
             }
+            fs.tellDir(from.dir);
+            if (target.dir != from.dir) fs.tellDir(target.dir);
+            fs.arrive(target.name, true);
         }
 
         /// SET_PROTECT and SET_DATE on (lock, name). The format keeps no
@@ -1094,7 +1256,8 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.locate(lockValue(args.lock), args.name orelse return error.InvalidName, &object);
             if (object.is_root) return error.WrongType;
             const entry = try fs.dirs.entryForWrite(object.found.spot);
-            const key = fs.existingKey(object.dir, object.found.index);
+            const key = fs.keyAt(object.dir, object.found.index);
+            defer if (key) |changed| fs.tell(changed);
             switch (action) {
                 .set_protect => {
                     const attr = _fat.attributeOf(@truncate(ptrArg(args.value)), entry[fat.ent_attr]);
@@ -1137,6 +1300,7 @@ pub fn FileSystem(comptime Media: type) type {
                 .create_dir,
                 .delete_object,
                 .rename_object,
+                .rename_disk,
                 .set_protect,
                 .set_date,
                 .set_file_size,
@@ -1163,7 +1327,7 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.locate(raw[0], @ptrFromInt(ptrArg(raw[1])), &object) catch |err| return no(err);
                     const key = fs.keyOf(&object) catch |err| return no(err);
                     const lock = fs.getLock(key, @truncate(raw[2])) catch |err| {
-                        if (key.locks == 0) fs.dropKey(key);
+                        fs.letGo(key);
                         return no(err);
                     };
                     return .{ .res1 = @bitCast(@intFromPtr(lock)), .res2 = 0 };
@@ -1244,6 +1408,14 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.rename(pkt.args.rename) catch |err| return no(err);
                     return yes();
                 },
+                .rename_disk => {
+                    const given: ?[*:0]const u8 = @ptrFromInt(ptrArg(raw[0]));
+                    const name = given orelse return no(error.InvalidName);
+                    var len: usize = 0;
+                    while (name[len] != 0) len += 1;
+                    fs.relabel(name[0..len]) catch |err| return no(err);
+                    return yes();
+                },
                 .set_protect, .set_comment, .set_date, .set_owner => {
                     fs.setProperty(pkt.args.property, pkt.getAction()) catch |err| return no(err);
                     return yes();
@@ -1275,6 +1447,16 @@ pub fn FileSystem(comptime Media: type) type {
                 },
                 .flush => return yes(),
                 .more_cache => return .{ .res1 = @intCast(cache_blocks), .res2 = 0 },
+                .add_notify => {
+                    const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
+                    fs.addNotify(request orelse return no(error.NotFound)) catch |err| return no(err);
+                    return yes();
+                },
+                .remove_notify => {
+                    const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
+                    if (request) |watched| fs.removeNotify(watched);
+                    return yes();
+                },
                 .is_filesystem => return yes(),
                 .die => return no(error.InUse),
                 else => return .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_ACTION_NOT_KNOWN },
@@ -1292,7 +1474,7 @@ pub fn FileSystem(comptime Media: type) type {
                 target = fs.keyOf(&object) catch |err| return no(err);
             }
             const lock = fs.getLock(target, dos.SHARED_LOCK) catch |err| {
-                if (target.locks == 0) fs.dropKey(target);
+                fs.letGo(target);
                 return no(err);
             };
             return .{ .res1 = @bitCast(@intFromPtr(lock)), .res2 = 0 };

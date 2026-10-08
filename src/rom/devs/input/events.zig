@@ -83,6 +83,7 @@ pub const Pointer = extern struct {
         if (!is_pointer) return 1;
         out[1] = .{
             .class = ie.IECLASS_NEWPOINTERPOS,
+            .subclass = ie.IESUBCLASS_FINGER,
             .code = code,
             .qualifier = qualifier.*,
             .x = e.x,
@@ -175,6 +176,7 @@ test "pointer: the first finger is the pointer, a second is only a finger" {
     try testing.expectEqual(@as(u32, 3), out[0].code);
     try testing.expectEqual(&out[1], out[0].next.?);
     try testing.expectEqual(ie.IECLASS_NEWPOINTERPOS, out[1].class);
+    try testing.expectEqual(ie.IESUBCLASS_FINGER, out[1].subclass); // a finger's
     try testing.expectEqual(ie.IECODE_LBUTTON, out[1].code);
     try testing.expectEqual(@as(i32, 10), out[1].x);
     try testing.expectEqual(ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_LEFTBUTTON, out[1].qualifier);

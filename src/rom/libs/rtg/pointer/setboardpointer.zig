@@ -80,7 +80,7 @@ pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
     const move_pointer = ops.move_pointer.?;
 
     const made: ?*rtg.RtgPointerImage = if (image) |source| blk: {
-        const converted = convert(rb, board, source, hot_x, hot_y);
+        const converted = convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_POINTER_MAX, .threshold);
         if (converted.code != err.RTGERR_OK) return converted.code;
         break :blk converted.image;
     } else null;
@@ -101,17 +101,32 @@ pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
     return err.RTGERR_OK;
 }
 
-const Converted = struct { code: i32, image: ?*rtg.RtgPointerImage = null };
+pub const Converted = struct { code: i32, image: ?*rtg.RtgPointerImage = null };
+
+/// How coverage becomes the one-bit mask: a pixel at least half covered
+/// (the pointer's), or coverage dithered by a 4x4 ordered pattern, so a
+/// soft edge or a see-through image keeps its look as dots (an overlay's).
+pub const MaskRule = enum { threshold, dither };
+
+/// The 4x4 ordered pattern: a pixel is shown when its coverage is above
+/// its place's step, `(n * 16 + 8)` of 255.
+const pattern = [4][4]u8{
+    .{ 0, 8, 2, 10 },
+    .{ 12, 4, 14, 6 },
+    .{ 3, 11, 1, 9 },
+    .{ 15, 7, 13, 5 },
+};
 
 /// The caller's image in the board's format, with its mask, in one block:
 /// the header, the pixels, the mask. It goes where the driver's handles
-/// go - internal memory for a driver whose interrupts read them.
-fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x: u32, hot_y: u32) Converted {
+/// go - internal memory for a driver whose interrupts read them. Shared
+/// with SetBoardOverlay, which takes a larger image and dithers.
+pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x: u32, hot_y: u32, most: u32, rule: MaskRule) Converted {
     const rtg_lib = rb.iface();
     const sys = rb.sys_base;
     const width = source.width;
     const height = source.height;
-    if (width == 0 or height == 0 or width > rtg.boards.RTG_POINTER_MAX or height > rtg.boards.RTG_POINTER_MAX) return .{ .code = err.RTGERR_BAD_ARG };
+    if (width == 0 or height == 0 or width > most or height > most) return .{ .code = err.RTGERR_BAD_ARG };
     if (hot_x >= width or hot_y >= height) return .{ .code = err.RTGERR_BAD_ARG };
     const from = source.pixels orelse return .{ .code = err.RTGERR_BAD_ARG };
     switch (source.format) {
@@ -136,13 +151,19 @@ fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x
         const row = from + @as(usize, y) * source.pitch;
         var x: u32 = 0;
         while (x < width) : (x += 1) {
+            // A 32-bit format's bytes are its channels in the order its
+            // name gives them, read here into the value UnpackRtgColor
+            // takes, the first channel highest.
             const value: u32 = switch (source.format) {
                 .argb1555 => @as(*align(1) const u16, @ptrCast(row + x * 2)).*,
-                else => @as(*align(1) const u32, @ptrCast(row + x * 4)).*,
+                else => @as(u32, row[x * 4]) << 24 | @as(u32, row[x * 4 + 1]) << 16 | @as(u32, row[x * 4 + 2]) << 8 | row[x * 4 + 3],
             };
             var rgb: rtg.RtgRGB = .{};
             rtg_lib.UnpackRtgColor(@intFromEnum(source.format), value, &rgb);
-            const shown = if (source.format == .argb1555) value & 0x8000 != 0 else rgb.alpha >= 0x80;
+            const shown = if (source.format == .argb1555) value & 0x8000 != 0 else switch (rule) {
+                .threshold => rgb.alpha >= 0x80,
+                .dither => @as(u32, rgb.alpha) > @as(u32, pattern[y % 4][x % 4]) * 16 + 8,
+            };
             if (!shown) continue;
             mask[y * mask_pitch + x / 8] |= @as(u8, 0x80) >> @intCast(x % 8);
             const packed_color = rtg_lib.PackRtgColor(@intFromEnum(format), rgb.red, rgb.green, rgb.blue);

@@ -56,6 +56,12 @@ NAME=ILBM BASE=ilbm GROUP=pict ID=ILBM TYPE=IFF PRI=5
   and `RECOGNISE` says the class knows how to tell and is to be asked.
 - `PRI` decides the order: highest first, so the descriptors that catch
   whatever is left - plain text, plain bytes - are given a low one.
+- `INFO`, `BROWSE`, `EDIT`, `PRINT` and `MAIL` name the programs that
+  do that with a file of the kind: `BROWSE=SYS:Programs/MultiView` on
+  the pictures, `BROWSE=SYS:Programs/Notepad` on plain text. `BROWSE`'s
+  is what the desktop opens a file with that has no icon to say so.
+  They are the type's `tools`, in that order, and
+  `datatypes.toolFor(dt, datatypes.TW_BROWSE)` finds one.
 
 `C:AddDataTypes` reads them into a list and publishes it, which the
 startup-sequence does before anything opens the library. A descriptor

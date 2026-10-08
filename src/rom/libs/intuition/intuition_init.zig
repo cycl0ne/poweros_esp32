@@ -91,7 +91,7 @@ pub const LIBRARY_VERSION = 0;
 /// GA_ClipRect, a gadget's clip, held by ObtainGIRPort; a layout's labels
 /// move with it; a value the wheel changes reported as GADGETUP
 /// (GMWR_VERIFY).
-pub const LIBRARY_REVISION = 33;
+pub const LIBRARY_REVISION = 34;
 const BUILD_DATE = "07.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -188,6 +188,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.input = .{};
     ib.pointer = .{};
     ib.pointer_mover = .{};
+    ib.drag = .{};
     @import("input/menus.zig").init(ib);
     @import("input/verify.zig").init(ib);
     // A second and a half, until there is a preference that says otherwise.

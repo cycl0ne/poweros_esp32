@@ -74,6 +74,8 @@ pub const LVO = struct {
     pub const MoveBoardPointer = libraries.lvo(55);
     pub const ShowBoardPointer = libraries.lvo(56);
     pub const ShowBitMapBands = libraries.lvo(57);
+    pub const SetBoardOverlay = libraries.lvo(58);
+    pub const MoveBoardOverlay = libraries.lvo(59);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -133,6 +135,8 @@ pub const Fn = struct {
     pub const MoveBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
     pub const ShowBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
     pub const ShowBitMapBands = *const fn (*RtgBase, *rtg.RtgBoard, [*]const rtg.RtgBand, u32) callconv(.c) i32;
+    pub const SetBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
+    pub const MoveBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -460,5 +464,19 @@ pub const RtgBase = opaque {
     /// screen pulled down shows the one behind above it.
     pub fn ShowBitMapBands(self: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
         return libraries.call(self, LVO.ShowBitMapBands, Fn.ShowBitMapBands, .{ board, bands, count });
+    }
+
+    /// A second image laid over the picture under the pointer - a dragged
+    /// icon - converted once with its coverage dithered into a mask; it
+    /// follows the pointer, its pixel (hot_x, hot_y) at the pointer's point.
+    /// Null takes it away. RTGERR_NOT_SUPPORTED without RTGBC_OVERLAY.
+    pub fn SetBoardOverlay(self: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32 {
+        return libraries.call(self, LVO.SetBoardOverlay, Fn.SetBoardOverlay, .{ board, image, hot_x, hot_y });
+    }
+
+    /// Put the overlay's point at (x, y), and keep it there rather than with
+    /// the pointer.
+    pub fn MoveBoardOverlay(self: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
+        return libraries.call(self, LVO.MoveBoardOverlay, Fn.MoveBoardOverlay, .{ board, x, y });
     }
 };

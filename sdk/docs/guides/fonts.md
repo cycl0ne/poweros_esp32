@@ -381,8 +381,10 @@ out for one fits in the other:
 SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16
 ```
 
-A size is in rows, or in points with `P` after it. `SetPrefs SHOW` prints
-the three in use; a program reads and sets them with `GetPrefs` and
+A size is in rows, or in points with `P` after it. A fourth,
+`ICON=family/size`, is the font of the names under the desktop's icons;
+left out, the desktop takes `DEFAULT`'s, and `C:SetPrefs` leaves it to
+the desktop. `SetPrefs SHOW` prints the three in use; a program reads and sets them with `GetPrefs` and
 `SetPrefs` (`IPREFS_ScreenFont`, `IPREFS_DefaultFont`,
 `IPREFS_FixedFont`). The boot shell's window opens after `C:SetPrefs`,
 so it is in the fonts the file names.
@@ -429,6 +431,6 @@ if (gb.RemFont(&mine.font)) sys.FreeVec(mine); // true once nobody holds it
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |
 | `C:FixFonts` | writes every family's contents file again |
 | `C:SetPrefs` | sets the system's fonts, with the rest of its settings, from `ENV:Sys`; `SHOW` prints them |
-| `SYS:Programs/Prefs` | picks the system's fonts in a window and writes `font.prefs` |
+| `SYS:Programs/Prefs` | picks the system's fonts and the desktop icons' in a window and writes `font.prefs` |
 | `SYS:Programs/FontView` | fonts and sizes in a window, the one chosen drawn |
 | `C:test/DiskFont`, `C:test/Fonts` | test programs: open sizes and time them; draw a size file |

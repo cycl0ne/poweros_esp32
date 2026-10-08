@@ -20,6 +20,7 @@ const exec = @import("../libs/exec/exec.zig");
 const utility = @import("../libs/utility/utility.zig");
 const graphics = @import("../libs/graphics/graphics.zig");
 const intuition = @import("../libs/intuition/intuition.zig");
+const rtg = @import("../libs/rtg/rtg.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "intuition.library";
@@ -149,6 +150,9 @@ pub const LVO = struct {
     pub const MoveScreen = libraries.lvo(124);
     pub const ScreenPositionTagList = libraries.lvo(125);
     pub const GadgetStyleState = libraries.lvo(126);
+    pub const BeginDrag = libraries.lvo(127);
+    pub const EndDrag = libraries.lvo(128);
+    pub const DoubleTap = libraries.lvo(129);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -277,6 +281,9 @@ pub const Fn = struct {
     pub const MoveScreen = *const fn (*IntuitionBase, *intuition.Screen, i32, i32) callconv(.c) void;
     pub const ScreenPositionTagList = *const fn (*IntuitionBase, *intuition.Screen, ?[*]const utility.TagItem) callconv(.c) void;
     pub const GadgetStyleState = *const fn (*IntuitionBase, *intuition.Object, ?*const intuition.DrawInfo, u32, u32) callconv(.c) u32;
+    pub const BeginDrag = *const fn (*IntuitionBase, *intuition.Window, *const rtg.Surface, u32, u32) callconv(.c) bool;
+    pub const EndDrag = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) ?*intuition.Window;
+    pub const DoubleTap = *const fn (*IntuitionBase, *const intuition.Tap, *const intuition.Tap) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1038,5 +1045,23 @@ pub const IntuitionBase = opaque {
     /// (STYLE_Transition) - a mixed state, the gadget drawn again as it goes.
     pub fn GadgetStyleState(self: *IntuitionBase, gadget: *intuition.Object, draw_info: ?*const intuition.DrawInfo, part: u32, state: u32) u32 {
         return libraries.call(self, LVO.GadgetStyleState, Fn.GadgetStyleState, .{ gadget, draw_info, part, state });
+    }
+
+    /// Start dragging a picture with the pointer, laid by the display over
+    /// everything under the pointer: true while it follows. One drag at a time.
+    pub fn BeginDrag(self: *IntuitionBase, window: *intuition.Window, image: *const rtg.Surface, hot_x: u32, hot_y: u32) bool {
+        return libraries.call(self, LVO.BeginDrag, Fn.BeginDrag, .{ window, image, hot_x, hot_y });
+    }
+
+    /// End the drag `window` began - flying the picture back first with
+    /// DRAGF_FLYBACK - and answer the window under the pointer, or null.
+    pub fn EndDrag(self: *IntuitionBase, window: *intuition.Window, flags: u32) ?*intuition.Window {
+        return libraries.call(self, LVO.EndDrag, Fn.EndDrag, .{ window, flags });
+    }
+
+    /// Whether two presses are a double click by place as well as time: within
+    /// the double-click time and within DOUBLETAP_DISTANCE pixels each way.
+    pub fn DoubleTap(self: *IntuitionBase, first: *const intuition.Tap, second: *const intuition.Tap) bool {
+        return libraries.call(self, LVO.DoubleTap, Fn.DoubleTap, .{ first, second });
     }
 };

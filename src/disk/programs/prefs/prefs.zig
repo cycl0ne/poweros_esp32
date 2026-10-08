@@ -6,7 +6,7 @@
 //!
 //!   SYS:Programs/Prefs
 //!
-//! Five pages under tabs:
+//! Six pages under tabs:
 //!
 //! - **Style**: the looks there are to pick from - a style file each in
 //!   SYS:Prefs/Presets/Styles, its first comment saying what it is - and a
@@ -27,7 +27,12 @@
 //!   pens of its own draws in - each typed as `#RRGGBB` or picked on the
 //!   colour wheel, its button showing it - and a button for the built-in
 //!   ones.
-//! - **Fonts**: the screens', the windows' and the consoles' fonts.
+//! - **Fonts**: the screens', the windows', the consoles' and the
+//!   desktop icons' fonts.
+//! - **Desktop**: the desktop's ground - a colour, or two shaded from top
+//!   to bottom, typed or picked on the colour wheel - a picture over it
+//!   and how it is placed, how large icons are shown, and how a drawer
+//!   with no view of its own is shown.
 //! - **System**: the double-click time, the height of a screen's font when
 //!   it is given none, when the keyboard on the screen comes up, and
 //!   whether a window may be moved partly past the screen's edges.
@@ -59,6 +64,7 @@ const style_file = prefs.style;
 const font_file = prefs.font;
 const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
+const anvil_file = prefs.anvil;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -79,6 +85,7 @@ const st = sdk.gadgets.string;
 const ig = sdk.gadgets.integer;
 const tx = sdk.gadgets.text;
 const gfo = sdk.gadgets.getfont;
+const gf = sdk.gadgets.getfile;
 const cb = sdk.gadgets.checkbox;
 const sl = sdk.gadgets.slider;
 const lv = sdk.gadgets.listview;
@@ -90,7 +97,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION_STRING = "\x00$VER: Prefs 1.3 (3.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Prefs 1.4 (8.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const MSG_NOLIBRARY = "No %s\n";
@@ -123,6 +130,9 @@ const ID_PEN_CHOICE = 64;
 /// A system pen's field's ID, and its button's: these and the pen.
 const ID_PEN_FIELD = 96;
 const ID_PEN_PICK = 112;
+/// The desktop page's.
+const ID_GROUND = 128;
+const ID_GROUND_PICK = 129;
 
 /// The colour wheel's window's gadgets.
 const ID_WHEEL = 1;
@@ -224,12 +234,15 @@ const state_labels = labels: {
 const border_labels = [_:null]?[*:0]const u8{ "Default", "None", "Flat", "Raised", "Recessed", "Ridge", "Groove" };
 const joins_labels = [_:null]?[*:0]const u8{ "Default", "None", "Angled" };
 const keyboard_labels = [_:null]?[*:0]const u8{ "When the board has none", "Always", "Never" };
-const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "System" };
+const place_labels = [_:null]?[*:0]const u8{ "Tiled", "Centred", "Scaled to cover" };
+const view_labels = [_:null]?[*:0]const u8{ "Icons", "Names", "Dates", "Sizes" };
+const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System" };
 const page_style = 0;
 const page_advanced = 1;
 const page_colours = 2;
 const page_fonts = 3;
-const page_system = 4;
+const page_desktop = 4;
+const page_system = 5;
 
 /// The screen pens' names as the pages show them, in the pens' order.
 const pen_labels = [sc.NUMDRIPENS]?[*:0]const u8{
@@ -309,7 +322,7 @@ const Editor = struct {
     preset_list: *Object = undefined,
     about: *Object = undefined,
     about_text: [120:0]u8 = @splat(0),
-    fonts: [3]*Object = undefined,
+    fonts: [font_file.which_names.len]*Object = undefined,
     double: *Object = undefined,
     height: *Object = undefined,
     keyboard: *Object = undefined,
@@ -328,7 +341,17 @@ const Editor = struct {
     wheel_base: *ColorWheelBase = undefined,
     /// The fonts as the file had them, and whether each was picked anew.
     font_line: font_file.Line = .{},
-    font_picked: [3]bool = @splat(false),
+    font_picked: [font_file.which_names.len]bool = @splat(false),
+    /// The desktop's settings as the file had them, the ground as the
+    /// page has it, and the page's gadgets.
+    desktop: anvil_file.Settings = .{},
+    ground_field: *Object = undefined,
+    ground_button: *Object = undefined,
+    ground_looks: [4]TagItem = undefined,
+    picture: *Object = undefined,
+    place: *Object = undefined,
+    icon_size: *Object = undefined,
+    view: *Object = undefined,
     /// The tags the preview is drawn with, and the fills they point to.
     tags: [max_lines * style_file.tags_per_line + 2]TagItem = undefined,
     fills: [max_lines]graphics.FillStyle = undefined,
@@ -678,6 +701,73 @@ const Editor = struct {
         return p;
     }
 
+    /// The colour the ground's button shows: its top, or the screen's
+    /// background when the ground is left to it.
+    fn groundColour(e: *const Editor) Pen {
+        return if (e.desktop.ground_given) e.desktop.top else e.pens[sc.BACKGROUNDPEN];
+    }
+
+    /// The ground as typed: `#RRGGBB`, `#top..#bottom`, or nothing for
+    /// the screen's background. Its length.
+    fn groundText(e: *const Editor, into: []u8) usize {
+        if (!e.desktop.ground_given) return 0;
+        var n = colourText(into, e.desktop.top);
+        if (e.desktop.top != e.desktop.bottom) {
+            @memcpy(into[n..][0..2], "..");
+            n += 2;
+            n += colourText(into[n..], e.desktop.bottom);
+        }
+        return n;
+    }
+
+    /// The ground shown: its field, and its button in its colour.
+    fn showGround(e: *Editor) void {
+        var text: [20:0]u8 = @splat(0);
+        _ = e.groundText(&text);
+        e.set(page_desktop, e.ground_field, &.{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&text) }, .{} });
+        e.ground_looks = buttonLooks(e.groundColour());
+        e.set(page_desktop, e.ground_button, &.{ .{ .tag = gc.GA_Style, .data = @intFromPtr(&e.ground_looks) }, .{} });
+    }
+
+    /// The ground's field taken: empty is the screen's background; what
+    /// is neither a colour nor two is put back.
+    fn takeGround(e: *Editor) void {
+        const text = e.fieldText(e.ground_field);
+        if (text.len == 0) {
+            e.desktop.ground_given = false;
+        } else if (anvil_file.groundOf(text)) |colours| {
+            e.desktop.top = colours[0];
+            e.desktop.bottom = colours[1];
+            e.desktop.ground_given = true;
+        }
+        e.showGround();
+    }
+
+    /// The ground picked on the wheel: one colour.
+    fn pickGround(e: *Editor) void {
+        const picked = e.pickColour(e.groundColour()) orelse return;
+        e.desktop.top = picked;
+        e.desktop.bottom = picked;
+        e.desktop.ground_given = true;
+        e.showGround();
+    }
+
+    /// The desktop's settings as the page has them.
+    fn desktopPrefs(e: *Editor) anvil_file.Settings {
+        var p = e.desktop;
+        var value: usize = 0;
+        _ = e.ib.GetAttr(gf.GETFILE_FullFile, e.picture, &value);
+        const name: []const u8 = if (value != 0) std_span(@ptrFromInt(value)) else "";
+        if (!p.setPicture(name)) p.picture = e.desktop.picture;
+        _ = e.ib.GetAttr(ch.CHOOSER_Active, e.place, &value);
+        p.place = @enumFromInt(@min(value, anvil_file.place_names.len - 1));
+        _ = e.ib.GetAttr(ig.INTEGER_Number, e.icon_size, &value);
+        p.icon_size = @intCast(@min(@max(@as(isize, @bitCast(value)), anvil_file.icon_size_min), anvil_file.icon_size_max));
+        _ = e.ib.GetAttr(ch.CHOOSER_Active, e.view, &value);
+        p.view = @enumFromInt(@min(value, anvil_file.view_names.len - 1));
+        return p;
+    }
+
     /// The files written to ENV:, and to ENVARC: too when kept, and
     /// handed to the system. Whether all were written.
     fn apply(e: *Editor, keep: bool) bool {
@@ -706,6 +796,14 @@ const Editor = struct {
         text[n] = '\n';
         n += 1;
         ok = e.saveBoth(intuition_file.ENV_FILE, intuition_file.ENVARC_FILE, text[0..n], keep) and ok;
+
+        n = anvil_file.header.len;
+        @memcpy(text[0..n], anvil_file.header);
+        const desktop = e.desktopPrefs();
+        n += anvil_file.write(&desktop, text[n..room]);
+        text[n] = '\n';
+        n += 1;
+        ok = e.saveBoth(anvil_file.ENV_FILE, anvil_file.ENVARC_FILE, text[0..n], keep) and ok;
 
         if (e.pens_changed) {
             n = palette_file.header.len;
@@ -1137,7 +1235,7 @@ fn build(e: *Editor) ?*Object {
     pages[page_colours] = column(ib, null, &.{ groups, note, builtin }, &.{}) orelse return null;
 
     // The fonts page.
-    const font_titles = [3][*:0]const u8{ "Font of screens' bars and menus", "Font of windows and gadgets", "Font of consoles (fixed-width)" };
+    const font_titles = [font_file.which_names.len][*:0]const u8{ "Font of screens' bars and menus", "Font of windows and gadgets", "Font of consoles (fixed-width)", "Font of the desktop's icons" };
     for (&e.fonts, 0..) |*o, i| {
         var name: [font_file.value_len:0]u8 = undefined;
         const attr = if (e.font_line.get(@enumFromInt(i))) |text| font_file.attrOf(text, &name) else null;
@@ -1150,7 +1248,71 @@ fn build(e: *Editor) ?*Object {
             .{},
         }) orelse return null;
     }
-    pages[page_fonts] = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2] }, &.{ "Sc_reen", "_Windows", "Conso_les" }) orelse return null;
+    pages[page_fonts] = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2], e.fonts[3] }, &.{ "Sc_reen", "_Windows", "Conso_les", "Ic_ons" }) orelse return null;
+
+    // The desktop page.
+    var ground_text: [20:0]u8 = @splat(0);
+    _ = e.groundText(&ground_text);
+    e.ground_looks = buttonLooks(e.groundColour());
+    e.ground_field = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_GROUND),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.GA_Width, field_width),
+        pair(gc.STRINGA_TextVal, @intFromPtr(&ground_text)),
+        pair(gc.STRINGA_MaxChars, 17),
+        .{},
+    }) orelse return null;
+    e.ground_button = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        pair(gc.GA_Text, @intFromPtr("Pick...")),
+        pair(gc.GA_ID, ID_GROUND_PICK),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.GA_Style, @intFromPtr(&e.ground_looks)),
+        .{},
+    }) orelse return null;
+    const ground_row = row(ib, &.{ e.ground_field, e.ground_button }) orelse return null;
+    // The picture's name as the field shows it: its drawer and its own.
+    var drawer: [anvil_file.picture_max + 1]u8 = @splat(0);
+    var own: [anvil_file.picture_max + 1]u8 = @splat(0);
+    if (e.desktop.pictureName()) |name| {
+        var cut: usize = 0;
+        for (name, 0..) |c, i| if (c == '/' or c == ':') {
+            cut = i + 1;
+        };
+        @memcpy(drawer[0..cut], name[0..cut]);
+        if (cut > 0 and drawer[cut - 1] == '/') drawer[cut - 1] = 0;
+        @memcpy(own[0 .. name.len - cut], name[cut..]);
+    }
+    e.picture = ib.NewObjectTagList(null, gf.GETFILE_CLASS, &[_]TagItem{
+        pair(gf.GETFILE_TitleText, @intFromPtr("The desktop's picture")),
+        pair(gf.GETFILE_Drawer, @intFromPtr(&drawer)),
+        pair(gf.GETFILE_File, @intFromPtr(&own)),
+        .{},
+    }) orelse return null;
+    e.place = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(ch.CHOOSER_Labels, @intFromPtr(&place_labels)),
+        pair(ch.CHOOSER_Active, @intFromEnum(e.desktop.place)),
+        .{},
+    }) orelse return null;
+    e.icon_size = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        pair(ig.INTEGER_Min, anvil_file.icon_size_min),
+        pair(ig.INTEGER_Max, anvil_file.icon_size_max),
+        pair(ig.INTEGER_Step, 8),
+        pair(ig.INTEGER_Number, e.desktop.icon_size),
+        .{},
+    }) orelse return null;
+    e.view = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(ch.CHOOSER_Labels, @intFromPtr(&view_labels)),
+        pair(ch.CHOOSER_Active, @intFromEnum(e.desktop.view)),
+        .{},
+    }) orelse return null;
+    const ground_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Wrap, 1),
+        pair(tx.TEXT_Text, @intFromPtr("A colour #RRGGBB, or two #top..#bottom shaded down the desktop; empty for the screen's background.")),
+        .{},
+    }) orelse return null;
+    const ground_group = column(ib, "Ground", &.{ ground_row, ground_note, e.picture, e.place }, &.{ "_Ground", null, "P_icture", "Pl_ace" }) orelse return null;
+    const drawers_group = column(ib, "Drawers", &.{ e.icon_size, e.view }, &.{ "Icon si_ze", "_View" }) orelse return null;
+    pages[page_desktop] = column(ib, null, &.{ ground_group, drawers_group }, &.{}) orelse return null;
 
     // The system page.
     var now: intuition_file.Settings = .{};
@@ -1250,9 +1412,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ib: *IntuitionBase = @ptrCast(int_lib);
 
     const wanted = [_][*:0]const u8{
-        ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,    ch.CHOOSER_LIBRARY,  st.STRING_LIBRARY,
-        ig.INTEGER_LIBRARY,  tx.TEXT_LIBRARY,     gfo.GETFONT_LIBRARY, cb.CHECKBOX_LIBRARY,
-        sl.SLIDER_LIBRARY,   lv.LISTVIEW_LIBRARY, gs.GRAD_LIBRARY,     cw.WHEEL_LIBRARY,
+        ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,  ch.CHOOSER_LIBRARY,  st.STRING_LIBRARY,
+        ig.INTEGER_LIBRARY,  tx.TEXT_LIBRARY,   gfo.GETFONT_LIBRARY, gf.GETFILE_LIBRARY,
+        cb.CHECKBOX_LIBRARY, sl.SLIDER_LIBRARY, lv.LISTVIEW_LIBRARY, gs.GRAD_LIBRARY,
+        cw.WHEEL_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
@@ -1277,6 +1440,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (prefs.load(dl, style_file.ENV_FILE, file[0..max_file])) |text| e.model.load(text);
     if (prefs.load(dl, font_file.ENV_FILE, file[0..max_file])) |text| {
         if (prefs.firstLine(text)) |line| _ = font_file.parse(line, &e.font_line);
+    }
+    if (prefs.load(dl, anvil_file.ENV_FILE, file[0..max_file])) |text| {
+        var desktop: anvil_file.Settings = .{};
+        if (prefs.firstLine(text)) |line| if (anvil_file.parse(line, &desktop) == null) {
+            e.desktop = desktop;
+        };
     }
 
     // The system's pens: as the default screen has them, as the file says.
@@ -1358,6 +1527,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_CANCEL => return dos.RETURN_OK,
                         ID_PRESET => e.pickPreset(code & ~lv.LISTVIEW_DOUBLE),
                         ID_BUILTIN => e.builtInPens(),
+                        ID_GROUND => e.takeGround(),
+                        ID_GROUND_PICK => e.pickGround(),
                         else => if (id >= ID_FIELD and id < ID_FIELD + style_file.key_count) {
                             e.takeField(@enumFromInt(id - ID_FIELD));
                         } else if (id >= ID_PEN_CHOICE and id < ID_PEN_CHOICE + style_file.key_count) {

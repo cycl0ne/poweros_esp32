@@ -47,7 +47,9 @@ const TagItem = sdk.utility.TagItem;
 ///   (default false),
 ///   NP_CurrentDir, NP_HomeDir (taken over; default a DupLock of the
 ///   caller's),
-///   NP_Arguments (copied), NP_ExitCode and NP_ExitData,
+///   NP_Arguments (copied), NP_ArgList with NP_NumArgs (the files it is
+///   started with: copied, each lock duplicated), NP_ExitCode and
+///   NP_ExitData,
 ///   NP_UserData (tc_UserData, there before the process first runs),
 ///   NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
 ///   any),
@@ -77,7 +79,8 @@ const TagItem = sdk.utility.TagItem;
 /// told apart in a list of tasks.
 /// When the process's code returns, its exit hook (NP_ExitCode) is called
 /// with NP_ExitData, then its CLI number, local variables, streams (as the
-/// close flags say), directories, command path and argument copy go.
+/// close flags say), directories, command path, argument copy and the
+/// copy of its files go.
 /// If a step after the block was made fails, what dos made is undone and
 /// the block freed.
 ///

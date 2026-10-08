@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! font.prefs: the system's three fonts as a file - one line,
-//! `SCREEN=family/size DEFAULT=family/size FIXED=family/size`, each
-//! family/size a font's name and its size in rows, or in points with a P
-//! after it: `spleen.font/16`, `spleen.font/10P`. One left out is pospaz
-//! from the ROM.
+//! font.prefs: the system's fonts as a file - one line,
+//! `SCREEN=family/size DEFAULT=family/size FIXED=family/size
+//! ICON=family/size`, each family/size a font's name and its size in rows,
+//! or in points with a P after it: `spleen.font/16`, `spleen.font/10P`.
+//! One of the first three left out is pospaz from the ROM; ICON, the
+//! names under the desktop's icons, left out is DEFAULT's.
 //!
 //! `parse` reads the line into a `Line`, `attrOf` turns one of its fonts
 //! into the `TextAttr` that asks for it, `write` writes the line back, and
@@ -16,15 +17,15 @@ const style = @import("style.zig");
 pub const ENV_FILE = "ENV:Sys/font.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/font.prefs";
 
-/// The three, in the line's order.
-pub const Which = enum(u8) { screen, default, fixed };
-pub const which_names = [3][]const u8{ "SCREEN", "DEFAULT", "FIXED" };
+/// The four, in the line's order.
+pub const Which = enum(u8) { screen, default, fixed, icon };
+pub const which_names = [4][]const u8{ "SCREEN", "DEFAULT", "FIXED", "ICON" };
 
 pub const value_len = 64;
 
 /// The line: each font's family/size as text, empty where it is left out.
 pub const Line = struct {
-    values: [3][value_len]u8 = @splat(@splat(0)),
+    values: [which_names.len][value_len]u8 = @splat(@splat(0)),
 
     pub fn get(line: *const Line, which: Which) ?[]const u8 {
         const v = &line.values[@intFromEnum(which)];
@@ -81,7 +82,7 @@ pub fn parse(text: []const u8, line: *Line) ?[*:0]const u8 {
         const word = text[i..end];
         const which: Which = for (which_names, 0..) |name, k| {
             if (style.same(word, name)) break @enumFromInt(k);
-        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=...";
+        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=... ICON=...";
         i = end;
         if (i < text.len and text[i] == '=') i += 1 else {
             while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
@@ -100,7 +101,7 @@ pub fn parse(text: []const u8, line: *Line) ?[*:0]const u8 {
 /// The line written, into `into`; how many bytes, no newline.
 pub fn write(line: *const Line, into: []u8) usize {
     var n: usize = 0;
-    for (0..3) |k| {
+    for (0..which_names.len) |k| {
         const text = line.get(@enumFromInt(k)) orelse continue;
         const name = which_names[k];
         if (n + name.len + text.len + 2 > into.len) break;
@@ -123,10 +124,12 @@ pub const header =
     \\# ENVARC:Sys/font.prefs - the system's fonts, which C:SetPrefs hands to
     \\# intuition.library at boot. SCREEN is screens' title bars and menus,
     \\# DEFAULT the text in windows and gadgets, FIXED the consoles' (it must be
-    \\# fixed-width). Each is family/size, the size in rows, or in points with
-    \\# a P after it: spleen.font/16, spleen.font/10P. One left out, or no line
-    \\# at all, is pospaz from the ROM. The first line that is not a comment
-    \\# is read; take the # off the one below to use it.
+    \\# fixed-width), ICON the names under the desktop's icons. Each is
+    \\# family/size, the size in rows, or in points with a P after it:
+    \\# spleen.font/16, spleen.font/10P. One of the first three left out, or no
+    \\# line at all, is pospaz from the ROM; ICON left out is DEFAULT's. The
+    \\# first line that is not a comment is read; take the # off the one below
+    \\# to use it.
     \\#
     \\# SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
     \\

@@ -3,8 +3,9 @@
 //! sdk/tools/elf2seg and run by the shell through LoadSeg. It reads its
 //! arguments with ReadArgs ("ITEMS/M,QUIET/S,N=NUMBER/N") from Input(),
 //! where RunCommand put the argument line, and prints them, GetArgStr's
-//! line and the stack it runs on to Output(). Its return code is the number
-//! of items. Built against the SDK only.
+//! line, the files it was started with as pairs (GetArgList: each lock's
+//! name and the name in it) and the stack it runs on to Output(). Its
+//! return code is the number of items. Built against the SDK only.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -15,7 +16,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "echoargs";
-const VERSION_STRING = "\x00$VER: echoargs 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: echoargs 1.1 (08.10.2026)\r\n";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -34,6 +35,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[1] != 0) _ = Printf(dl, "QUIET\n", .{});
     if (rdargs.number(argv[2])) |n| _ = Printf(dl, "NUMBER %d\n", .{n});
     if (dl.GetArgStr()) |line| _ = Printf(dl, "line: %s", .{line});
+    var count: u32 = 0;
+    if (dl.GetArgList(&count)) |files| {
+        for (files[0..count], 0..) |file, i| {
+            var where: [dos.path_max]u8 = @splat(0);
+            if (file.lock == null or !dl.NameFromLock(file.lock, &where, where.len)) where[0] = 0;
+            if (file.name) |name| if (name[0] != 0) {
+                _ = dl.AddPart(@ptrCast(&where), name, where.len);
+            };
+            _ = Printf(dl, "file %u: %s\n", .{ @as(u32, @intCast(i)), @as([*:0]const u8, @ptrCast(&where)) });
+        }
+    }
     const task = sys.FindTask(null).?;
     _ = Printf(dl, "stack at 0x%08x in 0x%08x..0x%08x\n", .{
         @as(u32, @truncate(@frameAddress())),

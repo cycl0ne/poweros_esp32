@@ -157,6 +157,18 @@ pub const TF_LAUNCH_MASK: u16 = 0x000F;
 pub const TF_SHELL: u16 = 0x0001;
 pub const TF_WORKBENCH: u16 = 0x0002;
 
+/// The program a data type names for `which` (`TW_*`) - what its
+/// descriptor's INFO, BROWSE, EDIT, PRINT or MAIL says - or null. BROWSE's
+/// is the one a file of the kind is opened with: what shows it.
+pub fn toolFor(dt: *DataType, which: u16) ?[*:0]const u8 {
+    var walk = dt.tools.iterator();
+    while (walk.next()) |node| {
+        const tool: *const ToolNode = @ptrCast(@alignCast(node));
+        if (tool.tool.which == which) return tool.tool.program;
+    }
+    return null;
+}
+
 // --- the list, as everything shares it --------------------------------------
 
 /// What `C:AddDataTypes` publishes and datatypes.library reads: every

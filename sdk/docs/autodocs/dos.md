@@ -63,6 +63,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeDeviceProc](#freedeviceproc) - Frees a DevProc GetDeviceProc gave.
 - [FreeDosEntry](#freedosentry) - Frees a node MakeDosEntry made.
 - [FreeDosObject](#freedosobject) - Frees an object AllocDosObject made.
+- [GetArgList](#getarglist) - Returns the files the calling process was started with, each a lock and a name.
 - [GetArgStr](#getargstr) - Returns the argument line of the command the calling process runs.
 - [GetConsoleTask](#getconsoletask) - Returns the running process's console handler's port (pr_ConsoleTask).
 - [GetCurrentDirName](#getcurrentdirname) - Copies the name of the running process's current directory into the caller's buffer.
@@ -101,6 +102,7 @@ Generated from the source by `./zig build autodoc`.
 - [Read](#read) - Reads up to `length` bytes from a file.
 - [ReadArgs](#readargs) - Parses a command line by a template into the caller's slots.
 - [ReadItem](#readitem) - Reads the next item of a command line into a buffer.
+- [Relabel](#relabel) - Gives the volume in a drive a new name, when its file system can.
 - [RemAssignList](#remassignlist) - Removes one directory from an assign.
 - [RemDosEntry](#remdosentry) - Takes a node off the device list.
 - [RemSegment](#remsegment) - Takes a user segment nobody runs off the list and frees it.
@@ -1115,7 +1117,9 @@ fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process
   (default false),
   NP_CurrentDir, NP_HomeDir (taken over; default a DupLock of the
   caller's),
-  NP_Arguments (copied), NP_ExitCode and NP_ExitData,
+  NP_Arguments (copied), NP_ArgList with NP_NumArgs (the files it is
+  started with: copied, each lock duplicated), NP_ExitCode and
+  NP_ExitData,
   NP_UserData (tc_UserData, there before the process first runs),
   NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
   any),
@@ -1147,7 +1151,8 @@ which is also put after its name, as " [n]", so that two shells can be
 told apart in a list of tasks.
 When the process's code returns, its exit hook (NP_ExitCode) is called
 with NP_ExitData, then its CLI number, local variables, streams (as the
-close flags say), directories, command path and argument copy go.
+close flags say), directories, command path, argument copy and the
+copy of its files go.
 If a step after the block was made fails, what dos made is undone and
 the block freed.
 
@@ -3329,6 +3334,74 @@ None known.
 
 ```zig
 dos_lib.FreeDosObject(dos.DOS_FIB, fib);
+```
+
+## GetArgList
+
+Returns the files the calling process was started with, each a lock and a name.
+
+**SYNOPSIS**
+
+```zig
+fn GetArgList(db: *DosBase, num_args: ?*u32) ?[*]const WBArg
+```
+
+**SINCE**
+
+1.4. LVO -564.
+
+**INPUTS**
+
+- `num_args` - where to put how many there are; may be null.
+
+**RESULT**
+
+The process's pairs (pr_ArgList), and their count in `num_args`; null
+and 0 for a process started without them, and from a plain task.
+
+**BEHAVIOR**
+
+What the launcher handed CreateNewProc as NP_ArgList, as the process's
+own copy: the program itself first - a lock on its drawer and its
+name - then each file it was given, a lock on the drawer the file is in
+and its name, or for a drawer or a volume a lock on itself and an
+empty name. A program started from a shell has none. The same files
+are on its command line, which ReadArgs reads; the pairs are for a
+program that wants them as locks, to work in the drawer a file is in
+or to stay with a file renamed meanwhile.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a process; a plain task gets null.
+
+**OWNERSHIP**
+
+The pairs, their locks and their names stay the process's and are
+freed when it ends. A program that wants a lock past that, or wants to
+give it to another process, DupLocks it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetArgStr`, `CreateNewProc`, `SystemTagList`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 0;
+if (dos_lib.GetArgList(&count)) |files| {
+    for (files[1..count]) |file| {
+        const old = dos_lib.CurrentDir(file.lock);
+        defer _ = dos_lib.CurrentDir(old);
+        // open file.name here
+    }
+}
 ```
 
 ## GetArgStr
@@ -5617,6 +5690,73 @@ while (dos_lib.ReadItem(&word, word.len, &cs) > 0) {
 }
 ```
 
+## Relabel
+
+Gives the volume in a drive a new name, when its file system can.
+
+**SYNOPSIS**
+
+```zig
+fn Relabel(db: *DosBase, drive: [*:0]const u8, name: [*:0]const u8) bool
+```
+
+**SINCE**
+
+1.4. LVO -568.
+
+**INPUTS**
+
+- `drive` - the drive, with its colon: a device (`DH0:`), a volume
+  (`System:`) or an assign to one.
+- `name` - the new name, without a colon: one to 30 characters, none
+  of them `:` or `/`.
+
+**RESULT**
+
+True when the volume has the new name; false with IoErr saying why -
+`ERROR_INVALID_COMPONENT_NAME` for a name that cannot be a volume's,
+`ERROR_ACTION_NOT_KNOWN` for a file system that cannot rename, or what
+the drive's handler answered (a name too long for its format, a write
+protected disk).
+
+**BEHAVIOR**
+
+`ACTION_RENAME_DISK` to the drive's handler, with the name. The
+handler writes the name where its format keeps it and gives the
+volume's node the new name - the same node, so a lock on the volume
+still names it, by its new name. A handler may shorten what it cannot
+hold: FAT keeps eleven characters in upper case.
+
+**CONTEXT**
+
+- Waits: yes, for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held, nor the device list.
+- Process: a Process.
+
+**OWNERSHIP**
+
+`name` is read while the call lasts.
+
+**NOTES**
+
+A program that shows volumes by name learns of the change by looking
+at the device list again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Info`, `Rename`
+
+**EXAMPLES**
+
+```zig
+if (!dos_lib.Relabel("SD0:", "Photos")) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Relabel");
+```
+
 ## RemAssignList
 
 Removes one directory from an assign.
@@ -7457,8 +7597,8 @@ message follows while one is out, and a change meanwhile is told once
 it is replied. With `NRF_NOTIFY_INITIAL` an object already there is
 told of once at the start.
 
-RAM: and the flash file system watch; other handlers may not. Of a
-multi-directory assign, the first directory is watched.
+RAM:, the flash file system and fat-handler watch; other handlers may
+not. Of a multi-directory assign, the first directory is watched.
 
 **CONTEXT**
 
@@ -7654,6 +7794,9 @@ makes one per Open; the shell closes them. Without SYS_Asynch the call
 waits for the shell to end; with it the call returns at once, and the
 shell closes the streams it was given. SYS_ScriptFile, for an
 interactive shell, is read before the input and closed by the shell.
+The shell's commands run on the caller's CLI's stack size, or with
+NP_StackSize on that (at least CLI_DEFAULT_STACK); NP_ArgList and
+NP_NumArgs hand them files as pairs, which GetArgList reads.
 
 **CONTEXT**
 

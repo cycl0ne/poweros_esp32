@@ -38,6 +38,12 @@
 //! node up again and makes those locks work. The node is taken off the
 //! list and freed once no lock points at it.
 //!
+//! **Notification** has one set of watchers for both bodies, so a watch
+//! outlives a card: a card going lets go of every watch's object, and the
+//! next one mounted - the same card back, or another with the volume's
+//! name - finds each watch's name again on it and tells its watcher. A
+//! watch named on the device (`SD0:x`) is on whichever card is in.
+//!
 //! **A device it cannot open** - no slot, no controller - is another
 //! matter: there will never be a card. The start then gives back what it
 //! took, answers ERROR_DEVICE_NOT_MOUNTED and ends, and dos unloads the
@@ -60,8 +66,8 @@ const exfat_fs = @import("exfat/fs.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 1;
-const BUILD_DATE = "28.09.2026";
+const HANDLER_REVISION = 2;
+const BUILD_DATE = "08.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -247,6 +253,15 @@ const Bodies = struct {
         bodies.fat32.volume_node = if (bodies.active() == .fat32) node else null;
         bodies.exfat.volume_node = if (bodies.active() == .exfat) node else null;
     }
+
+    /// One set of watchers for both: a watch stays while cards come and
+    /// go, and the device's name, which a watch may be named on.
+    fn watch(bodies: *Bodies, watchers: *dos.notify.Watchers, device: []const u8) void {
+        bodies.fat32.watchers = watchers;
+        bodies.exfat.watchers = watchers;
+        bodies.fat32.device_name = device;
+        bodies.exfat.device_name = device;
+    }
 };
 
 /// Everything the process keeps, in one allocation.
@@ -268,6 +283,11 @@ const State = struct {
     /// again and make those locks work. One is freed once no lock points
     /// at it.
     gone: [8]?*dos.DosList = @splat(null),
+    /// The volume's name after ACTION_RENAME_DISK, for its node.
+    label: dos.volumename.VolumeName = .{},
+    /// Who watches what, when there was memory for its port.
+    watchers: dos.notify.Watchers = undefined,
+    watching: bool = false,
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -293,6 +313,11 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const st = start(sys, dl, fssm, &code) orelse return dl.ReplyPkt(startup, dos.DOSFALSE, code);
 
     st.bodies = Bodies.init(&st.media, st.ub, &me.msg_port);
+    if (st.watchers.init(sys)) {
+        st.watching = true;
+        const device: []const u8 = if (node) |device_node| std.mem.span(device_node.name) else "";
+        st.bodies.watch(&st.watchers, device);
+    }
     // A card that is not there or not readable is not an error: the
     // handler stays for the one that will be.
     st.bodies.mount();
@@ -301,28 +326,44 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     if (node) |device_node| device_node.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
-    while (dl.WaitPkt()) |pkt| {
-        if (st.bodies.checkMedium()) st.renew = true;
-        if (st.renew) renewVolume(dl, st, &me.msg_port);
-        var reply = serve(st, pkt);
-        // A mounted volume that suddenly cannot be read is a read or
-        // write error, not a card that is missing or unformatted: the
-        // user is asked, and the packet served again if they say to.
-        // Nothing is asked when there is no volume to name - an empty
-        // slot and a card this handler cannot read both answer the same
-        // way, and neither is worth a question.
-        while (reply.res2 == dos.ERROR_NOT_A_DOS_DISK and st.volume != null) {
-            const volume = st.volume.?;
-            if (dl.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, @intFromPtr(volume), null)) break;
-            if (st.bodies.checkMedium()) {
-                st.renew = true;
-                break;
-            }
-            reply = serve(st, pkt);
-        }
-        sweepIfFree(dl, st);
-        dl.ReplyPkt(pkt, reply.res1, reply.res2);
+    // Packets on the process's port; the watchers' replies on theirs.
+    const packets = &me.msg_port;
+    const replies: u32 = if (st.watching) st.watchers.signals() else 0;
+    while (true) {
+        if (st.watching) st.watchers.collect();
+        while (sys.GetMsg(packets)) |message| handle(dl, st, DosPacket.fromMessage(message), packets);
+        _ = sys.Wait(packets.sigMask() | replies);
     }
+}
+
+/// One packet: the card checked first, the packet served - asked about
+/// again while the user says to retry - and answered.
+fn handle(dl: *DosBase, st: *State, pkt: *DosPacket, port: *MsgPort) void {
+    if (st.bodies.checkMedium()) st.renew = true;
+    if (st.renew) renewVolume(dl, st, port);
+    var reply = serve(st, pkt);
+    // A mounted volume that suddenly cannot be read is a read or
+    // write error, not a card that is missing or unformatted: the
+    // user is asked, and the packet served again if they say to.
+    // Nothing is asked when there is no volume to name - an empty
+    // slot and a card this handler cannot read both answer the same
+    // way, and neither is worth a question.
+    while (reply.res2 == dos.ERROR_NOT_A_DOS_DISK and st.volume != null) {
+        const volume = st.volume.?;
+        if (dl.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, @intFromPtr(volume), null)) break;
+        if (st.bodies.checkMedium()) {
+            st.renew = true;
+            break;
+        }
+        reply = serve(st, pkt);
+    }
+    sweepIfFree(dl, st);
+    // A rename keeps the node, which locks point at, and gives it the
+    // name once the packet is answered.
+    const renamed = pkt.getAction() == .rename_disk and reply.res1 != dos.DOSFALSE;
+    dl.ReplyPkt(pkt, reply.res1, reply.res2);
+    if (renamed) st.label.set(st.bodies.volumeName());
+    st.label.apply(dl, st.volume);
 }
 
 /// What the handler runs on: utility.library, a port, its state and the
@@ -385,6 +426,20 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
         },
         .is_filesystem => return _fat.yes(),
         .die => return _fat.no(dos.ERROR_OBJECT_IN_USE),
+        // A name watched with no volume waits for the card that has it.
+        .add_notify => {
+            const request: ?*dos.notify.NotifyRequest = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
+            const watched = request orelse return _fat.no(dos.ERROR_OBJECT_NOT_FOUND);
+            if (!st.watching or !st.watchers.add(watched, null)) return _fat.no(dos.ERROR_NO_FREE_STORE);
+            return _fat.yes();
+        },
+        .remove_notify => {
+            const request: ?*dos.notify.NotifyRequest = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
+            if (request) |watched| if (st.watching) {
+                _ = st.watchers.remove(watched);
+            };
+            return _fat.yes();
+        },
         else => return _fat.no(if (card_in) dos.ERROR_NOT_A_DOS_DISK else dos.ERROR_NO_DISK),
     }
 }

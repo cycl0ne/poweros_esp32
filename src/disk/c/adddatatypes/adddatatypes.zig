@@ -27,7 +27,10 @@
 //! to be asked. `CASE` matches the pattern
 //! with regard to case. `PRI` decides the order they are tried in,
 //! highest first, so the descriptors that catch whatever is left - plain
-//! text, plain bytes - are given a low one.
+//! text, plain bytes - are given a low one. `INFO`, `BROWSE`, `EDIT`,
+//! `PRINT` and `MAIL` name the programs that do that with a file of the
+//! kind: `BROWSE`'s is the one a file is opened with from the desktop
+//! (`datatypes.toolFor`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -45,7 +48,7 @@ const idText = descriptor.idText;
 const textLen = descriptor.textLen;
 
 pub const COMMAND_NAME = "AddDataTypes";
-const VERSION_STRING = "\x00$VER: AddDataTypes 1.0 (29.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddDataTypes 1.1 (08.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILES/M,REFRESH/S,REMOVE/S,LIST/S,QUIET/S";
@@ -65,6 +68,7 @@ const MSG_NOTFOUND = "%s: no such data type\n";
 const MSG_LINE = "%-16s %-5s %-5s %4ld  %s\n";
 const MSG_HEAD = "Name             Group ID     Pri  Class\n";
 const MSG_COUNT = "%ld data types\n";
+const MSG_TOOL = "    %-7s %s\n";
 
 /// How big a descriptor file may be.
 const max_descriptor = 1024;
@@ -233,6 +237,18 @@ fn printList(sys: *ExecBase, dl: *DosBase, list: *datatypes.DataTypesList) void 
             @as(i64, dt.header.priority),
             dt.header.base_name,
         });
+        var tools = dt.tools.iterator();
+        while (tools.next()) |tool_node| {
+            const tool: *const datatypes.ToolNode = @ptrCast(@alignCast(tool_node));
+            const word: [*:0]const u8 = switch (tool.tool.which) {
+                datatypes.TW_INFO => "info",
+                datatypes.TW_BROWSE => "browse",
+                datatypes.TW_EDIT => "edit",
+                datatypes.TW_PRINT => "print",
+                else => "mail",
+            };
+            _ = Printf(dl, MSG_TOOL, .{ word, tool.tool.program orelse "" });
+        }
     }
     _ = Printf(dl, MSG_COUNT, .{@as(i64, list.count)});
 }

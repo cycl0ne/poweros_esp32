@@ -16,8 +16,9 @@
 //!
 //! A process ends through exec's finalPC, processEnd, which runs on the
 //! process itself: the exit hook, then the CLI number, the variables, the
-//! streams (as its flags say), the directories, the command path and the
-//! argument copy go - endProcess, which a failed CreateNewProc uses too.
+//! streams (as its flags say), the directories, the command path, the
+//! argument copy and the files it was started with go - endProcess, which
+//! a failed CreateNewProc uses too.
 //!
 //! The CLI numbers are a table in the base, under its own semaphore: a
 //! CLI takes the lowest free slot, and pr_TaskNum is the slot plus 1.
@@ -167,6 +168,13 @@ pub fn setUpContext(db: *DosBase, proc: *Process, parent: ?*Process, tags: ?[*]c
         proc.own_arguments = proc.arguments;
         proc.flags |= x.PRF_FREEARGS;
     }
+    if (@as(?[*]const dos.WBArg, @ptrFromInt(ub.GetTagData(dos.NP_ArgList, 0, tags)))) |given| {
+        const count: u32 = @truncate(ub.GetTagData(dos.NP_NumArgs, 0, tags));
+        if (count > 0) {
+            proc.arg_list = copyArgList(db, given[0..count]) orelse return false;
+            proc.num_args = count;
+        }
+    }
     if (parent) |p| {
         if (ub.GetTagData(dos.NP_CopyVars, 1, tags) != 0 and !copyVars(db, p, proc)) return false;
     }
@@ -214,6 +222,48 @@ fn copyString(db: *DosBase, text: [*:0]const u8) ?[*:0]const u8 {
     @memcpy(copy[0..len], text[0..len]);
     copy[len] = 0;
     return @ptrCast(copy);
+}
+
+/// A copy of the files a process is started with, in one block: the
+/// pairs, then their names. Each lock is duplicated; a null lock stays
+/// null. Null with IoErr() set and nothing left over when a lock cannot be
+/// duplicated or there is no memory.
+///
+/// INPUTS:
+/// - `db` - dos.library's base.
+/// - `pairs` - the caller's pairs.
+fn copyArgList(db: *DosBase, pairs: []const dos.WBArg) ?[*]dos.WBArg {
+    const dos_lib = db.iface();
+    var bytes = pairs.len * @sizeOf(dos.WBArg);
+    for (pairs) |arg| {
+        if (arg.name) |name| bytes += db.utility_base.Strlen(name) + 1;
+    }
+    const block = db.sys_base.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = fail(db, dos.ERROR_NO_FREE_STORE);
+        return null;
+    };
+    const copy: [*]dos.WBArg = @ptrCast(@alignCast(block));
+    var text: [*]u8 = @as([*]u8, @ptrCast(block)) + pairs.len * @sizeOf(dos.WBArg);
+    for (pairs, 0..) |arg, index| {
+        copy[index] = .{};
+        if (arg.lock) |lock| {
+            copy[index].lock = dos_lib.DupLock(lock) orelse {
+                const code = dos_lib.IoErr();
+                for (copy[0..index]) |done| dos_lib.UnLock(done.lock);
+                db.sys_base.FreeVec(block);
+                _ = fail(db, code);
+                return null;
+            };
+        }
+        if (arg.name) |name| {
+            const len = db.utility_base.Strlen(name);
+            @memcpy(text[0..len], name[0..len]);
+            text[len] = 0;
+            copy[index].name = @ptrCast(text);
+            text += len + 1;
+        }
+    }
+    return copy;
 }
 
 /// A command path with nodes and locks of its own (DupLock each).
@@ -315,7 +365,7 @@ pub fn processEnd(sys: *ExecBase) callconv(.c) void {
 
 /// Frees what a process holds: its exit hook is called, then its CLI
 /// number, variables, streams (as its flags say), directories, command
-/// path and argument copy go, a handler loaded from a file is given back
+/// path, argument copy and the files it was started with go, a handler loaded from a file is given back
 /// when this was the last process running it, and a library it held while
 /// it ran its code (NP_HoldLibrary) is closed.
 ///
@@ -348,6 +398,12 @@ pub fn endProcess(db: *DosBase, proc: *Process) void {
     }
     proc.own_arguments = null;
     proc.arguments = null;
+    if (proc.arg_list) |pairs| {
+        for (pairs[0..proc.num_args]) |arg| dos_lib.UnLock(arg.lock);
+        db.sys_base.FreeVec(pairs);
+    }
+    proc.arg_list = null;
+    proc.num_args = 0;
     proc.flags &= ~(x.PRF_CLOSEINPUT | x.PRF_CLOSEOUTPUT | x.PRF_CLOSEERROR | x.PRF_FREECURRDIR | x.PRF_FREEARGS);
     // A handler whose code came from a file: the last of its processes to
     // end gives the code back. Its own code has returned by now.

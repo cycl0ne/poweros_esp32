@@ -176,6 +176,34 @@ test "a long-name entry is not a volume label" {
     try testing.expect(ATTR_LONG_NAME != ATTR_VOLUME_LABEL);
 }
 
+test "a watch is on this volume when its name says so" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
+    var on_volume = "holiday:Pictures/One".*;
+    var on_device = "SD0:Pictures".*;
+    var elsewhere = "Work:Pictures".*;
+    var bare = "Pictures".*;
+    const named = [_]dos.notify.NotifyRequest{
+        .{ .full_name = &on_volume },
+        .{ .full_name = &on_device },
+        .{ .full_name = &bare },
+    };
+    for (&named) |*request| try testing.expect(subject.watchedHere(ub, request, "Holiday", "SD0"));
+    const other: dos.notify.NotifyRequest = .{ .full_name = &elsewhere };
+    try testing.expect(!subject.watchedHere(ub, &other, "Holiday", "SD0"));
+}
+
+test "a path's last part, case aside" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
+    try testing.expect(subject.endsIn(ub, "Pictures/One", "one"));
+    try testing.expect(subject.endsIn(ub, "Pictures/", "PICTURES"));
+    try testing.expect(subject.endsIn(ub, "One", "One"));
+    try testing.expect(!subject.endsIn(ub, "Pictures/One", "Pictures"));
+    try testing.expect(!subject.endsIn(ub, "Pictures/Ones", "One"));
+    try testing.expect(subject.endsIn(ub, "Pictures/One", ""));
+}
+
 test "upper-casing the letters, and nothing else" {
     try testing.expectEqual(@as(u8, 'A'), upper('a'));
     try testing.expectEqual(@as(u8, 'Z'), upper('z'));

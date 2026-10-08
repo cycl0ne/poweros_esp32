@@ -15,8 +15,8 @@
 //!     two keys down before it go in its `x` and `y` for keymap.library's
 //!     dead keys, and the event goes down the chain;
 //!   - a finger: an IECLASS_TOUCH event, and for the pointer finger an
-//!     IECLASS_NEWPOINTERPOS after it (`events.Pointer`), linked, down the
-//!     chain as one list;
+//!     IECLASS_NEWPOINTERPOS after it (`events.Pointer`) marked
+//!     IESUBCLASS_FINGER, linked, down the chain as one list;
 //!   - the mouse: its IECLASS_RAWMOUSE event, the device's qualifiers taking
 //!     the buttons', and for a mouse that says where it is an
 //!     IECLASS_NEWPOINTERPOS after it with the same button, linked
@@ -51,8 +51,8 @@ const events = @import("events.zig");
 
 pub const DEVICE_NAME = input.INPUTNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "19.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "08.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

@@ -56,10 +56,7 @@ pub const ASL_TB = utility.TAG_USER + 0x0008_0000;
 ///
 /// The locks and the names are the library's: they hold until the next
 /// `AslRequest` on that requester or until it is freed.
-pub const WBArg = extern struct {
-    lock: ?*dos.FileLock = null,
-    name: ?[*:0]const u8 = null,
-};
+pub const WBArg = dos.WBArg;
 
 // --- the file requester -----------------------------------------------------
 

@@ -1504,6 +1504,35 @@ test "StartNotify: an assign's and a relative name written out, told through dos
     try tearDown(db);
 }
 
+test "Relabel: the drive's handler asked, the root renamed, the node after; names refused" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+
+    try testing.expect(dl.Relabel("RAMT:", "Scratch"));
+    var fib: dos.FileInfoBlock = .{};
+    const root = dl.Lock("RAMT:", dos.SHARED_LOCK).?;
+    try testing.expect(dl.Examine(root, &fib));
+    try testing.expectEqualStrings("Scratch", std.mem.sliceTo(&fib.file_name, 0));
+    dl.UnLock(root);
+    // The node takes the name when the handler can have the list.
+    try testing.expect(RamFs.disk.label.pending != 0);
+    RamFs.disk.label.apply(@ptrCast(dl), RamFs.disk.volume);
+    if (RamFs.disk.volume) |volume| try testing.expectEqualStrings("Scratch", std.mem.span(volume.name));
+
+    try testing.expect(!dl.Relabel("RAMT:", "a:b"));
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, dl.IoErr());
+    try testing.expect(!dl.Relabel("RAMT:", "a/b"));
+    try testing.expect(!dl.Relabel("RAMT:", ""));
+    try testing.expect(!dl.Relabel("NOWHERE:", "Name"));
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
 test "NameFromLock, and GetCurrentDirName without a CLI, on a RAM: disk" {
     const db = try setUp();
     defer kexec.deinit();
@@ -1548,6 +1577,69 @@ test "NameFromLock, and GetCurrentDirName without a CLI, on a RAM: disk" {
     try testing.expectEqual(@as(?*FileLock, sub), dl.CurrentDir(null));
     dl.UnLock(sub);
     tp.proc.file_system_task = null;
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "CreateNewProc with NP_ArgList: the files copied, locks and all, read by GetArgList, freed at the end" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    dl.UnLock(dl.CreateDir("RAMT:d").?);
+    try makeFile(dl, "RAMT:d/file", 1);
+
+    // The program in RAMT:d, a file beside it, and the drawer itself.
+    const drawer = dl.Lock("RAMT:d", dos.SHARED_LOCK).?;
+    var name = "program".*;
+    const given = [_]dos.WBArg{
+        .{ .lock = drawer, .name = @ptrCast(&name) },
+        .{ .lock = drawer, .name = "file" },
+        .{ .lock = drawer, .name = "" },
+        .{ .lock = null, .name = "an app icon" },
+    };
+    const tags = [_]TagItem{
+        .{ .tag = dos.NP_Entry, .data = @intFromPtr(&ProcEntry.run) },
+        .{ .tag = dos.NP_ArgList, .data = @intFromPtr(&given) },
+        .{ .tag = dos.NP_NumArgs, .data = given.len },
+        .{},
+    };
+    const proc = dl.CreateNewProc(&tags).?;
+    name[0] = 'P'; // the copy is the process's own
+    try testing.expectEqual(@as(u32, given.len), proc.num_args);
+
+    const saved = kexec.SysBase.cpu().this_task;
+    kexec.SysBase.cpu().this_task = &proc.task;
+    var count: u32 = 99;
+    const got = dl.GetArgList(&count).?;
+    kexec.SysBase.cpu().this_task = saved;
+    try testing.expectEqual(@as(u32, given.len), count);
+    try testing.expectEqualStrings("program", std.mem.span(got[0].name.?));
+    try testing.expectEqualStrings("file", std.mem.span(got[1].name.?));
+    try testing.expectEqualStrings("", std.mem.span(got[2].name.?));
+    try testing.expectEqualStrings("an app icon", std.mem.span(got[3].name.?));
+    try testing.expect(got[3].lock == null);
+    for (got[0..3]) |file| {
+        try testing.expect(file.lock != drawer); // a lock of its own
+        try testing.expectEqual(dos.LOCK_SAME, dl.SameLock(file.lock, drawer));
+    }
+    // The caller's process was started without any.
+    try testing.expect(dl.GetArgList(&count) == null);
+    try testing.expectEqual(@as(u32, 0), count);
+    try testing.expect(dl.GetArgList(null) == null);
+
+    // Its end gives back the copy and its locks: the leak check below, and
+    // the drawer, which the RAM disk could not lose otherwise.
+    proc.pkt_wait = tp.proc.pkt_wait;
+    runAs(proc);
+    try testing.expect(proc.arg_list == null and proc.num_args == 0);
+    kexec.RemTask(kexec.SysBase, &proc.task);
+    dl.UnLock(drawer);
+    try testing.expect(dl.DeleteFile("RAMT:d/file"));
+    try testing.expect(dl.DeleteFile("RAMT:d"));
     RamFs.disk.deinit();
     try tearDown(db);
 }
@@ -2466,6 +2558,39 @@ test "ReadArgs: /M and the /A items after it, /M/N, /F" {
     try testing.expect(parseLine(dl, &rda, "ARGS/F", "args=  x \"y\" \n", &cmd) != null);
     try testing.expectEqualStrings("  x \"y\"", slotText(cmd[0]));
     dl.FreeArgs(&rda);
+    try tearDown(db);
+}
+
+test "rdargs.quote: names read back whole by ReadArgs - blanks, quotes, stars, a line's end" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+
+    const names = [_][]const u8{ "RAM:plain", "RAM:with space", "RAM:say \"hi\"", "RAM:a*b", "RAM:two\nlines", "x=y;z", "" };
+    var line: [256]u8 = undefined;
+    var at: usize = 0;
+    for (names) |name| {
+        at += dos.rdargs.quote(line[at..], name).?;
+        line[at] = ' ';
+        at += 1;
+    }
+    line[at] = '\n';
+    at += 1;
+    var rda: dos.RDArgs = .{};
+    var argv: [1]usize = @splat(0);
+    try testing.expect(parseLine(dl, &rda, "FILES/M", line[0..at], &argv) != null);
+    const back = dos.rdargs.multi(argv[0]);
+    try testing.expectEqual(names.len, back.len);
+    for (names, back) |name, read| try testing.expectEqualStrings(name, std.mem.span(read));
+    dl.FreeArgs(&rda);
+
+    var small: [6]u8 = undefined;
+    try testing.expectEqual(@as(?usize, 6), dos.rdargs.quote(&small, "a\"b"));
+    try testing.expectEqualStrings("\"a*\"b\"", &small);
+    try testing.expect(dos.rdargs.quote(&small, "abcde") == null);
     try tearDown(db);
 }
 

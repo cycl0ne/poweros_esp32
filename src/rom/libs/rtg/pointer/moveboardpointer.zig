@@ -26,7 +26,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// The position is kept whether or not the board has a pointer, an image
 /// or the pointer shown, so an image set or shown later appears where the
 /// pointer is. The image's point is put here, which is its hot spot and
-/// not its corner. Nothing is done for the same place twice.
+/// not its corner. Nothing is done for the same place twice. An overlay
+/// that follows the pointer (SetBoardOverlay) moves with it.
 ///
 /// A board that turns its picture itself (`MirrorBoard`, `SwapBoardAxes`,
 /// `SetBoardGap`) turns the pointer with it: the driver lays the pointer
@@ -63,8 +64,15 @@ pub fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
     if (board.pointer_x == x and board.pointer_y == y) return;
     board.pointer_x = x;
     board.pointer_y = y;
-    const image = board.pointer orelse return;
     const ops = board.ops orelse return;
+    if (board.overlay_follows != 0) {
+        board.overlay_x = x;
+        board.overlay_y = y;
+        if (board.overlay) |overlay| if (ops.move_overlay) |move_overlay| {
+            move_overlay(board, x - @as(i32, @intCast(overlay.hot_x)), y - @as(i32, @intCast(overlay.hot_y)));
+        };
+    }
+    const image = board.pointer orelse return;
     const move_pointer = ops.move_pointer orelse return;
     move_pointer(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
 }

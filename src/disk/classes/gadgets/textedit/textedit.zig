@@ -83,9 +83,10 @@ const Text = model.Text;
 pub const Library = gadgets.ClassLibrary(.{
     .name = te.TEXTEDIT_CLASS,
     .version = 1,
-    // 1: the wheel, a third press, indent, line numbers.
-    .revision = 1,
-    .date = "07.10.2026",
+    // 1: the wheel, a third press, indent, line numbers. 2: a press
+    // follows the one before by place and time (DoubleTap).
+    .revision = 2,
+    .date = "08.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -188,9 +189,9 @@ pub const Data = struct {
     /// The font the widths were measured in, and its line's height.
     font: ?*graphics.TextFont = null,
     line_height: i32 = 8,
-    /// The last press, for the ones that follow it.
-    last_secs: u32 = 0,
-    last_micros: u32 = 0,
+    /// The last press, when and where, for the ones that follow it; and
+    /// the position the run of presses began at.
+    last_tap: intuition.Tap = .{},
     last_press: u32 = 0xFFFF_FFFF,
     /// The presses in a row at one place, each in the double-click time
     /// of the one before: two select a word, three a line.
@@ -882,17 +883,20 @@ fn posUnder(own: *const Data, parts: Parts, x: i32, y: i32) u32 {
 
 /// A press in the text: the cursor there, the selection made to it with
 /// Shift, a word with a second press and its line with a third. A fourth
-/// starts again from one.
+/// starts again from one. A press follows the one before when it comes
+/// within the double-click time and near it (`DoubleTap`), so a finger's
+/// second tap a character off still selects the word the first was in.
 fn pressAt(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, e: *const ie.InputEvent) void {
     const parts = partsOf(base, own, o, in.gadget_info);
     const pos = posUnder(own, parts, in.mouse.x, in.mouse.y);
-    const follows = pos == own.last_press and base.intuition_base.DoubleClick(own.last_secs, own.last_micros, e.time.secs, e.time.micro);
+    const now = intuition.Tap{ .seconds = e.time.secs, .micros = e.time.micro, .x = in.mouse.x, .y = in.mouse.y };
+    const follows = own.last_press != 0xFFFF_FFFF and base.intuition_base.DoubleTap(&own.last_tap, &now);
     own.presses = if (follows and own.presses < 3) own.presses + 1 else 1;
-    own.last_press = pos;
-    own.last_secs = e.time.secs;
-    own.last_micros = e.time.micro;
+    if (!follows) own.last_press = pos;
+    own.last_tap = now;
     if (own.presses > 1) {
-        const span = if (own.presses == 2) own.text.wordAround(pos) else own.text.lineAround(pos);
+        const at = own.last_press;
+        const span = if (own.presses == 2) own.text.wordAround(at) else own.text.lineAround(at);
         own.anchor = span.from;
         moveTo(own, span.to, true, false);
         own.pressed = false;

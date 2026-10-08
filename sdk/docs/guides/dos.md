@@ -453,6 +453,66 @@ The shell looks for a command first among dos's resident segments,
 where `Resident` puts one it has loaded; `AddSegment`, `FindSegment`
 and `RemSegment`, under `LockSegmentList`, keep that list.
 
+### Starting a program with files
+
+A launcher - the desktop, a program that opens a file in another - runs
+the program as a shell runs one, with the files twice over: on its
+command line, each full name quoted, for `ReadArgs`; and as pairs of a
+lock and a name, for a program that wants locks. The pairs are
+`WBArg`s, the program itself first: a file is a lock on the drawer it
+is in and its name, a drawer or a volume a lock on itself and an empty
+name.
+
+```zig
+// MultiView with RAM:Notes.txt: the line, then the shell that runs it.
+var line: [512]u8 = undefined;
+var at = dos.rdargs.quote(&line, "SYS:Programs/MultiView").?;
+line[at] = ' ';
+at += 1;
+at += dos.rdargs.quote(line[at..], "RAM:Notes.txt").?;
+line[at] = 0;
+
+const pairs = [_]dos.WBArg{
+    .{ .lock = programs, .name = "MultiView" }, // locks the launcher holds
+    .{ .lock = ram, .name = "Notes.txt" },
+};
+const output = dl.Open("CON:40/60/560/240/MultiView/AUTO/CLOSE/WAIT", dos.MODE_NEWFILE);
+const rc = dl.SystemTagList(@ptrCast(&line), &[_]TagItem{
+    .{ .tag = dos.SYS_Asynch, .data = 1 },
+    .{ .tag = dos.SYS_Input, .data = @intFromPtr(dl.Open("NIL:", dos.MODE_OLDFILE)) },
+    .{ .tag = dos.SYS_Output, .data = @intFromPtr(output) },
+    .{ .tag = dos.NP_StackSize, .data = 32768 },
+    .{ .tag = dos.NP_ArgList, .data = @intFromPtr(&pairs) },
+    .{ .tag = dos.NP_NumArgs, .data = pairs.len },
+    .{ .tag = dos.NP_ExitCode, .data = @intFromPtr(&ended) }, // hear of its end
+    .{},
+});
+```
+
+`dos.rdargs.quote` writes a name as `ReadArgs` reads it back whole -
+blanks, quotes (`*"`), stars (`**`), line ends (`*N`). The output
+console with `AUTO` opens its window only when the program prints, and
+`WAIT` keeps it until it is closed; a console nothing reads gets no
+banner. `NP_StackSize` is the stack the program runs on. CreateNewProc
+copies the pairs, each lock duplicated, so the launcher keeps and frees
+its own; the copy is the process's until it ends. The program reads
+them with `GetArgList`, beside `GetArgStr`'s line:
+
+```zig
+var count: u32 = 0;
+if (dl.GetArgList(&count)) |files| {
+    for (files[1..count]) |file| {
+        const old = dl.CurrentDir(file.lock);
+        defer _ = dl.CurrentDir(old);
+        // file.name, opened in the drawer it is in
+    }
+}
+```
+
+A program started from a shell has none, and every program reads its
+line with `ReadArgs` either way. `C:test/Launch TOOL/A,FILES/M,STACK/K/N,PRI/K/N`
+starts a program like this; `C:test/EchoArgs` prints what it was given.
+
 ## Variables
 
 A local variable belongs to a process: a shell's own, copied to each
@@ -526,10 +586,15 @@ while (true) {
   waits for the name again.
 - **Where**: dos writes the handler's own path into `full_name` - an
   assign's directory written out, so `ENV:Sys/x` is `Ram Disk:ENV/Sys/x`
-  - and the handler keeps the request. RAM: and the flash file system
-  watch, so `ENV:` and `ENVARC:` can be watched; `StartNotify` fails with
-  `ERROR_ACTION_NOT_KNOWN` on a handler that does not. Of a
-  multi-directory assign, the first directory is watched.
+  - and the handler keeps the request. RAM:, the flash file system and
+  fat-handler watch, so `ENV:`, `ENVARC:` and the cards in `SD0:` can be
+  watched; `StartNotify` fails with `ERROR_ACTION_NOT_KNOWN` on a handler
+  that does not. Of a multi-directory assign, the first directory is
+  watched.
+- **A card** taken out lets go of what its watches found; the card put
+  back - or another with the same volume name - finds their names again
+  and tells each watcher. A name given on the device (`SD0:Work`)
+  is watched on whichever card is in.
 - **The end**: `EndNotify` takes back the request's messages still on the
   port; reply the ones already taken, before or after.
 
@@ -620,7 +685,11 @@ A file system that watches answers `ACTION_ADD_NOTIFY` and
 `ACTION_REMOVE_NOTIFY` (the request in `args.raw[0]`) with a
 `dos.notify.Watchers`: it hands the watchers the node a request's
 `full_name` names, or none, and tells them as nodes change, are made,
-renamed or go (`changed`, `adopt`, `orphan`). The watchers send the
+renamed or go (`changed`, `adopt`, `orphan`). A file system that keeps
+nothing in memory for an object nobody holds - fat-handler - hands them
+its key for the object instead, holds that key while it is watched, and
+has the watches waiting for a name look again with `settle` when an
+entry is made or renamed and when a volume is mounted. The watchers send the
 messages and take them back on a port of their own, which the handler
 waits on beside its packets and empties with `collect`. `src/rom/handler/nil/nil.zig` is the
 smallest whole handler, with the `exec.ResidentHandler` tag dos finds it
@@ -642,6 +711,15 @@ first shell, in a console window, reading `S:Startup-Sequence`.
 `Mount SD0:` puts a device on the list from its entry in
 `DEVS:MountList`. [Disks and partitions](rdb.md) has the partition
 table and how to change it.
+
+`Relabel(drive, name)` - and `C:Relabel DRIVE/A,NAME/A` - gives a volume
+a new name, which its handler writes where its format keeps one: the
+flash disk's root record, a FAT card's label in upper case and at most
+eleven characters, an exFAT card's label as written. The volume's node
+keeps its place on the device list and takes the new name, so a lock
+on the volume names it by that at once. A handler that does this gives
+its node the name with `dos.volumename.VolumeName`, after the packet is
+answered and only when the device list can be had at once.
 
 ## Consoles
 
@@ -667,7 +745,9 @@ console's input as Ctrl-\ does, raw or cooked.
 Each console writes the system's banner before the first thing written
 to it, so it stands above a shell's first prompt. A console set raw
 before anything was written gets none: it is a program's channel - one
-command run over SSH - not a terminal somebody reads.
+command run over SSH - not a terminal somebody reads. Nor does a console
+only ever opened for writing, such as the window a program started from
+the desktop prints into.
 
 A console starts cooked: it edits a line, with a history and copy and
 paste, and a read answers once Return is pressed. Tab completes the

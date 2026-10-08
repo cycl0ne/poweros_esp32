@@ -82,8 +82,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   exFAT on SD cards (`SD0:`), `RAM:`, `PIPE:`, `NIL:`; partitions from
   the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
   [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
-  told when a file in `ENV:` or `ENVARC:` changes; consoles with line editing,
-  Tab completion of file names, and copy and paste; a shell with scripts and resident commands, 38
+  told when a file or a drawer changes (`RAM:`, `DH0:`, `SD0:`); consoles with line editing,
+  Tab completion of file names, and copy and paste; volumes renamed
+  (`C:Relabel`); a shell with scripts and resident commands, 39
   commands in `C:` (`dir all | more` pages through anything), test
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
@@ -103,7 +104,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   intuition.library - screens, pulled down by their title bar to show
   the ones behind, windows, menus, requesters, and gadget classes in
   layouts that fit any display; the mouse wheel scrolls or steps
-  whatever is under the pointer. Everything is drawn from a
+  whatever is under the pointer; on a touch panel a tap on the screen's
+  bar opens the menus, and a picture can be dragged across the screen
+  (`BeginDrag`). Everything is drawn from a
   style a screen carries, so the look changes with no program changed
   (the [styles guide](sdk/docs/guides/styles.md)). More gadget classes
   in `SYS:classes/gadgets/`: tabs, number fields, pop-up lists, progress
@@ -120,9 +123,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   fades, a gauge fills, a list glides. See the
   [motion guide](sdk/docs/guides/motion.md).
 - **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts,
-  the input, and whether windows may be moved partly past the screen's
-  edges, in one window; every open window takes a change at once, and
-  `C:SetPrefs` hands them over at boot.
+  the input, whether windows may be moved partly past the screen's
+  edges, and the desktop's ground, picture and drawers
+  (`ENV:Sys/anvil.prefs`), in one window; every open window takes a
+  change at once, and `C:SetPrefs` hands them over at boot.
 - **Fonts:** bitmap and TrueType, any size, smooth or in colour, shown
   by `SYS:Programs/FontView`. See the
   [fonts guide](sdk/docs/guides/fonts.md).

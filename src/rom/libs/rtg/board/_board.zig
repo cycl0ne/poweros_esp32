@@ -154,6 +154,7 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     // A pointer is all three or none: one that could be set but not moved
     // is no pointer.
     if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;
+    if (ops.set_overlay != null and ops.move_overlay != null) caps |= rtg.boards.RTGBC_OVERLAY;
     return caps;
 }
 

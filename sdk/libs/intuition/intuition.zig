@@ -62,6 +62,24 @@ pub const menus = @import("menus.zig");
 
 /// The name to open it by.
 pub const INTUITIONNAME = "intuition.library";
+
+/// EndDrag's flags: fly the picture back to where the drag began before it
+/// goes - a drop nothing took.
+pub const DRAGF_FLYBACK: u32 = 1 << 0;
+
+/// A press, for DoubleTap: when, as an IntuiMessage's `seconds` and
+/// `micros` carry it, and where.
+pub const Tap = extern struct {
+    seconds: u32 = 0,
+    micros: u32 = 0,
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
+/// How far apart, across and down, two presses may be and still be a
+/// double click to DoubleTap: what two taps of one finger miss each other
+/// by.
+pub const DOUBLETAP_DISTANCE: u32 = 16;
 /// The version a caller of this SDK asks for.
 pub const INTUITION_VERSION = 0;
 

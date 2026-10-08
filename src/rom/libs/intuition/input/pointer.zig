@@ -229,10 +229,32 @@ const std_pi: f64 = 3.14159265358979323846;
 const default_hot = .{ 0, 0 };
 const busy_hot = .{ busy_picture.width / 2, busy_picture.height / 2 };
 
-fn ownSurface(made: anytype) rtg.Surface {
+/// A picture's pixels laid out as rgba32 is in memory - red, green, blue
+/// and coverage, a byte each - from the values above, which are
+/// 0xRRGGBBAA.
+fn bytesOf(comptime made: anytype) [made.pixels.len * 4]u8 {
+    var bytes: [made.pixels.len * 4]u8 = undefined;
+    for (made.pixels, 0..) |pixel, i| {
+        bytes[i * 4] = @truncate(pixel >> 24);
+        bytes[i * 4 + 1] = @truncate(pixel >> 16);
+        bytes[i * 4 + 2] = @truncate(pixel >> 8);
+        bytes[i * 4 + 3] = @truncate(pixel);
+    }
+    return bytes;
+}
+
+const default_bytes = bytesOf(default_picture);
+const busy_bytes = all: {
+    @setEvalBranchQuota(100_000);
+    var made: [busy_turn][busy_picture.pixels.len * 4]u8 = undefined;
+    for (&made, 0..) |*frame, i| frame.* = bytesOf(busy_frames[i]);
+    break :all made;
+};
+
+fn ownSurface(made: anytype, bytes: []const u8) rtg.Surface {
     return .{
         // Read only, by SetBoardPointer.
-        .pixels = @ptrCast(@constCast(&made.pixels)),
+        .pixels = @constCast(bytes.ptr),
         .width = made.width,
         .height = made.height,
         .pitch = made.width * 4,
@@ -301,11 +323,11 @@ fn give(ib: *IntuitionBase, board: *rtg.RtgBoard, kind: Kind, object: ?*Object) 
     const rb = ib.rtg_base.?;
     switch (kind) {
         .default, .none, .hidden => {
-            const surface = ownSurface(&default_picture);
+            const surface = ownSurface(&default_picture, &default_bytes);
             return rb.SetBoardPointer(board, &surface, default_hot[0], default_hot[1]) == rtg.errors.RTGERR_OK;
         },
         .busy => {
-            const surface = ownSurface(&busy_frames[ib.pointer.frame % busy_turn]);
+            const surface = ownSurface(&busy_frames[0], &busy_bytes[ib.pointer.frame % busy_turn]);
             return rb.SetBoardPointer(board, &surface, busy_hot[0], busy_hot[1]) == rtg.errors.RTGERR_OK;
         },
         .custom => {

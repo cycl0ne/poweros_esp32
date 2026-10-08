@@ -521,7 +521,11 @@ pub fn startShell(db: *DosBase, command: ?[*:0]const u8, shell_name: [*:0]const 
     cli.standard_output = output;
     cli.current_output = output;
     cli.background = command != null;
-    if (caller_cli) |c| cli.default_stack = c.default_stack;
+    // The caller's command stack, unless the caller said how much the
+    // commands want: NP_StackSize is then theirs as well as the shell's.
+    if (caller_cli) |c| if (ub.FindTagItem(dos.NP_StackSize, theirs) == null) {
+        cli.default_stack = c.default_stack;
+    };
     const number = proc.task_num;
 
     const answer = objects.exchangeVia(sys, caller, reply_port, &proc.msg_port, @intFromEnum(dos.ActionCode.startup), .{ @intFromEnum(mode), flags, 0, 0, 0 });

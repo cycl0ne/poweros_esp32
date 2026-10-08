@@ -46,6 +46,9 @@ const TagItem = utility.TagItem;
 /// waits for the shell to end; with it the call returns at once, and the
 /// shell closes the streams it was given. SYS_ScriptFile, for an
 /// interactive shell, is read before the input and closed by the shell.
+/// The shell's commands run on the caller's CLI's stack size, or with
+/// NP_StackSize on that (at least CLI_DEFAULT_STACK); NP_ArgList and
+/// NP_NumArgs hand them files as pairs, which GetArgList reads.
 ///
 /// CONTEXT:
 /// - Waits: yes. It sends packets, and a synchronous start waits for the

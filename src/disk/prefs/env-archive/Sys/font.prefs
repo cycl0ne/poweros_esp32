@@ -1,10 +1,12 @@
 # ENVARC:Sys/font.prefs - the system's fonts, which C:SetPrefs hands to
 # intuition.library at boot. SCREEN is screens' title bars and menus,
 # DEFAULT the text in windows and gadgets, FIXED the consoles' (it must be
-# fixed-width). Each is family/size, the size in rows, or in points with
-# a P after it: spleen.font/16, spleen.font/10P. One left out, or no line
-# at all, is pospaz from the ROM. The first line that is not a comment
-# is read; take the # off the one below to use it.
+# fixed-width), ICON the names under the desktop's icons. Each is
+# family/size, the size in rows, or in points with a P after it:
+# spleen.font/16, spleen.font/10P. One of the first three left out, or no
+# line at all, is pospaz from the ROM; ICON left out is DEFAULT's. The
+# first line that is not a comment is read; take the # off the one below
+# to use it.
 #
 # SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
 SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16

@@ -103,6 +103,25 @@ A script (`def_script.info`) and each group of files
 file is there; without one they show a project's. A default is read
 once and kept until its file changes.
 
+## The desktop's settings
+
+How large an icon is shown, and how a drawer is shown that has no
+`VIEW` of its own, are the desktop's settings, with the ground it draws
+icons on - one line in `ENV:Sys/anvil.prefs`, read and written by
+`sdk.prefs.anvil` and edited on the Desktop page of
+`SYS:Programs/Prefs`:
+
+```
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON
+```
+
+`GROUND` is a colour, or two shaded from the top down (left out, the
+screen's background pen); `PICTURE` a picture over it in any format
+datatypes read, `NONE` for none, `TILED`, `CENTRED` or `SCALED` to cover
+the desktop; `ICONSIZE` the most pixels an icon is shown at each way,
+16 to 256, a larger picture scaled down; `VIEW` `ICON`, `NAME`, `DATE`
+or `SIZE`. The names under the icons are in `font.prefs`'s `ICON` font.
+
 ## Making icons on the host
 
 `tools/mkicon` makes an icon from a PNG for the disk image:
