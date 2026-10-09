@@ -11,8 +11,10 @@
 //! tool.
 //!
 //! **How**, as `Run` starts a program: in a shell of its own that ends
-//! with it, its files on its command line - each full name quoted - and
-//! as lock-and-name pairs (`NP_ArgList`) for a program that wants locks:
+//! with it, its files on its command line - each full name quoted - then
+//! the text of the icon's `ARGS` tool type, as it would be typed, and the
+//! files as lock-and-name pairs (`NP_ArgList`) for a program that wants
+//! locks:
 //! the program first, then each file, a drawer or a disk as a lock on
 //! itself with an empty name. Its input is NIL:, its output a console
 //! that opens only if it prints. It starts in the drawer of the program,
@@ -313,6 +315,18 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
         n += 1;
         n += dos.rdargs.quote(work.line[n .. line_max - 2], chosen.pathText()) orelse break;
     }
+    // What the icon gives it to read besides, as it would be typed: after
+    // the files, so a keyword is found wherever it is and a word that is
+    // not one follows the files - a script's arguments, through IconX.
+    if (object) |held| if (d.icon_base.FindToolType(held.tool_types, "ARGS")) |given| {
+        const text = textOf(given);
+        if (text.len > 0) {
+            if (n + 1 + text.len > line_max - 2) return null;
+            work.line[n] = ' ';
+            @memcpy(work.line[n + 1 ..][0..text.len], text);
+            n += 1 + text.len;
+        }
+    };
     work.line[n] = '\n';
     work.line[n + 1] = 0;
 

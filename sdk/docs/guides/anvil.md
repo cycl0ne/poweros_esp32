@@ -149,8 +149,24 @@ a lock on itself with an empty name (see [the dos
 guide](dos.md#starting-a-program-with-files)). Its input is NIL:, and its
 output a console that opens only if it prints. It starts in its own
 drawer, with the stack its icon asks for - 24 KiB, the desktop's own, when
-it asks for none - and the priority of its `TOOLPRI` tool type. The desktop counts what it started until each has ended, and
-will not quit before then.
+it asks for none - and the priority of its `TOOLPRI` tool type. The
+desktop counts what it started until each has ended, and will not quit
+before then.
+
+The icon's `ARGS` tool type gives the program arguments of its own: its
+text goes on the command line after the files, as it would be typed. The
+icon is the one the stack and the priority come from - the program's,
+the document's whose default tool runs, or the script's:
+
+| Icon | Tool type | Command line |
+|---|---|---|
+| `SYS:programs/Battery` | `ARGS=HOST 192.168.1.13` | `"SYS:programs/Battery" HOST 192.168.1.13` |
+| a picture, default tool MultiView | `ARGS=SCALE` | `SYS:programs/MultiView "SYS:pictures/Mandelbrot.png" SCALE` |
+| a script | `ARGS=fast` | `C:IconX "SYS:s/backup" fast` - the script's own arguments |
+
+A keyword the program does not know makes its `ReadArgs` fail, and it
+says so in its console. Information edits the line with the other tool
+types.
 
 ### Scripts and shells
 
