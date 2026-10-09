@@ -6,6 +6,7 @@ const _gadget = @import("../gadget/_gadget.zig");
 const _screen = @import("../screen/_screen.zig");
 const _window = @import("_window.zig");
 const Window = _window.Window;
+const Screen = _screen.Screen;
 const disposeParts = _window.disposeParts;
 const dropPort = _window.dropPort;
 const lock = _window.lock;
@@ -33,7 +34,10 @@ const unlock = _window.unlock;
 /// window underneath is repaired. Messages still waiting on its port are
 /// freed with the port; on a port the program shares between its windows
 /// (`WA_UserPort`), this window's are taken off and the port is left. If
-/// it was active, no window is. A window opened on
+/// it was active, the window on its screen that was active most recently
+/// before it is active again - a program's window when its requester
+/// closes, the desktop when a program it started ends - and with none on
+/// that screen, no window is. A window opened on
 /// a public screen by name, or on the default one, ends its visit, which
 /// may be the last the screen's owner is waiting for.
 ///
@@ -65,7 +69,8 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     const s = w.screen;
     lock(ib);
     defer unlock(ib);
-    if (ib.active_window == w) {
+    const was_active = ib.active_window == w;
+    if (was_active) {
         ib.active_window = null;
         // No window active: the screen says its own title again.
         if (s.title != s.default_title) {
@@ -94,5 +99,20 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     const visitor = w.more_flags & _window.WMF_VISITOR != 0;
     ib.sys_base.FreeMem(w, @sizeOf(Window));
     repairScreen(ib, s);
+    // The activation back where it was before: drawn once the screen is.
+    if (was_active) if (latest(s)) |before| _window.activate(ib, before);
     if (visitor) _screen.leave(ib, s);
+}
+
+/// The window on `s` that was made active most recently, if any was.
+fn latest(s: *Screen) ?*Window {
+    var found: ?*Window = null;
+    var node = s.windows.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const each: *Window = @ptrCast(@alignCast(n));
+        if (each.activated == 0) continue;
+        if (found == null or each.activated -% found.?.activated < 0x8000_0000) found = each;
+    }
+    return found;
 }

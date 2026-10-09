@@ -112,6 +112,10 @@ pub const IntuitionBase = extern struct {
     font_height: u32,
     /// The window the border colours say is active, or null.
     active_window: ?*_window.Window,
+    /// How many times a window has been made active: each activation's
+    /// number goes into the window, so the one active before a closing
+    /// window is the highest number left on its screen.
+    activations: u32,
     /// The handler on input.device's chain, its task, and what the pointer
     /// is doing.
     input: _input.State,

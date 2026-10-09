@@ -110,6 +110,10 @@ pub const Window = extern struct {
     menu_lend: ?*Window = null,
     /// `WMF_` bits: this library's own, beside `flags`.
     more_flags: u32 = 0,
+    /// When it was last made active, in `activations`: 0 for never. The
+    /// window that takes the activation back when the active one closes
+    /// is the one with the highest number on the screen.
+    activated: u32 = 0,
     /// Its help group: every window with the same number shares gadget
     /// help (`WA_HelpGroup`).
     help_group: u32 = 0,
@@ -844,6 +848,8 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
     // A window that never takes the activation (`WA_NoActivate`).
     if (w.flags & WF_NOACTIVATE != 0) return;
     ib.active_window = w;
+    ib.activations +%= 1;
+    w.activated = ib.activations;
     // Only the screen with the active window shows anything but its own
     // title: one the active window leaves goes back to its default, and the
     // new one shows what its window asked for.

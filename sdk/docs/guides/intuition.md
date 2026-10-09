@@ -144,7 +144,10 @@ it is); `ChangeWindowBox`, `MoveWindow`, `SizeWindow`, `WindowLimits`,
 `ZipWindow`, `WindowToFront` and `ActivateWindow` move, size and order
 it; `SetWindowPointerA` with `WA_BusyPointer` shows the busy pointer
 while the program works at length, and `WA_PointerDelay` keeps it from
-showing for work that ends at once.
+showing for work that ends at once. When the active window closes, the
+window on its screen that was active before it is active again - a
+program's window when its requester goes, the desktop when a program it
+started ends.
 
 A window is kept wholly on its screen as it is moved and sized, by the
 calls and by its title bar and sizing gadget alike; `SizeWindow` grows it

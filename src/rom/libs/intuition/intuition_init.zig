@@ -90,9 +90,10 @@ pub const LIBRARY_VERSION = 0;
 /// IDCMP_MOUSEWHEEL and WMHI_MOUSEWHEEL to the window's program. 33:
 /// GA_ClipRect, a gadget's clip, held by ObtainGIRPort; a layout's labels
 /// move with it; a value the wheel changes reported as GADGETUP
-/// (GMWR_VERIFY).
-pub const LIBRARY_REVISION = 35;
-const BUILD_DATE = "08.10.2026";
+/// (GMWR_VERIFY). 36: the active window closed, the window on its screen
+/// that was active before it is active again.
+pub const LIBRARY_REVISION = 36;
+const BUILD_DATE = "09.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -185,6 +186,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.window_class = if (ib.layout_class != null) windowclass.make(ib) else null;
     ib.pointer_class = if (ib.window_class != null) pointerclass.make(ib) else null;
     ib.active_window = null;
+    ib.activations = 0;
     ib.input = .{};
     ib.pointer = .{};
     ib.pointer_mover = .{};

@@ -2216,8 +2216,10 @@ test "windows: IDCMP - activation, a simple window repaired and told, moves and 
     // back (the right edge's shadow) and the program is told, once.
     ib.iface().CloseWindow(front);
     try testing.expectEqual(@as(u16, 0x0000), display.pixel(39, 30));
-    try testing.expectEqual(@as(usize, 1), drainClasses(ib, back, &got));
+    try testing.expectEqual(@as(usize, 2), drainClasses(ib, back, &got));
     try testing.expectEqual(wn.IDCMP_REFRESHWINDOW, got[0]);
+    // And it is active again, as it was before the front one opened.
+    try testing.expectEqual(wn.IDCMP_ACTIVEWINDOW, got[1]);
 
     // The program redraws inside BeginRefresh, where it can read what needs
     // it - the part the front window covered, in its own coordinates - and
@@ -3941,6 +3943,49 @@ test "icclass: an update aimed at a window's IDCMP reaches it" {
     it.DisposeObject(conn);
     ib.iface().CloseWindow(w);
     try testing.expect(ib.iface().CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "windows: the active window closed, the one active before it is active again" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Four windows on one screen: three made active in turn, one never.
+    var windows: [4]*intuition.Window = undefined;
+    for (&windows, 0..) |*w, i| {
+        w.* = it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Left, .data = 4 * i },
+            .{ .tag = wn.WA_Top, .data = 4 * i },
+            .{ .tag = wn.WA_Width, .data = 32 },
+            .{ .tag = wn.WA_Height, .data = 20 },
+            .{ .tag = wn.WA_Activate, .data = @intFromBool(i != 3) },
+            .{},
+        }).?;
+    }
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, windows[0], wn.WA_Screen));
+    try testing.expectEqual(@intFromPtr(windows[2]), @intFromPtr(ib.active_window.?));
+
+    // The first made active again, then the last: closing it hands the
+    // activation back to the first, and closing that to the middle one.
+    it.ActivateWindow(windows[0]);
+    it.ActivateWindow(windows[2]);
+    it.CloseWindow(windows[2]);
+    try testing.expectEqual(@intFromPtr(windows[0]), @intFromPtr(ib.active_window.?));
+    it.CloseWindow(windows[0]);
+    try testing.expectEqual(@intFromPtr(windows[1]), @intFromPtr(ib.active_window.?));
+
+    // A window that is not active closes without taking anything along.
+    it.CloseWindow(windows[3]);
+    try testing.expectEqual(@intFromPtr(windows[1]), @intFromPtr(ib.active_window.?));
+    // The last that ever was active closed: none is.
+    it.CloseWindow(windows[1]);
+    try testing.expect(ib.active_window == null);
+
+    try testing.expect(it.CloseScreen(screen));
     display.down(ib);
     try tearDown(ib);
 }
@@ -8177,7 +8222,7 @@ test "a finger's window drag waits out its wobble; a mouse's moves at once" {
     const wn = intuition.windows;
     const ie = sdk.devices.inputevent;
     const it = ib.iface();
-    const display = try Display.sized(ib, 128, 64, .rgb565);
+    const display = try Display.sized(ib, 128, 60, .rgb565);
     const w = it.OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Left, .data = 40 },
         .{ .tag = wn.WA_Top, .data = 10 },
@@ -9099,11 +9144,10 @@ test "the pointer: seen once a mouse is, the active window's, busy now or after 
     try testing.expectEqual(pointer.Kind.busy, ib.pointer.kind);
     it.ActivateWindow(w);
     try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
-    // Closing the active window leaves none active, and the default.
+    // Closing the active window makes the one active before it active
+    // again, with its own.
     it.ActivateWindow(other);
     it.CloseWindow(other);
-    try testing.expectEqual(pointer.Kind.default, ib.pointer.kind);
-    it.ActivateWindow(w);
     try testing.expectEqual(pointer.Kind.custom, ib.pointer.kind);
 
     // Hidden: not shown while this window is active, the picture left as
