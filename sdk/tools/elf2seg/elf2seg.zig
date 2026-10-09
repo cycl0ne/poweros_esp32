@@ -8,10 +8,12 @@
 //! The program is already linked, so every PC-relative fixup is done: on
 //! Xtensa an l32r finds its literal at a fixed distance, and the linker
 //! resolved it (those relocations stay in the file as R_XTENSA_SLOT0_OP and
-//! are ignored here). What is left are the words that hold an address:
-//! R_XTENSA_32. For each one this writes down which segment the word is in,
-//! its offset there, and which segment it points into; the loader adds that
-//! segment's base to the word.
+//! are ignored here); on RISC-V the code is built PC-relative (medany), and
+//! its auipc pairs, branches and calls are resolved the same way. What is
+//! left are the words that hold an address: R_XTENSA_32, R_RISCV_32. For
+//! each one this writes down which segment the word is in, its offset
+//! there, and which segment it points into; the loader adds that segment's
+//! base to the word.
 //!
 //! The linker wrote the address the program was linked at, so each such word
 //! is made relative to the segment it points into first: the loader knows
@@ -23,9 +25,17 @@
 //! a fixed address, as the chip ROM's functions and data are - is not the
 //! program's: it holds that address already and is left as it is.
 //!
-//! Sections become segments: an executable one (SHF_EXECINSTR) is code, a
-//! NOBITS one is bss, any other allocatable one is data. Code comes first,
-//! since the entry is in it.
+//! Sections become segments. On Xtensa an executable one (SHF_EXECINSTR)
+//! is code, a NOBITS one is bss, any other allocatable one is data; code
+//! comes first, since the entry is in it. On RISC-V all of them make one
+//! segment, code first and bss last (program_esp32p4.ld), because
+//! PC-relative code reaches its data at a fixed distance: they have to be
+//! loaded together.
+//!
+//! What a loaded program could not survive fails the build here: an
+//! absolute address in RISC-V code (built without medany), a PC-relative
+//! reach of a fixed address (a direct call into the ROM - go through a
+//! pointer, which is a word the loader leaves alone), the GOT or TLS.
 
 const std = @import("std");
 const mem = std.mem;
@@ -61,6 +71,7 @@ const SHF_EXECINSTR = 4;
 const SHN_ABS = 0xFFF1;
 
 const EM_XTENSA = 94;
+const EM_RISCV = 243;
 const ET_EXEC = 2;
 
 const R_XTENSA_NONE = 0;
@@ -68,6 +79,31 @@ const R_XTENSA_32 = 1;
 const R_XTENSA_ASM_EXPAND = 11;
 const R_XTENSA_DIFF32 = 19;
 const R_XTENSA_SLOT0_OP = 20;
+
+const R_RISCV_NONE = 0;
+const R_RISCV_32 = 1;
+const R_RISCV_BRANCH = 16;
+const R_RISCV_JAL = 17;
+const R_RISCV_CALL = 18;
+const R_RISCV_CALL_PLT = 19;
+const R_RISCV_PCREL_HI20 = 23;
+const R_RISCV_PCREL_LO12_I = 24;
+const R_RISCV_PCREL_LO12_S = 25;
+const R_RISCV_HI20 = 26;
+const R_RISCV_LO12_I = 27;
+const R_RISCV_LO12_S = 28;
+const R_RISCV_ADD8 = 33;
+const R_RISCV_SUB64 = 40;
+const R_RISCV_ALIGN = 43;
+const R_RISCV_RVC_BRANCH = 44;
+const R_RISCV_RVC_JUMP = 45;
+const R_RISCV_RELAX = 51;
+const R_RISCV_SUB6 = 52;
+const R_RISCV_SET32 = 56;
+const R_RISCV_32_PCREL = 57;
+const R_RISCV_PLT32 = 59;
+const R_RISCV_SET_ULEB128 = 60;
+const R_RISCV_SUB_ULEB128 = 61;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("elf2seg: " ++ fmt ++ "\n", args);
@@ -117,7 +153,8 @@ pub fn main(init: std.process.Init) !void {
     const elf = try cwd.readFileAlloc(io, args[1], arena, .unlimited);
     if (elf.len < 52 or !mem.eql(u8, elf[0..4], "\x7fELF") or elf[4] != 1 or elf[5] != 1)
         fatal("{s}: not a little-endian ELF32 file", .{args[1]});
-    if (u16At(elf, e_machine) != EM_XTENSA) fatal("{s}: not an Xtensa file", .{args[1]});
+    const machine = u16At(elf, e_machine);
+    if (machine != EM_XTENSA and machine != EM_RISCV) fatal("{s}: neither an Xtensa nor a RISC-V file", .{args[1]});
     if (u16At(elf, e_type) != ET_EXEC) fatal("{s}: not a linked executable", .{args[1]});
 
     const sections = try readSections(elf, arena);
@@ -131,14 +168,25 @@ pub fn main(init: std.process.Init) !void {
 
     // Each allocatable section joins its segment, which must be contiguous:
     // program.ld lays them out in order, so a gap would mean a stray section.
+    // On RISC-V there is one segment, its bss last.
+    var bss_seen = false;
     for (sections) |*s| {
         if (s.flags & SHF_ALLOC == 0 or s.size == 0) continue;
-        const index: u16 = if (s.flags & SHF_EXECINSTR != 0)
+        const index: u16 = if (machine == EM_RISCV)
+            0
+        else if (s.flags & SHF_EXECINSTR != 0)
             0
         else if (s.type == SHT_NOBITS)
             2
         else
             1;
+        if (machine == EM_RISCV) {
+            if (s.type == SHT_NOBITS) {
+                bss_seen = true;
+            } else if (bss_seen) {
+                fatal("section {s} at 0x{x} follows bss: program_esp32p4.ld puts bss last", .{ s.name, s.addr });
+            }
+        }
         const seg = &segments[index];
         if (seg.size == 0) {
             seg.addr = s.addr;
@@ -155,13 +203,13 @@ pub fn main(init: std.process.Init) !void {
     }
     if (segments[0].size == 0) fatal("{s}: no code", .{args[1]});
 
-    try collectRelocs(elf, sections, &segments, arena);
+    try collectRelocs(elf, machine, sections, &segments, arena);
 
     const entry = u32At(elf, e_entry);
     if (entry < segments[0].addr or entry >= segments[0].addr + segments[0].size)
         fatal("entry 0x{x} is not in the code segment", .{entry});
 
-    const out = try write(&segments, entry - segments[0].addr, arena);
+    const out = try write(&segments, machine, entry - segments[0].addr, arena);
     try cwd.writeFile(io, .{ .sub_path = args[2], .data = out });
 }
 
@@ -193,11 +241,12 @@ fn readSections(elf: []const u8, arena: mem.Allocator) ![]Section {
     return sections;
 }
 
-/// Every R_XTENSA_32 of an allocatable section: the word at its offset holds
-/// an address, so the target's segment and the site's segment are written
-/// down. The relocations the linker already applied are skipped; anything
-/// else fails the build, since the loader could not do it.
-fn collectRelocs(elf: []const u8, sections: []Section, segments: *[3]Segment, arena: mem.Allocator) !void {
+/// Every R_XTENSA_32 or R_RISCV_32 of an allocatable section: the word at
+/// its offset holds an address, so the target's segment and the site's
+/// segment are written down. The relocations the linker already applied
+/// are skipped; anything else fails the build, since the loader could not
+/// do it.
+fn collectRelocs(elf: []const u8, machine: u16, sections: []Section, segments: *[3]Segment, arena: mem.Allocator) !void {
     for (sections) |rela| {
         if (rela.type != SHT_RELA or rela.entsize < 12) continue;
         if (rela.info >= sections.len) continue;
@@ -213,12 +262,29 @@ fn collectRelocs(elf: []const u8, sections: []Section, segments: *[3]Segment, ar
             const r_info = u32At(elf, e + 4);
             const addend = u32At(elf, e + 8);
             const kind = r_info & 0xFF;
-            switch (kind) {
+            const sym = r_info >> 8;
+            if (machine == EM_RISCV) {
+                switch (riscvKind(kind)) {
+                    .address => {},
+                    .done => continue,
+                    // PC-relative: resolved by the linker, and right
+                    // wherever the segment goes - as long as what it reaches
+                    // goes with it. A fixed address does not; the linker
+                    // names one by symbol 0 and the address as the addend.
+                    .pc_relative => {
+                        const reached = symbolValue(elf, symtab, sym) +% addend;
+                        if (symbolSection(elf, symtab, sym) == SHN_ABS or !inProgram(segments, reached))
+                            fatal("{s}: the code at 0x{x} reaches 0x{x}, a fixed address, PC-relatively (a direct call into the ROM?): reach it through a pointer", .{ rela.name, r_offset, reached });
+                        continue;
+                    },
+                    .absolute_code => fatal("{s}: an absolute address in the code at 0x{x}: build with -mcmodel=medany", .{ rela.name, r_offset }),
+                    .unsupported => fatal("{s}: relocation type {d} at 0x{x} is not supported (GOT, TLS?)", .{ rela.name, kind, r_offset }),
+                }
+            } else switch (kind) {
                 R_XTENSA_32 => {},
                 R_XTENSA_NONE, R_XTENSA_SLOT0_OP, R_XTENSA_ASM_EXPAND, R_XTENSA_DIFF32 => continue,
                 else => fatal("{s}: relocation type {d} at 0x{x} is not supported", .{ rela.name, kind, r_offset }),
             }
-            const sym = r_info >> 8;
             if (symbolSection(elf, symtab, sym) == SHN_ABS) continue;
             const value = symbolValue(elf, symtab, sym);
             const address = value +% addend;
@@ -241,6 +307,34 @@ fn collectRelocs(elf: []const u8, sections: []Section, segments: *[3]Segment, ar
     }
 }
 
+/// What a RISC-V relocation asks of the loader.
+const RiscvKind = enum {
+    /// A word holding an address: the loader adds its segment's base.
+    address,
+    /// Applied by the linker, nothing left: label differences, the low
+    /// half of an auipc pair (named by the auipc's label), alignment and
+    /// relaxation markers.
+    done,
+    /// Applied by the linker, PC-relative to the symbol it names.
+    pc_relative,
+    /// An absolute address in an instruction (lui, or a load or store
+    /// off it): only right at the address the program was linked at.
+    absolute_code,
+    unsupported,
+};
+
+fn riscvKind(kind: u32) RiscvKind {
+    return switch (kind) {
+        R_RISCV_32 => .address,
+        R_RISCV_NONE, R_RISCV_PCREL_LO12_I, R_RISCV_PCREL_LO12_S, R_RISCV_ALIGN, R_RISCV_RELAX => .done,
+        R_RISCV_ADD8...R_RISCV_SUB64, R_RISCV_SUB6...R_RISCV_SET32, R_RISCV_SET_ULEB128, R_RISCV_SUB_ULEB128 => .done,
+        R_RISCV_BRANCH, R_RISCV_JAL, R_RISCV_CALL, R_RISCV_CALL_PLT, R_RISCV_PCREL_HI20 => .pc_relative,
+        R_RISCV_RVC_BRANCH, R_RISCV_RVC_JUMP, R_RISCV_32_PCREL, R_RISCV_PLT32 => .pc_relative,
+        R_RISCV_HI20, R_RISCV_LO12_I, R_RISCV_LO12_S => .absolute_code,
+        else => .unsupported,
+    };
+}
+
 fn symbolValue(elf: []const u8, symtab: *const Section, index: u32) u32 {
     const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else 16;
     if ((index + 1) * entsize > symtab.size) fatal("symbol {d} is outside the symbol table", .{index});
@@ -254,6 +348,15 @@ fn symbolSection(elf: []const u8, symtab: *const Section, index: u32) u16 {
     return mem.readInt(u16, elf[symtab.offset + index * entsize + 14 ..][0..2], .little);
 }
 
+/// Whether an address is in the program, or the byte just past one of
+/// its segments (a symbol marking an end).
+fn inProgram(segments: *const [3]Segment, address: u32) bool {
+    for (segments) |*seg| {
+        if (seg.size != 0 and address >= seg.addr and address <= seg.addr + seg.size) return true;
+    }
+    return false;
+}
+
 /// Which segment an address is in. A bss address may be the byte past the
 /// data segment, so bss is tried first.
 fn segmentOf(segments: *const [3]Segment, address: u32) ?u16 {
@@ -264,16 +367,22 @@ fn segmentOf(segments: *const [3]Segment, address: u32) ?u16 {
     return null;
 }
 
-fn write(segments: *[3]Segment, entry_offset: u32, arena: mem.Allocator) ![]u8 {
+fn write(segments: *[3]Segment, machine: u16, entry_offset: u32, arena: mem.Allocator) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
+    // Each segment's place in the file: an empty one is left out, and the
+    // relocations name the segments by their place.
+    var place: [3]u16 = undefined;
     var count: u16 = 0;
-    for (segments) |*s| {
+    for (segments, 0..) |*s, i| {
+        place[i] = count;
         if (s.size != 0) count += 1;
     }
     try append(&out, arena, loadfile.Header{
         .segments = count,
         .entry_segment = 0,
+        .machine = if (machine == EM_RISCV) loadfile.MACHINE_RISCV else loadfile.MACHINE_XTENSA,
         .entry_offset = entry_offset,
+        .word_size = 4,
     });
     for (segments) |*s| {
         if (s.size == 0) continue;
@@ -298,7 +407,7 @@ fn write(segments: *[3]Segment, entry_offset: u32, arena: mem.Allocator) ![]u8 {
         for (s.relocs, 0..) |list, target| {
             if (list.items.len == 0) continue;
             try append(&out, arena, loadfile.RelocGroup{
-                .target_segment = @intCast(target),
+                .target_segment = place[target],
                 .count = @intCast(list.items.len),
             });
             for (list.items) |offset| try append(&out, arena, offset);

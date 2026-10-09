@@ -12,7 +12,7 @@ const Loaded = _program.Loaded;
 const max_segments = _program.max_segments;
 const fail = _program.fail;
 const loadfile = dos.loadfile;
-const readValue = _program.readValue;
+const readAll = _program.readAll;
 
 /// Loads a program or module file into memory, ready to run.
 ///
@@ -30,11 +30,16 @@ const readValue = _program.readValue;
 /// The chain of segments, the first one with the entry point in its
 /// `entry` - which a `SegCode` wraps for RunCommand or CreateNewProc -
 /// and later UnLoadSeg; IoErr is 0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
-/// that isn't a load file of this version, ERROR_BAD_HUNK for one that is
+/// that isn't a load file, or is one for another CPU or word size,
+/// ERROR_BAD_HUNK for one that is
 /// damaged (too many or too large segments, relocations outside them, an
 /// entry point outside the code), ERROR_NO_FREE_STORE, or Open's error.
 ///
 /// BEHAVIOR:
+/// The file's header names the CPU and the width of an address word it
+/// was built for; both must be this machine's. A version-1 file names
+/// neither and is taken as an Xtensa one.
+///
 /// Each segment gets one block of memory the CPU can run code from, its
 /// bytes read in and the rest cleared. Once all are in, the relocations are
 /// applied: each word named gets the base of its target segment added, the
@@ -68,9 +73,22 @@ pub fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList {
     const fh = dos_lib.Open(name, dos.MODE_OLDFILE) orelse return null;
     defer _ = dos_lib.Close(fh);
 
-    const header = readValue(db, fh, loadfile.Header) orelse return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
-    if (@as(u32, @bitCast(header.magic)) != @as(u32, @bitCast(loadfile.MAGIC)) or header.version != loadfile.VERSION)
-        return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
+    // A version-1 header is the first part of a version-2 one.
+    var header: loadfile.Header = undefined;
+    const header_bytes: [*]u8 = @ptrCast(&header);
+    if (!readAll(db, fh, header_bytes[0..loadfile.HEADER_V1_SIZE])) return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
+    if (@as(u32, @bitCast(header.magic)) != @as(u32, @bitCast(loadfile.MAGIC))) return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
+    switch (header.version) {
+        // Before files said which CPU they were for, they were Xtensa's.
+        1 => if (loadfile.native_machine != loadfile.MACHINE_XTENSA) return fail(db, dos.ERROR_OBJECT_WRONG_TYPE),
+        loadfile.VERSION => {
+            if (!readAll(db, fh, header_bytes[loadfile.HEADER_V1_SIZE..@sizeOf(loadfile.Header)]))
+                return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
+            if (header.machine != loadfile.native_machine or header.word_size != loadfile.native_word_size)
+                return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
+        },
+        else => return fail(db, dos.ERROR_OBJECT_WRONG_TYPE),
+    }
     if (header.segments == 0 or header.segments > max_segments) return fail(db, dos.ERROR_BAD_HUNK);
 
     var loaded: [max_segments]Loaded = @splat(.{});

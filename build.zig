@@ -35,7 +35,7 @@ const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
-const Chip = enum { esp32s3, esp32p4 };
+const Chip = poweros_sdk.Chip;
 
 fn chipOf(board: Board) Chip {
     return switch (board) {
@@ -43,17 +43,6 @@ fn chipOf(board: Board) Chip {
         .esp32p4_emu => .esp32p4,
     };
 }
-
-/// The ESP32-P4's HP cores as the kernel is built for them: RV32IMAFC with
-/// the CSR and fence.i instructions, and none of the chip's own extensions
-/// (PIE, hardware loops), whose state no task carries yet.
-const p4_target_query: std.Target.Query = .{
-    .cpu_arch = .riscv32,
-    .os_tag = .freestanding,
-    .abi = .none,
-    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
-    .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .c, .zicsr, .zifencei }),
-};
 
 /// The directories every disk image has, parents before what is in them.
 const image_dirs = [_][]const u8{
@@ -211,7 +200,7 @@ pub fn build(b: *std.Build) void {
     const disk_size = flash_size - disk_offset;
 
     const target = b.resolveTargetQuery(poweros_sdk.target_query);
-    const p4_target = b.resolveTargetQuery(p4_target_query);
+    const p4_target = b.resolveTargetQuery(poweros_sdk.p4_target_query);
     const kernel_target = switch (chipOf(board)) {
         .esp32s3 => target,
         .esp32p4 => p4_target,
@@ -580,8 +569,13 @@ pub fn build(b: *std.Build) void {
     try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
     test_step.dependOn(&try_mkicon.step);
     // Every program and module on the disk compiles: the disk image is
-    // made from all of them.
+    // made from all of them. And for the ESP32-P4 too, into load files.
     test_step.dependOn(&make_disk.step);
+    const p4_disk = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
+    for (poweros_userland.programs) |program| {
+        if (!poweros_userland.builtFor(program, .esp32p4)) continue;
+        p4_disk.namedLazyPath(program.disk).addStepDependencies(test_step);
+    }
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
         const other_target = switch (chipOf(other)) {

@@ -137,6 +137,20 @@ const modules = [_]Program{
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 
+/// Drivers of the ESP32-S3's own hardware, built for it alone: the SD card
+/// on its SPI and SDMMC host, RS-485 on its UART, Ethernet in Espressif
+/// QEMU's S3 machine. The ESP32-P4's come as drivers of their own.
+const s3_only = [_][]const u8{ "sdcard.device", "rs485.device", "openeth.device" };
+
+/// Whether `program` is built for `chip`.
+pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
+    if (chip == .esp32s3) return true;
+    for (s3_only) |name| {
+        if (std.mem.eql(u8, program.name, name)) return false;
+    }
+    return true;
+}
+
 pub const programs: []const Program = blk: {
     var list: [commands.len + tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
@@ -240,8 +254,11 @@ pub const files = [_]File{
 pub fn build(b: *std.Build) void {
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseSafe)") orelse .ReleaseSafe;
     const wifi = b.option([]const u8, "wifi", "The directory with the radio's vendor libraries (scripts/fetch-wifi.sh); without it there is no wifi.device");
+    const chip = b.option(poweros_sdk.Chip, "chip", "The chip the programs are built for (default: esp32s3)") orelse .esp32s3;
     const sdk = b.dependency("poweros_sdk", .{});
-    if (wifi) |dir| {
+    // The radio's vendor libraries are the S3's.
+    if (wifi != null and chip == .esp32s3) {
+        const dir = wifi.?;
         var archives: [wifi_archives.len]std.Build.LazyPath = undefined;
         for (wifi_archives, 0..) |name, i| archives[i] = .{ .cwd_relative = b.pathJoin(&.{ dir, name }) };
         var scripts: [wifi_rom_scripts.len]std.Build.LazyPath = undefined;
@@ -257,7 +274,8 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "wifi.device.seg").step);
     }
     for (programs) |program| {
-        const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize });
+        if (!builtFor(program, chip)) continue;
+        const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize, .chip = chip });
         b.addNamedLazyPath(program.disk, seg);
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }

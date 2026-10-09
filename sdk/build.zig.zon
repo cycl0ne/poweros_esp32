@@ -12,6 +12,7 @@
         "sdk.zig",
         "release.zig",
         "program.ld",
+        "program_esp32p4.ld",
         "devices",
         "fd",
         "hardware",

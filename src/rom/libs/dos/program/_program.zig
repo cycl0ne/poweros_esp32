@@ -173,7 +173,7 @@ fn failBool(db: *DosBase, code: i32) bool {
 /// - `db` - the library's base.
 /// - `fh` - the load file.
 /// - `buf` - what to fill.
-fn readAll(db: *DosBase, fh: *dos.FileHandle, buf: []u8) bool {
+pub fn readAll(db: *DosBase, fh: *dos.FileHandle, buf: []u8) bool {
     const dos_lib = db.iface();
     return dos_lib.Read(fh, buf.ptr, @intCast(buf.len)) == @as(isize, @intCast(buf.len));
 }

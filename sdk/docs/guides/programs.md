@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
 }
 ```
 
+A program for the ESP32-P4 says so with `.chip = .esp32p4` (the
+ESP32-S3 is the default). There the code is RISC-V and PC-relative, and
+the load file holds it with its data in one segment; it reaches the ROM
+only through a pointer, never by a direct call, which `addProgram`
+refuses. A load file names the CPU it was built for, and `LoadSeg`
+refuses one built for another.
+
 ## Hello, world - in the shell
 
 A command is a function `_program_entry` that gets exec's base. It opens

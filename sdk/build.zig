@@ -18,13 +18,41 @@
 
 const std = @import("std");
 
-/// The chip every program runs on.
+/// The ESP32-S3: what its programs are built for.
 pub const target_query: std.Target.Query = .{
     .cpu_arch = .xtensa,
     .os_tag = .freestanding,
     .abi = .none,
     .cpu_model = .{ .explicit = &std.Target.xtensa.cpu.esp32s3 },
 };
+
+/// The chips code is built for.
+pub const Chip = enum { esp32s3, esp32p4 };
+
+/// The ESP32-P4's HP cores: RV32IMAFC with the CSR and fence.i
+/// instructions, and none of the chip's own extensions (PIE, hardware
+/// loops), whose state no task carries yet.
+pub const p4_target_query: std.Target.Query = .{
+    .cpu_arch = .riscv32,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+    .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .c, .zicsr, .zifencei }),
+};
+
+/// What a program for `chip` is built for. On the P4 without the linker's
+/// relaxation: it may turn a PC-relative sequence into one that holds an
+/// address, which would not survive the move to where the loader puts it.
+pub fn programTargetQuery(chip: Chip) std.Target.Query {
+    return switch (chip) {
+        .esp32s3 => target_query,
+        .esp32p4 => blk: {
+            var query = p4_target_query;
+            query.cpu_features_sub = std.Target.riscv.featureSet(&.{.relax});
+            break :blk query;
+        },
+    };
+}
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
 const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "dos", "rtg", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil" };
@@ -85,6 +113,33 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Check that every interface is up to date with its .fd file, and test the tools");
     test_step.dependOn(&b.addRunArtifact(addends_tests).step);
     test_step.dependOn(&b.addRunArtifact(romld_tests).step);
+
+    // elf2seg refuses what a loaded RISC-V program could not survive:
+    // absolute addresses in its code, and a direct call to a fixed address.
+    const refused = [_]struct { name: []const u8, root: []const u8, code_model: std.builtin.CodeModel, says: []const u8 }{
+        .{ .name = "absolute", .root = "tools/elf2seg/tests/absolute.zig", .code_model = .medlow, .says = "an absolute address in the code" },
+        .{ .name = "romcall", .root = "tools/elf2seg/tests/romcall.zig", .code_model = .medany, .says = "a fixed address, PC-relatively" },
+    };
+    for (refused) |case| {
+        const exe = b.addExecutable(.{ .name = case.name, .root_module = b.createModule(.{
+            .root_source_file = b.path(case.root),
+            .target = b.resolveTargetQuery(programTargetQuery(.esp32p4)),
+            .optimize = .ReleaseSmall,
+            .strip = false,
+            .single_threaded = true,
+            .unwind_tables = .none,
+            .code_model = case.code_model,
+        }) });
+        exe.entry = .{ .symbol_name = "_program_entry" };
+        exe.link_emit_relocs = true;
+        exe.setLinkerScript(b.path("program_esp32p4.ld"));
+        const convert = b.addRunArtifact(elf2seg);
+        convert.addArtifactArg(exe);
+        _ = convert.addOutputFileArg(b.fmt("{s}.seg", .{case.name}));
+        convert.expectExitCode(1);
+        convert.expectStdErrMatch(case.says);
+        test_step.dependOn(&convert.step);
+    }
     for (interfaces) |name| {
         const fd = b.path(b.fmt("fd/{s}_lib.fd", .{name}));
         const interface = b.fmt("interface/{s}.zig", .{name});
@@ -111,6 +166,8 @@ pub const Program = struct {
     /// Its root source file.
     root: std.Build.LazyPath,
     optimize: std.builtin.OptimizeMode = .ReleaseSafe,
+    /// The chip it runs on.
+    chip: Chip = .esp32s3,
     /// Foreign archives linked in (`.a`): code built by GCC for the same
     /// chip and the windowed ABI, such as the radio's vendor libraries.
     /// Each goes through tools/addends first; only what the program
@@ -125,28 +182,36 @@ pub const Program = struct {
 /// A program, library, device or handler built for the chip and made into
 /// a load file: the `.seg` dos's LoadSeg reads. What goes on the disk.
 ///
-/// It is linked with the SDK's `program.ld` and with the linker's
-/// relocations kept (`--emit-relocs`); `elf2seg` keeps the ones that hold
-/// an address and makes the load file from them. The entry is
+/// It is linked with the SDK's `program.ld` (`program_esp32p4.ld` on the
+/// P4, where the code is PC-relative, -mcmodel=medany) and with the
+/// linker's relocations kept (`--emit-relocs`); `elf2seg` keeps the ones
+/// that hold an address and makes the load file from them. The entry is
 /// `_program_entry`, which a command exports; a module's ROM tag is what
 /// ramlib or dos finds in it instead.
 pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) std.Build.LazyPath {
+    const target = b.resolveTargetQuery(programTargetQuery(program.chip));
+    const code_model: std.builtin.CodeModel = switch (program.chip) {
+        .esp32s3 => .default,
+        .esp32p4 => .medany,
+    };
     const own = b.createModule(.{
         .root_source_file = program.root,
-        .target = b.resolveTargetQuery(target_query),
+        .target = target,
         .optimize = program.optimize,
         .single_threaded = true,
         .unwind_tables = .none,
+        .code_model = code_model,
     });
     own.addImport("sdk", dep.module("sdk"));
     // The root is the SDK's program.zig, which takes the program's own
     // root in and gives it the SDK's panic handler.
     const module = b.createModule(.{
         .root_source_file = dep.path("program.zig"),
-        .target = b.resolveTargetQuery(target_query),
+        .target = target,
         .optimize = program.optimize,
         .single_threaded = true,
         .unwind_tables = .none,
+        .code_model = code_model,
     });
     module.addImport("sdk", dep.module("sdk"));
     module.addImport("program", own);
@@ -155,11 +220,15 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         char.* = '_';
     };
     const exe = b.addExecutable(.{ .name = artifact_name, .root_module = module });
+    const script_name = switch (program.chip) {
+        .esp32s3 => "program.ld",
+        .esp32p4 => "program_esp32p4.ld",
+    };
     if (program.rom_scripts.len == 0) {
-        exe.setLinkerScript(dep.path("program.ld"));
+        exe.setLinkerScript(dep.path(script_name));
     } else {
         const merge = b.addRunArtifact(dep.artifact("romld"));
-        merge.addFileArg(dep.path("program.ld"));
+        merge.addFileArg(dep.path(script_name));
         const script = merge.addOutputFileArg(b.fmt("{s}.ld", .{program.name}));
         for (program.rom_scripts) |rom| merge.addFileArg(rom);
         exe.setLinkerScript(script);
