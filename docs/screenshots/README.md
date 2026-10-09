@@ -59,16 +59,16 @@ double click opens a drawer or starts a program; icons are dragged
 between windows, into drawers and onto programs. See the
 [desktop guide](../../sdk/docs/guides/anvil.md).
 
-## Two screens: `C:test/Styles DARK` over the desktop
+## Two screens: the desktop in front of `C:test/Styles DARK`
 
-![A dark screen pulled down over the desktop](desktop2.jpeg)
+![The desktop's screen pulled down in front of a dark screen](desktop2.jpeg)
 
 `C:test/Styles DARK` opens a screen with a dark style of its own and
 makes it the default public screen: `C:test/Gadgets` and CPU Load,
 started after it, open there and are drawn dark, with nothing in either
-changed. Pulled down by its title bar, it shows the desktop's screen
-behind it - the System disk and its Programs drawer, MultiView with
-`SYS:Pictures/Mandelbrot.png`, and a shell.
+changed. The desktop's screen is in front - the System disk and its
+Programs drawer, MultiView with `SYS:Pictures/Mandelbrot.png`, and a
+shell - pulled down by its title bar to show the dark screen behind it.
 
 ## The shell
 

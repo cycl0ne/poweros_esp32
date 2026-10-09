@@ -18,7 +18,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 </p>
 <p>
 <a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the System disk opened, its drawers and its programs"></a>
-<a href="docs/screenshots/README.md#two-screens-cteststyles-dark-over-the-desktop"><img src="docs/screenshots/desktop2.jpeg" width="49%" alt="A dark-style screen pulled down over the desktop, MultiView and CPU Load"></a>
+<a href="docs/screenshots/README.md#two-screens-the-desktop-in-front-of-cteststyles-dark"><img src="docs/screenshots/desktop2.jpeg" width="49%" alt="The desktop's screen pulled down in front of a dark-style screen with CPU Load"></a>
 </p>
 
 ## Contents
