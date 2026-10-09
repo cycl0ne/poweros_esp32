@@ -120,8 +120,8 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 4;
-const BUILD_DATE = "08.10.2026";
+const HANDLER_REVISION = 5;
+const BUILD_DATE = "09.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -912,8 +912,12 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
         if (!any and h.pushOne()) any = true;
         // A window kept standing by WAIT goes when the input ends: Ctrl-\
         // typed into it, or its close gadget, which says the same thing.
-        // Until then it stands there with what was written on it.
-        if (st.io.waitPending() and h.ed.eof) {
+        // Until then it stands there with what was written on it. Only
+        // once the last handle is closed: while a program still has the
+        // console open, the end of the input is no more than that, and
+        // the window and this process stay - the program's next write,
+        // and its close, would otherwise go to a port that is gone.
+        if (st.io.waitPending() and h.ed.eof and h.opens == 0) {
             st.io.key_seen = true;
             st.io.close();
         }
