@@ -31,7 +31,9 @@ const unlock = _window.unlock;
 /// BEHAVIOR:
 /// Its layer goes, so what it covered is uncovered and any simple-refresh
 /// window underneath is repaired. Messages still waiting on its port are
-/// freed with the port. If it was active, no window is. A window opened on
+/// freed with the port; on a port the program shares between its windows
+/// (`WA_UserPort`), this window's are taken off and the port is left. If
+/// it was active, no window is. A window opened on
 /// a public screen by name, or on the default one, ends its visit, which
 /// may be the last the screen's owner is waiting for.
 ///

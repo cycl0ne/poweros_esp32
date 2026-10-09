@@ -70,12 +70,20 @@ away. The whole clip list is put aside rather than freed, since it is
 what the layer goes back to and working it out again could fail for want
 of memory just when there is none.
 
+Begun, the layer stays held - as `LockLayer` holds it - until
+`EndUpdate`: nothing moves over it or uncovers more of it meanwhile,
+which would add damage that `EndUpdate` then cleared without its having
+been drawn. What is drawn reaches the display together at the end.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait, and it allocates.
-- Locks: no spinlock may be held: it waits for a lock.
-- Process: a Task will do.
+- Locks: no spinlock may be held: it waits for a lock. Begun, the
+  layer's lock is held until `EndUpdate`: between the two, only draw.
+  Anything that moves, opens or closes a layer of the display waits
+  for it, so a call that waits on such a thing waits for ever.
+- Process: a Task will do; `EndUpdate` must be called by the same.
 
 **OWNERSHIP**
 
@@ -443,14 +451,15 @@ Nothing. Without an update on, nothing happens.
 **BEHAVIOR**
 
 The clip list `BeginUpdate` put aside comes back, and the narrowed one
-is freed.
+is freed. The layer's lock that `BeginUpdate` kept is given back, and
+what was drawn goes to the display.
 
 **CONTEXT**
 
 - Waits: yes, while another task holds the layer.
 - Interrupts: no. It may wait.
 - Locks: no spinlock may be held: it waits for a lock.
-- Process: a Task will do.
+- Process: a Task will do: the one that called `BeginUpdate`.
 
 **OWNERSHIP**
 
@@ -560,8 +569,9 @@ What was installed before, for the caller to dispose of, or null.
 **BEHAVIOR**
 
 It is folded together with what the layer can actually see, which only
-this library knows. While `BeginUpdate` is on, the change takes effect
-at `EndUpdate`.
+this library knows. While `BeginUpdate` is on, it narrows the damage
+being drawn through as well, and stays when `EndUpdate` ends the
+update.
 
 **CONTEXT**
 

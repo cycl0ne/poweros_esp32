@@ -20,6 +20,10 @@
 //! A card going in or out (`IDCMP_DISKINSERTED`, `IDCMP_DISKREMOVED`)
 //! has the drawer read again, or the volumes listed again when those are
 //! what is shown.
+//!
+//! While the desktop runs, a file dragged from it and let go on the
+//! requester goes to its drawer and puts its name in the File field; a
+//! drawer or a disk let go there is gone to.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -123,6 +127,8 @@ const Session = struct {
     was_drawer: [dos.path_max + 1]u8 = @splat(0),
     was_file: [dos.name_max + 1]u8 = @splat(0),
     was_pattern: [dos.name_max + 1]u8 = @splat(0),
+    /// The window as one files can be dropped on, while the desktop runs.
+    drop: sdk.anvil.DropTarget = .{},
     /// True once the requester has been answered or given up.
     answered: bool = false,
     given_up: bool = false,
@@ -661,6 +667,23 @@ fn act(s: *Session, word: usize, code: u32) bool {
     return true;
 }
 
+/// Files let go on the requester: to the drawer of each, its name in the
+/// File field; a drawer or a disk gone to.
+fn takeDrops(s: *Session) void {
+    while (s.drop.next(s.dl, &s.path)) |file| {
+        s.ib.ActivateWindow(s.window);
+        if (file.is_drawer) {
+            goTo(s, file.name);
+            continue;
+        }
+        _request.copyInto(&s.r.file, s.dl.FilePart(file.name));
+        setString(s, s.file_gadget, @ptrCast(&s.r.file));
+        const end = @intFromPtr(s.dl.PathPart(file.name)) - @intFromPtr(&s.path);
+        s.path[end] = 0;
+        goTo(s, @ptrCast(&s.path));
+    }
+}
+
 /// The requester run until it is answered or given up.
 fn loop(s: *Session) void {
     var code: u32 = 0;
@@ -678,11 +701,12 @@ fn loop(s: *Session) void {
             readChunk(s);
             continue;
         }
-        const got = s.ib.WaitIMsg(s.window, exec.SIGBREAKF_CTRL_C);
+        const got = s.ib.WaitIMsg(s.window, s.drop.signal() | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) {
             s.given_up = true;
             return;
         }
+        if (got & s.drop.signal() != 0) takeDrops(s);
     }
 }
 
@@ -749,6 +773,11 @@ pub fn ask(ab: *AslBase, r: *Requester) bool {
         const awake = [_]TagItem{ .{ .tag = wn.WA_BusyPointer, .data = 0 }, .{} };
         s.ib.SetWindowPointerA(w, &awake);
     };
+
+    // Files let go on it, while the desktop runs; taken off the desktop's
+    // list before the window closes.
+    s.drop.add(s.sys, s.window);
+    defer s.drop.remove();
 
     // What the fields opened with, for Restore.
     _request.copyInto(&s.was_drawer, @ptrCast(&r.drawer));

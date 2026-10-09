@@ -31,11 +31,18 @@ const unlock = _window.unlock;
 /// further IDCMP_REFRESHWINDOW can be sent from here on. For a window
 /// with nothing to redraw it does nothing, and so does its EndRefresh.
 ///
+/// Until `EndRefresh` the window's layer is held, as `LockLayer` holds
+/// it: no window moves, opens or closes on the screen meanwhile, so
+/// nothing more of this one is uncovered while it is drawn and then lost
+/// when `EndRefresh` clears what it owed.
+///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
 /// - Interrupts: no.
-/// - Locks: none needed.
-/// - Process: a Task will do.
+/// - Locks: none needed. The window's layer is held from here to
+///   `EndRefresh`: between the two, only draw - no intuition call, and
+///   nothing that waits for a window to move, open or close.
+/// - Process: a Task will do; `EndRefresh` must be called by the same.
 ///
 /// OWNERSHIP:
 /// Nothing changes hands.

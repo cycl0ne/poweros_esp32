@@ -353,9 +353,9 @@ fn ask(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo, which: u32) Si
 }
 
 /// What a child needs, with the layout's word for it put in place of its
-/// own: the sizes it was told, and a weight of 0 holding it to its nominal
-/// size that way. Never a nominal size below the minimum nor a maximum
-/// below the nominal.
+/// own: the sizes it was told - a maximum holding its nominal size too -
+/// and a weight of 0 holding it to its nominal size that way. Never a
+/// nominal size below the minimum nor a maximum below the nominal.
 ///
 /// A child that is a layout of this very class is measured once for all
 /// three: asked them one by one, each of its own children would be asked
@@ -370,8 +370,14 @@ pub fn childNeed(ib: *IntuitionBase, record: *const Child, gi: ?*classusr.Gadget
     };
     if (record.min_width != 0) need.min.width = record.min_width;
     if (record.min_height != 0) need.min.height = record.min_height;
-    if (record.max_width != 0) need.max.width = record.max_width;
-    if (record.max_height != 0) need.max.height = record.max_height;
+    if (record.max_width != 0) {
+        need.max.width = record.max_width;
+        need.nominal.width = @min(need.nominal.width, record.max_width);
+    }
+    if (record.max_height != 0) {
+        need.max.height = record.max_height;
+        need.nominal.height = @min(need.nominal.height, record.max_height);
+    }
     need.nominal.width = @max(need.nominal.width, need.min.width);
     need.nominal.height = @max(need.nominal.height, need.min.height);
     if (record.weight_width == 0) need.max.width = need.nominal.width;

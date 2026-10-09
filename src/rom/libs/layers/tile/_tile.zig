@@ -211,6 +211,15 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
 
 /// Work out a layer's targets again from what it can see.
 ///
+/// **A layer in an update has two lists**, and both are made anew: the
+/// whole one, which waits aside for `EndUpdate` to put back, and the one
+/// its RastPort draws through, narrowed to the damage. The update holds
+/// the layer, so only its own task changes it meanwhile - a clip region
+/// installed, the layer scrolled - and the narrowed list has to follow.
+/// Without memory for the narrowed one the update goes on through the
+/// whole list, which `EndUpdate` keeps: the program draws more than it
+/// owes, and never less.
+///
 /// INPUTS:
 /// - `lb` - the library.
 /// - `layer` - the layer.
@@ -221,7 +230,22 @@ pub fn rebuild(lb: *LayersBase, layer: *Layer) bool {
     const gb = lb.graphics_base;
     const region = inLayerSpace(lb, layer, null) orelse return false;
     defer gb.DisposeRegion(region);
-    return install(lb, layer, region, true);
+    if (layer.flags & layers.LAYERUPDATING == 0) return install(lb, layer, region, true);
+
+    // The whole list made and put aside, in place of the one from before.
+    if (!install(lb, layer, region, true)) return false;
+    info_mod.freeTargets(lb.sys_base, layer.info, layer.saved_targets);
+    layer.saved_targets = layer.targets;
+    layer.targets = null;
+    // The RastPort narrowed to the damage within it.
+    const narrowed = inLayerSpace(lb, layer, layer.damage);
+    if (narrowed) |owed| {
+        defer gb.DisposeRegion(owed);
+        if (install(lb, layer, owed, false)) return true;
+    }
+    layer.targets = layer.saved_targets;
+    layer.saved_targets = null;
+    return false;
 }
 
 /// Work out every layer's visible area again, and tell each RastPort.

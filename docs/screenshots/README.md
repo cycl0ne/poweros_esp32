@@ -48,11 +48,33 @@ shell: the title with its door, and the first corridor of the dungeon. It
 is started from the shell with `cd SYS:dm`, `Stack 65536` and
 `Run dm window`.
 
+## The desktop: Anvil
+
+![The desktop](desktop.png)
+
+The machine comes up on the desktop: an icon for each disk, the free
+memory in the screen's title, and here the flash disk `System` opened,
+showing its drawers with icons and the Trashcan, and its Programs. A
+double click opens a drawer or starts a program; icons are dragged
+between windows, into drawers and onto programs. See the
+[desktop guide](../../sdk/docs/guides/anvil.md).
+
+## Two screens: `C:test/Styles DARK` over the desktop
+
+![A dark screen pulled down over the desktop](desktop2.jpeg)
+
+`C:test/Styles DARK` opens a screen with a dark style of its own and
+makes it the default public screen: `C:test/Gadgets` and CPU Load,
+started after it, open there and are drawn dark, with nothing in either
+changed. Pulled down by its title bar, it shows the desktop's screen
+behind it - the System disk and its Programs drawer, MultiView with
+`SYS:Pictures/Mandelbrot.png`, and a shell.
+
 ## The shell
 
 ![Shell](shell.png)
 
-The machine comes up in a shell window. `Info` lists the mounted disks -
+A shell window, from `SYS:System/Shell`. `Info` lists the mounted disks -
 the flash disk `DH0:` named `System`, and `RAM:` - and `Avail` the memory:
 internal SRAM and the 8 MiB of PSRAM. The blue block is the cursor.
 

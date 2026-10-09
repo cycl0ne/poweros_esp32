@@ -33,7 +33,8 @@
 //! requester. A text that has changed is not let go - by New, Open, Quit
 //! or the close gadget - before a requester asks whether to save it; the
 //! window's title says the file's name, with a `*` before it while it has
-//! changed.
+//! changed. A file dragged from the desktop and let go on the window is
+//! opened as Open opens one.
 //!
 //! Find... and Replace... open a small window: the text to find, what to
 //! put in its place, whether case matters, and buttons that find the next
@@ -190,6 +191,8 @@ const Notepad = struct {
     search: [search_size:0]u8 = @splat(0),
     with: [search_size:0]u8 = @splat(0),
     any_case: bool = false,
+    /// The window as one files can be dropped on, while the desktop runs.
+    drop: sdk.anvil.DropTarget = .{},
 
     fn deinit(np: *Notepad) void {
         np.closeFinder();
@@ -750,6 +753,18 @@ const Notepad = struct {
         }
     }
 
+    /// Files let go on the window: each opened, as Open would, once the
+    /// text before it may go.
+    fn dropped(np: *Notepad) void {
+        var name: [path_size:0]u8 = undefined;
+        while (np.drop.next(np.dl, &name)) |file| {
+            if (file.is_drawer) continue;
+            np.ib.ActivateWindow(np.window);
+            if (np.mayLeave()) _ = np.load(file.name, false);
+            np.focus();
+        }
+    }
+
     fn signalOf(np: *Notepad, object: *Object) u32 {
         var mask: usize = 0;
         _ = np.ib.GetAttr(wc.WINDOWA_SigMask, object, &mask);
@@ -761,9 +776,11 @@ const Notepad = struct {
         while (true) {
             const main_signal = np.signalOf(np.object);
             const find_signal = if (np.finder) |finder| np.signalOf(finder.object) else 0;
-            const got = np.sys.Wait(main_signal | find_signal | exec.SIGBREAKF_CTRL_C);
+            const drop_signal = np.drop.signal();
+            const got = np.sys.Wait(main_signal | find_signal | drop_signal | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0 and np.mayLeave()) return;
             if (got & find_signal != 0) np.findWindow();
+            if (got & drop_signal != 0) np.dropped();
             if (!np.mainWindow()) return;
             np.followChanges();
         }
@@ -967,6 +984,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var np = Notepad{ .sys = sys, .dl = dl, .ib = ib, .screen = screen, .object = object, .window = window, .editor = editor, .bars = bars };
     defer np.deinit();
+    // Taken off the desktop's list before the window closes.
+    np.drop.add(sys, window);
+    defer np.drop.remove();
     if (dos.rdargs.string(argv[0])) |name| {
         // A name that is not there yet is where the text will be saved.
         if (!np.load(name, true)) np.keepPath(name);

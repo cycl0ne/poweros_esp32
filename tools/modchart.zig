@@ -17,8 +17,9 @@
 //! `const X = "<name>";` under <sdk dir> and <src dir>, or by the name as
 //! a string of its own. No arrow goes to a handler: dos.library names each
 //! to start it, and reaches it by packets. A name that arrives at run time - a mount entry's
-//! device, a caller's, a file's type - the source cannot show: those opens
-//! are listed below (`run_time`) and drawn dashed.
+//! device, a caller's, a file's type - the source cannot show, nor one an
+//! SDK helper opens for the module: those opens are listed below
+//! (`run_time`) and drawn dashed.
 //!
 //! <modules.md> holds each chart between `<!-- modchart <chart> -->` and
 //! `<!-- modchart end -->`; the chart is written afresh and the text
@@ -66,6 +67,9 @@ const run_time = [_][2][]const u8{
     .{ "tls.library", "bsdsocket.library" },
     // The class a file's type names.
     .{ "datatypes.library", datatype_classes },
+    // Opened by an SDK helper the module calls (sdk.anvil.DropTarget),
+    // which names it where the module's code does not.
+    .{ "asl.library", "anvil.library" },
 };
 
 /// Where the ROM's modules are under <src dir>, and what their folder adds

@@ -653,12 +653,19 @@ the part that needs it, so a program may simply draw everything. A
 further IDCMP_REFRESHWINDOW can be sent from here on. For a window
 with nothing to redraw it does nothing, and so does its EndRefresh.
 
+Until `EndRefresh` the window's layer is held, as `LockLayer` holds
+it: no window moves, opens or closes on the screen meanwhile, so
+nothing more of this one is uncovered while it is drawn and then lost
+when `EndRefresh` clears what it owed.
+
 **CONTEXT**
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Locks: none needed.
-- Process: a Task will do.
+- Locks: none needed. The window's layer is held from here to
+  `EndRefresh`: between the two, only draw - no intuition call, and
+  nothing that waits for a window to move, open or close.
+- Process: a Task will do; `EndRefresh` must be called by the same.
 
 **OWNERSHIP**
 
@@ -1197,7 +1204,9 @@ Nothing.
 
 Its layer goes, so what it covered is uncovered and any simple-refresh
 window underneath is repaired. Messages still waiting on its port are
-freed with the port. If it was active, no window is. A window opened on
+freed with the port; on a port the program shares between its windows
+(`WA_UserPort`), this window's are taken off and the port is left. If
+it was active, no window is. A window opened on
 a public screen by name, or on the default one, ends its visit, which
 may be the last the screen's owner is waiting for.
 
@@ -2291,14 +2300,17 @@ Nothing.
 
 **BEHAVIOR**
 
-Drawing reaches the whole window again.
+Drawing reaches the whole window again, the window's layer that
+`BeginRefresh` held is let go, and what was drawn goes to the display.
 
 **CONTEXT**
 
 - Waits: for the screen list's semaphore, and the layers' locks.
 - Interrupts: no.
-- Locks: none needed.
-- Process: a Task will do.
+- Locks: the window's layer, from `BeginRefresh`; it is let go of
+  before the screen list's semaphore is taken, which a window move
+  takes before a layer's.
+- Process: a Task will do: the one that called `BeginRefresh`.
 
 **OWNERSHIP**
 
@@ -4335,8 +4347,10 @@ flags are then as they were.
 
 **BEHAVIOR**
 
-0 takes the port away, with every message still waiting on it. From 0
-to anything, the window gets a port, made for the calling task.
+0 takes the port away, with every message still waiting on it - from a
+port shared with the program's other windows (`WA_UserPort`), only this
+window's, and the port stays. From 0 to anything, a window with no port
+gets one, made for the calling task.
 
 **CONTEXT**
 
@@ -5225,7 +5239,8 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
   `WA_Activate` - or `WA_NoActivate`, never active, its gadgets
   pressed beside whatever has the input - and `WA_IDCMP` for a message
-  port. Its menus:
+  port, or `WA_UserPort` for a port of the program's it shares with its
+  other windows. Its menus:
   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as
@@ -5246,7 +5261,9 @@ title bar the font's height and a little, and the images of the border
 gadgets it asked for - and the part inside is the screen's background
 pen. Its RastPort draws in `TEXTPEN` on `BACKGROUNDPEN` in the screen's
 font. With `WA_IDCMP` it has a message port of its own, made for the
-calling task. With `WA_Activate` it becomes the active window.
+calling task; with `WA_UserPort` its messages go to the program's port
+instead, each saying in `window` whose it is. With `WA_Activate` it
+becomes the active window.
 
 **CONTEXT**
 
@@ -5258,7 +5275,8 @@ calling task. With `WA_Activate` it becomes the active window.
 **OWNERSHIP**
 
 The caller's until `CloseWindow`, which the same task must call: the
-message port's signal is that task's.
+message port's signal is that task's. A port given with `WA_UserPort`
+stays the program's, and must outlive every window on it.
 
 **NOTES**
 

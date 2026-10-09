@@ -70,7 +70,8 @@ const zoomWidth = _window.zoomWidth;
 ///   `WA_SimpleRefresh`/`WA_SmartRefresh`, `WA_NoCareRefresh`,
 ///   `WA_Activate` - or `WA_NoActivate`, never active, its gadgets
 ///   pressed beside whatever has the input - and `WA_IDCMP` for a message
-///   port. Its menus:
+///   port, or `WA_UserPort` for a port of the program's it shares with its
+///   other windows. Its menus:
 ///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
 ///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
 ///   `WA_PointerDelay`, as
@@ -89,7 +90,9 @@ const zoomWidth = _window.zoomWidth;
 /// gadgets it asked for - and the part inside is the screen's background
 /// pen. Its RastPort draws in `TEXTPEN` on `BACKGROUNDPEN` in the screen's
 /// font. With `WA_IDCMP` it has a message port of its own, made for the
-/// calling task. With `WA_Activate` it becomes the active window.
+/// calling task; with `WA_UserPort` its messages go to the program's port
+/// instead, each saying in `window` whose it is. With `WA_Activate` it
+/// becomes the active window.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -99,7 +102,8 @@ const zoomWidth = _window.zoomWidth;
 ///
 /// OWNERSHIP:
 /// The caller's until `CloseWindow`, which the same task must call: the
-/// message port's signal is that task's.
+/// message port's signal is that task's. A port given with `WA_UserPort`
+/// stays the program's, and must outlive every window on it.
 ///
 /// NOTES:
 /// - A window on a public screen keeps it from closing, so no lock needs
@@ -330,8 +334,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         .height = height,
         .min_width = @intCast(ub.GetTagData(wn.WA_MinWidth, @intCast(width), tags)),
         .min_height = @intCast(ub.GetTagData(wn.WA_MinHeight, @intCast(height), tags)),
-        .max_width = @intCast(ub.GetTagData(wn.WA_MaxWidth, @intCast(s.width), tags)),
-        .max_height = @intCast(ub.GetTagData(wn.WA_MaxHeight, @intCast(s.height), tags)),
+        .max_width = maximum(ub.GetTagData(wn.WA_MaxWidth, @intCast(s.width), tags), s.width),
+        .max_height = maximum(ub.GetTagData(wn.WA_MaxHeight, @intCast(s.height), tags), s.height),
         .border_left = bl,
         .border_top = bt,
         .border_right = br,
@@ -456,7 +460,11 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             if (w.size_image == null) ok = false;
         }
     }
-    if (ok and w.idcmp != 0) {
+    if (ub.GetTagData(wn.WA_UserPort, 0, tags) != 0) {
+        // The program's own port, shared with its other windows.
+        w.user_port = @ptrFromInt(ub.GetTagData(wn.WA_UserPort, 0, tags));
+        w.more_flags |= _window.WMF_SHARED_PORT;
+    } else if (ok and w.idcmp != 0) {
         w.user_port = ib.sys_base.CreateMsgPort();
         if (w.user_port == null) ok = false;
     }
@@ -494,4 +502,11 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         if (ib.pub_modes & sc.POPPUBSCREEN != 0) it.ScreenToFront(@ptrCast(s));
     }
     return @ptrCast(w);
+}
+
+/// A maximum as a tag gives it: a negative one, -1 the usual, is as large
+/// as the screen, as `WindowLimits` takes it.
+fn maximum(data: usize, screen_size: i32) i32 {
+    const given: i32 = @bitCast(@as(u32, @truncate(data)));
+    return if (given < 0) screen_size else given;
 }

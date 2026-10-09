@@ -71,3 +71,11 @@ UnSet Kickstart
 If EXISTS S:User-Startup
   Execute S:User-Startup
 EndIf
+
+; The desktop, and this shell's window put away so it shows: a shell is
+; one double click away (SYS:System/Shell), and the serial console keeps
+; its own. A desktop that could not start leaves this shell where it is.
+C:LoadAnvil
+If NOT FAIL
+  EndCLI >NIL:
+EndIf

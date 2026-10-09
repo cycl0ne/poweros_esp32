@@ -16,6 +16,10 @@ Espressif's QEMU. The ESP32-P4 is next.
 <a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence, line numbers on"></a>
 <a href="docs/screenshots/README.md#cpu-load-sysprogramscpuload"><img src="docs/screenshots/cpuload.png" width="49%" alt="CPULoad: both cores, after a burst of C:test/Anim"></a>
 </p>
+<p>
+<a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the System disk opened, its drawers and its programs"></a>
+<a href="docs/screenshots/README.md#two-screens-cteststyles-dark-over-the-desktop"><img src="docs/screenshots/desktop2.jpeg" width="49%" alt="A dark-style screen pulled down over the desktop, MultiView and CPU Load"></a>
+</p>
 
 ## Contents
 
@@ -84,7 +88,7 @@ Espressif's QEMU. The ESP32-P4 is next.
   [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
   told when a file or a drawer changes (`RAM:`, `DH0:`, `SD0:`); consoles with line editing,
   Tab completion of file names, and copy and paste; volumes renamed
-  (`C:Relabel`); a shell with scripts and resident commands, 39
+  (`C:Relabel`); a shell with scripts and resident commands, 41
   commands in `C:` (`dir all | more` pages through anything), test
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
@@ -98,6 +102,18 @@ Espressif's QEMU. The ESP32-P4 is next.
   one - and gives a file without an icon the default that fits it: a
   disk, a drawer, a program, a document, by its datatype's group. See the
   [icons guide](sdk/docs/guides/icons.md).
+- **Desktop:** `LIBS:anvil.library`, started at boot by `C:LoadAnvil`:
+  the Workbench screen's ground - a colour, a gradient or a picture -
+  with an icon for each disk, drawers opened into windows of icons or
+  lists, programs started with the files picked, icons dragged to move
+  and copy files, a trash on the disk, Information on any file, and the
+  free memory in the screen's title; it follows its prefs as they
+  change, and starts the programs in `SYS:WBStartup`.
+  `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
+  script from its. Programs add windows files are dropped on, icons and
+  Tools items (MultiView, Notepad, FontView and the file requester take
+  a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
+  and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
 - **Graphics and windows:** rtg.library for the displays;
   graphics.library with smooth curves and lines, rounded rectangles,
   gradients, shadows and scaled pictures; layers.library; and
@@ -186,12 +202,13 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/wifi.device` |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
+| `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 
 Without them the disk has everything but that part. On a board the serial
 console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
-comes up with a shell window, opened once S:Startup-Sequence has set the
-system's fonts, pens and style - or as soon as the script prints
-something.
+comes up with the desktop, which S:Startup-Sequence starts at its end
+before it puts its own shell window away - `SYS:System/Shell` opens
+another. A desktop that cannot start leaves that shell on the display.
 
 More build steps and options:
 

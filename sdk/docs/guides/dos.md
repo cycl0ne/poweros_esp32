@@ -707,7 +707,8 @@ dos's init takes them in with `EnterBootNodes`; a node handed over later
 goes on the list at once. dos then makes `SYS:` a late assign to the
 bootable partition with the highest boot priority, `C:`, `S:`, `LIBS:`,
 `DEVS:` and `HANDLERS:` late assigns to its directories, and starts the
-first shell, in a console window, reading `S:Startup-Sequence`.
+first shell, in a console window, reading `S:Startup-Sequence` - which
+ends by starting the desktop and closing that window.
 `Mount SD0:` puts a device on the list from its entry in
 `DEVS:MountList`. [Disks and partitions](rdb.md) has the partition
 table and how to change it.

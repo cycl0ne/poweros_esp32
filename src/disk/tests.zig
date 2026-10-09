@@ -42,6 +42,8 @@ test {
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");
+    _ = @import("libs/anvil/tests/anvil.zig");
+    _ = @import("libs/anvil/tests/app.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
     _ = @import("libs/asl/tests/asl.zig");

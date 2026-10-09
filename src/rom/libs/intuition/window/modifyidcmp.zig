@@ -26,8 +26,10 @@ const unlock = _window.unlock;
 /// flags are then as they were.
 ///
 /// BEHAVIOR:
-/// 0 takes the port away, with every message still waiting on it. From 0
-/// to anything, the window gets a port, made for the calling task.
+/// 0 takes the port away, with every message still waiting on it - from a
+/// port shared with the program's other windows (`WA_UserPort`), only this
+/// window's, and the port stays. From 0 to anything, a window with no port
+/// gets one, made for the calling task.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.

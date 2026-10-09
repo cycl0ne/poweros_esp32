@@ -27,13 +27,16 @@ const unlock = _window.unlock;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// Drawing reaches the whole window again.
+/// Drawing reaches the whole window again, the window's layer that
+/// `BeginRefresh` held is let go, and what was drawn goes to the display.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
 /// - Interrupts: no.
-/// - Locks: none needed.
-/// - Process: a Task will do.
+/// - Locks: the window's layer, from `BeginRefresh`; it is let go of
+///   before the screen list's semaphore is taken, which a window move
+///   takes before a layer's.
+/// - Process: a Task will do: the one that called `BeginRefresh`.
 ///
 /// OWNERSHIP:
 /// Nothing changes hands.
@@ -52,9 +55,13 @@ const unlock = _window.unlock;
 /// ib.EndRefresh(window, true);
 /// ```
 pub fn EndRefresh(ib: *IntuitionBase, window: *Window, complete: bool) void {
+    // The flag is this task's own, set by its BeginRefresh. The layer goes
+    // first: a window move holds the screen list's semaphore while it
+    // waits for the layers, so taking that semaphore with the layer still
+    // held could wait for ever.
+    if (window.flags & WF_IN_REFRESH == 0) return;
+    ib.layers_base.EndUpdate(innerLayer(window), complete);
     lock(ib);
     defer unlock(ib);
-    if (window.flags & WF_IN_REFRESH == 0) return;
     window.flags &= ~WF_IN_REFRESH;
-    ib.layers_base.EndUpdate(innerLayer(window), complete);
 }

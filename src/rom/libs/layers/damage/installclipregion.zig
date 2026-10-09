@@ -35,8 +35,9 @@ const LayersBase = @import("../layers.zig").LayersBase;
 ///
 /// BEHAVIOR:
 /// It is folded together with what the layer can actually see, which only
-/// this library knows. While `BeginUpdate` is on, the change takes effect
-/// at `EndUpdate`.
+/// this library knows. While `BeginUpdate` is on, it narrows the damage
+/// being drawn through as well, and stays when `EndUpdate` ends the
+/// update.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the layer.
@@ -64,10 +65,7 @@ pub fn InstallClipRegion(lb: *LayersBase, layer: *Layer, region: ?*graphics.Regi
     defer _locks.releaseOne(lb, layer);
     const was = layer.clip_region;
     layer.clip_region = region;
-    // While an update is on, the clipping is the damage's and this takes
-    // effect when it ends.
-    if (layer.flags & layers.LAYERUPDATING == 0) {
-        layer.last_error = if (tile.rebuild(lb, layer)) layers.LERR_OK else layers.LERR_NO_MEMORY;
-    }
+    // In an update too: both its lists are made anew with the region.
+    layer.last_error = if (tile.rebuild(lb, layer)) layers.LERR_OK else layers.LERR_NO_MEMORY;
     return was;
 }

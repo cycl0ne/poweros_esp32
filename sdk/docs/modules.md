@@ -146,6 +146,7 @@ flowchart TB
 <!-- modchart disk -->
 ```mermaid
 flowchart TB
+    m_anvil_library["anvil.library"]
     m_asl_library["asl.library"]
     m_bsdsocket_library["bsdsocket.library"]
     m_clipboard_device["clipboard.device"]
@@ -166,6 +167,7 @@ flowchart TB
     m_iffparse_library["iffparse.library"]
     m_input_device["input.device"]
     m_intuition_library["intuition.library"]
+    m_layers_library["layers.library"]
     m_modbus_library["modbus.library"]
     m_openeth_device["openeth.device"]
     m_rdb_library["rdb.library"]
@@ -181,6 +183,16 @@ flowchart TB
     m_usbserial_device["usbserial.device"]
     m_wifi_device["wifi.device"]
 
+    m_anvil_library --> m_datatypes_library
+    m_anvil_library --> m_diskfont_library
+    m_anvil_library --> m_dos_library
+    m_anvil_library --> m_gadget_classes
+    m_anvil_library --> m_graphics_library
+    m_anvil_library --> m_icon_library
+    m_anvil_library --> m_intuition_library
+    m_anvil_library --> m_layers_library
+    m_anvil_library --> m_timer_device
+    m_asl_library -.-> m_anvil_library
     m_asl_library --> m_diskfont_library
     m_asl_library --> m_dos_library
     m_asl_library --> m_gadget_classes
@@ -236,7 +248,7 @@ flowchart TB
     m_wifi_device --> m_timer_device
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_asl_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_filter_library,m_icon_library,m_iffparse_library,m_modbus_library,m_rdb_library,m_tls_library,m_truetype_library lib
+    class m_anvil_library,m_asl_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_filter_library,m_icon_library,m_iffparse_library,m_modbus_library,m_rdb_library,m_tls_library,m_truetype_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_clipboard_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_wifi_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
@@ -244,7 +256,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_serial_device,m_timer_device,m_usbserial_device rom
+    class m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_layers_library,m_serial_device,m_timer_device,m_usbserial_device rom
 ```
 <!-- modchart end -->
 
@@ -267,6 +279,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     m_animation_datatype["animation.datatype"]
+    m_anvil_library["anvil.library"]
     m_ascii_datatype["ascii.datatype"]
     m_asl_library["asl.library"]
     m_bmp_datatype["bmp.datatype"]
@@ -310,6 +323,13 @@ flowchart TB
     m_animation_datatype --> m_dos_library
     m_animation_datatype --> m_motion_library
     m_animation_datatype --> m_timer_device
+    m_anvil_library --> m_checkbox_gadget
+    m_anvil_library --> m_fuelgauge_gadget
+    m_anvil_library --> m_integer_gadget
+    m_anvil_library --> m_scroller_gadget
+    m_anvil_library --> m_string_gadget
+    m_anvil_library --> m_text_gadget
+    m_anvil_library --> m_textedit_gadget
     m_ascii_datatype --> m_dos_library
     m_ascii_datatype --> m_iffparse_library
     m_ascii_datatype --> m_text_datatype
@@ -359,7 +379,7 @@ flowchart TB
     m_textedit_gadget --> m_scroller_gadget
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_asl_library,m_datatypes_library,m_diskfont_library,m_iffparse_library lib
+    class m_anvil_library,m_asl_library,m_datatypes_library,m_diskfont_library,m_iffparse_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_animation_datatype,m_ascii_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151

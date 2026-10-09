@@ -103,6 +103,11 @@ A script (`def_script.info`) and each group of files
 file is there; without one they show a project's. A default is read
 once and kept until its file changes.
 
+The disk carries all fourteen in `ENVARC:Sys`, which the startup
+sequence copies to `ENV:`; `def_script.info` has `C:IconX` as its
+default tool, so a script without an icon of its own runs when it is
+opened.
+
 ## The desktop's settings
 
 How large an icon is shown, and how a drawer is shown that has no
@@ -131,3 +136,12 @@ mkicon picture.png Notepad.info KIND=TOOL STACK=16384 TYPE=FILETYPE=text
 ```
 
 It reads back what it wrote and stops on a field that would not read.
+
+The build makes the disk's own icons this way - the defaults, the
+volume's (`Disk.info`, its window showing only icons), the `Trashcan`,
+the drawers a person opens and each program in `SYS:Programs` and
+`SYS:System` - from the pictures `scripts/fetch-icons.sh` fetches: the
+Tango icon library, in the public domain, drawn from its SVG sources at
+the size the board shows icons at (48 pixels on the 7B and in QEMU, 40
+on the 3.5" board) into `toolchain/icons/<size>/`. Without them the disk
+has no icons of its own and the library's built-in ones stand in.

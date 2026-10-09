@@ -1,0 +1,555 @@
+# anvil.library
+
+anvil.library's functions: the desktop started, a file's information
+shown, and the windows, icons and menu items programs add. Open it with
+OpenLibrary("anvil.library", 1).
+
+The table is this library's own: it starts at the first slot after
+the standard four and holds only what is here.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AddAppIcon](#addappicon) - Adds an icon to the desktop.
+- [AddAppMenuItem](#addappmenuitem) - Adds an item to the Tools menu.
+- [AddAppWindow](#addappwindow) - Adds a window that files can be dropped on.
+- [Information](#information) - Shows a file's information in a window.
+- [RemoveAppIcon](#removeappicon) - Removes an icon a program added.
+- [RemoveAppMenuItem](#removeappmenuitem) - Removes an item a program added to the Tools menu.
+- [RemoveAppWindow](#removeappwindow) - Removes a window files could be dropped on.
+- [StartAnvil](#startanvil) - Starts the desktop.
+
+## AddAppIcon
+
+Adds an icon to the desktop.
+
+**SYNOPSIS**
+
+```zig
+fn AddAppIcon(base: *AnvilBase, id: u32, user_data: usize, text: [*:0]const u8, port: *exec.MsgPort, object: *const icon.DiskObject, tags: ?[*]const utility.TagItem) ?*anvil.AppIcon
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `id`, `user_data` - the program's own, handed back in each message.
+- `text` - the name under the icon; the first 63 bytes are kept.
+- `port` - where the messages go.
+- `object` - its picture (`image`), and where it lies (`current_x`,
+  `current_y`, or `NO_ICON_POSITION` for the first free place down the
+  desktop's edge); nothing else of it is read.
+- `tags` - none yet: null.
+
+**RESULT**
+
+The handle `RemoveAppIcon` takes; null when the desktop does not run
+(IoErr ERROR_OBJECT_NOT_FOUND), when `object` has no picture
+(ERROR_REQUIRED_ARG_MISSING) or there is no memory
+(ERROR_NO_FREE_STORE).
+
+**BEHAVIOR**
+
+The icon is drawn on the desktop's ground among the disks, picked and
+moved as they are. A double click on it sends `port` an `AppMessage`
+of kind `AMTYPE_APPICON` with no files; icons dragged onto it send one
+with their files as lock-and-name pairs. The program replies each.
+The Icons menu opens it; it is not copied, renamed, snapshot, or
+asked about, and it is not dropped on anything.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+`text` and the picture are copied: `object` may go once the call
+returns. The port stays the program's and must stay until
+`RemoveAppIcon`.
+
+**NOTES**
+
+A program reads its picture with icon.library and frees it after:
+`GetDiskObjectNew("PROGDIR:Name")` gives it the program's own icon or
+the default one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemoveAppIcon`, `AddAppWindow`, `AddAppMenuItem`
+
+**EXAMPLES**
+
+```zig
+const object = ib.GetDiskObjectNew("PROGDIR:Clock") orelse return;
+defer ib.FreeDiskObject(object);
+object.current_x = icon.NO_ICON_POSITION;
+const app = ab.AddAppIcon(0, 0, "Clock", port, object, null);
+```
+
+## AddAppMenuItem
+
+Adds an item to the Tools menu.
+
+**SYNOPSIS**
+
+```zig
+fn AddAppMenuItem(base: *AnvilBase, id: u32, user_data: usize, text: [*:0]const u8, port: *exec.MsgPort, tags: ?[*]const utility.TagItem) ?*anvil.AppMenuItem
+```
+
+**SINCE**
+
+1.0. LVO -44.
+
+**INPUTS**
+
+- `id`, `user_data` - the program's own, handed back in each message.
+- `text` - the item's words; the first 63 bytes are kept.
+- `port` - where the messages go.
+- `tags` - none yet: null.
+
+**RESULT**
+
+The handle `RemoveAppMenuItem` takes; null when the desktop does not
+run (IoErr ERROR_OBJECT_NOT_FOUND) or there is no memory
+(ERROR_NO_FREE_STORE).
+
+**BEHAVIOR**
+
+The item goes at the end of the desktop's Tools menu, which is off
+while it has none. Choosing it sends `port` an `AppMessage` of kind
+`AMTYPE_APPMENUITEM` with the files of every icon picked, on the
+desktop and in its drawers, as lock-and-name pairs. The program
+replies it. The menu holds 32 items; one past them is not shown.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+`text` is copied. The port stays the program's and must stay until
+`RemoveAppMenuItem`.
+
+**NOTES**
+
+The items come in the order they were added.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemoveAppMenuItem`, `AddAppIcon`
+
+**EXAMPLES**
+
+```zig
+const app = ab.AddAppMenuItem(0, 0, "Show picked", port, null);
+```
+
+## AddAppWindow
+
+Adds a window that files can be dropped on.
+
+**SYNOPSIS**
+
+```zig
+fn AddAppWindow(base: *AnvilBase, id: u32, user_data: usize, window: *intuition.Window, port: *exec.MsgPort, tags: ?[*]const utility.TagItem) ?*anvil.AppWindow
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `id`, `user_data` - the program's own, handed back in each message.
+- `window` - the program's window, on the desktop's screen.
+- `port` - where the messages go.
+- `tags` - none yet: null.
+
+**RESULT**
+
+The handle `RemoveAppWindow` takes; null when the desktop does not
+run (IoErr ERROR_OBJECT_NOT_FOUND) or there is no memory
+(ERROR_NO_FREE_STORE).
+
+**BEHAVIOR**
+
+Icons dragged from the desktop and let go over the window - over any
+of it the pointer reaches, its border included - no longer fly back:
+the desktop sends `port` an `AppMessage` of kind `AMTYPE_APPWINDOW`
+with the files of the icons dragged as lock-and-name pairs (a drawer
+or a disk as a lock on itself and an empty name) and where they were
+let go, in the window's own coordinates. The program replies it; the
+pairs go with the reply.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+The window and the port stay the program's and must stay until
+`RemoveAppWindow`. The handle is the desktop's.
+
+**NOTES**
+
+A window that closes is removed first. The desktop does not quit while
+a window, an icon or a menu item a program added is on its lists.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemoveAppWindow`, `AddAppIcon`, `sdk.anvil.DropTarget`
+
+**EXAMPLES**
+
+```zig
+const app = ab.AddAppWindow(0, 0, window, port, null);
+defer _ = ab.RemoveAppWindow(app);
+```
+
+## Information
+
+Shows a file's information in a window.
+
+**SYNOPSIS**
+
+```zig
+fn Information(base: *AnvilBase, lock: ?*dos.FileLock, name: [*:0]const u8, screen: ?*intuition.Screen) bool
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `lock` - the drawer `name` is in; null for the caller's current
+  directory, or when `name` is a full name.
+- `name` - the file, the drawer or the disk (`Work:`); empty for the
+  drawer `lock` itself.
+- `screen` - the screen the window opens on; null for the default
+  public screen.
+
+**RESULT**
+
+True once the window's process has started; false with IoErr set:
+ERROR_OBJECT_NOT_FOUND, ERROR_LINE_TOO_LONG, ERROR_NO_FREE_STORE.
+
+**BEHAVIOR**
+
+The window opens on a process of its own and the call returns at
+once. What it shows goes by the kind of the icon. A disk: whether it
+may be written, its blocks, used and free, the block size, when it
+was made, its default tool. A file or a drawer: when it was last
+changed, its protection bits (Script, Archived, Readable, Writable,
+Executable, Deletable) and, but for the trash, its comment; a program
+or a document its size in bytes and blocks and its stack, a document
+its default tool; a drawer, a program and a document their tool
+types, a line each. Without an icon file the icon's fields are left
+out. Save writes the bits and the comment where they changed, and the
+icon with the stack, the default tool and the tool types, and closes
+the window; Cancel and the close gadget close it with nothing written.
+
+**CONTEXT**
+
+- Waits: yes, for the name to be found and the process started.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process: the name is found through dos.
+
+**OWNERSHIP**
+
+`lock` and `name` are read and not kept. A screen given must stay
+open until the window has closed.
+
+**NOTES**
+
+The window's process holds anvil.library open while it runs. The
+desktop's Icons menu opens one for each icon picked.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartAnvil`, icon.library's `PutDiskObject`
+
+**EXAMPLES**
+
+```zig
+_ = ab.Information(null, "SYS:Programs/Notepad", null);
+```
+
+## RemoveAppIcon
+
+Removes an icon a program added.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveAppIcon(base: *AnvilBase, app: ?*anvil.AppIcon) bool
+```
+
+**SINCE**
+
+1.0. LVO -40.
+
+**INPUTS**
+
+- `app` - what `AddAppIcon` gave; null does nothing.
+
+**RESULT**
+
+True when it was on the desktop's list; false for null, for one
+removed already, and once the desktop has ended.
+
+**BEHAVIOR**
+
+Nothing more is sent for the icon once the call returns; the desktop
+takes it off its ground soon after. Messages sent before are still on
+the program's port, to be replied.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+The handle is gone; the port is the program's again.
+
+**NOTES**
+
+The program replies what is left on its port before it deletes it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddAppIcon`
+
+**EXAMPLES**
+
+```zig
+_ = ab.RemoveAppIcon(app);
+```
+
+## RemoveAppMenuItem
+
+Removes an item a program added to the Tools menu.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveAppMenuItem(base: *AnvilBase, app: ?*anvil.AppMenuItem) bool
+```
+
+**SINCE**
+
+1.0. LVO -48.
+
+**INPUTS**
+
+- `app` - what `AddAppMenuItem` gave; null does nothing.
+
+**RESULT**
+
+True when it was on the desktop's list; false for null, for one
+removed already, and once the desktop has ended.
+
+**BEHAVIOR**
+
+Nothing more is sent for the item once the call returns; the desktop
+takes it out of the menu soon after. Messages sent before are still on
+the program's port, to be replied.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+The handle is gone; the port is the program's again.
+
+**NOTES**
+
+The program replies what is left on its port before it deletes it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddAppMenuItem`
+
+**EXAMPLES**
+
+```zig
+_ = ab.RemoveAppMenuItem(app);
+```
+
+## RemoveAppWindow
+
+Removes a window files could be dropped on.
+
+**SYNOPSIS**
+
+```zig
+fn RemoveAppWindow(base: *AnvilBase, app: ?*anvil.AppWindow) bool
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `app` - what `AddAppWindow` gave; null does nothing.
+
+**RESULT**
+
+True when it was on the desktop's list; false for null, for one
+removed already, and once the desktop has ended, which lets go of
+everything added to it.
+
+**BEHAVIOR**
+
+Nothing more is sent for the window once the call returns: icons let
+go over it fly back again. Messages sent before are still on the
+program's port, to be replied.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: any task.
+
+**OWNERSHIP**
+
+The handle is gone; the window and the port are the program's again.
+
+**NOTES**
+
+The program replies what is left on its port before it deletes it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddAppWindow`
+
+**EXAMPLES**
+
+```zig
+_ = ab.RemoveAppWindow(app);
+while (sys.GetMsg(port)) |message| sys.ReplyMsg(message);
+sys.DeleteMsgPort(port);
+```
+
+## StartAnvil
+
+Starts the desktop.
+
+**SYNOPSIS**
+
+```zig
+fn StartAnvil(base: *AnvilBase, tags: ?[*]const utility.TagItem) bool
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `tags`:
+  - ANVA_CleanUp (bool): the disks' icons placed anew down the
+    desktop's edge, their saved places left aside.
+
+**RESULT**
+
+True when the desktop runs - started now, or running already. False
+with IoErr: ERROR_NO_FREE_STORE, ERROR_INVALID_RESIDENT_LIBRARY (a
+library it draws with could not be opened), ERROR_OBJECT_NOT_FOUND (no
+Workbench screen).
+
+**BEHAVIOR**
+
+A process named "Anvil" is started with a CLI of its own - the
+caller's command path, so the programs it starts are found as the
+caller would find them - and `SYS:` as its current directory. It
+locks the Workbench screen, lays a backdrop window across it under the
+screen's bar with the ground `ENV:Sys/anvil.prefs` gives, puts an icon
+on it for each mounted volume, and says in the screen's title how much
+memory is free. The call returns once the desktop is up, or has failed
+to come up.
+
+While the desktop runs, a second call brings its screen to the front
+and does nothing else.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop to come up.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process; IoErr is set on failure.
+
+**OWNERSHIP**
+
+The desktop holds the library open while it runs; the caller may
+close its own opening at once.
+
+**NOTES**
+
+The desktop ends when Quit is picked from its menu, or on CTRL-C.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`C:LoadAnvil`
+
+**EXAMPLES**
+
+```zig
+const ab: *sdk.interface.anvil.AnvilBase = @ptrCast(sys.OpenLibrary(anvil.ANVILNAME, 1) orelse return);
+defer sys.CloseLibrary(ab.lib());
+if (!ab.StartAnvil(null)) return;
+```

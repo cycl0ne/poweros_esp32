@@ -135,7 +135,9 @@ pub const CHILDA_WeightHeight = CHILDA_Dummy + 0x03;
 /// for a finger, say. 0 leaves the child's own.
 pub const CHILDA_MinWidth = CHILDA_Dummy + 0x04;
 pub const CHILDA_MinHeight = CHILDA_Dummy + 0x05;
-/// Its largest size, in place of what it says. 0 leaves the child's own.
+/// Its largest size, in place of what it says, and the most it asks for:
+/// an editor that would ask for a page kept to a few lines. 0 leaves the
+/// child's own. A minimum above it wins.
 pub const CHILDA_MaxWidth = CHILDA_Dummy + 0x06;
 pub const CHILDA_MaxHeight = CHILDA_Dummy + 0x07;
 /// Where it sits in its room when it is smaller than the room: one

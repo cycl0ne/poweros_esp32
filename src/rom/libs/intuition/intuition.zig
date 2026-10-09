@@ -4656,6 +4656,56 @@ test "layoutgclass: a child smaller than its room sits where CHILDA_Align says" 
     try tearDown(ib);
 }
 
+test "layoutgclass: a child's maximum holds its nominal size, and the layout's with it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A gadget that asks for 300 by 200, told it may be 20 by 10 and no
+    // more than 120 by 60, in a column made without a size.
+    const big = it.NewObjectTagList(null, classusr.GADGETCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 200 },
+        .{},
+    }).?;
+    const column = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(big) },
+        .{ .tag = lg.CHILDA_MinWidth, .data = 20 },
+        .{ .tag = lg.CHILDA_MinHeight, .data = 10 },
+        .{ .tag = lg.CHILDA_MaxWidth, .data = 120 },
+        .{ .tag = lg.CHILDA_MaxHeight, .data = 60 },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 300;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(column, @ptrCast(&lay));
+
+    const box = boxOf(ib, big);
+    try testing.expectEqual(@as(i32, 120), box.width);
+    try testing.expectEqual(@as(i32, 60), box.height);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(column);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "layoutgclass: a grid lines its cells up across rows, spans, and keeps reading order" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -5072,6 +5122,94 @@ test "preferences: read, changed, told about, and set back to what the system st
 
     const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, listening, wn.WA_Screen));
     it.CloseWindow(listening);
+    try testing.expect(it.CloseScreen(on));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "OpenWindowTagList: a maximum of -1 is as large as the screen" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const window = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_MaxWidth, .data = @bitCast(@as(isize, -1)) },
+        .{ .tag = wn.WA_MaxHeight, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    }).?;
+    const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, window, wn.WA_Screen));
+    var width: usize = 0;
+    it.GetScreenAttrs(on, &[_]TagItem{ .{ .tag = intuition.screens.SA_Width, .data = @intFromPtr(&width) }, .{} });
+    try testing.expectEqual(width, windowAttr(ib, window, wn.WA_MaxWidth));
+    it.CloseWindow(window);
+    try testing.expect(it.CloseScreen(on));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "WA_UserPort: windows share the program's port, and each takes only its own messages when it goes" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const sys = kexec.SysBase.iface();
+    const display = try Display.up(ib);
+    const ie = sdk.devices.inputevent;
+    const port = sys.CreateMsgPort().?;
+
+    const opened = [2]*intuition.Window{
+        it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Width, .data = 40 },
+            .{ .tag = wn.WA_Height, .data = 20 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_DISKINSERTED },
+            .{ .tag = wn.WA_UserPort, .data = @intFromPtr(port) },
+            .{},
+        }).?,
+        it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Top, .data = 18 },
+            .{ .tag = wn.WA_Width, .data = 40 },
+            .{ .tag = wn.WA_Height, .data = 20 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_DISKINSERTED },
+            .{ .tag = wn.WA_UserPort, .data = @intFromPtr(port) },
+            .{},
+        }).?,
+    };
+    try testing.expectEqual(@intFromPtr(port), windowAttr(ib, opened[1], wn.WA_UserPort));
+
+    // One card, two messages on the one port, each naming its window.
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_DISKINSERTED });
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_DISKINSERTED });
+    var count: usize = 0;
+    var node = port.msg_list.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ != null) count += 1;
+    }
+    try testing.expectEqual(@as(usize, 4), count);
+
+    // The first closes: its two go, the second's two stay, and so does the
+    // port.
+    const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, opened[0], wn.WA_Screen));
+    it.CloseWindow(opened[0]);
+    var kept: usize = 0;
+    while (sys.GetMsg(port)) |message| {
+        const told: *wn.IntuiMessage = @ptrCast(@alignCast(message));
+        try testing.expectEqual(@intFromPtr(opened[1]), @intFromPtr(told.window));
+        kept += 1;
+        sys.ReplyMsg(message);
+    }
+    try testing.expectEqual(@as(usize, 2), kept);
+
+    // ModifyIDCMP(0) on the second does the same: its message off, the
+    // port left for the program to delete.
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_DISKINSERTED });
+    try testing.expect(it.ModifyIDCMP(opened[1], 0));
+    try testing.expect(sys.GetMsg(port) == null);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, opened[1], wn.WA_UserPort));
+    it.CloseWindow(opened[1]);
+    sys.DeleteMsgPort(port);
     try testing.expect(it.CloseScreen(on));
     display.down(ib);
     try tearDown(ib);

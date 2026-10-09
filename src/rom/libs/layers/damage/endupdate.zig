@@ -33,13 +33,14 @@ const LayersBase = @import("../layers.zig").LayersBase;
 ///
 /// BEHAVIOR:
 /// The clip list `BeginUpdate` put aside comes back, and the narrowed one
-/// is freed.
+/// is freed. The layer's lock that `BeginUpdate` kept is given back, and
+/// what was drawn goes to the display.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the layer.
 /// - Interrupts: no. It may wait.
 /// - Locks: no spinlock may be held: it waits for a lock.
-/// - Process: a Task will do.
+/// - Process: a Task will do: the one that called `BeginUpdate`.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
@@ -60,15 +61,20 @@ pub fn EndUpdate(lb: *LayersBase, layer: *Layer, done: bool) void {
     const gb = lb.graphics_base;
     const sys = lb.sys_base;
     if (layer.flags & layers.LAYERUPDATING == 0) return;
+    // The hold BeginUpdate kept, given back with this call's.
+    defer _locks.releaseOne(lb, layer);
 
-    _layerinfo.freeTargets(sys, layer.info, layer.targets);
-    layer.targets = layer.saved_targets;
-    layer.saved_targets = null;
-    const tags = [_]sdk.utility.TagItem{
-        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(layer.targets) },
-        .{},
-    };
-    gb.SetRPAttrs(layer.rp, &tags);
+    // Without one put aside, the update ran on the whole list, which stays.
+    if (layer.saved_targets) |saved| {
+        _layerinfo.freeTargets(sys, layer.info, layer.targets);
+        layer.targets = saved;
+        layer.saved_targets = null;
+        const tags = [_]sdk.utility.TagItem{
+            .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(layer.targets) },
+            .{},
+        };
+        gb.SetRPAttrs(layer.rp, &tags);
+    }
 
     layer.flags &= ~layers.LAYERUPDATING;
     // Not done means the program drew some of it and wants the rest kept,

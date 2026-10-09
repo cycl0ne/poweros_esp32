@@ -11,7 +11,9 @@
 //! render it at. Choosing a size opens that font with OpenDiskFont; a line
 //! under the lists says what it is - rows, where it came from, whether it
 //! was drawn or made, its kind of pixels - and a sample line is drawn in
-//! it below. The close gadget or Ctrl-C ends it.
+//! it below. A font's file (`Name.font`) dragged from the desktop and let
+//! go on the window chooses that family. The close gadget or Ctrl-C ends
+//! it.
 
 const sdk = @import("sdk");
 const asl = sdk.asl;
@@ -39,7 +41,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FontView";
-const VERSION_STRING = "\x00$VER: FontView 1.0 (28.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FontView 1.1 (09.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -535,6 +537,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.FreeMenus(made);
     };
 
+    // Font files let go on the window, while the desktop runs; taken off
+    // its list before the window closes.
+    var target: sdk.anvil.DropTarget = .{};
+    target.add(sys, window);
+    defer target.remove();
+
     // The first family shown to begin with.
     _ = ib.SetGadgetAttrsTagList(parts.fonts, window, &[_]TagItem{ .{ .tag = lv.LISTVIEW_Selected, .data = 0 }, .{} });
     chooseFamily(sys, gb, ib, dfb, state, window, parts.sizes, parts.preview, parts.about, 0);
@@ -542,8 +550,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var code: u32 = 0;
     var handle = wc.WmHandleInput{ .code = &code };
     while (true) {
-        const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
+        const got = ib.WaitIMsg(window, target.signal() | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_OK;
+        if (got & target.signal() != 0) {
+            var name: [dos.path_max + 1]u8 = undefined;
+            while (target.next(dl, &name)) |file| {
+                if (file.is_drawer) continue;
+                const line = lineOfFamily(ub, state, dl.FilePart(file.name)) orelse continue;
+                ib.ActivateWindow(window);
+                _ = ib.SetGadgetAttrsTagList(parts.fonts, window, &[_]TagItem{
+                    .{ .tag = lv.LISTVIEW_Selected, .data = line },
+                    .{ .tag = lv.LISTVIEW_MakeVisible, .data = line },
+                    .{},
+                });
+                chooseFamily(sys, gb, ib, dfb, state, window, parts.sizes, parts.preview, parts.about, line);
+            }
+        }
         while (true) {
             const word = ib.SendMessage(object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;

@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT
+//! anvil.library's functions: the desktop started, a file's information
+//! shown, and the windows, icons and menu items programs add. Open it with
+//! OpenLibrary("anvil.library", 1).
+//!
+//! The table is this library's own: it starts at the first slot after
+//! the standard four and holds only what is here.
+##include libs/exec/exec as exec
+##include libs/anvil/anvil as anvil
+##include libs/icon/icon as icon
+##include libs/utility/utility as utility
+##include libs/dos/dos as dos
+##include libs/intuition/intuition as intuition
+##basetype AnvilBase
+##name anvil.library
+##bias 4
+##public
+/// The desktop started on its own process, or brought to the front when
+/// it runs already: true, or false with IoErr saying why.
+bool StartAnvil(?[*]const utility.TagItem tags)
+/// A window of what a file, a drawer or a disk is - and its icon's fields
+/// - to read and change, on a process of its own: `name` in the drawer
+/// `lock` (none: the current one), on `screen` (none: the default).
+bool Information(?*dos.FileLock lock, [*:0]const u8 name, ?*intuition.Screen screen)
+/// A program's window made one that files can be dropped on: each drop
+/// an AppMessage to `port`. Null when the desktop does not run.
+?*anvil.AppWindow AddAppWindow(u32 id, usize user_data, *intuition.Window window, *exec.MsgPort port, ?[*]const utility.TagItem tags)
+/// The window taken off the desktop's list: no message is sent for it
+/// once this returns.
+bool RemoveAppWindow(?*anvil.AppWindow app)
+/// An icon of a program's on the desktop's ground, named `text`, with
+/// `object`'s picture: a double click or a drop on it an AppMessage to
+/// `port`. Null when the desktop does not run.
+?*anvil.AppIcon AddAppIcon(u32 id, usize user_data, [*:0]const u8 text, *exec.MsgPort port, *const icon.DiskObject object, ?[*]const utility.TagItem tags)
+/// The icon taken off the desktop.
+bool RemoveAppIcon(?*anvil.AppIcon app)
+/// An item `text` in the desktop's Tools menu: choosing it an AppMessage
+/// to `port` with the icons picked. Null when the desktop does not run.
+?*anvil.AppMenuItem AddAppMenuItem(u32 id, usize user_data, [*:0]const u8 text, *exec.MsgPort port, ?[*]const utility.TagItem tags)
+/// The item taken out of the Tools menu.
+bool RemoveAppMenuItem(?*anvil.AppMenuItem app)
+##end

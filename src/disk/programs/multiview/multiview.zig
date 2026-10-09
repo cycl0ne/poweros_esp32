@@ -10,7 +10,9 @@
 //! Without a name it asks for one with a file requester. `CLIP` takes
 //! the contents of a clipboard unit instead of a file, `SCALE` shows a
 //! picture at the size of the window rather than its own, and
-//! `PUBSCREEN` names a screen other than the default.
+//! `PUBSCREEN` names a screen other than the default. A file dragged from
+//! the desktop and let go on the window is shown in place of the one
+//! there, in a window where the last one was.
 //!
 //! **MultiView knows no formats.** Everything it shows it shows by
 //! opening the object and adding it to a window; a new kind of file is a
@@ -50,7 +52,7 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION_STRING = "\x00$VER: MultiView 1.0 (29.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MultiView 1.1 (09.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE,CLIP/K/N,SCALE/S,PUBSCREEN/K";
@@ -351,134 +353,207 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     } else {
         name = fileWanted(al, @ptrFromInt(argv[arg_file]), &chosen) orelse return dos.RETURN_WARN;
     }
-    const shown_name = name.?;
+    var object = makeObject(dl, dt, name.?, source, argv[arg_scale] != 0) orelse {
+        var why: [128]u8 = @splat(0);
+        _ = Printf(dl, MSG_NOOBJECT, .{ name.?, faultText(dl, &why) });
+        return dos.RETURN_FAIL;
+    };
+    // A file dropped on the window takes the place of the one shown, in a
+    // window where the last one was.
+    const shown = Shown{ .sys = sys, .dl = dl, .ib = ib, .dt = dt, .screen = screen, .scale = argv[arg_scale] != 0 };
+    var place: ?Place = null;
+    while (true) {
+        switch (shown.show(object, &place)) {
+            .done => |code| return code,
+            .next => |next| object = next,
+        }
+    }
+}
 
+/// A file or a clipboard unit opened as a data type object; null with
+/// IoErr saying why.
+fn makeObject(dl: *DosBase, dt: *DataTypesBase, name: [*:0]const u8, source: u32, scale: bool) ?*Object {
     // The window is titled with the file's own name, not the path it
     // was reached by: a drawer name that fills the title bar tells a
     // person nothing they did not just type.
-    const object = dt.NewDTObjectA(@ptrCast(shown_name), &[_]TagItem{
+    return dt.NewDTObjectA(@ptrCast(name), &[_]TagItem{
         .{ .tag = dtc.DTA_SourceType, .data = source },
-        .{ .tag = dtc.DTA_Title, .data = @intFromPtr(dl.FilePart(shown_name)) },
+        .{ .tag = dtc.DTA_Title, .data = @intFromPtr(dl.FilePart(name)) },
         // The object lays itself out on a process of its own, so the
         // numbers the bars need are not right until it says so. It says
         // so as an IDCMP message, which is the only way a program hears
         // from a gadget it did not ask anything of.
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{ .tag = gc.GA_RelVerify, .data = 1 },
-        .{ .tag = if (argv[arg_scale] != 0) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
+        .{ .tag = if (scale) pic.PDTA_Scale else utility.TAG_IGNORE, .data = 1 },
         // An animation plays as soon as it is shown; anything else
         // passes this by.
         .{ .tag = dtc.DTA_Immediate, .data = 1 },
         .{},
-    }) orelse {
-        var why: [128]u8 = @splat(0);
-        _ = Printf(dl, MSG_NOOBJECT, .{ shown_name, faultText(dl, &why) });
-        return dos.RETURN_FAIL;
-    };
-    // From here on the object is the layout's child, and a layout
-    // disposes of what is in it: this program disposes of the object
-    // itself only while it is still in no layout.
-    const layout = build(ib, object) orelse {
-        dt.DisposeDTObject(object);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
-        return dos.RETURN_FAIL;
-    };
+    });
+}
 
-    var title_storage: usize = 0;
-    _ = ib.GetAttr(dtc.DTA_Title, object, &title_storage);
-    const named: [*:0]const u8 = if (title_storage != 0) @ptrFromInt(title_storage) else shown_name;
-    // A picture too large to hold whole is kept smaller, and the title
-    // says so: a picture silently shown at half its size would have a
-    // person measuring the wrong thing.
-    var titled: [320]u8 = @splat(0);
-    const title = withShrink(ib, object, named, &titled);
+/// Where the window was, for the next one.
+const Place = struct { left: i32, top: i32 };
 
-    const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-        .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
-        .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
-        .{ .tag = wn.WA_CloseGadget, .data = 1 },
-        .{ .tag = wn.WA_DragBar, .data = 1 },
-        .{ .tag = wn.WA_DepthGadget, .data = 1 },
-        .{ .tag = wn.WA_SizeGadget, .data = 1 },
-        // The sizing gadget in both borders, so that the two bars each
-        // have a border deep enough to sit in and stop short of it.
-        .{ .tag = wn.WA_SizeBRight, .data = 1 },
-        .{ .tag = wn.WA_SizeBBottom, .data = 1 },
-        .{ .tag = wn.WA_Activate, .data = 1 },
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE },
-        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
-        .{},
-    }) orelse {
-        ib.DisposeObject(layout); // and the object in it
-        _ = Printf(dl, MSG_NOMEMORY, .{});
-        return dos.RETURN_FAIL;
-    };
-    // The window, and with it the layout, the bars and the object: a
-    // layout disposes of what is in it, and a data type object gives
-    // its kind back when it goes, so this is the whole of it.
-    defer ib.DisposeObject(window_object);
+/// What showing an object came to: the program done, with its return
+/// code, or another object to show in its place.
+const Outcome = union(enum) { done: i32, next: *Object };
 
-    var open = wc.WmOpen{};
-    if (ib.SendMessage(window_object, @ptrCast(&open)) == 0) {
-        _ = Printf(dl, MSG_NOWINDOW, .{});
-        return dos.RETURN_FAIL;
-    }
-    var window_ptr: usize = 0;
-    _ = ib.GetAttr(wc.WINDOWA_Window, window_object, &window_ptr);
-    const window: *intuition.Window = @ptrFromInt(window_ptr);
-    const made = bars(ib, window, object) orelse {
-        _ = Printf(dl, MSG_NOMEMORY, .{});
-        return dos.RETURN_FAIL;
-    };
-    // The bars are this program's, not the window object's, and they are
-    // in a window: it is closed first, which takes them out of it, and
-    // the window object is left with nothing but itself to give back.
-    defer {
-        var shut = wc.WmClose{};
-        _ = ib.SendMessage(window_object, @ptrCast(&shut));
-        ib.DisposeObject(made.model); // and the connections in it
-        ib.DisposeObject(made.vert);
-        ib.DisposeObject(made.horiz);
-    }
-    // What the object already knows, put into the bars. From here on
-    // each IDCMPUPDATE puts in what its new layout worked out.
-    followObject(ib, made, object, window);
+/// What every window is shown with.
+const Shown = struct {
+    sys: *ExecBase,
+    dl: *DosBase,
+    ib: *IntuitionBase,
+    dt: *DataTypesBase,
+    screen: *intuition.Screen,
+    scale: bool,
 
-    var code: u32 = 0;
-    var handle = wc.WmHandleInput{ .code = &code };
-    while (true) {
-        const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
-        if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
-        // Everything waiting is taken first and answered once.
-        //
-        // A resize on its own is nothing to this program: the object
-        // lays itself out again because intuition told it to. What is
-        // this program's is what the object reports when that has
-        // finished - the numbers go into the bars and the object is
-        // drawn again - and doing that once for a batch says as much as
-        // doing it for every message in it, which, since each drawing
-        // takes about as long as a step of a drag does, is what kept
-        // the program behind the pointer instead of level with it.
-        var draw = false;
+    /// `object` in a window - where the last one was, when there was one
+    /// - until the window is closed, or a file dropped on it can be
+    /// shown instead. The object is the window's from here on.
+    fn show(shown: *const Shown, object: *Object, place: *?Place) Outcome {
+        const ib = shown.ib;
+        const dl = shown.dl;
+        const dt = shown.dt;
+        // From here on the object is the layout's child, and a layout
+        // disposes of what is in it: this program disposes of the object
+        // itself only while it is still in no layout.
+        const layout = build(ib, object) orelse {
+            dt.DisposeDTObject(object);
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return .{ .done = dos.RETURN_FAIL };
+        };
+
+        var title_storage: usize = 0;
+        _ = ib.GetAttr(dtc.DTA_Title, object, &title_storage);
+        const named: [*:0]const u8 = if (title_storage != 0) @ptrFromInt(title_storage) else "MultiView";
+        // A picture too large to hold whole is kept smaller, and the title
+        // says so: a picture silently shown at half its size would have a
+        // person measuring the wrong thing.
+        var titled: [320]u8 = @splat(0);
+        const title = withShrink(ib, object, named, &titled);
+
+        const at = place.*;
+        const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
+            .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(shown.screen) },
+            .{ .tag = if (at != null) wn.WA_Left else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.left)) else 0 },
+            .{ .tag = if (at != null) wn.WA_Top else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.top)) else 0 },
+            // A larger object than the last is moved in from the edge
+            // rather than not shown.
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_SizeGadget, .data = 1 },
+            // The sizing gadget in both borders, so that the two bars each
+            // have a border deep enough to sit in and stop short of it.
+            .{ .tag = wn.WA_SizeBRight, .data = 1 },
+            .{ .tag = wn.WA_SizeBBottom, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE },
+            .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+            .{},
+        }) orelse {
+            ib.DisposeObject(layout); // and the object in it
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return .{ .done = dos.RETURN_FAIL };
+        };
+        // The window, and with it the layout, the bars and the object: a
+        // layout disposes of what is in it, and a data type object gives
+        // its kind back when it goes, so this is the whole of it.
+        defer ib.DisposeObject(window_object);
+
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(window_object, @ptrCast(&open)) == 0) {
+            _ = Printf(dl, MSG_NOWINDOW, .{});
+            return .{ .done = dos.RETURN_FAIL };
+        }
+        var window_ptr: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_Window, window_object, &window_ptr);
+        const window: *intuition.Window = @ptrFromInt(window_ptr);
+        const made = bars(ib, window, object) orelse {
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return .{ .done = dos.RETURN_FAIL };
+        };
+        // The bars are this program's, not the window object's, and they are
+        // in a window: it is closed first, which takes them out of it, and
+        // the window object is left with nothing but itself to give back.
+        defer {
+            place.* = .{ .left = windowAttr(ib, window, wn.WA_Left), .top = windowAttr(ib, window, wn.WA_Top) };
+            var shut = wc.WmClose{};
+            _ = ib.SendMessage(window_object, @ptrCast(&shut));
+            ib.DisposeObject(made.model); // and the connections in it
+            ib.DisposeObject(made.vert);
+            ib.DisposeObject(made.horiz);
+        }
+        // Files let go on the window, while the desktop runs; taken off
+        // its list before the window closes.
+        var target: sdk.anvil.DropTarget = .{};
+        target.add(shown.sys, window);
+        defer target.remove();
+        // What the object already knows, put into the bars. From here on
+        // each IDCMPUPDATE puts in what its new layout worked out.
+        followObject(ib, made, object, window);
+
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
         while (true) {
-            const word = ib.SendMessage(window_object, @ptrCast(&handle));
-            if (word == wc.WMHI_LASTMSG) break;
-            switch (word & wc.WMHI_CLASSMASK) {
-                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
-                // The object finished laying itself out on a process of
-                // its own: its numbers are right only now, and what is
-                // on the screen was drawn from the layout before it.
-                wc.WMHI_IDCMPUPDATE => draw = true,
-                wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return dos.RETURN_OK,
-                else => {},
+            const got = ib.WaitIMsg(window, target.signal() | exec.SIGBREAKF_CTRL_C);
+            if (got & exec.SIGBREAKF_CTRL_C != 0) return .{ .done = dos.RETURN_WARN };
+            if (got & target.signal() != 0) {
+                if (shown.dropped(&target, window)) |next| return .{ .next = next };
+            }
+            // Everything waiting is taken first and answered once.
+            //
+            // A resize on its own is nothing to this program: the object
+            // lays itself out again because intuition told it to. What is
+            // this program's is what the object reports when that has
+            // finished - the numbers go into the bars and the object is
+            // drawn again - and doing that once for a batch says as much as
+            // doing it for every message in it, which, since each drawing
+            // takes about as long as a step of a drag does, is what kept
+            // the program behind the pointer instead of level with it.
+            var draw = false;
+            while (true) {
+                const word = ib.SendMessage(window_object, @ptrCast(&handle));
+                if (word == wc.WMHI_LASTMSG) break;
+                switch (word & wc.WMHI_CLASSMASK) {
+                    wc.WMHI_CLOSEWINDOW => return .{ .done = dos.RETURN_OK },
+                    // The object finished laying itself out on a process of
+                    // its own: its numbers are right only now, and what is
+                    // on the screen was drawn from the layout before it.
+                    wc.WMHI_IDCMPUPDATE => draw = true,
+                    wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return .{ .done = dos.RETURN_OK },
+                    else => {},
+                }
+            }
+            if (draw) {
+                followObject(ib, made, object, window);
+                dt.RefreshDTObjectA(object, window, null, null);
             }
         }
-        if (draw) {
-            followObject(ib, made, object, window);
-            dt.RefreshDTObjectA(object, window, null, null);
-        }
     }
-}
+
+    /// The last file let go on the window opened as an object; null, and
+    /// the screen flashed, when none of them could be.
+    fn dropped(shown: *const Shown, target: *sdk.anvil.DropTarget, window: *intuition.Window) ?*Object {
+        var name: [dos.path_max + 1]u8 = undefined;
+        var next: ?*Object = null;
+        while (target.next(shown.dl, &name)) |file| {
+            if (file.is_drawer) continue;
+            const made = makeObject(shown.dl, shown.dt, file.name, dtc.DTST_FILE, shown.scale) orelse {
+                shown.ib.DisplayBeep(shown.screen);
+                continue;
+            };
+            if (next) |earlier| shown.dt.DisposeDTObject(earlier);
+            next = made;
+        }
+        if (next != null) shown.ib.ActivateWindow(window);
+        return next;
+    }
+};
 
 /// What went wrong, in words. The library answers its own numbers for
 /// what it could not do with a file, and dos's for everything else.

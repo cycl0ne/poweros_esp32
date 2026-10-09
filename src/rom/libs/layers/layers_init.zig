@@ -29,10 +29,10 @@ pub const LIBRARY_VERSION = 0;
 
 /// The build within the version. Set into the base by `init`, since exec
 /// copies only the tag's name, version and ID string.
-pub const LIBRARY_REVISION = 1;
+pub const LIBRARY_REVISION = 2;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "18.9.2026";
+const BUILD_DATE = "09.10.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =

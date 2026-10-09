@@ -121,7 +121,8 @@ pub const WA_AutoAdjust = WA_Dummy + 0x2D;
 /// A `*Screen` to open on, which the caller keeps open.
 pub const WA_CustomScreen = WA_Dummy + 0x0D;
 /// The smallest and largest it may be sized to. Its opening size, and
-/// the screen's, by default.
+/// the screen's, by default; a negative maximum is as large as the
+/// screen.
 pub const WA_MinWidth = WA_Dummy + 0x0F;
 pub const WA_MinHeight = WA_Dummy + 0x10;
 pub const WA_MaxWidth = WA_Dummy + 0x11;
@@ -292,7 +293,10 @@ pub const DEFAULTRPTQUEUE: u32 = 3;
 
 /// Read only: its RastPort, whose (0,0) is the window's top-left.
 pub const WA_RastPort = WA_Dummy + 0x100;
-/// Read only: its message port, or 0 without IDCMP.
+/// Its message port, or 0 without IDCMP. Given at open: a port of the
+/// program's own, shared with its other windows - each message's `window`
+/// says whose it is. The port stays the program's: closing the window, or
+/// `ModifyIDCMP(0)`, takes this window's messages off it and leaves it.
 pub const WA_UserPort = WA_Dummy + 0x101;
 /// Read only: the screen it is on.
 pub const WA_Screen = WA_Dummy + 0x102;

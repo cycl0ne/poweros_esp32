@@ -132,6 +132,7 @@ gadgets and hands its messages over as words.
 | `WA_Activate` | made the active window as it opens |
 | `WA_SimpleRefresh`, `WA_GimmeZeroZero`, `WA_Borderless`, `WA_Backdrop` | what kind of window |
 | `WA_IDCMP` | the messages it sends; without it, no port |
+| `WA_UserPort` | a port of the program's own its messages go to, shared with its other windows |
 | `WA_Gadgets` | gadgets, linked with `GA_Previous`, added and drawn as it opens |
 
 A window is opaque too, read with `GetWindowAttrs` and the same tags, and
@@ -171,7 +172,9 @@ A smart-refresh window, the default, keeps what is covered and puts it
 back by itself. A simple-refresh one keeps nothing and sends
 `IDCMP_REFRESHWINDOW`; the program draws between `BeginRefresh` and
 `EndRefresh`, which let through only the part that needs it, so it may
-draw everything. `IDCMP_NEWSIZE` says the size changed:
+draw everything. The window's layer is held from one to the other, so
+no window moves over it meanwhile: in between, only draw - no intuition
+call. `IDCMP_NEWSIZE` says the size changed:
 
 ```zig
 const graphics = sdk.graphics;
@@ -225,6 +228,13 @@ several messages, so a program takes them until `GetIMsg` answers null.
 **Copy what is needed and reply at once.** The message is intuition's
 again after the reply, one not replied holds back the moves and key
 repeats behind it, and every one is replied before the window closes.
+
+**One port for many windows.** A program with several windows can give
+each the same port of its own (`WA_UserPort`) and wait on that one
+signal: each message's `window` says whose it is. The port stays the
+program's - `CloseWindow` and `ModifyIDCMP(window, 0)` take only that
+window's messages off it - and is deleted after the last window on it
+has closed.
 
 | Class | When | `code`, `iaddress` |
 |---|---|---|
@@ -449,7 +459,7 @@ with weight 0 keeps its own size.
 | `LAYOUTA_AddChild` | a gadget, the layout's from then on; the `CHILDA_` tags after it are about it |
 | `CHILDA_Label` | text on its left; the labels of a column line up |
 | `CHILDA_WeightWidth`, `CHILDA_WeightHeight` | its share of the spare room in a row, in a column (100) |
-| `CHILDA_MinWidth` ... `CHILDA_MaxHeight` | its smallest and largest size - a button big enough for a finger |
+| `CHILDA_MinWidth` ... `CHILDA_MaxHeight` | its smallest and largest size - a button big enough for a finger; the largest is also the most it asks for, so an editor that wants a page can be kept to a few lines |
 | `CHILDA_Align` | `CALIGN_` across and down, for a child smaller than its room |
 | `LAYOUTA_Frame`, `LAYOUTA_FrameTitle` | a frame round it, with a title in its top edge |
 | `LAYOUTA_Columns`, `CHILDA_Column`, `CHILDA_Row`, `CHILDA_ColumnSpan` | a grid's columns and cells |
@@ -834,7 +844,10 @@ keeps the window from taking input while it is up, and
 ready for `OpenDiskFont` ([Choosing and opening a font](fonts.md#choosing-and-opening-a-font)).
 In a window of gadgets, getfile.gadget and getfont.gadget are a field
 with a button beside it that opens these requesters
-([More than buttons](programs.md#more-than-buttons)).
+([More than buttons](programs.md#more-than-buttons)). While the desktop
+runs, a file dragged from it and let go on the file requester goes to
+its drawer with its name in the File field
+([Programs on the desktop](anvil.md#programs-on-the-desktop)).
 
 ## Trying it
 

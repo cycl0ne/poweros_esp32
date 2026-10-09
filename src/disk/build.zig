@@ -33,7 +33,8 @@ const commands = [_][]const u8{
     "backlight",    "rtg",       "showinfo", "setmap",        "mount",
     "showconfig",   "date",      "setdate",  "setprefs",      "fixfonts",
     "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",   "modbus",    "more",     "relabel",
+    "diskchange",   "modbus",    "more",     "relabel",       "loadanvil",
+    "iconx",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -44,7 +45,7 @@ const tests = [_][]const u8{
     "bsdsocktest", "asl",        "settings",    "iff",     "datatypes",
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
-    "launch",      "drag",       "tap",
+    "launch",      "drag",       "tap",         "app",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -57,6 +58,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
     .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
+    .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -73,6 +75,7 @@ const modules = [_]Program{
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
+    .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },

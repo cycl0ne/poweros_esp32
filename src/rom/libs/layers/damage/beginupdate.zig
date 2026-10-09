@@ -39,11 +39,19 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// what the layer goes back to and working it out again could fail for want
 /// of memory just when there is none.
 ///
+/// Begun, the layer stays held - as `LockLayer` holds it - until
+/// `EndUpdate`: nothing moves over it or uncovers more of it meanwhile,
+/// which would add damage that `EndUpdate` then cleared without its having
+/// been drawn. What is drawn reaches the display together at the end.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the layer.
 /// - Interrupts: no. It may wait, and it allocates.
-/// - Locks: no spinlock may be held: it waits for a lock.
-/// - Process: a Task will do.
+/// - Locks: no spinlock may be held: it waits for a lock. Begun, the
+///   layer's lock is held until `EndUpdate`: between the two, only draw.
+///   Anything that moves, opens or closes a layer of the display waits
+///   for it, so a call that waits on such a thing waits for ever.
+/// - Process: a Task will do; `EndUpdate` must be called by the same.
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free.
@@ -63,7 +71,14 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// ```
 pub fn BeginUpdate(lb: *LayersBase, layer: *Layer) bool {
     _locks.holdOne(lb, layer);
-    defer _locks.releaseOne(lb, layer);
+    // Begun, the hold is kept for EndUpdate to give back.
+    const begun = begin(lb, layer);
+    if (!begun) _locks.releaseOne(lb, layer);
+    return begun;
+}
+
+/// The update begun, with the layer held: true when it was.
+fn begin(lb: *LayersBase, layer: *Layer) bool {
     const gb = lb.graphics_base;
     layer.last_error = layers.LERR_OK;
     if (layer.flags & layers.LAYERUPDATING != 0) return false;

@@ -48,6 +48,8 @@ pub const filter = @import("libs/filter/filter.zig");
 /// Icons: the picture a file is shown with and its fields, through
 /// icon.library.
 pub const icon = @import("libs/icon/icon.zig");
+/// anvil.library: the desktop.
+pub const anvil = @import("libs/anvil/anvil.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

@@ -64,6 +64,14 @@ const image_dirs = [_][]const u8{
     "devs/handlers",
     // SYS:Programs - programs with windows, off the command path.
     "programs",
+    // SYS:WBStartup - the programs the desktop starts as it comes up,
+    // empty until some are put there.
+    "WBStartup",
+    // SYS:System - what the desktop's own icons start: Shell.
+    "System",
+    // The volume's trash: a file put in it is renamed there, and Empty
+    // Trash deletes what it holds.
+    "Trashcan",
     // SYS:Tests - files to try the system on, a directory per subject.
     "tests",
     "tests/datatypes",
@@ -81,6 +89,63 @@ const image_dirs = [_][]const u8{
     "prefs/presets",
     "prefs/presets/styles",
 };
+
+/// An icon the build writes onto the image: where it goes, the picture
+/// scripts/fetch-icons.sh drew for it, and its fields as tools/mkicon
+/// takes them.
+const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const []const u8 = &.{} };
+
+const disk_icons = [_]DiskIcon{
+    // The defaults, in ENVARC:Sys and from there in ENV:Sys: a file
+    // without an icon gets the one of its kind, its group or a script's.
+    .{ .path = "prefs/env-archive/Sys/def_disk.info", .picture = "drive-harddisk", .fields = &.{"KIND=DISK"} },
+    .{ .path = "prefs/env-archive/Sys/def_drawer.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "prefs/env-archive/Sys/def_tool.info", .picture = "application-x-executable", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "prefs/env-archive/Sys/def_project.info", .picture = "text-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_trashcan.info", .picture = "user-trash", .fields = &.{"KIND=TRASHCAN"} },
+    // A script runs through IconX.
+    .{ .path = "prefs/env-archive/Sys/def_script.info", .picture = "text-x-script", .fields = &.{ "KIND=PROJECT", "TOOL=C:IconX" } },
+    .{ .path = "prefs/env-archive/Sys/def_picture.info", .picture = "image-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_text.info", .picture = "text-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_document.info", .picture = "x-office-document", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_sound.info", .picture = "audio-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_instrument.info", .picture = "audio-card", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_music.info", .picture = "multimedia-player", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_animation.info", .picture = "video-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_movie.info", .picture = "video-x-generic", .fields = &.{"KIND=PROJECT"} },
+    // The volume itself: its window shows the drawers with icons, the
+    // system's own (C:, S:, LIBS:, DEVS:, ...) left to the shell.
+    .{ .path = "Disk.info", .picture = "drive-harddisk", .fields = &.{ "KIND=DISK", "SHOW=ICONS" } },
+    .{ .path = "Trashcan.info", .picture = "user-trash", .fields = &.{"KIND=TRASHCAN"} },
+    .{ .path = "programs.info", .picture = "applications-other", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "prefs.info", .picture = "preferences-desktop", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "System.info", .picture = "applications-system", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "WBStartup.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "tests.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "pictures.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "fonts.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    // The programs.
+    .{ .path = "programs/Notepad.info", .picture = "accessories-text-editor", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/MultiView.info", .picture = "system-search", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/FontView.info", .picture = "preferences-desktop-font", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/Prefs.info", .picture = "preferences-system", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{"KIND=TOOL"} },
+};
+
+/// The size the desktop shows icons at on a board's screen - an eighth of
+/// its height, at most 48 (the screens are in src/boards/<board>/
+/// system.zig) - so the disk's pictures are drawn at it, not shrunk on
+/// the board.
+fn iconSize(board: Board) u32 {
+    return switch (board) {
+        // 1024x600
+        .waveshare_7b, .qemu => 48,
+        // 480x320
+        .es3c35p => 40,
+    };
+}
 
 pub fn build(b: *std.Build) void {
     // ReleaseSmall currently trips over a compiler_rt symbol bug in the
@@ -163,6 +228,17 @@ pub fn build(b: *std.Build) void {
     });
     mkfs.root_module.addImport("sdk", sdk);
     mkfs.root_module.addImport("fs", fs_mod);
+
+    // tools/mkicon, which makes the disk's icons from pictures.
+    const mkicon = b.addExecutable(.{
+        .name = "mkicon",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkicon/mkicon.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    mkicon.root_module.addImport("sdk", sdk);
 
     // What goes on the image besides the build's own outputs: the
     // `disk/` tree, then -Dextra. `made` is the directories the image
@@ -251,6 +327,17 @@ pub fn build(b: *std.Build) void {
         const store = run.addOutputFileArg("roots");
         make_disk.addArg("certificates");
         make_disk.addPrefixedFileArg("certificates/roots=", store);
+    }
+    // The icons, from the pictures scripts/fetch-icons.sh drew at the
+    // board's size, when they are there.
+    if (iconsDir(b, iconSize(board))) |dir| {
+        for (disk_icons) |one| {
+            const run = b.addRunArtifact(mkicon);
+            run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{one.picture}) }) });
+            const made_icon = run.addOutputFileArg(std.fs.path.basename(one.path));
+            run.addArgs(one.fields);
+            make_disk.addPrefixedFileArg(b.fmt("{s}=", .{one.path}), made_icon);
+        }
     }
     // The `disk/` tree, and then -Dextra last, so that either may
     // replace a file the tree above put there.
@@ -433,18 +520,9 @@ pub fn build(b: *std.Build) void {
     check_modchart.addFileArg(disk_module_list);
     check_modchart.has_side_effects = true;
     test_step.dependOn(&check_modchart.step);
-    // tools/mkicon, which makes the disk's icons from pictures: it runs
-    // once on a default icon's picture with every field, reads back what
-    // it wrote, and fails if any of it does not read.
-    const mkicon = b.addExecutable(.{
-        .name = "mkicon",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/mkicon/mkicon.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    mkicon.root_module.addImport("sdk", sdk);
+    // tools/mkicon runs once on a default icon's picture with every
+    // field, reads back what it wrote, and fails if any of it does not
+    // read.
     const try_mkicon = b.addRunArtifact(mkicon);
     try_mkicon.addFileArg(b.path("src/disk/libs/icon/images/drawer.png"));
     _ = try_mkicon.addOutputFileArg("Work.info");
@@ -636,6 +714,19 @@ fn fontsDir(b: *std.Build) ?[]const u8 {
     const path = b.pathFromRoot("toolchain/fonts");
     var dir = std.Io.Dir.cwd().openDir(io, b.pathJoin(&.{ path, "go" }), .{}) catch {
         std.log.info("no font sources (scripts/fetch-fonts.sh): the disk has no FONTS:", .{});
+        return null;
+    };
+    dir.close(io);
+    return path;
+}
+
+/// Where scripts/fetch-icons.sh put the pictures drawn at `size`, if it
+/// has.
+fn iconsDir(b: *std.Build, size: u32) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot(b.fmt("toolchain/icons/{d}", .{size}));
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch {
+        std.log.info("no icon pictures (scripts/fetch-icons.sh): the disk has no icons of its own", .{});
         return null;
     };
     dir.close(io);

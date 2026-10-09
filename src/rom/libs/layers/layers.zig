@@ -534,12 +534,19 @@ test "layers: the library takes the locks itself, and they nest" {
     try testing.expectEqual(@as(i16, 0), l.lock.nest_count);
 
     // A layer's own lock nests the same way, which is what a drawing task
-    // holds while it draws.
+    // holds while it draws - and an update holds it from BeginUpdate to
+    // EndUpdate, a level of its own.
     base(lb).LockLayer(layer);
     base(lb).LockLayer(layer);
-    try testing.expect(base(lb).BeginUpdate(layer) or true); // takes it again
+    try testing.expectEqual(@as(i16, 2), l.lock.nest_count);
+    if (base(lb).BeginUpdate(layer)) {
+        try testing.expectEqual(@as(i16, 3), l.lock.nest_count);
+        base(lb).EndUpdate(layer, true);
+    }
+    try testing.expectEqual(@as(i16, 2), l.lock.nest_count);
     base(lb).UnlockLayer(layer);
     base(lb).UnlockLayer(layer);
+    try testing.expectEqual(@as(i16, 0), l.lock.nest_count);
 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);
@@ -872,6 +879,59 @@ test "layers: a simple layer is owed what it could not carry, and what a resize 
     fill(lb, back, graphics.penRGB(0, 0, 255), .{ .max_x = 14, .max_y = 8 });
     try testing.expectEqual(blue, pixelAt(&surface, 31, 15)); // the part still on it
     for (pixels[32 * 16 * 2 ..]) |b| try testing.expectEqual(@as(u8, 0), b);
+
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+test "layers: a layer moved over one being updated: the update and what follows it draw only where it shows" {
+    const lb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{
+        .pixels = &pixels,
+        .width = 32,
+        .height = 16,
+        .pitch = 32 * 2,
+        .size_bytes = pixels.len,
+        .format = .rgb565,
+    };
+    const screen = try display(lb, &surface);
+    const info = base(lb).NewLayerInfo(screen) orelse return error.NoLayerInfo;
+    const back_where = Rect{ .min_x = 0, .min_y = 0, .max_x = 20, .max_y = 10 };
+    const back_tags = [_]TagItem{ .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&back_where) }, .{} };
+    const back = base(lb).CreateLayerTagList(info, &back_tags) orelse return error.NoLayer;
+    const front_where = Rect{ .min_x = 12, .min_y = 6, .max_x = 32, .max_y = 16 };
+    const front_tags = [_]TagItem{ .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&front_where) }, .{} };
+    _ = base(lb).CreateLayerTagList(info, &front_tags) orelse return error.NoLayer;
+    fill(lb, back, graphics.penRGB(255, 0, 0), .{ .max_x = 20, .max_y = 10 });
+
+    // Raised, it owes the corner (12..20, 6..10). A third layer in front
+    // of everything, clear of it for now.
+    try testing.expect(base(lb).UpfrontLayer(back));
+    const over_where = Rect{ .min_x = 24, .min_y = 0, .max_x = 32, .max_y = 6 };
+    const over_tags = [_]TagItem{ .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&over_where) }, .{} };
+    const over = base(lb).CreateLayerTagList(info, &over_tags) orelse return error.NoLayer;
+
+    // Its program begins the update - and before it draws, the third one
+    // is moved over part of the corner, to (14..22, 4..10).
+    try testing.expect(base(lb).BeginUpdate(back));
+    try testing.expect(base(lb).MoveLayer(over, -10, 4));
+    fill(lb, back, graphics.penRGB(0, 0, 255), .{ .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(blue, pixelAt(&surface, 13, 8)); // owed and still showing
+    try testing.expect(pixelAt(&surface, 16, 8) != blue); // owed, but covered now
+    try testing.expectEqual(red, pixelAt(&surface, 5, 3)); // never owed
+    base(lb).EndUpdate(back, true);
+
+    // After it, the whole layer draws again - where it shows now, not
+    // where it showed when the update began.
+    fill(lb, back, graphics.penRGB(0, 255, 0), .{ .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(green, pixelAt(&surface, 5, 3));
+    try testing.expectEqual(green, pixelAt(&surface, 13, 8));
+    try testing.expect(pixelAt(&surface, 16, 8) != green);
+    try testing.expect(pixelAt(&surface, 18, 5) != green);
 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);

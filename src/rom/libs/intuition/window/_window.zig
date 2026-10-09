@@ -244,6 +244,10 @@ pub const WMF_NEEDMENUCLEAR: u32 = 1 << 1;
 pub const WMF_VISITOR: u32 = 1 << 2;
 /// Gadget help is on for it (`HelpControl`).
 pub const WMF_GADGETHELP: u32 = 1 << 3;
+/// Its port is the program's (`WA_UserPort` given at open), shared with
+/// its other windows: only its own messages are taken off, and the port
+/// stays.
+pub const WMF_SHARED_PORT: u32 = 1 << 4;
 /// Inside BeginRefresh, so EndRefresh has an update to end.
 pub const WF_IN_REFRESH = wn.WFLG_WINDOWREFRESH;
 /// An IDCMP_INTUITICKS is waiting; no second is sent until it is replied.
@@ -717,10 +721,28 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
 }
 
 /// Take a window's port away, with every message still waiting on it.
+/// A port the program shares between its windows keeps the others'
+/// messages and stays the program's: this window's are found on it and
+/// taken off one by one. The caller holds intuition's lock, which every
+/// message is posted under, so the queue changes under the walk only by
+/// what the program takes off it - and it is the program that is here.
 pub fn dropPort(ib: *IntuitionBase, w: *Window) void {
     const port = w.user_port orelse return;
-    while (ib.sys_base.GetMsg(port)) |m| freeMessage(ib, m);
-    ib.sys_base.DeleteMsgPort(port);
+    if (w.more_flags & WMF_SHARED_PORT != 0) {
+        var node = port.msg_list.head;
+        while (node) |n| {
+            const following = n.succ;
+            const im: *wn.IntuiMessage = @ptrCast(@alignCast(n));
+            if (following != null and @intFromPtr(im.window) == @intFromPtr(w)) {
+                if (ib.sys_base.RemoveMsg(port, &im.msg)) freeMessage(ib, &im.msg);
+            }
+            node = following;
+        }
+        w.more_flags &= ~WMF_SHARED_PORT;
+    } else {
+        while (ib.sys_base.GetMsg(port)) |m| freeMessage(ib, m);
+        ib.sys_base.DeleteMsgPort(port);
+    }
     w.user_port = null;
     w.flags &= ~WF_REFRESH_SENT;
 }

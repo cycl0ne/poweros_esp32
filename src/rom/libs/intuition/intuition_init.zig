@@ -91,8 +91,8 @@ pub const LIBRARY_VERSION = 0;
 /// GA_ClipRect, a gadget's clip, held by ObtainGIRPort; a layout's labels
 /// move with it; a value the wheel changes reported as GADGETUP
 /// (GMWR_VERIFY).
-pub const LIBRARY_REVISION = 34;
-const BUILD_DATE = "07.10.2026";
+pub const LIBRARY_REVISION = 35;
+const BUILD_DATE = "08.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -33,3 +33,4 @@ pub const tls = @import("tls.zig");
 pub const modbus = @import("modbus.zig");
 pub const filter = @import("filter.zig");
 pub const icon = @import("icon.zig");
+pub const anvil = @import("anvil.zig");

@@ -64,6 +64,10 @@ tags and constants, each with its doc comment.
 - [Datatypes](guides/datatypes.md) - what a file is to datatypes.library,
   working an object, pictures, text, animations, showing one in a
   window, and writing a class.
+- [The desktop](guides/anvil.md) - anvil.library: starting the desktop
+  and its startup drawer, the ground and the disks, drawers, opening and
+  dragging, working with files, Information, scripts and shells, the
+  calls programs take part with, and the menus.
 - [Icons](guides/icons.md) - the icon file, reading one and its
   picture, tool types, writing one, the defaults, and making icons on
   the host.
