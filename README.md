@@ -203,6 +203,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
+| `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display |
 
 Without them the disk has everything but that part. On a board the serial
 console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
