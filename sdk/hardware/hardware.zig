@@ -40,7 +40,8 @@ pub const i2c = own.i2c;
 pub const systimer = own.systimer;
 pub const rtc_cntl = own.rtc_cntl;
 /// The general DMA engine's channels, for dma.resource and the drivers
-/// that drive a channel directly.
+/// that drive a channel directly. The ESP32-P4 has two engines, AHB and
+/// AXI, so its calls name the engine as well as the channel.
 pub const gdma = own.gdma;
 /// The general-purpose SPI controllers (SPI2, SPI3) as bus masters.
 pub const gpspi = own.gpspi;

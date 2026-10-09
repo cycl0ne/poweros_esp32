@@ -439,6 +439,7 @@ fn typeName(node_type: exec.NodeType) [*:0]const u8 {
 /// SDK's own INTB_ constants: the source numbers are the chip's, and a
 /// number alone says nothing about which peripheral it belongs to.
 const source_names = blk: {
+    @setEvalBranchQuota(20_000);
     const intbits = sdk.hardware.intbits;
     var names: [intbits.INTB_COUNT]?[*:0]const u8 = @splat(null);
     for (@typeInfo(intbits).@"struct".decls) |d| {
