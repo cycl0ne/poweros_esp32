@@ -139,7 +139,7 @@ fn checkStack(task: *const Task, context: *anyopaque) void {
     if (task.flags & sdk.exec.TF_GUARDED == 0) return;
     var over = !guardIntact(task.sp_lower);
     // The host tests hand the dispatcher contexts that are not addresses.
-    if (@import("builtin").cpu.arch == .xtensa) {
+    if (@import("builtin").cpu.arch == .xtensa or @import("builtin").cpu.arch == .riscv32) {
         const at = @intFromPtr(context);
         if (at < task.sp_lower or at > task.sp_upper) over = true;
     }

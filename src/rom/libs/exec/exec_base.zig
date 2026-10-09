@@ -34,18 +34,26 @@ pub const max_cores = 2;
 
 /// The core's cycle counter; none on the host.
 pub inline fn cycles() u32 {
-    if (comptime builtin.cpu.arch != .xtensa) return 0;
+    if (comptime builtin.cpu.arch != .xtensa and builtin.cpu.arch != .riscv32) return 0;
     return sdk.hardware.cpu.ccount();
 }
 
-/// The core this code runs on: 0 or 1, from PRID (0xCDCD for core 0,
-/// 0xABAB for core 1 - bit 13 tells them apart). The host tests have one.
+/// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
+/// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on RISC-V
+/// from mhartid. The host tests have one.
 pub inline fn coreId() u32 {
-    if (comptime builtin.cpu.arch != .xtensa) return 0;
-    const prid = asm volatile ("rsr %[prid], prid"
-        : [prid] "=r" (-> u32),
-    );
-    return (prid >> 13) & 1;
+    switch (comptime builtin.cpu.arch) {
+        .xtensa => {
+            const prid = asm volatile ("rsr %[prid], prid"
+                : [prid] "=r" (-> u32),
+            );
+            return (prid >> 13) & 1;
+        },
+        .riscv32 => return asm volatile ("csrr %[id], mhartid"
+            : [id] "=r" (-> u32),
+        ),
+        else => return 0,
+    }
 }
 
 /// What each core has of its own: the task it runs, its Disable state, its scheduling flags and time slice, how deep it is in

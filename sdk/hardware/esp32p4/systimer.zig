@@ -20,10 +20,12 @@ pub const TARGET0_HI: usize = map.SYSTIMER + 0x1C;
 pub const TARGET0_LO: usize = map.SYSTIMER + 0x20;
 pub const TARGET0_CONF: usize = map.SYSTIMER + 0x34;
 pub const TARGET1_CONF: usize = map.SYSTIMER + 0x38;
+pub const TARGET2_CONF: usize = map.SYSTIMER + 0x3C;
 pub const UNIT0_VALUE_HI: usize = map.SYSTIMER + 0x40;
 pub const UNIT0_VALUE_LO: usize = map.SYSTIMER + 0x44;
 pub const COMP0_LOAD: usize = map.SYSTIMER + 0x50;
 pub const COMP1_LOAD: usize = map.SYSTIMER + 0x54;
+pub const COMP2_LOAD: usize = map.SYSTIMER + 0x58;
 pub const INT_ENA: usize = map.SYSTIMER + 0x64;
 pub const INT_RAW: usize = map.SYSTIMER + 0x68;
 pub const INT_CLR: usize = map.SYSTIMER + 0x6C;
@@ -33,6 +35,7 @@ pub const DATE: usize = map.SYSTIMER + 0xFC;
 pub const DATE_RESET: u32 = 0x0220_1073;
 
 // CONF: which alarms run.
+pub const CONF_TARGET2_WORK_EN: u32 = 1 << 22;
 pub const CONF_TARGET1_WORK_EN: u32 = 1 << 23;
 pub const CONF_TARGET0_WORK_EN: u32 = 1 << 24;
 

@@ -50,6 +50,9 @@ pub const wdt = own.wdt;
 pub const cpu = own.cpu;
 /// The random number generator.
 pub const rng = own.rng;
+/// The caches, and the controller's entry points in the ROM: the
+/// ESP32-P4's. exec drives the ESP32-S3's itself, so there it is empty.
+pub const cache = if (chip == .esp32p4) own.cache else struct {};
 /// The emulator's virtual display, with its window's pointer and keys.
 pub const qemu_rgb = own.qemu_rgb;
 

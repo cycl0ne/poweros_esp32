@@ -382,9 +382,19 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseSafe,
         }),
     });
+    // The ESP32-P4's ROM-loaded part of the kernel image, cut from the
+    // whole one.
+    const ramimage = b.addExecutable(.{
+        .name = "ramimage",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/ramimage.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
     const built = switch (chipOf(board)) {
         .esp32s3 => addImage(b, esptool, ressize, kernel, disk_bin, disk_offset),
-        .esp32p4 => addP4Image(b, esptool, kernel),
+        .esp32p4 => addP4Image(b, esptool, ramimage, kernel),
     };
     const image = built.image;
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
@@ -425,7 +435,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores));
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores));
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -913,23 +923,40 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
 }
 
+/// Where the ESP32-P4's kernel keeps its flash part in flash: the offset
+/// src/arch/esp32p4/kernel.ld links it for (`_flash_part_offset`).
+const p4_flash_part_offset = 0x40000;
+
 /// The ESP32-P4's kernel made into what is flashed and what esp-emulator
-/// boots: an ESP image for the ROM, which loads its RAM segments and runs
-/// it, at flash offset 0x2000, where the P4's ROM looks for its
-/// second-stage bootloader; in a 16 MB flash dump for the emulator.
-fn addP4Image(b: *std.Build, esptool: []const u8, kernel: *std.Build.Step.Compile) Image {
+/// boots, in two parts: the RAM part, an ESP image the ROM loads and runs,
+/// at flash offset 0x2000, where the P4's ROM looks for its second-stage
+/// bootloader; and the flash part - the code and constants - at the
+/// offset it is linked for, which the RAM part maps in place
+/// (src/arch/esp32p4/flashmap.zig). Both in a 16 MB flash dump for the
+/// emulator.
+fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Compile, kernel: *std.Build.Step.Compile) Image {
     const kernel_elf = kernel.getEmittedBin();
+    // --ram-only-header puts the RAM segments first and has the header
+    // count only those; the image is cut after their checksum.
     const elf2image = b.addSystemCommand(&.{
-        esptool,        "--chip", "esp32p4",      "elf2image",
-        "--flash-mode", "dio",    "--flash-freq", "80m",
-        "--flash-size", "16MB",   "-o",
+        esptool,        "--chip", "esp32p4",           "elf2image",
+        "--flash-mode", "dio",    "--flash-freq",      "80m",
+        "--flash-size", "16MB",   "--ram-only-header", "--dont-append-digest",
+        "-o",
     });
-    const image = elf2image.addOutputFileArg("kernel.bin");
+    const whole = elf2image.addOutputFileArg("kernel-whole.bin");
     elf2image.addFileArg(kernel_elf);
+    const cut = b.addRunArtifact(ramimage);
+    cut.addFileArg(whole);
+    const image = cut.addOutputFileArg("kernel.bin");
+    const flash_part = b.addObjCopy(kernel_elf, .{ .format = .bin, .only_section = ".flash" });
     const merge = b.addSystemCommand(&.{ esptool, "--chip", "esp32p4", "merge-bin", "--pad-to-size", "16MB", "-o" });
     const flash_image = merge.addOutputFileArg("flash.bin");
     merge.addArg("0x2000");
     merge.addFileArg(image);
+    merge.addArg(b.fmt("0x{x}", .{p4_flash_part_offset}));
+    merge.addFileArg(flash_part.getOutput());
+    b.getInstallStep().dependOn(&b.addInstallBinFile(flash_part.getOutput(), "kernel-flash.bin").step);
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
 }
 

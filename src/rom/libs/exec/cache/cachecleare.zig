@@ -78,7 +78,7 @@ pub fn CacheClearE(base: *ExecBase, address: *anyopaque, length: u32, caches: u3
                 .start = _cache.lineOf(range.start),
                 .end = _cache.lineOf(range.end + sdk.hardware.DCACHE_LINE_SIZE - 1),
             };
-            _cache.inChunks(whole_lines, hardware.invalidate);
+            _cache.inChunks(whole_lines, hardware.invalidate_icache orelse hardware.invalidate);
         } else if (_cache.data_bus.clip(start, length) != null) {
             hardware.invalidate_icache_all();
         }

@@ -28,6 +28,8 @@ pub const wdt = @import("wdt.zig");
 pub const cpu = @import("cpu.zig");
 /// The random number generator.
 pub const rng = @import("rng.zig");
+/// The caches, and the controller's entry points in the ROM.
+pub const cache = @import("cache.zig");
 
 /// The crystal: the clock the chip starts on.
 pub const XTAL_HZ: u32 = 40_000_000;

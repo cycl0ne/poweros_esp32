@@ -9,7 +9,8 @@
 //!   before any library does, and
 //!   `boards/` itself. A module asks
 //!   expansion.library for its part.
-//! - **exec's hardware** (`src/arch/`) is imported by the kernel, exec, and
+//! - **exec's hardware** (`src/arch/`) is imported by the kernel - with
+//!   the ESP32-P4's boot task (`selftest_esp32p4.zig`) - exec, and
 //!   platform.resource, which reports the kernel's own measurements. A
 //!   module's peripheral is in its own folder or in `sdk/hardware/`.
 //!
@@ -37,7 +38,7 @@ const rules = [_]Rule{
     },
     .{
         .target = "arch/",
-        .allowed = &.{ "main.zig", "main_esp32p4.zig", "bootstrap.zig", "arch/", "rom/libs/exec/", "rom/resources/platform/" },
+        .allowed = &.{ "main.zig", "main_esp32p4.zig", "selftest_esp32p4.zig", "bootstrap.zig", "arch/", "rom/libs/exec/", "rom/resources/platform/" },
         .why = "a module's peripheral is in its own folder or in sdk/hardware",
     },
 };

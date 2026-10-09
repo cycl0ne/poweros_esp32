@@ -179,7 +179,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, and an RS-485 port on its second serial port | runs |
-| `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the port's start: boots, prints on UART0 with the system timer's time stamps, copies memory with the AHB DMA engine (the emulator has no AXI engine) |
+| `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | exec runs on both cores from flash, with 32 MB PSRAM: interrupts, the tick, tasks with the FPU, NewStackRun; the boot task checks the chip and runs tasks on both cores; no drivers or shell yet |
 
 `C:ShowConfig` lists what the running board has.
 
@@ -276,7 +276,7 @@ src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, mkicon, the autodocs, the module charts, checks
+tools/         build helpers: mkfs, ressize, ramimage, mkicon, the autodocs, the module charts, checks
 scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts, certificates), a serial terminal
 ```
 
