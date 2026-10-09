@@ -25,8 +25,13 @@ pub const RamLibBase = extern struct {
     /// library's segments are unloaded when it is asked for again after it
     /// expunged itself; a device's stay.
     loaded: exec.List = .{},
-    /// One load at a time: two tasks asking for the same name at once
-    /// would otherwise both load it.
+    /// What is being loaded now: a `Loading` per module (loader.zig), each
+    /// with a lock its loader holds until it is done, which a second task
+    /// asking for the same name waits on.
+    loading: exec.List = .{},
+    /// Over the two lists, held only while one is looked at or changed -
+    /// never across a load, so that one module's load does not hold up
+    /// another's.
     lock: exec.SignalSemaphore = .{},
 };
 

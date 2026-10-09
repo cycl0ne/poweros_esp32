@@ -60,11 +60,6 @@ C:SetPrefs >NIL:
 ; called by name like the rest.
 Path >NIL: RAM: SYS: S: C:test C:net
 
-; The network, from DEVS:NetInterfaces/, and then the clock from a time
-; server: in a shell of its own, so the boot waits for neither. A board
-; without an interface's device says nothing and loses no time.
-Run >NIL: Execute S:Network-Startup
-
 SetEnv Kickstart $Kickstart
 UnSet Kickstart
 
@@ -76,6 +71,15 @@ EndIf
 ; one double click away (SYS:System/Shell), and the serial console keeps
 ; its own. A desktop that could not start leaves this shell where it is.
 C:LoadAnvil
-If NOT FAIL
+Set Desktop $RC
+
+; The network, from DEVS:NetInterfaces/, and then the clock from a time
+; server: in a shell of its own, so the boot waits for neither. After the
+; desktop, whose screen would otherwise wait for its drivers - the
+; largest modules on the disk - to load. A board without an interface's
+; device says nothing and loses no time.
+Run >NIL: Execute S:Network-Startup
+
+If $Desktop EQ 0 VAL
   EndCLI >NIL:
 EndIf

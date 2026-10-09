@@ -313,7 +313,7 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
-| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
+| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:
 
@@ -352,7 +352,8 @@ old one lasts for the connections it still has. `C:net/NetStatus` marks
 them `temporary`.
 
 A keyword not in the table is an error, reported with its line and
-column. A board without the file's device skips the interface; with
+column. A board without the file's device skips the interface, with its
+`Network` not joined, and the device is looked for once; with
 `QUIET`, as `S:Network-Startup` runs it, it says nothing, so one set of
 files serves every board (without, it names the interface it could not
 add and ends with `WARN`).

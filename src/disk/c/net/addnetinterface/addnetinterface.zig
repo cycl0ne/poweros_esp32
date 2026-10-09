@@ -16,7 +16,9 @@
 //!
 //! A file that names a Wi-Fi `Network` has it joined first, with the
 //! passphrase kept for it in ENVARC:Sys/net/networks/<network> if there
-//! is one; the address follows once the station is on it.
+//! is one; the address follows once the station is on it. When its
+//! device cannot be opened, the interface is not added either: that
+//! would only load the device again to find the same.
 //!
 //! An interface with IPv6 and stable identifiers (the default) is given
 //! the secret in ENVARC:Sys/net/ipv6-secret - 32 hex digits - so that
@@ -40,7 +42,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.4 (07.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.5 (09.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -159,7 +161,11 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
         return dos.RETURN_ERROR;
     }
 
-    if (config.network[0] != 0) joinNetwork(sys, dl, &config, options);
+    if (config.network[0] != 0 and !joinNetwork(sys, dl, &config, options)) {
+        const missing: i32 = bsd.ENXIO;
+        if (!options.quiet) _ = Printf(dl, MSG_FAILED, .{ COMMAND_NAME, interface, bsd.errnoText(sb, missing), missing });
+        return dos.RETURN_WARN;
+    }
 
     var tags: [40]TagItem = @splat(.{});
     var count: usize = 0;
@@ -239,13 +245,18 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
 /// passphrase kept for it if there is one. The join is taken at once and
 /// finishes on its own; the interface's address comes after. The
 /// passphrase is cleared from the stack once the device has it.
-fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Options) void {
+/// The file's network joined; false when its device could not be opened
+/// at all, which an exec error (below 0) says, as against the device's
+/// own.
+fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Options) bool {
     const network: [*:0]const u8 = @ptrCast(&config.network);
     var kept: [wireless.PASSPHRASE_MAX + 1]u8 = @splat(0);
     defer @memset(@as(*volatile [kept.len]u8, &kept), 0);
     const passphrase = wireless.knownPassphrase(dl, network, &kept);
     const err = wireless.join(sys, @ptrCast(&config.device), config.unit, network, passphrase);
+    if (err < 0) return false;
     if (err != 0 and !options.quiet) _ = Printf(dl, MSG_NOJOIN, .{ COMMAND_NAME, network, @as(i32, err) });
+    return true;
 }
 
 /// Until DHCP has an address for the interface, or a link-local one

@@ -32,25 +32,113 @@ const ExecBase = sdk.interface.exec.ExecBase;
 /// The longest name a module may have, with its directory in front.
 const max_path = 96;
 
+/// A module being loaded: its tail name, the lock its loader holds from
+/// the start of the load to its end, and how many tasks still look at
+/// this record - the loader and those waiting for it.
+const Loading = struct {
+    node: exec.Node = .{},
+    name_buf: [64]u8 = @splat(0),
+    lock: exec.SignalSemaphore = .{},
+    users: u32 = 0,
+};
+
 /// Look for `name`, make what is in it, and keep the segments. True when
 /// something was made, and the caller looks on exec's list again, by the
 /// name's tail. `own_process` is true when this runs in the asking
 /// process, whose current directory the name as given is tried from.
+///
+/// **Loads go side by side.** A load reads a file and runs the module's
+/// init, which may take seconds and open further modules; a task asking
+/// for another module goes on meanwhile. Only the same name waits - two
+/// tasks asking for one module at once would otherwise both load it -
+/// and the second then answers what the first made of it. Two modules
+/// whose inits each open the other, loaded by two tasks at once, would
+/// wait for each other for ever; no module does that.
 pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32, own_process: bool) bool {
     const sys = rlb.sys_base;
-    // One at a time: two tasks asking for the same name at once would both
-    // find it missing and both load it.
-    sys.ObtainSemaphore(&rlb.lock);
-    defer sys.ReleaseSemaphore(&rlb.lock);
-
     const tail = tailName(name);
-    // Somebody may have loaded it while this was waiting for the lock.
-    if (kind == ramlib.KIND_LIBRARY) {
-        if (libraryListed(rlb, tail)) return true;
-        // Loaded once and expunged since: its segments are free to go.
-        forget(rlb, tail);
-    } else if (alreadyLoaded(rlb, tail)) return true;
+    sys.ObtainSemaphore(&rlb.lock);
+    if (isThere(rlb, tail, kind)) {
+        sys.ReleaseSemaphore(&rlb.lock);
+        return true;
+    }
+    if (loadingOf(rlb, tail)) |other| {
+        other.users += 1;
+        sys.ReleaseSemaphore(&rlb.lock);
+        // Held by its loader until it is done. When this task is the
+        // loader - the module's own init asking for it - it holds it
+        // already, and goes straight on to say it is not there yet.
+        sys.ObtainSemaphore(&other.lock);
+        sys.ReleaseSemaphore(&other.lock);
+        sys.ObtainSemaphore(&rlb.lock);
+        defer sys.ReleaseSemaphore(&rlb.lock);
+        drop(rlb, other);
+        return isThere(rlb, tail, kind);
+    }
+    // Loaded once and expunged since: its segments are free to go.
+    if (kind == ramlib.KIND_LIBRARY) forget(rlb, tail);
+    const mine = begin(rlb, tail) orelse {
+        sys.ReleaseSemaphore(&rlb.lock);
+        return false;
+    };
+    sys.ReleaseSemaphore(&rlb.lock);
 
+    const made = make(rlb, name, tail, kind, version, own_process);
+
+    sys.ReleaseSemaphore(&mine.lock);
+    sys.ObtainSemaphore(&rlb.lock);
+    drop(rlb, mine);
+    sys.ReleaseSemaphore(&rlb.lock);
+    return made;
+}
+
+/// Whether the module is there: a library on exec's list, a device that
+/// was loaded. Under the lists' lock.
+fn isThere(rlb: *RamLibBase, tail: [*:0]const u8, kind: u32) bool {
+    if (kind == ramlib.KIND_LIBRARY) return libraryListed(rlb, tail);
+    return alreadyLoaded(rlb, tail);
+}
+
+/// The record of a module of that name being loaded now, if one is.
+fn loadingOf(rlb: *RamLibBase, tail: [*:0]const u8) ?*Loading {
+    var node = rlb.loading.first();
+    while (node) |n| : (node = n.next()) {
+        const record: *Loading = @fieldParentPtr("node", n);
+        if (sameName(@ptrCast(&record.name_buf), tail)) return record;
+    }
+    return null;
+}
+
+/// A record made for a load this task begins, its lock held: null
+/// without memory. Under the lists' lock.
+fn begin(rlb: *RamLibBase, tail: [*:0]const u8) ?*Loading {
+    const sys = rlb.sys_base;
+    const memory = sys.AllocVec(@sizeOf(Loading), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    const record: *Loading = @ptrCast(@alignCast(memory));
+    record.* = .{ .users = 1 };
+    var i: usize = 0;
+    while (tail[i] != 0 and i + 1 < record.name_buf.len) : (i += 1) record.name_buf[i] = tail[i];
+    record.name_buf[i] = 0;
+    sys.InitSemaphore(&record.lock);
+    sys.ObtainSemaphore(&record.lock);
+    sys.AddTail(&rlb.loading, &record.node);
+    return record;
+}
+
+/// One task done with the record; the last frees it. Under the lists'
+/// lock.
+fn drop(rlb: *RamLibBase, record: *Loading) void {
+    record.users -= 1;
+    if (record.users != 0) return;
+    rlb.sys_base.Remove(&record.node);
+    rlb.sys_base.FreeVec(record);
+}
+
+/// The module made: from a ROM tag no boot phase started, or from its
+/// file, whose segments are kept. With the name's own lock held, and not
+/// the lists'.
+fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, version: u32, own_process: bool) bool {
+    const sys = rlb.sys_base;
     // A ROM tag of that name that no boot phase started: made from the
     // ROM, with no file behind it.
     if (sys.FindResident(tail)) |tag| {
@@ -67,6 +155,8 @@ pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32, own_
         rlb.dos_base.UnLoadSeg(seg_list);
         return false;
     }
+    sys.ObtainSemaphore(&rlb.lock);
+    defer sys.ReleaseSemaphore(&rlb.lock);
     keep(rlb, tail, seg_list);
     return true;
 }
@@ -272,6 +362,40 @@ test "the scan walks every segment of the file" {
     var tail = dos.SegList{ .mem_size = second.len, .data = &second };
     var head = dos.SegList{ .mem_size = first.len, .data = &first, .next = &tail };
     try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&head, "test.device", 0));
+}
+
+test "a name being loaded is not waited for by its own loader, and its record goes with the last" {
+    const kexec = @import("../exec/exec.zig");
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    // Only what the bookkeeping needs: exec's own OpenLibrary to look on
+    // its list, and the lists. No dos: nothing here reaches a file.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    sys.NewList(&rlb.loaded);
+    sys.NewList(&rlb.loading);
+    sys.InitSemaphore(&rlb.lock);
+    const exec_lib: *exec.Library = @ptrCast(@alignCast(sys));
+    rlb.old_open_library = exec_lib.vector(*const anyopaque, sdk.interface.exec.LVO.OpenLibrary);
+
+    // This task begins loading a module...
+    sys.ObtainSemaphore(&rlb.lock);
+    const mine = begin(&rlb, "busy.library") orelse return error.NoMemory;
+    sys.ReleaseSemaphore(&rlb.lock);
+    try testing.expect(loadingOf(&rlb, "BUSY.library") == mine);
+    // ...whose init asks for it again: no wait on itself, and it is not
+    // there yet.
+    try testing.expect(!load(&rlb, "busy.library", ramlib.KIND_LIBRARY, 0, true));
+    try testing.expectEqual(@as(u32, 1), mine.users);
+
+    // The load done, the record goes, and the lists' lock is free.
+    sys.ReleaseSemaphore(&mine.lock);
+    sys.ObtainSemaphore(&rlb.lock);
+    drop(&rlb, mine);
+    sys.ReleaseSemaphore(&rlb.lock);
+    try testing.expect(rlb.loading.isEmpty());
+    try testing.expectEqual(@as(i16, 0), rlb.lock.nest_count);
+    try kexec.expectNoLeaks();
 }
 
 test "a path is where its kind lives and the name" {
