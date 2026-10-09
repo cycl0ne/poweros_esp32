@@ -203,12 +203,15 @@ anvil.library/StartAnvil
 	was made, its default tool. A file or a drawer: when it was last
 	changed, its protection bits (Script, Archived, Readable, Writable,
 	Executable, Deletable) and, but for the trash, its comment; a program
-	or a document its size in bytes and blocks and its stack, a document
-	its default tool; a drawer, a program and a document their tool
-	types, a line each. Without an icon file the icon's fields are left
-	out. Save writes the bits and the comment where they changed, and the
-	icon with the stack, the default tool and the tool types, and closes
-	the window; Cancel and the close gadget close it with nothing written.
+	or a document its size in bytes and blocks and its stack - for an
+	icon that asks for none, the one the desktop gives (24 KiB) - a
+	document its default tool; a drawer, a program and a document their
+	tool types, a line each. Without an icon file the icon's fields are
+	left out. Save writes the bits and the comment where they changed,
+	and the icon with the stack, the default tool and the tool types, and
+	closes the window; an icon that asked for no stack and still shows the
+	desktop's goes on asking for none. Cancel and the close gadget close
+	it with nothing written.
 
    CONTEXT
 	- Waits: yes, for the name to be found and the process started.

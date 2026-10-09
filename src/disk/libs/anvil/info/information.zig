@@ -8,14 +8,16 @@
 //! icon: for a disk whether it may be written, its blocks, used and free,
 //! the block size, when it was made and its default tool; for a file or a
 //! drawer when it was last changed, its protection bits and its comment;
-//! for a program or a document its size and its stack; a document's
+//! for a program or a document its size and its stack - the usual one
+//! the desktop gives, when its icon asks for none; a document's
 //! default tool; the tool types, a line each, of anything but a disk and
 //! the trash. Without an icon file only what the file itself says is
 //! shown, and no icon is written.
 //!
 //! **Save** writes the bits and the comment where they changed, and the
-//! icon with the window's stack (rounded up to 4 bytes), default tool
-//! and tool types; Cancel or the close gadget leaves everything as it
+//! icon with the window's stack (rounded up to 4 bytes; an icon that
+//! asked for none and still shows the usual one goes on asking for none),
+//! default tool and tool types; Cancel or the close gadget leaves everything as it
 //! was. The drawer's notification brings the change to the desktop.
 
 const sdk = @import("sdk");
@@ -43,6 +45,7 @@ const Object = intuition.Object;
 const _base = @import("../anvil_base.zig");
 const AnvilBase = _base.AnvilBase;
 const path = @import("../drawer/path.zig");
+const usual_stack = @import("../start/startanvil.zig").usual_stack;
 
 /// The bits shown, in the order of their boxes: ticked means allowed for
 /// the four that are set to forbid (rwed), set for the others.
@@ -133,12 +136,15 @@ const Info = struct {
 /// was made, its default tool. A file or a drawer: when it was last
 /// changed, its protection bits (Script, Archived, Readable, Writable,
 /// Executable, Deletable) and, but for the trash, its comment; a program
-/// or a document its size in bytes and blocks and its stack, a document
-/// its default tool; a drawer, a program and a document their tool
-/// types, a line each. Without an icon file the icon's fields are left
-/// out. Save writes the bits and the comment where they changed, and the
-/// icon with the stack, the default tool and the tool types, and closes
-/// the window; Cancel and the close gadget close it with nothing written.
+/// or a document its size in bytes and blocks and its stack - for an
+/// icon that asks for none, the one the desktop gives (24 KiB) - a
+/// document its default tool; a drawer, a program and a document their
+/// tool types, a line each. Without an icon file the icon's fields are
+/// left out. Save writes the bits and the comment where they changed,
+/// and the icon with the stack, the default tool and the tool types, and
+/// closes the window; an icon that asked for no stack and still shows the
+/// desktop's goes on asking for none. Cancel and the close gadget close
+/// it with nothing written.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the name to be found and the process started.
@@ -404,7 +410,7 @@ fn show(info: *Info) void {
                 pair(ig.INTEGER_Min, 0),
                 pair(ig.INTEGER_Max, 1 << 20),
                 pair(ig.INTEGER_Step, 4096),
-                pair(ig.INTEGER_Number, object.stack_size),
+                pair(ig.INTEGER_Number, if (object.stack_size != 0) object.stack_size else usual_stack),
                 .{},
             });
             children.add(info.stack, "Stack");
@@ -546,7 +552,11 @@ fn save(info: *Info, window: *intuition.Window) void {
     if (info.stack) |field| {
         var value: usize = 0;
         _ = ib.GetAttr(ig.INTEGER_Number, field, &value);
-        object.stack_size = @intCast((value + 3) & ~@as(usize, 3));
+        // The usual one, shown for an icon that asks for none, is left
+        // unasked for: it follows the desktop's from then on.
+        if (!(object.stack_size == 0 and value == usual_stack)) {
+            object.stack_size = @intCast((value + 3) & ~@as(usize, 3));
+        }
     }
     if (info.types) |editor| {
         var length: usize = 0;

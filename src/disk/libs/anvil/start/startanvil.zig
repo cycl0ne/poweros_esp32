@@ -18,6 +18,11 @@ const process_name = "Anvil";
 const stack_bytes = 24576;
 const priority = 1;
 
+/// The stack a program started from the desktop gets when its icon asks
+/// for none: the desktop's CLI hands its commands its own stack size,
+/// never less than `CLI_DEFAULT_STACK`.
+pub const usual_stack: u32 = @max(stack_bytes, dos.CLI_DEFAULT_STACK);
+
 /// Starts the desktop.
 ///
 /// SYNOPSIS:

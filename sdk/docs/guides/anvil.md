@@ -148,8 +148,8 @@ pairs that `GetArgList` reads - the program first, a drawer or a disk as
 a lock on itself with an empty name (see [the dos
 guide](dos.md#starting-a-program-with-files)). Its input is NIL:, and its
 output a console that opens only if it prints. It starts in its own
-drawer, with the stack its icon asks for and the priority of its `TOOLPRI`
-tool type. The desktop counts what it started until each has ended, and
+drawer, with the stack its icon asks for - 24 KiB, the desktop's own, when
+it asks for none - and the priority of its `TOOLPRI` tool type. The desktop counts what it started until each has ended, and
 will not quit before then.
 
 ### Scripts and shells
@@ -242,7 +242,8 @@ Readable, Writable, Executable and Deletable ticked when allowed. The
 tool types are an editor, a line each. A file without an icon shows what
 the file says and no icon fields. Save writes the bits and the comment
 where they changed and the icon with the stack (rounded up to 4 bytes),
-the default tool and the tool types; Cancel and the close gadget write
+the default tool and the tool types; an icon that asks for no stack shows
+the desktop's 24 KiB, and goes on asking for none unless that is changed. Cancel and the close gadget write
 nothing. The drawer sees the change through its notification.
 
 A program opens the same window for any file with `Information` - a
