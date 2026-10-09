@@ -27,7 +27,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 |---|---|
 | [Screenshots](docs/screenshots/README.md) | the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
-| [Quick start](#quick-start) | boards, building, QEMU, flashing |
+| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
@@ -209,6 +209,40 @@ console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
 comes up with the desktop, which S:Startup-Sequence starts at its end
 before it puts its own shell window away - `SYS:System/Shell` opens
 another. A desktop that cannot start leaves that shell on the display.
+
+### First time in QEMU
+
+From a fresh clone to the desktop in a window:
+
+```sh
+scripts/build-qemu.sh        # once: QEMU with the display, into toolchain/qemu
+scripts/fetch-icons.sh       # optional: the desktop's icons
+scripts/fetch-fonts.sh       # optional: the fonts
+./zig build qemu-display     # the first run also fetches the Zig toolchain
+```
+
+`scripts/build-qemu.sh` runs on Linux. It needs a C compiler, git,
+Python 3, ninja, pkg-config, and the development files of glib, pixman,
+SDL2, libgcrypt and libslirp:
+
+```sh
+# Debian, Ubuntu
+sudo apt install build-essential git python3 python3-venv ninja-build pkg-config \
+    libglib2.0-dev libpixman-1-dev libsdl2-dev libgcrypt20-dev libslirp-dev
+# Arch
+sudo pacman -S --needed base-devel git python ninja glib2 pixman sdl2 libgcrypt libslirp
+```
+
+`scripts/fetch-icons.sh` draws the icons at each board's size with
+`rsvg-convert` (`librsvg2-bin`, `librsvg`); without it they are the
+release's 32-pixel pictures.
+
+The window shows the boot and then the desktop; `SYS:System/Shell` opens
+a shell on it. The terminal QEMU runs in is the serial console: `s3>`
+there is the ROM's debug shell, `newshell` starts a CLI (`List`, `Info`,
+...), and Ctrl-A X quits QEMU. `qemu-display` also forwards host port
+2323 to the machine's Telnet port and 2222 to its SSH port, for
+`C:net/ShellServer`.
 
 More build steps and options:
 
