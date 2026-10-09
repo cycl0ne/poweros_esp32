@@ -4,11 +4,16 @@
 # HP cores, the CLIC, UART0 on the terminal, the system timer, flash with
 # its cache and MMU, PSRAM, the Ethernet MAC and a GDB stub, booting the
 # chip's own mask ROM. Released as binaries under Apache-2.0, at a pinned
-# version checked against its sha256 for the host it runs on. Nothing of it
-# is committed: it lands in toolchain/esp-emu/esp-emu.
+# version checked against its sha256 for the host it runs on. And the ROM
+# it boots: the emulator carries a v3.x chip's; the boards' chips are
+# v1.x, whose ROM comes from Espressif's ROM ELFs (esp-rom-elfs), pinned
+# and checked the same way. Nothing of it is committed: it lands in
+# toolchain/esp-emu/ (esp-emu, esp32p4_rev0_rom.elf).
 set -eu
 
 version=0.48.0
+rom_elfs=20241011
+rom_elfs_sha256=921f000164a421c7628fbfee55b173384aafaa51883adc65cd27bf9b0af9e9a9
 
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64)
@@ -47,4 +52,8 @@ mkdir -p "$out"
 cp "$binary" "$out/esp-emu"
 chmod +x "$out/esp-emu"
 "$out/esp-emu" --version
-echo "esp-emulator in $out"
+
+roms="esp-rom-elfs-$rom_elfs.tar.gz"
+curl -sSfL -o "$work/$roms" "https://github.com/espressif/esp-rom-elfs/releases/download/$rom_elfs/$roms"
+(cd "$work" && echo "$rom_elfs_sha256  $roms" | sha256sum -c --quiet && tar xzf "$roms" -C "$out" esp32p4_rev0_rom.elf)
+echo "esp-emulator and the ESP32-P4 v1.x ROM in $out"

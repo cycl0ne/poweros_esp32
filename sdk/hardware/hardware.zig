@@ -1,44 +1,64 @@
 // SPDX-License-Identifier: MIT
-//! The chip's hardware, by name (include/hardware).
+//! The chip's hardware, by name (include/hardware): a folder per chip -
+//! `esp32s3/`, `esp32p4/` - each with its peripherals' base addresses,
+//! registers and bits by the manual's names, picked by what the code is
+//! built for: RISC-V is the ESP32-P4, Xtensa the ESP32-S3, and the host
+//! tests see the S3's. The names below are the same on every chip; one a
+//! chip does not have yet is an error only where it is used.
 
-pub const intbits = @import("intbits.zig");
+const builtin = @import("builtin");
+
+/// The chips there are.
+pub const Chip = enum { esp32s3, esp32p4 };
+
+/// The chip this code is built for.
+pub const chip: Chip = if (builtin.cpu.arch == .riscv32) .esp32p4 else .esp32s3;
+
+/// The chip's own folder.
+const own = switch (chip) {
+    .esp32s3 => @import("esp32s3/hardware.zig"),
+    .esp32p4 => @import("esp32p4/hardware.zig"),
+};
+
+/// The interrupt sources, by number.
+pub const intbits = own.intbits;
 /// The pads and the GPIO matrix: which signal is on which pad. Here so a
 /// driver on the disk routes its pads the same way the kernel's do.
-pub const gpio = @import("gpio.zig");
+pub const gpio = own.gpio;
 /// A register by its address.
-pub const mmio = @import("mmio.zig");
+pub const mmio = own.mmio;
 /// The peripherals' base addresses.
-pub const map = @import("map.zig");
+pub const map = own.map;
 /// The peripherals' bus clocks and resets.
-pub const system = @import("system.zig");
+pub const system = own.system;
 /// The GPIO matrix's peripheral signal numbers.
-pub const signals = @import("signals.zig");
+pub const signals = own.signals;
 /// Each peripheral's registers and their bits, by the manual's names.
-pub const uart = @import("uart.zig");
-pub const usb_serial_jtag = @import("usb_serial_jtag.zig");
-pub const i2c = @import("i2c.zig");
-pub const systimer = @import("systimer.zig");
-pub const rtc_cntl = @import("rtc_cntl.zig");
+pub const uart = own.uart;
+pub const usb_serial_jtag = own.usb_serial_jtag;
+pub const i2c = own.i2c;
+pub const systimer = own.systimer;
+pub const rtc_cntl = own.rtc_cntl;
 /// The general DMA engine's channels, for dma.resource and the drivers
 /// that drive a channel directly.
-pub const gdma = @import("gdma.zig");
+pub const gdma = own.gdma;
 /// The general-purpose SPI controllers (SPI2, SPI3) as bus masters.
-pub const gpspi = @import("gpspi.zig");
-pub const wdt = @import("wdt.zig");
+pub const gpspi = own.gpspi;
+pub const wdt = own.wdt;
 /// The core's cycle counter.
-pub const cpu = @import("cpu.zig");
+pub const cpu = own.cpu;
 /// The random number generator.
-pub const rng = @import("rng.zig");
+pub const rng = own.rng;
 /// The emulator's virtual display, with its window's pointer and keys.
-pub const qemu_rgb = @import("qemu_rgb.zig");
+pub const qemu_rgb = own.qemu_rgb;
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
-pub const XTAL_HZ: u32 = 40_000_000;
-/// The clock the boot sets the CPU to, and so what CCOUNT counts at.
-pub const CPU_HZ: u32 = 240_000_000;
-
+pub const XTAL_HZ = own.XTAL_HZ;
+/// The clock the boot sets the CPU to, and so what the cycle counter
+/// counts at.
+pub const CPU_HZ = own.CPU_HZ;
 /// A data cache line, in bytes: the unit the cache moves external memory
 /// in, and so what a buffer a DMA engine reaches through the cache should
 /// start and end on. Anything else sharing its first or last line and
 /// written during the transfer wins over the transfer's data.
-pub const DCACHE_LINE_SIZE = 64;
+pub const DCACHE_LINE_SIZE = own.DCACHE_LINE_SIZE;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! dma.resource: the chip's general DMA engine (GDMA, sdk/hardware/gdma.zig),
+//! dma.resource: the chip's general DMA engine (GDMA, `sdk.hardware.gdma`),
 //! its 5 channels handed out to one owner each. AllocDMAChannel claims a
 //! channel under the resource's lock and gives null, or the owner's name
 //! if it is taken;

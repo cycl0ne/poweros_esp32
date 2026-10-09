@@ -20,6 +20,7 @@
 
 const mmio = @import("mmio.zig");
 const map = @import("map.zig");
+const rtc_cntl = @import("rtc_cntl.zig");
 
 /// Core 1's clock, stall and reset.
 pub const CORE_1_CONTROL_0: usize = map.SYSTEM + 0x00;
@@ -44,6 +45,14 @@ pub inline fn core1Off() void {
     control.* |= CORE_1_RESETING;
     control.* &= ~CORE_1_CLKGATE_EN;
     mmio.reg(CORE_1_CONTROL_1).* = 0;
+}
+
+/// The software system reset: core 1 stopped, then SW_SYS_RST, which
+/// resets the whole chip. It does not come back.
+pub fn resetChip() noreturn {
+    core1Off();
+    mmio.reg(rtc_cntl.OPTIONS0).* |= rtc_cntl.OPTIONS0_SW_SYS_RST;
+    while (true) {}
 }
 
 /// The four cross-core interrupts, a word each: writing 1 raises source

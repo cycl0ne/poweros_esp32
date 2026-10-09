@@ -31,7 +31,29 @@ const disk_tree = "disk";
 /// is built per board. `qemu` is Espressif QEMU's machine, with its
 /// virtual display, keyboard and mouse: the `qemu*` steps always run that
 /// one, whichever board `-Dboard` names.
-const Board = enum { waveshare_7b, es3c35p, qemu };
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu };
+
+/// The chip a board is built on, which picks the kernel's target, its
+/// root, start code and linker script, and how its image is made.
+const Chip = enum { esp32s3, esp32p4 };
+
+fn chipOf(board: Board) Chip {
+    return switch (board) {
+        .waveshare_7b, .es3c35p, .qemu => .esp32s3,
+        .esp32p4_emu => .esp32p4,
+    };
+}
+
+/// The ESP32-P4's HP cores as the kernel is built for them: RV32IMAFC with
+/// the CSR and fence.i instructions, and none of the chip's own extensions
+/// (PIE, hardware loops), whose state no task carries yet.
+const p4_target_query: std.Target.Query = .{
+    .cpu_arch = .riscv32,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
+    .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .c, .zicsr, .zifencei }),
+};
 
 /// The directories every disk image has, parents before what is in them.
 const image_dirs = [_][]const u8{
@@ -149,6 +171,8 @@ fn iconSize(board: Board) u32 {
         .waveshare_7b, .qemu => 48,
         // 480x320
         .es3c35p => 40,
+        // No screen yet.
+        .esp32p4_emu => 48,
     };
 }
 
@@ -157,7 +181,7 @@ pub fn build(b: *std.Build) void {
     // Espressif Zig build, and Debug does not fit into IRAM, so default to
     // ReleaseSafe (ReleaseFast works as well).
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseSafe)") orelse .ReleaseSafe;
-    const esptool = b.option([]const u8, "esptool", "esptool executable") orelse "esptool";
+    const esptool = b.option([]const u8, "esptool", "esptool executable (default: ESP-IDF's, else esptool from PATH)") orelse findEsptool(b);
     const qemu = b.option([]const u8, "qemu", "Espressif qemu-system-xtensa executable") orelse findQemu(b);
     const port = b.option([]const u8, "port", "Serial port used by `zig build flash`") orelse "/dev/ttyACM0";
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
@@ -187,13 +211,18 @@ pub fn build(b: *std.Build) void {
     const disk_size = flash_size - disk_offset;
 
     const target = b.resolveTargetQuery(poweros_sdk.target_query);
+    const p4_target = b.resolveTargetQuery(p4_target_query);
+    const kernel_target = switch (chipOf(board)) {
+        .esp32s3 => target,
+        .esp32p4 => p4_target,
+    };
 
     // The SDK (sdk/, a package of its own): the system's types and the
     // libraries' jump tables, and how a program is built. The kernel builds
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, target, optimize, sdk, board, disk_offset, cores);
+    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -364,7 +393,10 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseSafe,
         }),
     });
-    const built = addImage(b, esptool, ressize, kernel, disk_bin, disk_offset);
+    const built = switch (chipOf(board)) {
+        .esp32s3 => addImage(b, esptool, ressize, kernel, disk_bin, disk_offset),
+        .esp32p4 => addP4Image(b, esptool, kernel),
+    };
     const image = built.image;
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(image, "kernel.bin").step);
@@ -401,6 +433,20 @@ pub fn build(b: *std.Build) void {
     const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, qemuConsole(b, &.{"-nographic"}, uart1));
     run_disk.step.dependOn(&keep.step);
     b.step("qemu-disk", "Boot in QEMU on a flash image that keeps what is written to the disk").dependOn(&run_disk.step);
+
+    // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
+    // its own: the `emu` step runs its image on the boards' v1.x ROM.
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores));
+    const run_emu = b.addSystemCommand(&.{
+        b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
+        "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
+        "32M",                                       "--net",                                                  "user",
+        "--firmware",
+    });
+    run_emu.addFileArg(p4_emulated.flash_image);
+    run_emu.stdio = .inherit;
+    run_emu.has_side_effects = true;
+    b.step("emu", "Boot the ESP32-P4 kernel in esp-emulator (quit with Ctrl-C)").dependOn(&run_emu.step);
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
@@ -538,7 +584,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&make_disk.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
-        if (other != board) test_step.dependOn(&addKernel(b, target, optimize, sdk, other, disk_offset, cores).step);
+        const other_target = switch (chipOf(other)) {
+            .esp32s3 => target,
+            .esp32p4 => p4_target,
+        };
+        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -860,7 +910,7 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
     const image = fits.addOutputFileArg("kernel.bin");
 
     // Full 16 MB flash dump for QEMU, like the board's N16R8 module.
-    const merge = b.addSystemCommand(&.{ esptool, "--chip", "esp32s3", "merge-bin", "--fill-flash-size", "16MB", "-o" });
+    const merge = b.addSystemCommand(&.{ esptool, "--chip", "esp32s3", "merge-bin", "--pad-to-size", "16MB", "-o" });
     const flash_image = merge.addOutputFileArg("flash.bin");
     merge.addArg("0x0");
     merge.addFileArg(image);
@@ -869,12 +919,36 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
 }
 
+/// The ESP32-P4's kernel made into what is flashed and what esp-emulator
+/// boots: an ESP image for the ROM, which loads its RAM segments and runs
+/// it, at flash offset 0x2000, where the P4's ROM looks for its
+/// second-stage bootloader; in a 16 MB flash dump for the emulator.
+fn addP4Image(b: *std.Build, esptool: []const u8, kernel: *std.Build.Step.Compile) Image {
+    const kernel_elf = kernel.getEmittedBin();
+    const elf2image = b.addSystemCommand(&.{
+        esptool,        "--chip", "esp32p4",      "elf2image",
+        "--flash-mode", "dio",    "--flash-freq", "80m",
+        "--flash-size", "16MB",   "-o",
+    });
+    const image = elf2image.addOutputFileArg("kernel.bin");
+    elf2image.addFileArg(kernel_elf);
+    const merge = b.addSystemCommand(&.{ esptool, "--chip", "esp32p4", "merge-bin", "--pad-to-size", "16MB", "-o" });
+    const flash_image = merge.addOutputFileArg("flash.bin");
+    merge.addArg("0x2000");
+    merge.addFileArg(image);
+    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
+}
+
 /// The kernel for `board`: src/main.zig with the board's description
 /// chosen (src/boards/boards.zig reads `build_options.board`). `cores` 0
 /// leaves the number of cores to the board.
 fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32) *std.Build.Step.Compile {
+    const chip = chipOf(board);
     const kernel_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path(switch (chip) {
+            .esp32s3 => "src/main.zig",
+            .esp32p4 => "src/main_esp32p4.zig",
+        }),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
@@ -886,15 +960,23 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     options.addOption(u32, "disk_offset", disk_offset);
     options.addOption(u32, "cores", cores);
     kernel_mod.addOptions("build_options", options);
-    kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/start.S"));
-    kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/cache.S"));
-    kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/stack.S"));
+    switch (chip) {
+        .esp32s3 => {
+            kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/start.S"));
+            kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/cache.S"));
+            kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/stack.S"));
+        },
+        .esp32p4 => kernel_mod.addAssemblyFile(b.path("src/arch/esp32p4/start.S")),
+    }
 
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_module = kernel_mod,
     });
-    kernel.setLinkerScript(b.path("kernel.ld"));
+    kernel.setLinkerScript(b.path(switch (chip) {
+        .esp32s3 => "kernel.ld",
+        .esp32p4 => "src/arch/esp32p4/kernel.ld",
+    }));
     kernel.entry = .{ .symbol_name = "_start" };
     // A section per function, so each function's literals (.literal.<fn>)
     // sit next to its code: l32r reaches only 256 KiB back, and the code in
@@ -976,6 +1058,26 @@ fn isModule(disk: []const u8) bool {
         if (std.mem.startsWith(u8, disk, place)) return true;
     }
     return false;
+}
+
+/// esptool: ESP-IDF's, the newest under ~/.espressif/tools/python/<version>/venv/bin,
+/// which ESP-IDF keeps working with its own Python; else esptool from PATH.
+fn findEsptool(b: *std.Build) []const u8 {
+    const name = "esptool";
+    const io = b.graph.io;
+    const home = b.graph.environ_map.get("HOME") orelse return name;
+    const pythons = b.pathJoin(&.{ home, ".espressif", "tools", "python" });
+    var dir = std.Io.Dir.openDirAbsolute(io, pythons, .{ .iterate = true }) catch return name;
+    defer dir.close(io);
+    var newest: ?[]const u8 = null;
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (newest == null or std.mem.order(u8, entry.name, newest.?) == .gt) newest = b.dupe(entry.name);
+    }
+    const version = newest orelse return name;
+    const found = b.pathJoin(&.{ pythons, version, "venv", "bin", name });
+    if (std.Io.Dir.cwd().access(io, found, .{})) |_| return found else |_| return name;
 }
 
 /// The 240 MHz build from scripts/build-qemu.sh if present, else

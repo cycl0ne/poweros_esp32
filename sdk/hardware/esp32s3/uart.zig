@@ -4,7 +4,7 @@
 //! module that runs a UART shares: setting one up (`setUp`), its line
 //! (`setLine`), bytes in and out, the receive interrupts. serial.device's
 //! units and rs485.device run on it; exec's raw port (kprintf) drives
-//! UART0 through the registers with its own driver.
+//! UART0 as the console (`consoleInit`, `consolePut`, `consoleGet`).
 //!
 //! The driver keeps no state: whether a UART is up is its bus clock and
 //! its clock source, read back.
@@ -32,6 +32,47 @@ pub fn baseOf(n: u2) usize {
         1 => map.UART1,
         else => map.UART2,
     };
+}
+
+// --- UART0 as the raw console -----------------------------------------------
+
+/// UART0 as exec's raw console (`consoleInit`, `consolePut`, `consoleGet`),
+/// set up the same way `setUp` would: bus clock, reset with the core held,
+/// the crystal as its clock, 115200 8N1. serial.device then finds UART0
+/// already running from the crystal and leaves it alone. The helpers mask
+/// interrupts at the CPU, not through exec: this runs before exec is up,
+/// and after it has stopped.
+const console = base(0);
+
+/// UART0 set up. Whatever the boot ROM was still sending is let out
+/// first, so its output and the kernel's do not run together.
+pub fn consoleInit() void {
+    while (reg(console + STATUS).* & STATUS_TXFIFO_CNT != 0) {}
+    while (reg(console + FSM_STATUS).* & FSM_ST_UTX_OUT != 0) {}
+    system.clockOn(.uart_mem);
+    system.clockOn(.uart0);
+    system.releaseReset(.uart0);
+    reg(console + CLK_CONF).* |= CLK_RST_CORE;
+    system.holdInReset(.uart0);
+    system.releaseReset(.uart0);
+    reg(console + CLK_CONF).* &= ~CLK_RST_CORE;
+    const clk = reg(console + CLK_CONF).* & ~(CLK_SCLK_SEL | CLK_SCLK_DIV_NUM);
+    reg(console + CLK_CONF).* = clk | CLK_SCLK_SEL_XTAL | CLK_SCLK_EN | CLK_TX_SCLK_EN | CLK_RX_SCLK_EN;
+    const div16: u32 = (hardware.XTAL_HZ << 4) / default_baud; // in 1/16 steps
+    reg(console + CLKDIV).* = (div16 & 0xF) << CLKDIV_FRAG_SHIFT | div16 >> 4;
+    reg(console + CONF0).* = (reg(console + CONF0).* & ~CONF0_FRAME) | CONF0_8N1;
+}
+
+/// A byte out, waiting while the TX FIFO is full.
+pub fn consolePut(character: u8) void {
+    while ((reg(console + STATUS).* & STATUS_TXFIFO_CNT) >> STATUS_TXFIFO_CNT_SHIFT >= FIFO_LEN - 2) {}
+    reg(console + FIFO).* = character;
+}
+
+/// A byte in, if one is waiting.
+pub fn consoleGet() ?u8 {
+    if (reg(console + STATUS).* & STATUS_RXFIFO_CNT == 0) return null;
+    return @truncate(reg(console + FIFO).*);
 }
 
 // The registers, as offsets from a UART's base.

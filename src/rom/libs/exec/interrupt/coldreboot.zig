@@ -53,10 +53,8 @@ pub fn ColdReboot(base: *ExecBase) noreturn {
 
 const hardware = @import("sdk").hardware;
 
-/// The software system reset: SW_SYS_RST resets the whole chip. It does
+/// The chip's software system reset, which resets the whole chip. It does
 /// not come back.
 fn reset() noreturn {
-    hardware.system.core1Off();
-    hardware.mmio.reg(hardware.rtc_cntl.OPTIONS0).* |= hardware.rtc_cntl.OPTIONS0_SW_SYS_RST;
-    while (true) {}
+    hardware.system.resetChip();
 }

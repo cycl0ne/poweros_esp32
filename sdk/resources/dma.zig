@@ -7,7 +7,7 @@
 //! side), ...). The sources are level-triggered, so a server clears what it
 //! handles (DMAIntStatus, ClearDMAInts).
 
-const intbits = @import("../hardware/intbits.zig");
+const intbits = @import("../hardware/hardware.zig").intbits;
 
 /// The resource's name, for OpenResource.
 pub const DMANAME = "dma.resource";

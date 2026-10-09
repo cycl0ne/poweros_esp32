@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! serial.device: the chip's UARTs, raw, one unit per UART (sdk/hardware/uart.zig).
+//! serial.device: the chip's UARTs, raw, one unit per UART (`sdk.hardware.uart`).
 //! Its API is IOExtSer requests, their commands, parameters and errors
 //! (sdk/devices/serial.zig). The USB-Serial-JTAG port is usbserial.device.
 //!
