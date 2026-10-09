@@ -143,5 +143,9 @@ the drawers a person opens and each program in `SYS:Programs` and
 `SYS:System` - from the pictures `scripts/fetch-icons.sh` fetches: the
 Tango icon library, in the public domain, drawn from its SVG sources at
 the size the board shows icons at (48 pixels on the 7B and in QEMU, 40
-on the 3.5" board) into `toolchain/icons/<size>/`. Without them the disk
-has no icons of its own and the library's built-in ones stand in.
+on the 3.5" board) into `toolchain/icons/<size>/`. Every one of them that
+starts a program - a program's, and the tool, project and script
+defaults - asks for a 16 KiB stack (`STACK=16384`), what a command gets
+in a shell, so a program has the same stack opened from its icon as
+typed. Without them the disk has no icons of its own and the library's
+built-in ones stand in.

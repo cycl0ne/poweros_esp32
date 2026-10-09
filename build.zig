@@ -95,24 +95,29 @@ const image_dirs = [_][]const u8{
 /// takes them.
 const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const []const u8 = &.{} };
 
+/// The stack every icon that starts a program asks for: what a command
+/// gets in a shell (`CLI_DEFAULT_STACK`), so a program has the same stack
+/// started from its icon as typed.
+const icon_stack = "STACK=16384";
+
 const disk_icons = [_]DiskIcon{
     // The defaults, in ENVARC:Sys and from there in ENV:Sys: a file
     // without an icon gets the one of its kind, its group or a script's.
     .{ .path = "prefs/env-archive/Sys/def_disk.info", .picture = "drive-harddisk", .fields = &.{"KIND=DISK"} },
     .{ .path = "prefs/env-archive/Sys/def_drawer.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
-    .{ .path = "prefs/env-archive/Sys/def_tool.info", .picture = "application-x-executable", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "prefs/env-archive/Sys/def_project.info", .picture = "text-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_tool.info", .picture = "application-x-executable", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_project.info", .picture = "text-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
     .{ .path = "prefs/env-archive/Sys/def_trashcan.info", .picture = "user-trash", .fields = &.{"KIND=TRASHCAN"} },
     // A script runs through IconX.
-    .{ .path = "prefs/env-archive/Sys/def_script.info", .picture = "text-x-script", .fields = &.{ "KIND=PROJECT", "TOOL=C:IconX" } },
-    .{ .path = "prefs/env-archive/Sys/def_picture.info", .picture = "image-x-generic", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_text.info", .picture = "text-x-generic", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_document.info", .picture = "x-office-document", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_sound.info", .picture = "audio-x-generic", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_instrument.info", .picture = "audio-card", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_music.info", .picture = "multimedia-player", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_animation.info", .picture = "video-x-generic", .fields = &.{"KIND=PROJECT"} },
-    .{ .path = "prefs/env-archive/Sys/def_movie.info", .picture = "video-x-generic", .fields = &.{"KIND=PROJECT"} },
+    .{ .path = "prefs/env-archive/Sys/def_script.info", .picture = "text-x-script", .fields = &.{ "KIND=PROJECT", "TOOL=C:IconX", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_picture.info", .picture = "image-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_text.info", .picture = "text-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_document.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_sound.info", .picture = "audio-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_instrument.info", .picture = "audio-card", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_music.info", .picture = "multimedia-player", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_animation.info", .picture = "video-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
     // The volume itself: its window shows the drawers with icons, the
     // system's own (C:, S:, LIBS:, DEVS:, ...) left to the shell.
     .{ .path = "Disk.info", .picture = "drive-harddisk", .fields = &.{ "KIND=DISK", "SHOW=ICONS" } },
@@ -125,13 +130,13 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "pictures.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "fonts.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     // The programs.
-    .{ .path = "programs/Notepad.info", .picture = "accessories-text-editor", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "programs/MultiView.info", .picture = "system-search", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "programs/FontView.info", .picture = "preferences-desktop-font", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "programs/Prefs.info", .picture = "preferences-system", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{"KIND=TOOL"} },
-    .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{"KIND=TOOL"} },
+    .{ .path = "programs/Notepad.info", .picture = "accessories-text-editor", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/MultiView.info", .picture = "system-search", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/FontView.info", .picture = "preferences-desktop-font", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/Prefs.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
 };
 
 /// The size the desktop shows icons at on a board's screen - an eighth of
