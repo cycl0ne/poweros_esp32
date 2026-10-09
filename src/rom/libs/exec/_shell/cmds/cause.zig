@@ -3,7 +3,7 @@
 //! second is ignored, since it is queued already - and when it ran.
 
 const _shell = @import("../shell.zig");
-const uptime = @import("../../../../../arch/esp32s3/timer.zig");
+const uptime = @import("../../../../../arch/arch.zig").timer;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 

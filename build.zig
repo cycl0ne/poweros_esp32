@@ -974,6 +974,8 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .optimize = optimize,
         .single_threaded = true,
         .unwind_tables = .none,
+        // The P4's backtraces walk the frame-pointer chain.
+        .omit_frame_pointer = if (chip == .esp32p4) false else null,
     });
     kernel_mod.addImport("sdk", sdk);
     const options = b.addOptions();

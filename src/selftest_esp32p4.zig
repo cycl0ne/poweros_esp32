@@ -15,6 +15,7 @@
 //!   round trip is two Waits and two Signals, each a switch.
 //! - Two tasks that only count, at the same priority as the others, so the
 //!   tick's time slice is what shares the cores between them.
+//! - The ROM debugger on `d` from the console, looked for every second.
 //! - A report every second, from an interrupt server on SYSTIMER's third
 //!   alarm (AddIntServer, the matrix routing a device source): what each
 //!   task got done, on which core, and how each core spent its time. The
@@ -351,6 +352,9 @@ fn report(sys: *ExecBase) noreturn {
     for (0..2) |core| _ = sys.ReadCoreTimes(@intCast(core), &previous_times[core]);
     while (true) {
         _ = sys.Wait(sdk.exec.SIGBREAKF_CTRL_E);
+        if (exec.raw_io_hardware.get()) |character| {
+            if (character == 'd') sys.Debug(0);
+        }
         seconds += 1;
         // Every second for the first ten, every ten from then on.
         if (seconds > 10 and seconds % 10 != 0) continue;

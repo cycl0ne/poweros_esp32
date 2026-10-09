@@ -34,9 +34,11 @@ SECTIONS
 {
   .text :
   {
+    _ram_text_start = ABSOLUTE(.);
     KEEP(*(.text.start))
     *(.text.trap)
     *(.iram.text .iram.text.*)
+    _ram_text_end = ABSOLUTE(.);
   } > ram
 
   /* ROM tags: exec's boot scan finds them between these two. */

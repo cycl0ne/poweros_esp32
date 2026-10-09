@@ -31,6 +31,9 @@ const st = sdk.expansion.systemtags;
 
 comptime {
     _ = @import("arch/esp32p4/trap.zig"); // exports riscv_exception for start.S
+    // The kernel's shell, built for this chip so it keeps building here; it
+    // starts once its console's drivers run on the P4.
+    _ = &@import("rom/libs/exec/_shell/shell.zig").run;
     // The board's description: its system tag list, a ROM tag of its own.
     _ = &boards.system.system_tag;
     _ = boards.romtags;
@@ -77,14 +80,18 @@ fn startCpu1(sys: *sdk.interface.exec.ExecBase) void {
 /// Nothing goes out on UART0 until exec's init has done RawIOInit; the log
 /// keeps it all from the first line.
 export fn kmain() callconv(.c) noreturn {
+    cpu1.hold();
     wdt.disableAll();
     clock.init();
-    const psram_result = psram.init();
+    const psram_result = psram.init(boards.fact(st.SYSTAG_PsramSpeed, 80));
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
+    exec.log_mirror.* = boards.fact(st.SYSTAG_LogMirror, 0) != 0;
+    exec.setLogMirror();
     lastwords.restore();
     exec.interrupt_hardware.* = intmatrix.interrupt_hardware;
     exec.alert_hook.* = alert.show;
+    exec.debug_hardware.* = &alert.debug_hardware;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();
     entropy.init();

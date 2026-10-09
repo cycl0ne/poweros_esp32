@@ -150,7 +150,8 @@ pub fn copyName(into: []u8, from: ?[*:0]const u8) [*:0]const u8 {
 /// words are wrong, and its lines of `help`, beside its `run`; the table
 /// the loop looks a command up in and the whole of `help`'s text are made
 /// from this list at compile time. `zig build test` fails when a file in
-/// `cmds/` is missing from it (tools/shellcheck.zig).
+/// `cmds/` is missing from it (tools/shellcheck.zig). `dma` is the
+/// ESP32-S3's until dma.resource runs on the ESP32-P4.
 const commands = .{
     @import("cmds/help.zig"),
     @import("cmds/info.zig"),
@@ -195,7 +196,10 @@ const commands = .{
     @import("cmds/panic.zig"),
     @import("cmds/wdt.zig"),
     @import("cmds/cache.zig"),
-    @import("cmds/dma.zig"),
+} ++ switch (sdk.hardware.chip) {
+    .esp32s3 => .{@import("cmds/dma.zig")},
+    .esp32p4 => .{},
+} ++ .{
     @import("cmds/reboot.zig"),
 };
 

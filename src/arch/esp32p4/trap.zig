@@ -2,7 +2,8 @@
 //! Exception and interrupt dispatch. start.S saves the interrupted context
 //! into a `Frame` and calls `riscv_exception` for every trap: an
 //! exception, an interrupt from one of the interrupt controller's lines
-//! (the number in mcause), or an `ecall` - the kernel's syscall.
+//! (the number in mcause), an `ecall` - the kernel's syscall - or a
+//! breakpoint exception, which is the ROM debugger's (debugexc.zig).
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
@@ -90,9 +91,13 @@ pub fn syscall(nr: u32, arg: u32) u32 {
         : .{ .memory = true });
 }
 
-/// The longest trap each core has taken, in cycles, and its mcause.
+/// The longest trap each core has taken, in cycles, its mcause and the
+/// line it served (bit n for line 16 + n), and the longest each line's
+/// handler ran; the shell's `cores` shows them.
 pub var longest: [2]u32 = @splat(0);
 pub var longest_cause: [2]u32 = @splat(0);
+pub var longest_lines: [2]u32 = @splat(0);
+pub var line_longest: [2][line_count]u32 = @splat(@splat(0));
 
 /// Called by start.S for every trap. Returns the frame to resume: `frame`
 /// itself, or another task's when exec switched tasks.
@@ -112,6 +117,8 @@ export fn riscv_exception(frame: *Frame) callconv(.c) *Frame {
     if (took > longest[core]) {
         longest[core] = took;
         longest_cause[core] = frame.mcause;
+        const line = frame.mcause & 0x3F;
+        longest_lines[core] = if (frame.mcause & cpu.MCAUSE_INTERRUPT != 0 and line >= 16) @as(u32, 1) << @intCast(line - 16) else 0;
     }
     return resumed;
 }
@@ -126,6 +133,7 @@ fn handle(frame: *Frame) void {
             frame.x[10] = handleSyscall(@enumFromInt(frame.x[10]), frame.x[11]);
             frame.mepc += 4; // past the ecall
         },
+        .breakpoint => @import("debugexc.zig").onBreakpoint(frame),
         else => {
             // Before exec is up there is nobody to ask.
             if (!exec.initialized) fatal(frame);
@@ -143,7 +151,13 @@ fn handle(frame: *Frame) void {
 
 fn dispatchLine(line: u6) void {
     if (line < line_count) {
-        if (handlers[cpu.coreId()][line]) |handler| return handler(line);
+        if (handlers[cpu.coreId()][line]) |handler| {
+            const began = cpu.ccount();
+            handler(line);
+            const core = cpu.coreId();
+            line_longest[core][line] = @max(line_longest[core][line], cpu.ccount() -% began);
+            return;
+        }
     }
     @import("intmatrix.zig").disableLine(line);
     exec.kprintf("\n[trap] spurious interrupt %d on core %d, disabled\n", .{ line, cpu.coreId() });

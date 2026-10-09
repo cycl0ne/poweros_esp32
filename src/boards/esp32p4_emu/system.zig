@@ -26,6 +26,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_Cores, 2),
+    // The boards run this image until they have lists of their own; the
+    // ESP32-P4-PC's console is its USB port, so the log goes there too.
+    .value(st.SYSTAG_LogMirror, 1),
     .done,
 };
 

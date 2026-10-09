@@ -229,6 +229,10 @@ pub inline fn setFunctionClock(comptime peripheral: Peripheral, clock: FunctionC
     if (fields.pre_divider) |pre| setField(pre, clock.pre_divider - 1);
 }
 
+/// HP_SYSTEM's CPU_INT_FROM_CPU_0..3, a word each: writing 1 raises
+/// source `INTB_FROM_CPU_INTR0 + n`, writing 0 lowers it.
+pub const CPU_INTR_FROM_CPU_0: usize = map.HP_SYS + 0x10;
+
 /// The ROM's software_reset, through the ROM's table of entry points,
 /// which is at the same place in every revision's ROM.
 const rom_software_reset: *const fn () callconv(.c) noreturn = @ptrFromInt(0x4FC0_0094);

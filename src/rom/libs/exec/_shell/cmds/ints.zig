@@ -8,7 +8,7 @@ const exec = @import("../../exec.zig");
 const _shell = @import("../shell.zig");
 const Shell = _shell.Shell;
 const Args = _shell.Args;
-const intmatrix = @import("../../../../../arch/esp32s3/intmatrix.zig");
+const intmatrix = @import("../../../../../arch/arch.zig").intmatrix;
 
 pub const name = "ints";
 pub const usage = "ints";

@@ -3,12 +3,16 @@
 //! for it.
 //!
 //! Core 1 comes up held in reset with its clock off, and its ROM code,
-//! once it runs, waits for an address to go to. Core 0 lets it go as
-//! ESP-IDF does: its software stall cleared, its clock on, out of reset,
-//! and the ROM told where to send it (`ets_set_appcpu_boot_addr`). It
-//! comes out at `_start_cpu1` (start.S), which sets the core up as
-//! `_start` does core 0 and calls `kmain_cpu1`. Core 0 waits until it says
-//! it is up.
+//! once it runs, waits for an address to go to. That address is an LP
+//! register, which a reset of the digital part alone (a debugger's, the
+//! software reset after a Guru) leaves as it was: core 1 may then be
+//! running from it before core 0 has set anything up. So core 0 first
+//! resets core 1 and clears the address (`hold`), and core 1 clears it
+//! again as it comes in. Core 0 lets it go as ESP-IDF does: its
+//! software stall cleared, its clock on, out of reset, and the ROM told
+//! where to send it (`ets_set_appcpu_boot_addr`). It comes out at
+//! `_start_cpu1` (start.S), which sets the core up as `_start` does core 0
+//! and calls `kmain_cpu1`. Core 0 waits until it says it is up.
 //!
 //! Core 0 makes core 1's idle task before it lets it go (exec's
 //! `prepareCore`): the code core 1 starts in becomes that task, as the
@@ -53,6 +57,16 @@ pub fn isUp() bool {
     return @as(*volatile u32, &up).* != 0;
 }
 
+/// Core 1 stopped, whatever a reset left it doing, and the ROM's boot
+/// address cleared; the kernel's first act on core 0. With its clock on
+/// (a reset that kept it running) core 1 is reset and goes back to its
+/// ROM code, which waits for an address; with it off, it stays in reset.
+pub fn hold() void {
+    reg(hp_rst_en0).* |= rst_en_core1_global;
+    ets_set_appcpu_boot_addr(0);
+    if (reg(soc_clk_ctrl0).* & core1_cpu_clk_en != 0) reg(hp_rst_en0).* &= ~rst_en_core1_global;
+}
+
 /// Core 1 let go, on the stack that ends at `stack_top` (16-byte
 /// aligned). True once it says it is up; false if it never does within
 /// about a tenth of a second.
@@ -60,8 +74,7 @@ pub fn start(stack_top: usize) bool {
     cpu1_stack_top = stack_top;
     const stall = reg(pmu_cpu_sw_stall);
     stall.* = (stall.* & ~(@as(u32, 0xFF) << core1_stall_code_shift)) | (@as(u32, 0xFF) << core1_stall_code_shift);
-    // Its clock on and out of reset, unless a debugger did that already
-    // and may have set breakpoints a reset would clear.
+    // Its clock on and out of reset, where `hold` left it in.
     if (reg(soc_clk_ctrl0).* & core1_cpu_clk_en == 0) reg(soc_clk_ctrl0).* |= core1_cpu_clk_en;
     if (reg(hp_rst_en0).* & rst_en_core1_global != 0) reg(hp_rst_en0).* &= ~rst_en_core1_global;
     ets_set_appcpu_boot_addr(@intCast(@intFromPtr(&_start_cpu1)));
@@ -76,6 +89,8 @@ pub fn start(stack_top: usize) bool {
 /// its interrupt controller and its tick set up, it takes tasks from here,
 /// says it is up, and goes on as its idle task.
 export fn kmain_cpu1() callconv(.c) noreturn {
+    // The ROM's boot address cleared, for the next reset that keeps it.
+    ets_set_appcpu_boot_addr(0);
     intmatrix.initCore1();
     timer.initCore1();
     exec.coreStarted(exec.SysBase);

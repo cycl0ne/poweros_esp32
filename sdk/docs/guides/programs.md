@@ -251,9 +251,11 @@ dbg> g                       go on (q as well)
 dbg> reset                   the machine started again
 ```
 
-The breakpoints and watchpoints are the core's own - two of each - so
-nothing is written into the code, which could not be done anyway: it is
-in flash, mapped for reading. `s` steps one instruction with every
+The breakpoints and watchpoints are the core's own - two of each on the
+ESP32-S3, two breakpoints and one watchpoint from the ESP32-P4's three
+triggers - so nothing is written into the code, which could not be done
+anyway: it is in flash, mapped for reading. On the ESP32-P4 `bt` follows
+the frame pointers the kernel is built with. `s` steps one instruction with every
 interrupt held off, so what is stepped is the code that was stopped and
 not whichever interrupt happened to be next; the stopped code's own
 interrupt level is left alone, because it may be inside a `Disable`.

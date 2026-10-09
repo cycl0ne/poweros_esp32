@@ -3,21 +3,26 @@
 //! edges - behind the PSRAM controller (MSPI2, which the caches reach it
 //! through, and MSPI3, which talks to the chip itself), mapped at
 //! 0x48000000 by the PSRAM MMU. Brought up as ESP-IDF v6.1 does
-//! (esp_psram_impl_ap_hex.c, mspi_timing_by_dqs.c), at a 200 MHz bus:
+//! (esp_psram_impl_ap_hex.c, mspi_timing_by_dqs.c), at the bus speed the
+//! board's list gives (SYSTAG_PsramSpeed): 200 MHz where the board's
+//! wiring holds it, else 80. At 200 MHz a board with too little margin
+//! reads and writes right but now and then answers a cache fill with a
+//! bus error, which the CPU takes as an access fault far from its cause.
 //!
 //! 1. The chip's power, LDO channel 2 at 1.8 V, which feeds the MPLL too;
-//!    the MPLL at 400 MHz, the controller's clock, set over the analog bus
-//!    and calibrated; the controller clocked from it and reset.
+//!    the MPLL at 400 MHz for 200, 320 for 80 - the controller's clock -
+//!    set over the analog bus and calibrated; the controller clocked from
+//!    it and reset.
 //! 2. The pads' drive and the data strobe (DQS) on; chip select timing,
-//!    split transfers, 2 KiB pages; both controllers' bus clocks 400 / 20;
-//!    the DLLs on.
+//!    split transfers, 2 KiB pages; both controllers' bus clocks the MPLL
+//!    divided down to 20 MHz; the DLLs on.
 //! 3. The chip's mode registers - latency, drive, burst - set with direct
 //!    transactions on MSPI3 (the ROM's esp_rom_spi_cmd_*), a word written
 //!    and read back to find it there, and its size read from MR2.
 //! 4. MSPI2 set up for the caches' accesses - commands, 32-bit addresses,
 //!    dummy cycles, DDR on 16 lines over the AXI bus.
 //! 5. The timing tuned: a 128-byte pattern written at 20 MHz, then read
-//!    back at 200 MHz under each of the data strobe's four phases, and
+//!    back at full speed under each of the data strobe's four phases, and
 //!    under the best of them, each of 31 delay line settings a hundred
 //!    times - the strobe delayed against the data, then the data against
 //!    the strobe. The middle of the longest run of settings that read it
@@ -98,10 +103,10 @@ const mspi_cal_stop: u32 = 1 << 9;
 const mpll_ir_cal = 1; // IR_CAL_RSTB in bit 5
 const mpll_div = 2; // divider in bits 3-7, reference divider in 0-2
 const mpll_dhref = 3; // DHREF in bits 4-5
-const mpll_hz: u32 = 400_000_000;
 
-/// The MPLL at 400 MHz: 40 MHz x (div + 1) / (ref_div + 1), div 19, ref 1.
-fn mpllInit() void {
+/// The MPLL at `mhz` (320 or 400): 40 MHz x (div + 1) / (ref_div + 1),
+/// the reference divider 1.
+fn mpllInit(mhz: u32) void {
     reg(pmu_rf_pwc).* |= mspi_phy_xpd;
     reg(lp_hp_clk_ctrl).* |= mpll_500m_clk_en;
     reg(ana_pll_ctrl0).* &= ~mspi_cal_stop;
@@ -109,7 +114,7 @@ fn mpllInit() void {
     const rstb = regi2c.read(.mpll, mpll_ir_cal);
     regi2c.write(.mpll, mpll_ir_cal, rstb & 0xDF);
     regi2c.write(.mpll, mpll_ir_cal, rstb | 1 << 5);
-    const div: u8 = @intCast(mpll_hz / 20_000_000 - 1);
+    const div: u8 = @intCast(mhz / 20 - 1);
     regi2c.write(.mpll, mpll_div, div << 3 | 1);
     var spins: u32 = 0;
     while (reg(ana_pll_ctrl0).* & mspi_cal_end == 0 and spins < 1_000_000) spins += 1;
@@ -202,23 +207,33 @@ const reg_write: u16 = 0xC0C0;
 /// A word written and read back to find the chip.
 const reference_word: u32 = 0x5A6B_7C8D;
 
-/// What a bus speed asks of the chip and the controllers: the latencies
-/// set in the chip, the dummy bits that cover them, and the controllers'
-/// clock divider from the MPLL.
+/// What a bus speed asks of the chip and the controllers: the MPLL its
+/// clock is divided from, the latencies set in the chip, and the dummy
+/// bits that cover them.
 const Speed = struct {
     mhz: u32,
+    mpll_mhz: u32,
     rd_dummy_bits: u32,
     rd_reg_dummy_bits: u32,
     wr_dummy_bits: u32,
     read_latency: u8,
     write_latency: u8,
 
+    /// The controllers' clock divider from the MPLL.
     fn divider(speed: Speed) u32 {
-        return mpll_hz / (speed.mhz * 1_000_000);
+        return speed.mpll_mhz / speed.mhz;
+    }
+
+    /// 20 MHz from the same MPLL: where a chip the tuning finds nothing
+    /// for is brought up again.
+    fn untuned(speed: Speed) Speed {
+        return .{ .mhz = 20, .mpll_mhz = speed.mpll_mhz, .rd_dummy_bits = 2 * (10 - 1), .rd_reg_dummy_bits = 2 * (5 - 1), .wr_dummy_bits = 2 * (5 - 1), .read_latency = 2, .write_latency = 2 };
     }
 };
-const fast: Speed = .{ .mhz = 200, .rd_dummy_bits = 2 * (14 - 1), .rd_reg_dummy_bits = 2 * (7 - 1), .wr_dummy_bits = 2 * (7 - 1), .read_latency = 4, .write_latency = 1 };
-const slow: Speed = .{ .mhz = 20, .rd_dummy_bits = 2 * (10 - 1), .rd_reg_dummy_bits = 2 * (5 - 1), .wr_dummy_bits = 2 * (5 - 1), .read_latency = 2, .write_latency = 2 };
+const speeds = [_]Speed{
+    .{ .mhz = 200, .mpll_mhz = 400, .rd_dummy_bits = 2 * (14 - 1), .rd_reg_dummy_bits = 2 * (7 - 1), .wr_dummy_bits = 2 * (7 - 1), .read_latency = 4, .write_latency = 1 },
+    .{ .mhz = 80, .mpll_mhz = 320, .rd_dummy_bits = 2 * (10 - 1), .rd_reg_dummy_bits = 2 * (5 - 1), .wr_dummy_bits = 2 * (5 - 1), .read_latency = 2, .write_latency = 2 },
+};
 
 /// The bus speed `init` brought the chip up at, and what the tuning chose.
 pub var bus_mhz: u32 = 0;
@@ -281,14 +296,18 @@ fn clockBits(divider: u32) u32 {
     return (divider - 1) << 16 | (divider / 2 - 1) << 8 | (divider - 1);
 }
 
-/// The PSRAM brought up at 200 MHz with its timing tuned, or at 20 MHz
-/// where the tuning finds nothing that reads right; mapped.
-pub fn init() Error!void {
+/// The PSRAM brought up at `mhz` (200 or 80; anything else is taken as
+/// 80) with its timing tuned, or at 20 MHz where the tuning finds nothing
+/// that reads right; mapped.
+pub fn init(mhz: u32) Error!void {
+    const speed = for (speeds) |candidate| {
+        if (candidate.mhz == mhz) break candidate;
+    } else speeds[1];
     ldoInit();
-    mpllInit();
+    mpllInit(speed.mpll_mhz);
     // At 20 MHz nothing is tuned, so only a chip that is not there fails.
-    bringUp(fast) catch {
-        bringUp(slow) catch return error.NotFound;
+    bringUp(speed) catch {
+        bringUp(speed.untuned()) catch return error.NotFound;
     };
     var entry: u32 = 0;
     while (entry < size / page_size) : (entry += 1) {
@@ -376,7 +395,7 @@ fn bringUp(speed: Speed) BringUpError!void {
     reg(cache_fctrl).* = (reg(cache_fctrl).* & ~close_axi_inf_en) | axi_req_en;
     reg(ctrl1).* |= aw_splice_en | ar_splice_en;
 
-    if (speed.mhz > slow.mhz) try tune(speed);
+    if (speed.mhz > 20) try tune(speed);
     reg(mspi3_ddr).* |= fmem_var_dummy;
     bus_mhz = speed.mhz;
 }
@@ -421,7 +440,7 @@ fn delaylineOf(index: u32) Delayline {
 /// lines swept at `speed`, the best of each kept and set.
 fn tune(speed: Speed) BringUpError!void {
     // At 20 MHz, where the default timing holds, the pattern written.
-    setBusClock(slow);
+    setBusClock(speed.untuned());
     clearTuning();
     const pattern: [128]u8 = @bitCast(pattern_words);
     var at: u32 = 0;

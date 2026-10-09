@@ -69,7 +69,7 @@ var line_exclusive: [trap.line_count]bool = @splat(false);
 
 /// HP_SYSTEM's CPU_INT_FROM_CPU_0..3: writing 1 raises the source, 0
 /// lowers it.
-const from_cpu = hardware.map.HP_SYS + 0x10;
+const from_cpu = hardware.system.CPU_INTR_FROM_CPU_0;
 
 pub const interrupt_hardware: exec.InterruptHardware = .{
     .enable_source = enableSource,

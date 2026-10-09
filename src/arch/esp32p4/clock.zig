@@ -70,12 +70,13 @@ pub fn chipRevision() u32 {
     return major * 100 + minor;
 }
 
-/// The CPU on the CPLL at 360 MHz, unless it is there already.
+/// The CPU on the CPLL at 360 MHz.
 pub fn init() void {
-    if (reg(hp_clk_ctrl).* & root_src_mask == root_src_cpll) {
-        cpu_hz = cpll_hz;
-        return;
-    }
+    // The root clock's source is in the LP domain, which a reset of the
+    // digital part alone (USB, JTAG, software) keeps, while that reset
+    // puts the dividers back: the crystal first, then all of it set up
+    // as after power-on.
+    reg(hp_clk_ctrl).* &= ~root_src_mask;
     reg(pmu_imm_hp_ck_power).* |= tie_high_xpd_cpll | tie_high_xpd_cpll_i2c;
     reg(pmu_imm_hp_ck_power).* |= tie_high_global_cpll_icg;
 

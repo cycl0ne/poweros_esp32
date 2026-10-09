@@ -6,7 +6,7 @@
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
-const cpu = @import("../../../../../arch/esp32s3/cpu.zig");
+const cpu = @import("../../../../../arch/arch.zig").cpu;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 const platform = sdk.resources.platform;

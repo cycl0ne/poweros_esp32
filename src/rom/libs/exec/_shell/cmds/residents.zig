@@ -8,7 +8,7 @@ const exec = @import("../../exec.zig");
 const _shell = @import("../shell.zig");
 const Shell = _shell.Shell;
 const Args = _shell.Args;
-const layout = @import("../../../../../arch/esp32s3/layout.zig");
+const layout = @import("../../../../../arch/arch.zig").layout;
 
 pub const name = "residents";
 pub const usage = "residents";
