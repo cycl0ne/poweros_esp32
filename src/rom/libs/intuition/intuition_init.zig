@@ -91,8 +91,10 @@ pub const LIBRARY_VERSION = 0;
 /// GA_ClipRect, a gadget's clip, held by ObtainGIRPort; a layout's labels
 /// move with it; a value the wheel changes reported as GADGETUP
 /// (GMWR_VERIFY). 36: the active window closed, the window on its screen
-/// that was active before it is active again.
-pub const LIBRARY_REVISION = 36;
+/// that was active before it is active again. 37: a refresh with nothing
+/// left to redraw draws nothing; only the part of the border that shows
+/// is drawn; a GimmeZeroZero window's two layers move in one pass.
+pub const LIBRARY_REVISION = 37;
 const BUILD_DATE = "09.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -32,7 +32,8 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// BEHAVIOR:
 /// Its RastPort, its regions and everything it kept go back. What was
 /// behind it is uncovered: a simple layer there is owed the pixels as
-/// damage, a smart or super one gets them back from its keeping.
+/// damage, a smart or super one gets them back from its keeping. A layer
+/// that moved with it (`LATAG_MovesWith`) stays, and moves on its own.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -64,6 +65,12 @@ pub fn DeleteLayer(lb: *LayersBase, layer: ?*Layer) void {
 
     sys.Remove(&gone.node);
     sys.Remove(&gone.lock.link);
+    // A layer that moved with it moves on its own from now on.
+    var others = info.layers.iterator();
+    while (others.next()) |node| {
+        const other: *Layer = @fieldParentPtr("node", node);
+        if (other.moves_with == gone) other.moves_with = null;
+    }
     // What it inherited when it joined, given back before it goes: the
     // list release will not see it any more.
     var held: u32 = 0;

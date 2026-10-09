@@ -43,12 +43,15 @@ const LayersBase = @import("../layers.zig").LayersBase;
 ///   - `LATAG_Backdrop` - non-zero keeps it behind every ordinary layer.
 ///   - `LATAG_BackFill` - what paints its empty parts: 0 for its background
 ///     pen, `LAYERS_NOBACKFILL` for nothing, or a `*Hook`.
+///   - `LATAG_MovesWith` - a `*Layer` of the same display it moves and
+///     sizes with.
 ///   - `LATAG_ErrorPtr` - an `*i32` that gets the reason if it fails.
 ///
 /// RESULT:
 /// The layer, or null. `LATAG_ErrorPtr` then holds why: `LERR_BAD_BOUNDS`
 /// for no rectangle or an empty one, `LERR_NO_SUPERBITMAP` for a
-/// `LAYERSUPER` layer without a bitmap big enough, `LERR_NO_RASTPORT`, or
+/// `LAYERSUPER` layer without a bitmap big enough, `LERR_NOT_DONE` for a
+/// `LATAG_MovesWith` layer of another display, `LERR_NO_RASTPORT`, or
 /// `LERR_NO_MEMORY`.
 ///
 /// BEHAVIOR:
@@ -131,6 +134,12 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         }
     }
 
+    // The layer it moves with is one of this display's.
+    const moves_with: ?*Layer = @ptrFromInt(ub.GetTagData(layers.LATAG_MovesWith, 0, tag_list));
+    if (moves_with) |other| if (other.info != info) {
+        report(lb, tag_list, layers.LERR_NOT_DONE);
+        return null;
+    };
     const mem = sys.AllocVec(@sizeOf(Layer), exec.MEMF_CLEAR) orelse {
         report(lb, tag_list, layers.LERR_NO_MEMORY);
         return null;
@@ -181,6 +190,7 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         .rp = rp,
         .visible = seen,
         .damage = owed,
+        .moves_with = moves_with,
     };
     sys.InitSemaphore(&layer.lock);
     // Every layer's lock is also on the LayerInfo's list, so LockLayers is

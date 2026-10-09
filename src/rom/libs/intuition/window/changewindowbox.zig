@@ -90,6 +90,8 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     // to draw in.
     const cleared = dw != 0 or dh != 0;
     if (cleared) _gadget.clearRelative(ib, window);
+    // A GimmeZeroZero window's interior goes with it: its layer moves and
+    // sizes with the border's, by the same amounts.
     if (!ib.layers_base.MoveSizeLayer(window.layer, dx, dy, dw, dh)) {
         // The layer would not move, so the window is the size it was -
         // but its gadgets have just been cleared off it. They are put
@@ -111,9 +113,6 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
         });
         return;
     }
-    // The interior goes with it. Its border widths do not change, so it
-    // moves by the same amount and grows by the same amount.
-    if (window.inner_layer) |inner| _ = ib.layers_base.MoveSizeLayer(inner, dx, dy, dw, dh);
     const old_w = window.width;
     const old_h = window.height;
     window.left = new_l;

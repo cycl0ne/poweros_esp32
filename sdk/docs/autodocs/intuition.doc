@@ -522,7 +522,8 @@ intuition.library/ZipWindow
 	Until `EndRefresh`, drawing through the window's RastPort reaches only
 	the part that needs it, so a program may simply draw everything. A
 	further IDCMP_REFRESHWINDOW can be sent from here on. For a window
-	with nothing to redraw it does nothing, and so does its EndRefresh.
+	with nothing left to redraw - a part uncovered and covered again before
+	the program answered - what is drawn until `EndRefresh` reaches nothing.
 
 	Until `EndRefresh` the window's layer is held, as `LockLayer` holds
 	it: no window moves, opens or closes on the screen meanwhile, so

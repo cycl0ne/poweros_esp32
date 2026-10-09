@@ -58,15 +58,17 @@ fn BeginUpdate(lb: *LayersBase, layer: *Layer) bool
 
 **RESULT**
 
-True if there was damage and the layer is now narrowed to it. False if
-there was none, if an update was already on, or with `LERR_NO_MEMORY` in
-the layer if there was no memory.
+True if the layer is now narrowed to its damage. False if an update was
+already on, or with `LERR_NO_MEMORY` in the layer if there was no
+memory.
 
 **BEHAVIOR**
 
 Between this and `EndUpdate` a program can draw all of itself and touch
 only the parts that were uncovered: the rest of the layer is clipped
-away. The whole clip list is put aside rather than freed, since it is
+away. A layer that owes nothing is narrowed to nothing, so a program
+asked to refresh after its damage has gone draws nothing over what is
+shown. The whole clip list is put aside rather than freed, since it is
 what the layer goes back to and working it out again could fail for want
 of memory just when there is none.
 
@@ -190,13 +192,16 @@ fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const TagItem
   - `LATAG_Backdrop` - non-zero keeps it behind every ordinary layer.
   - `LATAG_BackFill` - what paints its empty parts: 0 for its background
     pen, `LAYERS_NOBACKFILL` for nothing, or a `*Hook`.
+  - `LATAG_MovesWith` - a `*Layer` of the same display it moves and
+    sizes with.
   - `LATAG_ErrorPtr` - an `*i32` that gets the reason if it fails.
 
 **RESULT**
 
 The layer, or null. `LATAG_ErrorPtr` then holds why: `LERR_BAD_BOUNDS`
 for no rectangle or an empty one, `LERR_NO_SUPERBITMAP` for a
-`LAYERSUPER` layer without a bitmap big enough, `LERR_NO_RASTPORT`, or
+`LAYERSUPER` layer without a bitmap big enough, `LERR_NOT_DONE` for a
+`LATAG_MovesWith` layer of another display, `LERR_NO_RASTPORT`, or
 `LERR_NO_MEMORY`.
 
 **BEHAVIOR**
@@ -278,7 +283,8 @@ Nothing.
 
 Its RastPort, its regions and everything it kept go back. What was
 behind it is uncovered: a simple layer there is owed the pixels as
-damage, a smart or super one gets them back from its keeping.
+damage, a smart or super one gets them back from its keeping. A layer
+that moved with it (`LATAG_MovesWith`) stays, and moves on its own.
 
 **CONTEXT**
 
@@ -1036,6 +1042,11 @@ that are visible before and after - they are copied across the display -
 and is owed the rest as damage; a smart layer is owed nothing. What a
 growing layer gains has never held anything and is painted with its
 backfill.
+
+Every layer made to move with this one (`LATAG_MovesWith`) moves and
+sizes by the same amounts in the same pass. Where one of them covered
+another before, it covers it after, so none is uncovered by another on
+the way and none owes a redraw for it.
 
 **CONTEXT**
 

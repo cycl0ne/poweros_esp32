@@ -373,7 +373,9 @@ pub fn unlock(ib: *IntuitionBase) void {
 /// RastPort draws in the window's own coordinates and sends what falls in
 /// the strip to its bitmap, so the border and its gadgets draw there
 /// exactly as they would on the window. Without the memory for a strip it
-/// is all drawn in place after all.
+/// is all drawn in place after all. Only the part of a strip that shows
+/// through the window's clipping is drawn - none of one that is covered,
+/// or outside the damage an update is narrowed to.
 pub fn drawBorder(ib: *IntuitionBase, w: *Window) void {
     if (w.flags & WF_BORDERLESS != 0) return;
     const gb = ib.graphics_base;
@@ -393,11 +395,34 @@ pub fn drawBorder(ib: *IntuitionBase, w: *Window) void {
     };
     for (strips) |strip| {
         if (strip.max_x <= strip.min_x or strip.max_y <= strip.min_y) continue;
-        if (drawStrip(ib, w, strip, font)) continue;
+        const shown = shownPart(gb, w.rp, strip) orelse continue;
+        if (drawStrip(ib, w, shown, font)) continue;
         paintBorder(ib, w, w.rp);
         drawBorderGadgets(ib, w, w.rp);
         return;
     }
+}
+
+/// The box around what of `area`, in the RastPort's own coordinates, gets
+/// through its clip list; null when none of it does. A RastPort without
+/// one clips nothing.
+fn shownPart(gb: *sdk.interface.graphics.GraphicsBase, rp: *graphics.RastPort, area: graphics.Rect) ?graphics.Rect {
+    var list: usize = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&list) }, .{} });
+    if (list == 0) return area;
+    var shown: ?graphics.Rect = null;
+    var target: ?*const graphics.ClipTarget = @ptrFromInt(list);
+    while (target) |each| : (target = each.next) {
+        const meet = graphics.Rect.intersect(each.rect, area);
+        if (meet.isEmpty()) continue;
+        shown = if (shown) |box| .{
+            .min_x = @min(box.min_x, meet.min_x),
+            .min_y = @min(box.min_y, meet.min_y),
+            .max_x = @max(box.max_x, meet.max_x),
+            .max_y = @max(box.max_y, meet.max_y),
+        } else meet;
+    }
+    return shown;
 }
 
 /// One strip of the border, drawn off the window and put on it; false when

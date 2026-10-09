@@ -254,7 +254,9 @@ pub fn rebuild(lb: *LayersBase, layer: *Layer) bool {
 /// deleted, or moved in the order. A layer that is uncovered by the change
 /// has the uncovered part added to its damage, since with the simple
 /// refresh those pixels were not kept anywhere and only its program can
-/// put them back.
+/// put them back. Such a layer's damage is cut to what it can still see:
+/// a part covered again before it was drawn is damaged afresh when it is
+/// next uncovered, and until then drawing it would land nowhere.
 ///
 /// **Two passes, and the order between them is the point.** The first
 /// works out what each layer can see now and has every layer that keeps
@@ -346,6 +348,7 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
 
         gb.DisposeRegion(layer.visible);
         layer.visible = seen;
+        if (layer.flags & (layers.LAYERSMART | layers.LAYERSUPER) == 0) trimDamage(lb, layer);
 
         if (!rebuild(lb, layer)) ok = false;
         // After the targets are in place, so that the paint goes where the
@@ -356,4 +359,17 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
         }
     }
     return ok;
+}
+
+/// A simple layer's damage cut to what it can see, and the layer no longer
+/// owed a refresh when none is left. Without the memory to cut it, the
+/// damage stays as it was: too much is drawn again, never too little.
+fn trimDamage(lb: *LayersBase, layer: *Layer) void {
+    const gb = lb.graphics_base;
+    if (info_mod.isEmpty(gb, layer.damage)) return;
+    const seen = info_mod.copyRegion(gb, layer.visible) orelse return;
+    defer gb.DisposeRegion(seen);
+    gb.OffsetRegion(seen, -layer.bounds.min_x, -layer.bounds.min_y);
+    if (!gb.AndRegionRegion(seen, layer.damage)) return;
+    if (info_mod.isEmpty(gb, layer.damage)) layer.flags &= ~layers.LAYERREFRESH;
 }

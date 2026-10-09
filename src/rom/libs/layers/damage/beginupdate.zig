@@ -28,14 +28,16 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// - `layer` - the layer.
 ///
 /// RESULT:
-/// True if there was damage and the layer is now narrowed to it. False if
-/// there was none, if an update was already on, or with `LERR_NO_MEMORY` in
-/// the layer if there was no memory.
+/// True if the layer is now narrowed to its damage. False if an update was
+/// already on, or with `LERR_NO_MEMORY` in the layer if there was no
+/// memory.
 ///
 /// BEHAVIOR:
 /// Between this and `EndUpdate` a program can draw all of itself and touch
 /// only the parts that were uncovered: the rest of the layer is clipped
-/// away. The whole clip list is put aside rather than freed, since it is
+/// away. A layer that owes nothing is narrowed to nothing, so a program
+/// asked to refresh after its damage has gone draws nothing over what is
+/// shown. The whole clip list is put aside rather than freed, since it is
 /// what the layer goes back to and working it out again could fail for want
 /// of memory just when there is none.
 ///
@@ -82,7 +84,6 @@ fn begin(lb: *LayersBase, layer: *Layer) bool {
     const gb = lb.graphics_base;
     layer.last_error = layers.LERR_OK;
     if (layer.flags & layers.LAYERUPDATING != 0) return false;
-    if (_layerinfo.isEmpty(gb, layer.damage)) return false;
 
     const narrowed = tile.inLayerSpace(lb, layer, layer.damage) orelse {
         layer.last_error = layers.LERR_NO_MEMORY;

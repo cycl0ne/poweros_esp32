@@ -175,7 +175,9 @@ A smart-refresh window, the default, keeps what is covered and puts it
 back by itself. A simple-refresh one keeps nothing and sends
 `IDCMP_REFRESHWINDOW`; the program draws between `BeginRefresh` and
 `EndRefresh`, which let through only the part that needs it, so it may
-draw everything. The window's layer is held from one to the other, so
+draw everything; when nothing is left to draw - the part was covered
+again before the program got to it - nothing it draws lands. The
+window's layer is held from one to the other, so
 no window moves over it meanwhile: in between, only draw - no intuition
 call. `IDCMP_NEWSIZE` says the size changed:
 

@@ -95,6 +95,15 @@ pub const LATAG_BackFill = LATAG_Dummy + 6;
 /// must outlive the layer.
 pub const LATAG_SuperBitMap = LATAG_Dummy + 7;
 
+/// A `*Layer` of the same display this one moves and sizes with: moving or
+/// sizing that layer moves and sizes this one by the same amounts, in the
+/// same pass, so neither is uncovered by the other on the way and neither
+/// owes a redraw for it - a window's interior with its border. Moved on
+/// its own, this layer moves alone. One step only: a layer moving with
+/// this one does not move when this one's own layer does. Deleting that
+/// layer leaves this one on its own.
+pub const LATAG_MovesWith = LATAG_Dummy + 8;
+
 /// Where to write the error if the call fails, as an `*i32`. The layer
 /// that would have carried it does not exist yet, which is why this is
 /// here at all.
@@ -146,9 +155,8 @@ pub const LERR_BAD_BOUNDS: i32 = -2;
 /// The RastPort for the layer could not be made, which on a machine with
 /// no display is what happens.
 pub const LERR_NO_RASTPORT: i32 = -3;
-/// The call asked for something this library does not do. Nothing
-/// returns it at present; it stays so that a code once returned keeps its
-/// meaning.
+/// The call asked for something this library does not do: a layer made
+/// to move with a layer of another display.
 pub const LERR_NOT_DONE: i32 = -4;
 /// A `LAYERSUPER` layer was asked for without a bitmap to draw into, or
 /// with one smaller than the layer.

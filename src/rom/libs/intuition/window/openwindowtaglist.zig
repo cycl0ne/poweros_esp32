@@ -370,9 +370,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
 
     // A GimmeZeroZero window's interior is a layer of its own, in front of
     // the border's, so that what the program draws is clipped to the inside
-    // and its own (0, 0) is that corner. A window that cannot have the
-    // second layer opens without it and is an ordinary window, which is
-    // better than not opening at all.
+    // and its own (0, 0) is that corner. It moves and sizes with the
+    // border's layer, in the same pass, so a move uncovers neither of the
+    // other. A window that cannot have the second layer opens without it
+    // and is an ordinary window, which is better than not opening at all.
     if (flags & WF_GZZ != 0 and bl + br < width and bt + bb < height) {
         const inner = graphics.Rect{
             .min_x = left + bl,
@@ -385,6 +386,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             .{ .tag = layers.LATAG_Refresh, .data = refresh },
             .{ .tag = layers.LATAG_BackFill, .data = paints_it },
             .{ .tag = layers.LATAG_SuperBitMap, .data = super },
+            .{ .tag = layers.LATAG_MovesWith, .data = @intFromPtr(layer) },
             .{},
         };
         if (lb.CreateLayerTagList(s.layer_info, &inner_tags)) |inner_layer| {

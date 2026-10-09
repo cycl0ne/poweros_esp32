@@ -137,6 +137,9 @@ pub const Layer = struct {
     lock: exec.SignalSemaphore = .{ .link = .{ .type = .signalsem } },
     /// What went wrong in the last call on this layer.
     last_error: i32 = layers.LERR_OK,
+    /// The layer this one moves and sizes with (`LATAG_MovesWith`), or
+    /// null.
+    moves_with: ?*Layer = null,
 };
 
 /// Room for one kept piece, from the LayerInfo's pool.

@@ -84,7 +84,7 @@ const LayersBase = sdk.interface.layers.LayersBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gfx";
-const VERSION_STRING = "\x00$VER: Gfx 1.0 (17.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gfx 1.1 (09.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DISPLAY/S,MEMORY/S,FORMATS/S,FILL/S,BLIT/S,LINES/S,REGION/S,DRAW/S,GURU/S,LAYERS/S,ALL/S,SPEED/S";
@@ -916,10 +916,9 @@ fn drawLayers(sys: *ExecBase, gb: *GraphicsBase) ?u32 {
         label(gb, rp, font, 6, 14, names[0], graphics.penRGB(255, 255, 255));
     }
 
-    // A smart layer answers false here, having nothing to redraw: its
-    // pixels were put back the moment it was uncovered. So the loop paints
-    // only the simple ones, and what is left in its own colour is the
-    // smart one that never had to.
+    // A smart layer owes nothing here: its pixels were put back the moment
+    // it was uncovered. So the loop paints only the simple ones, and what
+    // is left in its own colour is the smart one that never had to.
     var i: u32 = 1;
     while (i < count) : (i += 1) {
         // Where the damage is, read before the update clears it, so the
@@ -929,21 +928,19 @@ fn drawLayers(sys: *ExecBase, gb: *GraphicsBase) ?u32 {
         var owed: usize = 0;
         const ask_damage = [_]TagItem{ .{ .tag = layers.LATAG_GetDamage, .data = @intFromPtr(&owed) }, .{} };
         lb.GetLayerAttrs(made[i], &ask_damage);
-        const have_corner = owed != 0 and gb.RegionRectangles(@ptrFromInt(owed), @ptrCast(&corner), 1) != 0;
+        if (owed == 0 or gb.RegionRectangles(@ptrFromInt(owed), @ptrCast(&corner), 1) == 0) continue;
 
-        if (!lb.BeginUpdate(made[i])) continue;
         const rp = rastPortOf(lb, made[i]) orelse continue;
+        if (!lb.BeginUpdate(made[i])) continue;
         // A whole repaint in a colour of its own. Only what was uncovered
         // can land, so what shows is the shape of the damage - which is
         // exactly where the raised window had been over this one. No
         // border: that belongs to the window, and drawn here it would be
         // cut to the damage and read as an edge of something else.
         fillLayer(gb, rp, lighter(pens[i]), wide, high, false);
-        if (have_corner) {
-            // The caption in the window's own colour, on the lighter
-            // shade of it: legible, and it ties the two together.
-            label(gb, rp, font, corner.min_x + 4, corner.min_y + 12, redraw_names[i], pens[i]);
-        }
+        // The caption in the window's own colour, on the lighter shade of
+        // it: legible, and it ties the two together.
+        label(gb, rp, font, corner.min_x + 4, corner.min_y + 12, redraw_names[i], pens[i]);
         lb.EndUpdate(made[i], true);
     }
     return count;

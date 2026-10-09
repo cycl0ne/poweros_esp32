@@ -295,7 +295,6 @@ test "layers: a smart layer keeps what is covered and gets it back" {
     base(lb).GetLayerAttrs(back, &ask_flags);
     try testing.expectEqual(@as(u32, 0), flags & layers.LAYERREFRESH);
     try testing.expectEqual(layers.LAYERSMART, flags & layers.LAYERSMART);
-    try testing.expect(!base(lb).BeginUpdate(back));
 
     // With the front one gone the back one is frontmost; a new one goes in
     // front of it.
@@ -635,7 +634,6 @@ test "layers: a moved layer carries its pixels, and a smart one carries the cove
     try testing.expectEqual(red, pixelAt(&surface, 9, 15));
     // A smart layer is owed nothing, whatever happens to it.
     try testing.expectEqual(@as(u32, 0), owed(lb, back));
-    try testing.expect(!base(lb).BeginUpdate(back));
     // And the front one is where it was, untouched.
     try testing.expectEqual(green, pixelAt(&surface, 8, 3));
 
@@ -829,6 +827,228 @@ test "layers: moved, sized and reordered at random, every pixel is the front lay
     try tearDown(lb);
 }
 
+test "layers: a layer moving with another goes in the same pass, and neither owes anything for it" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    var surface: rtg.Surface = undefined;
+    const screen, const info = try scene(lb, &surface, &pixels);
+
+    // A window: its border's layer, and its interior's in front of it,
+    // moving with it.
+    const outer_where = Rect{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 10 };
+    const outer = try layerAt(lb, info, &outer_where, layers.LAYERSIMPLE);
+    const inner_where = Rect{ .min_x = 4, .min_y = 4, .max_x = 12, .max_y = 8 };
+    const inner_tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&inner_where) },
+        .{ .tag = layers.LATAG_MovesWith, .data = @intFromPtr(outer) },
+        .{},
+    };
+    const inner = base(lb).CreateLayerTagList(info, &inner_tags) orelse return error.NoLayer;
+    fill(lb, outer, graphics.penRGB(255, 0, 0), .{ .max_x = 12, .max_y = 8 });
+    fill(lb, inner, graphics.penRGB(0, 0, 255), .{ .max_x = 8, .max_y = 4 });
+
+    // Moved further than the border is wide: each would have uncovered the
+    // other on the way, and here neither does.
+    try testing.expect(base(lb).MoveLayer(outer, 6, 4));
+    try testing.expectEqual(Rect{ .min_x = 10, .min_y = 8, .max_x = 18, .max_y = 12 }, boundsOf(lb, inner));
+    try testing.expectEqual(@as(u32, 0), owed(lb, outer));
+    try testing.expectEqual(@as(u32, 0), owed(lb, inner));
+    try testing.expectEqual(red, pixelAt(&surface, 8, 6)); // the border's corner
+    try testing.expectEqual(red, pixelAt(&surface, 9, 10)); // its left side
+    try testing.expectEqual(blue, pixelAt(&surface, 10, 8)); // the interior's corner
+    try testing.expectEqual(blue, pixelAt(&surface, 17, 11));
+    try testing.expectEqual(red, pixelAt(&surface, 19, 13)); // the border's far corner
+
+    // Sized, the interior grows with it, and keeps what it had.
+    try testing.expect(base(lb).SizeLayer(outer, 4, 2));
+    try testing.expectEqual(Rect{ .min_x = 10, .min_y = 8, .max_x = 22, .max_y = 14 }, boundsOf(lb, inner));
+    try testing.expectEqual(blue, pixelAt(&surface, 17, 11));
+
+    // Moved on its own, it moves alone.
+    try testing.expect(base(lb).MoveLayer(inner, 1, 0));
+    try testing.expectEqual(Rect{ .min_x = 8, .min_y = 6, .max_x = 24, .max_y = 16 }, boundsOf(lb, outer));
+    try testing.expectEqual(Rect{ .min_x = 11, .min_y = 8, .max_x = 23, .max_y = 14 }, boundsOf(lb, inner));
+
+    // With the layer it moved with gone, it stays, on its own.
+    base(lb).DeleteLayer(outer);
+    try testing.expect(base(lb).MoveLayer(inner, -1, 0));
+    try testing.expectEqual(Rect{ .min_x = 10, .min_y = 8, .max_x = 22, .max_y = 14 }, boundsOf(lb, inner));
+
+    // A layer of another display is not one to move with.
+    const other_info = base(lb).NewLayerInfo(screen) orelse return error.NoLayerInfo;
+    var why: i32 = 0;
+    const stray_tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&inner_where) },
+        .{ .tag = layers.LATAG_MovesWith, .data = @intFromPtr(inner) },
+        .{ .tag = layers.LATAG_ErrorPtr, .data = @intFromPtr(&why) },
+        .{},
+    };
+    try testing.expect(base(lb).CreateLayerTagList(other_info, &stray_tags) == null);
+    try testing.expectEqual(layers.LERR_NOT_DONE, why);
+
+    base(lb).DisposeLayerInfo(other_info);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+/// Where a layer is, in the display's coordinates.
+fn boundsOf(lb: *LayersBase, layer: *layers.Layer) Rect {
+    var bounds = Rect{};
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetBounds, .data = @intFromPtr(&bounds) }, .{} };
+    base(lb).GetLayerAttrs(layer, &ask);
+    return bounds;
+}
+
+test "layers: a window's two layers among others, moved, sized and reordered at random: every pixel is the front one's" {
+    try randomWindow(layers.LAYERSIMPLE);
+    try randomWindow(layers.LAYERSMART);
+}
+
+/// A window - a border's layer and an interior's moving with it, both of
+/// `mode` - among a smart and a simple layer, moved, sized and reordered
+/// at random. Every pixel is the frontmost layer's after each step, and
+/// the window moved while nothing is in front of it owes nothing.
+fn randomWindow(mode: usize) !void {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var pixels: [32 * 16 * 2 + 64]u8 = @splat(0);
+    var surface: rtg.Surface = undefined;
+    const screen, const info = try scene(lb, &surface, &pixels);
+    const border = 2;
+
+    const pictures = [_]Painted{
+        .{ .top = .{ 255, 0, 0 }, .bottom = .{ 0, 255, 0 } },
+        .{ .top = .{ 0, 0, 255 }, .bottom = .{ 255, 255, 0 } },
+        .{ .top = .{ 255, 0, 255 }, .bottom = .{ 0, 255, 255 } },
+        .{ .top = .{ 255, 255, 255 }, .bottom = .{ 0, 0, 0 } },
+    };
+    // 0 the window's border, 1 its interior, 2 and 3 the others.
+    var made: [4]*layers.Layer = undefined;
+    var where: [4]Rect = undefined;
+    where[0] = .{ .min_x = 0, .min_y = 0, .max_x = 12, .max_y = 9 };
+    made[0] = try layerAt(lb, info, &where[0], mode);
+    where[1] = insetOf(where[0], border);
+    const inner_tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&where[1]) },
+        .{ .tag = layers.LATAG_Refresh, .data = mode },
+        .{ .tag = layers.LATAG_MovesWith, .data = @intFromPtr(made[0]) },
+        .{},
+    };
+    made[1] = base(lb).CreateLayerTagList(info, &inner_tags) orelse return error.NoLayer;
+    where[2] = .{ .min_x = 8, .min_y = 3, .max_x = 20, .max_y = 11 };
+    made[2] = try layerAt(lb, info, &where[2], layers.LAYERSMART);
+    where[3] = .{ .min_x = 16, .min_y = 6, .max_x = 28, .max_y = 14 };
+    made[3] = try layerAt(lb, info, &where[3], layers.LAYERSIMPLE);
+    for (0..4) |i| pictures[i].paint(lb, made[i], where[i].width(), where[i].height());
+    // Front first: the window is one unit, its interior just in front of
+    // its border.
+    var order = [_]usize{ 3, 2, 0 };
+
+    var prng = std.Random.DefaultPrng.init(0x5EED);
+    const rand = prng.random();
+    var step: u32 = 0;
+    while (step < 1000) : (step += 1) {
+        const unit = order[rand.uintLessThan(usize, 3)];
+        const i = unit;
+        const op = rand.uintLessThan(u32, 4);
+        switch (op) {
+            0 => {
+                // A move that stays on the display.
+                const dx = rand.intRangeAtMost(i32, -where[i].min_x, 32 - where[i].max_x);
+                const dy = rand.intRangeAtMost(i32, -where[i].min_y, 16 - where[i].max_y);
+                try testing.expect(base(lb).MoveLayer(made[i], dx, dy));
+                where[i] = .{ .min_x = where[i].min_x + dx, .min_y = where[i].min_y + dy, .max_x = where[i].max_x + dx, .max_y = where[i].max_y + dy };
+                if (i == 0) {
+                    where[1] = insetOf(where[0], border);
+                    // Nothing in front of it: nothing of it was lost.
+                    if (order[0] == 0) {
+                        try testing.expectEqual(@as(u32, 0), owed(lb, made[0]));
+                        try testing.expectEqual(@as(u32, 0), owed(lb, made[1]));
+                    }
+                }
+            },
+            1 => {
+                // A size between 6x6 and what fits, then the program draws
+                // its picture again for the new size.
+                const nw = rand.intRangeAtMost(i32, 6, @min(16, 32 - where[i].min_x));
+                const nh = rand.intRangeAtMost(i32, 6, @min(12, 16 - where[i].min_y));
+                try testing.expect(base(lb).SizeLayer(made[i], nw - where[i].width(), nh - where[i].height()));
+                where[i].max_x = where[i].min_x + nw;
+                where[i].max_y = where[i].min_y + nh;
+                pictures[i].paint(lb, made[i], nw, nh);
+                if (i == 0) {
+                    where[1] = insetOf(where[0], border);
+                    pictures[1].paint(lb, made[1], where[1].width(), where[1].height());
+                }
+            },
+            2 => {
+                try testing.expect(base(lb).UpfrontLayer(made[i]));
+                if (i == 0) try testing.expect(base(lb).MoveLayerInFrontOf(made[1], made[0]));
+                var k: usize = 0;
+                while (order[k] != unit) k += 1;
+                while (k > 0) : (k -= 1) order[k] = order[k - 1];
+                order[0] = unit;
+            },
+            else => {
+                try testing.expect(base(lb).BehindLayer(made[i]));
+                if (i == 0) try testing.expect(base(lb).MoveLayerInFrontOf(made[1], made[0]));
+                var k: usize = 0;
+                while (order[k] != unit) k += 1;
+                while (k < 2) : (k += 1) order[k] = order[k + 1];
+                order[2] = unit;
+            },
+        }
+        // A layer owed a redraw gets one, as its program would.
+        for (0..4) |j| {
+            if (owed(lb, made[j]) == 0) continue;
+            if (base(lb).BeginUpdate(made[j])) {
+                pictures[j].paint(lb, made[j], where[j].width(), where[j].height());
+                base(lb).EndUpdate(made[j], true);
+            }
+        }
+        // Every pixel a layer covers is the frontmost one's.
+        var y: i32 = 0;
+        while (y < 16) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 32) : (x += 1) {
+                const front = frontAt(&order, &where, x, y) orelse continue;
+                const r = where[front];
+                const want = pictures[front].at(y - r.min_y, r.height());
+                const have = pixelAt(&surface, @intCast(x), @intCast(y));
+                if (want != have) {
+                    std.debug.print("step {d}: pixel {d},{d} is {x:0>4}, layer {d} wants {x:0>4}\n", .{ step, x, y, have, front, want });
+                    return error.TestUnexpectedResult;
+                }
+            }
+        }
+    }
+
+    for ([_]usize{ 1, 0, 2, 3 }) |i| base(lb).DeleteLayer(made[i]);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+/// A rectangle with `by` taken off each side.
+fn insetOf(r: Rect, by: i32) Rect {
+    return .{ .min_x = r.min_x + by, .min_y = r.min_y + by, .max_x = r.max_x - by, .max_y = r.max_y - by };
+}
+
+/// Which layer is in front at (`x`, `y`): the units front first, the
+/// window's interior before its border.
+fn frontAt(order: []const usize, where: []const Rect, x: i32, y: i32) ?usize {
+    for (order) |unit| {
+        const candidates: []const usize = if (unit == 0) &.{ 1, 0 } else &.{unit};
+        for (candidates) |j| {
+            const r = where[j];
+            if (x >= r.min_x and x < r.max_x and y >= r.min_y and y < r.max_y) return j;
+        }
+    }
+    return null;
+}
+
 test "layers: a simple layer is owed what it could not carry, and what a resize adds" {
     const lb = try setUp();
     defer kexec.deinit();
@@ -883,6 +1103,62 @@ test "layers: a simple layer is owed what it could not carry, and what a resize 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);
     try tearDown(lb);
+}
+
+test "layers: a simple layer's damage covered again is no longer owed, and is owed again when uncovered" {
+    const lb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    var surface: rtg.Surface = undefined;
+    const screen, const info = try scene(lb, &surface, &pixels);
+
+    const back_where = Rect{ .max_x = 16, .max_y = 8 };
+    const back = try layerAt(lb, info, &back_where, layers.LAYERSIMPLE);
+    const front_where = Rect{ .min_x = 8, .max_x = 16, .max_y = 8 };
+    const front = try layerAt(lb, info, &front_where, layers.LAYERSIMPLE);
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+
+    // The front one moved off: the back one is owed what it uncovered.
+    try testing.expect(base(lb).MoveLayer(front, 0, 8));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, back));
+    try testing.expectEqual(Rect{ .min_x = 8, .max_x = 16, .max_y = 8 }, damageBounds(lb, back));
+
+    // Half of it covered again before it was drawn: only the other half
+    // is owed.
+    try testing.expect(base(lb).MoveLayer(front, 4, -8));
+    try testing.expectEqual(Rect{ .min_x = 8, .max_x = 12, .max_y = 8 }, damageBounds(lb, back));
+
+    // All of it covered: nothing is owed.
+    try testing.expect(base(lb).MoveLayer(front, -4, 0));
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+
+    // Uncovered again, it is owed again - all of it.
+    try testing.expect(base(lb).MoveLayer(front, 0, 8));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, back));
+    try testing.expectEqual(Rect{ .min_x = 8, .max_x = 16, .max_y = 8 }, damageBounds(lb, back));
+
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+/// The rectangle around what a layer is owed, in its own coordinates.
+fn damageBounds(lb: *LayersBase, layer: *layers.Layer) Rect {
+    var damage: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetDamage, .data = @intFromPtr(&damage) }, .{} };
+    base(lb).GetLayerAttrs(layer, &ask);
+    var pieces: [8]Rect = undefined;
+    const count = gbase(lb).RegionRectangles(@ptrFromInt(damage), &pieces, pieces.len);
+    if (count == 0) return .{};
+    var bounds = pieces[0];
+    for (pieces[1..@min(count, pieces.len)]) |piece| {
+        bounds.min_x = @min(bounds.min_x, piece.min_x);
+        bounds.min_y = @min(bounds.min_y, piece.min_y);
+        bounds.max_x = @max(bounds.max_x, piece.max_x);
+        bounds.max_y = @max(bounds.max_y, piece.max_y);
+    }
+    return bounds;
 }
 
 test "layers: a layer moved over one being updated: the update and what follows it draw only where it shows" {
@@ -967,7 +1243,12 @@ test "layers: raising one damages what it uncovers, and an update draws only tha
     const ask_flags = [_]TagItem{ .{ .tag = layers.LATAG_GetFlags, .data = @intFromPtr(&flags) }, .{} };
     base(lb).GetLayerAttrs(back, &ask_flags);
     try testing.expectEqual(@as(u32, 0), flags & layers.LAYERREFRESH);
-    try testing.expect(!base(lb).BeginUpdate(back));
+    // An update then is narrowed to nothing: what is drawn in it lands
+    // nowhere.
+    try testing.expect(base(lb).BeginUpdate(back));
+    fill(lb, back, graphics.penRGB(0, 0, 255), .{ .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(red, pixelAt(&surface, 5, 3));
+    base(lb).EndUpdate(back, true);
 
     // Raising it uncovers the corner the front one had, and nothing kept
     // those pixels - so the layer is owed a redraw of exactly that.
@@ -983,10 +1264,9 @@ test "layers: raising one damages what it uncovers, and an update draws only tha
     try testing.expectEqual(red, pixelAt(&surface, 5, 3)); // was never damaged
     base(lb).EndUpdate(back, true);
 
-    // Once done, there is nothing owed and no second update to be had.
+    // Once done, there is nothing owed.
     base(lb).GetLayerAttrs(back, &ask_flags);
     try testing.expectEqual(@as(u32, 0), flags & layers.LAYERREFRESH);
-    try testing.expect(!base(lb).BeginUpdate(back));
 
     // And with the update over, the whole layer draws again.
     fill(lb, back, graphics.penRGB(0, 255, 0), .{ .max_x = 20, .max_y = 10 });
