@@ -76,6 +76,9 @@ pub const LVO = struct {
     pub const ShowBitMapBands = libraries.lvo(57);
     pub const SetBoardOverlay = libraries.lvo(58);
     pub const MoveBoardOverlay = libraries.lvo(59);
+    pub const BlendPixels = libraries.lvo(60);
+    pub const BlendRect = libraries.lvo(61);
+    pub const ScalePixels = libraries.lvo(62);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -137,6 +140,9 @@ pub const Fn = struct {
     pub const ShowBitMapBands = *const fn (*RtgBase, *rtg.RtgBoard, [*]const rtg.RtgBand, u32) callconv(.c) i32;
     pub const SetBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
     pub const MoveBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
+    pub const BlendPixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32) callconv(.c) i32;
+    pub const BlendRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
+    pub const ScalePixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -478,5 +484,28 @@ pub const RtgBase = opaque {
     /// the pointer.
     pub fn MoveBoardOverlay(self: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
         return libraries.call(self, LVO.MoveBoardOverlay, Fn.MoveBoardOverlay, .{ board, x, y });
+    }
+
+    /// Lay pixels of one's own over a rectangle, each by its own coverage
+    /// times `alpha` (0 to 255). The rectangle is cut down to the buffer, and
+    /// the pixels' corner moves with the cut. RTGERR_NOT_SUPPORTED unless the
+    /// board's engine takes the job.
+    pub fn BlendPixels(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32 {
+        return libraries.call(self, LVO.BlendPixels, Fn.BlendPixels, .{ dest, area, pixels, alpha });
+    }
+
+    /// Lay a colour, 0xAARRGGBB, over a rectangle by its alpha. Same rules
+    /// as FillRect.
+    pub fn BlendRect(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32 {
+        return libraries.call(self, LVO.BlendRect, Fn.BlendRect, .{ dest, area, color });
+    }
+
+    /// Scale a part of pixels of one's own, `width` by `height` from the
+    /// pixels' corner, to the rectangle's size, mixing neighbouring pixels,
+    /// and lay it over the rectangle by its coverage. The rectangle is not
+    /// cut: one not wholly inside the buffer is RTGERR_NOT_SUPPORTED, as is
+    /// any job the board's engine does not take.
+    pub fn ScalePixels(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) i32 {
+        return libraries.call(self, LVO.ScalePixels, Fn.ScalePixels, .{ dest, area, pixels, width, height });
     }
 };

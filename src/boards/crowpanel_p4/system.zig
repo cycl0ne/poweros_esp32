@@ -111,6 +111,12 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_DiskOffset, build_options.disk_offset),
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
     .value(st.SYSTAG_PsramSpeed, 200),
+    // LDO 4 feeds the I/O bank (VDDPST_5) that the panel's reset (GPIO41)
+    // and its pull-up, the touch controller's reset and interrupt and the
+    // I2C bus are on. Left as the ROM leaves it, the panel's controller
+    // drops out while the boot's 2D-engine copies run, and the screen
+    // stays dark.
+    .value(st.SYSTAG_Ldo4Voltage, 3300),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),

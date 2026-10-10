@@ -53,6 +53,11 @@ const rastport = @import("../rastport/_rastport.zig");
 /// pixels that belong at that place, so a picture drawn in pieces is the
 /// same picture as one drawn in a single call.
 ///
+/// A smooth scale whose destination is one whole piece of a board's
+/// buffer goes to the board's engine (`rtg.ScalePixels`) where it takes
+/// the job - for an engine that scales in fixed steps, a size those steps
+/// reach exactly; everything else is done here.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it
@@ -92,6 +97,12 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
     const dest_w = dest_area.width();
     const dest_h = dest_area.height();
     if (src_w <= 0 or src_h <= 0 or dest_w <= 0 or dest_h <= 0) return;
+
+    const described = rtg.RtgPixels{ .pixels = pixels, .pitch = pitch, .format = from, .x = src_area.min_x, .y = src_area.min_y };
+    if (_blit.scaleByEngine(gb, rp, &described, src_area.*, dest_area.*)) {
+        drawing.handOn(gb, rp, dest_area.min_y, dest_area.max_y);
+        return;
+    }
 
     const src_bytes = rtg.bitmaps.formatBits(from) / 8;
     var it = drawing.visible(rp, dest_area.*);

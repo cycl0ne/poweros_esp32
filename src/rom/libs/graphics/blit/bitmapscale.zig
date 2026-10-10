@@ -36,10 +36,13 @@ const pixelBytes = _blit.pixelBytes;
 ///
 /// BEHAVIOR:
 /// The nearest pixel for each, stepped with whole numbers - no smoothing.
-/// It keeps a
-/// scaled-up shape's edges where they were rather than blurring them
-/// across the pixels either side. Scaling down drops pixels rather than
-/// averaging them.
+/// It keeps a scaled-up shape's edges where they were rather than
+/// blurring them across the pixels either side. Scaling down drops pixels
+/// rather than averaging them. A RastPort that wants it smooth
+/// (`RPTAG_Smooth`) gets each pixel mixed from the four round its place
+/// instead; a smooth scale whose destination is one whole piece of a
+/// board's buffer goes to the board's engine (`rtg.ScalePixels`) where it
+/// takes the job.
 ///
 /// Which source pixel a destination pixel comes from is worked out from the
 /// destination rectangle's own corner and not from the clipped one, so a
@@ -87,6 +90,14 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
     const src_h = from.height();
     const dest_w = dest_area.width();
     const dest_h = dest_area.height();
+
+    if (src.pixels) |pixels| {
+        const described = rtg.RtgPixels{ .pixels = pixels, .pitch = src.pitch, .format = src.format, .x = from.min_x, .y = from.min_y };
+        if (_blit.scaleByEngine(gb, dest, &described, from, dest_area.*)) {
+            drawing.handOn(gb, dest, dest_area.min_y, dest_area.max_y);
+            return;
+        }
+    }
 
     var it = drawing.visible(dest, dest_area.*);
     var bound = Rect{};

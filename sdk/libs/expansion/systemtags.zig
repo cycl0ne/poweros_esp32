@@ -61,6 +61,11 @@ pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
 /// The PSRAM's bus clock in MHz: as fast as the board's wiring holds it
 /// without errors. The ESP32-P4 runs it at 200 or 80; absent, 80.
 pub const SYSTAG_PsramSpeed = SYSTAG_Dummy + 14;
+/// The millivolts the board wants from the chip's fourth adjustable LDO
+/// (VO4) from the start, before any driver uses a pin: a board that runs
+/// a bank of I/O pins or their pull-ups from it. The ESP32-P4 only;
+/// absent, 0, and the channel is left as the ROM left it.
+pub const SYSTAG_Ldo4Voltage = SYSTAG_Dummy + 15;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

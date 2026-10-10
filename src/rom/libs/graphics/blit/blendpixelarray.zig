@@ -56,6 +56,9 @@ const rastport = @import("../rastport/_rastport.zig");
 /// When the clip cuts the front off, the picture starts that much
 /// further in, so a clipped picture is cut rather than slid.
 ///
+/// A piece that lies in a board's buffer goes to the board's blend
+/// (`rtg.BlendPixels`) where it takes the job; the rest is mixed here.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it
@@ -100,6 +103,15 @@ pub fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
         // further in.
         const from_x = src_x + (r.rect.min_x - area.min_x);
         const from_y = src_y + (r.rect.min_y - area.min_y);
+        if (r.bitmap) |bitmap| {
+            const described = rtg.RtgPixels{ .pixels = pixels, .pitch = pitch, .format = from, .x = from_x, .y = from_y };
+            const target = _blit.asRtgRect(r.on(r.rect));
+            if (gb.rtg_base.BlendPixels(bitmap, &target, &described, 255) == rtg.errors.RTGERR_OK) {
+                drawing.grow(&bound, r.rect.min_y, &any);
+                drawing.grow(&bound, r.rect.max_y - 1, &any);
+                continue;
+            }
+        }
         const width: usize = @intCast(r.rect.width());
         var y: i32 = r.rect.min_y;
         while (y < r.rect.max_y) : (y += 1) {

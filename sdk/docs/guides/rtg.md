@@ -260,7 +260,11 @@ the front screen alone.
 Some boards have an engine that does a few things to a buffer faster than
 the CPU: `FillRect`, `CopyRect`, `InvertRect`, `BlitTemplate` (a one-bit
 shape in two colours) and `BlitPattern` (a one-bit tile anchored to the
-buffer). `WaitBlit` waits until the engine is done.
+buffer); `BlendPixels` lays pixels of the caller's own over a buffer by
+their coverage, times a constant alpha, `BlendRect` a colour by its
+alpha, and `ScalePixels` a part of a picture scaled to a rectangle's
+size, mixed between its pixels. `WaitBlit` waits until the engine is
+done.
 
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
@@ -268,7 +272,20 @@ operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
 bit clear does the work itself, which is what graphics.library does. Every
 rectangle is cut down to the buffer before the board sees it; a rectangle
 with nothing inside is `RTGERR_OK` and no work. The colours are in the
-buffer's format.
+buffer's format, a blend's as 0xAARRGGBB. A blend's picture moves with
+the cut, so a cut picture is cut rather than slid; a scale's rectangle is
+not cut at all - one not wholly inside the buffer is refused, since a cut
+would move the picture under it. The source of `CopyRect` and the
+pictures of the blends and the scale need not be a board's: memory of
+the caller's own, described in an `RtgBitMap` or an `RtgPixels`, will do
+where the engine can read it.
+
+graphics.library hands the engine what it can: a plain fill, a blit
+without a mask (`BltBitMapRastPort` and every window move, refresh and
+backing store behind it), `BlendPixelArray`, a translucent pen filled
+under `DRMD_BLEND`, and a smooth scale (`RPTAG_Smooth`) whose destination
+is one whole piece of a board's buffer. What the board refuses it does
+itself, with the same result.
 
 The ESP32-S3's boards have no engine: that chip has nothing that draws,
 so graphics.library draws everything with the CPU there. The ESP32-P4's
@@ -279,9 +296,20 @@ lines inside a rectangle and the CPU does each row's ragged ends: nothing
 outside the rectangle - another window being drawn at the same time - is
 lost to a line both wrote. Rectangles the CPU does sooner than the
 engine is set up - under about 32000 pixels with the PSRAM at 80 MHz,
-proportionally more with a faster one - and a copy within one buffer
-whose rectangles overlap are refused, and the caller does them itself.
-Every operation is finished when the call returns. The engine shares the
+proportionally more with a faster one, and 2048 for a blend, whose CPU
+mixing is far slower - a copy within one buffer whose rectangles overlap,
+and a source outside the PSRAM and the internal memory are refused, and
+the caller does them itself. The blends run on the PPA's blend unit,
+which reads the buffer and the picture together and writes the mix:
+pictures in `bgra32`, `bgr24`, `rgb24` and `rgb565`; `rgba32` is
+refused, since the unit can read four bytes only as they are, with each
+pair exchanged, or reversed. The scale runs on the PPA's scaler, which
+mixes between pixels as `RPTAG_Smooth` does and steps its factors in
+sixteenths, so it takes a job only when both sizes come out exactly - a
+half, a double, three quarters; it scales into a block of its own, which
+is then blended over the rectangle. Every operation is finished when the
+call returns; the caller's task waits for the engine's interrupt
+meanwhile, so the CPU is free for others. The engine shares the
 PSRAM with the panel's stream, which cannot wait: the stream is put first
 on the bus, and a panel that streams more than the PSRAM leaves room for
 - 40 MB/s at 80 MHz, proportionally more with a faster one - holds the
@@ -479,6 +507,8 @@ zero in its `show_bitmap`.
 | `fill_rect` ... `wait_blit` | the engine |
 | `mirror`, `swap_xy`, `set_gap` | turning the picture |
 | `set_pointer`, `move_pointer`, `show_pointer` | the pointer |
+| `set_overlay`, `move_overlay` | a second image under the pointer |
+| `blend_pixels`, `blend_rect`, `scale_pixels` | the engine's blends and scale |
 
 New slots are only ever added at the end, so a driver built against an
 older SDK keeps its layout.
@@ -489,7 +519,7 @@ older SDK keeps its layout.
 |---|---|---|---|
 | Waveshare 7B, 7" 1024 x 600 | `rgb` | LCD_CAM streams pixels from three small buffers in internal memory; a DMA channel copies the picture from PSRAM into each one as the panel finishes it | a copy descriptor per display line, each from the row its band shows; changed at a frame's start |
 | LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
-| Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
+| Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
 
@@ -519,7 +549,10 @@ same host is another tag list.
   (expander.resource), and says so on a board without one.
 - `C:test/Engine` checks the board's FillRect and CopyRect pixel for
   pixel against the CPU - rectangles that start and end anywhere in a
-  cache line, copies between buffers and within one - and times both.
+  cache line, copies between buffers, within one and out of plain
+  memory - and its blends and scales against graphics.library's own
+  software, times both, and counts the frames the display starved of
+  meanwhile.
 - `C:test/Screens` double-buffers a screen and prints the frame rate;
   `SWITCH` puts two screens on the display to drag and switch; `MOVE`
   pulls a second screen half way down and back, which shows the bands.

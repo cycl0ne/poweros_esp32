@@ -4,6 +4,8 @@ rtg.library/AddRtgDriver
 rtg.library/AddRtgEventServer
 rtg.library/AllocBitMap
 rtg.library/AttachBitMap
+rtg.library/BlendPixels
+rtg.library/BlendRect
 rtg.library/BlitPattern
 rtg.library/BlitTemplate
 rtg.library/BoardBrightness
@@ -39,6 +41,7 @@ rtg.library/RemRtgEventServer
 rtg.library/RtgErrorText
 rtg.library/RtgLastError
 rtg.library/RxParam
+rtg.library/ScalePixels
 rtg.library/SetBoardBrightness
 rtg.library/SetBoardDisplay
 rtg.library/SetBoardGap
@@ -238,6 +241,102 @@ rtg.library/WaitVBlank
    EXAMPLES
 	    var described: rtg.RtgBitMap = .{ .pixels = mem.ptr, .width = 320, .height = 200, .format = .rgb565 };
 	    const buffer = rb.AttachBitMap(board, &described) orelse return error.NoMemory;
+rtg.library/BlendPixels                                rtg.library/BlendPixels
+
+   NAME
+	BlendPixels -- Lays pixels of the caller's own over a rectangle of a buffer with the board's engine, each by its own coverage.
+
+   SYNOPSIS
+	    fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32
+
+   SINCE
+	1.4. LVO -244.
+
+   INPUTS
+	- `dest` - the buffer, of a board.
+	- `area` - the rectangle.
+	- `pixels` - the picture: its first byte, pitch and format, and the
+	  pixel that lands on the rectangle's top left corner. The rectangle's
+	  size is how much of it is read.
+	- `alpha` - 0 to 255, multiplied into every pixel's coverage; 255
+	  leaves the coverage as it is.
+
+   RESULT
+	`RTGERR_OK` - also when none of the rectangle is inside the buffer -
+	`RTGERR_BAD_ARG` for a buffer with no pixels or no board, or a
+	picture with none, `RTGERR_NOT_SUPPORTED` unless the engine takes the
+	job, or what the driver answered.
+
+   BEHAVIOR
+	Each pixel is mixed with the one under it by its coverage: fully
+	covered goes down as it is, uncovered leaves the buffer alone. A
+	format without coverage - `rgb565`, `rgb24` - covers by `alpha` alone.
+	The rectangle is cut to the buffer here, and the picture's corner
+	moves with whatever was cut off its top and left, so a cut picture is
+	cut rather than slid. Which formats and sizes the engine takes is the
+	driver's to say; the library draws nothing itself.
+
+   CONTEXT
+	- Waits: only if the driver does.
+	- Interrupts: no. The driver may wait on its bus.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The picture stays the caller's and is only read;
+	it has to be where the board's engine can read it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BlendRect`, `ScalePixels`, `CopyRect`
+
+   EXAMPLES
+	    const picture: rtg.RtgPixels = .{ .pixels = icon.ptr, .pitch = 64 * 4, .format = .bgra32 };
+	    _ = rb.BlendPixels(buffer, &.{ .x = 10, .y = 10, .width = 64, .height = 64 }, &picture, 255);
+rtg.library/BlendRect                                    rtg.library/BlendRect
+
+   NAME
+	BlendRect -- Lays a colour over a rectangle of a buffer with the board's engine, by the colour's alpha.
+
+   SYNOPSIS
+	    fn BlendRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32
+
+   SINCE
+	1.4. LVO -248.
+
+   INPUTS
+	- `dest` - the buffer, of a board.
+	- `area` - the rectangle.
+	- `color` - 0xAARRGGBB: the colour and how much of it covers.
+
+   RESULT
+	As for `FillRect`.
+
+   BEHAVIOR
+	Every pixel of the rectangle is mixed with the colour by its alpha:
+	255 is the colour, 0 leaves the pixel as it was. The rectangle is cut
+	to the buffer here. A translucent plate over a selection, a shade over
+	what cannot be chosen.
+
+   CONTEXT
+	- Waits: only if the driver does.
+	- Interrupts: no. The driver may wait on its bus.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FillRect`, `BlendPixels`
+
+   EXAMPLES
+	    _ = rb.BlendRect(buffer, &.{ .x = 0, .y = 0, .width = 200, .height = 40 }, 0x8000_40C0);
 rtg.library/BlitPattern                                rtg.library/BlitPattern
 
    NAME
@@ -487,8 +586,11 @@ rtg.library/WaitVBlank
 	1.0. LVO -136.
 
    INPUTS
-	- `src` - the buffer copied from.
-	- `dest` - the buffer copied to; it may be `src`.
+	- `src` - the buffer copied from: one of a board's, or memory of the
+	  caller's own described in an `RtgBitMap` - only its pixels, size,
+	  pitch and format are read. It has to be where the board's engine
+	  can read it.
+	- `dest` - the buffer copied to, of a board; it may be `src`.
 	- `copy` - where from, where to, and how big.
 
    RESULT
@@ -496,7 +598,9 @@ rtg.library/WaitVBlank
 
    BEHAVIOR
 	The rectangles are cut to both buffers here. The two may be one buffer
-	and may overlap; the engine is what copies in the right order.
+	and may overlap; the engine is what copies in the right order, and a
+	driver whose engine cannot answers `RTGERR_NOT_SUPPORTED` for such a
+	copy - also when the two are one memory described twice.
 
    CONTEXT
 	- Waits: only if the driver does.
@@ -1692,6 +1796,59 @@ rtg.library/WaitVBlank
    EXAMPLES
 	    var id: [3]u8 = undefined;
 	    _ = rb.RxParam(io, 0x04, &id, id.len);
+rtg.library/ScalePixels                                rtg.library/ScalePixels
+
+   NAME
+	ScalePixels -- Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
+
+   SYNOPSIS
+	    fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) i32
+
+   SINCE
+	1.4. LVO -252.
+
+   INPUTS
+	- `dest` - the buffer, of a board.
+	- `area` - where the picture lands and how big it becomes.
+	- `pixels` - the picture: its first byte, pitch and format, and the
+	  top left corner of the part taken.
+	- `width` - the part's width, in the picture's pixels.
+	- `height` - its height.
+
+   RESULT
+	`RTGERR_OK` - also for an empty rectangle or part - `RTGERR_BAD_ARG`
+	for a buffer with no pixels or no board, or a picture with none,
+	`RTGERR_NOT_SUPPORTED` for a rectangle not wholly inside the buffer or
+	a job the engine does not take, or what the driver answered.
+
+   BEHAVIOR
+	Every pixel of the rectangle is the picture's colour at that place,
+	mixed from the pixels round it, and is laid over the buffer by its
+	coverage as `BlendPixels` lays it. The rectangle is not cut to the
+	buffer: a cut would move the picture under it. Which formats and
+	which ratios the engine takes is the driver's to say - an engine that
+	scales in fixed steps takes only the sizes those steps reach exactly -
+	and the library draws nothing itself.
+
+   CONTEXT
+	- Waits: only if the driver does.
+	- Interrupts: no. The driver may wait on its bus.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do. The driver may allocate.
+
+   OWNERSHIP
+	Nothing stays allocated. The picture stays the caller's and is only
+	read; it has to be where the board's engine can read it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BlendPixels`, `CopyRect`
+
+   EXAMPLES
+	    const picture: rtg.RtgPixels = .{ .pixels = photo.ptr, .pitch = 320 * 4, .format = .bgra32 };
+	    _ = rb.ScalePixels(buffer, &.{ .x = 0, .y = 0, .width = 640, .height = 400 }, &picture, 320, 200);
 rtg.library/SetBoardBrightness                  rtg.library/SetBoardBrightness
 
    NAME

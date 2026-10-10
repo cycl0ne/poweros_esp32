@@ -637,8 +637,9 @@ pub const LINE_SOLID: u16 = 0xFFFF;
 pub const Pen = u32;
 
 /// A pen that covers what is under it. Only an opaque pen can be handed to
-/// a board's engine, which takes one colour word and writes it; anything
-/// less has to be composed pixel by pixel, in software.
+/// a board's engine as a colour word to write; anything less is composed
+/// over what is there - by the engine's blend where the board has one,
+/// pixel by pixel in software otherwise.
 pub inline fn penIsOpaque(value: Pen) bool {
     return value >> 24 == 0xFF;
 }

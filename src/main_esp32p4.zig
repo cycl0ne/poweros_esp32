@@ -110,6 +110,8 @@ export fn kmain() callconv(.c) noreturn {
     wdt.disableAll();
     power.init();
     clock.init();
+    const ldo4_millivolts = boards.fact(st.SYSTAG_Ldo4Voltage, 0);
+    const ldo4_set = ldo4_millivolts != 0 and sdk.hardware.ldo.set(4, ldo4_millivolts);
     const psram_result = psram.init(boards.fact(st.SYSTAG_PsramSpeed, 80));
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
@@ -179,6 +181,7 @@ export fn kmain() callconv(.c) noreturn {
         supply.dbias,
         supply.lp_dbias,
     });
+    if (ldo4_set) note("I/O supply: LDO 4 at %d mV", .{@as(u32, @intCast(ldo4_millivolts))});
     cpu.enableInterrupts();
 
     // Multitasking starts. The exec task runs first: it starts the

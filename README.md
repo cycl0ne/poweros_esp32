@@ -114,7 +114,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   Tools items (MultiView, Notepad, FontView and the file requester take
   a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
   and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
-- **Graphics and windows:** rtg.library for the displays;
+- **Graphics and windows:** rtg.library for the displays, with the
+  ESP32-P4's 2D engine (the PPA and the 2D-DMA) filling, copying,
+  blending and scaling for graphics.library on the DSI boards;
   graphics.library with smooth curves and lines, rounded rectangles,
   gradients, shadows and scaled pictures; layers.library; and
   intuition.library - screens, pulled down by their title bar to show

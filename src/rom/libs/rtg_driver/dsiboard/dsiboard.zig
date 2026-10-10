@@ -50,6 +50,8 @@ const host = @import("host.zig");
 const bridge = @import("bridge.zig");
 const dwgdma = @import("dwgdma.zig");
 const engine_file = @import("engine.zig");
+const blend_file = @import("blend.zig");
+const scale_file = @import("scale.zig");
 const bus = @import("bus.zig");
 const chain_file = @import("chain.zig");
 const Chain = chain_file.Chain;
@@ -143,6 +145,7 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         chain_file.rearm(panel.chain);
         dwgdma.run(channel, panel.chain.first);
         panel.stats.frames +%= 1;
+        engine_file.frameTick(&panel.engine);
     }
     return 1;
 }
@@ -358,6 +361,7 @@ fn giveBack(panel: *Panel) void {
         sys.RemIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
         panel.hooked = false;
     }
+    engine_file.takeDown(&panel.engine);
     bridge.stop();
     host.stop();
     if (panel.config.backlight_pin.wired()) _ = drive(panel.config.backlight_pin, false);
@@ -527,13 +531,33 @@ fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
 /// (`engine.zig`); RTGERR_NOT_SUPPORTED for one the engine does not take.
 fn fillRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
     const panel = panelOf(board);
-    return engine_file.fill(&panel.engine, panel.sys, bitmap, area, color);
+    return engine_file.fill(&panel.engine, panel.sys, bitmap, area, color, panel.streaming);
 }
 
 /// A rectangle copied by the 2D-DMA, its ragged ends by the CPU.
 fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *const rtg.RtgCopy) callconv(.c) i32 {
     const panel = panelOf(board);
-    return engine_file.copy(&panel.engine, panel.sys, src, dest, what);
+    return engine_file.copy(&panel.engine, panel.sys, src, dest, what, panel.streaming);
+}
+
+/// Pixels laid over a rectangle by the PPA's blend unit, its ragged ends
+/// by the CPU (`blend.zig`).
+fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    return blend_file.blendPixels(&panel.engine, panel.sys, dest, area, pixels, alpha, panel.streaming);
+}
+
+/// A colour laid over a rectangle the same way.
+fn blendRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    return blend_file.blendRect(&panel.engine, panel.sys, dest, area, color, panel.streaming);
+}
+
+/// A picture scaled by the PPA's scaler and then laid over the rectangle
+/// (`scale.zig`), for ratios its steps reach exactly.
+fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    return scale_file.scalePixels(&panel.engine, panel.sys, dest, area, pixels, width, height, panel.streaming);
 }
 
 /// Every operation is done before it returns: nothing to wait for.
@@ -552,7 +576,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     };
 }
 
-/// What this board has: of the engine, fills and copies.
+/// What this board has: of the engine, fills, copies, blends and scales.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .set_mode = &setMode,
@@ -567,6 +591,9 @@ const ops = rtg.RtgBoardOps{
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
     .wait_blit = &waitBlit,
+    .blend_pixels = &blendPixels,
+    .blend_rect = &blendRect,
+    .scale_pixels = &scalePixels,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };

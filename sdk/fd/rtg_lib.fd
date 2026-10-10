@@ -178,4 +178,18 @@ i32 SetBoardOverlay(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u
 /// Put the overlay's point at (x, y), and keep it there rather than with
 /// the pointer.
 void MoveBoardOverlay(*rtg.RtgBoard board, i32 x, i32 y)
+/// Lay pixels of one's own over a rectangle, each by its own coverage
+/// times `alpha` (0 to 255). The rectangle is cut down to the buffer, and
+/// the pixels' corner moves with the cut. RTGERR_NOT_SUPPORTED unless the
+/// board's engine takes the job.
+i32 BlendPixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixels pixels, u32 alpha)
+/// Lay a colour, 0xAARRGGBB, over a rectangle by its alpha. Same rules
+/// as FillRect.
+i32 BlendRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, u32 color)
+/// Scale a part of pixels of one's own, `width` by `height` from the
+/// pixels' corner, to the rectangle's size, mixing neighbouring pixels,
+/// and lay it over the rectangle by its coverage. The rectangle is not
+/// cut: one not wholly inside the buffer is RTGERR_NOT_SUPPORTED, as is
+/// any job the board's engine does not take.
+i32 ScalePixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixels pixels, u32 width, u32 height)
 ##end
