@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The SPI flash as a writable medium on the ESP32-P4, for flash.device:
-//! the calls ../spiflash.zig has on the ESP32-S3, with the same contract.
+//! the calls ../esp32s3/spiflash.zig has on the ESP32-S3, with the same contract.
 //!
 //! The whole flash is mapped at 0x40000000 from the boot on
 //! (src/arch/esp32p4/flashmap.zig), so the disk area is read straight out
@@ -104,7 +104,7 @@ fn suspendCache() linksection(".iram.text") Suspended {
         : [old] "=r" (-> u32),
         : [bits] "r" (mhcr_predictor),
     );
-    _ = cache.Cache_WriteBack_All(cache.MAP_L1_DCACHE);
+    cache.syncWriteBack(cache.MAP_L1_DCACHE, 0, 0);
     return .{ .autoload = rom.suspend_l2_cache(), .mhcr = mhcr };
 }
 

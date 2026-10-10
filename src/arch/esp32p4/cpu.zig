@@ -80,6 +80,17 @@ pub inline fn trapVector() u32 {
     );
 }
 
+/// The trap vector's base: mtvec without the mode.
+pub inline fn vecbase() u32 {
+    return trapVector() & ~@as(u32, 3);
+}
+
+/// The core's id as platform.resource reports it (its PRID): mhartid,
+/// 0 or 1.
+pub inline fn prid() u32 {
+    return coreId();
+}
+
 /// The core stopped for good: interrupts masked, asleep.
 pub fn halt() noreturn {
     _ = disableInterrupts();

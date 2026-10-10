@@ -25,11 +25,12 @@ const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const cpu = @import("../../../arch/esp32s3/cpu.zig");
-const clock = @import("../../../arch/esp32s3/clock.zig");
-const timer = @import("../../../arch/esp32s3/timer.zig");
-const psram = @import("../../../arch/esp32s3/psram.zig");
-const layout = @import("../../../arch/esp32s3/layout.zig");
+const arch = @import("../../../arch/arch.zig");
+const cpu = arch.cpu;
+const clock = arch.clock;
+const timer = arch.timer;
+const psram = arch.psram;
+const layout = arch.layout;
 const vec = exec.vec;
 const types = sdk.resources.platform;
 const PlatformInfo = types.PlatformInfo;
@@ -43,10 +44,16 @@ const RESOURCE_VERSION_STRING =
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The board's chip and its core, by name. Constants: every board has the
-/// same chip.
-const CHIP_NAME = "ESP32-S3";
-const CORE_NAME = "Xtensa LX7";
+/// The board's chip and its core, by name: constants of the chip the
+/// kernel is built for.
+const CHIP_NAME = switch (sdk.hardware.chip) {
+    .esp32s3 => "ESP32-S3",
+    .esp32p4 => "ESP32-P4",
+};
+const CORE_NAME = switch (sdk.hardware.chip) {
+    .esp32s3 => "Xtensa LX7",
+    .esp32p4 => "RISC-V RV32IMAFC",
+};
 /// What the kernel was built with, as `Version` and `Platform` print it.
 const BUILT_WITH = "zig " ++ builtin.zig_version_string ++ ", " ++ @tagName(builtin.mode);
 

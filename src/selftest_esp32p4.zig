@@ -19,9 +19,8 @@
 //! - Two tasks that only count, at the same priority as the others, so the
 //!   tick's time slice is what shares the cores between them.
 //! - The ROM debugger on `d` from the console, looked for every second.
-//! - A report every second, from an interrupt server on SYSTIMER's third
-//!   alarm (AddIntServer, the matrix routing a device source): what each
-//!   task got done, on which core, and how each core spent its time. The
+//! - A report every second, timed by timer.device: what each task got
+//!   done, on which core, and how each core spent its time. The
 //!   reporting task is above all of them, so it is heard even where ping
 //!   and pong leave nothing to the tasks below them - on one core they
 //!   always have one of the two ready.
@@ -37,6 +36,7 @@ const gdma = hardware.gdma;
 const systimer = hardware.systimer;
 
 const ExecBase = sdk.interface.exec.ExecBase;
+const timer_types = sdk.devices.timer;
 const spiflash = @import("rom/devs/flash/esp32p4/spiflash.zig");
 
 /// A kernel status line; the raw port puts the uptime in front.
@@ -418,47 +418,37 @@ fn countLoop(worker: *Worker) void {
 
 // --- the report -----------------------------------------------------------------
 
-/// The interrupt server on SYSTIMER's third alarm: its interrupt cleared,
-/// and the reporting task signalled.
-var second_server: sdk.exec.Interrupt = .{};
-var reporter: ?*sdk.exec.Task = null;
+/// A second on timer.device, to report by: false if the device cannot be
+/// had.
+const Clock = struct {
+    request: *timer_types.TimeRequest,
 
-fn onSecond(_: ?*anyopaque, _: u32) callconv(.c) i32 {
-    if (reg(systimer.INT_ST).* & systimer.INT_TARGET2 == 0) return 0;
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET2;
-    exec.SysBase.iface().Signal(reporter.?, sdk.exec.SIGBREAKF_CTRL_E);
-    return 1;
-}
+    fn open(sys: *ExecBase) ?Clock {
+        const port = sys.CreateMsgPort() orelse return null;
+        const io = sys.CreateIORequest(port, @sizeOf(timer_types.TimeRequest)) orelse return null;
+        if (sys.OpenDevice(timer_types.TIMERNAME, timer_types.UNIT_MICROHZ, io, 0) != 0) return null;
+        return .{ .request = @ptrCast(@alignCast(io)) };
+    }
 
-/// SYSTIMER's third alarm, once a second on unit 0, its interrupt to the
-/// server.
-fn startSecondAlarm(sys: *ExecBase) void {
-    reporter = sys.FindTask(null);
-    second_server = .{ .node = .{ .type = .interrupt, .name = "selftest second" }, .code = @ptrCast(&onSecond) };
-    sys.AddIntServer(hardware.intbits.INTB_SYSTIMER_TARGET2, &second_server);
-    const period: u32 = systimer.SYSTIMER_HZ;
-    reg(systimer.CONF).* &= ~systimer.CONF_TARGET2_WORK_EN;
-    reg(systimer.TARGET2_CONF).* = period;
-    reg(systimer.COMP2_LOAD).* = 1;
-    reg(systimer.TARGET2_CONF).* = period | systimer.TARGET_PERIOD_MODE;
-    reg(systimer.COMP2_LOAD).* = 1;
-    reg(systimer.CONF).* |= systimer.CONF_TARGET2_WORK_EN;
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET2;
-    reg(systimer.INT_ENA).* |= systimer.INT_TARGET2;
-}
+    fn second(clock: Clock, sys: *ExecBase) void {
+        clock.request.node.command = timer_types.TR_ADDREQUEST;
+        clock.request.time = .{ .secs = 1 };
+        _ = sys.DoIO(&clock.request.node);
+    }
+};
 
 fn report(sys: *ExecBase) noreturn {
-    startSecondAlarm(sys);
+    const clock = Clock.open(sys) orelse {
+        note("report: no timer.device", .{});
+        while (true) _ = sys.Wait(0);
+    };
     var previous: [workers.len]u32 = @splat(0);
     var previous_times: [2]sdk.exec.CoreTimes = .{ .{}, .{} };
     var seconds: u32 = 0;
-    // The alarm's first interrupt comes before a second is up: the counts
-    // start from it.
-    _ = sys.Wait(sdk.exec.SIGBREAKF_CTRL_E);
     for (&workers, &previous) |*worker, *before| before.* = @as(*volatile u32, &worker.count).*;
     for (0..2) |core| _ = sys.ReadCoreTimes(@intCast(core), &previous_times[core]);
     while (true) {
-        _ = sys.Wait(sdk.exec.SIGBREAKF_CTRL_E);
+        clock.second(sys);
         if (exec.raw_io_hardware.get()) |character| {
             if (character == 'd') sys.Debug(0);
         }

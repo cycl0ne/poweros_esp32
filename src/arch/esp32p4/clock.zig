@@ -23,6 +23,10 @@ const regi2c = @import("regi2c.zig");
 
 /// The clock the CPU runs at.
 pub var cpu_hz: u32 = hardware.XTAL_HZ;
+/// The crystal's.
+pub const xtal_hz: u32 = hardware.XTAL_HZ;
+/// Whether the CPLL said its calibration ended.
+pub var pll_calibrated = false;
 
 /// PMU_IMM_HP_CK_POWER: the CPLL and its analog bus powered, its clock
 /// gate open.
@@ -90,6 +94,7 @@ pub fn init() void {
     regi2c.write(.cpu_pll, cpll_oc_dcur, 1 << 6 | 3 << 4 | dcur);
     var spins: u32 = 0;
     while (reg(ana_pll_ctrl0).* & cpu_pll_cal_end == 0 and spins < 1_000_000) spins += 1;
+    pll_calibrated = reg(ana_pll_ctrl0).* & cpu_pll_cal_end != 0;
     @import("sdk").hardware.cpu.spinCycles(400); // 10 us at 40 MHz
     reg(ana_pll_ctrl0).* |= cpu_pll_cal_stop;
 

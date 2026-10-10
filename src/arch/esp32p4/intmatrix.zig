@@ -24,7 +24,8 @@
 //! The software interrupt and the cross-core interrupt are the matrix's
 //! FROM_CPU sources, raised by a register of HP_SYSTEM: FROM_CPU_INTR<n>
 //! is the cross-core interrupt of core n, FROM_CPU_INTR<2 + n> core n's
-//! software interrupt.
+//! software interrupt. Core 1's cross-core interrupt brings it its tick
+//! too (timer.zig).
 
 const cpu = @import("cpu.zig");
 const hardware = @import("sdk").hardware;
@@ -143,6 +144,8 @@ fn onCrossCore(_: u6) void {
     cross_core_count[core] +%= 1;
     // Held by the other core: parked until it lets go.
     rendezvous.parkIfAsked();
+    // Core 1's tick, which core 0's hands on.
+    if (core == 1) @import("timer.zig").takeCore1Tick();
     // Otherwise poked: the dispatcher looks again at the exit.
     if (exec.initialized) exec.crossCorePoke(exec.SysBase);
 }

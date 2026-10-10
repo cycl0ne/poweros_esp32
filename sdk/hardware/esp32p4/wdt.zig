@@ -23,6 +23,27 @@ pub fn timgBase(n: u1) usize {
     return if (n == 0) map.TIMG0 else map.TIMG1;
 }
 
-// A timer group's watchdog, as offsets from the group's base.
+// A timer group's watchdog (MWDT), as offsets from the group's base: the
+// ESP32-S3's layout.
 pub const TIMG_WDT_CONFIG0 = 0x48;
+pub const TIMG_WDT_CONFIG1 = 0x4C;
+pub const TIMG_WDT_CONFIG2 = 0x50;
+pub const TIMG_WDT_FEED = 0x60;
 pub const TIMG_WDT_WPROTECT = 0x64;
+
+// CONFIG0
+pub const WDT_EN: u32 = 1 << 31;
+/// What stage 0 does when its time is up (bits 29-30).
+pub const WDT_STG0_SHIFT = 29;
+/// PROCPU_RESET_EN: lets a "reset CPU" stage reset core 0.
+pub const WDT_PROCPU_RESET_EN: u32 = 1 << 13;
+/// SYS_RESET_LENGTH and CPU_RESET_LENGTH at their longest.
+pub const WDT_RESET_LENGTHS: u32 = 7 << 15 | 7 << 18;
+/// CONF_UPDATE_EN: what was written to CONFIG0-2 taken over; the bit
+/// clears itself.
+pub const WDT_CONF_UPDATE_EN: u32 = 1 << 22;
+// CONFIG1: the prescaler (bits 16-31) on the watchdog's clock.
+pub const WDT_CLK_PRESCALE_SHIFT = 16;
+/// The clock a timer group's watchdog counts: the crystal, HP_SYS_CLKRST's
+/// default for it.
+pub const TIMG_WDT_CLOCK_HZ: u32 = 40_000_000;

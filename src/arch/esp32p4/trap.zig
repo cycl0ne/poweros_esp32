@@ -180,6 +180,23 @@ pub fn causeName(code: u32) [:0]const u8 {
     return std.enums.tagName(Cause, @enumFromInt(code)) orelse "unknown";
 }
 
+/// A trap that came on a stack with no room for its frame, from start.S on
+/// the core's fault stack: what it had of where it was - the stack
+/// pointer, pc, cause, address, return address and frame pointer - and a
+/// dead end. The task's registers are gone; the call chain is followed
+/// from its frame pointer as far as it leads through memory.
+export fn riscv_stack_fault(sp: u32, pc: u32, mcause: u32, mtval: u32, ra: u32, fp: u32) callconv(.c) noreturn {
+    exec.kprintf("\n*** trap on a stack with no room: sp 0x%08x, pc 0x%08x, cause 0x%08x, address 0x%08x, ra 0x%08x, fp 0x%08x\n", .{ sp, pc, mcause, mtval, ra, fp });
+    var info: exec.TrapInfo = .{
+        .number = mcause & cpu.MCAUSE_CODE,
+        .pc = pc,
+        .address = mtval,
+        .frame = null,
+    };
+    exec.alert_hook.*(sdk.exec.AT_DeadEnd | sdk.exec.AN_StackProbe, pc, &info, "a trap on a stack with no room");
+    cpu.halt();
+}
+
 /// An exception before exec is up: the frame, and the machine stops.
 fn fatal(frame: *const Frame) noreturn {
     _ = cpu.disableInterrupts();

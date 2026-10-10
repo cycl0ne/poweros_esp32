@@ -25,7 +25,9 @@ it knows where it put each segment.
    since the entry is in it. On RISC-V they all make **one segment**, code
    first and bss last, since the code's distance to its data must not
    change. The sections of a segment must follow each other, as the linker
-   script lays them out.
+   script lays them out, and none may ask for an alignment coarser than
+   64 bytes (`SEGMENT_ALIGN`): the loader starts each segment on such a
+   boundary, which keeps every alignment the linker gave inside it.
 2. **Relocations.** Of the entries the linker left behind, only
    `R_XTENSA_32` and `R_RISCV_32` matter: a word holding an address. The
    ones already applied are skipped - on Xtensa `R_XTENSA_SLOT0_OP` (the

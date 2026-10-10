@@ -37,6 +37,14 @@
 #define F_F(n)          (152 + 4 * (n))
 #define FRAME_SIZE      288
 
+/* Where a trap's stack may be: PSRAM and L2MEM, with room for a frame
+   above their start. */
+#define STACK_PSRAM_LOW  (0x48000000 + 512)
+#define STACK_PSRAM_HIGH 0x4C000000
+#define STACK_L2MEM_LOW  (0x4FF00000 + 512)
+#define STACK_L2MEM_HIGH 0x4FFC0000
+#define FAULT_STACK_SIZE 1024
+
 #define MSTATUS_MIE     0x8
 #define MSTATUS_FS_INITIAL 0x2000
 #define MTVEC_CLIC      3
@@ -98,6 +106,21 @@ _start_cpu1:
     .global _trap_entry
     .type _trap_entry, @function
 _trap_entry:
+    /* The stack it came on must have room for the frame in memory that
+       is there: a task that ran off its stack would otherwise have every
+       trap from here on push its frame further into nothing. One that has
+       no room goes to riscv_stack_fault (trap.zig) on a stack of its
+       core's own, with what can be saved of where it was. */
+    csrw    mscratch, t0
+    li      t0, STACK_PSRAM_LOW
+    bltu    sp, t0, _trap_bad_stack
+    li      t0, STACK_PSRAM_HIGH
+    bltu    sp, t0, 1f
+    li      t0, STACK_L2MEM_LOW
+    bltu    sp, t0, _trap_bad_stack
+    li      t0, STACK_L2MEM_HIGH
+    bgeu    sp, t0, _trap_bad_stack
+1:  csrr    t0, mscratch
     addi    sp, sp, -FRAME_SIZE
     sw      x1, F_X(1)(sp)
     sw      x3, F_X(3)(sp)
@@ -277,6 +300,33 @@ _trap_entry:
     lw      sp, F_X(2)(sp)
     mret
     .size _trap_entry, . - _trap_entry
+
+/*
+ * A trap on a stack with no room: the stack pointer, where the trap came
+ * from and why, the return address and the frame pointer to
+ * riscv_stack_fault, on the core's fault stack. It does not come back.
+ */
+    .section .text.trap, "ax"
+_trap_bad_stack:
+    mv      a0, sp
+    csrr    t0, mhartid
+    addi    t0, t0, 1
+    slli    t0, t0, 10              /* (core + 1) * FAULT_STACK_SIZE */
+    la      sp, riscv_fault_stacks
+    add     sp, sp, t0
+    csrr    a1, mepc
+    csrr    a2, mcause
+    csrr    a3, mtval
+    mv      a4, ra
+    mv      a5, s0
+    call    riscv_stack_fault
+2:  j       2b
+
+    .section .bss
+    .balign 16
+    .global riscv_fault_stacks
+riscv_fault_stacks:
+    .space  2 * FAULT_STACK_SIZE
 
 /*
  * i32 riscv_call_on_stack(u32 stack_upper, fn code, void *arg), for exec's

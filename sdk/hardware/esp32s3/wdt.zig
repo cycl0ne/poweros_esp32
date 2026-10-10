@@ -44,3 +44,5 @@ pub const WDT_PROCPU_RESET_EN: u32 = 1 << 13;
 pub const WDT_RESET_LENGTHS: u32 = 7 << 15 | 7 << 18;
 // CONFIG1: the prescaler on the 80 MHz APB clock (bits 16-31).
 pub const WDT_CLK_PRESCALE_SHIFT = 16;
+/// The clock a timer group's watchdog counts: the APB clock.
+pub const TIMG_WDT_CLOCK_HZ: u32 = 80_000_000;

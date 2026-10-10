@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The kernel for the ESP32-P4, as far as it goes: started by the ROM from
-//! the image's RAM segments (src/arch/esp32p4/start.S), it makes exec
-//! with L2MEM as its memory, starts the tick and the second core, and
-//! goes on as the boot task, which runs the chip's checks and exec's
-//! tasks (selftest_esp32p4.zig) until the shell runs here. The drivers
-//! and the rest of the ROM follow as the port goes on.
+//! The kernel for the ESP32-P4: started by the ROM from the image's RAM
+//! segments (src/arch/esp32p4/start.S), it makes exec with L2MEM and the
+//! PSRAM as its memory, starts the tick and the second core, and goes on
+//! as the boot task: the `s3>` shell, or with `-Dselftest` the chip's
+//! checks and exec's test tasks (selftest_esp32p4.zig). Its ROM holds the
+//! S3 kernel's modules but the screen's and dma.resource.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -23,6 +23,8 @@ const layout = @import("arch/esp32p4/layout.zig");
 const psram = @import("arch/esp32p4/psram.zig");
 const ram = @import("arch/esp32p4/ram.zig");
 const selftest = @import("selftest_esp32p4.zig");
+const shell = @import("rom/libs/exec/_shell/shell.zig");
+const build_options = @import("build_options");
 const timer = @import("arch/esp32p4/timer.zig");
 const wdt = @import("arch/esp32p4/wdt.zig");
 const boards = @import("boards/boards.zig");
@@ -31,9 +33,26 @@ const st = sdk.expansion.systemtags;
 
 comptime {
     _ = @import("arch/esp32p4/trap.zig"); // exports riscv_exception for start.S
-    // The kernel's shell, built for this chip so it keeps building here; it
-    // starts once its console's drivers run on the P4.
-    _ = &@import("rom/libs/exec/_shell/shell.zig").run;
+    _ = @import("rom/devs/timer/timer.zig");
+    _ = @import("rom/devs/flash/flash.zig");
+    _ = @import("rom/devs/serial/serial.zig");
+    _ = @import("rom/devs/usbserial/usbserial.zig");
+    _ = @import("rom/devs/input/input.zig");
+    _ = @import("rom/libs/keymap/keymap.zig");
+    _ = @import("rom/libs/utility/utility.zig");
+    _ = @import("rom/libs/expansion/expansion.zig");
+    _ = @import("rom/resources/gpio/gpio.zig");
+    _ = @import("rom/libs/dos/dos.zig");
+    _ = @import("rom/libs/ramlib/ramlib.zig");
+    _ = @import("rom/handler/nil/nil.zig");
+    _ = @import("rom/handler/ram/ram.zig");
+    _ = @import("rom/handler/con/con.zig");
+    _ = @import("rom/handler/pipe/pipe.zig");
+    _ = @import("rom/handler/flashfs/flashfs.zig");
+    _ = @import("rom/shell/shell.zig");
+    _ = @import("rom/resources/watchdog/watchdog.zig");
+    _ = @import("rom/resources/platform/platform.zig");
+    _ = @import("rom/release.zig");
     // The board's description: its system tag list, a ROM tag of its own.
     _ = &boards.system.system_tag;
     _ = boards.romtags;
@@ -142,7 +161,7 @@ export fn kmain() callconv(.c) noreturn {
         clock.chipRevision() / 100,
         clock.chipRevision() % 100,
         clock.cpu_hz / 1_000_000,
-        timer.cpu_hz / 1_000_000,
+        timer.measured_cpu_hz / 1_000_000,
         timer.tick_hz,
     });
     cpu.enableInterrupts();
@@ -157,7 +176,14 @@ export fn kmain() callconv(.c) noreturn {
         exec.SysBase.share_cores = 1;
         sys.Enable();
     }
-    selftest.run(sys, boards.fact(st.SYSTAG_FlashSize, 16 * 1024 * 1024));
+    if (build_options.selftest) selftest.run(sys, boards.fact(st.SYSTAG_FlashSize, 16 * 1024 * 1024));
+
+    // The shell's code is a task's code: it gets SysBase as the tasks of
+    // CreateTask do, and when it returns, the task ends.
+    const shell_code: exec.TaskFn = &shell.run;
+    shell_code(sys);
+    sys.RemTask(null);
+    unreachable;
 }
 
 /// The microseconds since the boot, by SYSTIMER's unit 0: the log's clock.

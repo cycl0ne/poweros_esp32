@@ -33,7 +33,9 @@
 //! counts per erase; the E-clock and uptime (SYSTIMER) don't.
 //!
 //! The caller's buffer may be in PSRAM too, so every write goes through the
-//! 256-byte buffer src/rom/devs/flash/spiflash.zig keeps in internal SRAM.
+//! 256-byte buffer the chip's flash layer keeps in internal SRAM:
+//! esp32s3/spiflash.zig on the ESP32-S3, esp32p4/spiflash.zig on the ESP32-P4,
+//! the same calls on each.
 //!
 //! io_Offset and io_Length are bytes, 64-bit; there is no motor, no
 //! seeking, no removal and no ETD_*; TDCMD_ERASE exists since flash must be
@@ -52,7 +54,10 @@ const td = sdk.devices.trackdisk;
 const ExecBase = sdk.interface.exec.ExecBase;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const spiflash = @import("spiflash.zig");
+const spiflash = switch (sdk.hardware.chip) {
+    .esp32s3 => @import("esp32s3/spiflash.zig"),
+    .esp32p4 => @import("esp32p4/spiflash.zig"),
+};
 const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = td.FLASHNAME;

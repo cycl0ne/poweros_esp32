@@ -6,7 +6,7 @@ const poweros_userland = @import("poweros_userland");
 /// The flash chip every board has (16 MiB), and the flash disk on it:
 /// flash.device's unit 0 starts at `-Ddisk-offset` and runs to the end of
 /// the chip, with 4 KiB erase sectors and 256-byte pages
-/// (src/rom/devs/flash/spiflash.zig). The build needs the numbers to make
+/// (src/rom/devs/flash/esp32s3/spiflash.zig). The build needs the numbers to make
 /// a disk image and to put it in the right place, and hands the offset to
 /// the kernel, whose boards give it to flash.device as SYSTAG_DiskOffset.
 const flash_size = 16 * 1024 * 1024;
@@ -177,6 +177,7 @@ pub fn build(b: *std.Build) void {
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
+    const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
@@ -211,7 +212,7 @@ pub fn build(b: *std.Build) void {
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores);
+    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -271,25 +272,34 @@ pub fn build(b: *std.Build) void {
     const tree = diskTree(b, &made);
     const extras = extraFiles(b, &made);
 
+    // Two images from one recipe: the ESP32-S3's and the ESP32-P4's, which
+    // differ only in their programs' load files.
     const make_disk = b.addRunArtifact(mkfs);
     const disk_bin = make_disk.addOutputFileArg("disk.bin");
-    make_disk.addArgs(&.{
+    const make_p4_disk = b.addRunArtifact(mkfs);
+    const p4_disk_bin = make_p4_disk.addOutputFileArg("disk-esp32p4.bin");
+    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk } };
+    const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
+    disks.addArgs(&.{
         "System",
         "DH0",
         b.fmt("{d}", .{disk_size / disk_sector}),
         b.fmt("{d}", .{disk_sector}),
         b.fmt("{d}", .{disk_page}),
     });
-    make_disk.addArgs(&image_dirs);
+    disks.addArgs(&image_dirs);
     // The directories those files need, made before anything goes in
     // them: mkfs takes its paths in the order they are given.
-    make_disk.addArgs(tree.dirs);
-    for (extras) |extra| make_disk.addArgs(extra.dirs);
+    disks.addArgs(tree.dirs);
+    for (extras) |extra| disks.addArgs(extra.dirs);
     for (poweros_userland.programs) |program| {
         make_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), disk_dep.namedLazyPath(program.disk));
+        if (poweros_userland.builtFor(program, .esp32p4)) {
+            make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), p4_disk_dep.namedLazyPath(program.disk));
+        }
     }
     for (poweros_userland.files) |file| {
-        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
+        disks.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
@@ -313,19 +323,19 @@ pub fn build(b: *std.Build) void {
             run.addArg(family.name);
             run.addArgs(family.options);
             for (family.sources) |source| run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, source }) });
-            make_disk.addArg(b.fmt("fonts/{s}", .{family.name}));
-            make_disk.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
+            disks.addArg(b.fmt("fonts/{s}", .{family.name}));
+            disks.addPrefixedFileArg(b.fmt("fonts/{s}.font=", .{family.name}), out.path(b, b.fmt("{s}.font", .{family.name})));
             for (family.sizes) |rows| {
                 const size = b.fmt("{s}/{d}", .{ family.name, rows });
-                make_disk.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
+                disks.addPrefixedFileArg(b.fmt("fonts/{s}=", .{size}), out.path(b, size));
             }
             for (family.outlines) |file| {
                 const at = b.fmt("{s}/{s}", .{ family.name, file });
-                make_disk.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
+                disks.addPrefixedFileArg(b.fmt("fonts/{s}=", .{at}), out.path(b, at));
             }
         }
-        make_disk.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
-        make_disk.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
+        disks.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
+        disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -348,8 +358,8 @@ pub fn build(b: *std.Build) void {
         const run = b.addRunArtifact(anchors);
         run.addFileArg(.{ .cwd_relative = bundle });
         const store = run.addOutputFileArg("roots");
-        make_disk.addArg("certificates");
-        make_disk.addPrefixedFileArg("certificates/roots=", store);
+        disks.addArg("certificates");
+        disks.addPrefixedFileArg("certificates/roots=", store);
     }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
     // board's size, when they are there.
@@ -359,18 +369,19 @@ pub fn build(b: *std.Build) void {
             run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{one.picture}) }) });
             const made_icon = run.addOutputFileArg(std.fs.path.basename(one.path));
             run.addArgs(one.fields);
-            make_disk.addPrefixedFileArg(b.fmt("{s}=", .{one.path}), made_icon);
+            disks.addPrefixedFileArg(b.fmt("{s}=", .{one.path}), made_icon);
         }
     }
     // The `disk/` tree, and then -Dextra last, so that either may
     // replace a file the tree above put there.
     for (tree.files) |file| {
-        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.path}), b.path(file.host));
+        disks.addPrefixedFileArg(b.fmt("{s}=", .{file.path}), b.path(file.host));
     }
     for (extras) |extra| {
-        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), .{ .cwd_relative = extra.host });
+        disks.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), .{ .cwd_relative = extra.host });
     }
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
 
     // After linking: every ROM tag's module size into the kernel's
     // resident_sizes table (the shell's `residents` shows them).
@@ -394,7 +405,7 @@ pub fn build(b: *std.Build) void {
     });
     const built = switch (chipOf(board)) {
         .esp32s3 => addImage(b, esptool, ressize, kernel, disk_bin, disk_offset),
-        .esp32p4 => addP4Image(b, esptool, ramimage, kernel),
+        .esp32p4 => addP4Image(b, esptool, ramimage, kernel, p4_disk_bin, disk_offset),
     };
     const image = built.image;
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
@@ -403,7 +414,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, qemuConsole(b, &.{"-nographic"}, uart1));
@@ -435,7 +446,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores));
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest), p4_disk_bin, disk_offset);
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -581,18 +592,14 @@ pub fn build(b: *std.Build) void {
     // Every program and module on the disk compiles: the disk image is
     // made from all of them. And for the ESP32-P4 too, into load files.
     test_step.dependOn(&make_disk.step);
-    const p4_disk = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
-    for (poweros_userland.programs) |program| {
-        if (!poweros_userland.builtFor(program, .esp32p4)) continue;
-        p4_disk.namedLazyPath(program.disk).addStepDependencies(test_step);
-    }
+    test_step.dependOn(&make_p4_disk.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
         const other_target = switch (chipOf(other)) {
             .esp32s3 => target,
             .esp32p4 => p4_target,
         };
-        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores).step);
+        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -927,14 +934,31 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
 /// src/arch/esp32p4/kernel.ld links it for (`_flash_part_offset`).
 const p4_flash_part_offset = 0x40000;
 
+/// Disk images made from one recipe: what is given goes into each.
+const DiskImages = struct {
+    runs: [2]*std.Build.Step.Run,
+
+    fn addArg(images: DiskImages, arg: []const u8) void {
+        for (images.runs) |run| run.addArg(arg);
+    }
+
+    fn addArgs(images: DiskImages, args: []const []const u8) void {
+        for (images.runs) |run| run.addArgs(args);
+    }
+
+    fn addPrefixedFileArg(images: DiskImages, prefix: []const u8, path: std.Build.LazyPath) void {
+        for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
+    }
+};
+
 /// The ESP32-P4's kernel made into what is flashed and what esp-emulator
 /// boots, in two parts: the RAM part, an ESP image the ROM loads and runs,
 /// at flash offset 0x2000, where the P4's ROM looks for its second-stage
 /// bootloader; and the flash part - the code and constants - at the
 /// offset it is linked for, which the RAM part maps in place
-/// (src/arch/esp32p4/flashmap.zig). Both in a 16 MB flash dump for the
-/// emulator.
-fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Compile, kernel: *std.Build.Step.Compile) Image {
+/// (src/arch/esp32p4/flashmap.zig). Both, and the disk at `disk_offset`,
+/// in a 16 MB flash dump for the emulator.
+fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Compile, kernel: *std.Build.Step.Compile, disk_bin: std.Build.LazyPath, disk_offset: u32) Image {
     const kernel_elf = kernel.getEmittedBin();
     // --ram-only-header puts the RAM segments first and has the header
     // count only those; the image is cut after their checksum.
@@ -956,14 +980,17 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
     merge.addFileArg(image);
     merge.addArg(b.fmt("0x{x}", .{p4_flash_part_offset}));
     merge.addFileArg(flash_part.getOutput());
+    merge.addArg(b.fmt("0x{x}", .{disk_offset}));
+    merge.addFileArg(disk_bin);
     b.getInstallStep().dependOn(&b.addInstallBinFile(flash_part.getOutput(), "kernel-flash.bin").step);
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
 }
 
 /// The kernel for `board`: src/main.zig with the board's description
 /// chosen (src/boards/boards.zig reads `build_options.board`). `cores` 0
-/// leaves the number of cores to the board.
-fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32) *std.Build.Step.Compile {
+/// leaves the number of cores to the board; `selftest` makes an ESP32-P4's
+/// boot task the chip's checks rather than the shell.
+fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool) *std.Build.Step.Compile {
     const chip = chipOf(board);
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path(switch (chip) {
@@ -982,6 +1009,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     options.addOption(Board, "board", board);
     options.addOption(u32, "disk_offset", disk_offset);
     options.addOption(u32, "cores", cores);
+    options.addOption(bool, "selftest", selftest);
     kernel_mod.addOptions("build_options", options);
     switch (chip) {
         .esp32s3 => {

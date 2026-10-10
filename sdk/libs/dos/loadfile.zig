@@ -109,6 +109,11 @@ pub const RelocGroup = extern struct {
 /// Sizes are rounded up to this, so every header stays aligned.
 pub const ALIGN = 4;
 
+/// Where a loaded segment starts: on this boundary, the coarsest a
+/// program's section may ask for (elf2seg refuses a coarser one). A cache
+/// line, so a DMA buffer a program aligns to one keeps it.
+pub const SEGMENT_ALIGN = 64;
+
 pub fn alignUp(n: u32) u32 {
     return (n + (ALIGN - 1)) & ~@as(u32, ALIGN - 1);
 }

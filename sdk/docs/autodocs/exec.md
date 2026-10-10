@@ -4433,8 +4433,9 @@ sequencing the modules: a driver at a lower priority than the library it
 registers with can rely on that library being there.
 
 **A module that fails stops the boot.** For an `RTF_AUTOINIT` tag that
-is a dead-end alert rather than a return, since a library that could not
-be built leaves everything above it with nothing to open.
+is a dead-end alert (`AG_MakeLib`, the tag's name as its text) rather
+than a return, since a library that could not be built leaves
+everything above it with nothing to open.
 
 **CONTEXT**
 
@@ -5135,7 +5136,10 @@ memory, and control comes back when it returns.
 checks its bottom words while `code` runs, and this call checks them
 once more before it gives the stack back. A stack `code` ran past the
 end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
-written over below it.
+written over below it. The dispatcher's check is on only while `code`
+itself runs: in the instructions that move the stack pointer to the new
+stack and back the task's bounds already say one stack while it is on
+the other, and a switch there is no overrun.
 
 **CONTEXT**
 

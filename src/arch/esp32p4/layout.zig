@@ -32,6 +32,17 @@ pub fn inKernel(address: usize) bool {
         (address >= @intFromPtr(&_flash_start) and address < @intFromPtr(&_flash_end));
 }
 
+/// The code in the RAM part (start, trap entry, .iram.text).
+pub fn iramStart() usize {
+    return @intFromPtr(&_ram_text_start);
+}
+pub fn iramEnd() usize {
+    return @intFromPtr(&_ram_text_end);
+}
+/// The RAM part's data, from the ROM tags on.
+pub fn dramStart() usize {
+    return @intFromPtr(&_resident_start);
+}
 pub fn bssEnd() usize {
     return @intFromPtr(&_bss_end);
 }
@@ -53,4 +64,11 @@ pub fn residentStart() usize {
 }
 pub fn residentEnd() usize {
     return @intFromPtr(&_resident_end);
+}
+/// The flash part: the code and constants run in place at 0x40040000.
+pub fn flashTextStart() usize {
+    return @intFromPtr(&_flash_start);
+}
+pub fn flashTextEnd() usize {
+    return @intFromPtr(&_flash_end);
 }

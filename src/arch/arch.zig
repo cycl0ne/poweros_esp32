@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 //! exec's hardware for the chip the kernel is built for: `esp32s3/` or
-//! `esp32p4/`, by `sdk.hardware.chip`. The kernel's shell reads its
-//! figures through here - the tick, the cores, the interrupt lines, the
-//! traps - so one command serves both chips. Each chip's module answers
+//! `esp32p4/`, by `sdk.hardware.chip`. The kernel's shell and
+//! platform.resource read their figures through here - the clock, the
+//! tick, the cores, the memory map, the interrupt lines, the traps - so
+//! one command serves both chips. Each chip's module answers
 //! to the same names for what the shell asks.
 
 const chip = @import("sdk").hardware.chip;
 
+pub const clock = switch (chip) {
+    .esp32s3 => @import("esp32s3/clock.zig"),
+    .esp32p4 => @import("esp32p4/clock.zig"),
+};
+pub const psram = switch (chip) {
+    .esp32s3 => @import("esp32s3/psram.zig"),
+    .esp32p4 => @import("esp32p4/psram.zig"),
+};
 pub const cpu = switch (chip) {
     .esp32s3 => @import("esp32s3/cpu.zig"),
     .esp32p4 => @import("esp32p4/cpu.zig"),

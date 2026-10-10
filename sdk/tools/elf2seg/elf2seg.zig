@@ -59,6 +59,7 @@ const sh_offset = 16;
 const sh_size = 20;
 const sh_link = 24;
 const sh_info = 28;
+const sh_addralign = 32;
 const sh_entsize = 36;
 
 const SHT_PROGBITS = 1;
@@ -127,6 +128,7 @@ const Section = struct {
     size: u32,
     link: u32,
     info: u32,
+    addralign: u32,
     entsize: u32,
     /// Which segment it became, if any.
     segment: ?u16 = null,
@@ -172,6 +174,10 @@ pub fn main(init: std.process.Init) !void {
     var bss_seen = false;
     for (sections) |*s| {
         if (s.flags & SHF_ALLOC == 0 or s.size == 0) continue;
+        // The loader starts a segment on a SEGMENT_ALIGN boundary, no
+        // coarser: a section that needs more would lose it.
+        if (s.addralign > loadfile.SEGMENT_ALIGN)
+            fatal("section {s} wants {d}-byte alignment; a loaded segment has {d}", .{ s.name, s.addralign, loadfile.SEGMENT_ALIGN });
         const index: u16 = if (machine == EM_RISCV)
             0
         else if (s.flags & SHF_EXECINSTR != 0)
@@ -235,6 +241,7 @@ fn readSections(elf: []const u8, arena: mem.Allocator) ![]Section {
             .size = u32At(elf, h + sh_size),
             .link = u32At(elf, h + sh_link),
             .info = u32At(elf, h + sh_info),
+            .addralign = u32At(elf, h + sh_addralign),
             .entsize = u32At(elf, h + sh_entsize),
         };
     }

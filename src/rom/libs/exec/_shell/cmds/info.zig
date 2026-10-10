@@ -32,7 +32,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     const board: [*:0]const u8 = @ptrFromInt(_shell.boardFact(shell, st.SYSTAG_Name, @intFromPtr("(no name)")));
     shell.print("board    %s\n", .{board});
     shell.print("chip     %s, %s, PRID 0x%04x\n", .{ p.chip.?, p.core.?, p.prid & 0xFFFF });
-    shell.print("clock    %d MHz CPU (configured %d, measured %d), %d Hz tick on CCOMPARE0 (irq %d)\n", .{
+    shell.print("clock    %d MHz CPU (configured %d, measured %d), %d Hz tick on interrupt %d\n", .{
         pr.CpuClock() / 1_000_000,
         p.cpu_hz / 1_000_000,
         p.measured_cpu_hz / 1_000_000,
@@ -45,7 +45,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     shell.print("flash    0x%08x-0x%08x  %d KiB code\n", .{ p.flash_text_lower, p.flash_text_upper, (p.flash_text_upper - p.flash_text_lower) / 1024 });
     shell.print("ram      internal %d KiB free, external %d KiB free (see avail)\n", .{ sys.AvailMem(sdk.exec.MEMF_INTERNAL) / 1024, sys.AvailMem(sdk.exec.MEMF_EXTERNAL) / 1024 });
     if (p.psram_size != 0) {
-        shell.print("psram    0x%08x-0x%08x  %d MiB octal, vendor 0x%02x\n", .{ p.psram_base, p.psram_base + p.psram_size, p.psram_size >> 20, p.psram_vendor });
+        shell.print("psram    0x%08x-0x%08x  %d MiB, vendor 0x%02x\n", .{ p.psram_base, p.psram_base + p.psram_size, p.psram_size >> 20, p.psram_vendor });
     }
     shell.print("stack    0x%08x-0x%08x  sp 0x%08x\n", .{ p.stack_lower, p.stack_upper, cpu.stackPointer() });
     shell.print("built    %s\n", .{p.built.?});
