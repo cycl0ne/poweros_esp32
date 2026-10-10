@@ -115,7 +115,8 @@ const Panel = struct {
     hdmi: bool = false,
     link: link_file.Link = .{},
     stream_bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
-    /// What a line and a frame of the stream are in bytes.
+    /// A screen's row, what a line and a frame of the stream are in bytes.
+    screen_pitch: u32 = 0,
     stream_pitch: u32 = 0,
     stream_frame_bytes: u32 = 0,
     /// What the PHY's PLL and the pixel clock really run at.
@@ -433,17 +434,25 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (state.board != null) return err.RTGERR_IN_USE;
 
     const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
-    const panel = panelOf(board);
-    panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
-    panel.frame_bytes = wanted.width * wanted.height * (wanted.bits_per_pixel / 8);
-    panel.stream_pitch = wanted.width * (wanted.bits_per_pixel / 8);
-    panel.stream_frame_bytes = panel.frame_bytes;
 
     // An HDMI bridge only with a monitor behind it.
     var bridge_bus: ?lt8912b.I2c = null;
     defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
-    if (wanted.chip == st.CHIP_LT8912B) {
-        bridge_bus = monitorFor(state.sys, wanted) orelse return err.RTGERR_NO_DISPLAY;
+    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(state.sys, wanted) orelse return err.RTGERR_NO_DISPLAY;
+
+    const panel = panelOf(board);
+    panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
+    // A screen's rows: the stream reads a panel's straight, so they are
+    // exactly its width; over HDMI it reads the copy instead, and the
+    // screens' rows are whole cache lines as AllocBitMap makes them, for a
+    // width that is not.
+    const row = wanted.width * (wanted.bits_per_pixel / 8);
+    const line = hardware.DCACHE_LINE_SIZE;
+    panel.screen_pitch = if (bridge_bus != null) (row + line - 1) / line * line else row;
+    panel.frame_bytes = panel.screen_pitch * wanted.height;
+    panel.stream_pitch = row;
+    panel.stream_frame_bytes = panel.frame_bytes;
+    if (bridge_bus != null) {
         panel.hdmi = true;
         if (!link_file.allocate(&panel.link, state.sys, wanted.width, wanted.height)) return err.RTGERR_NO_MEMORY;
         panel.stream_pitch = panel.link.pitch;
@@ -463,7 +472,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .width = wanted.width,
         .height = wanted.height,
         .format = .rgb565,
-        .pitch = wanted.width * (wanted.bits_per_pixel / 8),
+        .pitch = panel.screen_pitch,
         .pixel_clock_hz = panel.pixel_hz,
         .refresh_mhz = refreshMilliHz(panel),
         .flags = rtg.boards.RTGMF_DEFAULT,
