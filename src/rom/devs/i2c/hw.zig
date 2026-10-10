@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The ESP32-S3's two I2C controllers, for i2c.device.
+//! The chip's two I2C controllers, for i2c.device: the ESP32-S3's and the
+//! ESP32-P4's are the same block, but for where their clock is chosen and
+//! the names of their signals.
 //!
 //! A controller is driven by a list of up to eight commands. Each one says
 //! what to put on the bus - a START, a repeated START, so many bytes
@@ -26,8 +28,20 @@ const signals = hardware.signals;
 pub const Port = enum(u1) { i2c0 = 0, i2c1 = 1 };
 
 /// GPIO matrix signals, SCL then SDA, per controller.
-const scl_signal = [_]u32{ signals.I2CEXT0_SCL, signals.I2CEXT1_SCL };
-const sda_signal = [_]u32{ signals.I2CEXT0_SDA, signals.I2CEXT1_SDA };
+const scl_signal = switch (hardware.chip) {
+    .esp32s3 => [_]u32{ signals.I2CEXT0_SCL, signals.I2CEXT1_SCL },
+    .esp32p4 => [_]u32{ signals.I2C0_SCL, signals.I2C1_SCL },
+};
+const sda_signal = switch (hardware.chip) {
+    .esp32s3 => [_]u32{ signals.I2CEXT0_SDA, signals.I2CEXT1_SDA },
+    .esp32p4 => [_]u32{ signals.I2C0_SDA, signals.I2C1_SDA },
+};
+
+/// The first controller's interrupt; the second's is the next.
+pub const int_first = switch (hardware.chip) {
+    .esp32s3 => hardware.intbits.INTB_I2C_EXT0,
+    .esp32p4 => hardware.intbits.INTB_I2C0,
+};
 
 /// The interrupts a master wants to hear about.
 pub const INT_MASTER: u32 = regs.INT_END_DETECT | regs.INT_ARBITRATION_LOST |
@@ -202,8 +216,18 @@ pub fn setUp(port: Port, speed: u32, scl_pin: u8, sda_pin: u8) bool {
     gpio.openDrainBus(scl_pin, scl_signal[i]);
     gpio.openDrainBus(sda_pin, sda_signal[i]);
 
-    // XTAL as the source (SCLK_SEL 0), and the controller's clock gate open.
-    r(port, regs.CLK_CONF).* = regs.CLK_SCLK_ACTIVE;
+    const t = timingFor(speed);
+    // XTAL as the source, divided down: in the controller's own CLK_CONF
+    // on the ESP32-S3 (its clock gate opened there too), in HP_SYS_CLKRST
+    // on the ESP32-P4.
+    switch (hardware.chip) {
+        .esp32s3 => r(port, regs.CLK_CONF).* = regs.CLK_SCLK_ACTIVE |
+            ((t.clkm_div - 1) & regs.CLK_SCLK_DIV_NUM),
+        .esp32p4 => switch (port) {
+            .i2c0 => system.setFunctionClock(.i2c0, .{ .divider = t.clkm_div }),
+            .i2c1 => system.setFunctionClock(.i2c1, .{ .divider = t.clkm_div }),
+        },
+    }
 
     // Master, open-drain pins, no arbitration (one master on this bus),
     // MSB first, the FIFO in use rather than DMA.
@@ -216,9 +240,6 @@ pub fn setUp(port: Port, speed: u32, scl_pin: u8, sda_pin: u8) bool {
     // A glitch filter of seven source-clock cycles on both lines.
     r(port, regs.FILTER_CFG).* = (1 << 9) | (1 << 8) | (7 << 4) | 7;
 
-    const t = timingFor(speed);
-    const clk = r(port, regs.CLK_CONF);
-    clk.* = (clk.* & ~regs.CLK_SCLK_DIV_NUM) | ((t.clkm_div - 1) & regs.CLK_SCLK_DIV_NUM);
     r(port, regs.SCL_LOW_PERIOD).* = t.scl_low - 1;
     r(port, regs.SCL_HIGH_PERIOD).* = (t.scl_wait_high << 9) | t.scl_high;
     r(port, regs.SDA_HOLD).* = t.sda_hold - 1;

@@ -24,6 +24,33 @@ const dcsStep = tags.dcsStep;
 /// The board, as its maker names it.
 const name = "Elecrow CrowPanel Advanced 10.1\" ESP32-P4";
 
+// --- the I2C bus ------------------------------------------------------------------
+
+/// SCL GPIO46, SDA GPIO45: the touch controller is on it.
+const i2c_bus = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_I2CBUS),
+    .value(st.PART_PinSCL, pins.gpio(46)),
+    .value(st.PART_PinSDA, pins.gpio(45)),
+    .done,
+};
+
+// --- the touch panel ---------------------------------------------------------------
+
+/// The GT911 on the I2C bus, its axes the panel's. It answers at 0x5D
+/// because touch.device holds its interrupt line low while letting it out
+/// of reset. Its interrupt line is GPIO42, its reset GPIO40, active low.
+const touch_panel = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_TOUCH),
+    .value(st.PART_Chip, st.CHIP_GT911),
+    .pointer(st.PART_ChipName, "gt911"),
+    .value(st.PART_Bus, st.BUS_I2C),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0x5D),
+    .value(st.PART_PinInt, pins.gpio(42)),
+    .value(st.PART_PinReset, pins.gpioLow(40)),
+    .done,
+};
+
 // --- the display ----------------------------------------------------------------
 
 /// The 10.1" IPS panel, 1024x600, behind an EK79007 on two DSI data lanes.
@@ -91,6 +118,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 1),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &i2c_bus),
+    .pointer(st.SYSTAG_Part, &touch_panel),
     .pointer(st.SYSTAG_Part, &panel),
     .done,
 };

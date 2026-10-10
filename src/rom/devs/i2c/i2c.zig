@@ -658,7 +658,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     if (io.message.length < @sizeOf(types.IOExtI2C)) return exec.IOERR_OPENFAIL;
     const u = &base.units[unit_number];
     if (u.hooked == 0) {
-        base.sys_base.AddIntServer(intbits.INTB_I2C_EXT0 + unit_number, &u.int);
+        base.sys_base.AddIntServer(hw.int_first + unit_number, &u.int);
         u.hooked = 1;
     }
     if (u.ready == 0 and u.scl_pin != types.PIN_KEEP and u.sda_pin != types.PIN_KEEP) {
