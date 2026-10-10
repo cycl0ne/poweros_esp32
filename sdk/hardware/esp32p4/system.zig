@@ -83,6 +83,9 @@ pub const Peripheral = enum {
     dsi,
     /// The DMA controller that feeds the DSI and CSI bridges (DW-GDMA).
     dw_gdma,
+    /// The pixel-processing accelerator, and the 2D-DMA that feeds it.
+    ppa,
+    dma2d,
 };
 
 /// One bit in one register.
@@ -160,6 +163,14 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
         .dw_gdma => .{
             .clocks = &.{ bit(SOC_CLK_CTRL0, 13), bit(SOC_CLK_CTRL1, 5) },
             .resets = &.{bit(HP_RST_EN0, 21)},
+        },
+        .ppa => .{
+            .clocks = &.{bit(SOC_CLK_CTRL1, 9)},
+            .resets = &.{bit(HP_RST_EN1, 0)},
+        },
+        .dma2d => .{
+            .clocks = &.{bit(SOC_CLK_CTRL1, 6)},
+            .resets = &.{bit(HP_RST_EN0, 31)},
         },
     };
 }

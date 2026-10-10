@@ -45,7 +45,7 @@ const tests = [_][]const u8{
     "bsdsocktest", "asl",        "settings",    "iff",     "datatypes",
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
-    "launch",      "drag",       "tap",         "app",
+    "launch",      "drag",       "tap",         "app",     "engine",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 

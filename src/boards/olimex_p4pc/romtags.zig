@@ -5,4 +5,6 @@
 comptime {
     // The display on the MIPI-DSI connector.
     _ = @import("../../rom/libs/rtg_driver/dsiboard/dsiboard.zig");
+    // The I2C bus.
+    _ = @import("../../rom/devs/i2c/i2c.zig");
 }

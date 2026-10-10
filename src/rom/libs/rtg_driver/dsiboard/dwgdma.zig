@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The ESP32-P4's DW-GDMA, the AXI DMA controller that feeds the DSI and
 //! CSI bridges, for the DSI board driver: one channel, which carries a
-//! whole picture from PSRAM to the DSI bridge's FIFO as one block.
+//! picture from PSRAM to the DSI bridge's FIFO, a block for each run of
+//! lines that lies in one piece of memory.
 //!
-//! The channel works from a linked-list item in memory: source,
-//! destination, size, and how to move it - 64-bit words, the bridge
-//! asking for each burst by its hardware handshake. The item is the
-//! channel's while its VALID bit is set, and the channel clears it once
-//! the block is done; a picture is sent again by setting it again and
-//! restarting the channel, which is what the transfer-done interrupt is
-//! for. The item is written through the uncached view of internal memory
+//! The channel works from a chain of linked-list items in memory: each a
+//! source, a destination, a size, how to move it - 64-bit words, the
+//! bridge asking for each burst by its hardware handshake - and the next
+//! item. An item is the channel's while its VALID bit is set, and the
+//! channel clears it once its block is done; a picture is sent again by
+//! setting them again and restarting the channel, which is what the
+//! transfer-done interrupt, at the chain's end, is for. The item is written through the uncached view of internal memory
 //! (`uncached`), so the channel always reads what was written last.
 //!
 //! The controller's two masters: master 0 reaches the bridges, master 1
@@ -55,9 +56,10 @@ pub const int_transfer_done: u32 = 1 << 1;
 
 /// The linked-list item's CTL: from the memory master (1), incrementing,
 /// to the bridge master (0), fixed, both 64 bits wide, bursts of 512 and
-/// 256 words; AXI bursts of 16; the last item, and valid.
+/// 256 words; AXI bursts of 16; then whether it is the chain's last item,
+/// and valid.
 const ctl_lo: u32 = 0x001E_1B41;
-const ctl_hi: u32 = 0xC010_8840;
+const ctl_hi: u32 = 0x0010_8840;
 const ctl_hi_valid: u32 = 1 << 31;
 const ctl_hi_last: u32 = 1 << 30;
 /// LLP's LMS: items are read through master 1, the memories' master.
@@ -107,28 +109,24 @@ pub fn setUpChannel(channel: u32) void {
 }
 
 /// The item at `item` (its uncached view) made to send `bytes` from
-/// `source` to `destination`, and handed to the channel.
-pub fn fill(item: *volatile Item, source: usize, destination: u32, bytes: u32) void {
+/// `source` to `destination`, then go on to the item at `next` (its cached
+/// address), or end the chain for 0; and handed to the channel.
+pub fn fill(item: *volatile Item, source: usize, destination: u32, bytes: u32, next: usize) void {
     item.sar_lo = @intCast(source);
     item.sar_hi = 0;
     item.dar_lo = destination;
     item.dar_hi = 0;
     item.block_ts = bytes / 8 - 1;
-    item.llp_lo = llp_memory_master;
+    item.llp_lo = @as(u32, @intCast(next)) | llp_memory_master;
     item.llp_hi = 0;
     item.ctl_lo = ctl_lo;
-    item.ctl_hi = ctl_hi;
-}
-
-/// A new source for the item, for the next time it runs.
-pub fn setSource(item: *volatile Item, source: usize) void {
-    item.sar_lo = @intCast(source);
+    rearm(item, next == 0);
 }
 
 /// The item handed to the channel again: the channel cleared VALID when
 /// it was done with it.
-pub fn rearm(item: *volatile Item) void {
-    item.ctl_hi = ctl_hi | ctl_hi_valid | ctl_hi_last;
+pub fn rearm(item: *volatile Item, last: bool) void {
+    item.ctl_hi = ctl_hi | ctl_hi_valid | (if (last) ctl_hi_last else 0);
 }
 
 /// The channel started on the item at `item_address`, its cached

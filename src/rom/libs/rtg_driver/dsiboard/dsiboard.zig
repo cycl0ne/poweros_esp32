@@ -17,11 +17,13 @@
 //! the bridge's DPI side on. So the first picture can be drawn and written
 //! back out of the cache while nothing reads it.
 //!
-//! **The stream.** The channel sends the whole picture as one block, and
-//! its transfer-done interrupt sends it again - from a new buffer, if one
-//! was shown meanwhile, which is how a flip happens at a frame's end. The
-//! picture is read straight out of PSRAM; the CPU's writes reach it when
-//! RefreshBitMap writes them back out of the cache.
+//! **The stream.** The channel sends the picture as a chain of blocks - a
+//! buffer whole, or several in bands, a block for each run of lines that
+//! lies in one piece of memory (`chain.zig`) - and its transfer-done
+//! interrupt sends it again: from a new chain, if one was shown
+//! meanwhile, which is how a flip or a band change happens at a frame's
+//! end. The picture is read straight out of PSRAM; the CPU's writes reach
+//! it when RefreshBitMap writes them back out of the cache.
 //!
 //! The module keeps nothing of its own. The driver node, SysBase and the
 //! rest are allocated at init, and per-board state is the `Panel` the
@@ -47,6 +49,10 @@ const config = @import("config.zig");
 const host = @import("host.zig");
 const bridge = @import("bridge.zig");
 const dwgdma = @import("dwgdma.zig");
+const engine_file = @import("engine.zig");
+const bus = @import("bus.zig");
+const chain_file = @import("chain.zig");
+const Chain = chain_file.Chain;
 
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
@@ -94,21 +100,21 @@ const Panel = struct {
     /// What the PHY's PLL and the pixel clock really run at.
     lane_kbps: u32 = 0,
     pixel_hz: u32 = 0,
-    /// Room for the DMA's linked-list item, which sits on the 64-byte
-    /// boundary inside it (`item`, its cached address); it is only ever
-    /// written through its uncached view.
-    item_room: [128]u8 = @splat(0),
-    item: usize = 0,
-    /// The stream runs; the buffer to send from the next frame on, which
-    /// the interrupt takes (0: none waiting).
+    /// The stream runs, from `chain`; `pending` is the one to send from
+    /// the next frame on, which the interrupt takes, leaving the one it
+    /// replaced in `retired` for the task to free.
     streaming: bool = false,
-    next: usize = 0,
+    chain: Chain = .{},
+    pending: Chain = .{},
+    retired: Chain = .{},
     /// The backlight as last set, for a board that has a line for it.
     brightness: u32 = 100,
     dma_int: exec.Interrupt = .{},
     bridge_int: exec.Interrupt = .{},
     hooked: bool = false,
     stats: rtg.RtgBoardStats = .{},
+    /// The PPA and the 2D-DMA: FillRect and CopyRect.
+    engine: engine_file.Engine = .{},
 };
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
@@ -119,14 +125,9 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
-/// The linked-list item, as the CPU writes it: through the uncached view.
-fn itemOf(panel: *Panel) *volatile dwgdma.Item {
-    return @ptrFromInt(dwgdma.uncached(panel.item));
-}
-
 // --- the interrupts ------------------------------------------------------
 
-/// A picture has gone: send the next one, from the buffer shown meanwhile
+/// A picture has gone: send the next one, from the chain shown meanwhile
 /// if there is one.
 fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
@@ -134,14 +135,13 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     const raised = dwgdma.takeInterrupts(channel);
     if (raised == 0) return 0;
     if (raised & dwgdma.int_transfer_done != 0 and panel.streaming) {
-        const item = itemOf(panel);
-        const next: *volatile usize = &panel.next;
-        if (next.* != 0) {
-            dwgdma.setSource(item, next.*);
-            next.* = 0;
+        if (panel.pending.first != 0) {
+            panel.retired = panel.chain;
+            panel.chain = panel.pending;
+            panel.pending = .{};
         }
-        dwgdma.rearm(item);
-        dwgdma.run(channel, panel.item);
+        chain_file.rearm(panel.chain);
+        dwgdma.run(channel, panel.chain.first);
         panel.stats.frames +%= 1;
     }
     return 1;
@@ -249,13 +249,8 @@ fn bringUp(panel: *Panel) i32 {
     });
 
     if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
+    bus.share(streamBytes(panel));
     dwgdma.setUpChannel(channel);
-    // The item's line out of the cache once, cleared and all: from here
-    // on it is written only through its uncached view.
-    panel.item = (@intFromPtr(&panel.item_room) + 63) & ~@as(usize, 63);
-    var line_bytes: u32 = 64;
-    _ = sys.CachePreDMA(@ptrFromInt(panel.item), &line_bytes, 0);
-    sys.CachePostDMA(@ptrFromInt(panel.item), &line_bytes, 0);
 
     panel.dma_int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
@@ -271,6 +266,7 @@ fn bringUp(panel: *Panel) i32 {
     sys.AddIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
     panel.hooked = true;
 
+    engine_file.setUp(&panel.engine, sys);
     if (wanted.backlight_pin.wired()) _ = drive(wanted.backlight_pin, true);
     return err.RTGERR_OK;
 }
@@ -293,22 +289,63 @@ fn sendSequence(bytes: []const u8) bool {
     return true;
 }
 
-/// The stream started from `pixels`.
-fn startStream(panel: *Panel, pixels: usize) void {
-    dwgdma.fill(itemOf(panel), pixels, bridge.fifo, panel.frame_bytes);
-    dwgdma.run(channel, panel.item);
+/// The stream started from `chain`.
+fn startStream(panel: *Panel, chain: Chain) void {
+    panel.chain = chain;
+    dwgdma.run(channel, chain.first);
     host.videoMode(true);
     bridge.dpi(true);
     bridge.underrunInterrupt(true);
     panel.streaming = true;
 }
 
+/// The stream stopped, and every chain freed.
 fn stopStream(panel: *Panel) void {
+    const sys = panel.sys;
+    sys.Disable();
     panel.streaming = false;
+    sys.Enable();
     bridge.underrunInterrupt(false);
     bridge.dpi(false);
     host.videoMode(false);
     dwgdma.halt(channel);
+    for ([_]*Chain{ &panel.chain, &panel.pending, &panel.retired }) |one| {
+        chain_file.free(sys, one.*);
+        one.* = .{};
+    }
+}
+
+/// Show `bands` from the next frame on, whole; the first time, this starts
+/// the stream. Returns once the chain they make is the one being sent, and
+/// the one before it is no longer read.
+fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
+    const sys = panel.sys;
+    const line_bytes = panel.mode.pitch;
+    const made = chain_file.build(sys, bands, panel.mode.height, line_bytes) orelse return err.RTGERR_NO_MEMORY;
+    if (!panel.streaming) {
+        startStream(panel, made);
+        return err.RTGERR_OK;
+    }
+    sys.Disable();
+    panel.pending = made;
+    sys.Enable();
+    const waiting: *volatile usize = &panel.pending.first;
+    const since = systimer.uptimeUs();
+    while (waiting.* != 0) {
+        if (systimer.uptimeUs() - since > flip_wait_us) break;
+    }
+    sys.Disable();
+    const timed_out = panel.pending.first == made.first;
+    if (timed_out) panel.pending = .{};
+    const retired = panel.retired;
+    panel.retired = .{};
+    sys.Enable();
+    chain_file.free(sys, retired);
+    if (timed_out) {
+        chain_file.free(sys, made);
+        return err.RTGERR_NO_DISPLAY;
+    }
+    return err.RTGERR_OK;
 }
 
 /// Everything create took, given back.
@@ -375,6 +412,17 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     return err.RTGERR_OK;
 }
 
+/// What the stream reads a second, on average: a frame's bytes, as often
+/// as the pixel clock sends frames.
+fn streamBytes(panel: *const Panel) u64 {
+    const wanted = &panel.config;
+    const line = wanted.hsync + wanted.hbp + wanted.width + wanted.hfp;
+    const lines = wanted.vsync + wanted.vbp + wanted.height + wanted.vfp;
+    const whole: u64 = @as(u64, line) * lines;
+    if (whole == 0) return 0;
+    return @as(u64, panel.frame_bytes) * panel.pixel_hz / whole;
+}
+
 /// Frames a second, in thousandths: the pixel clock over everything a
 /// frame costs, blanking and all.
 fn refreshMilliHz(panel: *const Panel) u32 {
@@ -396,10 +444,10 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return if (mode.id == panelOf(board).mode.id) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
 
-/// Feed the panel from that buffer. The first time, this starts the
-/// stream. With the stream running it is a flip: the buffer is sent from
-/// the next frame on, whole, and this returns once the frame before it is
-/// the last that reads the one it replaced.
+/// Feed the panel from that buffer: a chain of one band. The first time,
+/// this starts the stream. With the stream running it is a flip: the
+/// buffer is sent from the next frame on, whole, and this returns once
+/// the frame before it is the last that reads the one it replaced.
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
@@ -407,21 +455,26 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         if (panel.streaming) stopStream(panel);
         return err.RTGERR_OK;
     };
-    const pixels = bm.pixels orelse return err.RTGERR_BAD_ARG;
+    if (bm.pixels == null) return err.RTGERR_BAD_ARG;
     if (bm.width != panel.mode.width or bm.height != panel.mode.height) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
-    if (!panel.streaming) {
-        startStream(panel, @intFromPtr(pixels));
-        return err.RTGERR_OK;
+    const whole = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    return show(panel, &whole);
+}
+
+/// Several buffers at once, in bands: each band a run of display lines
+/// from one buffer, whose rows are a line each. Shown from the next frame
+/// on, as a flip is.
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    for (bands[0..count]) |band| {
+        const bm = band.bitmap;
+        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
+        if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
     }
-    const next: *volatile usize = &panel.next;
-    next.* = @intFromPtr(pixels);
-    const since = systimer.uptimeUs();
-    while (next.* != 0) {
-        if (systimer.uptimeUs() - since > flip_wait_us) return err.RTGERR_NO_DISPLAY;
-    }
-    return err.RTGERR_OK;
+    return show(panel, bands[0..count]);
 }
 
 /// Rows the CPU wrote, handed to the panel: the DMA reads that memory
@@ -459,6 +512,24 @@ fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
     out.* = panelOf(board).stats;
 }
 
+/// A rectangle filled by the PPA, its ragged ends by the CPU
+/// (`engine.zig`); RTGERR_NOT_SUPPORTED for one the engine does not take.
+fn fillRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    return engine_file.fill(&panel.engine, panel.sys, bitmap, area, color);
+}
+
+/// A rectangle copied by the 2D-DMA, its ragged ends by the CPU.
+fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *const rtg.RtgCopy) callconv(.c) i32 {
+    const panel = panelOf(board);
+    return engine_file.copy(&panel.engine, panel.sys, src, dest, what);
+}
+
+/// Every operation is done before it returns: nothing to wait for.
+fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
+    _ = board;
+}
+
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     _ = value;
     return switch (what) {
@@ -470,18 +541,21 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     };
 }
 
-/// What this board has. Every engine slot is null for now: what draws on
-/// this chip comes as its own step.
+/// What this board has: of the engine, fills and copies.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .set_mode = &setMode,
     .show_bitmap = &showBitMap,
+    .show_bands = &showBands,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
+    .fill_rect = &fillRect,
+    .copy_rect = &copyRect,
+    .wait_blit = &waitBlit,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };

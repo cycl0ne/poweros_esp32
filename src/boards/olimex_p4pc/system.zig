@@ -51,6 +51,17 @@ const ethernet = [_]Tag{
     .done,
 };
 
+// --- the I2C bus ------------------------------------------------------------------
+
+/// SCL GPIO8, SDA GPIO7: the LT8912B (through level shifters), the HDMI
+/// connector's DDC lines, and the DSI and CSI connectors share it.
+const i2c_bus = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_I2CBUS),
+    .value(st.PART_PinSCL, pins.gpio(8)),
+    .value(st.PART_PinSDA, pins.gpio(7)),
+    .done,
+};
+
 // --- the display ----------------------------------------------------------------
 
 /// Olimex's MIPI-LCD2.8 (WLK2802MIPI-15P-V2) on the MIPI-DSI connector: an
@@ -152,6 +163,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 1),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &i2c_bus),
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &panel),
     .done,
