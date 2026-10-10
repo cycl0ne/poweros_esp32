@@ -3,6 +3,8 @@
 //! image has: the drivers for the parts this board has.
 
 comptime {
+    // The chip's JPEG codec.
+    _ = @import("../../rom/resources/jpeg/jpeg.zig");
     // The display on the MIPI-DSI connector.
     _ = @import("../../rom/libs/rtg_driver/dsiboard/dsiboard.zig");
     // The I2C bus.

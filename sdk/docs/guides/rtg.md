@@ -320,8 +320,8 @@ beside the 1024 x 600 panel starves it, and the panel goes dark; at
 The engine's channels are dma.resource's 2D channels 1 and 2 - send
 channels 1 and 2, receive channel 1 - claimed when the board is made; a
 board that cannot have them does everything in software. Channel 0, the
-only one that reorders blocks and converts colour, is left to the JPEG
-codec.
+only one that reorders blocks and converts colour, is the JPEG codec's
+(jpeg.resource), which shares the bus limit above with the engine.
 
 ## Turning the picture
 

@@ -46,6 +46,7 @@ const tests = [_][]const u8{
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
+    "jpeg",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -188,6 +189,9 @@ pub const programs: []const Program = blk: {
 /// name: its Ethernet interface names its own device.
 pub const p4_files = [_]File{
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/esp32p4/ETH0" },
+    // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
+    // time the codec on.
+    .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
 };
 
 /// The radio's device: built only when the vendor libraries it links are

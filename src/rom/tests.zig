@@ -9,6 +9,7 @@ test {
     _ = @import("libs/utility/utility.zig");
     _ = @import("libs/expansion/expansion.zig");
     _ = @import("resources/gpio/gpio.zig");
+    _ = @import("resources/jpeg/jpeg.zig");
     _ = @import("libs/rtg/rtg.zig");
     _ = @import("libs/graphics/graphics.zig");
     _ = @import("libs/layers/layers.zig");

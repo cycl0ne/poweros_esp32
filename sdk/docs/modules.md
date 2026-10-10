@@ -44,6 +44,7 @@ flowchart TB
     m_i2c_device["i2c.device"]
     m_input_device["input.device"]
     m_intuition_library["intuition.library"]
+    m_jpeg_resource["jpeg.resource"]
     m_keyboard_device["keyboard.device"]
     m_keymap_library["keymap.library"]
     m_layers_library["layers.library"]
@@ -99,6 +100,8 @@ flowchart TB
     m_intuition_library --> m_motion_library
     m_intuition_library --> m_rtg_library
     m_intuition_library --> m_timer_device
+    m_jpeg_resource --> m_dma_resource
+    m_jpeg_resource --> m_timer_device
     m_keyboard_device --> m_timer_device
     m_layers_library --> m_graphics_library
     m_motion_library --> m_timer_device
@@ -118,7 +121,7 @@ flowchart TB
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_audio_device,m_console_device,m_flash_device,m_i2c_device,m_input_device,m_keyboard_device,m_mouse_device,m_serial_device,m_timer_device,m_touch_device,m_usbserial_device dev
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
-    class m_dma_resource,m_expander_resource,m_gpio_resource res
+    class m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource res
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_ram_handler hand
 ```
@@ -301,6 +304,7 @@ flowchart TB
     m_integer_gadget["integer.gadget"]
     m_intuition_library["intuition.library"]
     m_jpeg_datatype["jpeg.datatype"]
+    m_jpeg_resource["jpeg.resource"]
     m_keyboard_gadget["keyboard.gadget"]
     m_keymap_library["keymap.library"]
     m_layers_library["layers.library"]
@@ -357,6 +361,7 @@ flowchart TB
     m_integer_gadget --> m_string_gadget
     m_intuition_library --> m_keyboard_gadget
     m_jpeg_datatype --> m_dos_library
+    m_jpeg_datatype --> m_jpeg_resource
     m_jpeg_datatype --> m_picture_datatype
     m_keyboard_gadget --> m_input_device
     m_keyboard_gadget --> m_keymap_library
@@ -385,7 +390,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_animation_datatype,m_ascii_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_dos_library,m_input_device,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
+    class m_dos_library,m_input_device,m_intuition_library,m_jpeg_resource,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
 ```
 <!-- modchart end -->
 

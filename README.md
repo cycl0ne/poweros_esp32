@@ -93,7 +93,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
   and hands back an object a program puts in a window - pictures (ILBM,
-  BMP, PNG, GIF, JPEG), text (plain, FTXT, Markdown) and animations
+  BMP, PNG, GIF, JPEG, on the ESP32-P4 decoded by its JPEG codec), text
+  (plain, FTXT, Markdown) and animations
   (animated GIF, Lottie). `SYS:Programs/MultiView` shows any of them;
   `LIBS:iffparse.library` and `DEVS:clipboard.device` carry IFF between
   programs. See the [datatypes guide](sdk/docs/guides/datatypes.md).
@@ -168,8 +169,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 - **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
   card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio,
   Telnet, SSH; watchdog, DMA (the general channels and the ESP32-P4's
-  2D-DMA), GPIO, IO expander and platform resources;
-  `LIBS:crypto.library` on the chip's SHA,
+  2D-DMA), GPIO, IO expander, JPEG (the ESP32-P4's codec) and platform
+  resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures, ML-KEM-768.
 - **Boards are data:** which parts are fitted and how they are wired is a
@@ -185,8 +186,8 @@ Espressif's QEMU. The ESP32-P4 is next.
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, and an RS-485 port on its second serial port | runs |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA; flashed over the same port |
-| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, ES8311 audio, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port |
+| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, ES8311 audio, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`) |
 
 `C:ShowConfig` lists what the running board has.
 

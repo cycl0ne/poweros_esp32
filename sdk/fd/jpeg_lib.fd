@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+//! jpeg.resource's functions: the chip's JPEG codec, decoding a file into
+//! pixels (sdk/resources/jpeg.zig). A resource: no Open or Close, its
+//! first function in the first slot. The base comes from
+//! OpenResource("jpeg.resource").
+##include resources/jpeg as jpeg
+##basetype JpegBase
+##name jpeg.resource
+##bias 0
+##public
+/// What the `length` bytes at `file` are and whether the codec decodes
+/// them: JPEGERR_OK and `info` filled in, or why not. Reads only.
+u32 ExamineJPEG([*]const u8 file, u32 length, *jpeg.JPEGInfo info)
+/// The file decoded into a picture the resource allocates: JPEGERR_OK and
+/// `picture` filled in, or why not. Waits for the codec. Not from
+/// interrupts.
+u32 DecodeJPEG([*]const u8 file, u32 length, *jpeg.JPEGPicture picture)
+/// A picture DecodeJPEG made given back; one never made, or given back
+/// already, is left alone.
+void FreeJPEGPicture(*jpeg.JPEGPicture picture)
+##end

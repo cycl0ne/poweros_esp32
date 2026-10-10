@@ -133,6 +133,27 @@ draws, scrolls, reads back or saves it works in; `PDTA_SourceWidth` and
 `PDTA_SourceHeight` say what the file held and `PDTA_ShrunkBy` by how
 much the two differ, so a program that must know can ask.
 
+**A JPEG on a machine with a codec** (the ESP32-P4's, as
+jpeg.resource) is decoded by the codec when it takes the file - a
+baseline file, grey or in three components at 4:4:4, 4:2:2 or 4:2:0 -
+and its decoded picture fits beside the one the object keeps; anything
+else is decoded in software, as on a machine without one. The two
+pictures are close, not equal: the two decoders round and bring the
+colour's halved samples to full size each its own way. `JDTA_Decoder` (`datatypes.jpegclass`) given to
+`NewDTObjectA` keeps the class to one of them - `JDEC_SOFTWARE`, or
+`JDEC_CODEC` and no object when the codec cannot - and asked with
+`GetDTAttrsA` says which one read the file. `C:test/Jpeg <file>` times
+the codec alone and the class both ways, and compares the two pictures
+(the ESP32-P4's disk has `SYS:Tests/datatypes/Desktop.jpg`, 1024 x 600,
+for it):
+
+```
+Codec alone: 9839 us a decode
+Datatype, software: 1024 x 600 in 1496245 us, read by software
+Datatype, codec: 1024 x 600 in 198387 us, read by the codec
+Compared: worst 35, mean 107/100, 559 of 614400 pixels more than 24 apart
+```
+
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
 or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
