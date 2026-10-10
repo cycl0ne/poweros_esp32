@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Espressif's esp-emulator running an ESP32-P4 (scripts/fetch-esp-emu.sh,
-//! `./zig build emu`): 16 MB of flash, 32 MB of PSRAM as the boards have,
-//! both HP cores, UART0 on the emulator's terminal, and the chip's v1.x
-//! ROM, the boards' revision. Its parts come as their drivers do.
+//! The Elecrow CrowPanel Advanced 10.1" ESP32-P4, V1.2: an ESP32-P4NRW32
+//! module (16 MB of flash, 32 MB of PSRAM), UART0 through a CH340K on a
+//! USB-C connector - the console, and the way it is flashed, its reset on
+//! DTR/RTS - a 1024x600 IPS panel (EK79007) on MIPI-DSI with a GT911
+//! touch controller, an ESP32-C6 for Wi-Fi on SDIO, an ES8311 codec with
+//! an amplifier and two microphones, and an SD slot. Its parts come into
+//! the list as their drivers do.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -14,8 +17,8 @@ const exec = sdk.exec;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
 
-/// The machine, as the emulator names it.
-const name = "esp-emulator ESP32-P4";
+/// The board, as its maker names it.
+const name = "Elecrow CrowPanel Advanced 10.1\" ESP32-P4";
 
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
@@ -24,8 +27,12 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_FlashSize, 16 * 1024 * 1024),
     .value(st.SYSTAG_DiskOffset, build_options.disk_offset),
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
+    // 200 MHz is past what this board's wiring holds: now and then a
+    // cache fill comes back as a bus error.
+    .value(st.SYSTAG_PsramSpeed, 80),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
-    .value(st.SYSTAG_Cores, 2),
+    // One core until two run clean on the boards.
+    .value(st.SYSTAG_Cores, 1),
     .done,
 };
 

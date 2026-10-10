@@ -31,7 +31,7 @@ const disk_tree = "disk";
 /// is built per board. `qemu` is Espressif QEMU's machine, with its
 /// virtual display, keyboard and mouse: the `qemu*` steps always run that
 /// one, whichever board `-Dboard` names.
-const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu };
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -40,7 +40,7 @@ const Chip = poweros_sdk.Chip;
 fn chipOf(board: Board) Chip {
     return switch (board) {
         .waveshare_7b, .es3c35p, .qemu => .esp32s3,
-        .esp32p4_emu => .esp32p4,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
     };
 }
 
@@ -161,7 +161,7 @@ fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => 48,
     };
 }
 
@@ -609,11 +609,19 @@ pub fn build(b: *std.Build) void {
     fd_step.dependOn(&sdk_dep.builder.top_level_steps.get("fd").?.step);
     test_step.dependOn(&sdk_dep.builder.top_level_steps.get("test").?.step);
 
-    const flash = b.addSystemCommand(&.{ esptool, "--chip", "esp32s3", "--port", port, "--baud", baud, "write-flash", "0x0" });
-    flash.addFileArg(image);
+    // The board's chip and its disk: the S3's image at 0x0, the P4's two
+    // parts at 0x2000 and p4_flash_part_offset; each chip's own programs
+    // on its disk.
+    const chip_name = @tagName(chipOf(board));
+    const board_disk = switch (chipOf(board)) {
+        .esp32s3 => disk_bin,
+        .esp32p4 => p4_disk_bin,
+    };
+    const flash = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash" });
+    built.addTo(b, flash);
     flash.stdio = .inherit;
     flash.has_side_effects = true;
-    b.step("flash", "Write the kernel to flash offset 0x0 (replaces the bootloader)").dependOn(&flash.step);
+    b.step("flash", "Write the kernel to the board's flash (replaces the bootloader)").dependOn(&flash.step);
 
     // The disk, on its own: `zig build flash` doesn't touch it, so this is
     // what puts a file system there the first time (or wipes it).
@@ -628,14 +636,14 @@ pub fn build(b: *std.Build) void {
     // it was, and a program from one build runs against a ROM from another,
     // which fails in ways that look like anything but a stale disk.
     const erase_disk = b.addSystemCommand(&.{
-        esptool,        "--chip",                       "esp32s3",                    "--port", port, "--baud", baud,
+        esptool,        "--chip",                       chip_name,                    "--port", port, "--baud", baud,
         "erase-region", b.fmt("0x{x}", .{disk_offset}), b.fmt("0x{x}", .{disk_size}),
     });
     erase_disk.stdio = .inherit;
     erase_disk.has_side_effects = true;
 
-    const flash_disk = b.addSystemCommand(&.{ esptool, "--chip", "esp32s3", "--port", port, "--baud", baud, "write-flash", b.fmt("0x{x}", .{disk_offset}) });
-    flash_disk.addFileArg(disk_bin);
+    const flash_disk = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash", b.fmt("0x{x}", .{disk_offset}) });
+    flash_disk.addFileArg(board_disk);
     flash_disk.stdio = .inherit;
     flash_disk.has_side_effects = true;
     flash_disk.step.dependOn(&erase_disk.step);
@@ -645,10 +653,10 @@ pub fn build(b: *std.Build) void {
     // kernel and the disk image in one write-flash - one connection to the
     // chip for the two, and a ROM and a disk from the same build, which is
     // the pairing a stale disk breaks.
-    const flash_all = b.addSystemCommand(&.{ esptool, "--chip", "esp32s3", "--port", port, "--baud", baud, "write-flash", "0x0" });
-    flash_all.addFileArg(image);
+    const flash_all = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash" });
+    built.addTo(b, flash_all);
     flash_all.addArg(b.fmt("0x{x}", .{disk_offset}));
-    flash_all.addFileArg(disk_bin);
+    flash_all.addFileArg(board_disk);
     flash_all.stdio = .inherit;
     flash_all.has_side_effects = true;
     flash_all.step.dependOn(&erase_disk.step);
@@ -880,6 +888,23 @@ const Image = struct {
     kernel_elf: std.Build.LazyPath,
     image: std.Build.LazyPath,
     flash_image: std.Build.LazyPath,
+    /// The ESP32-P4's second part, the code and constants run in place
+    /// from flash; the S3's image is one piece.
+    flash_part: ?std.Build.LazyPath = null,
+
+    /// The kernel's pieces for `esptool write-flash`, each after the
+    /// offset it goes to.
+    fn addTo(image: Image, b: *std.Build, run: *std.Build.Step.Run) void {
+        if (image.flash_part) |part| {
+            run.addArg("0x2000");
+            run.addFileArg(image.image);
+            run.addArg(b.fmt("0x{x}", .{p4_flash_part_offset}));
+            run.addFileArg(part);
+        } else {
+            run.addArg("0x0");
+            run.addFileArg(image.image);
+        }
+    }
 };
 
 /// `kernel` made into what is flashed and what QEMU boots.
@@ -983,7 +1008,7 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
     merge.addArg(b.fmt("0x{x}", .{disk_offset}));
     merge.addFileArg(disk_bin);
     b.getInstallStep().dependOn(&b.addInstallBinFile(flash_part.getOutput(), "kernel-flash.bin").step);
-    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image };
+    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image, .flash_part = flash_part.getOutput() };
 }
 
 /// The kernel for `board`: src/main.zig with the board's description
