@@ -86,9 +86,11 @@ pub fn parkIfAsked() void {
     parked_max[core] = @max(parked_max[core], cpu.ccount() -% before);
 }
 
-/// The loop a held core waits in: no calls, nothing but the words above,
-/// until it is let go.
-noinline fn parkHere() void {
+/// The loop a held core waits in: the RAM part, no calls, nothing but the
+/// words above, until it is let go - a flash write suspends the cache the
+/// flash part is read through.
+noinline fn parkHere() linksection(".iram.text") void {
+    @setRuntimeSafety(false);
     const parked_word: *volatile u32 = &parked;
     const released_word: *volatile u32 = &released;
     parked_word.* = 1;

@@ -157,7 +157,7 @@ export fn kmain() callconv(.c) noreturn {
         exec.SysBase.share_cores = 1;
         sys.Enable();
     }
-    selftest.run(sys);
+    selftest.run(sys, boards.fact(st.SYSTAG_FlashSize, 16 * 1024 * 1024));
 }
 
 /// The microseconds since the boot, by SYSTIMER's unit 0: the log's clock.

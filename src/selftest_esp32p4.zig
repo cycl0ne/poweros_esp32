@@ -7,6 +7,9 @@
 //!   after reset, a copy memory to memory on each DMA engine, the random
 //!   number generator, and 1 MiB of PSRAM written and read back - four
 //!   times the L2 cache, so the words go out to the chip and come back.
+//! - The flash through the ROM's routines, as flash.device drives it: its
+//!   last sector kept, erased, written with a pattern a page at a time and
+//!   read back through the window and over MSPI1, then put back.
 //! - NewStackRun: code run on a stack of its own, and its answer.
 //! - Two tasks that use the FPU, each with a value it checks after every
 //!   step: a switch that lost or mixed up their FPU registers shows as an
@@ -34,6 +37,7 @@ const gdma = hardware.gdma;
 const systimer = hardware.systimer;
 
 const ExecBase = sdk.interface.exec.ExecBase;
+const spiflash = @import("rom/devs/flash/esp32p4/spiflash.zig");
 
 /// A kernel status line; the raw port puts the uptime in front.
 fn note(comptime format: [:0]const u8, args: anytype) void {
@@ -41,9 +45,11 @@ fn note(comptime format: [:0]const u8, args: anytype) void {
 }
 
 /// The checks, then the tasks, then a report every second; never returns.
-pub fn run(sys: *ExecBase) noreturn {
+/// `flash_size` is the board's, in bytes.
+pub fn run(sys: *ExecBase, flash_size: u32) noreturn {
     checkHardware(sys);
     checkPsram(sys);
+    checkFlash(sys, flash_size);
     checkNewStackRun(sys);
     // Above the tasks before they start: the first above it would take
     // the core at once.
@@ -187,6 +193,107 @@ fn checkPsram(sys: *ExecBase) void {
         @as(u32, @intCast(read - written)),
         wrong,
     });
+}
+
+// --- the flash ------------------------------------------------------------------
+
+/// The flash's last sector through esp32p4/spiflash.zig, each call with
+/// interrupts off and core 1 held as flash.device makes them: its bytes
+/// kept, the chip's size given to the ROM and its protection off, the
+/// sector erased and written a page at a time with a pattern, the pattern
+/// read back through the window and its first page over MSPI1, then the
+/// kept bytes written back and compared.
+fn checkFlash(sys: *ExecBase, chip_size: u32) void {
+    const offset = chip_size - spiflash.sector_size;
+    const window: [*]const volatile u8 = @ptrFromInt(hardware.map.FLASH_START + offset);
+    const kept_block = sys.AllocMem(spiflash.sector_size, exec.MEMF_ANY) orelse {
+        note("flash: no memory to keep a sector in", .{});
+        return;
+    };
+    defer sys.FreeMem(kept_block, spiflash.sector_size);
+    const kept: [*]u8 = @ptrCast(kept_block);
+    for (0..spiflash.sector_size) |index| kept[index] = window[index];
+
+    const rom_size = spiflash.size();
+    sys.Disable();
+    sys.HoldOtherCores();
+    const sized = spiflash.setSize(chip_size);
+    const unlocked = spiflash.unlock();
+    sys.ReleaseOtherCores();
+    sys.Enable();
+
+    const began = timer.uptimeUs();
+    const commands = sized and unlocked and eraseHeld(sys, offset);
+    const erased = timer.uptimeUs();
+    var blank = true;
+    for (0..spiflash.sector_size) |index| {
+        if (window[index] != 0xFF) blank = false;
+    }
+    const programmed = commands and writeHeld(sys, offset, null);
+    const written = timer.uptimeUs();
+    var in_window = programmed;
+    for (0..spiflash.sector_size) |index| {
+        if (window[index] != patternByte(index)) in_window = false;
+    }
+    const raw: [*]u32 = @ptrCast(spiflash.pageBuffer());
+    sys.Disable();
+    sys.HoldOtherCores();
+    var over_mspi1 = programmed and spiflash.readRaw(offset, raw, spiflash.page_size);
+    sys.ReleaseOtherCores();
+    sys.Enable();
+    for (spiflash.pageBuffer(), 0..) |byte, index| {
+        if (byte != patternByte(index)) over_mspi1 = false;
+    }
+
+    var restored = eraseHeld(sys, offset) and writeHeld(sys, offset, kept);
+    for (0..spiflash.sector_size) |index| {
+        if (window[index] != kept[index]) restored = false;
+    }
+    note("flash: %d MiB (the ROM had %d), last sector erased in %u us (%s), written in %u us; read back through the window %s, over MSPI1 %s; put back %s", .{
+        chip_size >> 20,
+        rom_size >> 20,
+        @as(u32, @intCast(erased - began)),
+        rightOrWrong(blank),
+        @as(u32, @intCast(written - erased)),
+        rightOrWrong(in_window),
+        rightOrWrong(over_mspi1),
+        rightOrWrong(restored),
+    });
+}
+
+fn rightOrWrong(right: bool) [*:0]const u8 {
+    return if (right) "right" else "WRONG";
+}
+
+fn patternByte(index: usize) u8 {
+    return @truncate(index *% 151 +% 7);
+}
+
+/// The sector at `offset` erased, core 1 held.
+fn eraseHeld(sys: *ExecBase, offset: u32) bool {
+    sys.Disable();
+    sys.HoldOtherCores();
+    const ok = spiflash.eraseSector(offset / spiflash.sector_size);
+    sys.ReleaseOtherCores();
+    sys.Enable();
+    return ok;
+}
+
+/// The sector at `offset` written a page at a time: `from`'s bytes, or the
+/// pattern without them.
+fn writeHeld(sys: *ExecBase, offset: u32, from: ?[*]const u8) bool {
+    const buffer = spiflash.pageBuffer();
+    var at: u32 = 0;
+    while (at < spiflash.sector_size) : (at += spiflash.page_size) {
+        for (buffer, 0..) |*byte, index| byte.* = if (from) |bytes| bytes[at + index] else patternByte(at + index);
+        sys.Disable();
+        sys.HoldOtherCores();
+        const ok = spiflash.programPage(offset + at, spiflash.page_size);
+        sys.ReleaseOtherCores();
+        sys.Enable();
+        if (!ok) return false;
+    }
+    return true;
 }
 
 // --- NewStackRun ----------------------------------------------------------------
