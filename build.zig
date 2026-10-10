@@ -224,6 +224,7 @@ pub fn build(b: *std.Build) void {
     else
         b.dependency("poweros_userland", .{ .optimize = optimize });
     for (poweros_userland.programs) |program| {
+        if (!poweros_userland.builtFor(program, .esp32s3)) continue;
         const load_file = b.fmt("{s}.seg", .{program.name});
         b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(program.disk), load_file).step);
     }
@@ -293,13 +294,20 @@ pub fn build(b: *std.Build) void {
     disks.addArgs(tree.dirs);
     for (extras) |extra| disks.addArgs(extra.dirs);
     for (poweros_userland.programs) |program| {
-        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), disk_dep.namedLazyPath(program.disk));
+        if (poweros_userland.builtFor(program, .esp32s3)) {
+            make_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), disk_dep.namedLazyPath(program.disk));
+        }
         if (poweros_userland.builtFor(program, .esp32p4)) {
             make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), p4_disk_dep.namedLazyPath(program.disk));
         }
     }
     for (poweros_userland.files) |file| {
         disks.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
+    }
+    // The ESP32-P4's own versions after the shared ones, which they
+    // replace on its image.
+    for (poweros_userland.p4_files) |file| {
+        make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), p4_disk_dep.namedLazyPath(file.source));
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;

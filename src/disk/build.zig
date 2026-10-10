@@ -130,6 +130,7 @@ const modules = [_]Program{
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
+    .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
@@ -141,11 +142,16 @@ const modules = [_]Program{
 /// on its SPI and SDMMC host, RS-485 on its UART, Ethernet in Espressif
 /// QEMU's S3 machine. The ESP32-P4's come as drivers of their own.
 const s3_only = [_][]const u8{ "sdcard.device", "rs485.device", "openeth.device" };
+/// Drivers of the ESP32-P4's own hardware: its Ethernet MAC.
+const p4_only = [_][]const u8{"emac.device"};
 
 /// Whether `program` is built for `chip`.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
-    if (chip == .esp32s3) return true;
-    for (s3_only) |name| {
+    const others = switch (chip) {
+        .esp32s3 => &p4_only,
+        .esp32p4 => &s3_only,
+    };
+    for (others) |name| {
         if (std.mem.eql(u8, program.name, name)) return false;
     }
     return true;
@@ -176,6 +182,12 @@ pub const programs: []const Program = blk: {
     }
     const done = list;
     break :blk &done;
+};
+
+/// The ESP32-P4's disk has these in place of the shared files of the same
+/// name: its Ethernet interface names its own device.
+pub const p4_files = [_]File{
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/esp32p4/ETH0" },
 };
 
 /// The radio's device: built only when the vendor libraries it links are
@@ -280,4 +292,5 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }
     for (files) |file| b.addNamedLazyPath(file.disk, b.path(file.source));
+    for (p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }

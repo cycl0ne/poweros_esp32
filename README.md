@@ -148,9 +148,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   [fonts guide](sdk/docs/guides/fonts.md).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
-  multicast with IGMP and MLD) on QEMU's Ethernet, the chip's Wi-Fi
-  (WPA2) and SLIP over a serial line, and a shell over Telnet or SSH
-  (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys and a
+  multicast with IGMP and MLD) on Ethernet (the ESP32-P4's MAC, and
+  QEMU's), the ESP32-S3's Wi-Fi (WPA2) and SLIP over a serial line, and
+  a shell over Telnet or SSH (`C:net/ShellServer`, `SSH` with password
+  or ssh-ed25519 keys and a
   post-quantum key exchange, and the files over sftp and scp) - and the
   other way, `C:net/SSH` for a shell or a command on another machine
   and `C:net/SCP` to copy files to and from it; a packet filter
@@ -180,7 +181,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, and an RS-485 port on its second serial port | runs |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them, on one core so far); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; no screen, no DMA resource yet |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, one core; flashed over the same port |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), one core; flashed over the same port |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, ES8311 audio, SD slot | runs: the shell on UART0, dos and the flash disk, one core; PSRAM at 80 MHz |
 
 `C:ShowConfig` lists what the running board has.

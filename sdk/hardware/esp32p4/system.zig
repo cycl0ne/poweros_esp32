@@ -27,6 +27,8 @@ const map = @import("map.zig");
 // The registers.
 pub const SOC_CLK_CTRL1: usize = map.HP_SYS_CLKRST + 0x018;
 pub const SOC_CLK_CTRL2: usize = map.HP_SYS_CLKRST + 0x01C;
+pub const PERI_CLK_CTRL00: usize = map.HP_SYS_CLKRST + 0x030;
+pub const PERI_CLK_CTRL01: usize = map.HP_SYS_CLKRST + 0x034;
 pub const PERI_CLK_CTRL10: usize = map.HP_SYS_CLKRST + 0x040;
 pub const PERI_CLK_CTRL11: usize = map.HP_SYS_CLKRST + 0x044;
 pub const PERI_CLK_CTRL21: usize = map.HP_SYS_CLKRST + 0x098;
@@ -40,6 +42,10 @@ pub const PERI_CLK_CTRL116: usize = map.HP_SYS_CLKRST + 0x080;
 pub const PERI_CLK_CTRL117: usize = map.HP_SYS_CLKRST + 0x084;
 pub const HP_RST_EN1: usize = map.HP_SYS_CLKRST + 0x0C4;
 pub const HP_RST_EN2: usize = map.HP_SYS_CLKRST + 0x0C8;
+/// LP_CLKRST's (always on): the HP side's root clock and its pad clocks,
+/// and the resets of the SD host and the Ethernet MAC.
+pub const LP_HP_CLK_CTRL: usize = map.LP_CLKRST + 0x040;
+pub const LP_HP_SDMMC_EMAC_RST_CTRL: usize = map.LP_CLKRST + 0x04C;
 
 /// A peripheral with clocks and a reset of its own.
 pub const Peripheral = enum {
@@ -57,6 +63,9 @@ pub const Peripheral = enum {
     ahb_dma,
     axi_dma,
     usb_serial_jtag,
+    /// The Ethernet MAC: its bus clock and its reset. The clocks of its
+    /// RMII or MII lines are its driver's to set (`update`).
+    emac,
 };
 
 /// One bit in one register.
@@ -123,12 +132,17 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
             .clocks = &.{bit(SOC_CLK_CTRL2, 29)},
             .resets = &.{},
         },
+        .emac => .{
+            .clocks = &.{bit(SOC_CLK_CTRL1, 13)},
+            .resets = &.{bit(LP_HP_SDMMC_EMAC_RST_CTRL, 30)},
+        },
     };
 }
 
 /// `set` and `clear` applied to the register at `addr` with this core's
-/// interrupts masked, so nothing runs between the read and the write.
-inline fn update(addr: usize, set: u32, clear: u32) void {
+/// interrupts masked, so nothing runs between the read and the write: for
+/// a field of a shared register that no call here names.
+pub inline fn update(addr: usize, set: u32, clear: u32) void {
     const saved = asm volatile ("csrrci %[r], mstatus, 8"
         : [r] "=r" (-> u32),
         :

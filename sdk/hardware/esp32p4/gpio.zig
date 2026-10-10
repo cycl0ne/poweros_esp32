@@ -4,7 +4,8 @@
 //! A pad is two things at once. The IO_MUX register per pad says which of
 //! the chip's fixed functions it carries, whether its input buffer and its
 //! pull resistors are on, and how hard it drives; function 1 is always
-//! "the GPIO matrix", and that is the only one this uses. The matrix then
+//! "the GPIO matrix", the others a peripheral's line on the pad wired for
+//! it (`toFunction`), which a fast line such as Ethernet's needs. The matrix then
 //! crosses any peripheral signal onto any pad: one register per pad says
 //! which signal drives it (`connectOut`), one register per signal says
 //! which pad it listens to (`connectIn`).
@@ -86,11 +87,25 @@ pub fn toMatrix(pin: u8) void {
     r.* = (r.* & ~mux_func_mask) | (mux_func_gpio << mux_func_shift);
 }
 
+/// The pad carries the IO_MUX's fixed function `function` (0 to 4), as
+/// the manual's IO_MUX table gives it for that pad - a peripheral's own
+/// line on the one pad wired for it, past the GPIO matrix. An input
+/// delivered this way also needs `connectInDirect`.
+pub fn toFunction(pin: u8, function: u3) void {
+    const r = mux(pin);
+    r.* = (r.* & ~mux_func_mask) | (@as(u32, function) << mux_func_shift);
+}
+
 /// Whether the pad's input buffer is on. A pad a peripheral reads, and any
 /// open-drain pad, needs it: without it the level never gets back in.
 pub fn inputEnable(pin: u8, on: bool) void {
     const r = mux(pin);
     if (on) r.* |= mux_ie else r.* &= ~mux_ie;
+}
+
+/// Neither pull resistor: a line something else always drives.
+pub fn noPull(pin: u8) void {
+    mux(pin).* &= ~(mux_pu | mux_pd);
 }
 
 /// The pad's internal pull-up.
@@ -196,6 +211,12 @@ pub fn connectOut(pin: u8, signal: u32, from_gpio_oe: bool) void {
 /// `signal` reads `pin`, or the constant `in_low` / `in_high`.
 pub fn connectIn(signal: u32, pin: u32) void {
     reg(func_in_sel + @as(usize, signal) * 4).* = (pin & 0x3F) | sig_in_sel;
+}
+
+/// `signal` reads the pad whose fixed function carries it (`toFunction`)
+/// rather than whichever pad the matrix would cross onto it.
+pub fn connectInDirect(signal: u32) void {
+    reg(func_in_sel + @as(usize, signal) * 4).* &= ~sig_in_sel;
 }
 
 /// A pad on a shared open-drain bus: the matrix both ways, open drain, the

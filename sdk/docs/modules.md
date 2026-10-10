@@ -156,6 +156,7 @@ flowchart TB
     m_diskfont_library["diskfont.library"]
     m_dma_resource["dma.resource"]
     m_dos_library["dos.library"]
+    m_emac_device["emac.device"]
     m_expander_resource["expander.resource"]
     m_fat_handler["fat-handler"]
     m_filter_library["filter.library"]
@@ -213,6 +214,7 @@ flowchart TB
     m_diskfont_library --> m_dos_library
     m_diskfont_library --> m_graphics_library
     m_diskfont_library --> m_truetype_library
+    m_emac_device --> m_timer_device
     m_fat_handler --> m_dos_library
     m_fat_handler -.-> m_sdcard_device
     m_filter_library --> m_bsdsocket_library
@@ -250,7 +252,7 @@ flowchart TB
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_anvil_library,m_asl_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_filter_library,m_icon_library,m_iffparse_library,m_modbus_library,m_rdb_library,m_tls_library,m_truetype_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_clipboard_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_wifi_device dev
+    class m_clipboard_device,m_emac_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_wifi_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_fat_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827

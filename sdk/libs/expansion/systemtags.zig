@@ -121,6 +121,20 @@ pub const PART_PinPower = PART_Dummy + 0x35;
 /// The line that gives a part pads it shares with another: asserted, the
 /// pads are this part's; not asserted, the other's.
 pub const PART_PinSwitch = PART_Dummy + 0x36;
+/// An Ethernet PHY's RMII lines: two data lines and an enable from the
+/// chip, two data lines and carrier sense / data valid to it, and the
+/// 50 MHz reference clock both sides run on, which comes in from the
+/// PHY. Then the management bus the PHY's registers are read over: its
+/// clock and its data line.
+pub const PART_PinTxd0 = PART_Dummy + 0x37;
+pub const PART_PinTxd1 = PART_Dummy + 0x38;
+pub const PART_PinTxEnable = PART_Dummy + 0x39;
+pub const PART_PinRxd0 = PART_Dummy + 0x3A;
+pub const PART_PinRxd1 = PART_Dummy + 0x3B;
+pub const PART_PinCrsDv = PART_Dummy + 0x3C;
+pub const PART_PinRefClock = PART_Dummy + 0x3D;
+pub const PART_PinMDC = PART_Dummy + 0x3E;
+pub const PART_PinMDIO = PART_Dummy + 0x3F;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -149,6 +163,15 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinSelect => "CS",
         PART_PinPower => "PWR",
         PART_PinSwitch => "SEL",
+        PART_PinTxd0 => "TXD0",
+        PART_PinTxd1 => "TXD1",
+        PART_PinTxEnable => "TX_EN",
+        PART_PinRxd0 => "RXD0",
+        PART_PinRxd1 => "RXD1",
+        PART_PinCrsDv => "CRS_DV",
+        PART_PinRefClock => "REF_CLK",
+        PART_PinMDC => "MDC",
+        PART_PinMDIO => "MDIO",
         else => null,
     };
 }
@@ -204,6 +227,9 @@ pub const CHIP_TJA1051: u32 = 12;
 pub const CHIP_SP3485: u32 = 13;
 /// A battery charger, with the battery's voltage for a program to read.
 pub const CHIP_CS8501: u32 = 14;
+/// An Ethernet PHY, 10/100 Mbit/s (PARTKIND_NET on BUS_RMII; its
+/// PART_Address is its address on the management bus).
+pub const CHIP_IP101: u32 = 15;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -221,3 +247,5 @@ pub const BUS_MEMORY: u32 = 8;
 pub const BUS_UART: u32 = 9;
 /// The chip's CAN controller (TWAI).
 pub const BUS_TWAI: u32 = 10;
+/// The chip's Ethernet MAC, to a PHY over RMII.
+pub const BUS_RMII: u32 = 11;

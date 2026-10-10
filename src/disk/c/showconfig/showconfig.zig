@@ -29,7 +29,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.3 (24.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.4 (10.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -198,6 +198,7 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_MEMORY => "memory",
         st.BUS_UART => "uart",
         st.BUS_TWAI => "twai",
+        st.BUS_RMII => "rmii",
         else => "?",
     };
 }
