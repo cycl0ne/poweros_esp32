@@ -154,13 +154,13 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_FlashSize, 16 * 1024 * 1024),
     .value(st.SYSTAG_DiskOffset, build_options.disk_offset),
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
+    .value(st.SYSTAG_PsramSpeed, 200),
     // The USB port is the one connector a host reaches; UART0 goes to a
     // header.
     .value(st.SYSTAG_Console, st.CONSOLE_USBJTAG),
     // UART0 reaches no host here: the log goes to the USB console too.
     .value(st.SYSTAG_LogMirror, 1),
-    // One core until two run clean on the boards.
-    .value(st.SYSTAG_Cores, 1),
+    .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &i2c_bus),

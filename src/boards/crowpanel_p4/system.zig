@@ -110,12 +110,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_FlashSize, 16 * 1024 * 1024),
     .value(st.SYSTAG_DiskOffset, build_options.disk_offset),
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
-    // 200 MHz is past what this board's wiring holds: now and then a
-    // cache fill comes back as a bus error.
-    .value(st.SYSTAG_PsramSpeed, 80),
+    .value(st.SYSTAG_PsramSpeed, 200),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
-    // One core until two run clean on the boards.
-    .value(st.SYSTAG_Cores, 1),
+    .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &i2c_bus),

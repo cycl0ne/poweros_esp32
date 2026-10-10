@@ -20,6 +20,7 @@ const exec = @import("rom/libs/exec/exec.zig");
 const intmatrix = @import("arch/esp32p4/intmatrix.zig");
 const lastwords = @import("arch/esp32p4/lastwords.zig");
 const layout = @import("arch/esp32p4/layout.zig");
+const power = @import("arch/esp32p4/power.zig");
 const psram = @import("arch/esp32p4/psram.zig");
 const ram = @import("arch/esp32p4/ram.zig");
 const selftest = @import("selftest_esp32p4.zig");
@@ -107,6 +108,7 @@ fn startCpu1(sys: *sdk.interface.exec.ExecBase) void {
 export fn kmain() callconv(.c) noreturn {
     cpu1.hold();
     wdt.disableAll();
+    power.init();
     clock.init();
     const psram_result = psram.init(boards.fact(st.SYSTAG_PsramSpeed, 80));
     exec.log_ring.* = &log_ring;
@@ -169,6 +171,13 @@ export fn kmain() callconv(.c) noreturn {
         clock.cpu_hz / 1_000_000,
         timer.measured_cpu_hz / 1_000_000,
         timer.tick_hz,
+    });
+    const supply = power.state();
+    note("core supply: the converter at set-point %d, the internal regulator %s (level %d), always-on domain at level %d", .{
+        supply.vset,
+        if (supply.internal_on) "on" else "off",
+        supply.dbias,
+        supply.lp_dbias,
     });
     cpu.enableInterrupts();
 

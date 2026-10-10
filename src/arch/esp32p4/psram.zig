@@ -5,8 +5,9 @@
 //! 0x48000000 by the PSRAM MMU. Brought up as ESP-IDF v6.1 does
 //! (esp_psram_impl_ap_hex.c, mspi_timing_by_dqs.c), at the bus speed the
 //! board's list gives (SYSTAG_PsramSpeed): 200 MHz where the board's
-//! wiring holds it, else 80. At 200 MHz a board with too little margin
-//! reads and writes right but now and then answers a cache fill with a
+//! wiring holds it, else 80. At 200 MHz the controller runs at 400, which
+//! needs the core at its running voltage (power.zig): on a core left low,
+//! it reads and writes right but now and then answers a cache fill with a
 //! bus error, which the CPU takes as an access fault far from its cause.
 //!
 //! 1. The chip's power, LDO channel 2 at 1.8 V, which feeds the MPLL too;

@@ -12,8 +12,8 @@
 //! that every row has to put its line boundaries at the same columns: a
 //! buffer whose start or pitch is not whole lines is not the engine's,
 //! and neither is a rectangle with too few whole lines in it to be worth
-//! the setting up. Both are answered RTGERR_NOT_SUPPORTED, and the caller
-//! does them in software.
+//! the setting up (`smallest_at_80`). Both are answered
+//! RTGERR_NOT_SUPPORTED, and the caller does them in software.
 //!
 //! **The cache around it.** Before the engine runs, the rows it reads and
 //! writes are written back out of the cache in one go: whatever the CPU
@@ -43,11 +43,13 @@ const ppa = @import("ppa.zig");
 /// The data cache's line, and the RGB565 pixels in one.
 const line_bytes = 64;
 const line_pixels = line_bytes / 2;
-/// The fewest pixels worth handing to the engine. Setting it up and
-/// keeping the cache right around it costs about half a millisecond, and
-/// it fills about twice as fast as the CPU, at the rate `bus.zig` holds
-/// it to: measured on the ESP32-P4-PC, the two meet near 25000 pixels.
-const smallest = 32768;
+/// The fewest pixels worth handing to the engine, with the PSRAM at
+/// 80 MHz. Setting it up and keeping the cache right around it costs
+/// about half a millisecond, and it fills about twice as fast as the CPU:
+/// measured on the ESP32-P4-PC, the two meet near 25000 pixels. A faster
+/// PSRAM speeds the CPU's fills more than the engine's - at 200 MHz they
+/// meet near 50000 - so it raises this in proportion (`setUp`).
+const smallest_at_80 = 32768;
 /// How long one operation may take.
 const timeout_us = 200_000;
 
@@ -61,14 +63,18 @@ pub const Engine = struct {
     room: [128]u8 align(8) = @splat(0),
     line: usize = 0,
     ready: bool = false,
+    /// The fewest pixels worth handing to the engine on this board.
+    smallest: u32 = smallest_at_80,
     fills: u32 = 0,
     copies: u32 = 0,
     failures: u32 = 0,
 };
 
-/// The engine's clocks on and its descriptors' line out of the cache.
-pub fn setUp(engine: *Engine, sys: *ExecBase) void {
+/// The engine's clocks on and its descriptors' line out of the cache; its
+/// smallest job for the PSRAM at `psram_mhz`.
+pub fn setUp(engine: *Engine, sys: *ExecBase, psram_mhz: u32) void {
     sys.InitSemaphore(&engine.lock);
+    engine.smallest = smallest_at_80 * @max(psram_mhz, 80) / 80;
     sys.Disable();
     system.enable(.ppa);
     system.enable(.dma2d);
@@ -152,7 +158,7 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
     const width: u32 = @intCast(area.width);
     const height: u32 = @intCast(area.height);
     const middle = middleOf(x, width);
-    if ((middle.end - middle.start) * height < smallest) return err.RTGERR_NOT_SUPPORTED;
+    if ((middle.end - middle.start) * height < engine.smallest) return err.RTGERR_NOT_SUPPORTED;
 
     sys.ObtainSemaphore(&engine.lock);
     defer sys.ReleaseSemaphore(&engine.lock);
@@ -191,7 +197,7 @@ pub fn copy(engine: *Engine, sys: *ExecBase, src: *rtg.RtgBitMap, dest: *rtg.Rtg
         return err.RTGERR_NOT_SUPPORTED;
     }
     const middle = middleOf(dx, width);
-    if ((middle.end - middle.start) * height < smallest) return err.RTGERR_NOT_SUPPORTED;
+    if ((middle.end - middle.start) * height < engine.smallest) return err.RTGERR_NOT_SUPPORTED;
     const shift = middle.start - dx;
 
     sys.ObtainSemaphore(&engine.lock);

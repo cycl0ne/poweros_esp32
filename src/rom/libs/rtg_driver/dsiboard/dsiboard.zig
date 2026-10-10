@@ -249,7 +249,8 @@ fn bringUp(panel: *Panel) i32 {
     });
 
     if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
-    bus.share(streamBytes(panel));
+    const psram_mhz = psramMhz(sys, panel.board.rtg_base.?);
+    bus.share(streamBytes(panel), psram_mhz);
     dwgdma.setUpChannel(channel);
 
     panel.dma_int = .{
@@ -266,7 +267,7 @@ fn bringUp(panel: *Panel) i32 {
     sys.AddIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
     panel.hooked = true;
 
-    engine_file.setUp(&panel.engine, sys);
+    engine_file.setUp(&panel.engine, sys, psram_mhz);
     if (wanted.backlight_pin.wired()) _ = drive(wanted.backlight_pin, true);
     return err.RTGERR_OK;
 }
@@ -410,6 +411,16 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     board.info.brightness = panel.brightness;
     state.board = board;
     return err.RTGERR_OK;
+}
+
+/// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
+/// does not).
+fn psramMhz(sys: *ExecBase, rb: *RtgBase) u32 {
+    const default_mhz = 80;
+    const library = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return default_mhz;
+    defer sys.CloseLibrary(library);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(library);
+    return @truncate(rb.GetRtgTagData(sdk.expansion.systemtags.SYSTAG_PsramSpeed, default_mhz, eb.SystemTags()));
 }
 
 /// What the stream reads a second, on average: a frame's bytes, as often

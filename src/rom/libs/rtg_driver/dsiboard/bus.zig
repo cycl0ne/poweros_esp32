@@ -5,13 +5,15 @@
 //!
 //! A panel's stream cannot wait: a line the bridge does not have in time
 //! is an underrun, and after one the panel may stay dark. The engine can:
-//! unchecked, a whole-screen fill writes about 140 MB/s. Measured with
-//! the PSRAM at 80 MHz: beside the 480x640 panel's 29 MB/s that starves
+//! unchecked, a whole-screen fill writes about 140 MB/s with the PSRAM at
+//! 80 MHz. Measured there: beside the 480x640 panel's 29 MB/s that starves
 //! nothing (162 MB/s in all), beside the 1024x600 panel's 64 MB/s it
-//! starves a frame for every two such fills (204 MB/s). So a stream above
-//! `held_above` holds the engine to the rate below, about 78 MB/s, where
-//! it starves none and still fills twice as fast as the CPU; the next rate
-//! up is the same as none.
+//! starves a frame for every two such fills (204 MB/s). At 200 MHz the
+//! engine writes 220 MB/s beside that same 64 MB/s stream and starves
+//! nothing. So a stream above `held_above` - 40 MB/s at 80 MHz, as much
+//! more as the PSRAM is faster - holds the engine to the rate below, about
+//! 78 MB/s, where it starves none and still fills twice as fast as the CPU
+//! at 80 MHz; the next rate up is the same as none.
 //!
 //! The interconnect's arbitration is a priority and a read QoS per master
 //! (all 0 after reset: the masters take turns). Its regulators are set
@@ -57,16 +59,24 @@ const burstiness: u32 = (16 - 1) << 16;
 const regulator_on: u32 = 1;
 const rates: u32 = (0x8000_0000 >> 6) + (0x8000 >> 7);
 
-/// A stream above this many bytes a second holds the engine back.
-pub const held_above: u64 = 40_000_000;
+/// A stream above this many bytes a second holds the engine back, with
+/// the PSRAM at 80 MHz; a faster PSRAM raises it in proportion.
+const held_above_at_80: u64 = 40_000_000;
+
+/// What a stream may take before it holds the engine back, with the PSRAM
+/// at `psram_mhz`.
+pub fn heldAbove(psram_mhz: u32) u64 {
+    return held_above_at_80 * @max(psram_mhz, 80) / 80;
+}
 
 /// The panel's stream first; the 2D-DMA held back when the stream takes
-/// `stream_bytes` a second beyond `held_above`, else free to run.
-pub fn share(stream_bytes: u64) void {
+/// `stream_bytes` a second beyond what the PSRAM at `psram_mhz` leaves
+/// room for, else free to run.
+pub fn share(stream_bytes: u64, psram_mhz: u32) void {
     const mask = field_mask << gdma_memory_shift;
     reg(mst_arb_priority).* = (reg(mst_arb_priority).* & ~mask) | mask;
     reg(mst_arqos).* = (reg(mst_arqos).* & ~mask) | mask;
-    const held = stream_bytes > held_above;
+    const held = stream_bytes > heldAbove(psram_mhz);
     for ([_]u32{ 0, cmd_writes }) |direction| {
         command(burstiness | (if (held) regulator_on else 0), cmd_burstiness | direction);
         if (held) command(rates, cmd_rates | direction);
