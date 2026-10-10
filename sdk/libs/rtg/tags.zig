@@ -238,10 +238,16 @@ pub const RTGA_DSI_VSyncBackPorch = RTGA_DSI_Dummy + 8;
 pub const RTGA_DSI_VSyncFrontPorch = RTGA_DSI_Dummy + 9;
 /// *const u8 and u32: the panel's bring-up, sent as DCS commands before
 /// the picture streams; steps as RTGA_DCS_InitSequence's (`dcsStep`).
-/// Needed.
+/// Needed for a panel; a bridge the driver knows (CHIP_LT8912B) is
+/// brought up by the driver.
 pub const RTGA_DSI_InitSequence = RTGA_DSI_Dummy + 10;
 pub const RTGA_DSI_InitLength = RTGA_DSI_Dummy + 11;
 /// u32: the chip's LDO channel (1 to 4) that feeds the D-PHY, and its
 /// voltage in millivolts. Absent: the board feeds the PHY itself.
 pub const RTGA_DSI_PhyLdo = RTGA_DSI_Dummy + 12;
 pub const RTGA_DSI_PhyMillivolts = RTGA_DSI_Dummy + 13;
+/// Bool: the horizontal and the vertical sync pulse are high, as the
+/// mode's standard has them - what a bridge to a monitor tells it.
+/// Absent: low.
+pub const RTGA_DSI_HSyncHigh = RTGA_DSI_Dummy + 14;
+pub const RTGA_DSI_VSyncHigh = RTGA_DSI_Dummy + 15;

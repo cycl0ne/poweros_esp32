@@ -47,8 +47,8 @@ const systimer = sdk.hardware.systimer;
 
 pub const DEVICE_NAME = types.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "10.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -167,7 +167,9 @@ fn headOf(u: *I2CUnit) ?*exec.IORequest {
 
 /// The next command list into the controller's registers, and away. The
 /// bytes of a write go into the TX FIFO first; a read's come back through
-/// the RX FIFO, which is why a chunk is never longer than the FIFO.
+/// the RX FIFO, which is why a chunk is never longer than the FIFO - and a
+/// read chunk is a byte shorter: one of 32 holds SCL until the controller
+/// gives up on it as a stretched clock (`read_chunk`).
 fn fill(u: *I2CUnit) void {
     const port = portOf(u);
     var c: u32 = 0;
@@ -201,7 +203,7 @@ fn fill(u: *I2CUnit) void {
             u.first = 0;
         }
         var n = u.rd_len - u.rd_done;
-        if (n > regs.FIFO_LEN) n = regs.FIFO_LEN;
+        if (n > read_chunk) n = read_chunk;
         if (u.rd_done + n >= u.rd_len) {
             // The last byte of the whole read is left unacknowledged: that
             // is how a master tells a slave to stop sending.
@@ -220,6 +222,9 @@ fn fill(u: *I2CUnit) void {
     }
     hw.start(port);
 }
+
+/// The most bytes one command list reads: the RX FIFO less one.
+const read_chunk = regs.FIFO_LEN - 1;
 
 /// What the RX FIFO holds, into the caller's buffer.
 fn drainRx(u: *I2CUnit) void {

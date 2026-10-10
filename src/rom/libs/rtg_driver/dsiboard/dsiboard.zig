@@ -25,6 +25,14 @@
 //! end. The picture is read straight out of PSRAM; the CPU's writes reach
 //! it when RefreshBitMap writes them back out of the cache.
 //!
+//! **HDMI.** A part that is an HDMI bridge (CHIP_LT8912B) is the same
+//! board with three differences: create refuses it unless a monitor's
+//! EDID answers on the bridge's bus, so the next part the board lists -
+//! its panel - is tried instead; the bridge is brought up over I2C where a
+//! panel takes DCS commands; and the link carries RGB888, which the stream
+//! reads from a copy of what is shown (`link.zig`) while the screens stay
+//! RGB565.
+//!
 //! The module keeps nothing of its own. The driver node, SysBase and the
 //! rest are allocated at init, and per-board state is the `Panel` the
 //! library allocates beside each handle - in internal memory, since the
@@ -55,6 +63,9 @@ const scale_file = @import("scale.zig");
 const bus = @import("bus.zig");
 const chain_file = @import("chain.zig");
 const Chain = chain_file.Chain;
+const link_file = @import("link.zig");
+const lt8912b = @import("lt8912b.zig");
+const st = sdk.expansion.systemtags;
 
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
@@ -99,6 +110,14 @@ const Panel = struct {
     /// The one mode this panel has.
     mode: rtg.RtgMode = .{},
     frame_bytes: u32 = 0,
+    /// The link is an HDMI bridge's: the stream reads `link`, RGB888, and
+    /// `stream_bands` are the bands it sends over that copy.
+    hdmi: bool = false,
+    link: link_file.Link = .{},
+    stream_bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    /// What a line and a frame of the stream are in bytes.
+    stream_pitch: u32 = 0,
+    stream_frame_bytes: u32 = 0,
     /// What the PHY's PLL and the pixel clock really run at.
     lane_kbps: u32 = 0,
     pixel_hz: u32 = 0,
@@ -181,8 +200,8 @@ fn pixelDivider(pixel_hz: u32) u32 {
 }
 
 /// From nothing to a panel that has taken its bring-up and waits for a
-/// picture.
-fn bringUp(panel: *Panel) i32 {
+/// picture. `bus` reaches an HDMI bridge.
+fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c) i32 {
     const sys = panel.sys;
     const wanted = &panel.config;
 
@@ -217,14 +236,35 @@ fn bringUp(panel: *Panel) i32 {
     }
     host.commandMode(wanted.lane_mbps);
 
-    // A panel without a reset line is reset by its own command.
-    if (wanted.reset_pin.kind != boardpin.BPIN_GPIO) {
-        if (!host.dcsWrite(SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
-        systimer.spinUs(@as(u64, wanted.settle_ms) * 1000);
-    }
-    if (!sendSequence(wanted.init_sequence.?[0..wanted.init_length])) {
-        sdk.exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
-        return err.RTGERR_NO_DISPLAY;
+    if (bus_to_bridge) |bridge_bus| {
+        // An HDMI bridge: brought up over I2C for the mode the link carries.
+        const mode: lt8912b.Mode = .{
+            .width = wanted.width,
+            .height = wanted.height,
+            .hsync = wanted.hsync,
+            .hbp = wanted.hbp,
+            .hfp = wanted.hfp,
+            .vsync = wanted.vsync,
+            .vbp = wanted.vbp,
+            .vfp = wanted.vfp,
+            .hsync_high = wanted.hsync_high,
+            .vsync_high = wanted.vsync_high,
+            .pixel_hz = panel.pixel_hz,
+        };
+        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, wanted.lane_mbps, mode)) {
+            sdk.exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
+            return err.RTGERR_NO_DISPLAY;
+        }
+    } else {
+        // A panel without a reset line is reset by its own command.
+        if (wanted.reset_pin.kind != boardpin.BPIN_GPIO) {
+            if (!host.dcsWrite(SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
+            systimer.spinUs(@as(u64, wanted.settle_ms) * 1000);
+        }
+        if (!sendSequence(wanted.init_sequence.?[0..wanted.init_length])) {
+            sdk.exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
+            return err.RTGERR_NO_DISPLAY;
+        }
     }
 
     host.setVideo(.{
@@ -236,7 +276,8 @@ fn bringUp(panel: *Panel) i32 {
         .vsync = wanted.vsync,
         .vbp = wanted.vbp,
         .vfp = wanted.vfp,
-        .coding = host.coding_rgb565,
+        .coding = if (panel.hdmi) host.coding_rgb888 else host.coding_rgb565,
+        .low_power = !panel.hdmi,
     }, panel.lane_kbps, panel.pixel_hz);
     bridge.setUp(.{
         .width = wanted.width,
@@ -247,8 +288,8 @@ fn bringUp(panel: *Panel) i32 {
         .vsync = wanted.vsync,
         .vbp = wanted.vbp,
         .vfp = wanted.vfp,
-        .bits_per_pixel = wanted.bits_per_pixel,
-        .raw_type = bridge.raw_rgb565,
+        .bits_per_pixel = if (panel.hdmi) 24 else wanted.bits_per_pixel,
+        .raw_type = if (panel.hdmi) bridge.raw_rgb888 else bridge.raw_rgb565,
     });
 
     if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
@@ -303,6 +344,17 @@ fn startStream(panel: *Panel, chain: Chain) void {
     panel.streaming = true;
 }
 
+/// The HDMI bridge set to follow the stream that has just started; said
+/// on the raw port if it could not be reached.
+fn settleBridge(panel: *Panel) void {
+    const wanted = &panel.config;
+    const bus_to_bridge = lt8912b.I2c.open(panel.sys, wanted.i2c_unit) orelse return;
+    defer bus_to_bridge.close();
+    if (!lt8912b.follow(bus_to_bridge, wanted.i2c_address, panel.pixel_hz)) {
+        sdk.exec.kprintf(panel.sys, "%s: the HDMI bridge did not take the stream\n", .{MODULE_NAME});
+    }
+}
+
 /// The stream stopped, and every chain freed.
 fn stopStream(panel: *Panel) void {
     const sys = panel.sys;
@@ -324,10 +376,15 @@ fn stopStream(panel: *Panel) void {
 /// the one before it is no longer read.
 fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const sys = panel.sys;
-    const line_bytes = panel.mode.pitch;
-    const made = chain_file.build(sys, bands, panel.mode.height, line_bytes) orelse return err.RTGERR_NO_MEMORY;
+    var sent = bands;
+    if (panel.hdmi) {
+        const count = link_file.show(&panel.link, &panel.engine, sys, bands, panel.streaming, &panel.stream_bands);
+        sent = panel.stream_bands[0..count];
+    }
+    const made = chain_file.build(sys, sent, panel.mode.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
     if (!panel.streaming) {
         startStream(panel, made);
+        if (panel.hdmi) settleBridge(panel);
         return err.RTGERR_OK;
     }
     sys.Disable();
@@ -362,6 +419,7 @@ fn giveBack(panel: *Panel) void {
         panel.hooked = false;
     }
     engine_file.takeDown(&panel.engine);
+    link_file.free(&panel.link, sys);
     bridge.stop();
     host.stop();
     if (panel.config.backlight_pin.wired()) _ = drive(panel.config.backlight_pin, false);
@@ -378,8 +436,21 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const panel = panelOf(board);
     panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
     panel.frame_bytes = wanted.width * wanted.height * (wanted.bits_per_pixel / 8);
+    panel.stream_pitch = wanted.width * (wanted.bits_per_pixel / 8);
+    panel.stream_frame_bytes = panel.frame_bytes;
 
-    const code = bringUp(panel);
+    // An HDMI bridge only with a monitor behind it.
+    var bridge_bus: ?lt8912b.I2c = null;
+    defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
+    if (wanted.chip == st.CHIP_LT8912B) {
+        bridge_bus = monitorFor(state.sys, wanted) orelse return err.RTGERR_NO_DISPLAY;
+        panel.hdmi = true;
+        if (!link_file.allocate(&panel.link, state.sys, wanted.width, wanted.height)) return err.RTGERR_NO_MEMORY;
+        panel.stream_pitch = panel.link.pitch;
+        panel.stream_frame_bytes = panel.link.pitch * wanted.height;
+    }
+
+    const code = bringUp(panel, bridge_bus);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         return code;
@@ -417,6 +488,24 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     return err.RTGERR_OK;
 }
 
+/// The bridge's I2C bus, when a monitor's EDID answers on it; its name
+/// said on the raw port. Null, and nothing kept, when there is no monitor
+/// - or no bus.
+fn monitorFor(sys: *ExecBase, wanted: config.Config) ?lt8912b.I2c {
+    const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return null;
+    if (!lt8912b.monitorThere(bus_to_bridge)) {
+        bus_to_bridge.close();
+        return null;
+    }
+    var edid: lt8912b.Edid = undefined;
+    var name: [14]u8 = undefined;
+    name[0] = 0;
+    if (lt8912b.readEdid(bus_to_bridge, &edid)) lt8912b.monitorName(&edid, &name);
+    const shown: [*:0]const u8 = if (name[0] != 0) @ptrCast(&name) else "a monitor";
+    sdk.exec.kprintf(sys, "%s: HDMI to %s, %dx%d\n", .{ MODULE_NAME, shown, wanted.width, wanted.height });
+    return bus_to_bridge;
+}
+
 /// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
 /// does not).
 fn psramMhz(sys: *ExecBase, rb: *RtgBase) u32 {
@@ -435,7 +524,7 @@ fn streamBytes(panel: *const Panel) u64 {
     const lines = wanted.vsync + wanted.vbp + wanted.height + wanted.vfp;
     const whole: u64 = @as(u64, line) * lines;
     if (whole == 0) return 0;
-    return @as(u64, panel.frame_bytes) * panel.pixel_hz / whole;
+    return @as(u64, panel.stream_frame_bytes) * panel.pixel_hz / whole;
 }
 
 /// Frames a second, in thousandths: the pixel clock over everything a
@@ -497,17 +586,21 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
 /// out of it first. The stream never stops, so that is the whole of it.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
-    var bytes: u32 = (if (rows == 0) bitmap.height else rows) * bitmap.pitch;
+    const count = if (rows == 0) bitmap.height - y else rows;
+    var bytes: u32 = count * bitmap.pitch;
     if (bytes == 0) return err.RTGERR_OK;
     const start: *anyopaque = @ptrFromInt(@intFromPtr(pixels) + @as(usize, y) * bitmap.pitch);
-    _ = panelOf(board).sys.CachePreDMA(start, &bytes, 0);
+    const panel = panelOf(board);
+    _ = panel.sys.CachePreDMA(start, &bytes, 0);
+    // Over HDMI the stream reads the copy: the rows go into it too.
+    if (panel.hdmi) link_file.refresh(&panel.link, &panel.engine, panel.sys, bitmap, y, count, panel.streaming);
     return err.RTGERR_OK;
 }
 
 /// The panel's own display on or off, by its DCS command. Not the
 /// backlight.
 fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
-    _ = board;
+    if (panelOf(board).hdmi) return err.RTGERR_NOT_SUPPORTED;
     return if (host.dcsWrite(if (on) DISPON else DISPOFF, &.{})) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
 }
 

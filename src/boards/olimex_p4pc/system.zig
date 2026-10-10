@@ -69,8 +69,8 @@ const i2c_bus = [_]Tag{
 /// version 2 panel has neither a reset line nor a backlight switch the
 /// chip reaches: it is reset by its own command, and its backlight is on
 /// with its supply. The D-PHY is fed 2.5 V from the chip's LDO channel 3.
-/// The DSI lanes also reach the LT8912B HDMI bridge, which stays
-/// unconfigured.
+/// The DSI lanes also reach the LT8912B HDMI bridge (`hdmi`), listed
+/// first: the panel is the screen when no monitor is on the HDMI port.
 const screen = struct {
     const width = 480;
     const height = 640;
@@ -121,6 +121,45 @@ const st7701_sequence =
     dcsStep(0x11, 120, .{}) ++
     dcsStep(0x29, 0, .{});
 
+/// The HDMI port: an LT8912B on the DSI lanes, its pages at 0x48-0x4A on
+/// the I2C bus, which the connector's DDC lines join through level
+/// shifters - a monitor's EDID answers at 0x50 there. Taken only when one
+/// does. The screen 800x600 at 60 Hz on VESA's timings, whose 40 MHz
+/// pixel clock the chip makes exactly. RGB888 is 120 MB/s of it; two lanes
+/// at 650 Mbit/s carry 162 - a third more. The bridge steers the pixel
+/// clock it remakes by how full its FIFO is: two lanes at 1 Gbit/s sent
+/// each line in so short a burst that the FIFO's swings kept it hunting
+/// for seconds (a flickering picture, its lines shifted), and one lane at
+/// 1 Gbit/s, barely faster than the pixels arrive, left the host no room,
+/// and the bridge lost a frame's syncs now and then (the monitor calling
+/// the signal unsupported).
+const hdmi = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_LT8912B),
+    .pointer(st.PART_ChipName, "lt8912b"),
+    .value(st.PART_Bus, st.BUS_MIPI_DSI),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0x48),
+    .value(tags.RTGA_Width, 800),
+    .value(tags.RTGA_Height, 600),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565)),
+    .value(tags.RTGA_Buffers, 3),
+    .value(tags.RTGA_DSI_Lanes, 2),
+    .value(tags.RTGA_DSI_LaneRate, 650),
+    .value(tags.RTGA_DSI_PixelClock, 40_000_000),
+    .value(tags.RTGA_DSI_HSyncPulse, 128),
+    .value(tags.RTGA_DSI_HSyncBackPorch, 88),
+    .value(tags.RTGA_DSI_HSyncFrontPorch, 40),
+    .value(tags.RTGA_DSI_VSyncPulse, 4),
+    .value(tags.RTGA_DSI_VSyncBackPorch, 23),
+    .value(tags.RTGA_DSI_VSyncFrontPorch, 1),
+    .value(tags.RTGA_DSI_HSyncHigh, 1),
+    .value(tags.RTGA_DSI_VSyncHigh, 1),
+    .value(tags.RTGA_DSI_PhyLdo, 3),
+    .value(tags.RTGA_DSI_PhyMillivolts, 2500),
+    .done,
+};
+
 const panel = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PANEL),
     .value(st.PART_Chip, st.CHIP_ST7701),
@@ -165,6 +204,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &i2c_bus),
     .pointer(st.SYSTAG_Part, &ethernet),
+    .pointer(st.SYSTAG_Part, &hdmi),
     .pointer(st.SYSTAG_Part, &panel),
     .done,
 };

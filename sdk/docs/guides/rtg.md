@@ -527,6 +527,7 @@ older SDK keeps its layout.
 | LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
 | Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
+| Olimex ESP32-P4-PC on HDMI, 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
 
 The 7B's panel is never fed straight from PSRAM: the memory's own refresh
@@ -544,6 +545,24 @@ as DCS commands (`RTGA_DSI_InitSequence`, steps as `dcsStep` writes them),
 which the driver sends in command mode after the panel's reset - its
 reset line, or its own soft reset where it has none. Another panel on the
 same host is another tag list.
+
+**HDMI** goes through a bridge on the same link, an LT8912B
+(`CHIP_LT8912B`), whose part names its I2C unit and address instead of a
+bring-up, and the sync polarity the mode's standard gives
+(`RTGA_DSI_HSyncHigh`, `RTGA_DSI_VSyncHigh`). The driver takes that part
+only when a monitor's EDID answers on the bridge's bus, and refuses it
+otherwise, so graphics.library goes on to the board's next panel part -
+a board lists the bridge first. The bridge takes RGB888 only, and this
+revision of the chip sends what memory holds, so the screens stay RGB565
+and the stream reads a copy of what is shown, three bytes a pixel: showing
+bands converts their rows into it, and RefreshBitMap converts the rows
+drawn wherever a band shows them - the 2D-DMA widens RGB565 as it copies.
+The link stays in high speed through the blanking, as the bridge needs,
+and its lanes are best set to carry about a third more than the picture's
+RGB888: the bridge remakes the pixel clock by how full its FIFO keeps, so
+a link much faster sends each line in a burst too short for that to hold
+still, and one barely faster leaves the host no room, and frames lose
+their syncs.
 
 ## Tools
 

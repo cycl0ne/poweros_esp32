@@ -233,6 +233,20 @@ pub fn connectOut(channel: u32, peri: u32) bool {
     return true;
 }
 
+/// What a send channel's colour conversion can make of what it reads:
+/// RGB565 widened to three bytes a pixel on the way.
+pub const SendConvert = enum { rgb565_to_rgb888 };
+
+/// Send channel `channel`, connected, converting what it reads as
+/// `convert` says - set after `connectOut`, which turns it off.
+pub fn convertOut(channel: u32, convert: SendConvert) void {
+    // COLOR_CONVERT: output as it is (2), no matrix, input RGB565 (0).
+    const value: u32 = switch (convert) {
+        .rgb565_to_rgb888 => 2,
+    };
+    reg(outChannel(channel) + out_color_convert).* = value;
+}
+
 /// The scaler's macro-blocks as send channel `channel` hands them over
 /// the descriptor port: `width` x `height` pixels each.
 pub fn portBlock(channel: u32, width: u32, height: u32) void {
@@ -380,6 +394,7 @@ pub fn releaseOut(channel: u32) void {
     reg(at + int_clr).* = 0xFFFF_FFFF;
     reg(at + out_peri_sel).* = peri_none;
     reg(at + conf0).* &= ~conf_dscr_port;
+    reg(at + out_color_convert).* = convert_off;
 }
 
 /// Whether a transfer whose receive side ended as `raised` says ended

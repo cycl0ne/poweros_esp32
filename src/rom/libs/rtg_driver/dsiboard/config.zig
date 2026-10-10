@@ -5,7 +5,9 @@
 //! and kept in the board's own instance: the picture's size and format,
 //! the link (lanes, lane rate), the pixel clock and the timings, the
 //! panel's bring-up, the D-PHY's supply, and the panel's reset and
-//! backlight lines wherever the board has them. A tag that is not there
+//! backlight lines wherever the board has them. A part that is an HDMI
+//! bridge (CHIP_LT8912B) has no bring-up of its own: it says where on
+//! I2C the bridge is instead. A tag that is not there
 //! takes the default beside it in `sdk/libs/rtg/tags.zig`; a tag that has
 //! to be there and is not makes the create fail rather than the panel come
 //! up wrong.
@@ -20,6 +22,12 @@ const st = sdk.expansion.systemtags;
 const host = @import("host.zig");
 
 pub const Config = struct {
+    /// What is on the link: a panel's controller, or the HDMI bridge
+    /// (CHIP_LT8912B).
+    chip: u32 = st.CHIP_ANY,
+    /// The bridge's I2C unit and main address.
+    i2c_unit: u32 = 0,
+    i2c_address: u32 = 0,
     width: u32 = 0,
     height: u32 = 0,
     format: rtg.PixelFormat = .rgb565,
@@ -33,6 +41,9 @@ pub const Config = struct {
     vsync: u32 = 0,
     vbp: u32 = 0,
     vfp: u32 = 0,
+    /// The sync pulses' polarity, as the mode's standard has them.
+    hsync_high: bool = false,
+    vsync_high: bool = false,
     /// The panel's bring-up: steps as `dcsStep` writes them.
     init_sequence: ?[*]const u8 = null,
     init_length: u32 = 0,
@@ -58,6 +69,9 @@ fn u32At(rb: *RtgBase, tag: u32, default: u32, tag_list: ?[*]const TagItem) u32 
 /// asks for what this host cannot do.
 pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     var config = Config{};
+    config.chip = u32At(rb, st.PART_Chip, st.CHIP_ANY, tag_list);
+    config.i2c_unit = u32At(rb, st.PART_BusUnit, 0, tag_list);
+    config.i2c_address = u32At(rb, st.PART_Address, 0, tag_list);
     config.width = u32At(rb, tags.RTGA_Width, 0, tag_list);
     config.height = u32At(rb, tags.RTGA_Height, 0, tag_list);
     config.format = @enumFromInt(u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
@@ -71,6 +85,8 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     config.vsync = u32At(rb, tags.RTGA_DSI_VSyncPulse, 0, tag_list);
     config.vbp = u32At(rb, tags.RTGA_DSI_VSyncBackPorch, 0, tag_list);
     config.vfp = u32At(rb, tags.RTGA_DSI_VSyncFrontPorch, 0, tag_list);
+    config.hsync_high = u32At(rb, tags.RTGA_DSI_HSyncHigh, 0, tag_list) != 0;
+    config.vsync_high = u32At(rb, tags.RTGA_DSI_VSyncHigh, 0, tag_list) != 0;
     const sequence = rb.GetRtgTagData(tags.RTGA_DSI_InitSequence, 0, tag_list);
     if (sequence != 0) config.init_sequence = @ptrFromInt(sequence);
     config.init_length = u32At(rb, tags.RTGA_DSI_InitLength, 0, tag_list);
@@ -86,7 +102,11 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     if (config.lanes < 1 or config.lanes > 2) return null;
     if (config.lane_mbps < host.rate_min or config.lane_mbps > host.rate_max) return null;
     if (config.pixel_hz == 0 or config.hsync == 0 or config.vsync == 0) return null;
-    if (config.init_sequence == null or config.init_length == 0) return null;
+    if (config.chip == st.CHIP_LT8912B) {
+        if (config.i2c_address == 0) return null;
+    } else if (config.init_sequence == null or config.init_length == 0) {
+        return null;
+    }
     // The bridge sends what memory holds; 16 bits a pixel is what it is
     // driven at here.
     if (config.format != .rgb565) return null;

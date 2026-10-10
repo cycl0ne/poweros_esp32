@@ -373,6 +373,26 @@ pub fn resumeConsole(shell: *Shell, paused: ?*ConsoleUnit) void {
     if (paused) |u| readConsole(shell, u);
 }
 
+/// How long the shell waits for the system's start to finish.
+const cold_start_wait_us = 10_000_000;
+
+/// Until the exec task has started every resident and ended: the
+/// console's device is one of them, and a resident that waits while it
+/// starts - one talking to a chip over a bus - lets this task, below the
+/// exec task, run before they are all there. Spinning costs nothing the
+/// exec task needs: it is higher, and takes the processor back as soon as
+/// its wait ends. True once it has ended, false after
+/// `cold_start_wait_us`.
+fn awaitColdStart(sys: *sdk.exec.ExecBase) bool {
+    const systimer = sdk.hardware.systimer;
+    const since = systimer.uptimeUs();
+    while (sys.FindTask("exec") != null) {
+        if (systimer.uptimeUs() - since > cold_start_wait_us) return false;
+        systimer.spinUs(1000);
+    }
+    return true;
+}
+
 /// The shell's task code (an exec.TaskFn). Without its console, or the
 /// memory for its state, it ends.
 pub fn run(sys: *sdk.exec.ExecBase) callconv(.c) void {
@@ -387,7 +407,7 @@ pub fn run(sys: *sdk.exec.ExecBase) callconv(.c) void {
         .data = shell,
         .code = sdk.exec.vec(countSoftInt),
     };
-    if (!openConsole(shell)) {
+    if (!openConsole(shell) and !(awaitColdStart(sys) and openConsole(shell))) {
         sdk.exec.kprintf(sys, "shell: can't open %s or %s\n", .{ serial.SERIALNAME, usbserial.USBSERIALNAME });
         sys.FreeMem(block, @sizeOf(Shell));
         return;

@@ -3,7 +3,7 @@
 //! panel, or the emulator's virtual display, made into an rtg board and
 //! showing its first picture.
 //!
-//! It asks expansion.library for the board's panel part, whose tags are
+//! It asks expansion.library for the board's panel parts, whose tags are
 //! what rtg.library's drivers are told - the geometry, the timings or the
 //! bus, the pads and the control lines - and hands them to rtg.library,
 //! which finds the driver that can drive such a thing and brings it up: a
@@ -12,6 +12,11 @@
 //! driver, the emulator's display to the "qemu" driver. What comes back is a board with display memory; a buffer
 //! out of that memory is the picture, cleared to black and shown. Nothing
 //! is drawn before this: the kernel's output until then is exec's raw port.
+//!
+//! A board may list more than one way to a screen - an HDMI bridge ahead
+//! of the panel on the same link. They are tried in the list's order, and
+//! the first whose driver takes it is the display: a driver refuses a part
+//! whose screen is not there, an HDMI bridge without a monitor behind it.
 //!
 //! The order is the panel's and none of it is optional:
 //!
@@ -44,8 +49,8 @@ const GraphicsBase = @import("../graphics_base.zig").GraphicsBase;
 /// again.
 const BOARD_NAME = sdk.graphics.DISPLAY_BOARD;
 
-/// What the machine says about its display: the screen it runs, and the
-/// panel part if it has one.
+/// What the machine says about its display: the screen it runs, and one
+/// of its panel parts.
 const Machine = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -55,28 +60,39 @@ const Machine = struct {
     emulated: bool = false,
 };
 
-/// The machine's display, as expansion.library describes it. Empty when
+/// The most panel parts a board lists that are tried.
+const max_panels = 4;
+
+/// The machine's screen size and its panel parts in the list's order, as
+/// expansion.library describes them; how many there are. None when
 /// expansion.library is not there or names no panel.
-fn readMachine(gb: *GraphicsBase) Machine {
+fn readMachine(gb: *GraphicsBase, into: *[max_panels]Machine) usize {
     const sys = gb.sys_base;
     const ub = gb.utility_base;
-    var machine: Machine = .{};
-    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return machine;
+    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return 0;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
     const root = eb.SystemTags();
-    machine.width = @truncate(ub.GetTagData(st.SYSTAG_ScreenWidth, 0, root));
-    machine.height = @truncate(ub.GetTagData(st.SYSTAG_ScreenHeight, 0, root));
-    if (eb.FindBoardPart(null, st.PARTKIND_PANEL, st.CHIP_ANY)) |part| {
-        machine.panel = part;
-        machine.bus = @truncate(ub.GetTagData(st.PART_Bus, st.BUS_NONE, part.tags));
-        machine.emulated = part.chip == st.CHIP_QEMU_DISPLAY;
+    const width: u32 = @truncate(ub.GetTagData(st.SYSTAG_ScreenWidth, 0, root));
+    const height: u32 = @truncate(ub.GetTagData(st.SYSTAG_ScreenHeight, 0, root));
+    var count: usize = 0;
+    var found = eb.FindBoardPart(null, st.PARTKIND_PANEL, st.CHIP_ANY);
+    while (found) |part| : (found = eb.FindBoardPart(part, st.PARTKIND_PANEL, st.CHIP_ANY)) {
+        if (count == max_panels) break;
+        into[count] = .{
+            .width = width,
+            .height = height,
+            .panel = part,
+            .bus = @truncate(ub.GetTagData(st.PART_Bus, st.BUS_NONE, part.tags)),
+            .emulated = part.chip == st.CHIP_QEMU_DISPLAY,
+        };
+        count += 1;
     }
-    return machine;
+    return count;
 }
 
-/// Which display this machine turned out to have.
-const Found = struct { which: *rtg.RtgBoard, emulated: bool };
+/// Which display this machine turned out to have, and its picture's size.
+const Found = struct { which: *rtg.RtgBoard, emulated: bool, width: u32 = 0, height: u32 = 0 };
 
 /// The machine's panel, made into a board called BOARD_NAME whichever
 /// driver drives it, so everything past this point is the same and nothing
@@ -151,7 +167,7 @@ fn bringUp(rb: *RtgBase, machine: *const Machine) ?Found {
         return giveBack(rb, which);
     }
     _ = rb.SetBoardBrightness(which, 100);
-    return found;
+    return .{ .which = which, .emulated = found.emulated, .width = mode.width, .height = mode.height };
 }
 
 fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
@@ -185,20 +201,21 @@ fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
 /// - Locks: no spinlock may be held, because of the wait.
 /// - Process: a Task will do. The exec task runs it at cold start.
 pub fn openDisplay(gb: *GraphicsBase) void {
-    const machine = readMachine(gb);
-    const found = bringUp(gb.rtg_base, &machine) orelse return;
-    if (found.emulated) {
-        // The emulator's display owns its own pixels, so there is no
-        // framebuffer of this machine's to report.
-        exec.kprintf(gb.sys_base, "graphics.library: %dx%d virtual display\n", .{
-            machine.width,
-            machine.height,
-        });
-    } else {
-        exec.kprintf(gb.sys_base, "graphics.library: %dx%d panel, %d KiB in PSRAM\n", .{
-            machine.width,
-            machine.height,
-            machine.width * machine.height * 2 / 1024,
-        });
+    var machines: [max_panels]Machine = undefined;
+    const count = readMachine(gb, &machines);
+    for (machines[0..count]) |*machine| {
+        const found = bringUp(gb.rtg_base, machine) orelse continue;
+        if (found.emulated) {
+            // The emulator's display owns its own pixels, so there is no
+            // framebuffer of this machine's to report.
+            exec.kprintf(gb.sys_base, "graphics.library: %dx%d virtual display\n", .{ found.width, found.height });
+        } else {
+            exec.kprintf(gb.sys_base, "graphics.library: %dx%d panel, %d KiB in PSRAM\n", .{
+                found.width,
+                found.height,
+                found.width * found.height * 2 / 1024,
+            });
+        }
+        return;
     }
 }

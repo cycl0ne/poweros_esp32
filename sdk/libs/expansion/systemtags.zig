@@ -238,6 +238,10 @@ pub const CHIP_IP101: u32 = 15;
 /// Panel controllers on MIPI-DSI (PARTKIND_PANEL on BUS_MIPI_DSI).
 pub const CHIP_ST7701: u32 = 16;
 pub const CHIP_EK79007: u32 = 17;
+/// A MIPI-DSI to HDMI bridge (PARTKIND_PANEL on BUS_MIPI_DSI): set up over
+/// I2C (PART_BusUnit, PART_Address its main page), RGB888 on the link, a
+/// monitor behind it.
+pub const CHIP_LT8912B: u32 = 18;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

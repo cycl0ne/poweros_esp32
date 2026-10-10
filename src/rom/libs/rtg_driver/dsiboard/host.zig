@@ -90,9 +90,12 @@ const gen_pld_w_full: u32 = 1 << 3;
 /// CMD_MODE_CFG: every kind of command sent in low power, an
 /// acknowledgement asked for after each.
 const cmd_mode_low_power: u32 = 0x010F_7F02;
-/// VID_MODE_CFG: burst mode, low power allowed in every blanking period
-/// and for commands sent while the picture streams.
+/// VID_MODE_CFG: burst mode, an acknowledgement asked for after each
+/// frame, low power allowed in every blanking period and for commands sent
+/// while the picture streams - or, for a receiver that needs the link in
+/// high speed throughout (an HDMI bridge), the first two alone.
 const vid_mode_burst: u32 = 0xFF02;
+const vid_mode_burst_high_speed: u32 = 0x4002;
 /// PCKHDL_CFG: the end-of-transmission packet sent, ECC and CRC checked on
 /// what comes back.
 const pckhdl_eotp_ecc_crc: u32 = 0x19;
@@ -283,6 +286,8 @@ pub const Video = struct {
     vbp: u32,
     vfp: u32,
     coding: u32,
+    /// Whether the link may drop to low power in the blanking.
+    low_power: bool = true,
 };
 
 /// `pixels` pixel clocks of `pixel_hz` in byte clocks of a lane running
@@ -299,7 +304,7 @@ pub fn setVideo(video: Video, kbps: u32, pixel_hz: u32) void {
     reg(dpi_vcid).* = 0;
     reg(dpi_color_coding).* = video.coding;
     reg(dpi_cfg_pol).* = 0;
-    reg(vid_mode_cfg).* = vid_mode_burst;
+    reg(vid_mode_cfg).* = if (video.low_power) vid_mode_burst else vid_mode_burst_high_speed;
     reg(vid_pkt_size).* = video.width;
     reg(vid_num_chunks).* = 0;
     reg(vid_null_size).* = 0;
