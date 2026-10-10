@@ -55,6 +55,9 @@ pub const rng = own.rng;
 pub const cache = if (chip == .esp32p4) own.cache else struct {};
 /// The emulator's virtual display, with its window's pointer and keys.
 pub const qemu_rgb = own.qemu_rgb;
+/// The adjustable LDO regulators a board feeds its parts from: the
+/// ESP32-P4's. The ESP32-S3 has none, so there it is empty.
+pub const ldo = if (chip == .esp32p4) own.ldo else struct {};
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

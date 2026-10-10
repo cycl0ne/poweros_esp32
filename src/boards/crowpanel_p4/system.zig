@@ -16,9 +16,65 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const pins = sdk.expansion.boardpin;
+const rtg = sdk.rtg;
+const tags = rtg.tags;
+const dcsStep = tags.dcsStep;
 
 /// The board, as its maker names it.
 const name = "Elecrow CrowPanel Advanced 10.1\" ESP32-P4";
+
+// --- the display ----------------------------------------------------------------
+
+/// The 10.1" IPS panel, 1024x600, behind an EK79007 on two DSI data lanes.
+/// Its reset is GPIO41, active low; GPIO31 enables the backlight's
+/// driver. The D-PHY is fed 2.5 V from the chip's LDO channel 3.
+const screen = struct {
+    const width = 1024;
+    const height = 600;
+};
+
+/// The EK79007's bring-up: two lanes, the maker's settings, out of sleep
+/// and the display on.
+const ek79007_sequence =
+    dcsStep(0xB2, 0, .{0x10}) ++
+    dcsStep(0x80, 0, .{0x8B}) ++
+    dcsStep(0x81, 0, .{0x78}) ++
+    dcsStep(0x82, 0, .{0x84}) ++
+    dcsStep(0x83, 0, .{0x88}) ++
+    dcsStep(0x84, 0, .{0xA8}) ++
+    dcsStep(0x85, 0, .{0xE3}) ++
+    dcsStep(0x86, 0, .{0x88}) ++
+    dcsStep(0x11, 120, .{}) ++
+    dcsStep(0x29, 0, .{});
+
+const panel = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_EK79007),
+    .pointer(st.PART_ChipName, "ek79007"),
+    .value(st.PART_Bus, st.BUS_MIPI_DSI),
+    .value(st.PART_PinReset, pins.gpioLow(41)),
+    .value(st.PART_PinBacklight, pins.gpio(31)),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565)),
+    // A screen, a second screen or a back buffer, and one more.
+    .value(tags.RTGA_Buffers, 3),
+    .value(tags.RTGA_DSI_Lanes, 2),
+    .value(tags.RTGA_DSI_LaneRate, 1000),
+    .value(tags.RTGA_DSI_PixelClock, 51_000_000),
+    .value(tags.RTGA_DSI_HSyncPulse, 70),
+    .value(tags.RTGA_DSI_HSyncBackPorch, 160),
+    .value(tags.RTGA_DSI_HSyncFrontPorch, 160),
+    .value(tags.RTGA_DSI_VSyncPulse, 10),
+    .value(tags.RTGA_DSI_VSyncBackPorch, 23),
+    .value(tags.RTGA_DSI_VSyncFrontPorch, 21),
+    .pointer(tags.RTGA_DSI_InitSequence, &ek79007_sequence),
+    .value(tags.RTGA_DSI_InitLength, ek79007_sequence.len),
+    .value(tags.RTGA_DSI_PhyLdo, 3),
+    .value(tags.RTGA_DSI_PhyMillivolts, 2500),
+    .done,
+};
 
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
@@ -33,6 +89,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     // One core until two run clean on the boards.
     .value(st.SYSTAG_Cores, 1),
+    .value(st.SYSTAG_ScreenWidth, screen.width),
+    .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &panel),
     .done,
 };
 

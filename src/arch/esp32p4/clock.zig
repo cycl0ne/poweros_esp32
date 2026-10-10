@@ -4,9 +4,10 @@
 //! v3.0 runs at - with the memory and system clocks at 180 MHz and the APB
 //! at 90, as ESP-IDF v6.1 does (esp_hw_support/port/esp32p4/rtc_clk.c):
 //!
-//! 1. The CPLL powered up (PMU), then calibrated: its reference divider,
-//!    feedback divider and charge pump set over the analog bus (regi2c),
-//!    and the calibration waited for. From chip v0.1 on the feedback
+//! 1. The CPLL powered up (PMU), with the system PLL beside it, then the
+//!    CPLL calibrated: its reference divider, feedback divider and charge
+//!    pump set over the analog bus (regi2c), and the calibration waited
+//!    for. From chip v0.1 on the feedback
 //!    divider's bits 2 and 3 are swapped, so its value depends on the
 //!    revision in eFuse.
 //! 2. The dividers raised from the slowest clock up - APB, system, memory,
@@ -28,12 +29,17 @@ pub const xtal_hz: u32 = hardware.XTAL_HZ;
 /// Whether the CPLL said its calibration ended.
 pub var pll_calibrated = false;
 
-/// PMU_IMM_HP_CK_POWER: the CPLL and its analog bus powered, its clock
-/// gate open.
+/// PMU_IMM_HP_CK_POWER: a PLL and its analog bus powered, its clock gate
+/// open - the CPLL's, and the system PLL's (SPLL, 480 MHz), which the
+/// peripherals' reference clocks are cut from: the MIPI D-PHY's 20 MHz,
+/// the pixel clock's 240 MHz.
 const pmu_imm_hp_ck_power = hardware.map.PMU + 0x0CC;
 const tie_high_xpd_cpll: u32 = 1 << 27;
 const tie_high_xpd_cpll_i2c: u32 = 1 << 23;
 const tie_high_global_cpll_icg: u32 = 1 << 17;
+const tie_high_xpd_spll: u32 = 1 << 28;
+const tie_high_xpd_spll_i2c: u32 = 1 << 24;
+const tie_high_global_spll_icg: u32 = 1 << 18;
 
 /// HP_SYS_CLKRST: the CPLL's calibration (ANA_PLL_CTRL0) and the root
 /// clock's dividers, each the divider minus one.
@@ -83,6 +89,8 @@ pub fn init() void {
     reg(hp_clk_ctrl).* &= ~root_src_mask;
     reg(pmu_imm_hp_ck_power).* |= tie_high_xpd_cpll | tie_high_xpd_cpll_i2c;
     reg(pmu_imm_hp_ck_power).* |= tie_high_global_cpll_icg;
+    reg(pmu_imm_hp_ck_power).* |= tie_high_xpd_spll | tie_high_xpd_spll_i2c;
+    reg(pmu_imm_hp_ck_power).* |= tie_high_global_spll_icg;
 
     // 360 MHz from the 40 MHz crystal.
     const feedback: u8 = if (chipRevision() >= 1) 9 else 5;

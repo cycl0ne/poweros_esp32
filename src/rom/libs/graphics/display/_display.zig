@@ -8,8 +8,8 @@
 //! bus, the pads and the control lines - and hands them to rtg.library,
 //! which finds the driver that can drive such a thing and brings it up: a
 //! panel on LCD_CAM to the "rgb" driver, one on SPI to the "qspi"
-//! transport and the "dcs" controller on it, the emulator's display to the
-//! "qemu" driver. What comes back is a board with display memory; a buffer
+//! transport and the "dcs" controller on it, one on MIPI-DSI to the "dsi"
+//! driver, the emulator's display to the "qemu" driver. What comes back is a board with display memory; a buffer
 //! out of that memory is the picture, cleared to black and shown. Nothing
 //! is drawn before this: the kernel's output until then is exec's raw port.
 //!
@@ -105,6 +105,10 @@ fn createBoard(rb: *RtgBase, machine: *const Machine) ?Found {
             };
             if (rb.CreateBoardTagList("dcs", &on_bus)) |which| return .{ .which = which, .emulated = false };
             rb.DeleteTransport(io);
+        },
+        // A panel on the MIPI-DSI host: its tags are the DSI driver's.
+        st.BUS_MIPI_DSI => if (rb.CreateBoardTagList("dsi", &named)) |which| {
+            return .{ .which = which, .emulated = false };
         },
         // The emulator's display: memory and a doorbell.
         st.BUS_MEMORY => if (rb.CreateBoardTagList("qemu", &named)) |which| {

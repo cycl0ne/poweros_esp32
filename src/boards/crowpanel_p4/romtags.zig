@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The ROM tags the CrowPanel's image carries beyond the ones every image
-//! has: none yet.
+//! has: the drivers for the parts this board has.
 
-comptime {}
+comptime {
+    // The panel on MIPI-DSI.
+    _ = @import("../../rom/libs/rtg_driver/dsiboard/dsiboard.zig");
+}

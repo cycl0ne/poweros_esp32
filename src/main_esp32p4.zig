@@ -52,6 +52,12 @@ comptime {
     _ = @import("rom/shell/shell.zig");
     _ = @import("rom/resources/watchdog/watchdog.zig");
     _ = @import("rom/resources/platform/platform.zig");
+    _ = @import("rom/devs/console/console.zig");
+    _ = @import("rom/libs/rtg/rtg.zig");
+    _ = @import("rom/libs/graphics/graphics.zig");
+    _ = @import("rom/libs/layers/layers.zig");
+    _ = @import("rom/libs/intuition/intuition.zig");
+    _ = @import("rom/libs/motion/motion.zig");
     _ = @import("rom/release.zig");
     // The board's description: its system tag list, a ROM tag of its own.
     _ = &boards.system.system_tag;

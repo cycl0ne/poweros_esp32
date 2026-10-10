@@ -25,10 +25,19 @@ const mmio = @import("mmio.zig");
 const map = @import("map.zig");
 
 // The registers.
+pub const SOC_CLK_CTRL0: usize = map.HP_SYS_CLKRST + 0x014;
 pub const SOC_CLK_CTRL1: usize = map.HP_SYS_CLKRST + 0x018;
 pub const SOC_CLK_CTRL2: usize = map.HP_SYS_CLKRST + 0x01C;
+/// The peripherals' reference clocks, cut from the system PLL (480 MHz):
+/// a gate each, all on after reset.
+pub const REF_CLK_CTRL1: usize = map.HP_SYS_CLKRST + 0x028;
+pub const REF_CLK_CTRL2: usize = map.HP_SYS_CLKRST + 0x02C;
+pub const REF_240M_CLK_EN: u32 = 1 << 30;
+pub const REF_20M_CLK_EN: u32 = 1 << 8;
 pub const PERI_CLK_CTRL00: usize = map.HP_SYS_CLKRST + 0x030;
 pub const PERI_CLK_CTRL01: usize = map.HP_SYS_CLKRST + 0x034;
+pub const PERI_CLK_CTRL02: usize = map.HP_SYS_CLKRST + 0x038;
+pub const PERI_CLK_CTRL03: usize = map.HP_SYS_CLKRST + 0x03C;
 pub const PERI_CLK_CTRL10: usize = map.HP_SYS_CLKRST + 0x040;
 pub const PERI_CLK_CTRL11: usize = map.HP_SYS_CLKRST + 0x044;
 pub const PERI_CLK_CTRL21: usize = map.HP_SYS_CLKRST + 0x098;
@@ -40,6 +49,7 @@ pub const PERI_CLK_CTRL114: usize = map.HP_SYS_CLKRST + 0x078;
 pub const PERI_CLK_CTRL115: usize = map.HP_SYS_CLKRST + 0x07C;
 pub const PERI_CLK_CTRL116: usize = map.HP_SYS_CLKRST + 0x080;
 pub const PERI_CLK_CTRL117: usize = map.HP_SYS_CLKRST + 0x084;
+pub const HP_RST_EN0: usize = map.HP_SYS_CLKRST + 0x0C0;
 pub const HP_RST_EN1: usize = map.HP_SYS_CLKRST + 0x0C4;
 pub const HP_RST_EN2: usize = map.HP_SYS_CLKRST + 0x0C8;
 /// LP_CLKRST's (always on): the HP side's root clock and its pad clocks,
@@ -66,6 +76,13 @@ pub const Peripheral = enum {
     /// The Ethernet MAC: its bus clock and its reset. The clocks of its
     /// RMII or MII lines are its driver's to set (`update`).
     emac,
+    /// The MIPI-DSI host and its bridge: the bus clock, the D-PHY's
+    /// configuration and PLL reference clocks (both from the 20 MHz
+    /// reference clock, source 0 of PERI_CLK_CTRL02), and the pixel clock
+    /// (`setFunctionClock`); one reset, the bridge's, covers both.
+    dsi,
+    /// The DMA controller that feeds the DSI and CSI bridges (DW-GDMA).
+    dw_gdma,
 };
 
 /// One bit in one register.
@@ -135,6 +152,14 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
         .emac => .{
             .clocks = &.{bit(SOC_CLK_CTRL1, 13)},
             .resets = &.{bit(LP_HP_SDMMC_EMAC_RST_CTRL, 30)},
+        },
+        .dsi => .{
+            .clocks = &.{ bit(SOC_CLK_CTRL1, 12), bit(PERI_CLK_CTRL03, 0), bit(PERI_CLK_CTRL03, 1), bit(PERI_CLK_CTRL03, 7) },
+            .resets = &.{bit(HP_RST_EN0, 26)},
+        },
+        .dw_gdma => .{
+            .clocks = &.{ bit(SOC_CLK_CTRL0, 13), bit(SOC_CLK_CTRL1, 5) },
+            .resets = &.{bit(HP_RST_EN0, 21)},
         },
     };
 }
@@ -224,6 +249,9 @@ inline fn clockFieldsOf(comptime peripheral: Peripheral) ClockFields {
             .divider = field(PERI_CLK_CTRL117, 8, 8),
             .pre_divider = field(PERI_CLK_CTRL117, 0, 8),
         },
+        // The pixel clock: 0 the crystal, 1 the 240 MHz reference clock,
+        // 2 the 160 MHz one, 3 the audio PLL.
+        .dsi => .{ .source = field(PERI_CLK_CTRL03, 5, 2), .divider = field(PERI_CLK_CTRL03, 8, 8) },
         else => @compileError("no function clock to choose: " ++ @tagName(peripheral)),
     };
 }

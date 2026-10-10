@@ -189,9 +189,9 @@ pub const RTGA_DCS_Dummy = RTGA_DriverBase + 192;
 pub const RTGA_DCS_InitSequence = RTGA_DCS_Dummy + 1;
 pub const RTGA_DCS_InitLength = RTGA_DCS_Dummy + 2;
 
-/// One step of an RTGA_DCS_InitSequence, as a board writes it down: the
-/// command, the milliseconds to wait after it, and its parameters. Steps
-/// join with `++`.
+/// One step of an RTGA_DCS_InitSequence or RTGA_DSI_InitSequence, as a
+/// board writes it down: the command, the milliseconds to wait after it,
+/// and its parameters. Steps join with `++`.
 pub fn dcsStep(comptime cmd: u8, comptime delay_ms: u8, comptime params: anytype) [3 + params.len]u8 {
     var bytes: [3 + params.len]u8 = undefined;
     bytes[0] = cmd;
@@ -217,3 +217,31 @@ pub const RTGA_DCS_Align = RTGA_DCS_Dummy + 5;
 /// mode, unless RTGA_DCS_SwappedMadctl gives one. The two are not both
 /// given: a controller either turns the picture or it does not.
 pub const RTGA_DCS_SwappedTurn = RTGA_DCS_Dummy + 6;
+
+// --- the DSI board driver: RTGA_DriverBase + 256, 64 wide ----------------
+
+pub const RTGA_DSI_Dummy = RTGA_DriverBase + 256;
+/// u32: the data lanes the panel takes, 1 or 2. Needed.
+pub const RTGA_DSI_Lanes = RTGA_DSI_Dummy + 1;
+/// u32, Mbit/s: what each lane carries, 80 to 1500. Needed.
+pub const RTGA_DSI_LaneRate = RTGA_DSI_Dummy + 2;
+/// u32, Hz: the pixel clock the panel's timings count in. The chip makes
+/// the nearest it can, and the timings stay in its clocks. Needed.
+pub const RTGA_DSI_PixelClock = RTGA_DSI_Dummy + 3;
+/// u32, in pixel clocks. All six are needed.
+pub const RTGA_DSI_HSyncPulse = RTGA_DSI_Dummy + 4;
+pub const RTGA_DSI_HSyncBackPorch = RTGA_DSI_Dummy + 5;
+pub const RTGA_DSI_HSyncFrontPorch = RTGA_DSI_Dummy + 6;
+/// u32, in lines.
+pub const RTGA_DSI_VSyncPulse = RTGA_DSI_Dummy + 7;
+pub const RTGA_DSI_VSyncBackPorch = RTGA_DSI_Dummy + 8;
+pub const RTGA_DSI_VSyncFrontPorch = RTGA_DSI_Dummy + 9;
+/// *const u8 and u32: the panel's bring-up, sent as DCS commands before
+/// the picture streams; steps as RTGA_DCS_InitSequence's (`dcsStep`).
+/// Needed.
+pub const RTGA_DSI_InitSequence = RTGA_DSI_Dummy + 10;
+pub const RTGA_DSI_InitLength = RTGA_DSI_Dummy + 11;
+/// u32: the chip's LDO channel (1 to 4) that feeds the D-PHY, and its
+/// voltage in millivolts. Absent: the board feeds the PHY itself.
+pub const RTGA_DSI_PhyLdo = RTGA_DSI_Dummy + 12;
+pub const RTGA_DSI_PhyMillivolts = RTGA_DSI_Dummy + 13;

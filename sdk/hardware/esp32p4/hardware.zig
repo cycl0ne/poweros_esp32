@@ -30,6 +30,8 @@ pub const cpu = @import("cpu.zig");
 pub const rng = @import("rng.zig");
 /// The caches, and the controller's entry points in the ROM.
 pub const cache = @import("cache.zig");
+/// The four adjustable LDO regulators a board feeds its parts from.
+pub const ldo = @import("ldo.zig");
 
 /// The crystal: the clock the chip starts on.
 pub const XTAL_HZ: u32 = 40_000_000;

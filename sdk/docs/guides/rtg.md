@@ -33,7 +33,7 @@ reference: [rtg](../autodocs/rtg.md).
         |
   rtg.library          boards, modes, buffers, showing them
         |
-  a driver             "rgb", "dcs" on "qspi", "qemu", ...
+  a driver             "rgb", "dcs" on "qspi", "dsi", "qemu", ...
 ```
 
 rtg.library knows displays and nothing about drawing. A buffer is memory
@@ -64,7 +64,7 @@ const rb: *RtgBase = @ptrCast(lib);
 Two kinds of thing are registered with the library:
 
 - A **driver** is a module that knows one kind of display hardware. It
-  joins with `AddRtgDriver` under a name ("rgb", "dcs", "qemu") and
+  joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu") and
   stays until `RemRtgDriver`, which is refused while anything it made is
   alive.
 - A **board** is one display that a driver brought up. A caller makes one
@@ -473,12 +473,25 @@ older SDK keeps its layout.
 |---|---|---|---|
 | Waveshare 7B, 7" 1024 x 600 | `rgb` | LCD_CAM streams pixels from three small buffers in internal memory; a DMA channel copies the picture from PSRAM into each one as the panel finishes it | a copy descriptor per display line, each from the row its band shows; changed at a frame's start |
 | LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
+| Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a frame a block; the DMA's interrupt starts the next | none: one buffer a frame |
+| CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | none |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
 
 The 7B's panel is never fed straight from PSRAM: the memory's own refresh
 stalls the stream for longer than the panel's pixel buffer lasts, and the
 picture slips. So the panel reads small buffers in internal memory, and
-the copy into them runs from the panel's own interrupt.
+the copy into them runs from the panel's own interrupt. The ESP32-P4's
+DSI bridge holds 8 KB and asks for the picture in bursts, so it is fed
+from PSRAM itself.
+
+**A DSI panel** is described by its part's tags: the lanes and their rate
+(`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the pixel clock and the six
+timings, the D-PHY's supply where the chip's LDO feeds it
+(`RTGA_DSI_PhyLdo`, `RTGA_DSI_PhyMillivolts`), and the panel's bring-up
+as DCS commands (`RTGA_DSI_InitSequence`, steps as `dcsStep` writes them),
+which the driver sends in command mode after the panel's reset - its
+reset line, or its own soft reset where it has none. Another panel on the
+same host is another tag list.
 
 ## Tools
 

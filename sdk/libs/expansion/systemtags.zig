@@ -230,6 +230,9 @@ pub const CHIP_CS8501: u32 = 14;
 /// An Ethernet PHY, 10/100 Mbit/s (PARTKIND_NET on BUS_RMII; its
 /// PART_Address is its address on the management bus).
 pub const CHIP_IP101: u32 = 15;
+/// Panel controllers on MIPI-DSI (PARTKIND_PANEL on BUS_MIPI_DSI).
+pub const CHIP_ST7701: u32 = 16;
+pub const CHIP_EK79007: u32 = 17;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -249,3 +252,5 @@ pub const BUS_UART: u32 = 9;
 pub const BUS_TWAI: u32 = 10;
 /// The chip's Ethernet MAC, to a PHY over RMII.
 pub const BUS_RMII: u32 = 11;
+/// The chip's MIPI-DSI host, to a panel or a bridge.
+pub const BUS_MIPI_DSI: u32 = 12;
