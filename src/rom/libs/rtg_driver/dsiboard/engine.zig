@@ -39,6 +39,12 @@
 //!
 //! One operation at a time, under the panel's engine semaphore; each one
 //! is done before it returns, so WaitBlit has nothing left to wait for.
+//!
+//! **Its channels** are dma.resource's 2D channels 1 and 2 - send
+//! channels 1 and 2, receive channel 1 - claimed when the engine is set
+//! up: channel 0, the only one that reorders and converts colour, is the
+//! JPEG codec's. Without them the engine stays off and everything is the
+//! CPU's.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -49,8 +55,17 @@ const hardware = sdk.hardware;
 const system = hardware.system;
 const intbits = hardware.intbits;
 const map = hardware.map;
-const dma2d = @import("dma2d.zig");
+const dma2d = hardware.dma2d;
+const dmares = sdk.resources.dma;
 const ppa = @import("ppa.zig");
+
+/// The 2D-DMA's channels the engine works with: what it reads (and what
+/// lies under a blend), what goes over a blend, and what it writes.
+pub const send_channel = 1;
+pub const over_channel = 2;
+pub const receive_channel = 1;
+/// Their owner's name at dma.resource.
+const owner_name = "rtg-dsi engine";
 
 /// The data cache's line, and the RGB565 pixels in one.
 pub const line_bytes = 64;
@@ -78,6 +93,8 @@ const patience_frames = 10;
 pub const Engine = struct {
     sys: ?*ExecBase = null,
     lock: exec.SignalSemaphore = .{},
+    /// dma.resource, while the engine holds its two channels there.
+    dma: ?*dmares.DmaBase = null,
     /// The end interrupt's server, and whether it is hooked up.
     int: exec.Interrupt = .{},
     hooked: bool = false,
@@ -106,17 +123,17 @@ pub const Engine = struct {
     failures: u32 = 0,
 };
 
-/// The engine's clocks on and its descriptors' lines out of the cache; its
-/// smallest fill or copy for the PSRAM at `psram_mhz`.
+/// The engine's channels claimed, its clock on and its descriptors' lines
+/// out of the cache; its smallest fill or copy for the PSRAM at
+/// `psram_mhz`. Without the channels it stays off.
 pub fn setUp(engine: *Engine, sys: *ExecBase, psram_mhz: u32) void {
     engine.sys = sys;
     sys.InitSemaphore(&engine.lock);
     engine.smallest = smallest_at_80 * @max(psram_mhz, 80) / 80;
+    if (!claim(engine, sys)) return;
     sys.Disable();
     system.enable(.ppa);
-    system.enable(.dma2d);
     sys.Enable();
-    dma2d.start();
     engine.line = (@intFromPtr(&engine.room) + line_bytes - 1) & ~@as(usize, line_bytes - 1);
     var bytes: u32 = 2 * line_bytes;
     _ = sys.CachePreDMA(@ptrFromInt(engine.line), &bytes, 0);
@@ -126,24 +143,46 @@ pub fn setUp(engine: *Engine, sys: *ExecBase, psram_mhz: u32) void {
         .data = engine,
         .code = &endServer,
     };
-    sys.AddIntServer(intbits.INTB_DMA2D_IN_CH0, &engine.int);
+    sys.AddIntServer(end_interrupt, &engine.int);
     engine.hooked = true;
     engine.ready = true;
 }
 
-/// The engine's interrupt taken away again.
+/// The receive channel's interrupt.
+const end_interrupt = intbits.INTB_DMA2D_IN_CH0 + receive_channel;
+
+/// The two 2D channels from dma.resource, both or neither.
+fn claim(engine: *Engine, sys: *ExecBase) bool {
+    const db: *dmares.DmaBase = @ptrCast(@alignCast(sys.OpenResource(dmares.DMANAME) orelse return false));
+    const first = dmares.DMA2D_CHANNEL0 + send_channel;
+    const second = dmares.DMA2D_CHANNEL0 + over_channel;
+    if (db.AllocDMAChannel(first, owner_name) != null) return false;
+    if (db.AllocDMAChannel(second, owner_name) != null) {
+        db.FreeDMAChannel(first);
+        return false;
+    }
+    engine.dma = db;
+    return true;
+}
+
+/// The engine's interrupt taken away again, and its channels given back.
 pub fn takeDown(engine: *Engine) void {
-    if (!engine.hooked) return;
-    engine.sys.?.RemIntServer(intbits.INTB_DMA2D_IN_CH0, &engine.int);
-    engine.hooked = false;
+    if (engine.hooked) {
+        engine.sys.?.RemIntServer(end_interrupt, &engine.int);
+        engine.hooked = false;
+    }
     engine.ready = false;
+    const db = engine.dma orelse return;
+    db.FreeDMAChannel(dmares.DMA2D_CHANNEL0 + send_channel);
+    db.FreeDMAChannel(dmares.DMA2D_CHANNEL0 + over_channel);
+    engine.dma = null;
 }
 
 /// The 2D-DMA's receive side ended: the waiting task told.
 fn endServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const engine: *Engine = @ptrCast(@alignCast(is_data.?));
-    const raised = dma2d.takeEnded();
+    const raised = dma2d.takeEnded(receive_channel);
     if (raised == 0) return 0;
     engine.ended = raised;
     if (engine.waiter) |task| engine.sys.?.Signal(task, engine.waiter_mask);
@@ -175,14 +214,14 @@ pub fn prepare(engine: *Engine, sys: *ExecBase, watched: bool) i8 {
     engine.waiter_mask = @as(u32, 1) << @intCast(signal);
     engine.waiter = sys.FindTask(null);
     sys.Enable();
-    dma2d.interruptWhenEnded();
+    dma2d.interruptWhenEnded(receive_channel);
     return signal;
 }
 
 /// After the CPU's part: until the job has ended, or been given up.
 /// Whether it ended well; the channels are released either way.
 pub fn wait(engine: *Engine, sys: *ExecBase, signal: i8) bool {
-    if (signal < 0) return dma2d.release(dma2d.poll(timeout_us));
+    if (signal < 0) return release(dma2d.poll(receive_channel, timeout_us));
     var raised: u32 = 0;
     while (true) {
         sys.Disable();
@@ -195,7 +234,16 @@ pub fn wait(engine: *Engine, sys: *ExecBase, signal: i8) bool {
     }
     _ = sys.SetSignal(0, engine.waiter_mask);
     sys.FreeSignal(signal);
-    return dma2d.release(raised);
+    return release(raised);
+}
+
+/// The channels disconnected after a job that ended as `raised` says:
+/// whether it ended well.
+fn release(raised: u32) bool {
+    dma2d.releaseIn(receive_channel);
+    dma2d.releaseOut(send_channel);
+    dma2d.releaseOut(over_channel);
+    return dma2d.endedWell(raised);
 }
 
 /// The descriptors - two send channels' and the receive channel's -
@@ -301,10 +349,10 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
 
     const parts = descriptors(engine);
     ppa.reset();
-    if (!dma2d.connectIn(dma2d.peri_ppa_blend, false)) return failed(engine);
+    if (!dma2d.connectIn(receive_channel, dma2d.peri_ppa_blend, .{})) return failed(engine);
     dma2d.describe(parts.receive, @intFromPtr(bitmap.pixels.?), bitmap.pitch / 2, bitmap.height, middle.start, y, middle.end - middle.start, height, dma2d.pbyte_2);
     const signal = prepare(engine, sys, watched);
-    dma2d.runIn(parts.receive_at);
+    dma2d.runIn(receive_channel, parts.receive_at);
     ppa.fill(ppa.argbOf(color), middle.end - middle.start, height);
 
     const pixel: u16 = @truncate(color);
@@ -345,14 +393,14 @@ pub fn copy(engine: *Engine, sys: *ExecBase, src: *rtg.RtgBitMap, dest: *rtg.Rtg
     writeBack(sys, dest, middle.start, middle.end, dy, height);
 
     const parts = descriptors(engine);
-    if (!dma2d.connectOut(0, dma2d.peri_memory_out)) return failed(engine);
-    if (!dma2d.connectIn(dma2d.peri_memory_in, true)) return failed(engine);
+    if (!dma2d.connectOut(send_channel, dma2d.peri_memory_out)) return failed(engine);
+    if (!dma2d.connectIn(receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return failed(engine);
     const run = middle.end - middle.start;
     dma2d.describe(parts.send, @intFromPtr(src.pixels.?), src.pitch / 2, src.height, sx + shift, sy, run, height, dma2d.pbyte_2);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, dy, run, height, dma2d.pbyte_2);
     const signal = prepare(engine, sys, watched);
-    dma2d.runOut(0, parts.send_at);
-    dma2d.runIn(parts.receive_at);
+    dma2d.runOut(send_channel, parts.send_at);
+    dma2d.runIn(receive_channel, parts.receive_at);
 
     copyByCpu(src, dest, sx, sy, dx, dy, shift, height);
     copyByCpu(src, dest, sx + (middle.end - dx), sy, middle.end, dy, dx + width - middle.end, height);

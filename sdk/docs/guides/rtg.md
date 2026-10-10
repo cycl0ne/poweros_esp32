@@ -317,6 +317,12 @@ engine to about 78 MB/s. With the PSRAM at 80 MHz an engine running free
 beside the 1024 x 600 panel starves it, and the panel goes dark; at
 200 MHz it does not.
 
+The engine's channels are dma.resource's 2D channels 1 and 2 - send
+channels 1 and 2, receive channel 1 - claimed when the board is made; a
+board that cannot have them does everything in software. Channel 0, the
+only one that reorders blocks and converts colour, is left to the JPEG
+codec.
+
 ## Turning the picture
 
 A controller that can be told its scan direction turns the picture

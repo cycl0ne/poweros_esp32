@@ -1,37 +1,106 @@
 // SPDX-License-Identifier: MIT
-//! dma.resource: the chip's general DMA engine (GDMA), its 5 channels
-//! handed out to one owner each. Get the base with
-//! OpenResource(DMANAME); its functions are in sdk/interface/dma.zig.
+//! dma.resource: the chip's DMA engines, their channels handed out to one
+//! owner each. Get the base with OpenResource(DMANAME); its functions are
+//! in sdk/interface/dma.zig.
+//!
+//! **General channels**, 0 to DMA_CHANNELS - 1: the ESP32-S3's GDMA (5
+//! channels); on the ESP32-P4 the AHB engine's 3 (0-2) and the AXI
+//! engine's 3 (3-5). A peripheral is served by one engine, and a channel
+//! connects only to its own engine's (a DMAPERI_ value on the P4 carries
+//! the engine in bit 8).
+//!
+//! **The 2D-DMA's channels**, DMA2D_CHANNELS of them from DMA2D_CHANNEL0
+//! on (the ESP32-P4's; the S3 has none): 2D channel n is the 2D-DMA's
+//! send channel n and its receive channel n where there is one - 0 and 1
+//! receive, 2 only sends. They are claimed, given back and asked about
+//! like the general ones; their owner sets them up and starts them
+//! through `sdk.hardware.dma2d`, and the general calls refuse them.
 //!
 //! A channel's interrupts are exec's: AddIntServer(dmaIntNumber(channel,
 //! side), ...). The sources are level-triggered, so a server clears what it
 //! handles (DMAIntStatus, ClearDMAInts).
 
-const intbits = @import("../hardware/hardware.zig").intbits;
+const hardware = @import("../hardware/hardware.zig");
+const intbits = hardware.intbits;
 
 /// The resource's name, for OpenResource.
 pub const DMANAME = "dma.resource";
 
-/// Channels 0 to DMA_CHANNELS - 1.
-pub const DMA_CHANNELS: u32 = 5;
+/// General channels 0 to DMA_CHANNELS - 1.
+pub const DMA_CHANNELS: u32 = switch (hardware.chip) {
+    .esp32s3 => 5,
+    .esp32p4 => 6,
+};
+/// The 2D-DMA's channels, numbered from DMA2D_CHANNEL0.
+pub const DMA2D_CHANNELS: u32 = switch (hardware.chip) {
+    .esp32s3 => 0,
+    .esp32p4 => 3,
+};
+pub const DMA2D_CHANNEL0: u32 = DMA_CHANNELS;
+/// Every channel the resource hands out, general and 2D.
+pub const DMA_ALL_CHANNELS: u32 = DMA_CHANNELS + DMA2D_CHANNELS;
 
 /// A channel's sides: IN receives (device to memory), OUT transmits
 /// (memory to device).
 pub const DMA_IN: u32 = 0;
 pub const DMA_OUT: u32 = 1;
 
-/// ConnectDMAChannel's peripherals (ESP-IDF's gdma_channel.h).
-pub const DMAPERI_SPI2: u32 = 0;
-pub const DMAPERI_SPI3: u32 = 1;
-pub const DMAPERI_UHCI0: u32 = 2;
-pub const DMAPERI_I2S0: u32 = 3;
-pub const DMAPERI_I2S1: u32 = 4;
-pub const DMAPERI_LCD: u32 = 5;
-pub const DMAPERI_CAM: u32 = 5;
-pub const DMAPERI_AES: u32 = 6;
-pub const DMAPERI_SHA: u32 = 7;
-pub const DMAPERI_ADC: u32 = 8;
-pub const DMAPERI_RMT: u32 = 9;
+/// ConnectDMAChannel's peripherals (ESP-IDF's gdma_channel.h). A name
+/// the chip does not have is DMAPERI_ABSENT, which it refuses.
+const peripherals = switch (hardware.chip) {
+    .esp32s3 => struct {
+        pub const DMAPERI_SPI2: u32 = 0;
+        pub const DMAPERI_SPI3: u32 = 1;
+        pub const DMAPERI_UHCI0: u32 = 2;
+        pub const DMAPERI_I2S0: u32 = 3;
+        pub const DMAPERI_I2S1: u32 = 4;
+        pub const DMAPERI_LCD: u32 = 5;
+        pub const DMAPERI_CAM: u32 = 5;
+        pub const DMAPERI_AES: u32 = 6;
+        pub const DMAPERI_SHA: u32 = 7;
+        pub const DMAPERI_ADC: u32 = 8;
+        pub const DMAPERI_RMT: u32 = 9;
+    },
+    // The AHB engine's, then the AXI engine's (bit 8).
+    .esp32p4 => struct {
+        pub const DMAPERI_I3C: u32 = 0;
+        pub const DMAPERI_UHCI0: u32 = 2;
+        pub const DMAPERI_I2S0: u32 = 3;
+        pub const DMAPERI_I2S1: u32 = 4;
+        pub const DMAPERI_I2S2: u32 = 5;
+        pub const DMAPERI_ADC: u32 = 8;
+        pub const DMAPERI_RMT: u32 = 10;
+        pub const DMAPERI_LCD: u32 = DMAPERI_AXI | 0;
+        pub const DMAPERI_CAM: u32 = DMAPERI_AXI | 0;
+        pub const DMAPERI_SPI2: u32 = DMAPERI_AXI | 1;
+        pub const DMAPERI_SPI3: u32 = DMAPERI_AXI | 2;
+        pub const DMAPERI_PARLIO: u32 = DMAPERI_AXI | 3;
+        pub const DMAPERI_AES: u32 = DMAPERI_AXI | 4;
+        pub const DMAPERI_SHA: u32 = DMAPERI_AXI | 5;
+    },
+};
+/// On the ESP32-P4: the peripheral is the AXI engine's (channels 3-5).
+pub const DMAPERI_AXI: u32 = 1 << 8;
+/// A peripheral this chip does not have.
+pub const DMAPERI_ABSENT: u32 = 0xFFFF;
+
+fn peripheral(comptime name: []const u8) u32 {
+    return if (@hasDecl(peripherals, name)) @field(peripherals, name) else DMAPERI_ABSENT;
+}
+pub const DMAPERI_SPI2: u32 = peripheral("DMAPERI_SPI2");
+pub const DMAPERI_SPI3: u32 = peripheral("DMAPERI_SPI3");
+pub const DMAPERI_UHCI0: u32 = peripheral("DMAPERI_UHCI0");
+pub const DMAPERI_I2S0: u32 = peripheral("DMAPERI_I2S0");
+pub const DMAPERI_I2S1: u32 = peripheral("DMAPERI_I2S1");
+pub const DMAPERI_I2S2: u32 = peripheral("DMAPERI_I2S2");
+pub const DMAPERI_I3C: u32 = peripheral("DMAPERI_I3C");
+pub const DMAPERI_LCD: u32 = peripheral("DMAPERI_LCD");
+pub const DMAPERI_CAM: u32 = peripheral("DMAPERI_CAM");
+pub const DMAPERI_PARLIO: u32 = peripheral("DMAPERI_PARLIO");
+pub const DMAPERI_AES: u32 = peripheral("DMAPERI_AES");
+pub const DMAPERI_SHA: u32 = peripheral("DMAPERI_SHA");
+pub const DMAPERI_ADC: u32 = peripheral("DMAPERI_ADC");
+pub const DMAPERI_RMT: u32 = peripheral("DMAPERI_RMT");
 /// Memory to memory: OUT's data goes to IN.
 pub const DMAPERI_MEMORY: u32 = 0xFF;
 
@@ -86,11 +155,22 @@ pub const DMADF_ERR_EOF: u32 = 1 << 28;
 pub const DMADF_SUC_EOF: u32 = 1 << 30;
 pub const DMADF_OWNER: u32 = 1 << 31;
 
+/// How a descriptor is aligned: the ESP32-P4's AXI engine takes them on
+/// 8 bytes only, so there every descriptor is (ESP-IDF's
+/// dma_descriptor_align8_t), and one is 16 bytes long.
+const descriptor_align = switch (hardware.chip) {
+    .esp32s3 => 4,
+    .esp32p4 => 8,
+};
+
 /// One link of a DMA chain, in memory a DMA engine addresses (MEMF_DMA),
-/// 4-byte aligned.
+/// on `descriptor_align` bytes. Where the data cache covers internal
+/// memory (the ESP32-P4), a chain is written back before a side starts on
+/// it (AllocDMAChain does) and invalidated before the CPU reads what the
+/// DMA wrote into it (CachePostDMA).
 /// dw0: the buffer's size (bits 0-11), the bytes in it (12-23), the flags.
 pub const DMADescriptor = extern struct {
-    dw0: u32 = 0,
+    dw0: u32 align(descriptor_align) = 0,
     buffer: ?*anyopaque = null,
     next: ?*DMADescriptor = null,
 
@@ -107,9 +187,25 @@ pub const DMADescriptor = extern struct {
     }
 };
 
-/// exec's interrupt number for a channel's side.
+/// What dmaIntNumber answers for a side there is not: 2D channel 2's
+/// receive side.
+pub const DMA_NOINT: u32 = 0xFFFF_FFFF;
+
+/// exec's interrupt number for a channel's side, general or 2D.
 pub fn dmaIntNumber(channel: u32, side: u32) u32 {
-    return (if (side == DMA_IN) intbits.INTB_DMA_IN_CH0 else intbits.INTB_DMA_OUT_CH0) + channel;
+    const in = side == DMA_IN;
+    switch (hardware.chip) {
+        .esp32s3 => return (if (in) intbits.INTB_DMA_IN_CH0 else intbits.INTB_DMA_OUT_CH0) + channel,
+        .esp32p4 => {
+            if (channel >= DMA2D_CHANNEL0) {
+                const n = channel - DMA2D_CHANNEL0;
+                if (!in) return intbits.INTB_DMA2D_OUT_CH0 + n;
+                return if (n < 2) intbits.INTB_DMA2D_IN_CH0 + n else DMA_NOINT;
+            }
+            if (channel >= 3) return (if (in) intbits.INTB_AXI_PDMA_IN_CH0 else intbits.INTB_AXI_PDMA_OUT_CH0) + channel - 3;
+            return (if (in) intbits.INTB_AHB_PDMA_IN_CH0 else intbits.INTB_AHB_PDMA_OUT_CH0) + channel;
+        },
+    }
 }
 
 /// The resource's base, with its functions.

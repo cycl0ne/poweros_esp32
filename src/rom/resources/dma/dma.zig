@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
-//! dma.resource: the chip's general DMA engine (GDMA, `sdk.hardware.gdma`),
-//! its 5 channels handed out to one owner each. AllocDMAChannel claims a
-//! channel under the resource's lock and gives null, or the owner's name
-//! if it is taken;
-//! FreeDMAChannel gives it back, and also stops and disconnects the
-//! channel. The ROM tag is cold start at priority 70 and the functions
-//! start in the first slot (sdk/fd/dma_lib.fd).
+//! dma.resource: the chip's DMA engines, their channels handed out to one
+//! owner each. AllocDMAChannel claims a channel under the resource's lock
+//! and gives null, or the owner's name if it is taken; FreeDMAChannel
+//! gives it back, and also stops and disconnects the channel. The ROM tag
+//! is cold start at priority 70 and the functions start in the first slot
+//! (sdk/fd/dma_lib.fd).
 //!
-//! The owner connects the channel (to a peripheral, or memory to memory)
-//! and starts its sides on descriptor chains in internal RAM. Its
-//! interrupts are exec's: the owner puts a server on dmaIntNumber(channel,
-//! side) and clears what it handles. ConnectDMAChannel refuses a
-//! peripheral another channel is connected to. Open points: docs/dma.md.
+//! **General channels**: the ESP32-S3's GDMA, the ESP32-P4's AHB and AXI
+//! engines numbered as one (`esp32s3/channels.zig`,
+//! `esp32p4/channels.zig`). The owner connects one (to a peripheral, or
+//! memory to memory) and starts its sides on descriptor chains in internal
+//! RAM. Its interrupts are exec's: the owner puts a server on
+//! dmaIntNumber(channel, side) and clears what it handles.
+//! ConnectDMAChannel refuses a peripheral another channel of the same
+//! engine is connected to.
+//!
+//! **The 2D-DMA's channels** (the ESP32-P4's) are numbered after them. The
+//! resource starts the 2D-DMA when it is made, hands its channels out and
+//! stops one given back; its owner drives it through `sdk.hardware.dma2d`,
+//! and the general calls refuse it.
 //!
 //! It builds against the SDK.
 
@@ -19,14 +26,20 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const gdma = sdk.hardware.gdma;
 const vec = exec.vec;
 const types = sdk.resources.dma;
+/// The chip's channels: the general ones, the 2D-DMA's.
+const chip = switch (sdk.hardware.chip) {
+    .esp32s3 => @import("esp32s3/channels.zig"),
+    .esp32p4 => @import("esp32p4/channels.zig"),
+};
+const general = chip.general;
+const all_channels = general + chip.dma2d_channels;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 0;
-const BUILD_DATE = "15.9.2026";
+const RESOURCE_REVISION = 1;
+const BUILD_DATE = "10.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -48,8 +61,9 @@ comptime {
             @compileError("dma.resource's lvo" ++ d.name ++ " isn't in the slot of LVO." ++ d.name);
         }
     }
-    if (types.DMA_CHANNELS != gdma.channels) @compileError("the SDK's DMA_CHANNELS isn't the GDMA's");
-    if (types.DMA_MAXPRI != gdma.max_priority) @compileError("the SDK's DMA_MAXPRI isn't the GDMA's");
+    if (types.DMA_CHANNELS != general) @compileError("the SDK's DMA_CHANNELS isn't the chip's");
+    if (types.DMA2D_CHANNELS != chip.dma2d_channels) @compileError("the SDK's DMA2D_CHANNELS isn't the chip's");
+    if (types.DMA_MAXPRI != chip.max_priority) @compileError("the SDK's DMA_MAXPRI isn't the chip's");
 }
 
 /// The base.
@@ -57,10 +71,12 @@ const DmaBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
-    /// Each channel's owner (the name given to AllocDMAChannel), or null.
-    owner: [gdma.channels]?[*:0]const u8,
-    /// The peripheral ID each channel is connected to, or no_peripheral.
-    peri: [gdma.channels]u8,
+    /// Each channel's owner (the name given to AllocDMAChannel), or null:
+    /// the general ones, then the 2D-DMA's.
+    owner: [all_channels]?[*:0]const u8,
+    /// The number each general channel is connected to on its engine, or
+    /// no_peripheral.
+    peri: [general]u8,
     /// The two tables above, and the connections they say: a spinlock,
     /// held for the test and the change.
     lock: exec.Lock,
@@ -70,15 +86,7 @@ fn dmaBase(lib: *exec.Library) *DmaBase {
     return @fieldParentPtr("lib", lib);
 }
 
-/// The highest peripheral ID (RMT).
-const max_peripheral = types.DMAPERI_RMT;
-
-/// Where descriptors may be: the internal data RAM the GDMA reaches
-/// (ESP-IDF's SOC_DMA_LOW/HIGH), which LINK's 20 address bits can name.
-const dma_ram_start = 0x3FC8_8000;
-const dma_ram_end = 0x3FD0_0000;
-
-fn sideOf(side: u32) ?gdma.Side {
+fn sideOf(side: u32) ?chip.Side {
     return switch (side) {
         types.DMA_IN => .in,
         types.DMA_OUT => .out,
@@ -87,7 +95,7 @@ fn sideOf(side: u32) ?gdma.Side {
 }
 
 fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
-    if (channel >= gdma.channels) return "(no such channel)";
+    if (channel >= all_channels) return "(no such channel)";
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
     if (db.owner[channel]) |owner| return owner;
@@ -96,97 +104,94 @@ fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(
 }
 
 fn lvoFreeDMAChannel(db: *DmaBase, channel: u32) callconv(.c) void {
-    if (channel >= gdma.channels) return;
+    if (channel >= all_channels) return;
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
-    gdma.disconnect(channel);
-    db.peri[channel] = gdma.no_peripheral;
+    if (channel < general) {
+        chip.disconnect(channel);
+        db.peri[channel] = chip.no_peripheral;
+    } else {
+        chip.stop2d(channel - general);
+    }
     db.owner[channel] = null;
 }
 
 fn lvoDMAChannelOwner(db: *DmaBase, channel: u32) callconv(.c) ?[*:0]const u8 {
-    if (channel >= gdma.channels) return null;
+    if (channel >= all_channels) return null;
     return db.owner[channel];
 }
 
-/// Whether another channel is connected to peripheral `id`. Two channels
-/// on one peripheral would both take its requests; ESP-IDF's gdma_connect
-/// refuses that too.
+/// Whether another channel of `channel`'s engine is connected to number
+/// `id`. Two channels on one peripheral would both take its requests;
+/// ESP-IDF's gdma_connect refuses that too.
 fn peripheralTaken(db: *DmaBase, channel: u32, id: u8) bool {
-    for (db.peri, 0..) |p, c| {
-        if (c != channel and p == id) return true;
+    for (db.peri, 0..) |p, other| {
+        if (other != channel and chip.sameEngine(@intCast(other), channel) and p == id) return true;
     }
     return false;
 }
 
-/// Memory to memory still needs a peripheral ID on both sides, one no other
-/// channel is connected to. ESP-IDF's async_memcpy takes the lowest; this
-/// takes the highest (RMT first), so the IDs drivers need (SPI, LCD) stay
-/// free longer.
+/// Memory to memory still needs a number on both sides, one no other
+/// channel of the engine is connected to: the first free one the chip
+/// offers.
 fn freePeripheral(db: *DmaBase, channel: u32) ?u8 {
-    var id: u8 = max_peripheral + 1;
-    while (id > 0) {
-        id -= 1;
+    for (chip.memoryIds(channel)) |id| {
         if (!peripheralTaken(db, channel, id)) return id;
     }
     return null;
 }
 
 fn lvoConnectDMAChannel(db: *DmaBase, channel: u32, peripheral: u32, flags: u32) callconv(.c) bool {
-    if (channel >= gdma.channels) return false;
+    if (channel >= general) return false;
     const mem_to_mem = peripheral == types.DMAPERI_MEMORY;
-    if (!mem_to_mem and peripheral > max_peripheral) return false;
+    const wanted: ?u8 = if (mem_to_mem) null else chip.peripheralId(channel, peripheral) orelse return false;
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
-    const id: u8 = if (mem_to_mem) freePeripheral(db, channel) orelse return false else @intCast(peripheral);
+    const id: u8 = wanted orelse freePeripheral(db, channel) orelse return false;
     if (peripheralTaken(db, channel, id)) return false;
-    gdma.connect(channel, id, mem_to_mem, flags & types.DMACF_BURST != 0, flags & types.DMACF_LOOP != 0, flags & types.DMACF_WIDE != 0);
+    chip.connect(channel, id, mem_to_mem, flags & types.DMACF_BURST != 0, flags & types.DMACF_LOOP != 0, flags & types.DMACF_WIDE != 0);
     db.peri[channel] = id;
     return true;
 }
 
 fn lvoStartDMA(_: *DmaBase, channel: u32, side: u32, list: *types.DMADescriptor) callconv(.c) bool {
     const s = sideOf(side) orelse return false;
-    if (channel >= gdma.channels) return false;
+    if (channel >= general) return false;
     const addr = @intFromPtr(list);
-    if (addr % 4 != 0 or addr < dma_ram_start or addr >= dma_ram_end) return false;
-    gdma.start(channel, s, @intCast(addr));
+    if (!chip.descriptorFits(channel, addr)) return false;
+    chip.start(channel, s, @intCast(addr));
     return true;
 }
 
 fn lvoStopDMA(_: *DmaBase, channel: u32, side: u32) callconv(.c) void {
     const s = sideOf(side) orelse return;
-    if (channel < gdma.channels) gdma.stop(channel, s);
+    if (channel < general) chip.stop(channel, s);
 }
 
 fn lvoResetDMA(_: *DmaBase, channel: u32, side: u32) callconv(.c) void {
     const s = sideOf(side) orelse return;
-    if (channel < gdma.channels) gdma.reset(channel, s);
+    if (channel < general) chip.reset(channel, s);
 }
 
 fn lvoEnableDMAInts(_: *DmaBase, channel: u32, side: u32, mask: u32) callconv(.c) void {
     const s = sideOf(side) orelse return;
-    if (channel < gdma.channels) gdma.setIntEnable(channel, s, mask);
+    if (channel < general) chip.setIntEnable(channel, s, mask);
 }
 
 fn lvoDMAIntStatus(_: *DmaBase, channel: u32, side: u32) callconv(.c) u32 {
     const s = sideOf(side) orelse return 0;
-    return if (channel < gdma.channels) gdma.intStatus(channel, s) else 0;
+    return if (channel < general) chip.intStatus(channel, s) else 0;
 }
 
 fn lvoDMARawIntStatus(_: *DmaBase, channel: u32, side: u32) callconv(.c) u32 {
     const s = sideOf(side) orelse return 0;
-    return if (channel < gdma.channels) gdma.rawIntStatus(channel, s) else 0;
+    return if (channel < general) chip.rawIntStatus(channel, s) else 0;
 }
 
 fn lvoClearDMAInts(_: *DmaBase, channel: u32, side: u32, mask: u32) callconv(.c) void {
     const s = sideOf(side) orelse return;
-    if (channel < gdma.channels) gdma.clearInts(channel, s, mask);
+    if (channel < general) chip.clearInts(channel, s, mask);
 }
-
-/// Where the GDMA reaches PSRAM: the data bus (ESP-IDF's SOC_DMA_EXT).
-const psram_start = 0x3C00_0000;
-const psram_end = 0x3E00_0000;
 
 fn within(addr: usize, length: u32, start: usize, end: usize) bool {
     return addr >= start and addr < end and length <= end - addr;
@@ -195,9 +200,9 @@ fn within(addr: usize, length: u32, start: usize, end: usize) bool {
 fn lvoAllocDMAChain(db: *DmaBase, side: u32, buffer: ?*anyopaque, length: u32, flags: u32) callconv(.c) ?*types.DMADescriptor {
     if (sideOf(side) == null or length == 0) return null;
     const addr = @intFromPtr(buffer orelse return null);
-    const chunk: u32 = if (within(addr, length, dma_ram_start, dma_ram_end))
+    const chunk: u32 = if (within(addr, length, chip.internal_start, chip.internal_end))
         types.DMA_CHUNK
-    else if (within(addr, length, psram_start, psram_end))
+    else if (within(addr, length, chip.psram_start, chip.psram_end))
         types.DMA_CHUNK_PSRAM
     else
         return null;
@@ -214,6 +219,9 @@ fn lvoAllocDMAChain(db: *DmaBase, side: u32, buffer: ?*anyopaque, length: u32, f
         descs[i].next = if (!last) &descs[i + 1] else if (flags & types.DMACHF_LOOP != 0) &descs[0] else null;
         done += n;
     }
+    // Out of the data cache, where it covers internal memory.
+    var bytes: u32 = count * @sizeOf(types.DMADescriptor);
+    _ = db.sys_base.CachePreDMA(block, &bytes, 0);
     return &descs[0];
 }
 
@@ -223,15 +231,15 @@ fn lvoFreeDMAChain(db: *DmaBase, chain: ?*types.DMADescriptor) callconv(.c) void
 
 fn lvoDMAEOFDescriptor(_: *DmaBase, channel: u32, side: u32) callconv(.c) ?*types.DMADescriptor {
     const s = sideOf(side) orelse return null;
-    if (channel >= gdma.channels) return null;
-    const addr = gdma.eofDescriptor(channel, s);
+    if (channel >= general) return null;
+    const addr = chip.eofDescriptor(channel, s);
     return if (addr == 0) null else @ptrFromInt(addr);
 }
 
 fn lvoSetDMAPriority(_: *DmaBase, channel: u32, side: u32, priority: u32) callconv(.c) bool {
     const s = sideOf(side) orelse return false;
-    if (channel >= gdma.channels or priority > gdma.max_priority) return false;
-    gdma.setPriority(channel, s, priority);
+    if (channel >= general or priority > chip.max_priority) return false;
+    chip.setPriority(channel, s, priority);
     return true;
 }
 
@@ -243,8 +251,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     db.sys_base = sys_base;
     sys_base.InitLock(&db.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     db.owner = @splat(null);
-    db.peri = @splat(gdma.no_peripheral);
-    gdma.init();
+    db.peri = @splat(chip.no_peripheral);
+    chip.init();
     return lib;
 }
 

@@ -43,6 +43,9 @@ pub const rtc_cntl = own.rtc_cntl;
 /// that drive a channel directly. The ESP32-P4 has two engines, AHB and
 /// AXI, so its calls name the engine as well as the channel.
 pub const gdma = own.gdma;
+/// The 2D-DMA's channels, for their owners once dma.resource has handed
+/// them out: the ESP32-P4's. The ESP32-S3 has none, so there it is empty.
+pub const dma2d = if (chip == .esp32p4) own.dma2d else struct {};
 /// The general-purpose SPI controllers (SPI2, SPI3) as bus masters.
 pub const gpspi = own.gpspi;
 pub const wdt = own.wdt;

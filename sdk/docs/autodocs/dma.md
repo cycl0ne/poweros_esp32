@@ -1,7 +1,7 @@
 # dma.resource
 
-dma.resource's functions: the chip's general DMA engine (GDMA), its
-channels handed out to one owner each. A
+dma.resource's functions: the chip's DMA engines, their channels
+handed out to one owner each (sdk/resources/dma.zig). A
 resource: no Open or Close, its first function in the first slot. The
 base comes from OpenResource("dma.resource").
 
@@ -10,20 +10,20 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AllocDMAChain](#allocdmachain) - A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT sends them all (EOF on the last descriptor), DMA_IN fills them.
-- [AllocDMAChannel](#allocdmachannel) - Claim a channel (0-4) for `name`: null if it is now yours, else its owner's name.
+- [AllocDMAChannel](#allocdmachannel) - Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its owner's name.
 - [ClearDMAInts](#cleardmaints) - Clear a side's interrupts.
-- [ConnectDMAChannel](#connectdmachannel) - Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
+- [ConnectDMAChannel](#connectdmachannel) - Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
 - [DMAChannelOwner](#dmachannelowner) - Who has a channel, or null.
 - [DMAEOFDescriptor](#dmaeofdescriptor) - The descriptor that ended a side's last frame: IN's with SUC_EOF, OUT's last with EOF sent.
 - [DMAIntStatus](#dmaintstatus) - A side's pending, enabled interrupts.
 - [DMARawIntStatus](#dmarawintstatus) - A side's interrupt bits as the hardware sets them, enabled or not: what a driver polls when it wants to know that something happened without being interrupted by it.
-- [EnableDMAInts](#enabledmaints) - Enable a side's interrupts (DMAINTF_*); 0: none.
+- [EnableDMAInts](#enabledmaints) - Enable a general channel's side's interrupts (DMAINTF_*); 0: none.
 - [FreeDMAChain](#freedmachain) - Free a chain from AllocDMAChain (null: nothing).
 - [FreeDMAChannel](#freedmachannel) - Give a channel back: it stops, is disconnected, its interrupts off.
 - [ResetDMA](#resetdma) - Reset a side: its FIFO and state machine, its connection and flags left as they are.
 - [SetDMAPriority](#setdmapriority) - A side's priority on the bus, 0 (lowest) to DMA_MAXPRI.
-- [StartDMA](#startdma) - Start a side (DMA_IN, DMA_OUT) on a descriptor chain.
-- [StopDMA](#stopdma) - Stop a side.
+- [StartDMA](#startdma) - Start a general channel's side (DMA_IN, DMA_OUT) on a descriptor chain.
+- [StopDMA](#stopdma) - Stop a general channel's side.
 
 ## AllocDMAChain
 
@@ -38,13 +38,13 @@ A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT sends th
 **BEHAVIOR**
 
 In internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per
-descriptor; DMACHF_LOOP links the last back to the first. Null if the
-buffer isn't in internal RAM or PSRAM, or without memory. Not from
-interrupts.
+descriptor; DMACHF_LOOP links the last back to the first. Written back
+from the data cache where it covers internal memory. Null if the buffer
+isn't in internal RAM or PSRAM, or without memory. Not from interrupts.
 
 ## AllocDMAChannel
 
-Claim a channel (0-4) for `name`: null if it is now yours, else its owner's name.
+Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its owner's name.
 
 **SYNOPSIS**
 
@@ -72,7 +72,7 @@ From interrupts too.
 
 ## ConnectDMAChannel
 
-Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
+Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
 
 **SYNOPSIS**
 
@@ -82,8 +82,8 @@ bool ConnectDMAChannel(u32 channel, u32 peripheral, u32 flags)
 
 **BEHAVIOR**
 
-Resets the channel. False for a bad channel or peripheral, or a
-peripheral another channel is connected to.
+Resets the channel. False for a bad or 2D channel, a peripheral not on
+the channel's engine, or one another channel is connected to.
 
 ## DMAChannelOwner
 
@@ -139,7 +139,7 @@ From interrupts too.
 
 ## EnableDMAInts
 
-Enable a side's interrupts (DMAINTF_*); 0: none.
+Enable a general channel's side's interrupts (DMAINTF_*); 0: none.
 
 **SYNOPSIS**
 
@@ -206,7 +206,7 @@ False for a bad channel, side or priority.
 
 ## StartDMA
 
-Start a side (DMA_IN, DMA_OUT) on a descriptor chain.
+Start a general channel's side (DMA_IN, DMA_OUT) on a descriptor chain.
 
 **SYNOPSIS**
 
@@ -216,12 +216,12 @@ bool StartDMA(u32 channel, u32 side, *dma.DMADescriptor list)
 
 **BEHAVIOR**
 
-False unless the first descriptor is 4-byte aligned in internal RAM.
-Memory to memory: IN first, then OUT.
+False unless the first descriptor is in internal RAM, 4-byte aligned (8
+on the ESP32-P4's AXI channels). Memory to memory: IN first, then OUT.
 
 ## StopDMA
 
-Stop a side.
+Stop a general channel's side.
 
 **SYNOPSIS**
 

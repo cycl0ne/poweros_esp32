@@ -28,7 +28,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
-const dma2d = @import("dma2d.zig");
+const dma2d = sdk.hardware.dma2d;
 const ppa = @import("ppa.zig");
 const engine_file = @import("engine.zig");
 const Engine = engine_file.Engine;
@@ -194,15 +194,15 @@ pub fn blendRect(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *c
 
 /// The two send channels and the receive channel joined to the unit.
 fn connect() bool {
-    if (!dma2d.connectOut(0, dma2d.peri_ppa_blend)) return false;
-    if (!dma2d.connectOut(1, dma2d.peri_ppa_blend_over)) return false;
-    return dma2d.connectIn(dma2d.peri_ppa_blend, false);
+    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_ppa_blend)) return false;
+    if (!dma2d.connectOut(engine_file.over_channel, dma2d.peri_ppa_blend_over)) return false;
+    return dma2d.connectIn(engine_file.receive_channel, dma2d.peri_ppa_blend, .{});
 }
 
 fn run3(parts: engine_file.Descriptors) void {
-    dma2d.runOut(0, parts.send_at);
-    dma2d.runOut(1, parts.over_at);
-    dma2d.runIn(parts.receive_at);
+    dma2d.runOut(engine_file.send_channel, parts.send_at);
+    dma2d.runOut(engine_file.over_channel, parts.over_at);
+    dma2d.runIn(engine_file.receive_channel, parts.receive_at);
 }
 
 /// 0xAARRGGBB cut to RGB565.

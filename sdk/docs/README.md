@@ -165,7 +165,7 @@ All are in the ROM.
 |---|---|---|
 | platform.resource | what machine this is: the chip, its clocks, where the code and the stacks are, whether there is PSRAM | [md](autodocs/platform.md) · [doc](autodocs/platform.doc) |
 | gpio.resource | who holds which of the chip's pads | [md](autodocs/gpio.md) · [doc](autodocs/gpio.doc) |
-| dma.resource | the chip's general DMA engine, its channels one owner each | [md](autodocs/dma.md) · [doc](autodocs/dma.doc) |
+| dma.resource | the chip's DMA engines, their channels one owner each | [md](autodocs/dma.md) · [doc](autodocs/dma.doc) |
 | expander.resource | the board's IO expander: the pins the panel, the touch controller and the card hang on, the backlight, an analogue input | [md](autodocs/expander.md) · [doc](autodocs/expander.doc) |
 | watchdog.resource | the chip's watchdog timer, armed, fed and disarmed by programs | [md](autodocs/watchdog.md) · [doc](autodocs/watchdog.doc) |
 

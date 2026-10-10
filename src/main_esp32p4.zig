@@ -4,7 +4,7 @@
 //! PSRAM as its memory, starts the tick and the second core, and goes on
 //! as the boot task: the `s3>` shell, or with `-Dselftest` the chip's
 //! checks and exec's test tasks (selftest_esp32p4.zig). Its ROM holds the
-//! S3 kernel's modules but the screen's and dma.resource.
+//! S3 kernel's modules but the S3's screens.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -43,6 +43,7 @@ comptime {
     _ = @import("rom/libs/utility/utility.zig");
     _ = @import("rom/libs/expansion/expansion.zig");
     _ = @import("rom/resources/gpio/gpio.zig");
+    _ = @import("rom/resources/dma/dma.zig");
     _ = @import("rom/libs/dos/dos.zig");
     _ = @import("rom/libs/ramlib/ramlib.zig");
     _ = @import("rom/handler/nil/nil.zig");

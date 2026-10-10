@@ -25,13 +25,13 @@ dma.resource/StopDMA
 
    BEHAVIOR
 	In internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per
-	descriptor; DMACHF_LOOP links the last back to the first. Null if the
-	buffer isn't in internal RAM or PSRAM, or without memory. Not from
-	interrupts.
+	descriptor; DMACHF_LOOP links the last back to the first. Written back
+	from the data cache where it covers internal memory. Null if the buffer
+	isn't in internal RAM or PSRAM, or without memory. Not from interrupts.
 dma.resource/AllocDMAChannel                      dma.resource/AllocDMAChannel
 
    NAME
-	AllocDMAChannel -- Claim a channel (0-4) for `name`: null if it is now yours, else its owner's name.
+	AllocDMAChannel -- Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its owner's name.
 
    SYNOPSIS
 	    ?[*:0]const u8 AllocDMAChannel(u32 channel, [*:0]const u8 name)
@@ -51,14 +51,14 @@ dma.resource/StopDMA
 dma.resource/ConnectDMAChannel                  dma.resource/ConnectDMAChannel
 
    NAME
-	ConnectDMAChannel -- Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
+	ConnectDMAChannel -- Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
 
    SYNOPSIS
 	    bool ConnectDMAChannel(u32 channel, u32 peripheral, u32 flags)
 
    BEHAVIOR
-	Resets the channel. False for a bad channel or peripheral, or a
-	peripheral another channel is connected to.
+	Resets the channel. False for a bad or 2D channel, a peripheral not on
+	the channel's engine, or one another channel is connected to.
 dma.resource/DMAChannelOwner                      dma.resource/DMAChannelOwner
 
    NAME
@@ -99,7 +99,7 @@ dma.resource/StopDMA
 dma.resource/EnableDMAInts                          dma.resource/EnableDMAInts
 
    NAME
-	EnableDMAInts -- Enable a side's interrupts (DMAINTF_*); 0: none.
+	EnableDMAInts -- Enable a general channel's side's interrupts (DMAINTF_*); 0: none.
 
    SYNOPSIS
 	    void EnableDMAInts(u32 channel, u32 side, u32 mask)
@@ -147,18 +147,18 @@ dma.resource/StopDMA
 dma.resource/StartDMA                                    dma.resource/StartDMA
 
    NAME
-	StartDMA -- Start a side (DMA_IN, DMA_OUT) on a descriptor chain.
+	StartDMA -- Start a general channel's side (DMA_IN, DMA_OUT) on a descriptor chain.
 
    SYNOPSIS
 	    bool StartDMA(u32 channel, u32 side, *dma.DMADescriptor list)
 
    BEHAVIOR
-	False unless the first descriptor is 4-byte aligned in internal RAM.
-	Memory to memory: IN first, then OUT.
+	False unless the first descriptor is in internal RAM, 4-byte aligned (8
+	on the ESP32-P4's AXI channels). Memory to memory: IN first, then OUT.
 dma.resource/StopDMA                                      dma.resource/StopDMA
 
    NAME
-	StopDMA -- Stop a side.
+	StopDMA -- Stop a general channel's side.
 
    SYNOPSIS
 	    void StopDMA(u32 channel, u32 side)

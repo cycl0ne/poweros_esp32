@@ -21,6 +21,9 @@ pub const systimer = @import("systimer.zig");
 /// The two general DMA engines' channels (AHB and AXI), for
 /// dma.resource and the drivers that drive a channel directly.
 pub const gdma = @import("gdma.zig");
+/// The 2D-DMA's channels (the PPA's and the JPEG codec's), for their
+/// owners once dma.resource has handed them out.
+pub const dma2d = @import("dma2d.zig");
 /// The general-purpose SPI controllers (SPI2, SPI3) as bus masters.
 pub const gpspi = @import("gpspi.zig");
 pub const wdt = @import("wdt.zig");

@@ -23,7 +23,7 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
-const dma2d = @import("dma2d.zig");
+const dma2d = sdk.hardware.dma2d;
 const ppa = @import("ppa.zig");
 const engine_file = @import("engine.zig");
 const blend = @import("blend.zig");
@@ -63,16 +63,16 @@ pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
 
     const parts = engine_file.descriptors(engine);
     ppa.resetScaler();
-    if (!dma2d.connectOut(0, dma2d.peri_ppa_srm)) return engine_file.failed(engine);
-    dma2d.portBlock(0, ppa.port_block, ppa.port_block);
-    if (!dma2d.connectIn(dma2d.peri_ppa_srm, false)) return engine_file.failed(engine);
+    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_ppa_srm)) return engine_file.failed(engine);
+    dma2d.portBlock(engine_file.send_channel, ppa.port_block, ppa.port_block);
+    if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_ppa_srm, .{})) return engine_file.failed(engine);
     dma2d.describe(parts.send, picture.first_row, picture.width, height, picture.column, 0, width, height, picture.source.pbyte);
     // The scaler says where each of its blocks goes; the descriptor only
     // names the picture they go into.
     dma2d.describe(parts.receive, block, pitch / 4, out_height, 0, 0, 2, 2, 0);
     const signal = engine_file.prepare(engine, sys, watched);
-    dma2d.runOut(0, parts.send_at);
-    dma2d.runIn(parts.receive_at);
+    dma2d.runOut(engine_file.send_channel, parts.send_at);
+    dma2d.runIn(engine_file.receive_channel, parts.receive_at);
     ppa.scale(picture.source.cm, picture.source.swap, x16, y16, height, out_width);
     const done = engine_file.wait(engine, sys, signal);
     var bytes: u32 = block_bytes;

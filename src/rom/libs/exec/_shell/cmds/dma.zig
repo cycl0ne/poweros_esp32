@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
-//! dma [copy <bytes>]: dma.resource's channels and who holds them, or a
-//! memory-to-memory copy through it.
+//! dma [copy <bytes> [<channel>]]: dma.resource's channels and who holds
+//! them, or a memory-to-memory copy through it.
 //!
-//! The copy runs on a free channel at the highest priority: two chains
-//! from AllocDMAChain (OUT over the source, IN over the destination), the
-//! IN side's interrupt through an exec server, a timer.device request of
-//! a second as the timeout.
+//! The copy runs on the channel named, or the first free general one, at
+//! the highest priority: two chains from AllocDMAChain (OUT over the
+//! source, IN over the destination), the IN side's interrupt through an
+//! exec server, a timer.device request of a second as the timeout. The
+//! buffers are whole cache lines, written back before and invalidated
+//! after where the data cache covers internal memory, and so is the IN
+//! chain before its descriptors are read.
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
@@ -19,10 +22,11 @@ const timer = sdk.devices.timer;
 const max_copy = 0x10000;
 
 pub const name = "dma";
-pub const usage = "dma [copy <bytes>]";
+pub const usage = "dma [copy <bytes> [<channel>]]";
 pub const help =
     \\  dma                  dma.resource's channels and their owners
-    \\  dma copy <bytes>     a memory-to-memory DMA copy (1-65536 bytes) through dma.resource
+    \\  dma copy <bytes> [<channel>]
+    \\                       a memory-to-memory DMA copy (1-65536 bytes) through dma.resource
     \\
 ;
 
@@ -34,16 +38,22 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const word = args.next() orelse {
         shell.print("channel  owner\n", .{});
         var channel: u32 = 0;
-        while (channel < dmares.DMA_CHANNELS) : (channel += 1) {
+        while (channel < dmares.DMA_ALL_CHANNELS) : (channel += 1) {
             const owner: [*:0]const u8 = db.DMAChannelOwner(channel) orelse "-";
-            shell.print("%7d  %s\n", .{ channel, owner });
+            if (channel < dmares.DMA2D_CHANNEL0) {
+                shell.print("%7d  %s\n", .{ channel, owner });
+            } else {
+                shell.print("%7d  %s (2D-DMA %d)\n", .{ channel, owner, channel - dmares.DMA2D_CHANNEL0 });
+            }
         }
         return;
     };
     if (!_shell.same(word, "copy")) return error.Usage;
     const bytes = try args.number();
     if (bytes == 0 or bytes > max_copy) return error.Usage;
-    try copy(shell, db, bytes);
+    const wanted: ?u32 = if (args.peek() != null) try args.number() else null;
+    if (wanted) |channel| if (channel >= dmares.DMA_CHANNELS) return error.Usage;
+    try copy(shell, db, bytes, wanted);
 }
 
 /// What the copy's interrupt server works with.
@@ -67,10 +77,20 @@ fn copyServer(data: ?*anyopaque, _: u32) callconv(.c) i32 {
     return 1;
 }
 
-fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32) !void {
+/// A cache line, and room for a buffer of up to `max_copy` bytes in
+/// whole ones.
+const line = sdk.hardware.DCACHE_LINE_SIZE;
+const room = max_copy + 2 * line;
+
+fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32, wanted: ?u32) !void {
     const sys = shell.base.iface();
-    var channel: u32 = 0;
-    while (channel < dmares.DMA_CHANNELS) : (channel += 1) {
+    var channel: u32 = wanted orelse 0;
+    if (wanted != null) {
+        if (db.AllocDMAChannel(channel, "shell")) |owner| {
+            shell.print("channel %d is %s's\n", .{ channel, owner });
+            return;
+        }
+    } else while (channel < dmares.DMA_CHANNELS) : (channel += 1) {
         if (db.AllocDMAChannel(channel, "shell") == null) break;
     } else {
         shell.print("all DMA channels are taken\n", .{});
@@ -86,13 +106,19 @@ fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32) !void {
         return;
     }
 
-    // Buffers in internal memory: the DMA addresses it directly, and it
-    // isn't cached.
-    const source: [*]u8 = @ptrCast(sys.AllocMem(bytes, sdk.exec.MEMF_INTERNAL) orelse return error.OutOfMemory);
-    defer sys.FreeMem(source, bytes);
-    const destination: [*]u8 = @ptrCast(sys.AllocMem(bytes, sdk.exec.MEMF_INTERNAL | sdk.exec.MEMF_CLEAR) orelse return error.OutOfMemory);
-    defer sys.FreeMem(destination, bytes);
+    // Buffers in internal memory, which the DMA addresses directly, on
+    // whole cache lines.
+    const source_room = sys.AllocMem(room, sdk.exec.MEMF_INTERNAL) orelse return error.OutOfMemory;
+    defer sys.FreeMem(source_room, room);
+    const destination_room = sys.AllocMem(room, sdk.exec.MEMF_INTERNAL | sdk.exec.MEMF_CLEAR) orelse return error.OutOfMemory;
+    defer sys.FreeMem(destination_room, room);
+    const source: [*]u8 = @ptrFromInt(lineUp(@intFromPtr(source_room)));
+    const destination: [*]u8 = @ptrFromInt(lineUp(@intFromPtr(destination_room)));
     for (source[0..bytes], 0..) |*b, i| b.* = @truncate(i *% 7 +% 1);
+    var cached: u32 = bytes;
+    _ = sys.CachePreDMA(source, &cached, sdk.exec.DMAF_ReadFromRAM);
+    cached = bytes;
+    _ = sys.CachePreDMA(destination, &cached, 0);
     const out_chain = db.AllocDMAChain(dmares.DMA_OUT, source, bytes, 0) orelse {
         shell.print("AllocDMAChain failed\n", .{});
         return;
@@ -139,7 +165,12 @@ fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32) !void {
         db.StopDMA(channel, dmares.DMA_IN);
         shell.print("channel %d: no end of frame after %ld us (status 0x%02x)\n", .{ channel, us, status });
     } else {
-        // What IN received, and whether its frame ended on its last descriptor.
+        cached = bytes;
+        sys.CachePostDMA(destination, &cached, 0);
+        // What IN received, and whether its frame ended on its last
+        // descriptor: the chain as the DMA wrote it back.
+        var links_bytes: u32 = (bytes + dmares.DMA_CHUNK - 1) / dmares.DMA_CHUNK * @sizeOf(dmares.DMADescriptor);
+        sys.CachePostDMA(in_chain, &links_bytes, 0);
         var received: u32 = 0;
         var links: u32 = 0;
         var last: *dmares.DMADescriptor = in_chain;
@@ -155,4 +186,8 @@ fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32) !void {
         const eof_text: [*:0]const u8 = if (at_last) "its last" else "NOT its last";
         shell.print("channel %d: %d bytes %s, %d received in %d descriptors, EOF at %s, status 0x%02x, %ld us\n", .{ channel, bytes, verdict, received, links, eof_text, status, us });
     }
+}
+
+fn lineUp(address: usize) usize {
+    return (address + line - 1) & ~@as(usize, line - 1);
 }
