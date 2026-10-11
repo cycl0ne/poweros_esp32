@@ -866,4 +866,5 @@ its drawer with its name in the File field
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
 | `C:test/Asl` | the file and font requesters |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |
+| `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |

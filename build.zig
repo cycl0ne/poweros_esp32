@@ -136,6 +136,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Prefs.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/Sheet.info", .picture = "x-office-spreadsheet", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
 };
 

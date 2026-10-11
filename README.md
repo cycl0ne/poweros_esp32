@@ -111,8 +111,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   change, and starts the programs in `SYS:WBStartup`.
   `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
   script from its. Programs add windows files are dropped on, icons and
-  Tools items (MultiView, Notepad, FontView and the file requester take
-  a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
+  Tools items (MultiView, Notepad, Sheet, FontView and the file requester
+  take a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
   and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
 - **Graphics and windows:** rtg.library for the displays;
   graphics.library with smooth curves and lines, rounded rectangles,
@@ -138,6 +138,13 @@ Espressif's QEMU. The ESP32-P4 is next.
   eased values, timers that do not drift, timelines; a style change
   fades, a gauge fills, a list glides. See the
   [motion guide](sdk/docs/guides/motion.md).
+- **Spreadsheet:** `SYS:Programs/Sheet` - cells of numbers, text and
+  formulas (operators, references with and without `$`, ranges, SUM,
+  AVERAGE, IF and two dozen more functions) worked out again on every
+  change; fill, copy and paste with the references moving along; rows
+  and columns put in and taken out; a hundred steps of undo; the sum of
+  the cells picked in its status line; CSV files, as every spreadsheet
+  reads them, decimal commas included.
 - **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts,
   the input, whether windows may be moved partly past the screen's
   edges, and the desktop's ground, picture and drawers

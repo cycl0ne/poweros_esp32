@@ -324,8 +324,8 @@ while (target.next(dl, &name)) |dropped| open(dropped.name);
 ```
 
 MultiView shows a file let go on it in place of the one there, Notepad
-opens it, FontView chooses a font file's family, and asl's file requester
-goes to the file's drawer with its name filled in. `C:test/App
+and Sheet open it, FontView chooses a font file's family, and asl's file
+requester goes to the file's drawer with its name filled in. `C:test/App
 NAME/K,ITEM/K,WINDOW/S` adds an icon, a Tools item and with `WINDOW` a
 window, and prints every message they bring.
 

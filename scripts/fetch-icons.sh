@@ -24,6 +24,7 @@ mimetypes/text-x-generic
 mimetypes/text-x-script
 mimetypes/image-x-generic
 mimetypes/x-office-document
+mimetypes/x-office-spreadsheet
 mimetypes/audio-x-generic
 devices/audio-card
 devices/multimedia-player

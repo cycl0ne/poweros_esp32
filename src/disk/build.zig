@@ -58,6 +58,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
     .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
+    .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
 };
 
