@@ -149,6 +149,11 @@ window on its screen that was active before it is active again - a
 program's window when its requester goes, the desktop when a program it
 started ends.
 
+The depth gadget brings a window that another one overlaps from in front
+to the front, and sends a window nothing covers to the back, so that
+pressing it again and again goes through every window piled on one spot.
+With Shift held it sends the window to the back whatever covers it.
+
 A window is kept wholly on its screen as it is moved and sized, by the
 calls and by its title bar and sizing gadget alike; `SizeWindow` grows it
 no further than the screen's edges and never moves it. With

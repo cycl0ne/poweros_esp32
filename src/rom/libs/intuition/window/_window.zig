@@ -276,23 +276,24 @@ pub fn barHeight(font_height: u32) i32 {
 /// given as a proportion of that height.
 ///
 /// A pixel on these panels is square, so the shape a gadget is drawn in
-/// is the shape of its two numbers, and these are the shapes the
-/// drawings are made for: the sizing gadget a fifth wider than it is
-/// tall, the close gadget half again as wide, the depth gadget - and
-/// the zoom gadget beside it - wider still, since it shows one window
-/// over another. Taking them from the bar's height rather than fixing
+/// is the shape of its two numbers. The close gadget and the depth and
+/// zoom gadgets have the shape of the grid their drawings are laid out on
+/// in sysiclass, 20 by 11 and 24 by 11, so a drawing is scaled the same
+/// across as down and never squeezed. The sizing gadget is a fifth wider
+/// than it is tall. Taking them from the bar's height rather than fixing
 /// them in pixels keeps the shapes whatever font the screen is opened
-/// with.
+/// with; at an eight-row font the bar is 11 rows and the bar's gadgets
+/// are their grids to the pixel.
 pub fn sizeWidth(font_height: u32) i32 {
     return @divTrunc(barHeight(font_height) * 13, 11);
 }
 
 pub fn closeWidth(font_height: u32) i32 {
-    return @divTrunc(barHeight(font_height) * 15, 11);
+    return @divTrunc(barHeight(font_height) * 20, 11);
 }
 
 pub fn depthWidth(font_height: u32) i32 {
-    return @divTrunc(barHeight(font_height) * 18, 11);
+    return @divTrunc(barHeight(font_height) * 24, 11);
 }
 
 /// The zoom gadget is the depth gadget's size, and sits beside it.
@@ -314,6 +315,22 @@ pub fn closeWidthOf(w: *const Window) i32 {
 /// The depth gadget's, and the zoom gadget's.
 pub fn depthWidthOf(w: *const Window) i32 {
     return depthWidth(w.screen.font.image.height);
+}
+
+/// Where the depth gadget sits in a window's title bar, and the zoom
+/// gadget beside it: the left edge each is drawn at and hit from, one
+/// column narrower than its image. The image reaches that column further
+/// left, into the groove where the bar ends, so the depth gadget's last
+/// column is the window's right edge and the zoom gadget's last column is
+/// the depth gadget's groove. A zoom gadget with no depth gadget takes
+/// the depth gadget's place.
+pub fn depthLeft(w: *const Window) i32 {
+    return w.width - depthWidthOf(w) + 1;
+}
+
+pub fn zoomLeft(w: *const Window) i32 {
+    const right = if (w.flags & WF_DEPTH != 0) depthLeft(w) else w.width;
+    return right - depthWidthOf(w) + 1;
 }
 pub const side_border = 4;
 pub const bottom_border = 2;
@@ -542,8 +559,8 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
         gb.Text(rp, title, textLen(title));
     }
     if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
-    if (w.depth_image) |image| it.DrawImageState(rp, image, w.width - depthWidthOf(w), 0, state, dri);
-    if (w.zoom_image) |image| it.DrawImageState(rp, image, w.width - 2 * depthWidthOf(w), 0, state, dri);
+    if (w.depth_image) |image| it.DrawImageState(rp, image, depthLeft(w), 0, state, dri);
+    if (w.zoom_image) |image| it.DrawImageState(rp, image, zoomLeft(w), 0, state, dri);
     if (w.size_image) |image| {
         const box = sizeBoxOf(w);
         it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
@@ -734,8 +751,8 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
     } orelse return;
     const x: i32 = switch (which) {
         .close => 0,
-        .depth => w.width - depthWidthOf(w),
-        .zoom => w.width - 2 * depthWidthOf(w),
+        .depth => depthLeft(w),
+        .zoom => zoomLeft(w),
         .size => w.width - sizeBoxOf(w).width,
     };
     const y: i32 = if (which == .size) w.height - sizeBoxOf(w).height else 0;

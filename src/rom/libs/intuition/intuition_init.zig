@@ -98,7 +98,11 @@ pub const LIBRARY_VERSION = 0;
 /// gadgets and what a size leaves behind drawn aside an area at a time -
 /// and sized by the user a step at a time, each when the program has
 /// answered the last IDCMP_NEWSIZE; a gadget drawn whole is drawn aside.
-pub const LIBRARY_REVISION = 38;
+/// 39: the depth gadget brings a window another one overlaps from in
+/// front to the front and sends one nothing covers to the back, Shift
+/// always to the back; the bar's gadgets have the shape of their
+/// drawings' grids, depth and zoom flush with the window's right edge.
+pub const LIBRARY_REVISION = 39;
 const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

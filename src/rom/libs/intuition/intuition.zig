@@ -1966,8 +1966,8 @@ test "windows: which border holds the size gadget, and who paints the empty part
     const size_height: usize = @intCast(_window.barHeight(8));
     try testing.expectEqual(@as(usize, 13), size_width);
     try testing.expectEqual(@as(usize, 11), size_height);
-    try testing.expectEqual(@as(i32, 15), _window.closeWidth(8));
-    try testing.expectEqual(@as(i32, 18), _window.depthWidth(8));
+    try testing.expectEqual(@as(i32, 20), _window.closeWidth(8));
+    try testing.expectEqual(@as(i32, 24), _window.depthWidth(8));
     try testing.expectEqual(size_width, windowAttr(ib, right, wn.WA_BorderRight));
     try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < size_height);
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, right, wn.WA_Screen));
@@ -2661,8 +2661,8 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     }).?;
     const listen = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_RAWKEY | wn.IDCMP_INTUITICKS | wn.IDCMP_CLOSEWINDOW |
         wn.IDCMP_CHANGEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW;
-    // Close 4..18, drag bar 19..23, zoom 24..41, depth 42..59; the size
-    // gadget in the bottom right corner.
+    // Close 4..23, drag bar 24..36, depth 37..59 - too narrow for a zoom
+    // gadget beside them; the size gadget in the bottom right corner.
     const w = ib.iface().OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Left, .data = 4 },
         .{ .tag = wn.WA_Top, .data = 12 },
@@ -2722,9 +2722,9 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
 
     // The drag bar: held, moved by two and one, let go.
-    pointerEvent(ib, ie.IECODE_LBUTTON, 21, 14);
-    pointerEvent(ib, ie.IECODE_NOBUTTON, 23, 15);
-    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 23, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON, 26, 14);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 28, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 28, 15);
     try testing.expectEqual(@as(usize, 6), windowAttr(ib, w, wn.WA_Left));
     try testing.expectEqual(@as(usize, 13), windowAttr(ib, w, wn.WA_Top));
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
@@ -2771,6 +2771,83 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     ib.iface().CloseWindow(w);
     ib.iface().CloseWindow(other);
+    try testing.expect(ib.iface().CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "input: the depth gadget brings a covered window forward and sends an uncovered one back" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+    const lb: *sdk.interface.layers.LayersBase = ib.layers_base;
+
+    // Three windows, each in front of the one before: the first a
+    // GimmeZeroZero one, whose interior is a layer in front of its own;
+    // the second over its bottom right; the third clear of both. At an
+    // eight-row font a depth gadget is the last seventeen columns.
+    const Opened = struct {
+        fn at(it: anytype, left: usize, top: usize, gimme: bool) *intuition.Window {
+            return it.OpenWindowTagList(&[_]TagItem{
+                .{ .tag = wn.WA_Left, .data = left },
+                .{ .tag = wn.WA_Top, .data = top },
+                .{ .tag = wn.WA_Width, .data = 42 },
+                .{ .tag = wn.WA_Height, .data = 22 },
+                .{ .tag = wn.WA_DepthGadget, .data = 1 },
+                .{ .tag = wn.WA_DragBar, .data = 1 },
+                .{ .tag = wn.WA_GimmeZeroZero, .data = @intFromBool(gimme) },
+                .{},
+            }).?;
+        }
+    };
+    const first = Opened.at(ib.iface(), 2, 12, true);
+    const second = Opened.at(ib.iface(), 24, 24, false);
+    const clear = Opened.at(ib.iface(), 68, 30, false);
+    const first_layer: *sdk.layers.Layer = @ptrFromInt(windowAttr(ib, first, wn.WA_Layer));
+    const second_layer: *sdk.layers.Layer = @ptrFromInt(windowAttr(ib, second, wn.WA_Layer));
+
+    const Order = struct {
+        /// Whether `front` is somewhere in front of `back`.
+        fn before(layers_base: *sdk.interface.layers.LayersBase, front: *sdk.layers.Layer, back: *sdk.layers.Layer) bool {
+            var at: usize = @intFromPtr(back);
+            while (at != 0) {
+                var next: usize = 0;
+                const ask = [_]TagItem{ .{ .tag = sdk.layers.LATAG_GetInFront, .data = @intFromPtr(&next) }, .{} };
+                layers_base.GetLayerAttrs(@ptrFromInt(at), &ask);
+                if (next == @intFromPtr(front)) return true;
+                at = next;
+            }
+            return false;
+        }
+    };
+    try testing.expect(Order.before(lb, second_layer, first_layer));
+
+    // The second: nothing that overlaps it is in front of it - the third
+    // is, but elsewhere - so to the back, behind the first.
+    click(ib, 24 + 36, 27);
+    try testing.expect(Order.before(lb, first_layer, second_layer));
+
+    // The first, now uncovered: to the back as well, its interior with it.
+    click(ib, 2 + 36, 15);
+    try testing.expect(Order.before(lb, second_layer, first_layer));
+
+    // Again: the second covers it now, so to the front.
+    click(ib, 2 + 36, 15);
+    try testing.expect(Order.before(lb, first_layer, second_layer));
+
+    // The second, covered, with Shift held: to the back all the same.
+    const down: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON, .qualifier = ie.IEQUALIFIER_LSHIFT, .x = 24 + 36, .y = 27 };
+    const up: ie.InputEvent = .{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, .qualifier = ie.IEQUALIFIER_LSHIFT, .x = 24 + 36, .y = 27 };
+    _input.handle(ib, &down);
+    _input.handle(ib, &up);
+    try testing.expect(Order.before(lb, first_layer, second_layer));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, first, wn.WA_Screen));
+    ib.iface().CloseWindow(clear);
+    ib.iface().CloseWindow(second);
+    ib.iface().CloseWindow(first);
     try testing.expect(ib.iface().CloseScreen(s));
     display.down(ib);
     try tearDown(ib);

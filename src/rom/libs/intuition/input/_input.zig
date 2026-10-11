@@ -473,12 +473,11 @@ pub fn partAt(w: *const Window, x: i32, y: i32) Part {
     if (x < 0 or y < 0 or x >= w.width or y >= w.height) return .none;
     if (w.flags & _window.WF_BORDERLESS != 0) return .inside;
     if (y < w.border_top) {
-        const bar_gadget = _window.depthWidthOf(w);
         if (w.flags & _window.WF_CLOSE != 0 and x < _window.closeWidthOf(w)) return .close;
-        if (w.flags & _window.WF_DEPTH != 0 and x >= w.width - bar_gadget) return .depth;
+        if (w.flags & _window.WF_DEPTH != 0 and x >= _window.depthLeft(w)) return .depth;
         if (w.flags & _window.WF_HASZOOM != 0) {
-            const right = w.width - @as(i32, if (w.flags & _window.WF_DEPTH != 0) bar_gadget else 0);
-            if (x >= right - bar_gadget and x < right) return .zoom;
+            const left = _window.zoomLeft(w);
+            if (x >= left and x < left + _window.depthWidthOf(w) - 1) return .zoom;
         }
         return if (w.flags & _window.WF_DRAG != 0) .drag else .border;
     }
@@ -1486,13 +1485,36 @@ fn release(ib: *IntuitionBase) void {
     }
 }
 
-/// A window to the back when it is in front of every other, else to the
-/// front: what its depth gadget does.
+/// What a window's depth gadget does: a window another one overlaps from
+/// in front comes to the front, and one nothing covers goes to the back,
+/// so that pressing it again and again goes through every window piled
+/// on one spot. With Shift held it goes to the back whatever covers it.
 fn depthToggle(ib: *IntuitionBase, w: *Window) void {
-    var in_front: usize = 0;
-    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&in_front) }, .{} };
-    ib.layers_base.GetLayerAttrs(w.layer, &ask);
-    if (in_front == 0) ib.iface().WindowToBack(@ptrCast(w)) else ib.iface().WindowToFront(@ptrCast(w));
+    const shifted = stateOf(ib).qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+    if (!shifted and obscured(ib, w)) ib.iface().WindowToFront(@ptrCast(w)) else ib.iface().WindowToBack(@ptrCast(w));
+}
+
+/// Whether another window in front of `w` overlaps it. The layers in
+/// front of its own are walked to the front: its interior and its
+/// requesters are its own, and a layer that is no window's - the
+/// screen's title bar, a panel - covers nothing.
+fn obscured(ib: *IntuitionBase, w: *Window) bool {
+    var layer = layerInFront(ib, w.layer);
+    while (layer) |at| : (layer = layerInFront(ib, at)) {
+        const other = windowOfLayer(w.screen, at) orelse continue;
+        if (other == w) continue;
+        if (other.left < w.left + w.width and w.left < other.left + other.width and
+            other.top < w.top + w.height and w.top < other.top + other.height) return true;
+    }
+    return false;
+}
+
+/// The layer immediately in front of `layer`, or null for the frontmost.
+fn layerInFront(ib: *IntuitionBase, layer: *layers.Layer) ?*layers.Layer {
+    var next: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&next) }, .{} };
+    ib.layers_base.GetLayerAttrs(layer, &ask);
+    return @ptrFromInt(next);
 }
 
 /// Which of the window's own gadgets a gadget stands for (`GA_SysGadget`,
