@@ -346,7 +346,13 @@ picture by its mode instead: an upright and a sideways one, chosen with
 A board with `RTGBC_POINTER` lays a small image over the picture on its
 way to the glass, without the picture ever holding it - so the pointer
 can move over a screen that is being drawn without either disturbing the
-other.
+other. Where the display reads the picture straight out of memory, as
+the DSI boards' stream does, the board streams a copy of what is shown
+instead, from the first time a pointer is shown, and lays the pointer
+into the copy: a frame's memory more (the HDMI link has its copy
+anyway), and every refreshed row copied once more by the 2D-DMA. A
+board touched only with a finger never shows one, and never makes the
+copy.
 
 - `SetBoardPointer(board, image, hot_x, hot_y)` takes a surface with an
   alpha channel, at most `RTG_POINTER_MAX` (64) each way, and converts it

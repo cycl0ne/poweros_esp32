@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The picture an HDMI bridge is sent: RGB888, which is all the bridge
-//! takes, beside screens drawn in RGB565 - and this revision of the chip
-//! converts nothing on its way to the link.
+//! A copy of what is shown, which the stream reads instead of the
+//! screens: for an HDMI bridge always, and for a panel once a pointer
+//! is laid over the picture (`pointer.zig`), which the screens never
+//! hold.
 //!
-//! So the board keeps a copy of what is shown, three bytes a pixel, the
-//! size of the mode, and the stream reads that copy instead of the
-//! screens. What is shown is still bands of the screens' buffers; showing
+//! An HDMI bridge takes only RGB888, beside screens drawn in RGB565 - and
+//! this revision of the chip converts nothing on its way to the link - so
+//! its copy is three bytes a pixel; a panel's is the screens' own RGB565.
+//! Either is the size of the mode. What is shown is still bands of the
+//! screens' buffers; showing
 //! them converts each band's rows into the copy, at the lines it covers,
 //! and from then on rows a caller has drawn (RefreshBitMap) are converted
 //! again wherever a band shows them. A band that repeats a buffer's first
@@ -13,12 +16,13 @@
 //! sends that line again for each of its lines - its chain is built over
 //! the copy as it would be over the buffers (`streamBands`).
 //!
-//! **The conversion** is the engine's: a 2D-DMA copy whose send channel
-//! widens RGB565 to RGB888 as it reads, rows of the buffer into rows of
-//! the copy, under the engine's semaphore and on its channels. Without
-//! the engine the CPU converts, writing the copy through its uncached
-//! view. The CPU never reads the copy, and writes it only uncached, so no
-//! line of it is ever dirty in the data cache to be written over the
+//! **The conversion** is the engine's: a 2D-DMA copy, rows of the buffer
+//! into rows of the copy - its send channel widening RGB565 to RGB888 as
+//! it reads, for an RGB888 copy - under the engine's semaphore and on its
+//! channels. Without the engine the CPU converts, writing the copy
+//! through its uncached view. The CPU never reads the copy, and writes it
+//! only uncached (`put`, which the pointer's pixels go through too), so
+//! no line of it is ever dirty in the data cache to be written over the
 //! engine's work.
 
 const sdk = @import("sdk");
@@ -33,12 +37,14 @@ const Engine = engine_file.Engine;
 const uncached_offset: usize = 0x4000_0000;
 
 pub const Link = struct {
-    /// The copy: `width` x `height` pixels of three bytes, its rows
-    /// `pitch` apart, on a cache line; the block it is in.
+    /// The copy: `width` x `height` pixels of `format` - `bgr24` or
+    /// `rgb565` - its rows `pitch` apart, on a cache line; the block it
+    /// is in. No copy while `pixels` is 0.
     pixels: usize = 0,
     width: u32 = 0,
     height: u32 = 0,
     pitch: u32 = 0,
+    format: rtg.PixelFormat = .bgr24,
     memory: ?*anyopaque = null,
     memory_size: u32 = 0,
     /// The bands shown, as the screens' buffers give them.
@@ -53,15 +59,16 @@ pub const Link = struct {
     cpu_rows: u32 = 0,
 };
 
-/// The copy for a mode `width` x `height`, black; false without memory.
-pub fn allocate(link: *Link, sys: *ExecBase, width: u32, height: u32) bool {
+/// The copy for a mode `width` x `height`, in `format` (`bgr24` or
+/// `rgb565`), black; false without memory.
+pub fn allocate(link: *Link, sys: *ExecBase, width: u32, height: u32, format: rtg.PixelFormat) bool {
     const line = sdk.hardware.DCACHE_LINE_SIZE;
-    const pitch = width * 3;
+    const pitch = width * @as(u32, if (format == .rgb565) 2 else 3);
     const bytes = pitch * height;
     const size = bytes + line;
     const memory = sys.AllocMem(size, exec.MEMF_EXTERNAL) orelse return false;
     const pixels = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
-    link.* = .{ .pixels = pixels, .width = width, .height = height, .pitch = pitch, .memory = memory, .memory_size = size };
+    link.* = .{ .pixels = pixels, .width = width, .height = height, .pitch = pitch, .format = format, .memory = memory, .memory_size = size };
     // Black, written past the cache, and none of it left in the cache.
     var cleared: u32 = bytes;
     _ = sys.CachePreDMA(@ptrFromInt(pixels), &cleared, 0);
@@ -69,7 +76,7 @@ pub fn allocate(link: *Link, sys: *ExecBase, width: u32, height: u32) bool {
     const words: [*]volatile u32 = @ptrFromInt(pixels + uncached_offset);
     var at: usize = 0;
     while (at < bytes / 4) : (at += 1) words[at] = 0;
-    link.whole = .{ .width = width, .height = height, .pitch = pitch, .format = .bgr24, .pixels = @ptrFromInt(pixels) };
+    link.whole = .{ .width = width, .height = height, .pitch = pitch, .format = format, .pixels = @ptrFromInt(pixels) };
     return true;
 }
 
@@ -154,34 +161,65 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
     if (source.pitch % 2 != 0 or source.pitch / 2 > dma2d.field_max) return false;
     const parts = engine_file.descriptors(engine);
     if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_memory_out)) return false;
-    dma2d.convertOut(engine_file.send_channel, .rgb565_to_rgb888);
+    const wide = link.format == .bgr24;
+    if (wide) dma2d.convertOut(engine_file.send_channel, .rgb565_to_rgb888);
     if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return false;
     const width = @min(link.width, source.width);
     dma2d.describe(parts.send, @intFromPtr(source.pixels.?), source.pitch / 2, source.height, 0, row, width, rows, dma2d.pbyte_2);
-    dma2d.describe(parts.receive, link.pixels, link.width, link.height, 0, line, width, rows, dma2d.pbyte_3);
+    dma2d.describe(parts.receive, link.pixels, link.width, link.height, 0, line, width, rows, if (wide) dma2d.pbyte_3 else dma2d.pbyte_2);
     const signal = engine_file.prepare(engine, sys, watched);
     dma2d.runOut(engine_file.send_channel, parts.send_at);
     dma2d.runIn(engine_file.receive_channel, parts.receive_at);
     return engine_file.wait(engine, sys, signal);
 }
 
-/// The CPU's conversion, blue first as the engine writes it, through the
-/// copy's uncached view.
+/// The CPU's conversion, through the copy's uncached view.
 fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32) void {
     const width = @min(link.width, source.width);
     var r: u32 = 0;
     while (r < rows) : (r += 1) {
         const from: [*]const u16 = @ptrFromInt(@intFromPtr(source.pixels.?) + @as(usize, row + r) * source.pitch);
-        const to: [*]volatile u8 = @ptrFromInt(link.pixels + uncached_offset + @as(usize, line + r) * link.pitch);
-        var x: u32 = 0;
-        while (x < width) : (x += 1) {
-            const pixel = from[x];
-            const red: u8 = @truncate(pixel >> 11);
-            const green: u8 = @truncate((pixel >> 5) & 0x3F);
-            const blue: u8 = @truncate(pixel & 0x1F);
-            to[x * 3] = blue << 3 | blue >> 2;
-            to[x * 3 + 1] = green << 2 | green >> 4;
-            to[x * 3 + 2] = red << 3 | red >> 2;
-        }
+        put(link, line + r, 0, from, width);
     }
+}
+
+/// `count` RGB565 pixels from `from` into the copy at column `x` of line
+/// `line`, through its uncached view: as they are into an RGB565 copy,
+/// widened blue first - as the engine writes them - into an RGB888 one.
+/// The caller keeps them inside the copy.
+pub fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32) void {
+    const row = link.pixels + uncached_offset + @as(usize, line) * link.pitch;
+    if (link.format == .rgb565) {
+        const to: [*]volatile u16 = @ptrFromInt(row + @as(usize, x) * 2);
+        var at: u32 = 0;
+        while (at < count) : (at += 1) to[at] = from[at];
+        return;
+    }
+    const to: [*]volatile u8 = @ptrFromInt(row + @as(usize, x) * 3);
+    var at: u32 = 0;
+    while (at < count) : (at += 1) {
+        const pixel = from[at];
+        const red: u8 = @truncate(pixel >> 11);
+        const green: u8 = @truncate((pixel >> 5) & 0x3F);
+        const blue: u8 = @truncate(pixel & 0x1F);
+        to[at * 3] = blue << 3 | blue >> 2;
+        to[at * 3 + 1] = green << 2 | green >> 4;
+        to[at * 3 + 2] = red << 3 | red >> 2;
+    }
+}
+
+/// The row of the shown buffers that display line `line` shows: its
+/// band's, in RGB565; null where no band covers it.
+pub fn sourceRow(link: *const Link, line: u32) ?[*]const u16 {
+    var index = link.shown_count;
+    while (index > 0) {
+        index -= 1;
+        const band = link.shown[index];
+        if (line < band.line) continue;
+        const pixels = band.bitmap.pixels orelse return null;
+        const row = band.rowAt(line);
+        if (row >= band.bitmap.height) return null;
+        return @ptrFromInt(@intFromPtr(pixels) + @as(usize, row) * band.bitmap.pitch);
+    }
+    return null;
 }
