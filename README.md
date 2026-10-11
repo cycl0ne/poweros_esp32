@@ -7,8 +7,8 @@ devices, a DOS with file systems and a shell, a TCP/IP stack, and a
 windowed desktop on the board's display. Programs are loaded from disk at
 run time and built against a separate SDK.
 
-**Status: release 0.1.** It runs on two ESP32-S3 boards and in
-Espressif's QEMU. The ESP32-P4 is next.
+**Status: release 0.1.** It runs on two ESP32-S3 boards, on two
+ESP32-P4 boards and in Espressif's QEMU.
 
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
@@ -19,6 +19,10 @@ Espressif's QEMU. The ESP32-P4 is next.
 <p>
 <a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the System disk opened, its drawers and its programs"></a>
 <a href="docs/screenshots/README.md#two-screens-the-desktop-in-front-of-cteststyles-dark"><img src="docs/screenshots/desktop2.jpeg" width="49%" alt="The desktop's screen pulled down in front of a dark-style screen with CPU Load"></a>
+</p>
+<p>
+<a href="docs/screenshots/README.md#on-the-board"><img src="docs/screenshots/board-olimex-p4pc.jpg" width="49%" alt="The Olimex ESP32-P4-PC on a television over HDMI, with a USB keyboard and mouse: Plasma, Lines and CPU Load"></a>
+<a href="docs/screenshots/README.md#on-the-board"><img src="docs/screenshots/board-es3c35p.jpg" width="49%" alt="The ES3C35P's 3.5-inch panel with the shell after boot"></a>
 </p>
 
 ## Contents
@@ -31,7 +35,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [displays](sdk/docs/guides/rtg.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [displays](sdk/docs/guides/rtg.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
@@ -71,8 +75,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   rules, and every system list under a lock of its own, so neither core
   ever stops the other; libraries and devices opened by name, each under
   its own lock, loaded from disk on demand and expunged when memory runs
-  short; internal SRAM and 8 MiB of
-  PSRAM as memory with attributes. A system log from the first byte of
+  short; internal SRAM and the PSRAM (8 MiB on the ESP32-S3 boards, 32 on
+  the ESP32-P4 ones) as memory with attributes. A system log from the first byte of
   the boot, with levels, on the USB console where UART0 is not wired, and
   to a syslog server (`C:Log`). A Guru that names the failed check and
   offers a ROM debugger - registers, memory, backtrace, breakpoints,
@@ -210,7 +214,7 @@ Espressif's QEMU. The ESP32-P4 is next.
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards and mice through a hub, plugged in and out while it runs |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 (shown on a Samsung TV) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; audio.device for its ES8311 is in its image, not tried there yet; USB mice through its hub (`usb/hid.device`) move the pointer on the desktop; USB keyboards are in its image, not yet tried there |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; audio.device for its ES8311 is in its image, not tried there yet |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`) |
 
 `C:ShowConfig` lists what the running board has.
@@ -312,7 +316,7 @@ src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
 tools/         build helpers: mkfs, ressize, ramimage, mkicon, the autodocs, the module charts, checks
-scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts, certificates), a serial terminal
+scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries, fonts, certificates, icons, esp-emulator), a serial terminal
 ```
 
 ## License
@@ -326,7 +330,7 @@ Copyright (c) 2026 Claus Herrmann and the PowerOS contributors.
 - **The SDK** (`sdk/`) and **the disk's programs** (`src/disk/`) are under
   the [MIT license](sdk/LICENSE), so a program built against the SDK is
   its author's to license as they like.
-- `scripts/qemu/esp_rgb_input.patch` changes QEMU and is under QEMU's
+- The patches in `scripts/qemu/` change QEMU and are under QEMU's
   license, GPL-2.0-or-later.
 - `C:test/BsdSockTest` (`src/disk/c/test/bsdsocktest/`) is Thomas Dye's
   bsdsocktest in Zig and under its license,

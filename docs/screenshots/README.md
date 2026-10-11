@@ -1,9 +1,10 @@
 # Screenshots
 
-PowerOS 0.1 on a board, and in Espressif's QEMU. The screenshots are
+PowerOS 0.1 on the boards, and in Espressif's QEMU. The screenshots are
 QEMU's (`./zig build qemu-display`, with the QEMU from
 `scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
-has. Every program shown is on the flash disk and runs from there.
+has; the photos are the boards'. Every program shown is on the flash
+disk and runs from there.
 
 ## Graphics: `C:test/Anim`
 
@@ -30,6 +31,15 @@ The LCDwiki ES3C35P, an ESP32-S3 with a 3.5" 480×320 panel, running
 PowerOS 0.1: the shell window just after boot, on the system's own font.
 The speaker beside it is the board's; the machine is powered and its
 serial console reached over the USB cable.
+
+![PowerOS on the Olimex ESP32-P4-PC, on a television over HDMI](board-olimex-p4pc.jpg)
+
+The Olimex ESP32-P4-PC, an ESP32-P4 board, on a television over HDMI at
+800×600, with a USB keyboard and mouse in the sockets of its hub:
+`C:test/Plasma` running its colours through the picture, three
+`C:test/Lines` windows, CPU Load with both cores at work, and the shell
+that started them. The pointer, on Plasma's title bar, is the USB
+mouse's.
 
 ## A game: Dungeon Master
 
