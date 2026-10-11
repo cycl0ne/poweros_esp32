@@ -9,6 +9,16 @@
 //! and the qualifiers as they are after it. `KBD_READMATRIX` says which keys
 //! are down right now, a bit per rawkey.
 //!
+//! **The keys come from sources.** A driver of a keyboard - a USB keyboard,
+//! one on I2C, the emulator's window - opens the device with `KBDF_SOURCE`
+//! and hands it keys with `KBD_ADDEVENT`; the device makes the qualifiers,
+//! the matrix and the events readers see, whichever keyboard a key came
+//! from, so a reader sees one keyboard however many are plugged in. A key
+//! held on two keyboards is down once, and goes up when the last of them
+//! lets it go; a source that closes lets go of every key it still holds.
+//! The device opens with no source at all, and its readers then simply
+//! wait.
+//!
 //! Requests are `IOStdReq`s: io_Data and io_Length say where the answer
 //! goes, and io_Actual how many bytes of it were written.
 
@@ -17,6 +27,12 @@ const devices = @import("../libs/exec/devices.zig");
 /// The name to open it by. One unit, 0.
 pub const KEYBOARDNAME = "keyboard.device";
 
+/// OpenDevice's flags: the open is a source, a keyboard's driver handing
+/// the device keys with `KBD_ADDEVENT`. Its request then names a unit of
+/// its own (io_Unit), which keeps the keys this source holds down; it may
+/// still read like any other open.
+pub const KBDF_SOURCE: u32 = 1 << 0;
+
 /// Wait for keys and take them: io_Data an array of `InputEvent`, io_Length
 /// its size in bytes, a whole number of them. It returns when at least one
 /// key went down or up, with as many events as there are and fit.
@@ -24,6 +40,20 @@ pub const KBD_READEVENT: u16 = devices.CMD_NONSTD + 0;
 /// Which keys are down: io_Data a bitmap, bit (code % 8) of byte (code / 8)
 /// for each rawkey, io_Length up to `MATRIX_BYTES`.
 pub const KBD_READMATRIX: u16 = devices.CMD_NONSTD + 1;
+/// Keys from a source, on a request opened with `KBDF_SOURCE` only (any
+/// other gets IOERR_NOCMD): io_Data an array of `InputEvent`s, io_Length
+/// its size in bytes, a whole number of them. An event of class
+/// IECLASS_RAWKEY is a key, its `code` the rawkey with IECODE_UP_PREFIX
+/// when it went up; its qualifiers and time are not read - the device
+/// makes both, as for every key. Other classes are passed over. A key
+/// the source says is down when it already holds it, or up when it does
+/// not, changes nothing. Answered at once; io_Actual the bytes taken.
+pub const KBD_ADDEVENT: u16 = devices.CMD_NONSTD + 2;
+/// How many keyboards there are now: io_Actual the sources open - each
+/// keyboard's driver, a USB keyboard's among them - and the emulator's
+/// keyboard if it gives keys. Answered at once; what intuition asks
+/// before it puts a keyboard on the screen.
+pub const KBD_READSOURCES: u16 = devices.CMD_NONSTD + 3;
 
 /// The highest rawkey code; the matrix has a bit for each up to it.
 pub const HIGH_KEYCODE = 0x7F;

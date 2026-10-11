@@ -15,6 +15,8 @@ pub const RTC_MATCHWORD: u16 = 0x4AFC;
 pub const RTF_COLDSTART: u8 = 1 << 0;
 pub const RTF_SINGLETASK: u8 = 1 << 1;
 pub const RTF_AFTERDOS: u8 = 1 << 2;
+/// ...a device's tag that is a `ResidentDevice`, saying what it speaks...
+pub const RTF_DEVICEINFO: u8 = 1 << 3;
 /// ...and: rt_Init points to an InitTable.
 pub const RTF_AUTOINIT: u8 = 1 << 7;
 
@@ -43,6 +45,25 @@ pub const ResidentHandler = extern struct {
     resident: Resident,
     /// The handler's process entry.
     handler: TaskFn,
+};
+
+/// The ROM tag of a device that says what it speaks (rt_Flags has
+/// RTF_DEVICEINFO): the command sets (`DEVIF_*`, sdk.expansion.devices)
+/// a program may send it and rely on, and where its units come from. It
+/// can be read without running anything - in the ROM where it is, and on
+/// the disk from the file's bytes (`loadfile.findResident`) - so a
+/// program finds the devices of a kind without opening or loading one.
+pub const ResidentDevice = extern struct {
+    resident: Resident,
+    /// The command sets it speaks, DEVIF_*, ended by 0.
+    speaks: [*]const u32,
+    /// Its units are the board's parts of this kind (PARTKIND_*), a unit's
+    /// number its part's PART_BusUnit; 0: `units` says.
+    unit_part: u32 = 0,
+    /// With no part kind: units 0 to units - 1.
+    units: u32 = 1,
+    /// A label for each of those, or null for none.
+    unit_labels: ?[*]const [*:0]const u8 = null,
 };
 
 /// struct Resident (a ROM tag).

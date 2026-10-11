@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+//! A USB class driver's two functions, after BeginIO and AbortIO: what
+//! usb.library calls a driver in DEVS:usb/ with when it offers it an
+//! interface, and when that interface goes. Every class driver has them
+//! (sdk/devices/usbclass.zig); the base is the driver's, io_Device of an
+//! open request.
+##include libs/usb/usb as usb
+##interface
+##basetype UsbClassBase
+##name usbclass
+##bias 6
+##public
+/// An interface offered: true if the driver takes it - it has opened its
+/// pipes and filled a unit, `binding.unit` saying which - false if it
+/// declines and the next driver is asked. Called on the bus's process,
+/// which nothing else on the bus moves while it runs: decide quickly,
+/// and leave anything slow to the driver's own task. It may make control
+/// transfers on the device (DoUSBControl) and open pipes.
+bool USBClassBind(*usb.USBBinding binding)
+/// The interface is gone - the device was pulled, or the bus stops: every
+/// request the driver has outstanding on it answered, its pipes closed,
+/// its unit left without what was in it. Called on the bus's process.
+void USBClassUnbind(*usb.USBBinding binding)
+##end

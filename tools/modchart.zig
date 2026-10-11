@@ -65,6 +65,8 @@ const run_time = [_][2][]const u8{
     .{ "slip.device", "usbserial.device" },
     // A session runs over the caller's bsdsocket.library base.
     .{ "tls.library", "bsdsocket.library" },
+    // The class drivers in DEVS:usb/ whose tags match what is plugged in.
+    .{ "usb.library", "hid.device" },
     // The class a file's type names.
     .{ "datatypes.library", datatype_classes },
     // Opened by an SDK helper the module calls (sdk.anvil.DropTarget),

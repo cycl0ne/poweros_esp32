@@ -50,6 +50,8 @@ pub const filter = @import("libs/filter/filter.zig");
 pub const icon = @import("libs/icon/icon.zig");
 /// anvil.library: the desktop.
 pub const anvil = @import("libs/anvil/anvil.zig");
+/// usb.library: the USB buses, their devices, pipes to their endpoints.
+pub const usb = @import("libs/usb/usb.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

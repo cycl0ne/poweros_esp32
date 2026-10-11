@@ -66,6 +66,9 @@ const image_dirs = [_][]const u8{
     // interfaces C:net/AddNetInterface brings up.
     "devs/networks",
     "devs/NetInterfaces",
+    // The USB class drivers, opened as usb/<name>.device, whose ROM tags
+    // usb.library reads to know what each drives.
+    "devs/usb",
     // DEVS:DataTypes - one text descriptor per kind of file, which
     // C:AddDataTypes reads into datatypes.library's list.
     "devs/datatypes",
@@ -202,6 +205,9 @@ pub fn build(b: *std.Build) void {
     if (rs485 != null and slip_line != null) std.debug.panic("-Drs485 and -Dslip: both are UART1", .{});
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
+    const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
+    const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
+    const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
     // and `ssh -p 2222 localhost` reach a ShellServer in it without asking
     // for the port.
@@ -437,10 +443,10 @@ pub fn build(b: *std.Build) void {
     const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
-    const run_qemu = qemuRun(b, qemu, flash_image, network, qemuConsole(b, &.{"-nographic"}, uart1));
+    const run_qemu = qemuRun(b, qemu, flash_image, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
     b.step("qemu", "Boot the kernel in Espressif QEMU (quit with Ctrl-A X)").dependOn(&run_qemu.step);
 
-    const run_display = qemuRun(b, qemu, flash_image, display_network, qemuConsole(b, &.{ "-display", "sdl,show-cursor=off" }, uart1));
+    const run_display = qemuRun(b, qemu, flash_image, display_network, usb, qemuConsole(b, &.{ "-display", "sdl,show-cursor=off" }, uart1));
     b.step("qemu-display", "Boot in QEMU with its virtual display in an SDL window").dependOn(&run_display.step);
 
     // The same, but on a flash image that keeps what the kernel writes:
@@ -460,7 +466,7 @@ pub fn build(b: *std.Build) void {
     keep.addFileArg(emulated.image);
     keep.addFileArg(disk_bin);
     keep.has_side_effects = true;
-    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, qemuConsole(b, &.{"-nographic"}, uart1));
+    const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
     run_disk.step.dependOn(&keep.step);
     b.step("qemu-disk", "Boot in QEMU on a flash image that keeps what is written to the disk").dependOn(&run_disk.step);
 
@@ -1083,8 +1089,51 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
 
 /// A QEMU run on a throw-away copy of the image: -snapshot keeps the
 /// kernel's writes out of it.
-fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, network: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
-    return qemuRunPath(b, qemu, flash_image, true, network, extra);
+fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, network: []const []const u8, usb: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
+    return qemuRunPath(b, qemu, flash_image, true, network, usb, extra);
+}
+
+/// What is plugged into the emulator's USB port, as QEMU's arguments: a
+/// `-device` per item of `devices` - an item with `=` in it is a property
+/// of the device before it, so `usb-kbd,port=1,usb-mouse` is two devices
+/// - and a USB stick over the raw image `disk`. The port is the DWC2's one
+/// root port: QEMU puts a hub on it by itself when a device other than a
+/// hub is plugged in without `port=1`, and the devices then sit behind
+/// that hub. A `usb-serial` (an FTDI FT232) without a `chardev=` gets a
+/// pty of its own, whose name QEMU prints as it starts. A device plugged
+/// in or out while the machine runs goes through the monitor (Ctrl-A C):
+/// `device_add usb-kbd,id=kbd`, `device_del kbd`.
+fn qemuUsb(b: *std.Build, devices: ?[]const u8, disk: ?[]const u8) []const []const u8 {
+    var args: std.ArrayList([]const u8) = .empty;
+    if (devices) |list| {
+        var specs: std.ArrayList([]const u8) = .empty;
+        var items = std.mem.tokenizeScalar(u8, list, ',');
+        while (items.next()) |item| {
+            if (std.mem.indexOfScalar(u8, item, '=') == null) {
+                specs.append(b.allocator, item) catch @panic("OOM");
+                continue;
+            }
+            if (specs.items.len == 0) std.debug.panic("-Dusb={s}: {s} is a property of no device", .{ list, item });
+            const last = &specs.items[specs.items.len - 1];
+            last.* = b.fmt("{s},{s}", .{ last.*, item });
+        }
+        for (specs.items, 0..) |spec, index| {
+            const serial = std.mem.eql(u8, spec, "usb-serial") or std.mem.startsWith(u8, spec, "usb-serial,");
+            if (serial and std.mem.indexOf(u8, spec, "chardev=") == null) {
+                const id = b.fmt("usbserial{d}", .{index});
+                args.appendSlice(b.allocator, &.{ "-chardev", b.fmt("pty,id={s}", .{id}), "-device", b.fmt("{s},chardev={s}", .{ spec, id }) }) catch @panic("OOM");
+            } else {
+                args.appendSlice(b.allocator, &.{ "-device", spec }) catch @panic("OOM");
+            }
+        }
+    }
+    if (disk) |file| {
+        args.appendSlice(b.allocator, &.{
+            "-drive",  b.fmt("if=none,id=usbdisk,format=raw,file={s}", .{file}),
+            "-device", "usb-storage,drive=usbdisk",
+        }) catch @panic("OOM");
+    }
+    return args.items;
 }
 
 /// The emulator's network, as QEMU's arguments. Without them QEMU gives
@@ -1130,7 +1179,7 @@ fn qemuConsole(b: *std.Build, display: []const []const u8, uart1: ?[]const u8) [
 
 /// `snapshot` false lets the kernel write the image, so a disk on it keeps
 /// what is written from one boot to the next.
-fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, snapshot: bool, network: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
+fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, snapshot: bool, network: []const []const u8, usb: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
     // Like the board's N16R8 module: 8 MB octal PSRAM (-m is the PSRAM size).
     const run = b.addSystemCommand(&.{
         qemu,                                            "-machine", "esp32s3",
@@ -1139,6 +1188,7 @@ fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath,
     });
     if (snapshot) run.addArg("-snapshot");
     run.addArgs(network);
+    run.addArgs(usb);
     run.addArgs(extra);
     run.addArg("-drive");
     run.addPrefixedFileArg("if=mtd,format=raw,file=", flash_image);

@@ -16,6 +16,8 @@ pub const signals = @import("signals.zig");
 /// Each peripheral's registers and their bits, by the manual's names.
 pub const uart = @import("uart.zig");
 pub const usb_serial_jtag = @import("usb_serial_jtag.zig");
+/// The USB OTG controllers: where, their interrupts, what turns them on.
+pub const usb_otg = @import("usb_otg.zig");
 pub const i2c = @import("i2c.zig");
 pub const systimer = @import("systimer.zig");
 /// The two general DMA engines' channels (AHB and AXI), for

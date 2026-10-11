@@ -14,8 +14,10 @@
 //! let go, Return pressed - and no key of it is held, it closes again.
 //!
 //! **Wanted** is `IPREFS_Keyboard`: always, never, or - the default -
-//! when the board has no keyboard of its own (expansion.library has no
-//! `PARTKIND_KEYBOARD`), which is asked once.
+//! when there is no keyboard: the board has none of its own
+//! (expansion.library has no `PARTKIND_KEYBOARD`, asked once) and none is
+//! plugged in (keyboard.device has no source, `KBD_READSOURCES`, asked
+//! each time a field is typed into - a USB keyboard comes and goes).
 //!
 //! keyboard.gadget is a class on the disk: opened the first time the
 //! keyboard comes up, from this task through ramlib's process, and kept.
@@ -43,7 +45,12 @@ pub const State = extern struct {
     board_keys: u8 = 0,
     /// The class could not be had: not asked again.
     failed: u8 = 0,
-    pad: [2]u8 = .{ 0, 0 },
+    /// keyboard.device, asked how many keyboards there are: 0 not opened
+    /// yet, 1 open, 2 could not be.
+    query_open: u8 = 0,
+    pad: u8 = 0,
+    query: exec.IOStdReq = .{},
+    query_port: ?*exec.MsgPort = null,
 };
 
 /// Whether `o` is typed into: its class is strgclass or made from it,
@@ -84,7 +91,32 @@ fn wanted(ib: *IntuitionBase) bool {
             ib.sys_base.CloseLibrary(lib);
         }
     }
-    return st.board_keys == 2;
+    if (st.board_keys == 1) return false;
+    return keyboards(ib) == 0;
+}
+
+/// How many keyboards keyboard.device has now; 0 if it cannot be asked.
+/// On intuition's task, which owns the request's port.
+fn keyboards(ib: *IntuitionBase) u32 {
+    const st = &ib.input.keyboard;
+    const sys = ib.sys_base;
+    if (st.query_open == 0) {
+        st.query_open = 2;
+        const port = sys.CreateMsgPort() orelse return 0;
+        st.query = .{};
+        st.query.req.message.reply_port = port;
+        st.query.req.message.length = @sizeOf(exec.IOStdReq);
+        if (sys.OpenDevice(sdk.devices.keyboard.KEYBOARDNAME, 0, &st.query.req, 0) != 0) {
+            sys.DeleteMsgPort(port);
+            return 0;
+        }
+        st.query_port = port;
+        st.query_open = 1;
+    }
+    if (st.query_open != 1) return 0;
+    st.query.req.command = sdk.devices.keyboard.KBD_READSOURCES;
+    if (sys.DoIO(&st.query.req) != 0) return 0;
+    return @intCast(st.query.actual);
 }
 
 fn open(ib: *IntuitionBase, screen: *Screen) void {

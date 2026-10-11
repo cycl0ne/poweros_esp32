@@ -15,11 +15,19 @@
 //! and which keys are down - and turns each key into its event. A modifier
 //! sets its qualifier going down and clears it going up; Caps Lock toggles
 //! its qualifier each time it goes down; a keypad key carries NUMERICPAD.
+//!
+//! The keys come from several sources - keyboards - at once, each keeping
+//! what it holds down in a `Held` of its own. `Keys.pressFrom` counts the
+//! sources holding each key: a key goes down for the readers when the
+//! first source presses it and up when the last one lets go, and a source
+//! saying again what it already said changes nothing. `Keys.letGo` lets go
+//! of everything a source still holds, for one that goes away.
 
 const sdk = @import("sdk");
 const ie = sdk.devices.inputevent;
 const kb = sdk.devices.keyboard;
 const InputEvent = ie.InputEvent;
+const TimeVal = sdk.devices.timer.TimeVal;
 
 /// No rawkey for this code.
 pub const none: u8 = 0xFF;
@@ -97,12 +105,17 @@ fn modifier(rawkey: u8) u32 {
     };
 }
 
+/// What one source holds down: a bit per rawkey, as the matrix.
+pub const Held = [kb.MATRIX_BYTES]u8;
+
 /// What a stream of keys adds up to.
 pub const Keys = extern struct {
     /// The held modifiers and Caps Lock.
     qualifier: u32 = 0,
     /// A bit per rawkey that is down.
     matrix: [kb.MATRIX_BYTES]u8 = @splat(0),
+    /// How many sources hold each rawkey down.
+    holders: [kb.HIGH_KEYCODE + 1]u16 = @splat(0),
 
     /// A key going down or up: the state brought up to date, and the event
     /// that says so.
@@ -126,6 +139,38 @@ pub const Keys = extern struct {
 
     pub fn isDown(k: *const Keys, rawkey: u8) bool {
         return k.matrix[rawkey / 8] & (@as(u8, 1) << @intCast(rawkey % 8)) != 0;
+    }
+
+    /// A key going down or up on one source, `own` what that source
+    /// holds: the event the readers see, or null when the key does not
+    /// change for them - another source holds it still, or already did,
+    /// or this one said the same before.
+    pub fn pressFrom(k: *Keys, own: *Held, rawkey: u8, down: bool) ?InputEvent {
+        const code = rawkey & kb.HIGH_KEYCODE;
+        const bit: u8 = @as(u8, 1) << @intCast(code % 8);
+        const holds = own[code / 8] & bit != 0;
+        if (holds == down) return null;
+        if (down) {
+            own[code / 8] |= bit;
+            k.holders[code] += 1;
+            if (k.holders[code] > 1) return null;
+        } else {
+            own[code / 8] &= ~bit;
+            k.holders[code] -= 1;
+            if (k.holders[code] > 0) return null;
+        }
+        return k.press(code, down);
+    }
+
+    /// Every key `own` holds let go, as a source that goes away does: the
+    /// events of those that go up for the readers into `queue`, each at
+    /// `time`.
+    pub fn letGo(k: *Keys, own: *Held, queue: *Queue, time: TimeVal) void {
+        for (0..kb.HIGH_KEYCODE + 1) |code| {
+            var e = k.pressFrom(own, @intCast(code), false) orelse continue;
+            e.time = time;
+            queue.push(e);
+        }
     }
 };
 
@@ -229,6 +274,53 @@ test "keys: qualifiers held and toggled, the keypad marked, the matrix" {
     _ = k.press(kb.RAWKEY_LALT, true);
     e = k.press(kb.RAWKEY_F12, true);
     try testing.expectEqual(ie.IEQUALIFIER_CONTROL | ie.IEQUALIFIER_LALT, e.qualifier);
+}
+
+test "sources: a key held on two is down once, up when the last lets go" {
+    var k: Keys = .{};
+    var one: Held = @splat(0);
+    var two: Held = @splat(0);
+    const a: u8 = @intCast(kb.RAWKEY_A);
+    const down = k.pressFrom(&one, a, true).?;
+    try testing.expectEqual(kb.RAWKEY_A, down.code);
+    // The same key again from the same source, and from a second: nothing new.
+    try testing.expect(k.pressFrom(&one, a, true) == null);
+    try testing.expect(k.pressFrom(&two, a, true) == null);
+    try testing.expect(k.isDown(a));
+    // The first lets go: the second still holds it.
+    try testing.expect(k.pressFrom(&one, a, false) == null);
+    try testing.expect(k.isDown(a));
+    // Up from a source that does not hold it: nothing.
+    try testing.expect(k.pressFrom(&one, a, false) == null);
+    const up = k.pressFrom(&two, a, false).?;
+    try testing.expectEqual(kb.RAWKEY_A | ie.IECODE_UP_PREFIX, up.code);
+    try testing.expect(!k.isDown(a));
+    try testing.expectEqual(@as(u16, 0), k.holders[a]);
+}
+
+test "sources: one that goes away lets go of its keys, not of the others'" {
+    var k: Keys = .{};
+    var gone: Held = @splat(0);
+    var stays: Held = @splat(0);
+    const shift: u8 = @intCast(kb.RAWKEY_LSHIFT);
+    const a: u8 = @intCast(kb.RAWKEY_A);
+    const z: u8 = @intCast(kb.RAWKEY_Z);
+    _ = k.pressFrom(&gone, shift, true);
+    _ = k.pressFrom(&gone, a, true);
+    _ = k.pressFrom(&stays, z, true);
+    _ = k.pressFrom(&stays, a, true);
+    var q: Queue = .{};
+    k.letGo(&gone, &q, .{ .secs = 7 });
+    // Shift goes up; A is still held by the other; Z was never this one's.
+    try testing.expectEqual(@as(usize, 1), q.count);
+    var got: [1]InputEvent = undefined;
+    _ = q.take(&got);
+    try testing.expectEqual(kb.RAWKEY_LSHIFT | ie.IECODE_UP_PREFIX, got[0].code);
+    try testing.expectEqual(@as(u32, 7), got[0].time.secs);
+    try testing.expectEqual(@as(u32, 0), k.qualifier);
+    try testing.expect(k.isDown(a));
+    try testing.expect(k.isDown(z));
+    for (gone) |byte| try testing.expectEqual(@as(u8, 0), byte);
 }
 
 test "queue: in order, linked, the oldest dropped when full" {

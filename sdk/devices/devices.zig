@@ -19,3 +19,5 @@ pub const slip = @import("slip.zig");
 pub const ssh = @import("ssh.zig");
 pub const telnet = @import("telnet.zig");
 pub const clipboard = @import("clipboard.zig");
+pub const usbhc = @import("usbhc.zig");
+pub const usbclass = @import("usbclass.zig");

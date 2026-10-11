@@ -47,12 +47,17 @@ pub const USB_SERIAL_JTAG: usize = 0x6003_8000;
 pub const RNG_DATA: usize = 0x6003_507C;
 /// The AES, SHA and RSA engines (crypto.library's).
 pub const AES: usize = 0x6003_A000;
+/// The OTG controller's pads and PHY settings (usbotg.device's, with
+/// usbserial.device's port on the same PHY).
+pub const USB_WRAP: usize = 0x6003_9000;
 pub const SHA: usize = 0x6003_B000;
 pub const RSA: usize = 0x6003_C000;
 pub const GDMA: usize = 0x6003_F000;
 /// The SAR ADCs' digital controller.
 pub const APB_SARADC: usize = 0x6004_0000;
 pub const LCD_CAM: usize = 0x6004_1000;
+/// The USB OTG controller, a DWC2 core (sdk/hardware/usb_dwc.zig).
+pub const USB_OTG: usize = 0x6008_0000;
 /// SYSTEM: the peripherals' bus clocks and resets (`system.zig`).
 pub const SYSTEM: usize = 0x600C_0000;
 pub const INTERRUPT_MATRIX: usize = 0x600C_2000;

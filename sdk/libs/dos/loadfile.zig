@@ -117,3 +117,132 @@ pub const SEGMENT_ALIGN = 64;
 pub fn alignUp(n: u32) u32 {
     return (n + (ALIGN - 1)) & ~@as(u32, ALIGN - 1);
 }
+
+// --- reading a module's ROM tag without loading it --------------------------------
+
+/// Where a load file's bytes are read from, by offset: a file through
+/// dos, or bytes already in memory.
+pub const Source = struct {
+    context: *anyopaque,
+    /// `into.len` bytes at `offset` of the file into `into`; false if the
+    /// file has not that many there.
+    readAt: *const fn (context: *anyopaque, offset: u32, into: []u8) bool,
+};
+
+/// A module's ROM tag found in its load file: the segment it is in -
+/// where that segment's bytes start in the file, and how many there are -
+/// and the tag's offset in the segment.
+///
+/// Every address word in a file holds an offset into the segment it
+/// points into, which loading turns into an address. A tag's
+/// self-pointer is relocated against the segment it is in, so in the
+/// file it reads as the tag's own offset there: that, after the match
+/// word, is how a tag is told from bytes that look like one. Its name and
+/// whatever else it points at are in the same segment - rodata goes with
+/// the data on Xtensa, and on RISC-V there is one segment - so a pointer
+/// field of the tag, read from the file, is an offset to read at
+/// (`readWord`, `readBytes`, `readString`), checked against the segment.
+pub const FoundTag = struct {
+    file_offset: u32,
+    size: u32,
+    tag: u32,
+};
+
+/// The ROM tag in a module's load file, or null if the file is not a load
+/// file for this CPU or holds no tag. The data segments are looked
+/// through first, then the code ones; nothing is loaded and nothing runs.
+pub fn findResident(source: Source) ?FoundTag {
+    var header_bytes: [@sizeOf(Header)]u8 = undefined;
+    if (!source.readAt(source.context, 0, header_bytes[0..HEADER_V1_SIZE])) return null;
+    if (!bytesEqual(header_bytes[0..4], &MAGIC)) return null;
+    const version = word16(header_bytes[4..6]);
+    var header_size: u32 = HEADER_V1_SIZE;
+    if (version >= 2) {
+        if (!source.readAt(source.context, 0, &header_bytes)) return null;
+        if (word16(header_bytes[10..12]) != native_machine) return null;
+        if (header_bytes[16] != 4) return null;
+        header_size = @sizeOf(Header);
+    } else if (native_machine != MACHINE_XTENSA) {
+        return null;
+    }
+    const segments = word16(header_bytes[6..8]);
+    for ([_]SegmentKind{ .data, .code }) |wanted| {
+        var at = header_size;
+        var index: u32 = 0;
+        while (index < segments) : (index += 1) {
+            var segment_bytes: [@sizeOf(SegmentHeader)]u8 = undefined;
+            if (!source.readAt(source.context, at, &segment_bytes)) return null;
+            const kind: SegmentKind = @enumFromInt(segment_bytes[0]);
+            const file_size = word32(segment_bytes[4..8]);
+            const start = at + @sizeOf(SegmentHeader);
+            if (kind == wanted and file_size >= @sizeOf(u32) * 2) {
+                if (scanSegment(source, start, file_size)) |tag| {
+                    return .{ .file_offset = start, .size = file_size, .tag = tag };
+                }
+            }
+            at = start + alignUp(file_size);
+        }
+    }
+    return null;
+}
+
+/// The offset of the first ROM tag in a segment's `size` bytes at
+/// `start`, read a chunk at a time.
+fn scanSegment(source: Source, start: u32, size: u32) ?u32 {
+    const chunk = 256;
+    // Each chunk overlaps the next by a tag's first eight bytes, so a tag
+    // that starts near a chunk's end is still seen whole.
+    var buffer: [chunk + 8]u8 = undefined;
+    var base: u32 = 0;
+    while (base + 8 <= size) : (base += chunk) {
+        const want: u32 = @min(@as(u32, chunk + 8), size - base);
+        if (!source.readAt(source.context, start + base, buffer[0..want])) return null;
+        var offset: u32 = 0;
+        while (offset + 8 <= want) : (offset += 4) {
+            if (word16(buffer[offset..][0..2]) != 0x4AFC) continue;
+            if (word32(buffer[offset + 4 ..][0..4]) == base + offset) return base + offset;
+        }
+    }
+    return null;
+}
+
+/// The address word at `offset` of a found tag's segment (a pointer of
+/// the tag: an offset into the segment), or null past its end.
+pub fn readWord(source: Source, found: FoundTag, offset: u32) ?u32 {
+    if (offset > found.size or found.size - offset < 4) return null;
+    var bytes: [4]u8 = undefined;
+    if (!source.readAt(source.context, found.file_offset + offset, &bytes)) return null;
+    return word32(&bytes);
+}
+
+/// `into.len` bytes at `offset` of a found tag's segment; false past its
+/// end.
+pub fn readBytes(source: Source, found: FoundTag, offset: u32, into: []u8) bool {
+    if (offset > found.size or found.size - offset < into.len) return false;
+    return source.readAt(source.context, found.file_offset + offset, into);
+}
+
+/// The C string at `offset` of a found tag's segment into `into`, ended
+/// by a NUL there; null if it does not end within `into` or the segment.
+pub fn readString(source: Source, found: FoundTag, offset: u32, into: []u8) ?[:0]u8 {
+    var length: u32 = 0;
+    while (length < into.len) : (length += 1) {
+        if (!readBytes(source, found, offset + length, into[length..][0..1])) return null;
+        if (into[length] == 0) return into[0..length :0];
+    }
+    return null;
+}
+
+fn word16(bytes: *const [2]u8) u16 {
+    return @as(u16, bytes[0]) | @as(u16, bytes[1]) << 8;
+}
+
+fn word32(bytes: *const [4]u8) u32 {
+    return @as(u32, bytes[0]) | @as(u32, bytes[1]) << 8 | @as(u32, bytes[2]) << 16 | @as(u32, bytes[3]) << 24;
+}
+
+fn bytesEqual(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x != y) return false;
+    return true;
+}

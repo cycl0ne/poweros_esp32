@@ -29,7 +29,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.5 (10.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.6 (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -182,6 +182,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_RS485 => "rs-485",
         st.PARTKIND_BUTTON => "button",
         st.PARTKIND_HEADER => "header",
+        st.PARTKIND_USB => "usb",
         else => "?",
     };
 }

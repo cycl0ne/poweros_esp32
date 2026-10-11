@@ -12,6 +12,9 @@
 //!   ##public             the functions from here on are in the interface
 //!   ##private            the functions from here on only take their slot
 //!   ##reserve n          n empty slots (the .sfd's ==reserve)
+//!   ##interface          calls many modules each have (a USB class
+//!                        driver's): nothing changes here, and the
+//!                        autodoc takes the contract from this file
 //!   ##end                the end
 //!   /// text             the next function's doc comment
 //!   Ret Name(Type a, ...)  a function, in the next slot
@@ -111,6 +114,8 @@ fn generate(gpa: mem.Allocator, fd_name: []const u8, fd: []const u8) ![]const u8
                 public = false;
             } else if (mem.eql(u8, key, "end")) {
                 break;
+            } else if (mem.eql(u8, key, "interface")) {
+                continue;
             } else {
                 fatal("line {d}: unknown directive ##{s}", .{ line_no, key });
             }

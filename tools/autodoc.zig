@@ -10,7 +10,9 @@
 //! or, for a module on the disk, `<src dir>/disk/{libs,devs,classes/gadgets}/<stem>/`,
 //! split at the section headers (`SYNOPSIS:`, `INPUTS:`, ...). A call
 //! with no such block gets its `.fd` text instead: the prototype as
-//! SYNOPSIS, the rest as BEHAVIOR.
+//! SYNOPSIS, the rest as BEHAVIOR. An `.fd` marked `##interface` - calls
+//! that many modules each have, a USB class driver's - has no one folder
+//! of its source: its text is its contract.
 //!
 //! With --check it writes nothing and fails if a file in <out dir> is not
 //! what it would write, or has no `.fd` any more: the build's check that
@@ -83,10 +85,11 @@ pub fn main(init: std.process.Init) !void {
     for (stems.items) |stem| {
         const fd_name = try std.fmt.allocPrint(arena, "{s}_lib.fd", .{stem});
         const fd = try fd_dir.readFileAlloc(io, fd_name, arena, .unlimited);
-        const source = try findHome(io, src_dir, stem) orelse
+        const interface = mem.indexOf(u8, fd, "\n##interface") != null;
+        var home = try findHome(io, src_dir, stem);
+        if (home == null and !interface)
             fatal("{s}/{s}: no {s}/{{rom,disk}}/.../{s}/ holds its source", .{ fd_path, fd_name, src_path, stem });
-        var home = source;
-        defer home.close(io);
+        defer if (home) |*dir| dir.close(io);
         const module = try readModule(io, arena, fd_name, fd, home);
 
         const outputs = [_]struct { ext: []const u8, text: []const u8 }{
@@ -146,7 +149,7 @@ fn findHome(io: Io, src_dir: Io.Dir, stem: []const u8) !?Io.Dir {
 
 /// A module: its `.fd`'s name, description and public calls, each with
 /// the text its source gives it.
-fn readModule(io: Io, arena: Allocator, fd_name: []const u8, fd: []const u8, home: Io.Dir) !Module {
+fn readModule(io: Io, arena: Allocator, fd_name: []const u8, fd: []const u8, home: ?Io.Dir) !Module {
     var name: []const u8 = "";
     var about: std.ArrayList([]const u8) = .empty;
     var fd_calls: std.ArrayList(FdCall) = .empty;
@@ -185,13 +188,15 @@ fn readModule(io: Io, arena: Allocator, fd_name: []const u8, fd: []const u8, hom
 
     // Every `pub fn` doc block under the module's folder, by name.
     var blocks: std.StringHashMapUnmanaged(Found) = .empty;
-    var walker = try home.walk(arena);
-    defer walker.deinit();
-    while (try walker.next(io)) |entry| {
-        if (entry.kind != .file or !mem.endsWith(u8, entry.basename, ".zig")) continue;
-        const path = try arena.dupe(u8, entry.path);
-        const text = try entry.dir.readFileAlloc(io, entry.basename, arena, .unlimited);
-        try collectBlocks(arena, &blocks, path, text);
+    if (home) |dir| {
+        var walker = try dir.walk(arena);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !mem.endsWith(u8, entry.basename, ".zig")) continue;
+            const path = try arena.dupe(u8, entry.path);
+            const text = try entry.dir.readFileAlloc(io, entry.basename, arena, .unlimited);
+            try collectBlocks(arena, &blocks, path, text);
+        }
     }
 
     const calls = try arena.alloc(Call, fd_calls.items.len);

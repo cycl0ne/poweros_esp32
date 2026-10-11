@@ -106,7 +106,11 @@ pub const LIBRARY_VERSION = 0;
 /// answered last (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`) and makes
 /// scroll bars in its window's borders (`WINDOWA_VertScroller`,
 /// `WINDOWA_HorizScroller`).
-pub const LIBRARY_REVISION = 40;
+/// 41: a mouse that says only how far it went - a USB mouse - moves the
+/// pointer: its distances are added up into pointer positions, kept on
+/// the front screen, its buttons pressed where the pointer is; the
+/// keyboard on the screen stays away while a keyboard is plugged in.
+pub const LIBRARY_REVISION = 41;
 const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

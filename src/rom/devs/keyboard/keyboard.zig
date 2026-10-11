@@ -7,18 +7,25 @@
 //! The device keeps which keys are down (KBD_READMATRIX) and queues events
 //! until a KBD_READEVENT takes them.
 //!
-//! The one keyboard there is now is the emulator's: our QEMU build's display
-//! queues the keys typed into its window, by Linux keycode, and the device's
-//! task drains that queue every 10 ms. It is the qemu board's keyboard
-//! part; a board without one has no keyboard.device in its ROM, and an
-//! open without the part fails. A keyboard on a board later is a second
-//! backend feeding
-//! the same `rawkey.Keys`, as mouse.device leaves room for a mouse on the
-//! board beside the emulator's.
+//! **The keys come from sources.** A keyboard's driver opens the device
+//! with KBDF_SOURCE and gets a unit of its own, a `Source`, which keeps the
+//! keys it holds down; it hands keys over with KBD_ADDEVENT, and they go
+//! through the same `rawkey.Keys` as every other source's, so readers see
+//! one keyboard whichever keys came from where. A key two sources hold is
+//! down once (`Keys.pressFrom` counts the holders), and a source that
+//! closes lets go of what it still holds (`Keys.letGo`). Every board has
+//! the device; with no source it opens all the same and its readers wait.
 //!
-//! Nothing runs until the first OpenDevice starts the task; from then on the
-//! task stays, as touch.device's does. A read waiting for a key is queued on
-//! the unit, so AbortIO and CMD_FLUSH can take it back.
+//! **The emulator's keyboard** is a source the device keeps itself, on the
+//! qemu board only (its keyboard part): our QEMU build's display queues the
+//! keys typed into its window, by Linux keycode, and the device's task
+//! drains that queue every 10 ms. On any other board there is no task and
+//! nothing is polled.
+//!
+//! The first OpenDevice opens timer.device for the time each event
+//! carries, and on the qemu board starts the task, which then stays, as
+//! touch.device's does. A read waiting for a key is queued on the unit, so
+//! AbortIO and CMD_FLUSH can take it back.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -30,12 +37,17 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const TimerBase = timer.TimerBase;
 const InputEvent = ie.InputEvent;
 const rawkey = @import("rawkey.zig");
-const qemu_rgb = sdk.hardware.qemu_rgb;
+/// The emulator's display is there only where QEMU runs the chip: our
+/// QEMU is an ESP32-S3's.
+const emulated = sdk.hardware.chip == .esp32s3;
+const qemu_rgb = if (emulated) sdk.hardware.qemu_rgb else struct {};
 
 pub const DEVICE_NAME = kb.KEYBOARDNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "19.9.2026";
+/// 1: sources (KBDF_SOURCE, KBD_ADDEVENT, KBD_READSOURCES), and on every
+/// board.
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "11.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -60,19 +72,33 @@ const KeyboardBase = extern struct {
     unit: exec.Unit,
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
-    /// The task is running and has a keyboard.
+    /// The task is running and has the emulator's keyboard.
     ready: u8 = 0,
-    /// The task has been started.
+    /// The emulator's keyboard has been looked for.
     started: u8 = 0,
     start_signal: i8 = -1,
-    pad: u8 = 0,
+    /// timer.device is open for the events' time.
+    prepared: u8 = 0,
     starter: ?*exec.Task = null,
     /// Owned by the task.
     port: ?*exec.MsgPort = null,
     timer_io: timer.TimeRequest = .{},
+    /// Only ever asked for the time: no request is sent on it.
+    clock_io: timer.TimeRequest = .{},
     /// What the keys add up to, and the events not yet read.
     keys: rawkey.Keys = .{},
     queue: rawkey.Queue = .{},
+    /// The keys the emulator's keyboard holds down.
+    emulator: rawkey.Held = @splat(0),
+    /// The sources open (KBDF_SOURCE), for KBD_READSOURCES.
+    sources: u32 = 0,
+};
+
+/// An open with KBDF_SOURCE: its request's unit, and the keys it holds.
+/// Allocated at the open, freed at the close.
+const Source = extern struct {
+    unit: exec.Unit = .{},
+    held: rawkey.Held = @splat(0),
 };
 
 fn keyboardBase(dev: *exec.Device) *KeyboardBase {
@@ -83,57 +109,18 @@ fn stdReq(io: *exec.IORequest) *exec.IOStdReq {
     return @ptrCast(@alignCast(io));
 }
 
-// --- the task ---------------------------------------------------------------------
-
-fn wait(kbb: *KeyboardBase, us: u32) void {
-    kbb.timer_io.node.command = timer.TR_ADDREQUEST;
-    kbb.timer_io.time = timer.TimeVal.fromMicros(us);
-    _ = kbb.sys_base.DoIO(&kbb.timer_io.node);
+/// The source a request was opened as, or null for a reader's.
+fn sourceOf(kbb: *KeyboardBase, io: *exec.IORequest) ?*Source {
+    const unit = io.unit orelse return null;
+    if (unit == &kbb.unit) return null;
+    return @alignCast(@fieldParentPtr("unit", unit));
 }
 
 fn now(kbb: *KeyboardBase) timer.TimeVal {
     var t: timer.TimeVal = .{};
-    const tmb: *TimerBase = @ptrCast(kbb.timer_io.node.device.?);
+    const tmb: *TimerBase = @ptrCast(kbb.clock_io.node.device.?);
     tmb.GetSysTime(&t);
     return t;
-}
-
-/// Whether the board has the emulator's keyboard: its part in the board's
-/// system tag list.
-fn boardHasIt(sys: *ExecBase) bool {
-    const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
-    defer sys.CloseLibrary(expansion_lib);
-    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    const st = sdk.expansion.systemtags;
-    return eb.FindBoardPart(null, st.PARTKIND_KEYBOARD, st.CHIP_QEMU_DISPLAY) != null;
-}
-
-/// The emulator's keyboard, if the board has one.
-fn bringUp(kbb: *KeyboardBase) bool {
-    const sys = kbb.sys_base;
-    if (!boardHasIt(sys)) {
-        exec.kprintf(sys, "%s: this board has no keyboard\n", .{DEVICE_NAME});
-        return false;
-    }
-    if (!qemu_rgb.hasKeyboard()) {
-        exec.kprintf(sys, "%s: this QEMU gives no keys (build it with scripts/build-qemu.sh)\n", .{DEVICE_NAME});
-        return false;
-    }
-    kbb.port = sys.CreateMsgPort() orelse return false;
-    kbb.timer_io = .{};
-    kbb.timer_io.node.message.reply_port = kbb.port;
-    kbb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &kbb.timer_io.node, 0) != 0) return false;
-    // Whatever was typed before anyone listened is not a key for them.
-    while (qemu_rgb.key() != null) {}
-    return true;
-}
-
-fn giveBack(kbb: *KeyboardBase) void {
-    const sys = kbb.sys_base;
-    if (kbb.timer_io.node.device != null) sys.CloseDevice(&kbb.timer_io.node);
-    sys.DeleteMsgPort(kbb.port);
-    kbb.port = null;
 }
 
 /// Reads that were waiting, given what is queued now. Under the device's
@@ -156,6 +143,48 @@ fn serveReads(kbb: *KeyboardBase) void {
     }
 }
 
+// --- the emulator's keyboard ------------------------------------------------------
+
+fn wait(kbb: *KeyboardBase, us: u32) void {
+    kbb.timer_io.node.command = timer.TR_ADDREQUEST;
+    kbb.timer_io.time = timer.TimeVal.fromMicros(us);
+    _ = kbb.sys_base.DoIO(&kbb.timer_io.node);
+}
+
+/// Whether the board has the emulator's keyboard: its part in the board's
+/// system tag list.
+fn boardHasIt(sys: *ExecBase) bool {
+    const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
+    defer sys.CloseLibrary(expansion_lib);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
+    const st = sdk.expansion.systemtags;
+    return eb.FindBoardPart(null, st.PARTKIND_KEYBOARD, st.CHIP_QEMU_DISPLAY) != null;
+}
+
+/// The emulator's keyboard, which the board has.
+fn bringUp(kbb: *KeyboardBase) bool {
+    const sys = kbb.sys_base;
+    if (!qemu_rgb.hasKeyboard()) {
+        exec.kprintf(sys, "%s: this QEMU gives no keys (build it with scripts/build-qemu.sh)\n", .{DEVICE_NAME});
+        return false;
+    }
+    kbb.port = sys.CreateMsgPort() orelse return false;
+    kbb.timer_io = .{};
+    kbb.timer_io.node.message.reply_port = kbb.port;
+    kbb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &kbb.timer_io.node, 0) != 0) return false;
+    // Whatever was typed before anyone listened is not a key for them.
+    while (qemu_rgb.key() != null) {}
+    return true;
+}
+
+fn giveBack(kbb: *KeyboardBase) void {
+    const sys = kbb.sys_base;
+    if (kbb.timer_io.node.device != null) sys.CloseDevice(&kbb.timer_io.node);
+    sys.DeleteMsgPort(kbb.port);
+    kbb.port = null;
+}
+
 /// Every key the emulator has queued, as events.
 fn poll(kbb: *KeyboardBase) void {
     const first = qemu_rgb.key() orelse return;
@@ -166,7 +195,7 @@ fn poll(kbb: *KeyboardBase) void {
     var k: ?qemu_rgb.Key = first;
     while (k) |key| : (k = qemu_rgb.key()) {
         const code = rawkey.fromLinux(key.code) orelse continue;
-        var e = kbb.keys.press(code, key.down);
+        var e = kbb.keys.pressFrom(&kbb.emulator, code, key.down) orelse continue;
         e.time = time;
         kbb.queue.push(e);
     }
@@ -188,18 +217,22 @@ fn keyboardTask(sys: *ExecBase) callconv(.c) void {
     }
 }
 
-/// The task started and waited for; true if there is a keyboard.
-fn start(kbb: *KeyboardBase) bool {
+/// The emulator's keyboard looked for once, and its task started and
+/// waited for if the board has it. A board without it, or a QEMU that
+/// gives no keys, leaves the device with the sources that open it.
+fn startEmulator(kbb: *KeyboardBase) void {
     const sys = kbb.sys_base;
-    if (kbb.started != 0) return kbb.ready != 0;
-    const stack = kbb.stack orelse blk: {
-        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
-        kbb.stack = s;
-        break :blk s;
-    };
+    if (kbb.started != 0) return;
+    kbb.started = 1;
+    if (!emulated or !boardHasIt(sys)) return;
+    const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
     const signal = sys.AllocSignal(-1);
-    if (signal < 0) return false;
+    if (signal < 0) {
+        sys.FreeMem(stack, stack_size);
+        return;
+    }
     defer sys.FreeSignal(signal);
+    kbb.stack = stack;
     kbb.task = .{
         .node = .{ .type = .task, .pri = task_pri, .name = DEVICE_NAME },
         .sp_lower = @intFromPtr(stack),
@@ -210,9 +243,19 @@ fn start(kbb: *KeyboardBase) bool {
     kbb.ready = 0;
     _ = sys.AddTask(&kbb.task, &keyboardTask, null);
     _ = sys.Wait(@as(u32, 1) << @intCast(signal));
-    // A task that found no keyboard has ended; the next open tries again.
-    if (kbb.ready != 0) kbb.started = 1;
-    return kbb.ready != 0;
+    // A task that found no keyboard has ended; its stack stays with the
+    // device, as a running task's would.
+}
+
+/// timer.device open for the time, once: whether it is.
+fn prepare(kbb: *KeyboardBase) bool {
+    if (kbb.prepared != 0) return true;
+    const sys = kbb.sys_base;
+    kbb.clock_io = .{};
+    kbb.clock_io.node.message.length = @sizeOf(timer.TimeRequest);
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &kbb.clock_io.node, 0) != 0) return false;
+    kbb.prepared = 1;
+    return true;
 }
 
 // --- the device --------------------------------------------------------------------
@@ -248,6 +291,42 @@ fn readEvent(kbb: *KeyboardBase, io: *exec.IORequest) bool {
     return false;
 }
 
+/// A source's keys into the device: each rawkey event through the
+/// source's own `Held`, what changes for the readers queued.
+fn addEvent(kbb: *KeyboardBase, io: *exec.IORequest) void {
+    const source = sourceOf(kbb, io) orelse {
+        io.err = exec.IOERR_NOCMD;
+        return;
+    };
+    const std_io = stdReq(io);
+    const each = @sizeOf(InputEvent);
+    if (std_io.length % each != 0) {
+        io.err = exec.IOERR_BADLENGTH;
+        return;
+    }
+    if (std_io.length == 0) return;
+    const data = std_io.data orelse {
+        io.err = exec.IOERR_BADADDRESS;
+        return;
+    };
+    const given: [*]const InputEvent = @ptrCast(@alignCast(data));
+    const count: usize = @intCast(std_io.length / each);
+    const time = now(kbb);
+    const sys = kbb.sys_base;
+    sys.AcquireLock(&kbb.lock);
+    defer sys.ReleaseLock(&kbb.lock);
+    for (given[0..count]) |*from| {
+        if (from.class != ie.IECLASS_RAWKEY) continue;
+        const code: u8 = @intCast(from.code & ie.IECODE_KEY_CODE_MASK);
+        const down = from.code & ie.IECODE_UP_PREFIX == 0;
+        var e = kbb.keys.pressFrom(&source.held, code, down) orelse continue;
+        e.time = time;
+        kbb.queue.push(e);
+    }
+    std_io.actual = std_io.length;
+    serveReads(kbb);
+}
+
 fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const kbb = keyboardBase(dev);
     const sys = kbb.sys_base;
@@ -268,6 +347,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 std_io.actual = n;
             }
         },
+        kb.KBD_ADDEVENT => addEvent(kbb, io),
+        kb.KBD_READSOURCES => std_io.actual = kbb.sources + @as(u32, kbb.ready),
         exec.CMD_CLEAR => {
             sys.AcquireLock(&kbb.lock);
             kbb.queue.clear();
@@ -308,28 +389,53 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     return 0;
 }
 
+/// Unit 0, as a reader or with KBDF_SOURCE as a source. Runs inside the
+/// device's own lock, so the first open's setting up is done once.
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
-    _ = flags;
     const kbb = keyboardBase(dev);
+    const sys = kbb.sys_base;
     if (unit_number != 0) return exec.IOERR_OPENFAIL;
     if (io.message.length < @sizeOf(exec.IOStdReq)) return exec.IOERR_OPENFAIL;
-    if (!start(kbb)) return exec.IOERR_OPENFAIL;
+    if (!prepare(kbb)) return exec.IOERR_OPENFAIL;
+    startEmulator(kbb);
+    if (flags & kb.KBDF_SOURCE != 0) {
+        const memory = sys.AllocMem(@sizeOf(Source), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return exec.IOERR_OPENFAIL;
+        const source: *Source = @ptrCast(@alignCast(memory));
+        source.* = .{};
+        source.unit.open_cnt = 1;
+        io.unit = &source.unit;
+        kbb.sources += 1;
+    } else {
+        io.unit = &kbb.unit;
+    }
     dev.open_cnt += 1;
     dev.flags &= ~exec.LIBF_DELEXP;
     kbb.unit.open_cnt += 1;
-    io.unit = &kbb.unit;
     return 0;
 }
 
+/// A source lets go of the keys it holds, and its unit goes with it.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     const kbb = keyboardBase(dev);
+    const sys = kbb.sys_base;
     _ = abortIO(dev, io);
+    if (sourceOf(kbb, io)) |source| {
+        const time = now(kbb);
+        sys.AcquireLock(&kbb.lock);
+        kbb.keys.letGo(&source.held, &kbb.queue, time);
+        serveReads(kbb);
+        sys.ReleaseLock(&kbb.lock);
+        sys.FreeMem(source, @sizeOf(Source));
+        kbb.sources -= 1;
+    }
+    io.unit = null;
     kbb.unit.open_cnt -= 1;
     dev.open_cnt -= 1;
     return null;
 }
 
-/// The device stays: its task is the machine's once it has come up.
+/// The device stays: on the qemu board its task is the machine's once it
+/// has come up, and readers keep it open for good everywhere.
 fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
     return null;
 }
@@ -346,6 +452,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     kbb.unit.msg_port.msg_list.init(.message);
     kbb.keys = .{};
     kbb.queue = .{};
+    kbb.emulator = @splat(0);
     return dev;
 }
 

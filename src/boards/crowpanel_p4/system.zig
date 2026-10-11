@@ -127,6 +127,24 @@ const speakers = [_]Tag{
     .done,
 };
 
+// --- the USB socket ---------------------------------------------------------------
+
+/// The P4's high-speed controller on the second USB-C socket (J16): wired
+/// as a device's, 5.1 kOhm on both CC lines and VBUS coming in to the
+/// board, so a host plugged in sees a device and the board gives no 5 V
+/// out.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_DWC2),
+    .pointer(st.PART_ChipName, "esp32-p4 usb otg hs"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_DEVICE),
+    .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
+    .value(st.PART_UsbVbus, st.USBVBUS_NONE),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -149,6 +167,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &touch_panel),
     .pointer(st.SYSTAG_Part, &panel),
     .pointer(st.SYSTAG_Part, &speakers),
+    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 

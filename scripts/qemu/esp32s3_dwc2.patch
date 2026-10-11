@@ -1,0 +1,61 @@
+diff --git a/hw/xtensa/Kconfig b/hw/xtensa/Kconfig
+index 5866207..0e74a27 100644
+--- a/hw/xtensa/Kconfig
++++ b/hw/xtensa/Kconfig
+@@ -44,5 +44,11 @@ config XTENSA_ESP32S3
+     select DWC_SDMMC
+     select TMP105
+     select ESP_RGB
++    select USB_DWC2
++    imply USB_HUB
++    imply USB_HID
++    imply USB_STORAGE_BOT
++    imply USB_SERIAL
++    imply USB_NETWORK
+ 
+ 
+diff --git a/hw/xtensa/esp32s3.c b/hw/xtensa/esp32s3.c
+index 4a24a04..a13bad4 100644
+--- a/hw/xtensa/esp32s3.c
++++ b/hw/xtensa/esp32s3.c
+@@ -69,8 +69,10 @@
+ 
+ #include "hw/misc/esp32c3_jtag.h"
+ #include "hw/display/esp_rgb.h"
++#include "hw/usb/hcd-dwc2.h"
+ 
+ #define TYPE_ESP32S3_SOC "xtensa.esp32s3"
++#define ESP32S3_USB_OTG_BASE 0x60080000
+ #define ESP32S3_SOC(obj) OBJECT_CHECK(Esp32s3SocState, (obj), TYPE_ESP32S3_SOC)
+ 
+ #define TYPE_ESP32S3_CPU XTENSA_CPU_TYPE_NAME("esp32s3")
+@@ -675,6 +677,29 @@ static void esp32s3_machine_init(MachineState *machine)
+         memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_SERIAL_JTAG_BASE, mr, 0);
+     }
+ 
++    /* USB OTG: QEMU's DWC2 in host mode at the OTG's registers, full and
++     * low speed only as the S3's PHY is, its DMA on the system bus. */
++    {
++        DeviceState *dwc2 = qdev_new(TYPE_DWC2_USB);
++        qdev_prop_set_uint32(dwc2, "usb_version", 1);
++        object_property_add_const_link(OBJECT(dwc2), "dma-mr", OBJECT(sys_mem));
++        sysbus_realize_and_unref(SYS_BUS_DEVICE(dwc2), &error_fatal);
++        memory_region_add_subregion_overlap(sys_mem, ESP32S3_USB_OTG_BASE,
++                                            sysbus_mmio_get_region(SYS_BUS_DEVICE(dwc2), 0), 1);
++        sysbus_connect_irq(SYS_BUS_DEVICE(dwc2), 0,
++                           qdev_get_gpio_in(intmatrix_dev, ETS_USB_INTR_SOURCE));
++    }
++
++    /* USB_WRAP: the OTG's pad and PHY configuration. Only kept: a write is
++     * read back, and otg_conf reads its reset value (the pads enabled). */
++    {
++        MemoryRegion *usb_wrap = g_new(MemoryRegion, 1);
++        memory_region_init_ram(usb_wrap, NULL, "esp32s3.usb_wrap", 0x1000, &error_fatal);
++        memory_region_add_subregion_overlap(sys_mem, DR_REG_USB_WRAP_BASE, usb_wrap, 1);
++        uint32_t otg_conf = 1u << 18;
++        cpu_physical_memory_write(DR_REG_USB_WRAP_BASE, &otg_conf, 4);
++    }
++
+     /* SPI1 controller (SPI Flash) */
+     {
+         ss->spi1.xts_aes = &ss->xts_aes;

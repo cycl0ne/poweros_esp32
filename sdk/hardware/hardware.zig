@@ -36,6 +36,11 @@ pub const signals = own.signals;
 /// Each peripheral's registers and their bits, by the manual's names.
 pub const uart = own.uart;
 pub const usb_serial_jtag = own.usb_serial_jtag;
+/// The USB OTG controllers: where each is, its interrupt, what turns it
+/// on (`usb_otg.controllers`, `powerOn`); their registers, the same core
+/// on every chip, are `usb_dwc`.
+pub const usb_otg = own.usb_otg;
+pub const usb_dwc = @import("usb_dwc.zig");
 pub const i2c = own.i2c;
 pub const systimer = own.systimer;
 pub const rtc_cntl = own.rtc_cntl;

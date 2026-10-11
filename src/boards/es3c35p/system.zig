@@ -261,6 +261,23 @@ const radio = [_]Tag{
     .done,
 };
 
+// --- the USB port -----------------------------------------------------------------
+
+/// The chip's USB port on the board's one USB-C socket: the console as
+/// the chip starts, the OTG controller's when its bus takes the port.
+/// Whether the board gives 5 V out on it is not read off the board yet;
+/// absent, it gives none.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_DWC2),
+    .pointer(st.PART_ChipName, "esp32-s3 usb otg"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST | st.USBROLE_DEVICE),
+    .value(st.PART_UsbSpeed, st.USBSPEED_FULL),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -283,6 +300,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &codec),
     .pointer(st.SYSTAG_Part, &amplifier),
     .pointer(st.SYSTAG_Part, &sd_slot),
+    .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &led),
     .pointer(st.SYSTAG_Part, &battery),
     .pointer(st.SYSTAG_Part, &radio),

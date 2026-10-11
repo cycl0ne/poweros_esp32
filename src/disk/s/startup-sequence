@@ -67,6 +67,12 @@ If EXISTS S:User-Startup
   Execute S:User-Startup
 EndIf
 
+; The USB buses whose socket can only be a host - on a board whose
+; keyboard and mouse are USB - started before the desktop comes up, so
+; what is plugged in works from its first picture on. A socket that is
+; the console's too is left to `USB START`.
+C:USB >NIL: AUTO
+
 ; The desktop, and this shell's window put away so it shows: a shell is
 ; one double click away (SYS:System/Shell), and the serial console keeps
 ; its own. A desktop that could not start leaves this shell where it is.

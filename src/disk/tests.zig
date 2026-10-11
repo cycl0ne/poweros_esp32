@@ -40,6 +40,8 @@ test {
     _ = @import("libs/tls/tests/tls13.zig");
     _ = @import("libs/tls/tls_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
+    _ = @import("libs/usb/tests/usb.zig");
+    _ = @import("devs/usb/hid/report.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");

@@ -1,0 +1,27 @@
+TABLE OF CONTENTS
+
+usbclass/USBClassBind
+usbclass/USBClassUnbind
+usbclass/USBClassBind                                    usbclass/USBClassBind
+
+   NAME
+	USBClassBind -- An interface offered: true if the driver takes it - it has opened its pipes and filled a unit, `binding.unit` saying which - false if it declines and the next driver is asked.
+
+   SYNOPSIS
+	    bool USBClassBind(*usb.USBBinding binding)
+
+   BEHAVIOR
+	Called on the bus's process, which nothing else on the bus moves while
+	it runs: decide quickly, and leave anything slow to the driver's own
+	task. It may make control transfers on the device (DoUSBControl) and
+	open pipes.
+usbclass/USBClassUnbind                                usbclass/USBClassUnbind
+
+   NAME
+	USBClassUnbind -- The interface is gone - the device was pulled, or the bus stops: every request the driver has outstanding on it answered, its pipes closed, its unit left without what was in it.
+
+   SYNOPSIS
+	    void USBClassUnbind(*usb.USBBinding binding)
+
+   BEHAVIOR
+	Called on the bus's process.

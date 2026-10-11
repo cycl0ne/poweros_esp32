@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT
+//! usb.library's functions: the USB buses, the devices on them, their
+//! descriptors, and pipes to their endpoints. Open it with
+//! OpenLibrary("usb.library", 1); the structures are in sdk.usb.
+##include libs/exec/exec as exec
+##include libs/usb/usb as usb
+##basetype UsbBase
+##name usb.library
+##bias 4
+##public
+/// Bus `bus` started: its controller opened, its root hub found, what is
+/// plugged in set up and offered to the class drivers. 0, or USBERR_*.
+i32 StartUSB(u32 bus)
+/// Bus `bus` stopped: every driver let go, its controller closed.
+void StopUSB(u32 bus)
+/// The list of every device on every bus, held until
+/// ReleaseUSBDeviceList; its nodes are USBDevices.
+*exec.List ObtainUSBDeviceList()
+/// The list let go of.
+void ReleaseUSBDeviceList()
+/// The next descriptor of `descriptor_type` (0: any) after `previous`
+/// (null: from the start) in the device's configuration, or null.
+?*const usb.DescriptorHeader NextUSBDescriptor(*usb.USBDevice device, ?*const usb.DescriptorHeader previous, u32 descriptor_type)
+/// The next interface after `previous` whose class, subclass and
+/// protocol are these (-1: any), or null.
+?*const usb.InterfaceDescriptor FindUSBInterface(*usb.USBDevice device, ?*const usb.InterfaceDescriptor previous, i32 class, i32 subclass, i32 protocol)
+/// The first endpoint of `interface_desc` that goes `direction`
+/// (USB_DIR_IN, USB_DIR_OUT) and is of `transfer_type`
+/// (USB_ENDPOINT_XFER_*), or null.
+?*const usb.EndpointDescriptor FindUSBEndpoint(*usb.USBDevice device, *const usb.InterfaceDescriptor interface_desc, u32 direction, u32 transfer_type)
+/// String `index` of the device, as Latin-1, into `buffer`: its length,
+/// or -1 if it has none.
+i32 GetUSBString(*usb.USBDevice device, u32 index, [*]u8 buffer, u32 size)
+/// A pipe to endpoint `endpoint_address` of the device (0: its control
+/// endpoint), replying to `reply_port`; null if there is no such endpoint.
+?*usb.USBPipe OpenUSBPipe(*usb.USBDevice device, u32 endpoint_address, *exec.MsgPort reply_port)
+/// A pipe closed. Nothing of it may be outstanding.
+void CloseUSBPipe(?*usb.USBPipe pipe)
+/// A control transfer on the device's endpoint 0: io_Error, and the
+/// bytes moved in `actual` (null: not wanted).
+i32 DoUSBControl(*usb.USBDevice device, *const usb.SetupPacket setup, ?*anyopaque data, ?*u32 actual)
+/// An endpoint's halt cleared and its toggle back to DATA0: io_Error.
+i32 ClearUSBStall(*usb.USBPipe pipe)
+/// Interface `interface_number` of the device taken by a program called
+/// `name`; false if a driver or another program has it.
+bool ClaimUSBInterface(*usb.USBDevice device, u32 interface_number, [*:0]const u8 name)
+/// An interface a program had taken given back.
+void ReleaseUSBInterface(*usb.USBDevice device, u32 interface_number)
+/// `signals` sent to `task` whenever a device comes, goes or is bound;
+/// null without memory.
+?*usb.USBNotify AddUSBNotify(*exec.Task task, u32 signals)
+/// No more of that.
+void RemUSBNotify(?*usb.USBNotify notify)
+##end

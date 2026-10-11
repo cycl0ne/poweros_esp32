@@ -39,6 +39,8 @@ comptime {
     _ = @import("rom/devs/serial/serial.zig");
     _ = @import("rom/devs/usbserial/usbserial.zig");
     _ = @import("rom/devs/input/input.zig");
+    _ = @import("rom/devs/keyboard/keyboard.zig");
+    _ = @import("rom/devs/mouse/mouse.zig");
     _ = @import("rom/libs/keymap/keymap.zig");
     _ = @import("rom/libs/utility/utility.zig");
     _ = @import("rom/libs/expansion/expansion.zig");

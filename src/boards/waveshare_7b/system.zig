@@ -229,6 +229,24 @@ const can = [_]Tag{
     .done,
 };
 
+/// The chip's USB port on the USB-C socket marked USB, while USB_SEL is
+/// low (the expander's default): the console and the JTAG as the chip
+/// starts, the OTG controller's when its bus takes the port. The board
+/// takes its 5 V from the socket and gives none out, so as a host what is
+/// plugged in needs a supply of its own.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_DWC2),
+    .pointer(st.PART_ChipName, "esp32-s3 usb otg"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST | st.USBROLE_DEVICE),
+    .value(st.PART_UsbSpeed, st.USBSPEED_FULL),
+    .value(st.PART_UsbVbus, st.USBVBUS_NONE),
+    .value(st.PART_PinSwitch, pins.expanderLow(expander_pin_usb_select)),
+    .done,
+};
+
 // --- the rest ---------------------------------------------------------------------
 
 /// A CS8501 charges the cell on the two-pin battery connector from USB
@@ -279,6 +297,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &sd_slot),
     .pointer(st.SYSTAG_Part, &rs485),
     .pointer(st.SYSTAG_Part, &can),
+    .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &battery),
     .pointer(st.SYSTAG_Part, &header),
     .pointer(st.SYSTAG_Part, &radio),

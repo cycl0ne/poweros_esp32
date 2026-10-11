@@ -89,6 +89,8 @@ pub const Peripheral = enum {
     crypto_rsa,
     crypto_ds,
     crypto_hmac,
+    /// The USB OTG controller (USB-Serial-JTAG has a bit of its own).
+    usb_otg,
 };
 
 /// Which register pair holds a peripheral's bit, and the bit.
@@ -104,6 +106,7 @@ inline fn slotOf(comptime peripheral: Peripheral) Slot {
         .i2c0 => .{ .second = false, .bit = 1 << 7 },
         .i2c1 => .{ .second = false, .bit = 1 << 18 },
         .uart_mem => .{ .second = false, .bit = 1 << 24 },
+        .usb_otg => .{ .second = false, .bit = 1 << 23 },
         .apb_saradc => .{ .second = false, .bit = 1 << 28 },
         .gdma => .{ .second = true, .bit = 1 << 6 },
         .sdio_host => .{ .second = true, .bit = 1 << 7 },

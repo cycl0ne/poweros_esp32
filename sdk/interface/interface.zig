@@ -35,3 +35,5 @@ pub const modbus = @import("modbus.zig");
 pub const filter = @import("filter.zig");
 pub const icon = @import("icon.zig");
 pub const anvil = @import("anvil.zig");
+pub const usb = @import("usb.zig");
+pub const usbclass = @import("usbclass.zig");

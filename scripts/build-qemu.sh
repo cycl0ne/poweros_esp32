@@ -13,6 +13,8 @@ core=target/xtensa/core-esp32s3.c
 rgb=include/hw/display/esp_rgb.h
 rgb_c=hw/display/esp_rgb.c
 sdl=ui/sdl2.c
+machine=hw/xtensa/esp32s3.c
+kconfig=hw/xtensa/Kconfig
 
 if [ ! -d "$src" ]; then
     git clone --depth 1 --branch "$tag" https://github.com/espressif/qemu.git "$src"
@@ -27,7 +29,7 @@ patch() {
         exit 1
     fi
 }
-git checkout -- "$core" "$rgb" "$rgb_c" "$sdl"
+git checkout -- "$core" "$rgb" "$rgb_c" "$sdl" "$machine" "$kconfig"
 patch "$core" 's/\.clock_freq_khz = 40000,/.clock_freq_khz = 240000,/' '\.clock_freq_khz = 240000,'
 # Virtual display: allow the Waveshare 7B's 1024x600 panel (stock max is 800).
 patch "$rgb" 's/#define ESP_RGB_MAX_WIDTH   (800)/#define ESP_RGB_MAX_WIDTH   (1024)/' 'ESP_RGB_MAX_WIDTH   (1024)'
@@ -49,6 +51,12 @@ patch "$rgb_c" 's/#define RGB_VERSION_MINOR 5/#define RGB_VERSION_MINOR 6/' 'RGB
 # and the minor version raised to 7 so a guest can tell.
 git apply "$root/scripts/qemu/esp_rgb_wheel.patch"
 patch "$rgb_c" 's/#define RGB_VERSION_MINOR 6/#define RGB_VERSION_MINOR 7/' 'RGB_VERSION_MINOR 7'
+# USB OTG: QEMU's DWC2 host controller at the OTG's registers (0x6008_0000,
+# interrupt source 38), full and low speed only as the S3's PHY is, and
+# USB_WRAP kept as plain registers; the machine selects the controller and
+# the USB devices to plug into it (-device usb-kbd, usb-mouse, usb-tablet,
+# usb-hub, usb-storage, usb-serial, usb-net).
+git apply "$root/scripts/qemu/esp32s3_dwc2.patch"
 
 # Espressif's release flags (.github/workflows/scripts/configure-native.sh),
 # minus -Werror. SDL provides the window for the virtual display. Newer glibc turns const-qualifier mismatches in

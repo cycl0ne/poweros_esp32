@@ -84,6 +84,10 @@ tags and constants, each with its doc comment.
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
   the bus in QEMU.
+- [USB](guides/usb.md) - a bus and starting it, what is on it, driving
+  a device from a program (claims, pipes, control transfers), writing a
+  class driver, keyboards and mice as sources, writing a controller, and
+  USB in QEMU.
 - [Displays](guides/rtg.md) - rtg.library: drivers and boards, modes,
   buffers, handing on what was drawn, showing a buffer, several at once
   in bands, the engine, turning the picture, the pointer, events,
@@ -125,6 +129,7 @@ first time something opens it.
 | modbus.library | `LIBS:` | Modbus over RTU and TCP, as a client and as a server | [md](autodocs/modbus.md) · [doc](autodocs/modbus.doc) |
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
 | truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
+| usb.library | `LIBS:` | USB buses: their devices, descriptors, pipes to endpoints, class drivers | [md](autodocs/usb.md) · [doc](autodocs/usb.doc), [`usb.zig`](../libs/usb/usb.zig), [`descriptors.zig`](../libs/usb/descriptors.zig) |
 
 ## Devices
 
@@ -139,8 +144,8 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | timer.device | ROM | time, delays and alarms | [md](autodocs/timer.md) · [doc](autodocs/timer.doc), [`timer.zig`](../devices/timer.zig) |
 | input.device | ROM | every input as one stream of events, down a chain of handlers | [md](autodocs/input.md) · [doc](autodocs/input.doc), [`input.zig`](../devices/input.zig), [`inputevent.zig`](../devices/inputevent.zig) |
 | console.device | ROM | a terminal in a window | [md](autodocs/console.md) · [doc](autodocs/console.doc) |
-| keyboard.device | ROM | a keyboard, as raw keys | [`keyboard.zig`](../devices/keyboard.zig) |
-| mouse.device | ROM | a mouse, as raw events | [`mouse.zig`](../devices/mouse.zig) |
+| keyboard.device | ROM | the keyboards, as raw keys, from sources | [`keyboard.zig`](../devices/keyboard.zig) |
+| mouse.device | ROM | the mice, as raw events, from sources | [`mouse.zig`](../devices/mouse.zig) |
 | touch.device | ROM | a touch panel, as contacts | [`touch.zig`](../devices/touch.zig) |
 | serial.device | ROM | the chip's UARTs, a unit each | [`serial.zig`](../devices/serial.zig) |
 | usbserial.device | ROM | the USB-Serial-JTAG port, with serial.device's API | [`usbserial.zig`](../devices/usbserial.zig) |
@@ -155,6 +160,8 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | openeth.device | `DEVS:networks/` | QEMU's Ethernet | [`network.zig`](../devices/network.zig) |
 | wifi.device | `DEVS:networks/` | the chip's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | slip.device | `DEVS:networks/` | IP over a serial line (SLIP), on any device with serial.device's API | [`network.zig`](../devices/network.zig), [`slip.zig`](../devices/slip.zig) |
+| usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket | [`usbhc.zig`](../devices/usbhc.zig) |
+| usb/hid.device | `DEVS:usb/` | USB keyboards and mice, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
 
 ## Resources
 

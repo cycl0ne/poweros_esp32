@@ -29,7 +29,7 @@ const KeymapBase = sdk.interface.keymap.KeymapBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Input";
-const VERSION_STRING = "\x00$VER: Input 1.1 (22.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Input 1.2 (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TIMER/S,KEY/K/N";
@@ -134,6 +134,7 @@ fn buttonText(code: u32) [*:0]const u8 {
         ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX => "right let go",
         ie.IECODE_MBUTTON => "middle press",
         ie.IECODE_MBUTTON | ie.IECODE_UP_PREFIX => "middle let go",
+        ie.IECODE_WHEEL => "wheel",
         else => "moved",
     };
 }

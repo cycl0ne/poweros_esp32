@@ -202,6 +202,8 @@ pub const RTF_COLDSTART = resident.RTF_COLDSTART;
 pub const RTF_SINGLETASK = resident.RTF_SINGLETASK;
 pub const RTF_AFTERDOS = resident.RTF_AFTERDOS;
 pub const RTF_AUTOINIT = resident.RTF_AUTOINIT;
+pub const RTF_DEVICEINFO = resident.RTF_DEVICEINFO;
+pub const ResidentDevice = resident.ResidentDevice;
 
 pub const CACRF_ClearI = cache.CACRF_ClearI;
 pub const CACRF_ClearD = cache.CACRF_ClearD;

@@ -106,6 +106,11 @@ pub const State = extern struct {
     /// The handler writes `head`, the task `tail`.
     head: u32 = 0,
     tail: u32 = 0,
+    /// Where a mouse that says only how far it went has put the pointer:
+    /// the handler's, which adds each distance to it, and starts it again
+    /// from every position a finger or another mouse gives.
+    mouse_x: i32 = 0,
+    mouse_y: i32 = 0,
     events: [ring_size]InputEvent = undefined,
 
     /// The pointer on the screen `on` - the one at its line of the
@@ -206,14 +211,28 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     while (e) |ev| : (e = ev.next) {
         switch (ev.class) {
             // The pointer event after it came from a mouse, not a finger.
-            // The wheel is the one raw mouse event intuition's task wants.
+            // The wheel is the one raw mouse event intuition's task wants
+            // as it is. A mouse that says only how far it went has no
+            // pointer event after it: the distance is added to where it
+            // put the pointer last, and that place is the pointer's, as
+            // any position is.
             ie.IECLASS_RAWMOUSE => {
                 pointer.mouseSeen(ib);
-                if (ev.code != ie.IECODE_WHEEL) continue;
+                if (ev.code != ie.IECODE_WHEEL) {
+                    if (ev.qualifier & ie.IEQUALIFIER_RELATIVEMOUSE == 0) continue;
+                    var at = relativeMove(ib, st, ev);
+                    pointer.moved(ib, at.x, at.y);
+                    if (push(st, &at)) any = true;
+                    continue;
+                }
             },
             // The pointer follows at once, on its own task, while
             // intuition's may be busy.
-            ie.IECLASS_NEWPOINTERPOS => pointer.moved(ib, ev.x, ev.y),
+            ie.IECLASS_NEWPOINTERPOS => {
+                st.mouse_x = ev.x;
+                st.mouse_y = ev.y;
+                pointer.moved(ib, ev.x, ev.y);
+            },
             ie.IECLASS_RAWKEY, ie.IECLASS_TIMER => {},
             else => continue,
         }
@@ -221,6 +240,30 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     }
     if (any) ib.sys_base.Signal(&st.task, st.mask);
     return events;
+}
+
+/// A relative mouse's event as the pointer position it makes: the
+/// distance added to where the pointer was, kept on the front screen, the
+/// button it carries kept. On input.device's task.
+fn relativeMove(ib: *IntuitionBase, st: *State, ev: *const InputEvent) InputEvent {
+    var right: i32 = 0;
+    var bottom: i32 = 0;
+    const first = ib.screen_list.head;
+    if (first != null and first.?.succ != null) {
+        const front: *Screen = @ptrCast(@alignCast(first.?));
+        right = @max(front.width - 1, 0);
+        bottom = @max(front.top + front.height - 1, 0);
+    }
+    st.mouse_x = @min(@max(st.mouse_x + ev.x, 0), right);
+    st.mouse_y = @min(@max(st.mouse_y + ev.y, 0), bottom);
+    return .{
+        .class = ie.IECLASS_NEWPOINTERPOS,
+        .code = ev.code,
+        .qualifier = ev.qualifier & ~ie.IEQUALIFIER_RELATIVEMOUSE,
+        .x = st.mouse_x,
+        .y = st.mouse_y,
+        .time = ev.time,
+    };
 }
 
 /// One event into the ring: whether it went in.

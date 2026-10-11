@@ -62,6 +62,10 @@ pub const HP_RST_EN2: usize = map.HP_SYS_CLKRST + 0x0C8;
 /// and the resets of the SD host and the Ethernet MAC.
 pub const LP_HP_CLK_CTRL: usize = map.LP_CLKRST + 0x040;
 pub const LP_HP_SDMMC_EMAC_RST_CTRL: usize = map.LP_CLKRST + 0x04C;
+/// The USB controllers' clocks and resets in the LP block
+/// (LP_CLKRST_HP_USB_CLKRST_CTRL0/1).
+pub const LP_HP_USB_CLKRST_CTRL0: usize = map.LP_CLKRST + 0x044;
+pub const LP_HP_USB_CLKRST_CTRL1: usize = map.LP_CLKRST + 0x048;
 
 /// A peripheral with clocks and a reset of its own.
 pub const Peripheral = enum {
@@ -94,6 +98,13 @@ pub const Peripheral = enum {
     dma2d,
     /// The JPEG codec.
     jpeg,
+    /// The high-speed USB OTG controller and its UTMI PHY: the bus clock
+    /// and the PHY's 48 MHz reference; one reset each, the PHY's let go
+    /// first.
+    usb_otg20,
+    /// The full-speed USB OTG controller: the bus clock and its 48 MHz
+    /// clock, and its reset.
+    usb_otg11,
     /// The second I2S controller: its bus clock, its master clock's pad
     /// and its reset. Its transmit and receive clocks - enable, source,
     /// fractional divider - are its driver's to set (`update`, on
@@ -188,6 +199,14 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
         .jpeg => .{
             .clocks = &.{bit(SOC_CLK_CTRL1, 8)},
             .resets = &.{bit(HP_RST_EN0, 30)},
+        },
+        .usb_otg20 => .{
+            .clocks = &.{ bit(SOC_CLK_CTRL1, 16), bit(LP_HP_USB_CLKRST_CTRL1, 30) },
+            .resets = &.{ bit(LP_HP_USB_CLKRST_CTRL1, 1), bit(LP_HP_USB_CLKRST_CTRL1, 2) },
+        },
+        .usb_otg11 => .{
+            .clocks = &.{ bit(SOC_CLK_CTRL1, 15), bit(LP_HP_USB_CLKRST_CTRL0, 4) },
+            .resets = &.{bit(LP_HP_USB_CLKRST_CTRL1, 3)},
         },
         .i2s1 => .{
             .clocks = &.{ bit(SOC_CLK_CTRL2, 15), bit(LP_HP_CLK_CTRL, 11) },

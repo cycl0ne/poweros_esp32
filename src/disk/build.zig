@@ -34,7 +34,7 @@ const commands = [_][]const u8{
     "showconfig",   "date",      "setdate",  "setprefs",      "fixfonts",
     "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
     "diskchange",   "modbus",    "more",     "relabel",       "loadanvil",
-    "iconx",
+    "iconx",        "usb",       "usbinfo",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -46,7 +46,7 @@ const tests = [_][]const u8{
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
-    "jpeg",
+    "jpeg",        "keysource",  "usbdevice",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -74,6 +74,7 @@ const modules = [_]Program{
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
+    .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
@@ -137,6 +138,8 @@ const modules = [_]Program{
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
+    .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
+    .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 

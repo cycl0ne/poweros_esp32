@@ -97,6 +97,14 @@ pub const PART_Turn = PART_Dummy + 7;
 /// way round - its first half, the one I2S calls left, plays on the right
 /// speaker and its second on the left.
 pub const PART_SidesSwapped = PART_Dummy + 8;
+/// A USB socket's roles (USBROLE_* or'd): what the board's wiring lets
+/// its controller be on it.
+pub const PART_UsbRoles = PART_Dummy + 9;
+/// The fastest a USB socket is wired for (USBSPEED_*).
+pub const PART_UsbSpeed = PART_Dummy + 10;
+/// Where the 5 V a USB host gives what is plugged in comes from
+/// (USBVBUS_*). Absent, USBVBUS_NONE.
+pub const PART_UsbVbus = PART_Dummy + 11;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -209,6 +217,12 @@ pub const PARTKIND_RS485: u32 = 14;
 pub const PARTKIND_BUTTON: u32 = 15;
 /// A connector that brings a pad out for whatever is plugged into it.
 pub const PARTKIND_HEADER: u32 = 16;
+/// A USB controller and the socket the board brings it out to: its
+/// PART_BusUnit says which of the chip's controllers, PART_UsbRoles,
+/// PART_UsbSpeed and PART_UsbVbus how the socket is wired, PART_PinReset
+/// a hub on the board held in reset until the bus starts, and
+/// PART_PinSwitch the line that gives the socket's pads to it.
+pub const PARTKIND_USB: u32 = 17;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -250,6 +264,10 @@ pub const CHIP_LT8912B: u32 = 18;
 /// BUS_I2S): bit clock, word clock and data, no master clock and nothing
 /// to set up; PART_PinEnable switches it on.
 pub const CHIP_NS4168: u32 = 19;
+/// The chip's own Synopsys DWC2 USB OTG controller (PARTKIND_USB on
+/// BUS_MEMORY): on the ESP32-S3 the full-speed one, unit 0; on the
+/// ESP32-P4 the high-speed one, unit 0, and the full-speed one, unit 1.
+pub const CHIP_DWC2: u32 = 20;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -271,3 +289,25 @@ pub const BUS_TWAI: u32 = 10;
 pub const BUS_RMII: u32 = 11;
 /// The chip's MIPI-DSI host, to a panel or a bridge.
 pub const BUS_MIPI_DSI: u32 = 12;
+
+// A USB socket's roles (PART_UsbRoles).
+/// The controller may be the host: it gives the bus its frames, and
+/// keyboards, sticks and hubs are plugged in.
+pub const USBROLE_HOST: u32 = 1 << 0;
+/// The controller may be a device another host drives.
+pub const USBROLE_DEVICE: u32 = 1 << 1;
+
+// How fast a USB socket is wired (PART_UsbSpeed).
+pub const USBSPEED_LOW: u32 = 0;
+pub const USBSPEED_FULL: u32 = 1;
+pub const USBSPEED_HIGH: u32 = 2;
+
+// Where a USB host's 5 V comes from (PART_UsbVbus).
+/// The board gives none: what is plugged in needs a supply of its own,
+/// a powered hub or an adapter that feeds 5 V in.
+pub const USBVBUS_NONE: u32 = 0;
+/// The board gives it whenever it runs; a hub on the board may switch
+/// each of its sockets itself.
+pub const USBVBUS_ALWAYS: u32 = 1;
+/// The board switches it with the part's PART_PinPower.
+pub const USBVBUS_PIN: u32 = 2;

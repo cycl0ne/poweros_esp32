@@ -108,6 +108,24 @@ const rs485 = [_]Tag{
     .done,
 };
 
+// --- the USB port -----------------------------------------------------------------
+
+/// The emulator's DWC2 at the S3's OTG controller's address
+/// (scripts/qemu/esp32s3_dwc2.patch), host only and at full speed, as the
+/// chip's PHY is: what `-Dusb` names is plugged into it. It has no PHY to
+/// share with the console, and gives what is plugged in its power.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_DWC2),
+    .pointer(st.PART_ChipName, "qemu dwc2"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST),
+    .value(st.PART_UsbSpeed, st.USBSPEED_FULL),
+    .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -128,6 +146,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &mouse),
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &rs485),
+    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 
