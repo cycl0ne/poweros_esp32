@@ -437,6 +437,9 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(image, "kernel.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.flash_image, "flash.bin").step);
+    // Only the board's own: the emulator's image is made beside it on
+    // every build, and the two parts must not share the name.
+    if (built.flash_part) |part| b.getInstallStep().dependOn(&b.addInstallBinFile(part, "kernel-flash.bin").step);
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
@@ -1033,7 +1036,6 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
     merge.addFileArg(flash_part.getOutput());
     merge.addArg(b.fmt("0x{x}", .{disk_offset}));
     merge.addFileArg(disk_bin);
-    b.getInstallStep().dependOn(&b.addInstallBinFile(flash_part.getOutput(), "kernel-flash.bin").step);
     return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image, .flash_part = flash_part.getOutput() };
 }
 
