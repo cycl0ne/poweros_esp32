@@ -116,3 +116,14 @@ pub const DevOpenFn = *const fn (dev: *Device, io: *IORequest, unit: u32, flags:
 pub const DevCloseFn = *const fn (dev: *Device, io: *IORequest) callconv(.c) ?*anyopaque;
 pub const BeginIOFn = *const fn (dev: *Device, io: *IORequest) callconv(.c) void;
 pub const AbortIOFn = *const fn (dev: *Device, io: *IORequest) callconv(.c) i32;
+
+/// BeginIO: the request handed to its device's BeginIO vector as it
+/// stands, IOF_QUICK included - where DoIO sets it and waits, and SendIO
+/// clears it. With IOF_QUICK set it asks for an answer at once without
+/// committing to wait: a request that comes back with the flag still set
+/// is done, one without it is replied to its port later (WaitIO). A
+/// request not open does nothing.
+pub fn BeginIO(io: *IORequest) void {
+    const dev = io.device orelse return;
+    dev.vector(BeginIOFn, DEV_BEGINIO)(dev, io);
+}

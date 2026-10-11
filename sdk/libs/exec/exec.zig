@@ -157,6 +157,7 @@ pub const IOStdReq = devices.IOStdReq;
 pub const DevOpenFn = devices.DevOpenFn;
 pub const DevCloseFn = devices.DevCloseFn;
 pub const BeginIOFn = devices.BeginIOFn;
+pub const BeginIO = devices.BeginIO;
 pub const AbortIOFn = devices.AbortIOFn;
 pub const DEV_BEGINIO = devices.DEV_BEGINIO;
 pub const DEV_ABORTIO = devices.DEV_ABORTIO;

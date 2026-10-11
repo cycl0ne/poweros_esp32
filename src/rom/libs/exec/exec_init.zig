@@ -44,8 +44,8 @@ pub const LIBRARY_VERSION = 1;
 /// walks one, a library's own lock and pin around its vectors,
 /// DetachLibrary - SetTaskEndMsg and RemoveMsg, and Forbid and Permit gone.
 /// 7: SafePutToPort.
-pub const LIBRARY_REVISION = 7;
-const BUILD_DATE = "07.10.2026";
+pub const LIBRARY_REVISION = 8;
+const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
