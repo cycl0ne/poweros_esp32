@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! dma.resource's functions: the chip's general DMA engine (GDMA), its
-//! channels handed out to one owner each. A
+//! dma.resource's functions: the chip's DMA engines, their channels
+//! handed out to one owner each (sdk/resources/dma.zig). A
 //! resource: no Open or Close, its first function in the first slot. The
 //! base comes from OpenResource("dma.resource").
 ##include resources/dma as dma
@@ -8,7 +8,8 @@
 ##name dma.resource
 ##bias 0
 ##public
-/// Claim a channel (0-4) for `name`: null if it is now yours, else its
+/// Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or
+/// a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its
 /// owner's name. Not from interrupts.
 ?[*:0]const u8 AllocDMAChannel(u32 channel, [*:0]const u8 name)
 /// Give a channel back: it stops, is disconnected, its interrupts off.
@@ -16,21 +17,22 @@
 void FreeDMAChannel(u32 channel)
 /// Who has a channel, or null.
 ?[*:0]const u8 DMAChannelOwner(u32 channel)
-/// Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for
-/// memory to memory, with DMACF_* flags. Resets the channel. False for a bad
-/// channel or peripheral, or a peripheral another channel is connected to.
+/// Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY
+/// for memory to memory, with DMACF_* flags. Resets the channel. False for a
+/// bad or 2D channel, a peripheral not on the channel's engine, or one
+/// another channel is connected to.
 bool ConnectDMAChannel(u32 channel, u32 peripheral, u32 flags)
-/// Start a side (DMA_IN, DMA_OUT) on a descriptor chain. False unless the
-/// first descriptor is 4-byte aligned in internal RAM. Memory to memory:
-/// IN first, then OUT.
+/// Start a general channel's side (DMA_IN, DMA_OUT) on a descriptor chain.
+/// False unless the first descriptor is in internal RAM, 4-byte aligned (8
+/// on the ESP32-P4's AXI channels). Memory to memory: IN first, then OUT.
 bool StartDMA(u32 channel, u32 side, *dma.DMADescriptor list)
-/// Stop a side.
+/// Stop a general channel's side.
 void StopDMA(u32 channel, u32 side)
 /// Reset a side: its FIFO and state machine, its connection and flags left
 /// as they are. Stopping a side does not empty it, and what it still holds
 /// goes out ahead of the next chain it is started on. From interrupts too.
 void ResetDMA(u32 channel, u32 side)
-/// Enable a side's interrupts (DMAINTF_*); 0: none.
+/// Enable a general channel's side's interrupts (DMAINTF_*); 0: none.
 void EnableDMAInts(u32 channel, u32 side, u32 mask)
 /// A side's pending, enabled interrupts. From interrupts too.
 u32 DMAIntStatus(u32 channel, u32 side)
@@ -43,8 +45,9 @@ void ClearDMAInts(u32 channel, u32 side, u32 mask)
 /// A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT
 /// sends them all (EOF on the last descriptor), DMA_IN fills them. In
 /// internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per descriptor;
-/// DMACHF_LOOP links the last back to the first. Null if the buffer isn't
-/// in internal RAM or PSRAM, or without memory. Not from interrupts.
+/// DMACHF_LOOP links the last back to the first. Written back from the data
+/// cache where it covers internal memory. Null if the buffer isn't in
+/// internal RAM or PSRAM, or without memory. Not from interrupts.
 ?*dma.DMADescriptor AllocDMAChain(u32 side, ?*anyopaque buffer, u32 length, u32 flags)
 /// Free a chain from AllocDMAChain (null: nothing). Not from interrupts.
 void FreeDMAChain(?*dma.DMADescriptor chain)

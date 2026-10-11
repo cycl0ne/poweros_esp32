@@ -1,25 +1,50 @@
 // SPDX-License-Identifier: MIT
 //! audio.device: four channels of sound, allocated and written to.
 //!
-//! A channel is asked for rather than taken: `ADCMD_ALLOCATE` is given the
-//! combinations that would do and a precedence, and answers with the ones
-//! it got - stealing them from anything of lower precedence, or waiting
-//! until they are free. What comes back in `io_Unit` is the bits of the
-//! channels allocated, and `ioa_AllocKey` says which allocation they
-//! belong to: a command on a channel whose key has moved on is refused
-//! (`ADIOERR_NOALLOCATION`), which is how a program finds out that its
-//! channels were stolen.
+//! A channel is asked for rather than taken: `ADCMD_ALLOCATE` - or an
+//! OpenDevice with `data` and `length` - is given the combinations that
+//! would do and a precedence (`ln_Pri`), and answers with the one it got
+//! in `channels`: free channels if it can, else those of the lowest
+//! precedence below its own, which it steals - their writes come back
+//! IOERR_ABORTED. Without `ADIOF_NOWAIT` it waits until it can be had;
+//! a locked channel (`ADCMD_LOCK`) makes even that one wait, and tells
+//! the lock `ADIOERR_CHANNELSTOLEN`. `alloc_key` says which allocation
+//! the channels belong to: a command on a channel whose key has moved on
+//! is refused (`ADIOERR_NOALLOCATION`), which is how a program finds out
+//! that its channels were stolen. `ADCMD_SETPREC` changes the
+//! precedence, `ADCMD_FREE` - and CloseDevice, for every channel of the
+//! key - gives the channels back.
 //!
-//! `CMD_WRITE` plays `ioa_Data` on those channels: `ioa_Length` bytes of
-//! signed 8-bit samples, a sample every `ioa_Period` ticks of the
-//! machine's audio clock, at `ioa_Volume` of 64, `ioa_Cycles` times over
-//! (0 for ever). It is replied when the last sample has gone, or, with
-//! `ADIOF_WRITEMESSAGE`, `ioa_WriteMsg` is replied then and the request
-//! when the one after it starts.
+//! `CMD_WRITE` plays `data` on one channel - the lowest the request
+//! names, and `channels` says afterwards which: `length` bytes of signed
+//! 8-bit samples, a sample every `period` ticks of the machine's audio
+//! clock, at `volume` of 64, `cycles` times over (0 for ever). Writes on
+//! a channel queue without a limit and follow each other without a gap,
+//! so a program can stream sound as a pair of buffers, one playing while
+//! it fills the other. A write is replied when its last sample has gone;
+//! with `ADIOF_WRITEMESSAGE`, `write_msg` is replied when it starts. A
+//! sound for both sides is a write to a channel of each, kept in step by
+//! `CMD_STOP` on both, the writes, and `CMD_START` on both.
 //!
-//! This machine has one stereo output and no four-channel hardware, so the
+//! The other commands: `CMD_READ` answers the write playing (in `data`),
+//! `ADCMD_PERVOL` changes period and volume, `ADCMD_FINISH` ends the
+//! write playing, `ADCMD_WAITCYCLE` is replied when the cycle playing
+//! ends - each now or, with `ADIOF_SYNCCYCLE`, at the end of the cycle -
+//! and `CMD_FLUSH` and `CMD_RESET` throw everything away. A command for
+//! several channels serves those that are the caller's and leaves the
+//! rest out of `channels`.
+//!
+//! The flags - `ADIOF_PERVOL`, `ADIOF_SYNCCYCLE`, `ADIOF_NOWAIT`,
+//! `ADIOF_WRITEMESSAGE` - are the command's and reach the device through
+//! DoIO and SendIO; a request used again keeps the ones it was last
+//! given, so they are set for each command.
+//!
+//! This machine has one output and no four-channel hardware, so the
 //! device mixes the channels itself: 0 and 3 to the left, 1 and 2 to the
-//! right, as the hardware they are named for did.
+//! right, as the hardware they are named for did. Where the board's
+//! output is mono - one speaker or one jack - both sides are played on
+//! it together, so a program that writes a left and a right channel is
+//! heard whole on every board.
 
 const exec = @import("../libs/exec/exec.zig");
 const nodes = @import("../libs/exec/nodes.zig");
@@ -62,15 +87,15 @@ pub const ADCMD_ALLOCATE: u16 = 32;
 /// channel keeps what it had.
 pub const ADIOB_PERVOL: u32 = 4;
 pub const ADIOF_PERVOL: u8 = 1 << 4;
-/// Start at the end of the cycle the channel is in, rather than at once.
+/// ADCMD_PERVOL and ADCMD_FINISH at the end of the cycle the channel is
+/// in, rather than at once.
 pub const ADIOB_SYNCCYCLE: u32 = 5;
 pub const ADIOF_SYNCCYCLE: u8 = 1 << 5;
 /// An allocation that cannot be made comes back refused rather than
-/// waiting for the channels.
+/// waiting for the channels - unless a lock is what stands in the way.
 pub const ADIOB_NOWAIT: u32 = 6;
 pub const ADIOF_NOWAIT: u8 = 1 << 6;
-/// `ioa_WriteMsg` is replied when the write's last sample has gone, and
-/// the request itself when the next write starts.
+/// `write_msg` is replied when the write starts to play.
 pub const ADIOB_WRITEMESSAGE: u32 = 7;
 pub const ADIOF_WRITEMESSAGE: u8 = 1 << 7;
 
@@ -92,10 +117,9 @@ pub const IOAudio = extern struct {
     /// in; every later command on those channels carries it back.
     alloc_key: i16 = 0,
     pad: i16 = 0,
-    /// Which channels were allocated, one bit each. ADCMD_ALLOCATE fills
-    /// it in and every later command names its channels with it. (The
-    /// hardware's own device put this in `io_Unit`; a set of bits is not
-    /// a unit, and this machine's requests say what they mean.)
+    /// Channels, one bit each: those an allocation got, those a command
+    /// names - and, when it is done, those it acted on. A set of bits is
+    /// not a unit, so it has a field of its own.
     channels: u32 = 0,
     /// The samples: signed 8-bit, one a period.
     data: ?[*]const i8 = null,
@@ -106,7 +130,7 @@ pub const IOAudio = extern struct {
     /// How many times over; 0 plays until something stops it.
     cycles: u16 = 0,
     pad2: u16 = 0,
-    /// Replied when the last sample has gone, for a write that asked
+    /// Replied when the write starts to play, for a write that asked
     /// (ADIOF_WRITEMESSAGE).
     write_msg: Message = .{},
 };

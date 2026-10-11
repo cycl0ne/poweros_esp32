@@ -93,9 +93,17 @@ pub const LIBRARY_VERSION = 0;
 /// (GMWR_VERIFY). 36: the active window closed, the window on its screen
 /// that was active before it is active again. 37: a refresh with nothing
 /// left to redraw draws nothing; only the part of the border that shows
-/// is drawn; a GimmeZeroZero window's two layers move in one pass.
-pub const LIBRARY_REVISION = 37;
-const BUILD_DATE = "09.10.2026";
+/// is drawn; a GimmeZeroZero window's two layers move in one pass. 38: a
+/// window sized without flicker - nothing cleared on it first, the
+/// gadgets and what a size leaves behind drawn aside an area at a time -
+/// and sized by the user a step at a time, each when the program has
+/// answered the last IDCMP_NEWSIZE; a gadget drawn whole is drawn aside.
+/// 39: the depth gadget brings a window another one overlaps from in
+/// front to the front and sends one nothing covers to the back, Shift
+/// always to the back; the bar's gadgets have the shape of their
+/// drawings' grids, depth and zoom flush with the window's right edge.
+pub const LIBRARY_REVISION = 39;
+const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

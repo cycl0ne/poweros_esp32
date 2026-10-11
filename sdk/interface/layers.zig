@@ -46,6 +46,7 @@ pub const LVO = struct {
     pub const InstallLayerHook = libraries.lvo(26);
     pub const DoHookClipRects = libraries.lvo(27);
     pub const LayersErrorText = libraries.lvo(28);
+    pub const DamageLayer = libraries.lvo(29);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -76,6 +77,7 @@ pub const Fn = struct {
     pub const InstallLayerHook = *const fn (*LayersBase, *layers.Layer, usize) callconv(.c) usize;
     pub const DoHookClipRects = *const fn (*LayersBase, *utility.Hook, *graphics.RastPort, *const graphics.Rect) callconv(.c) void;
     pub const LayersErrorText = *const fn (*LayersBase, i32) callconv(.c) [*:0]const u8;
+    pub const DamageLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -244,5 +246,12 @@ pub const LayersBase = opaque {
     /// is "unknown error" rather than null.
     pub fn LayersErrorText(self: *LayersBase, code: i32) [*:0]const u8 {
         return libraries.call(self, LVO.LayersErrorText, Fn.LayersErrorText, .{code});
+    }
+
+    /// Say that part of a layer has to be drawn again: `area`, in the layer's
+    /// coordinates, joins its damage, and the layer is owed a refresh. Nothing
+    /// is painted. False if there was no memory for it.
+    pub fn DamageLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) bool {
+        return libraries.call(self, LVO.DamageLayer, Fn.DamageLayer, .{ layer, area });
     }
 };

@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
 }
 ```
 
+A program for the ESP32-P4 says so with `.chip = .esp32p4` (the
+ESP32-S3 is the default). There the code is RISC-V and PC-relative, and
+the load file holds it with its data in one segment; it reaches the ROM
+only through a pointer, never by a direct call, which `addProgram`
+refuses. A load file names the CPU it was built for, and `LoadSeg`
+refuses one built for another.
+
 ## Hello, world - in the shell
 
 A command is a function `_program_entry` that gets exec's base. It opens
@@ -75,9 +82,12 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     defer sys.CloseLibrary(layers_lib);
     const lb: *LayersBase = @ptrCast(layers_lib);
 
-    // A window on the default screen, with a close gadget that tells us so.
+    // A window on the default screen, with a close gadget that tells us so,
+    // and the program's name and version in the screen's title while it is
+    // the active window.
     const w = ib.OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Hello") },
+        .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr("Hello 1.0") },
         .{ .tag = wn.WA_InnerWidth, .data = 240 },
         .{ .tag = wn.WA_InnerHeight, .data = 60 },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
@@ -244,9 +254,11 @@ dbg> g                       go on (q as well)
 dbg> reset                   the machine started again
 ```
 
-The breakpoints and watchpoints are the core's own - two of each - so
-nothing is written into the code, which could not be done anyway: it is
-in flash, mapped for reading. `s` steps one instruction with every
+The breakpoints and watchpoints are the core's own - two of each on the
+ESP32-S3, two breakpoints and one watchpoint from the ESP32-P4's three
+triggers - so nothing is written into the code, which could not be done
+anyway: it is in flash, mapped for reading. On the ESP32-P4 `bt` follows
+the frame pointers the kernel is built with. `s` steps one instruction with every
 interrupt held off, so what is stepped is the code that was stopped and
 not whichever interrupt happened to be next; the stopped code's own
 interrupt level is left alone, because it may be inside a `Disable`.

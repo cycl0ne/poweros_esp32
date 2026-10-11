@@ -737,6 +737,68 @@ test "a copy is cut down to both buffers at once" {
     try tearDown(rb);
 }
 
+test "pixels and a colour laid over a buffer: cut down, the picture moved with the cut" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const bitmap = base(rb).AllocBitMap(board, 16, 8, format, 0).?;
+
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_BLEND_PIXELS != 0);
+    try testing.expect(info.caps & rtg.boards.RTGBC_BLEND_RECT != 0);
+    try testing.expect(info.caps & rtg.boards.RTGBC_SCALE_PIXELS != 0);
+
+    // A picture of four columns: white fully covering, half covering, and
+    // not covering at all.
+    const picture = [4]u32{ 0xFFFF_FFFF, 0x80FF_FFFF, 0x0000_0000, 0xFFFF_FFFF };
+    const pixels = rtg.RtgPixels{ .pixels = @ptrCast(&picture), .pitch = 16, .format = .bgra32 };
+    // Off the left by one: the driver gets the rest, and the picture's
+    // corner moves one along with it.
+    const area = rtg.RtgRect{ .x = -1, .y = 0, .width = 4, .height = 1 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).BlendPixels(bitmap, &area, &pixels, 255));
+    try testing.expectEqual(@as(i32, 0), fk.log.last_rect.x);
+    try testing.expectEqual(@as(i32, 3), fk.log.last_rect.width);
+    try testing.expectEqual(@as(i32, 1), fk.log.last_pixels.x);
+    const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
+    try testing.expectEqual(@as(u16, 0x8410), row[0]);
+    try testing.expectEqual(@as(u16, 0), row[1]);
+    try testing.expectEqual(@as(u16, 0xFFFF), row[2]);
+    // An alpha above the top is the top.
+    _ = base(rb).BlendPixels(bitmap, &area, &pixels, 1000);
+    try testing.expectEqual(@as(u32, 255), fk.log.last_alpha);
+    // No picture is a bad argument; nothing inside is no work.
+    const none = rtg.RtgPixels{};
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).BlendPixels(bitmap, &area, &none, 255));
+    const blends = fk.log.blends;
+    const outside = rtg.RtgRect{ .x = 100, .y = 0, .width = 4, .height = 1 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).BlendPixels(bitmap, &outside, &pixels, 255));
+    try testing.expectEqual(blends, fk.log.blends);
+
+    // A colour by its alpha, cut to the buffer.
+    const plate = rtg.RtgRect{ .x = 14, .y = 6, .width = 8, .height = 8 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).BlendRect(bitmap, &plate, 0xFF00_00FF));
+    try testing.expectEqual(@as(i32, 2), fk.log.last_rect.width);
+    try testing.expectEqual(@as(i32, 2), fk.log.last_rect.height);
+    try testing.expectEqual(@as(u16, 0x001F), @as([*]u16, @ptrCast(@alignCast(bitmap.rowPtr(7))))[15]);
+
+    // A scale is not cut: one over the edge is not the board's to try.
+    const scales = fk.log.scales;
+    const over_edge = rtg.RtgRect{ .x = 8, .y = 0, .width = 16, .height = 2 };
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ScalePixels(bitmap, &over_edge, &pixels, 4, 1));
+    try testing.expectEqual(scales, fk.log.scales);
+    const inside = rtg.RtgRect{ .x = 0, .y = 0, .width = 8, .height = 2 };
+    _ = base(rb).ScalePixels(bitmap, &inside, &pixels, 4, 1);
+    try testing.expectEqual(scales + 1, fk.log.scales);
+    try testing.expectEqual(@as(u32, 4), fk.log.last_scale_width);
+
+    base(rb).FreeBitMap(bitmap);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "a board with no engine says so, and the library does not draw" {
     const rb = try setUp();
     defer kexec.deinit();
@@ -757,6 +819,11 @@ test "a board with no engine says so, and the library does not draw" {
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).CopyRect(bitmap, bitmap, &copy));
     const shape = rtg.RtgTemplate{ .bits = @ptrCast("x"), .pitch = 1 };
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).BlitTemplate(bitmap, &area, &shape));
+    const picture = [1]u32{0xFFFF_FFFF};
+    const pixels = rtg.RtgPixels{ .pixels = @ptrCast(&picture), .pitch = 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).BlendPixels(bitmap, &area, &pixels, 255));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).BlendRect(bitmap, &area, 0xFFFF_FFFF));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ScalePixels(bitmap, &area, &pixels, 1, 1));
     // Nothing was written, because nothing drew.
     const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
     try testing.expectEqual(@as(u16, 0), row[0]);

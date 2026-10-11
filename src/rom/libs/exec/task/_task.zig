@@ -116,9 +116,14 @@ const guard_pattern: u32 = 0x5354_4B21; // "STK!"
 /// none.
 pub fn guardStack(task: *Task) void {
     if (task.sp_lower == 0) return;
-    const words: [*]volatile u32 = @ptrFromInt(task.sp_lower);
-    for (0..guard_words) |i| words[i] = guard_pattern;
+    writeGuard(task.sp_lower);
     task.flags |= sdk.exec.TF_GUARDED;
+}
+
+/// The guard written at the bottom of the stack starting at `lower`.
+pub fn writeGuard(lower: usize) void {
+    const words: [*]volatile u32 = @ptrFromInt(lower);
+    for (0..guard_words) |i| words[i] = guard_pattern;
 }
 
 /// Whether the stack starting at `lower` still has its guard.
@@ -139,7 +144,7 @@ fn checkStack(task: *const Task, context: *anyopaque) void {
     if (task.flags & sdk.exec.TF_GUARDED == 0) return;
     var over = !guardIntact(task.sp_lower);
     // The host tests hand the dispatcher contexts that are not addresses.
-    if (@import("builtin").cpu.arch == .xtensa) {
+    if (@import("builtin").cpu.arch == .xtensa or @import("builtin").cpu.arch == .riscv32) {
         const at = @intFromPtr(context);
         if (at < task.sp_lower or at > task.sp_upper) over = true;
     }

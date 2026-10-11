@@ -62,13 +62,12 @@
 //! has broken, and has no table to call through (codex rule 1). The
 //! jump-table calls hand their work to them.
 //!
-//! **The UART0 driver** is exec's own, just big enough. exec cannot import
-//! serial.device's `uart.zig`, since the host tests' module ends at
-//! src/rom/libs, and it needs a console long before a device exists
-//! anyway. It sets UART0 up the same way serial.device would: bus clock,
-//! reset with the core held, the 40 MHz crystal as its clock, 115200 8N1.
-//! serial.device then finds UART0 already running from the crystal and
-//! leaves it alone, so the two do not fight over the port.
+//! **UART0** is the chip's hardware layer's console (`sdk.hardware.uart`:
+//! `consoleInit`, `consolePut`, `consoleGet`), polled: exec needs a console
+//! long before a device exists, and after the machine has stopped. Where
+//! it is set up, it is set up as serial.device would set it, so
+//! serial.device finds UART0 already running and leaves it alone, and the
+//! two do not fight over the port.
 
 const builtin = @import("builtin");
 const sdk = @import("sdk");
@@ -111,8 +110,8 @@ pub var unfiltered = false;
 /// No hardware (host tests): output is dropped, and there is no input.
 pub const no_raw_io: RawIOHardware = .{ .init = noInit, .put = noPut, .get = noGet };
 
-/// exec's UART0 driver, below.
-pub const chip_raw_io: RawIOHardware = .{ .init = uartInit, .put = uartPut, .get = uartGet };
+/// UART0 as the chip's hardware layer drives it as the console.
+pub const chip_raw_io: RawIOHardware = .{ .init = uart.consoleInit, .put = uart.consolePut, .get = uart.consoleGet };
 
 /// The chip's own USB port, polled: what the ROM debugger talks on
 /// beside UART0, since both boards' console is that port and a machine
@@ -403,51 +402,10 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
     return data;
 }
 
-// --- the UART0 driver --------------------------------------------------------
+// --- the chip's own USB port ----------------------------------------------
 
-const baud = 115_200;
-const xtal_hz = sdk.hardware.XTAL_HZ;
-
-// UART0's registers.
-const uart = sdk.hardware.uart;
-const uart0 = uart.base(0);
-
-/// UART0's bus clock and reset, and the UARTs' FIFO memory. The helpers
-/// are inline and mask interrupts at the CPU, not through exec - this
-/// runs before exec is up, and after it has stopped.
-const system = sdk.hardware.system;
 const reg = sdk.hardware.mmio.reg;
-
-/// Sets UART0 up. Whatever the boot ROM was still sending is let out
-/// first, so its output and the kernel's do not run together.
-fn uartInit() void {
-    while (reg(uart0 + uart.STATUS).* & uart.STATUS_TXFIFO_CNT != 0) {}
-    while (reg(uart0 + uart.FSM_STATUS).* & uart.FSM_ST_UTX_OUT != 0) {}
-    system.clockOn(.uart_mem);
-    system.clockOn(.uart0);
-    system.releaseReset(.uart0);
-    reg(uart0 + uart.CLK_CONF).* |= uart.CLK_RST_CORE;
-    system.holdInReset(.uart0);
-    system.releaseReset(.uart0);
-    reg(uart0 + uart.CLK_CONF).* &= ~uart.CLK_RST_CORE;
-    const clk = reg(uart0 + uart.CLK_CONF).* & ~(uart.CLK_SCLK_SEL | uart.CLK_SCLK_DIV_NUM);
-    reg(uart0 + uart.CLK_CONF).* = clk | uart.CLK_SCLK_SEL_XTAL | uart.CLK_SCLK_EN | uart.CLK_TX_SCLK_EN | uart.CLK_RX_SCLK_EN;
-    const div16: u32 = (xtal_hz << 4) / baud; // in 1/16 steps
-    reg(uart0 + uart.CLKDIV).* = (div16 & 0xF) << uart.CLKDIV_FRAG_SHIFT | div16 >> 4;
-    reg(uart0 + uart.CONF0).* = (reg(uart0 + uart.CONF0).* & ~uart.CONF0_FRAME) | uart.CONF0_8N1;
-}
-
-/// RawPutChar's byte out. Waits while the TX FIFO is full.
-fn uartPut(character: u8) void {
-    while ((reg(uart0 + uart.STATUS).* & uart.STATUS_TXFIFO_CNT) >> uart.STATUS_TXFIFO_CNT_SHIFT >= uart.FIFO_LEN - 2) {}
-    reg(uart0 + uart.FIFO).* = character;
-}
-
-/// RawMayGetChar's byte, if one is waiting.
-fn uartGet() ?u8 {
-    if (reg(uart0 + uart.STATUS).* & uart.STATUS_RXFIFO_CNT == 0) return null;
-    return @truncate(reg(uart0 + uart.FIFO).*);
-}
+const uart = sdk.hardware.uart;
 
 // The chip's own USB port, polled. The boot ROM has already set it up -
 // its own messages come out of it - so there is nothing to start.

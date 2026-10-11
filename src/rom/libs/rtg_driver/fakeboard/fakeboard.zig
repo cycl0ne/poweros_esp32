@@ -87,6 +87,17 @@ pub const Log = struct {
     bands_shown: u32 = 0,
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
+    /// Pixels and colours laid over a buffer: how often, and the last
+    /// rectangle, pixels, alpha or colour and scaled size as the driver
+    /// got them.
+    blends: u32 = 0,
+    blend_rects: u32 = 0,
+    scales: u32 = 0,
+    last_pixels: rtg.RtgPixels = .{},
+    last_alpha: u32 = 0,
+    last_color: u32 = 0,
+    last_scale_width: u32 = 0,
+    last_scale_height: u32 = 0,
 };
 
 /// Everything this driver has that changes, allocated by `create`.
@@ -398,6 +409,77 @@ fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, cop
     return err.RTGERR_OK;
 }
 
+/// `over` mixed into the RGB565 pixel `under` by `coverage`, rounded as
+/// graphics.library's own blend rounds.
+fn mix(under: u16, over: u32, coverage: u32) u16 {
+    if (coverage == 0) return under;
+    const red: u32 = (under >> 11) & 0x1F;
+    const green: u32 = (under >> 5) & 0x3F;
+    const blue: u32 = under & 0x1F;
+    const was = [3]u32{ red << 3 | red >> 2, green << 2 | green >> 4, blue << 3 | blue >> 2 };
+    const new = [3]u32{ over >> 16 & 0xFF, over >> 8 & 0xFF, over & 0xFF };
+    var mixed: [3]u32 = undefined;
+    for (&mixed, was, new) |*channel, before, after| {
+        channel.* = (after * coverage + before * (255 - coverage) + 127) / 255;
+    }
+    return @intCast((mixed[0] >> 3) << 11 | (mixed[1] >> 2) << 5 | mixed[2] >> 3);
+}
+
+fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.blends += 1;
+    log.last_rect = area.*;
+    log.last_pixels = pixels.*;
+    log.last_alpha = alpha;
+    if (dest.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    if (pixels.format != .bgra32 and pixels.format != .rgba32) return err.RTGERR_BAD_FORMAT;
+    var row: u32 = 0;
+    while (row < area.height) : (row += 1) {
+        const to = rows16(dest, @as(u32, @intCast(area.y)) + row);
+        const from: [*]const u32 = @ptrCast(@alignCast(pixels.pixels.? + @as(usize, @intCast(pixels.y + @as(i32, @intCast(row)))) * pixels.pitch));
+        var column: u32 = 0;
+        while (column < area.width) : (column += 1) {
+            var pen = from[@as(usize, @intCast(pixels.x)) + column];
+            if (pixels.format == .rgba32) pen = (pen & 0xFF00_FF00) | (pen >> 16 & 0xFF) | (pen & 0xFF) << 16;
+            const coverage = ((pen >> 24) * alpha + 127) / 255;
+            const x = @as(u32, @intCast(area.x)) + column;
+            to[x] = mix(to[x], pen, coverage);
+        }
+    }
+    return err.RTGERR_OK;
+}
+
+fn blendRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.blend_rects += 1;
+    log.last_rect = area.*;
+    log.last_color = color;
+    if (dest.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    var y: u32 = @intCast(area.y);
+    while (y < area.y + area.height) : (y += 1) {
+        const row = rows16(dest, y);
+        var x: u32 = @intCast(area.x);
+        while (x < area.x + area.width) : (x += 1) row[x] = mix(row[x], color, color >> 24);
+    }
+    return err.RTGERR_OK;
+}
+
+/// Logged and refused: the caller scales in software, so a test of the
+/// layer above sees the same pixels with and without a board.
+fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
+    _ = dest;
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.scales += 1;
+    log.last_rect = area.*;
+    log.last_pixels = pixels.*;
+    log.last_scale_width = width;
+    log.last_scale_height = height;
+    return err.RTGERR_NOT_SUPPORTED;
+}
+
 fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
     instanceOf(board).calls += 1;
 }
@@ -426,6 +508,9 @@ const full_ops = rtg.RtgBoardOps{
     .show_pointer = &showPointer,
     .set_overlay = &setOverlay,
     .move_overlay = &moveOverlay,
+    .blend_pixels = &blendPixels,
+    .blend_rect = &blendRect,
+    .scale_pixels = &scalePixels,
 };
 
 /// A board with no engine: it can be shown and refreshed and no more.

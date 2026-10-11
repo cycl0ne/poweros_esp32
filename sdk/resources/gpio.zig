@@ -18,13 +18,21 @@
 /// The resource's name, for OpenResource.
 pub const GPIONAME = "gpio.resource";
 
-/// Pads 0 to 48. 22 to 25 are not brought out on this chip and are
-/// never handed out.
-pub const GPIO_PADS: u32 = 49;
+const hardware = @import("../hardware/hardware.zig");
+
+/// The ESP32-S3's pads 0 to 48, of which 22 to 25 are not brought out and
+/// are never handed out; the ESP32-P4's 0 to 54, every one of them there.
+pub const GPIO_PADS: u32 = switch (hardware.chip) {
+    .esp32s3 => 49,
+    .esp32p4 => 55,
+};
 
 /// Whether `pad` is one the chip has.
 pub fn padExists(pad: u32) bool {
-    return pad < GPIO_PADS and (pad < 22 or pad > 25);
+    return switch (hardware.chip) {
+        .esp32s3 => pad < GPIO_PADS and (pad < 22 or pad > 25),
+        .esp32p4 => pad < GPIO_PADS,
+    };
 }
 
 /// What AllocGPIO answers for a pad the chip does not have: a name no

@@ -20,12 +20,18 @@ pub const system = switch (build_options.board) {
     .waveshare_7b => @import("waveshare_7b/system.zig"),
     .es3c35p => @import("es3c35p/system.zig"),
     .qemu => @import("qemu/system.zig"),
+    .esp32p4_emu => @import("esp32p4_emu/system.zig"),
+    .olimex_p4pc => @import("olimex_p4pc/system.zig"),
+    .crowpanel_p4 => @import("crowpanel_p4/system.zig"),
 };
 
 pub const romtags = switch (build_options.board) {
     .waveshare_7b => @import("waveshare_7b/romtags.zig"),
     .es3c35p => @import("es3c35p/romtags.zig"),
     .qemu => @import("qemu/romtags.zig"),
+    .esp32p4_emu => @import("esp32p4_emu/romtags.zig"),
+    .olimex_p4pc => @import("olimex_p4pc/romtags.zig"),
+    .crowpanel_p4 => @import("crowpanel_p4/romtags.zig"),
 };
 
 /// The first item of `list` with `tag`, or null. A list's tags are plain

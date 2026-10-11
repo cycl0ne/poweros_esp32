@@ -33,7 +33,7 @@ reference: [rtg](../autodocs/rtg.md).
         |
   rtg.library          boards, modes, buffers, showing them
         |
-  a driver             "rgb", "dcs" on "qspi", "qemu", ...
+  a driver             "rgb", "dcs" on "qspi", "dsi", "qemu", ...
 ```
 
 rtg.library knows displays and nothing about drawing. A buffer is memory
@@ -64,7 +64,7 @@ const rb: *RtgBase = @ptrCast(lib);
 Two kinds of thing are registered with the library:
 
 - A **driver** is a module that knows one kind of display hardware. It
-  joins with `AddRtgDriver` under a name ("rgb", "dcs", "qemu") and
+  joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu") and
   stays until `RemRtgDriver`, which is refused while anything it made is
   alive.
 - A **board** is one display that a driver brought up. A caller makes one
@@ -260,7 +260,11 @@ the front screen alone.
 Some boards have an engine that does a few things to a buffer faster than
 the CPU: `FillRect`, `CopyRect`, `InvertRect`, `BlitTemplate` (a one-bit
 shape in two colours) and `BlitPattern` (a one-bit tile anchored to the
-buffer). `WaitBlit` waits until the engine is done.
+buffer); `BlendPixels` lays pixels of the caller's own over a buffer by
+their coverage, times a constant alpha, `BlendRect` a colour by its
+alpha, and `ScalePixels` a part of a picture scaled to a rectangle's
+size, mixed between its pixels. `WaitBlit` waits until the engine is
+done.
 
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
@@ -268,10 +272,56 @@ operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
 bit clear does the work itself, which is what graphics.library does. Every
 rectangle is cut down to the buffer before the board sees it; a rectangle
 with nothing inside is `RTGERR_OK` and no work. The colours are in the
-buffer's format.
+buffer's format, a blend's as 0xAARRGGBB. A blend's picture moves with
+the cut, so a cut picture is cut rather than slid; a scale's rectangle is
+not cut at all - one not wholly inside the buffer is refused, since a cut
+would move the picture under it. The source of `CopyRect` and the
+pictures of the blends and the scale need not be a board's: memory of
+the caller's own, described in an `RtgBitMap` or an `RtgPixels`, will do
+where the engine can read it.
 
-None of this machine's boards has an engine: the chip has nothing that
-draws, so graphics.library draws everything with the CPU.
+graphics.library hands the engine what it can: a plain fill, a blit
+without a mask (`BltBitMapRastPort` and every window move, refresh and
+backing store behind it), `BlendPixelArray`, a translucent pen filled
+under `DRMD_BLEND`, and a smooth scale (`RPTAG_Smooth`) whose destination
+is one whole piece of a board's buffer. What the board refuses it does
+itself, with the same result.
+
+The ESP32-S3's boards have no engine: that chip has nothing that draws,
+so graphics.library draws everything with the CPU there. The ESP32-P4's
+`dsi` board fills with the PPA and copies with the 2D-DMA, for RGB565
+buffers whose start and pitch are whole cache lines. The engine writes
+memory behind the cache's back, so it is given only the whole 64-byte
+lines inside a rectangle and the CPU does each row's ragged ends: nothing
+outside the rectangle - another window being drawn at the same time - is
+lost to a line both wrote. Rectangles the CPU does sooner than the
+engine is set up - under about 32000 pixels with the PSRAM at 80 MHz,
+proportionally more with a faster one, and 2048 for a blend, whose CPU
+mixing is far slower - a copy within one buffer whose rectangles overlap,
+and a source outside the PSRAM and the internal memory are refused, and
+the caller does them itself. The blends run on the PPA's blend unit,
+which reads the buffer and the picture together and writes the mix:
+pictures in `bgra32`, `bgr24`, `rgb24` and `rgb565`; `rgba32` is
+refused, since the unit can read four bytes only as they are, with each
+pair exchanged, or reversed. The scale runs on the PPA's scaler, which
+mixes between pixels as `RPTAG_Smooth` does and steps its factors in
+sixteenths, so it takes a job only when both sizes come out exactly - a
+half, a double, three quarters; it scales into a block of its own, which
+is then blended over the rectangle. Every operation is finished when the
+call returns; the caller's task waits for the engine's interrupt
+meanwhile, so the CPU is free for others. The engine shares the
+PSRAM with the panel's stream, which cannot wait: the stream is put first
+on the bus, and a panel that streams more than the PSRAM leaves room for
+- 40 MB/s at 80 MHz, proportionally more with a faster one - holds the
+engine to about 78 MB/s. With the PSRAM at 80 MHz an engine running free
+beside the 1024 x 600 panel starves it, and the panel goes dark; at
+200 MHz it does not.
+
+The engine's channels are dma.resource's 2D channels 1 and 2 - send
+channels 1 and 2, receive channel 1 - claimed when the board is made; a
+board that cannot have them does everything in software. Channel 0, the
+only one that reorders blocks and converts colour, is the JPEG codec's
+(jpeg.resource), which shares the bus limit above with the engine.
 
 ## Turning the picture
 
@@ -463,6 +513,8 @@ zero in its `show_bitmap`.
 | `fill_rect` ... `wait_blit` | the engine |
 | `mirror`, `swap_xy`, `set_gap` | turning the picture |
 | `set_pointer`, `move_pointer`, `show_pointer` | the pointer |
+| `set_overlay`, `move_overlay` | a second image under the pointer |
+| `blend_pixels`, `blend_rect`, `scale_pixels` | the engine's blends and scale |
 
 New slots are only ever added at the end, so a driver built against an
 older SDK keeps its layout.
@@ -473,12 +525,44 @@ older SDK keeps its layout.
 |---|---|---|---|
 | Waveshare 7B, 7" 1024 x 600 | `rgb` | LCD_CAM streams pixels from three small buffers in internal memory; a DMA channel copies the picture from PSRAM into each one as the panel finishes it | a copy descriptor per display line, each from the row its band shows; changed at a frame's start |
 | LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
+| Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
+| CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
+| Olimex ESP32-P4-PC on HDMI, 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
 
 The 7B's panel is never fed straight from PSRAM: the memory's own refresh
 stalls the stream for longer than the panel's pixel buffer lasts, and the
 picture slips. So the panel reads small buffers in internal memory, and
-the copy into them runs from the panel's own interrupt.
+the copy into them runs from the panel's own interrupt. The ESP32-P4's
+DSI bridge holds 8 KB and asks for the picture in bursts, so it is fed
+from PSRAM itself.
+
+**A DSI panel** is described by its part's tags: the lanes and their rate
+(`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the pixel clock and the six
+timings, the D-PHY's supply where the chip's LDO feeds it
+(`RTGA_DSI_PhyLdo`, `RTGA_DSI_PhyMillivolts`), and the panel's bring-up
+as DCS commands (`RTGA_DSI_InitSequence`, steps as `dcsStep` writes them),
+which the driver sends in command mode after the panel's reset - its
+reset line, or its own soft reset where it has none. Another panel on the
+same host is another tag list.
+
+**HDMI** goes through a bridge on the same link, an LT8912B
+(`CHIP_LT8912B`), whose part names its I2C unit and address instead of a
+bring-up, and the sync polarity the mode's standard gives
+(`RTGA_DSI_HSyncHigh`, `RTGA_DSI_VSyncHigh`). The driver takes that part
+only when a monitor's EDID answers on the bridge's bus, and refuses it
+otherwise, so graphics.library goes on to the board's next panel part -
+a board lists the bridge first. The bridge takes RGB888 only, and this
+revision of the chip sends what memory holds, so the screens stay RGB565
+and the stream reads a copy of what is shown, three bytes a pixel: showing
+bands converts their rows into it, and RefreshBitMap converts the rows
+drawn wherever a band shows them - the 2D-DMA widens RGB565 as it copies.
+The link stays in high speed through the blanking, as the bridge needs,
+and its lanes are best set to carry about a third more than the picture's
+RGB888: the bridge remakes the pixel clock by how full its FIFO keeps, so
+a link much faster sends each line in a burst too short for that to hold
+still, and one barely faster leaves the host no room, and frames lose
+their syncs.
 
 ## Tools
 
@@ -488,5 +572,12 @@ the copy into them runs from the panel's own interrupt.
   and `STATS` print one section, `FULL` everything.
 - `C:Backlight` sets the brightness through the board's IO expander
   (expander.resource), and says so on a board without one.
+- `C:test/Engine` checks the board's FillRect and CopyRect pixel for
+  pixel against the CPU - rectangles that start and end anywhere in a
+  cache line, copies between buffers, within one and out of plain
+  memory - and its blends and scales against graphics.library's own
+  software, times both, and counts the frames the display starved of
+  meanwhile.
 - `C:test/Screens` double-buffers a screen and prints the frame rate;
-  `SWITCH` puts two screens on the display to drag and switch.
+  `SWITCH` puts two screens on the display to drag and switch; `MOVE`
+  pulls a second screen half way down and back, which shows the bands.

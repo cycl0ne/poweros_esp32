@@ -171,7 +171,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 /// The boot code in .iram.text runs before the code in .flash.text is
-/// mapped, and flash.device's routines (src/rom/devs/flash/spiflash.zig) run
+/// mapped, and flash.device's routines (src/rom/devs/flash/esp32s3/spiflash.zig) run
 /// with the caches suspended, so neither may refer to flash code. The
 /// exceptions are what runs after the mapping: kmain, kmain_cpu1 - core 1
 /// is let go long after it - the exception handler and the debug one

@@ -3258,20 +3258,19 @@ test "device I/O: DoIO, SendIO, WaitIO, ReplyIO" {
     req.req.command = sdk.exec.CMD_FLUSH;
     try testing.expectEqual(@as(i32, IOERR_OPENFAIL), DoIO(SysBase, &req.req));
 
-    // DoIO sets io_Flags to just IOF_QUICK, as the ROM does.
+    // DoIO adds IOF_QUICK and leaves the command's own flags alone.
     req.req.flags = 0x80;
     req.req.command = CMD_READ;
     try testing.expectEqual(@as(i32, 0), DoIO(SysBase, &req.req));
-    try testing.expectEqual(IOF_QUICK, req.req.flags);
+    try testing.expectEqual(@as(u8, 0x80 | IOF_QUICK), req.req.flags);
 
-    // SendIO clears io_Flags (IOF_QUICK from the DoIO and any other bit):
-    // even a command the device does at once is replied, and WaitIO takes
-    // it off the port.
+    // SendIO clears IOF_QUICK alone: even a command the device does at
+    // once is replied, and WaitIO takes it off the port; the command's
+    // flags stay.
     req.req.command = CMD_READ;
-    req.req.flags |= 0x80;
     req.length = 7;
     SendIO(SysBase, &req.req);
-    try testing.expectEqual(@as(u8, 0), req.req.flags);
+    try testing.expectEqual(@as(u8, 0x80), req.req.flags);
     try testing.expectEqual(NodeType.replymsg, req.req.message.node.type);
     try testing.expectEqual(&req.req, CheckIO(SysBase, &req.req).?);
     try testing.expectEqual(@as(i32, 0), WaitIO(SysBase, &req.req));

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! dma.resource's functions: the chip's general DMA engine (GDMA), its
-//! channels handed out to one owner each. A
+//! dma.resource's functions: the chip's DMA engines, their channels
+//! handed out to one owner each (sdk/resources/dma.zig). A
 //! resource: no Open or Close, its first function in the first slot. The
 //! base comes from OpenResource("dma.resource").
 //!
@@ -60,7 +60,8 @@ pub const DmaBase = opaque {
         return @ptrCast(@alignCast(self));
     }
 
-    /// Claim a channel (0-4) for `name`: null if it is now yours, else its
+    /// Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or
+    /// a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its
     /// owner's name. Not from interrupts.
     pub fn AllocDMAChannel(self: *DmaBase, channel: u32, name: [*:0]const u8) ?[*:0]const u8 {
         return libraries.call(self, LVO.AllocDMAChannel, Fn.AllocDMAChannel, .{ channel, name });
@@ -77,21 +78,22 @@ pub const DmaBase = opaque {
         return libraries.call(self, LVO.DMAChannelOwner, Fn.DMAChannelOwner, .{channel});
     }
 
-    /// Connect a channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for
-    /// memory to memory, with DMACF_* flags. Resets the channel. False for a bad
-    /// channel or peripheral, or a peripheral another channel is connected to.
+    /// Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY
+    /// for memory to memory, with DMACF_* flags. Resets the channel. False for a
+    /// bad or 2D channel, a peripheral not on the channel's engine, or one
+    /// another channel is connected to.
     pub fn ConnectDMAChannel(self: *DmaBase, channel: u32, peripheral: u32, flags: u32) bool {
         return libraries.call(self, LVO.ConnectDMAChannel, Fn.ConnectDMAChannel, .{ channel, peripheral, flags });
     }
 
-    /// Start a side (DMA_IN, DMA_OUT) on a descriptor chain. False unless the
-    /// first descriptor is 4-byte aligned in internal RAM. Memory to memory:
-    /// IN first, then OUT.
+    /// Start a general channel's side (DMA_IN, DMA_OUT) on a descriptor chain.
+    /// False unless the first descriptor is in internal RAM, 4-byte aligned (8
+    /// on the ESP32-P4's AXI channels). Memory to memory: IN first, then OUT.
     pub fn StartDMA(self: *DmaBase, channel: u32, side: u32, list: *dma.DMADescriptor) bool {
         return libraries.call(self, LVO.StartDMA, Fn.StartDMA, .{ channel, side, list });
     }
 
-    /// Stop a side.
+    /// Stop a general channel's side.
     pub fn StopDMA(self: *DmaBase, channel: u32, side: u32) void {
         return libraries.call(self, LVO.StopDMA, Fn.StopDMA, .{ channel, side });
     }
@@ -103,7 +105,7 @@ pub const DmaBase = opaque {
         return libraries.call(self, LVO.ResetDMA, Fn.ResetDMA, .{ channel, side });
     }
 
-    /// Enable a side's interrupts (DMAINTF_*); 0: none.
+    /// Enable a general channel's side's interrupts (DMAINTF_*); 0: none.
     pub fn EnableDMAInts(self: *DmaBase, channel: u32, side: u32, mask: u32) void {
         return libraries.call(self, LVO.EnableDMAInts, Fn.EnableDMAInts, .{ channel, side, mask });
     }
@@ -128,8 +130,9 @@ pub const DmaBase = opaque {
     /// A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT
     /// sends them all (EOF on the last descriptor), DMA_IN fills them. In
     /// internal memory, DMA_CHUNK (PSRAM: DMA_CHUNK_PSRAM) bytes per descriptor;
-    /// DMACHF_LOOP links the last back to the first. Null if the buffer isn't
-    /// in internal RAM or PSRAM, or without memory. Not from interrupts.
+    /// DMACHF_LOOP links the last back to the first. Written back from the data
+    /// cache where it covers internal memory. Null if the buffer isn't in
+    /// internal RAM or PSRAM, or without memory. Not from interrupts.
     pub fn AllocDMAChain(self: *DmaBase, side: u32, buffer: ?*anyopaque, length: u32, flags: u32) ?*dma.DMADescriptor {
         return libraries.call(self, LVO.AllocDMAChain, Fn.AllocDMAChain, .{ side, buffer, length, flags });
     }

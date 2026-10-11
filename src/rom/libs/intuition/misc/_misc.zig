@@ -34,15 +34,20 @@ pub const Answer = enum(u8) { none, yes, no };
 /// A frame of a 60 Hz panel, what an alert's time-out counts in.
 pub const frame_us = 16_667;
 
+/// timer.device opened the first time it is wanted; whether it is open.
+fn openTimer(ib: *IntuitionBase) bool {
+    if (ib.timer_open) return true;
+    ib.timer_io = .{};
+    ib.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
+    if (ib.sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &ib.timer_io.node, 0) != 0) return false;
+    ib.timer_open = true;
+    return true;
+}
+
 /// Wait `us` microseconds, or not at all when timer.device cannot be had.
 pub fn wait(ib: *IntuitionBase, us: u64) void {
     const sys = ib.sys_base;
-    if (!ib.timer_open) {
-        ib.timer_io = .{};
-        ib.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &ib.timer_io.node, 0) != 0) return;
-        ib.timer_open = true;
-    }
+    if (!openTimer(ib)) return;
     const bit = sys.AllocSignal(-1);
     if (bit < 0) return;
     defer sys.FreeSignal(bit);
@@ -53,6 +58,16 @@ pub fn wait(ib: *IntuitionBase, us: u64) void {
     io.node.command = timer.TR_ADDREQUEST;
     io.time = timer.TimeVal.fromMicros(us);
     _ = sys.DoIO(&io.node);
+}
+
+/// The system's time, in microseconds; null when timer.device cannot be
+/// had.
+pub fn now(ib: *IntuitionBase) ?u64 {
+    if (!openTimer(ib)) return null;
+    const tmb: *sdk.interface.timer.TimerBase = @ptrCast(ib.timer_io.node.device orelse return null);
+    var time: timer.TimeVal = .{};
+    tmb.GetSysTime(&time);
+    return time.toMicros();
 }
 
 /// timer.device given back, if it was opened.

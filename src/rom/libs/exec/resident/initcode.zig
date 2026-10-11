@@ -5,7 +5,7 @@
 //! since what comes after may depend on it.
 
 const sdk = @import("sdk");
-const Alert = @import("../interrupt/alert.zig").Alert;
+const _interrupt = @import("../interrupt/_interrupt.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -34,8 +34,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// registers with can rely on that library being there.
 ///
 /// **A module that fails stops the boot.** For an `RTF_AUTOINIT` tag that
-/// is a dead-end alert rather than a return, since a library that could not
-/// be built leaves everything above it with nothing to open.
+/// is a dead-end alert (`AG_MakeLib`, the tag's name as its text) rather
+/// than a return, since a library that could not be built leaves
+/// everything above it with nothing to open.
 ///
 /// CONTEXT:
 /// - Waits: whatever the modules do. Cold start runs on the exec task once
@@ -70,7 +71,7 @@ pub fn InitCode(base: *ExecBase, start_class: u32, version: u32) ?*anyopaque {
             // Alert direct, not through the table: the path that reports a
             // broken machine must not depend on a replaced vector
             // (codex rule 1).
-            if (tag.flags & sdk.exec.RTF_AUTOINIT != 0) Alert(base, sdk.exec.AT_DeadEnd | sdk.exec.AG_MakeLib);
+            if (tag.flags & sdk.exec.RTF_AUTOINIT != 0) _interrupt.alertAt(sdk.exec.AT_DeadEnd | sdk.exec.AG_MakeLib, @returnAddress(), tag.name);
             return null;
         }
     }

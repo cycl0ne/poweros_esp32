@@ -2,7 +2,7 @@
 //! sleep <ms>: a timer.device wait, and how long it really took.
 
 const _shell = @import("../shell.zig");
-const timer = @import("../../../../../arch/esp32s3/timer.zig");
+const timer = @import("../../../../../arch/arch.zig").timer;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 

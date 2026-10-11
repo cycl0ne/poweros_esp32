@@ -5,10 +5,10 @@
 //!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,CHANNELS/K/N
 //!
 //! It allocates the channels asked for (one by default), writes a sine
-//! wave of one cycle to them, and lets it play for as long as it was
-//! told - a write of `cycles` times over, so the device plays it round
-//! and round without the program having to feed it. Then the channels are
-//! freed, which is what stops the sound.
+//! wave of one cycle to each - a write is one channel's - and lets it
+//! play for as long as it was told: a write of `cycles` times over, so
+//! the device plays it round and round without the program having to
+//! feed it. Then the channels are freed.
 //!
 //! The note's pitch is the period: a period of `n` plays a sample every
 //! `n` ticks of the audio clock, so a wave of `samples` samples comes out
@@ -23,7 +23,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 1.0 (23.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 1.1 (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,CHANNELS/K/N";
@@ -122,18 +122,41 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const period: u16 = @intCast(@max(audio.AUDIO_CLOCK / (hz * wave_len), audio.AUDIO_MINPERIOD));
     const rate = audio.AUDIO_CLOCK / (@as(u32, period) * wave_len);
     const cycles = rate * seconds;
-    _ = Printf(dl, MSG_PLAYING, .{ rate, io.channels, @as(u32, volume), seconds });
+    const allocated = io.channels;
+    _ = Printf(dl, MSG_PLAYING, .{ rate, allocated, @as(u32, volume), seconds });
 
-    io.req.command = exec.CMD_WRITE;
-    io.req.flags = audio.ADIOF_PERVOL;
-    io.data = &wave;
-    io.length = wave.len;
-    io.period = period;
-    io.volume = volume;
-    io.cycles = @intCast(@min(cycles, 0xFFFF));
-    const err = sys.DoIO(&io.req);
-    if (err != 0) _ = Printf(dl, MSG_FAILED, .{@as(i32, err)});
+    // A request per channel, the second a copy of the first: the same
+    // device, allocation and reply port.
+    const other: *audio.IOAudio = @ptrCast(@alignCast(sys.CreateIORequest(port, @sizeOf(audio.IOAudio)) orelse
+        return dos.RETURN_FAIL));
+    defer sys.DeleteIORequest(&other.req);
+    other.* = io.*;
+    const writes = [_]*audio.IOAudio{ io, other };
+    var sent: usize = 0;
+    var bit: u5 = 0;
+    while (bit < audio.ADHARD_CHANNELS) : (bit += 1) {
+        const channel = @as(u32, 1) << bit;
+        if (allocated & channel == 0 or sent == writes.len) continue;
+        const one_write = writes[sent];
+        one_write.channels = channel;
+        one_write.req.command = exec.CMD_WRITE;
+        one_write.req.flags = audio.ADIOF_PERVOL;
+        one_write.data = &wave;
+        one_write.length = wave.len;
+        one_write.period = period;
+        one_write.volume = volume;
+        one_write.cycles = @intCast(@min(cycles, 0xFFFF));
+        sys.SendIO(&one_write.req);
+        sent += 1;
+    }
+    var err: i32 = 0;
+    for (writes[0..sent]) |one_write| {
+        const result = sys.WaitIO(&one_write.req);
+        if (result != 0) err = result;
+    }
+    if (err != 0) _ = Printf(dl, MSG_FAILED, .{err});
 
+    io.channels = allocated;
     io.req.command = audio.ADCMD_FREE;
     io.req.flags = 0;
     _ = sys.DoIO(&io.req);

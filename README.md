@@ -93,7 +93,8 @@ Espressif's QEMU. The ESP32-P4 is next.
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
   and hands back an object a program puts in a window - pictures (ILBM,
-  BMP, PNG, GIF, JPEG), text (plain, FTXT, Markdown) and animations
+  BMP, PNG, GIF, JPEG, on the ESP32-P4 decoded by its JPEG codec), text
+  (plain, FTXT, Markdown) and animations
   (animated GIF, Lottie). `SYS:Programs/MultiView` shows any of them;
   `LIBS:iffparse.library` and `DEVS:clipboard.device` carry IFF between
   programs. See the [datatypes guide](sdk/docs/guides/datatypes.md).
@@ -112,9 +113,14 @@ Espressif's QEMU. The ESP32-P4 is next.
   `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
   script from its. Programs add windows files are dropped on, icons and
   Tools items (MultiView, Notepad, Sheet, FontView and the file requester
-  take a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
+  take a file let go on them). Each program in `SYS:Programs` has its
+  readme beside it (`Notepad.md`, opened in MultiView), and puts its name
+  and version in the screen's title while one of its windows is active.
+  See the [desktop guide](sdk/docs/guides/anvil.md)
   and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
-- **Graphics and windows:** rtg.library for the displays;
+- **Graphics and windows:** rtg.library for the displays, with the
+  ESP32-P4's 2D engine (the PPA and the 2D-DMA) filling, copying,
+  blending and scaling for graphics.library on the DSI boards;
   graphics.library with smooth curves and lines, rounded rectangles,
   gradients, shadows and scaled pictures; layers.library; and
   intuition.library - screens, pulled down by their title bar to show
@@ -155,9 +161,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   [fonts guide](sdk/docs/guides/fonts.md).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
-  multicast with IGMP and MLD) on QEMU's Ethernet, the chip's Wi-Fi
-  (WPA2) and SLIP over a serial line, and a shell over Telnet or SSH
-  (`C:net/ShellServer`, `SSH` with password or ssh-ed25519 keys and a
+  multicast with IGMP and MLD) on Ethernet (the ESP32-P4's MAC, and
+  QEMU's), the ESP32-S3's Wi-Fi (WPA2) and SLIP over a serial line, and
+  a shell over Telnet or SSH (`C:net/ShellServer`, `SSH` with password
+  or ssh-ed25519 keys and a
   post-quantum key exchange, and the files over sftp and scp) - and the
   other way, `C:net/SSH` for a shell or a command on another machine
   and `C:net/SCP` to copy files to and from it; a packet filter
@@ -170,8 +177,11 @@ Espressif's QEMU. The ESP32-P4 is next.
   a device from the shell, and `SYS:Programs/Battery` shows a battery a
   Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
 - **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
-  card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio,
-  Telnet, SSH; watchdog, DMA, GPIO, IO expander and platform resources; `LIBS:crypto.library` on the chip's SHA,
+  card, I2C, touch, keyboard, mouse (with its wheel), input, console, four-channel audio
+  (through an ES8311 codec or straight to I2S amplifiers),
+  Telnet, SSH; watchdog, DMA (the general channels and the ESP32-P4's
+  2D-DMA), GPIO, IO expander, JPEG (the ESP32-P4's codec) and platform
+  resources; `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures, ML-KEM-768.
 - **Boards are data:** which parts are fitted and how they are wired is a
@@ -186,6 +196,9 @@ Espressif's QEMU. The ESP32-P4 is next.
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, and an RS-485 port on its second serial port | runs |
+| `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 (shown on a Samsung TV) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; audio.device for its ES8311 is in its image, not tried there yet |
+| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`) |
 
 `C:ShowConfig` lists what the running board has.
 
@@ -198,6 +211,7 @@ Espressif Zig toolchain (`0.16.0-xtensa`) into `toolchain/` on first use.
 ./zig build test             # host tests; every board and every program compiles
 ./zig build qemu             # boot in QEMU on the serial console (quit: Ctrl-A X)
 ./zig build qemu-display     # the same with the display in a window
+./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
 
@@ -210,6 +224,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
+| `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
 Without them the disk has everything but that part. On a board the serial
 console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
@@ -270,6 +285,7 @@ More build steps and options:
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
 | `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
+| `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
 
 ## Repository layout
 
@@ -280,7 +296,7 @@ src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, mkicon, the autodocs, the module charts, checks
+tools/         build helpers: mkfs, ressize, ramimage, mkicon, the autodocs, the module charts, checks
 scripts/       the QEMU build, the pinned fetches (Wi-Fi libraries, fonts, certificates), a serial terminal
 ```
 

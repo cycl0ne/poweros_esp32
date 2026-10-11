@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! NewStackRun: runs a function on a stack of its own, for code that needs
 //! more stack than the task has. The task's stack bounds are moved for the
-//! call and put back after it, so a stack check sees the right ones.
+//! call and put back after it, so a stack check sees the right ones - and
+//! the check is off while the bounds and the stack pointer disagree: from
+//! the moment the bounds move until the code runs on the new stack, and
+//! from its return until they are back.
 
 const sdk = @import("sdk");
 const _task = @import("_task.zig");
@@ -38,7 +41,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// checks its bottom words while `code` runs, and this call checks them
 /// once more before it gives the stack back. A stack `code` ran past the
 /// end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
-/// written over below it.
+/// written over below it. The dispatcher's check is on only while `code`
+/// itself runs: in the instructions that move the stack pointer to the new
+/// stack and back the task's bounds already say one stack while it is on
+/// the other, and a switch there is no overrun.
 ///
 /// CONTEXT:
 /// - Waits: only if `code` does.
@@ -77,20 +83,44 @@ pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, st
     const stack = sys.AllocMem(size, sdk.exec.MEMF_ANY) orelse return -1;
     defer sys.FreeMem(stack, size);
     const task = sys.FindTask(null).?;
-    const lower = task.sp_lower;
-    const upper = task.sp_upper;
-    const guarded = task.flags & sdk.exec.TF_GUARDED;
-    task.sp_lower = @intFromPtr(stack);
-    task.sp_upper = task.sp_lower + size;
-    _task.guardStack(task);
-    defer {
-        task.sp_lower = lower;
-        task.sp_upper = upper;
-        task.flags = (task.flags & ~sdk.exec.TF_GUARDED) | guarded;
-    }
-    const result = _task.task_hardware.call_on_stack(task.sp_upper, @ptrCast(code), arg);
+    // Volatile, in this order: an interrupt on this core may switch the
+    // task away between any two of these stores and check what it finds.
+    const flags: *volatile u8 = &task.flags;
+    const sp_lower: *volatile usize = &task.sp_lower;
+    const sp_upper: *volatile usize = &task.sp_upper;
+    const lower = sp_lower.*;
+    const upper = sp_upper.*;
+    const guarded = flags.* & sdk.exec.TF_GUARDED;
+    flags.* &= ~sdk.exec.TF_GUARDED;
+    _task.writeGuard(@intFromPtr(stack));
+    sp_lower.* = @intFromPtr(stack);
+    sp_upper.* = @intFromPtr(stack) + size;
+    var run: OnNewStack = .{ .code = code, .arg = arg, .flags = flags };
+    const result = _task.task_hardware.call_on_stack(@intFromPtr(stack) + size, @ptrCast(&onNewStack), &run);
+    sp_lower.* = lower;
+    sp_upper.* = upper;
+    flags.* = (flags.* & ~sdk.exec.TF_GUARDED) | guarded;
     if (!_task.guardIntact(@intFromPtr(stack))) {
         _task.stackOverrun(@intFromPtr(stack));
     }
+    return result;
+}
+
+/// What the first frame on the new stack needs: the code and its argument,
+/// and the task's flags, whose stack check it turns on and off.
+const OnNewStack = struct {
+    code: sdk.exec.StackFn,
+    arg: ?*anyopaque,
+    flags: *volatile u8,
+};
+
+/// The code, on the new stack: the dispatcher checks the task against its
+/// new bounds from here, where the stack pointer is in them, until just
+/// before it leaves them again.
+fn onNewStack(arg: ?*anyopaque) callconv(.c) i32 {
+    const run: *const OnNewStack = @ptrCast(@alignCast(arg.?));
+    run.flags.* |= sdk.exec.TF_GUARDED;
+    const result = run.code(run.arg);
+    run.flags.* &= ~sdk.exec.TF_GUARDED;
     return result;
 }

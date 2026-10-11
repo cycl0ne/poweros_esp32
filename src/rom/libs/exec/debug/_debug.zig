@@ -53,6 +53,9 @@ pub const DebugHardware = struct {
     /// Where the stopped code was: its pc, its stack pointer and the
     /// return address it would have gone to.
     frameAt: *const fn (frame: *const anyopaque, pc: *usize, sp: *usize, ret: *usize) void,
+    /// The stopped code's frame pointer, where a call chain kept by frame
+    /// pointers starts; none where the chain is the register windows'.
+    framePointerAt: ?*const fn (frame: *const anyopaque) usize = null,
     /// The code an address is in, and how far into it; null when it is
     /// in none that is known.
     whereIs: *const fn (address: usize, offset: *usize) ?[*:0]const u8,
@@ -342,6 +345,7 @@ noinline fn spillWindows(depth: u32) u32 {
 /// stack that may be what broke.
 fn backtrace() void {
     const chip = debug_hardware orelse return;
+    if (builtin.cpu.arch == .riscv32) return backtraceByFramePointers(chip);
     if (reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
     var pc: usize = 0;
     var sp: usize = 0;
@@ -373,6 +377,35 @@ fn backtrace() void {
         if (next_pc == 0 or next_sp <= sp or !readable(next_sp)) break;
         pc = returnTo(next_pc, pc);
         sp = next_sp;
+    }
+    if (depth >= max_frames) printf("  ... and further\n", .{});
+}
+
+/// The call chain by frame pointers, as RISC-V code keeps them: each
+/// frame's return address at fp - 4 and the frame before it at fp - 8.
+/// From a trap the chain starts at the stopped code's frame pointer; from
+/// a call, at this function's own.
+fn backtraceByFramePointers(chip: *const DebugHardware) void {
+    var fp: usize = @frameAddress();
+    var depth: u32 = 0;
+    if (frame) |f| {
+        var pc: usize = 0;
+        var sp: usize = 0;
+        var ret: usize = 0;
+        chip.frameAt(f, &pc, &sp, &ret);
+        printFrame(0, pc);
+        depth = 1;
+        const at = chip.framePointerAt orelse return;
+        fp = at(f);
+    }
+    while (depth < max_frames) : (depth += 1) {
+        const ret = word32(fp -% 4) orelse break;
+        const before = word32(fp -% 8) orelse break;
+        if (ret == 0 or !inCode(ret)) break;
+        // Two back: inside the call, whether it took two bytes or four.
+        printFrame(depth, ret - 2);
+        if (before <= fp) break;
+        fp = before;
     }
     if (depth >= max_frames) printf("  ... and further\n", .{});
 }

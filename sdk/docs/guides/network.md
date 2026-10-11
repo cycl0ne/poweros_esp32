@@ -18,6 +18,7 @@ device requests are described in `sdk/devices/network.zig`,
 - [Interfaces](#interfaces)
 - [Configuration files](#configuration-files)
 - [The network device API](#the-network-device-api)
+- [Ethernet: emac.device](#ethernet-emacdevice)
 - [Wireless devices](#wireless-devices)
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
@@ -37,8 +38,8 @@ device requests are described in `sdk/devices/network.zig`,
     |              discovery, IGMP, MLD, DHCP, DHCPv6, routes, names - interfaces
     |              eth0, wlan0, lo0
     |  IOSana2Req (CMD_READ, CMD_WRITE, S2_ONEVENT ...)
- network device    DEVS:networks/openeth.device, DEVS:networks/wifi.device,
-    |              DEVS:networks/slip.device
+ network device    DEVS:networks/emac.device, DEVS:networks/openeth.device,
+    |              DEVS:networks/wifi.device, DEVS:networks/slip.device
     |
  hardware          a MAC's rings and interrupts, a radio's libraries
 ```
@@ -399,6 +400,23 @@ counted and dropped. A request that has to wait needs a reply port.
 `C:net/Net` speaks to a device directly - its address, its link, a frame
 sent - with no stack in between.
 
+## Ethernet: emac.device
+
+`DEVS:networks/emac.device` is the ESP32-P4's Ethernet MAC with the
+board's PHY behind it on RMII: a unit with Ethernet framing at 10 or 100
+Mbit/s, its station address the one the factory burned into the chip.
+The board's system tag list names the PHY - a `PARTKIND_NET` part on
+`BUS_RMII` with its address on the management bus, its reset line and
+the RMII pads - and a board without one gets no device, so its `ETH0` is
+skipped. Each chip's disk has its own `DEVS:NetInterfaces/ETH0`: the
+ESP32-P4's names this device, the ESP32-S3's QEMU's `openeth.device`.
+
+The device asks the PHY about its link every second. The unit is on line
+only while the cable has a partner, so the interface's DHCP waits for
+the link, and a link that drops takes the unit off line until it is
+back; each change is in the system log (`C:Log`) with the speed and
+duplex the two ends agreed on.
+
 ## Wireless devices
 
 A radio's unit takes the network device API with Ethernet framing, and the
@@ -524,6 +542,11 @@ registers (`ethmac.zig`). The unit's own tests in
 `src/disk/devs/networks/tests/` run it on the host over a link of the
 test's own - which read a frame goes to, orphans, filters, going offline,
 groups, aborts - so a new driver needs to test only its hardware.
+`src/disk/devs/networks/emac/` is a MAC on a chip: its descriptors and
+buffers in whole cache lines, written back (`CachePreDMA`) before the
+DMA engine reads them and invalidated (`CachePostDMA`) before the task
+reads what it wrote, and a PHY asked about its link, which it reports
+with the unit's `setCarrier`.
 
 ## A connection as a device: telnet.device
 

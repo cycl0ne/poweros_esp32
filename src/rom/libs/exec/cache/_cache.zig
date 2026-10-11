@@ -2,8 +2,8 @@
 //! The caches: CacheClearU, CacheClearE, CachePreDMA, CachePostDMA, and
 //! CodeAddress for code loaded into memory.
 //!
-//! The cache controller sits in front of **external memory only**, and
-//! there are two buses onto it:
+//! **The ESP32-S3.** The cache controller sits in front of **external
+//! memory only**, and there are two buses onto it:
 //!
 //!   DCache  0x3C00_0000 - 0x3DFF_FFFF  the data bus: PSRAM, external memory
 //!   ICache  0x4200_0000 - 0x43FF_FFFF  the instruction bus
@@ -42,6 +42,14 @@
 //! are in PSRAM. A data line only goes stale through DMA, and CachePostDMA
 //! is what covers that. DMAF_Continue changes nothing here, and there is
 //! no CacheControl - nothing on this machine turns a cache off and lives.
+//!
+//! **The ESP32-P4.** The L1 data cache is in front of L2MEM too, so
+//! internal memory a DMA engine uses is written back and invalidated as
+//! PSRAM is; code and data share one address space (`data_bus` and
+//! `instruction_bus` are the same range), so an instruction range is
+//! invalidated in the instruction caches alone (`invalidate_icache`) and
+//! never drops a dirty data line. The ROM's routines (sdk.hardware.cache)
+//! take whole ranges, and no line needs freezing.
 //!
 //! The calls are a file each in this folder; this file is everything else.
 //! What the calls drive (`CacheHardware`), with the chip's controller
@@ -125,6 +133,10 @@ pub const CacheHardware = struct {
     /// Invalidate the lines of [addr, addr + size): the ICache's or the
     /// DCache's, by the address.
     invalidate: *const fn (addr: usize, size: usize) void,
+    /// Invalidate [addr, addr + size) in the instruction caches alone: for
+    /// a chip whose two caches share their addresses, where `invalidate`
+    /// is the data cache's. None where the address tells them apart.
+    invalidate_icache: ?*const fn (addr: usize, size: usize) void = null,
 };
 
 /// exec's cache driver; in the host tests, nothing (or a test's stub).
@@ -144,12 +156,15 @@ fn noRange(_: usize, _: usize) void {}
 fn noLine(_: usize) void {}
 
 /// The chip's cache controller, driven through the functions below.
-pub const chip_cache: CacheHardware = .{
-    .writeback_all = writebackAll,
-    .invalidate_icache_all = invalidateICacheAll,
-    .writeback = writeback,
-    .writeback_line = writebackLine,
-    .invalidate = invalidate,
+pub const chip_cache: CacheHardware = switch (sdk.hardware.chip) {
+    .esp32s3 => .{
+        .writeback_all = writebackAll,
+        .invalidate_icache_all = invalidateICacheAll,
+        .writeback = writeback,
+        .writeback_line = writebackLine,
+        .invalidate = invalidate,
+    },
+    .esp32p4 => p4.hardware,
 };
 
 /// A DCache line, in bytes.
@@ -170,10 +185,17 @@ pub const Range = struct {
     }
 };
 
-/// The data bus: PSRAM, external memory, through the DCache.
-pub const data_bus = Range{ .start = 0x3C00_0000, .end = 0x3E00_0000 };
-/// The instruction bus, through the ICache.
-pub const instruction_bus = Range{ .start = 0x4200_0000, .end = 0x4400_0000 };
+/// The data bus: on the S3 PSRAM, external memory, through the DCache; on
+/// the P4 everything the data cache is in front of.
+pub const data_bus: Range = switch (sdk.hardware.chip) {
+    .esp32s3 => .{ .start = 0x3C00_0000, .end = 0x3E00_0000 },
+    .esp32p4 => .{ .start = sdk.hardware.cache.CACHED_START, .end = sdk.hardware.cache.CACHED_END },
+};
+/// The instruction bus, through the ICache: on the P4 the same addresses.
+pub const instruction_bus: Range = switch (sdk.hardware.chip) {
+    .esp32s3 => .{ .start = 0x4200_0000, .end = 0x4400_0000 },
+    .esp32p4 => data_bus,
+};
 
 /// The start of the line holding `address`.
 ///
@@ -274,11 +296,19 @@ pub const CodeMap = struct {
 /// Where loaded code can run. The host tests point it at their own memory.
 pub var code_map: CodeMap = if (builtin.is_test) .{} else chip_code_map;
 
-/// This chip's map: PSRAM on both buses.
-pub const chip_code_map: CodeMap = .{
-    .data_start = data_bus.start,
-    .instruction_start = instruction_bus.start,
-    .size = 8 << 20, // PSRAM's MMU entries (0-127), 64 KiB each
+/// This chip's map. The S3: PSRAM on both buses. The P4: one address for
+/// both, so PSRAM and L2MEM run where they are written.
+pub const chip_code_map: CodeMap = switch (sdk.hardware.chip) {
+    .esp32s3 => .{
+        .data_start = data_bus.start,
+        .instruction_start = instruction_bus.start,
+        .size = 8 << 20, // PSRAM's MMU entries (0-127), 64 KiB each
+    },
+    .esp32p4 => .{
+        .data_start = sdk.hardware.map.PSRAM_START,
+        .instruction_start = sdk.hardware.map.PSRAM_START,
+        .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.PSRAM_START,
+    },
 };
 
 // --- the chip's cache controller --------------------------------------------
@@ -366,3 +396,63 @@ fn invalidate(addr: usize, size: usize) void {
         at += piece;
     }
 }
+
+// --- the ESP32-P4's ---------------------------------------------------------
+
+/// The P4's cache controller, through the ROM's routines. Each takes the
+/// engine, a piece at a time, as the S3's do: the controller's sync
+/// registers are the chip's, not a core's.
+const p4 = struct {
+    const cache = sdk.hardware.cache;
+
+    const hardware: CacheHardware = .{
+        .writeback_all = writebackAllP4,
+        .invalidate_icache_all = invalidateICacheAllP4,
+        .writeback = writebackP4,
+        .writeback_line = writebackLineP4,
+        .invalidate = invalidateP4,
+        .invalidate_icache = invalidateICacheP4,
+    };
+
+    fn writebackAllP4() void {
+        const state = takeEngine();
+        defer dropEngine(state);
+        _ = cache.Cache_WriteBack_All(cache.MAP_DATA);
+    }
+
+    fn invalidateICacheAllP4() void {
+        const state = takeEngine();
+        defer dropEngine(state);
+        _ = cache.Cache_Invalidate_All(cache.MAP_L1_ICACHES);
+    }
+
+    fn writebackP4(addr: usize, size: usize) void {
+        inPieces(cache.MAP_DATA, addr, size, cache.Cache_WriteBack_Addr);
+    }
+
+    fn writebackLineP4(addr: usize) void {
+        inPieces(cache.MAP_DATA, lineOf(addr), line_size, cache.Cache_WriteBack_Addr);
+    }
+
+    fn invalidateP4(addr: usize, size: usize) void {
+        inPieces(cache.MAP_DATA, addr, size, cache.Cache_Invalidate_Addr);
+    }
+
+    fn invalidateICacheP4(addr: usize, size: usize) void {
+        inPieces(cache.MAP_L1_ICACHES, addr, size, cache.Cache_Invalidate_Addr);
+    }
+
+    /// `operation` on the caches `cache_map` names, over `size` bytes at
+    /// `addr`, an engine hold per piece.
+    fn inPieces(cache_map: u32, addr: usize, size: usize, operation: *const fn (u32, u32, u32) callconv(.c) i32) void {
+        var at = addr;
+        const end = addr + size;
+        while (at < end) {
+            const piece = @min(end - at, engine_piece);
+            const state = takeEngine();
+            _ = operation(cache_map, @intCast(at), @intCast(piece));
+            dropEngine(state);
+            at += piece;
+        }
+    }
+};

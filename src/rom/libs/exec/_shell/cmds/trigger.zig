@@ -11,16 +11,16 @@
 const sdk = @import("sdk");
 const exec = @import("../../exec.zig");
 const _shell = @import("../shell.zig");
-const uptime = @import("../../../../../arch/esp32s3/timer.zig");
+const uptime = @import("../../../../../arch/arch.zig").timer;
 const reg = sdk.hardware.mmio.reg;
 const intbits = sdk.hardware.intbits;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 
-/// SYSTEM_CPU_INTR_FROM_CPU_n_REG: bit 0 raises source
+/// The CPU_INTR_FROM_CPU_n registers: bit 0 raises source
 /// INTB_FROM_CPU_INTR0 + n until it is cleared again (the sources are
 /// level-triggered).
-const from_cpu_reg = sdk.hardware.map.SYSTEM + 0x30;
+const from_cpu_reg = sdk.hardware.system.CPU_INTR_FROM_CPU_0;
 
 fn acknowledge(int_number: u32) void {
     reg(from_cpu_reg + 4 * @as(usize, int_number - intbits.INTB_FROM_CPU_INTR0)).* = 0;

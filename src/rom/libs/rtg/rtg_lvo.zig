@@ -57,6 +57,9 @@ const BlitPattern = @import("engine/blitpattern.zig").BlitPattern;
 const WaitBlit = @import("engine/waitblit.zig").WaitBlit;
 const PackRtgColor = @import("engine/packrtgcolor.zig").PackRtgColor;
 const UnpackRtgColor = @import("engine/unpackrtgcolor.zig").UnpackRtgColor;
+const BlendPixels = @import("engine/blendpixels.zig").BlendPixels;
+const BlendRect = @import("engine/blendrect.zig").BlendRect;
+const ScalePixels = @import("engine/scalepixels.zig").ScalePixels;
 const AddRtgEventServer = @import("event/addrtgeventserver.zig").AddRtgEventServer;
 const RemRtgEventServer = @import("event/remrtgeventserver.zig").RemRtgEventServer;
 const SignalRtgEvent = @import("event/signalrtgevent.zig").SignalRtgEvent;
@@ -143,6 +146,9 @@ const contract_files = [_][]const u8{
     @embedFile("engine/waitblit.zig"),
     @embedFile("engine/packrtgcolor.zig"),
     @embedFile("engine/unpackrtgcolor.zig"),
+    @embedFile("engine/blendpixels.zig"),
+    @embedFile("engine/blendrect.zig"),
+    @embedFile("engine/scalepixels.zig"),
     @embedFile("event/addrtgeventserver.zig"),
     @embedFile("event/remrtgeventserver.zig"),
     @embedFile("event/signalrtgevent.zig"),
@@ -331,6 +337,15 @@ fn lvoSetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Sur
 fn lvoMoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) callconv(.c) void {
     return MoveBoardOverlay(rb, board, x, y);
 }
+fn lvoBlendPixels(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    return BlendPixels(rb, dest, area, pixels, alpha);
+}
+fn lvoBlendRect(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    return BlendRect(rb, dest, area, color);
+}
+fn lvoScalePixels(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
+    return ScalePixels(rb, dest, area, pixels, width, height);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -395,6 +410,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoShowBitMapBands),
     vec(lvoSetBoardOverlay),
     vec(lvoMoveBoardOverlay),
+    vec(lvoBlendPixels),
+    vec(lvoBlendRect),
+    vec(lvoScalePixels),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -402,7 +420,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 60), vectors.len);
+    try testing.expectEqual(@as(usize, 63), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

@@ -984,10 +984,13 @@ either rectangle is empty.
 **BEHAVIOR**
 
 The nearest pixel for each, stepped with whole numbers - no smoothing.
-It keeps a
-scaled-up shape's edges where they were rather than blurring them
-across the pixels either side. Scaling down drops pixels rather than
-averaging them.
+It keeps a scaled-up shape's edges where they were rather than
+blurring them across the pixels either side. Scaling down drops pixels
+rather than averaging them. A RastPort that wants it smooth
+(`RPTAG_Smooth`) gets each pixel mixed from the four round its place
+instead; a smooth scale whose destination is one whole piece of a
+board's buffer goes to the board's engine (`rtg.ScalePixels`) where it
+takes the job.
 
 Which source pixel a destination pixel comes from is worked out from the
 destination rectangle's own corner and not from the clipped one, so a
@@ -1069,6 +1072,9 @@ window twice therefore is not the same as blending it once.
 
 When the clip cuts the front off, the picture starts that much
 further in, so a clipped picture is cut rather than slid.
+
+A piece that lies in a board's buffer goes to the board's blend
+(`rtg.BlendPixels`) where it takes the job; the rest is mixed here.
 
 **CONTEXT**
 
@@ -4351,6 +4357,11 @@ losing them.
 The clip cuts the destination, and each piece of it still takes the
 pixels that belong at that place, so a picture drawn in pieces is the
 same picture as one drawn in a single call.
+
+A smooth scale whose destination is one whole piece of a board's
+buffer goes to the board's engine (`rtg.ScalePixels`) where it takes
+the job - for an engine that scales in fixed steps, a size those steps
+reach exactly; everything else is done here.
 
 **CONTEXT**
 

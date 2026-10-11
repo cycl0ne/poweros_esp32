@@ -27,7 +27,9 @@ const IORequest = sdk.exec.IORequest;
 /// `IOF_QUICK` is **cleared**, so the device always replies and the request
 /// always comes back to its port - even one the device could have finished
 /// at once. That is what makes the request waitable beside everything else
-/// the task is waiting for.
+/// the task is waiting for. The other flags are the command's - a device's
+/// own, such as audio.device's `ADIOF_PERVOL` - and reach the device as
+/// the caller set them.
 ///
 /// With no device open the request is left marked quick with
 /// `IOERR_OPENFAIL`, so the `WaitIO` that follows answers that immediately
@@ -76,9 +78,9 @@ const IORequest = sdk.exec.IORequest;
 pub fn SendIO(_: *ExecBase, io: *IORequest) void {
     io.err = sdk.exec.IOERR_OPENFAIL;
     const dev = io.device orelse {
-        io.flags = sdk.exec.IOF_QUICK;
+        io.flags |= sdk.exec.IOF_QUICK;
         return;
     };
-    io.flags = 0;
+    io.flags &= ~sdk.exec.IOF_QUICK;
     dev.vector(sdk.exec.BeginIOFn, sdk.exec.DEV_BEGINIO)(dev, io);
 }

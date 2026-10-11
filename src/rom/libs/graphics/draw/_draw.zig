@@ -241,14 +241,16 @@ pub fn fillSoftware(rp: *RastPort, p: Piece) void {
     }
 }
 
-/// The board's engine, if this rectangle can go to it.
+/// The board's engine, if this rectangle can go to it: its fill for an
+/// opaque pen, its blend (`BlendRect`) for a translucent one composed
+/// under `DRMD_BLEND`.
 ///
 /// RESULT:
 /// True when the board drew it. False for every other reason there is -
-/// no board behind the surface, a pen that is not opaque, a board with no
-/// engine, or an engine that refused this format - and the caller then
-/// does it in software. None of those is an error worth reporting: they
-/// are all "not that way, then".
+/// no board behind the surface, a pen that is not opaque outside
+/// `DRMD_BLEND`, a board with no engine, or an engine that refused this
+/// job - and the caller then does it in software. None of those is an
+/// error worth reporting: they are all "not that way, then".
 ///
 /// INPUTS:
 /// - `gb` - the library, for rtg.library's engine.
@@ -261,7 +263,6 @@ pub fn fillByEngine(gb: *GraphicsBase, rp: *RastPort, p: Piece) bool {
     // two pens a mode meant - so anything but a plain opaque fill is done
     // here instead.
     if (rp.draw_mode & (graphics.DRMD_COMPLEMENT | graphics.DRMD_INVERSVID) != 0) return false;
-    if (!graphics.penIsOpaque(rp.fg_pen)) return false;
     // The engine works on the surface, so the piece is moved onto it
     // first - for a window that is where the window sits on the display.
     const on = p.on(p.rect);
@@ -271,6 +272,11 @@ pub fn fillByEngine(gb: *GraphicsBase, rp: *RastPort, p: Piece) bool {
         .width = on.width(),
         .height = on.height(),
     };
+    if (!graphics.penIsOpaque(rp.fg_pen)) {
+        // Composed by its alpha, as plotPen composes it, or not at all.
+        if (rp.draw_mode & graphics.DRMD_BLEND == 0) return false;
+        return gb.rtg_base.BlendRect(bitmap, &r, rp.fg_pen) == rtg.errors.RTGERR_OK;
+    }
     return gb.rtg_base.FillRect(bitmap, &r, rp.fg_packed) == rtg.errors.RTGERR_OK;
 }
 

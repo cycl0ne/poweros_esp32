@@ -58,6 +58,14 @@ pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
 /// How many cores the kernel runs tasks on: 1 or 2. Absent, 1. The
 /// build's `-Dcores` has the last word.
 pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
+/// The PSRAM's bus clock in MHz: as fast as the board's wiring holds it
+/// without errors. The ESP32-P4 runs it at 200 or 80; absent, 80.
+pub const SYSTAG_PsramSpeed = SYSTAG_Dummy + 14;
+/// The millivolts the board wants from the chip's fourth adjustable LDO
+/// (VO4) from the start, before any driver uses a pin: a board that runs
+/// a bank of I/O pins or their pull-ups from it. The ESP32-P4 only;
+/// absent, 0, and the channel is left as the ROM left it.
+pub const SYSTAG_Ldo4Voltage = SYSTAG_Dummy + 15;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;
@@ -85,6 +93,10 @@ pub const PART_Address = PART_Dummy + 6;
 /// How far it is turned against the screen, in degrees (a touch panel
 /// mounted on its side).
 pub const PART_Turn = PART_Dummy + 7;
+/// Non-zero: a stereo output whose speakers take the I2S frame the other
+/// way round - its first half, the one I2S calls left, plays on the right
+/// speaker and its second on the left.
+pub const PART_SidesSwapped = PART_Dummy + 8;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -118,6 +130,20 @@ pub const PART_PinPower = PART_Dummy + 0x35;
 /// The line that gives a part pads it shares with another: asserted, the
 /// pads are this part's; not asserted, the other's.
 pub const PART_PinSwitch = PART_Dummy + 0x36;
+/// An Ethernet PHY's RMII lines: two data lines and an enable from the
+/// chip, two data lines and carrier sense / data valid to it, and the
+/// 50 MHz reference clock both sides run on, which comes in from the
+/// PHY. Then the management bus the PHY's registers are read over: its
+/// clock and its data line.
+pub const PART_PinTxd0 = PART_Dummy + 0x37;
+pub const PART_PinTxd1 = PART_Dummy + 0x38;
+pub const PART_PinTxEnable = PART_Dummy + 0x39;
+pub const PART_PinRxd0 = PART_Dummy + 0x3A;
+pub const PART_PinRxd1 = PART_Dummy + 0x3B;
+pub const PART_PinCrsDv = PART_Dummy + 0x3C;
+pub const PART_PinRefClock = PART_Dummy + 0x3D;
+pub const PART_PinMDC = PART_Dummy + 0x3E;
+pub const PART_PinMDIO = PART_Dummy + 0x3F;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -146,6 +172,15 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinSelect => "CS",
         PART_PinPower => "PWR",
         PART_PinSwitch => "SEL",
+        PART_PinTxd0 => "TXD0",
+        PART_PinTxd1 => "TXD1",
+        PART_PinTxEnable => "TX_EN",
+        PART_PinRxd0 => "RXD0",
+        PART_PinRxd1 => "RXD1",
+        PART_PinCrsDv => "CRS_DV",
+        PART_PinRefClock => "REF_CLK",
+        PART_PinMDC => "MDC",
+        PART_PinMDIO => "MDIO",
         else => null,
     };
 }
@@ -201,6 +236,20 @@ pub const CHIP_TJA1051: u32 = 12;
 pub const CHIP_SP3485: u32 = 13;
 /// A battery charger, with the battery's voltage for a program to read.
 pub const CHIP_CS8501: u32 = 14;
+/// An Ethernet PHY, 10/100 Mbit/s (PARTKIND_NET on BUS_RMII; its
+/// PART_Address is its address on the management bus).
+pub const CHIP_IP101: u32 = 15;
+/// Panel controllers on MIPI-DSI (PARTKIND_PANEL on BUS_MIPI_DSI).
+pub const CHIP_ST7701: u32 = 16;
+pub const CHIP_EK79007: u32 = 17;
+/// A MIPI-DSI to HDMI bridge (PARTKIND_PANEL on BUS_MIPI_DSI): set up over
+/// I2C (PART_BusUnit, PART_Address its main page), RGB888 on the link, a
+/// monitor behind it.
+pub const CHIP_LT8912B: u32 = 18;
+/// A class-D amplifier that takes I2S itself (PARTKIND_AMPLIFIER on
+/// BUS_I2S): bit clock, word clock and data, no master clock and nothing
+/// to set up; PART_PinEnable switches it on.
+pub const CHIP_NS4168: u32 = 19;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -218,3 +267,7 @@ pub const BUS_MEMORY: u32 = 8;
 pub const BUS_UART: u32 = 9;
 /// The chip's CAN controller (TWAI).
 pub const BUS_TWAI: u32 = 10;
+/// The chip's Ethernet MAC, to a PHY over RMII.
+pub const BUS_RMII: u32 = 11;
+/// The chip's MIPI-DSI host, to a panel or a bridge.
+pub const BUS_MIPI_DSI: u32 = 12;

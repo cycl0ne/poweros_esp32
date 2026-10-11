@@ -14,23 +14,38 @@ const GpioBase = @import("gpio_base.zig").GpioBase;
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.GPIONAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
-const BUILD_DATE = "24.09.2026";
+pub const RESOURCE_REVISION = 1;
+const BUILD_DATE = "11.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The pads the flash sits on: its clock, data and chip select.
-const flash_pads = [_]u32{ 27, 28, 29, 30, 31, 32 };
-/// PSRAM's chip select, and the four more data lines and the strobe an
-/// octal PSRAM takes.
-const psram_select: u32 = 26;
-const octal_psram_pads = [_]u32{ 33, 34, 35, 36, 37 };
-/// The USB port's D- and D+, which the USB-Serial-JTAG port is on.
-const usb_pads = [_]u32{ 19, 20 };
-/// UART0's TX and RX: exec's raw output, and the boot ROM's.
-const uart0_pads = [_]u32{ 43, 44 };
+/// The pads the system runs on, which differ by chip.
+const system_pads = switch (sdk.hardware.chip) {
+    .esp32s3 => struct {
+        /// The pads the flash sits on: its clock, data and chip select.
+        const flash = [_]u32{ 27, 28, 29, 30, 31, 32 };
+        /// PSRAM's chip select, and the four more data lines and the
+        /// strobe an octal PSRAM takes.
+        const psram_select = [_]u32{26};
+        const octal_psram = [_]u32{ 33, 34, 35, 36, 37 };
+        /// The USB port's D- and D+, which the USB-Serial-JTAG port is on.
+        const usb = [_]u32{ 19, 20 };
+        /// UART0's TX and RX: exec's raw output, and the boot ROM's.
+        const uart0 = [_]u32{ 43, 44 };
+    },
+    // The flash and the PSRAM have pins of their own, outside the pads.
+    .esp32p4 => struct {
+        const flash = [_]u32{};
+        const psram_select = [_]u32{};
+        const octal_psram = [_]u32{};
+        /// The USB-Serial-JTAG port's D- and D+.
+        const usb = [_]u32{ 24, 25 };
+        /// UART0's TX and RX: exec's raw output, and the boot ROM's.
+        const uart0 = [_]u32{ 37, 38 };
+    },
+};
 
 fn gpioBase(lib: *exec.Library) *GpioBase {
     return @alignCast(@fieldParentPtr("lib", lib));
@@ -74,14 +89,14 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     gb.sys_base = sys_base;
     sys_base.InitLock(&gb.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     gb.owner = @splat(null);
-    hold(gb, &flash_pads, "flash");
+    hold(gb, &system_pads.flash, "flash");
     const psram = psramOf(sys_base);
     if (psram.size != 0) {
-        hold(gb, &.{psram_select}, "psram");
-        if (psram.mode == st.PSRAM_OCTAL) hold(gb, &octal_psram_pads, "psram");
+        hold(gb, &system_pads.psram_select, "psram");
+        if (psram.mode == st.PSRAM_OCTAL) hold(gb, &system_pads.octal_psram, "psram");
     }
-    hold(gb, &usb_pads, "usb");
-    hold(gb, &uart0_pads, "uart0");
+    hold(gb, &system_pads.usb, "usb");
+    hold(gb, &system_pads.uart0, "uart0");
     return lib;
 }
 

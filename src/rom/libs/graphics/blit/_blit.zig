@@ -77,6 +77,31 @@ pub fn engineUsable(rp: *const RastPort, piece: drawing.Piece) bool {
     return true;
 }
 
+/// The engine's scale, for a RastPort that wants it smooth and shows the
+/// whole destination as one piece of a board's buffer: the engine mixes
+/// neighbouring pixels, which is what smooth asks for. True when the
+/// board did it; the caller hands the rows on.
+///
+/// INPUTS:
+/// - `gb` - the library, for rtg.library's engine.
+/// - `rp` - the RastPort.
+/// - `pixels` - the picture, as rtg.library reads it; its corner is the
+///   source rectangle's.
+/// - `src_area` - the part of the picture scaled.
+/// - `dest_area` - where it lands, in the RastPort's coordinates.
+pub fn scaleByEngine(gb: *GraphicsBase, rp: *RastPort, pixels: *const rtg.RtgPixels, src_area: Rect, dest_area: Rect) bool {
+    if (!rp.smooth) return false;
+    var it = drawing.visible(rp, dest_area);
+    const piece = it.next() orelse return false;
+    if (it.next() != null) return false;
+    // Cut by the clip, the picture would have to start between pixels.
+    if (piece.rect.min_x != dest_area.min_x or piece.rect.min_y != dest_area.min_y or
+        piece.rect.max_x != dest_area.max_x or piece.rect.max_y != dest_area.max_y) return false;
+    const bitmap = piece.bitmap orelse return false;
+    const target = asRtgRect(piece.on(piece.rect));
+    return gb.rtg_base.ScalePixels(bitmap, &target, pixels, @intCast(src_area.width()), @intCast(src_area.height())) == rtg.errors.RTGERR_OK;
+}
+
 /// A rectangle in rtg.library's form: corner and size.
 ///
 /// INPUTS:
@@ -241,6 +266,17 @@ pub fn blitInto(
     var bound = Rect{};
     var any = false;
     const inverse = dest.draw_mode & graphics.DRMD_INVERSVID != 0;
+    // The source as rtg.library reads it, for a board's engine: only its
+    // surface is looked at, so plain memory serves as well as a board's.
+    var described = rtg.bitmaps.RtgBitMap{
+        .pixels = src.pixels,
+        .width = src.width,
+        .height = src.height,
+        .pitch = src.pitch,
+        .size_bytes = src.size_bytes,
+        .format = src.format,
+        .flags = src.flags,
+    };
 
     while (it.next()) |r| {
         // The same for a piece with nowhere to put pixels: it is passed
@@ -249,6 +285,26 @@ pub fn blitInto(
             dest.last_error = graphics.GERR_BAD_SIZE;
             exec.kprintf(gb.sys_base, "blit: clip piece surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(r.surface)))});
             continue;
+        }
+        // A plain move of a piece of a board's buffer is the engine's
+        // copy where it takes it; the rows it wrote are handed on below
+        // with the rest.
+        if (mask == null) {
+            if (r.bitmap) |bitmap| {
+                const copy = rtg.RtgCopy{
+                    .src_x = r.rect.min_x - dx,
+                    .src_y = r.rect.min_y - dy,
+                    .width = r.rect.width(),
+                    .height = r.rect.height(),
+                    .dest_x = r.rect.min_x + r.dx,
+                    .dest_y = r.rect.min_y + r.dy,
+                };
+                if (gb.rtg_base.CopyRect(&described, bitmap, &copy) == rtg.errors.RTGERR_OK) {
+                    drawing.grow(&bound, r.rect.min_y, &any);
+                    drawing.grow(&bound, r.rect.max_y - 1, &any);
+                    continue;
+                }
+            }
         }
         // A surface moved over itself has to be walked away from where it
         // is going, or it would read pixels it has already written - the

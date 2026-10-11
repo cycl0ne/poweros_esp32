@@ -7,3 +7,4 @@ pub const dma = @import("dma.zig");
 pub const platform = @import("platform.zig");
 pub const expander = @import("expander.zig");
 pub const gpio = @import("gpio.zig");
+pub const jpeg = @import("jpeg.zig");

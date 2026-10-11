@@ -2,7 +2,7 @@
 //! Screens: a screen's buffers shown in turn, and a second screen in front
 //! of the first. Built against the SDK only.
 //!
-//!   Screens FRAMES/N,SCREEN/S,SWITCH/S
+//!   Screens FRAMES/N,SCREEN/S,SWITCH/S,MOVE/S
 //!
 //! Without SCREEN it opens a screen of its own and double-buffers it: a box
 //! bounces over a black picture drawn into one of the screen's two buffers
@@ -14,6 +14,11 @@
 //!
 //! With SCREEN it opens a second screen, shows it for two seconds in front
 //! of the first, puts it behind, and closes it.
+//!
+//! With MOVE it opens a second screen and pulls it down its display in
+//! steps, to half way, as dragging its bar would: the screen behind shows
+//! above it, in bands. It holds it there for two seconds, puts it back up,
+//! and closes it.
 //!
 //! With SWITCH it opens a second screen with a window on it, and a window
 //! on the default screen, each with a button: "To back" puts the second
@@ -38,13 +43,14 @@ const Printf = dos.stdio.Printf;
 const RastPort = graphics.RastPort;
 
 pub const COMMAND_NAME = "Screens";
-const VERSION_STRING = "\x00$VER: Screens 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Screens 1.1 (10.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FRAMES/N,SCREEN/S,SWITCH/S";
+const template = "FRAMES/N,SCREEN/S,SWITCH/S,MOVE/S";
 const arg_frames = 0;
 const arg_screen = 1;
 const arg_switch = 2;
+const arg_move = 3;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display\n";
@@ -86,7 +92,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -109,6 +115,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[arg_switch] != 0) return switchScreens(dl, ib);
     if (argv[arg_screen] != 0) return secondScreen(dl, ib, gb);
+    if (argv[arg_move] != 0) return movedScreen(dl, ib, gb);
     return doubleBuffer(dl, ib, gb, frames);
 }
 
@@ -192,6 +199,39 @@ fn secondScreen(dl: *DosBase, ib: *IntuitionBase, gb: *GraphicsBase) i32 {
     pen(gb, rp, graphics.penRGB(0x00, 0x66, 0xAA));
     gb.RectFill(rp, &.{ .min_x = 40, .min_y = top + 40, .max_x = 240, .max_y = top + 140 });
     dl.Delay(100);
+    ib.ScreenToBack(screen);
+    _ = ib.CloseScreen(screen);
+    return dos.RETURN_OK;
+}
+
+/// A second screen pulled down half its display in steps, held, and put
+/// back.
+fn movedScreen(dl: *DosBase, ib: *IntuitionBase, gb: *GraphicsBase) i32 {
+    var why: u32 = 0;
+    const screen = ib.OpenScreenTagList(&[_]TagItem{
+        .{ .tag = sc.SA_Title, .data = @intFromPtr("A screen pulled down") },
+        .{ .tag = sc.SA_ErrorCode, .data = @intFromPtr(&why) },
+        .{},
+    }) orelse {
+        _ = Printf(dl, MSG_NOSECOND, .{@as(u64, why)});
+        return dos.RETURN_WARN;
+    };
+    const rp: *RastPort = @ptrFromInt(attr(ib, screen, sc.SA_RastPort));
+    const top: i32 = @intCast(attr(ib, screen, sc.SA_BarHeight));
+    const height: i32 = @intCast(attr(ib, screen, sc.SA_Height));
+    pen(gb, rp, graphics.penRGB(0x00, 0x66, 0xAA));
+    gb.RectFill(rp, &.{ .min_x = 40, .min_y = top + 40, .max_x = 240, .max_y = top + 140 });
+    const steps = 20;
+    const step = @divTrunc(height, 2 * steps);
+    var moved: u32 = 0;
+    while (moved < steps) : (moved += 1) {
+        ib.MoveScreen(screen, 0, step);
+        dl.Delay(2);
+    }
+    _ = Printf(dl, "Pulled down by %ld lines\n", .{@as(i64, step * steps)});
+    dl.Delay(100);
+    ib.MoveScreen(screen, 0, -step * steps);
+    dl.Delay(25);
     ib.ScreenToBack(screen);
     _ = ib.CloseScreen(screen);
     return dos.RETURN_OK;

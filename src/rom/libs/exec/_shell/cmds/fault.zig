@@ -2,6 +2,7 @@
 //! fault [load|ill]: a CPU exception on purpose - a load from an address
 //! nothing answers, or an illegal instruction.
 
+const builtin = @import("builtin");
 const reg = @import("sdk").hardware.mmio.reg;
 const _shell = @import("../shell.zig");
 const Shell = _shell.Shell;
@@ -17,7 +18,11 @@ pub const help =
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const kind = args.next() orelse "load";
     if (_shell.same(kind, "ill")) {
-        asm volatile ("ill");
+        // Each core's own: Xtensa's ILL, RISC-V's all-zero instruction.
+        switch (builtin.cpu.arch) {
+            .riscv32 => asm volatile ("unimp"),
+            else => asm volatile ("ill"),
+        }
     } else if (_shell.same(kind, "load")) {
         shell.print("value: %x\n", .{reg(0x10).*});
     } else return error.Usage;

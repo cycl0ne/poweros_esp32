@@ -3523,7 +3523,7 @@ own code otherwise. `IOERR_OPENFAIL` if the device is not open.
 **BEHAVIOR**
 
 It asks for a quick answer by setting `IOF_QUICK`, and the device
-decides:
+decides. The other flags are the command's and are left as they are:
 
 **Finished inside BeginIO.** The flag is still set, no message was sent,
 and the error is read straight out of the request. Nothing waits and
@@ -3555,6 +3555,9 @@ afterwards. Its buffers must stay put and untouched for that time.
 
 The request needs a reply port for the slow path. A request with none
 that the device does not finish quickly cannot be waited for.
+
+A request used again still carries the flags it was last given: set
+them for each command that takes any.
 
 The error starts as `IOERR_OPENFAIL`, so a device that answers without
 setting it reports a failure rather than a false success.
@@ -4433,8 +4436,9 @@ sequencing the modules: a driver at a lower priority than the library it
 registers with can rely on that library being there.
 
 **A module that fails stops the boot.** For an `RTF_AUTOINIT` tag that
-is a dead-end alert rather than a return, since a library that could not
-be built leaves everything above it with nothing to open.
+is a dead-end alert (`AG_MakeLib`, the tag's name as its text) rather
+than a return, since a library that could not be built leaves
+everything above it with nothing to open.
 
 **CONTEXT**
 
@@ -5135,7 +5139,10 @@ memory, and control comes back when it returns.
 checks its bottom words while `code` runs, and this call checks them
 once more before it gives the stack back. A stack `code` ran past the
 end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
-written over below it.
+written over below it. The dispatcher's check is on only while `code`
+itself runs: in the instructions that move the stack pointer to the new
+stack and back the task's bounds already say one stack while it is on
+the other, and a switch there is no overrun.
 
 **CONTEXT**
 
@@ -7527,7 +7534,9 @@ Nothing. What happened is learned from `WaitIO` or `CheckIO`.
 `IOF_QUICK` is **cleared**, so the device always replies and the request
 always comes back to its port - even one the device could have finished
 at once. That is what makes the request waitable beside everything else
-the task is waiting for.
+the task is waiting for. The other flags are the command's - a device's
+own, such as audio.device's `ADIOF_PERVOL` - and reach the device as
+the caller set them.
 
 With no device open the request is left marked quick with
 `IOERR_OPENFAIL`, so the `WaitIO` that follows answers that immediately

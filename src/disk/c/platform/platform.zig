@@ -104,7 +104,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, "chip     %s, %s, PRID 0x%04x\n", .{ text(p.chip), text(p.core), p.prid & 0xFFFF });
     }
     if (has(got, "tick_irq")) {
-        _ = Printf(dl, "clock    %d MHz CPU (configured %d, measured %d), %d Hz tick on CCOMPARE0 (irq %d)\n", .{
+        _ = Printf(dl, "clock    %d MHz CPU (configured %d, measured %d), %d Hz tick on interrupt %d\n", .{
             pr.CpuClock() / 1_000_000,
             p.cpu_hz / 1_000_000,
             p.measured_cpu_hz / 1_000_000,
@@ -132,7 +132,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
     if (has(got, "psram_vendor") and p.psram_size != 0) {
-        _ = Printf(dl, "psram    0x%08x-0x%08x  %d MiB octal, vendor 0x%02x\n", .{
+        _ = Printf(dl, "psram    0x%08x-0x%08x  %d MiB, vendor 0x%02x\n", .{
             p.psram_base,
             p.psram_base + p.psram_size,
             p.psram_size >> 20,

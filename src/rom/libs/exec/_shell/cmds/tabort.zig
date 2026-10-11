@@ -4,7 +4,7 @@
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
-const uptime = @import("../../../../../arch/esp32s3/timer.zig");
+const uptime = @import("../../../../../arch/arch.zig").timer;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 const timer = sdk.devices.timer;

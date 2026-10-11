@@ -144,7 +144,7 @@ fn state(shell: *Shell, display: Display) void {
         });
         return;
     }
-    const pixel_clock = _shell.partFact(shell, sdk.expansion.systemtags.PARTKIND_PANEL, tags.RTGA_RGB_PixelClock, 0);
+    const pixel_clock = display.board.info.pixel_clock_hz;
     shell.print("%dx%d RGB565 on the panel at %d MHz, framebuffer 0x%08x in PSRAM, backlight %d%%, %d frames, active area at %d,\n%d late (worst %d us past the frame), %d starved, %d realigns,\ngaps: %d over a line, %d over 5 us, last %d us, worst %d us\n%d bufferfuls copied, %d of them late; at the blanking the copy is on stretch %d, which has moved %d\n", .{
         shown.width,
         shown.height,

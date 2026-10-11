@@ -22,6 +22,16 @@
 //! is, which costs neither the conversion nor the two planes.
 //!
 //! A JPEG says nothing about coverage, so the picture is always solid.
+//!
+//! **On a machine with a JPEG codec** (jpeg.resource) the file goes to
+//! the codec first: when it takes the file and its decoded picture fits
+//! beside the one picture.datatype keeps, the rows come from that picture
+//! and the software decoder is not used. The 2D-DMA brings the colour
+//! planes' halved samples to full size its own way, so the picture is
+//! close to the software decoder's, not equal. JDTA_Decoder
+//! (sdk/libs/datatypes/jpegclass.zig)
+//! given at `OM_NEW` chooses the decoder - the codec where it can, either
+//! one only - and says afterwards which one read the file.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -35,6 +45,8 @@ const datatypes = sdk.datatypes;
 const subclass = datatypes.subclass;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
+const jpegclass = datatypes.jpegclass;
+const jpeg = sdk.resources.jpeg;
 const decode = @import("decode.zig");
 const DosBase = sdk.interface.dos.DosBase;
 const Class = classes.Class;
@@ -45,7 +57,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "jpeg.datatype",
     .version = 1,
-    .date = "29.09.2026",
+    .revision = 1,
+    .date = "10.10.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{pic.PICTURE_LIBRARY},
     .Instance = Data,
@@ -55,11 +68,91 @@ comptime {
     _ = Library;
 }
 
-/// jpeg.datatype's part of an object: nothing. The picture is the
-/// superclass's the moment it has been read.
+/// jpeg.datatype's part of an object: which decoder read the file
+/// (JDEC_*). The picture is the superclass's the moment it has been read.
 pub const Data = extern struct {
-    unused: u32 = 0,
+    decoder: u32 = jpegclass.JDEC_SOFTWARE,
 };
+
+fn dataOf(cl: *Class, o: *Object) *Data {
+    return intuition.instData(Data, cl, o);
+}
+
+/// The file decoded by the machine's codec, and its rows handed to the
+/// superclass. Null when there is no codec, it does not take the file, or
+/// its picture would not fit beside the one picture.datatype keeps: the
+/// software decoder's turn. Otherwise what went wrong after the codec
+/// had decoded it, or 0.
+fn readByCodec(base: *Base, cl: *Class, o: *Object, file: []const u8) ?i32 {
+    const sys = base.sys_base;
+    const ib = base.intuition_base;
+    const jb: *jpeg.JpegBase = @ptrCast(sys.OpenResource(jpeg.JPEGNAME) orelse return null);
+    const length: u32 = @intCast(file.len);
+    var info: jpeg.JPEGInfo = .{};
+    if (jb.ExamineJPEG(file.ptr, length, &info) != jpeg.JPEGERR_OK) return null;
+    const by = subclass.shrinkFor(sys, info.width, info.height, info.bytes);
+    if (by == 0) return null;
+    var picture: jpeg.JPEGPicture = .{};
+    if (jb.DecodeJPEG(file.ptr, length, &picture) != jpeg.JPEGERR_OK) return null;
+    defer jb.FreeJPEGPicture(&picture);
+
+    const kept_width = subclass.shrunk(info.width, by);
+    const kept_height = subclass.shrunk(info.height, by);
+    const header = pic.BitMapHeader{
+        .width = @intCast(kept_width),
+        .height = @intCast(kept_height),
+        .depth = @intCast(info.components * 8),
+        .masking = pic.mskNone,
+        .x_aspect = 1,
+        .y_aspect = 1,
+        .page_width = @intCast(kept_width),
+        .page_height = @intCast(kept_height),
+    };
+    subclass.setSource(ib, cl, o, info.width, info.height, by);
+    if (!subclass.setPicture(ib, cl, o, &header, pic.PBPAFMT_RGB)) return datatypes.DTERROR_NOT_ENOUGH_DATA;
+
+    const row_memory = sys.AllocVec(info.width * 4, exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    defer sys.FreeVec(row_memory);
+    const colour: [*]u8 = @ptrCast(row_memory);
+    const pixels = picture.pixels.?;
+    var y: u32 = 0;
+    while (y < kept_height) : (y += 1) {
+        const row = pixels + @as(usize, y * by) * picture.pitch;
+        var x: u32 = 0;
+        while (x < info.width) : (x += 1) {
+            const at = colour + x * 4;
+            if (picture.format == jpeg.JPEGFMT_GREY8) {
+                at[0] = row[x];
+                at[1] = row[x];
+                at[2] = row[x];
+            } else {
+                // Blue, green, red in the codec's picture.
+                at[0] = row[x * 3 + 2];
+                at[1] = row[x * 3 + 1];
+                at[2] = row[x * 3];
+            }
+            at[3] = 0xFF;
+        }
+        const count = subclass.thinRow(colour, info.width, by);
+        subclass.putRow(ib, cl, o, 0, y, count, colour);
+    }
+    return 0;
+}
+
+/// The file read by the decoder `want` allows (JDEC_*): what went wrong,
+/// or 0. Which one did is noted in the object.
+fn readWith(base: *Base, cl: *Class, o: *Object, file: []const u8, want: usize) i32 {
+    const own = dataOf(cl, o);
+    if (want != jpegclass.JDEC_SOFTWARE) {
+        if (readByCodec(base, cl, o, file)) |failure| {
+            own.decoder = jpegclass.JDEC_CODEC;
+            return failure;
+        }
+        if (want == jpegclass.JDEC_CODEC) return datatypes.DTERROR_UNKNOWN_COMPRESSION;
+    }
+    own.decoder = jpegclass.JDEC_SOFTWARE;
+    return readFile(base, cl, o, file);
+}
 
 /// The file read and its pixels given to the superclass. What went
 /// wrong, or 0.
@@ -256,7 +349,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     return 0;
                 },
             };
-            const failure = readFile(base, cl, obj, bytes);
+            const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
+            const want = base.utility_base.GetTagData(jpegclass.JDTA_Decoder, jpegclass.JDEC_ANY, new.attr_list);
+            const failure = readWith(base, cl, obj, bytes, want);
             base.sys_base.FreeVec(bytes.ptr);
             if (failure != 0) {
                 _ = dl.SetIoErr(failure);
@@ -264,6 +359,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return 0;
             }
             return made;
+        },
+        classusr.OM_GET => {
+            const get: *classusr.OpGet = @ptrCast(@alignCast(msg));
+            if (get.attr_id != jpegclass.JDTA_Decoder) return ib.SendSuperMessage(cl, o, msg);
+            get.storage.* = dataOf(cl, o.?).decoder;
+            return 1;
         },
         else => return ib.SendSuperMessage(cl, o, msg),
     }

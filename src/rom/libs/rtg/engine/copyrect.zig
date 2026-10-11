@@ -24,8 +24,11 @@ const _engine = @import("_engine.zig");
 /// SINCE: 1.0. LVO -136.
 ///
 /// INPUTS:
-/// - `src` - the buffer copied from.
-/// - `dest` - the buffer copied to; it may be `src`.
+/// - `src` - the buffer copied from: one of a board's, or memory of the
+///   caller's own described in an `RtgBitMap` - only its pixels, size,
+///   pitch and format are read. It has to be where the board's engine
+///   can read it.
+/// - `dest` - the buffer copied to, of a board; it may be `src`.
 /// - `copy` - where from, where to, and how big.
 ///
 /// RESULT:
@@ -33,7 +36,9 @@ const _engine = @import("_engine.zig");
 ///
 /// BEHAVIOR:
 /// The rectangles are cut to both buffers here. The two may be one buffer
-/// and may overlap; the engine is what copies in the right order.
+/// and may overlap; the engine is what copies in the right order, and a
+/// driver whose engine cannot answers `RTGERR_NOT_SUPPORTED` for such a
+/// copy - also when the two are one memory described twice.
 ///
 /// CONTEXT:
 /// - Waits: only if the driver does.

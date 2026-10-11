@@ -45,7 +45,8 @@ const tests = [_][]const u8{
     "bsdsocktest", "asl",        "settings",    "iff",     "datatypes",
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
-    "launch",      "drag",       "tap",         "app",
+    "launch",      "drag",       "tap",         "app",     "engine",
+    "jpeg",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -131,12 +132,32 @@ const modules = [_]Program{
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
+    .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
+
+/// Drivers of the ESP32-S3's own hardware, built for it alone: the SD card
+/// on its SPI and SDMMC host, RS-485 on its UART, Ethernet in Espressif
+/// QEMU's S3 machine. The ESP32-P4's come as drivers of their own.
+const s3_only = [_][]const u8{ "sdcard.device", "rs485.device", "openeth.device" };
+/// Drivers of the ESP32-P4's own hardware: its Ethernet MAC.
+const p4_only = [_][]const u8{"emac.device"};
+
+/// Whether `program` is built for `chip`.
+pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
+    const others = switch (chip) {
+        .esp32s3 => &p4_only,
+        .esp32p4 => &s3_only,
+    };
+    for (others) |name| {
+        if (std.mem.eql(u8, program.name, name)) return false;
+    }
+    return true;
+}
 
 pub const programs: []const Program = blk: {
     var list: [commands.len + tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
@@ -163,6 +184,15 @@ pub const programs: []const Program = blk: {
     }
     const done = list;
     break :blk &done;
+};
+
+/// The ESP32-P4's disk has these in place of the shared files of the same
+/// name: its Ethernet interface names its own device.
+pub const p4_files = [_]File{
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/esp32p4/ETH0" },
+    // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
+    // time the codec on.
+    .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
 };
 
 /// The radio's device: built only when the vendor libraries it links are
@@ -236,13 +266,23 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Deep.ilbm", .source = "tests/datatypes/Deep.ilbm" },
     .{ .disk = "tests/datatypes/Ham.ilbm", .source = "tests/datatypes/Ham.ilbm" },
     .{ .disk = "tests/datatypes/Reading.md", .source = "tests/datatypes/Reading.md" },
+    // SYS:Programs - what each program is and how it is used, beside it.
+    .{ .disk = "programs/Battery.md", .source = "programs/battery/README.md" },
+    .{ .disk = "programs/CPULoad.md", .source = "programs/cpuload/README.md" },
+    .{ .disk = "programs/FontView.md", .source = "programs/fontview/README.md" },
+    .{ .disk = "programs/MultiView.md", .source = "programs/multiview/README.md" },
+    .{ .disk = "programs/Notepad.md", .source = "programs/notepad/README.md" },
+    .{ .disk = "programs/Prefs.md", .source = "programs/prefs/README.md" },
 };
 
 pub fn build(b: *std.Build) void {
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseSafe)") orelse .ReleaseSafe;
     const wifi = b.option([]const u8, "wifi", "The directory with the radio's vendor libraries (scripts/fetch-wifi.sh); without it there is no wifi.device");
+    const chip = b.option(poweros_sdk.Chip, "chip", "The chip the programs are built for (default: esp32s3)") orelse .esp32s3;
     const sdk = b.dependency("poweros_sdk", .{});
-    if (wifi) |dir| {
+    // The radio's vendor libraries are the S3's.
+    if (wifi != null and chip == .esp32s3) {
+        const dir = wifi.?;
         var archives: [wifi_archives.len]std.Build.LazyPath = undefined;
         for (wifi_archives, 0..) |name, i| archives[i] = .{ .cwd_relative = b.pathJoin(&.{ dir, name }) };
         var scripts: [wifi_rom_scripts.len]std.Build.LazyPath = undefined;
@@ -258,9 +298,11 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "wifi.device.seg").step);
     }
     for (programs) |program| {
-        const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize });
+        if (!builtFor(program, chip)) continue;
+        const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize, .chip = chip });
         b.addNamedLazyPath(program.disk, seg);
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }
     for (files) |file| b.addNamedLazyPath(file.disk, b.path(file.source));
+    for (p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }

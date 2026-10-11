@@ -3558,6 +3558,28 @@ test "LoadSeg, UnLoadSeg: segments relocated, the entry, a file that isn't one" 
     try testing.expect(dl.LoadSeg("RAMT:short") == null);
     try testing.expectEqual(dos.ERROR_BAD_HUNK, dl.IoErr());
 
+    // A file for another CPU, or with another width of address word, is
+    // refused; one from before files said so (version 1, 16 bytes of
+    // header) is an Xtensa one, and loads.
+    var foreign = bytes;
+    _ = put(foreign[0..], lf.Header{ .segments = 3, .entry_segment = 0, .entry_offset = 4, .machine = lf.MACHINE_RISCV });
+    try fileWith(dl, "RAMT:foreign", foreign[0..n]);
+    try testing.expect(dl.LoadSeg("RAMT:foreign") == null);
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    var wide = bytes;
+    _ = put(wide[0..], lf.Header{ .segments = 3, .entry_segment = 0, .entry_offset = 4, .word_size = 8 });
+    try fileWith(dl, "RAMT:wide", wide[0..n]);
+    try testing.expect(dl.LoadSeg("RAMT:wide") == null);
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    var old: [256]u8 = undefined;
+    _ = put(old[0..], lf.Header{ .version = 1, .segments = 3, .entry_segment = 0, .entry_offset = 4, .machine = 0 });
+    const rest = bytes[@sizeOf(lf.Header)..n];
+    @memcpy(old[lf.HEADER_V1_SIZE..][0..rest.len], rest);
+    try fileWith(dl, "RAMT:old", old[0 .. lf.HEADER_V1_SIZE + rest.len]);
+    const old_seg = dl.LoadSeg("RAMT:old").?;
+    try testing.expectEqual(@as(u32, @truncate(@intFromPtr(old_seg.next.?.data.?) + 4)), @as([*]align(1) u32, @ptrCast(old_seg.data.?))[0]);
+    dl.UnLoadSeg(old_seg);
+
     // A segment that owns loaded code: RemSegment unloads it (the shell's
     // Resident does this).
     const before = kexec.AvailMem(kexec.SysBase, kexec.MEMF_EXTERNAL);

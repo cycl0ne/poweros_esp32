@@ -1,0 +1,167 @@
+TABLE OF CONTENTS
+
+jpeg.resource/DecodeJPEG
+jpeg.resource/ExamineJPEG
+jpeg.resource/FreeJPEGPicture
+jpeg.resource/DecodeJPEG                              jpeg.resource/DecodeJPEG
+
+   NAME
+	DecodeJPEG -- Decodes a JPEG file with the chip's codec.
+
+   SYNOPSIS
+	    fn DecodeJPEG(jb: *JpegBase, file: [*]const u8, length: u32,
+	        picture: *JPEGPicture) u32
+
+   SINCE
+	1.0. LVO -8.
+
+   INPUTS
+	- `file` - the file's bytes, from its start, in memory the 2D-DMA
+	  reads: the PSRAM or the internal memory (what AllocVec gives).
+	- `length` - how many there are.
+	- `picture` - filled in.
+
+   RESULT
+	JPEGERR_OK, and `picture` holds the pixels - `width` x `height` of
+	them from `pixels` on, `pitch` bytes from one row to the next, in
+	`format` (JPEGFMT_BGR24, or JPEGFMT_GREY8 for a grey file). Otherwise
+	why not, and `picture` is all zero: what ExamineJPEG answers for the
+	file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read,
+	JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on the file
+	or did not finish in time, JPEGERR_NO_ENGINE when there is no codec.
+
+   BEHAVIOR
+	The headers are read and their tables written into the codec; the
+	2D-DMA feeds it the file from its scan on and writes the picture,
+	turned into red, green and blue with JFIF's matrix, into memory the
+	resource allocates on whole cache lines - whole blocks of the file's
+	sampling, so `pitch` and the rows may run past the picture. The
+	caller's task waits on the 2D-DMA's end interrupt, or the codec's
+	error interrupt, for at most a quarter of a second and a microsecond
+	for each eight pixels; the CPU is free meanwhile. One decode at a time:
+	a second caller waits for the first.
+
+	The codec writes behind the data cache's back: the file's bytes are
+	written back out of the cache before, the picture dropped from it
+	after, so the caller reads what the codec wrote.
+
+   CONTEXT
+	- Waits: yes, for the codec, and for a decode another task has under
+	  way. - Interrupts: no.
+	- Locks: takes the resource's semaphore for the decode.
+	- Process: a Task will do; it opens timer.device for the timeout.
+
+   OWNERSHIP
+	The picture is the caller's until it gives it to FreeJPEGPicture.
+	`file` is only read, and only during the call.
+
+   NOTES
+	The 2D-DMA brings the colour's halved samples to full size its own
+	way: the picture is close to a software decoder's, not equal.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ExamineJPEG`, `FreeJPEGPicture`
+
+   EXAMPLES
+	    var picture: sdk.resources.jpeg.JPEGPicture = .{};
+	    if (jb.DecodeJPEG(bytes.ptr, @intCast(bytes.len), &picture) == jpeg.JPEGERR_OK) {
+	        defer jb.FreeJPEGPicture(&picture);
+	        // rows from picture.pixels, picture.pitch apart
+	    }
+jpeg.resource/ExamineJPEG                            jpeg.resource/ExamineJPEG
+
+   NAME
+	ExamineJPEG -- Says what a JPEG file is and whether the codec decodes it.
+
+   SYNOPSIS
+	    fn ExamineJPEG(jb: *JpegBase, file: [*]const u8, length: u32,
+	        info: *JPEGInfo) u32
+
+   SINCE
+	1.0. LVO -4.
+
+   INPUTS
+	- `file` - the file's bytes, from its start.
+	- `length` - how many there are.
+	- `info` - filled in.
+
+   RESULT
+	JPEGERR_OK, and `info` holds the picture's size, its components and
+	sampling (JPEGSAMP_*), and what DecodeJPEG will make of it: its format
+	(JPEGFMT_*), the bytes from one row to the next and the bytes it will
+	allocate. Otherwise why not: JPEGERR_NOT_JPEG, JPEGERR_CORRUPT, or
+	JPEGERR_UNSUPPORTED for a file the codec does not take (see
+	sdk/resources/jpeg.zig), JPEGERR_NO_MEMORY when there is not room to
+	read the headers in - `info` is then all zero.
+
+   BEHAVIOR
+	The headers are read up to the scan; the picture itself is not
+	looked at, so a file whose scan is damaged is examined well and fails
+	in DecodeJPEG. A decoded picture is whole blocks of the file's
+	sampling, so `pitch` and `bytes` can be larger than the size says.
+
+   CONTEXT
+	- Waits: no. - Interrupts: no: it allocates.
+	- Locks: none taken. - Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is kept: `file` is only read, and only during the call.
+
+   NOTES
+	It answers the same with the codec in use, and without one
+	(JPEGERR_NO_ENGINE comes from DecodeJPEG only).
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DecodeJPEG`, `FreeJPEGPicture`
+
+   EXAMPLES
+	    var info: sdk.resources.jpeg.JPEGInfo = .{};
+	    if (jb.ExamineJPEG(bytes.ptr, @intCast(bytes.len), &info) == jpeg.JPEGERR_OK and
+	        info.bytes <= sys.AvailMem(exec.MEMF_ANY)) { ... }
+jpeg.resource/FreeJPEGPicture                    jpeg.resource/FreeJPEGPicture
+
+   NAME
+	FreeJPEGPicture -- Gives back a picture DecodeJPEG made.
+
+   SYNOPSIS
+	    fn FreeJPEGPicture(jb: *JpegBase, picture: *JPEGPicture) void
+
+   SINCE
+	1.0. LVO -12.
+
+   INPUTS
+	- `picture` - as DecodeJPEG filled it in.
+
+   RESULT
+	Nothing. `picture` is all zero afterwards.
+
+   BEHAVIOR
+	The memory behind the pixels is freed. A picture DecodeJPEG did not
+	make - all zero, as a failed decode leaves it - or one given back
+	already is left alone, so a caller may give back whatever it got.
+
+   CONTEXT
+	- Waits: no. - Interrupts: no: it frees memory.
+	- Locks: none taken. - Process: a Task will do.
+
+   OWNERSHIP
+	The pixels are gone: nothing may read them afterwards.
+
+   NOTES
+	The picture is one block, its pixels a cache line into it at most;
+	`memory` and `memory_size` say which, and are the resource's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DecodeJPEG`
+
+   EXAMPLES
+	    defer jb.FreeJPEGPicture(&picture);

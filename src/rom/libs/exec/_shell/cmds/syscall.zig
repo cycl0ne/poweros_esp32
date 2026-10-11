@@ -3,7 +3,7 @@
 //! 2 uptime in ms) and its answer.
 
 const _shell = @import("../shell.zig");
-const trap = @import("../../../../../arch/esp32s3/trap.zig");
+const trap = @import("../../../../../arch/arch.zig").trap;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 

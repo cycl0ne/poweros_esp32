@@ -43,13 +43,16 @@ pub fn read() ?u8 {
 
 /// The receive interrupt on: for every packet from the host. Route the
 /// source first; an interrupt raised before that is lost.
+/// The receive interrupt on, and only it: the ESP32-P4's ROM leaves the
+/// transmit side's (SERIAL_IN_EMPTY) enabled for its own console, which
+/// nothing here serves and which stays raised while the FIFO is empty.
 pub fn enableRx() void {
     reg(usj.INT_CLR).* = usj.INT_SERIAL_OUT_RECV_PKT;
-    reg(usj.INT_ENA).* |= usj.INT_SERIAL_OUT_RECV_PKT;
+    reg(usj.INT_ENA).* = usj.INT_SERIAL_OUT_RECV_PKT;
 }
 
 pub fn disableRx() void {
-    reg(usj.INT_ENA).* &= ~usj.INT_SERIAL_OUT_RECV_PKT;
+    reg(usj.INT_ENA).* = 0;
     reg(usj.INT_CLR).* = usj.INT_SERIAL_OUT_RECV_PKT;
 }
 

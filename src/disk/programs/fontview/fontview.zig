@@ -41,8 +41,11 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FontView";
-const VERSION_STRING = "\x00$VER: FontView 1.1 (09.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+/// What the screen's bar says while one of its windows is active.
+const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const template = "";
 
@@ -489,6 +492,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("FontView") },
+        .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
         .{ .tag = wn.WA_InnerWidth, .data = 720 },
         .{ .tag = wn.WA_InnerHeight, .data = 420 },

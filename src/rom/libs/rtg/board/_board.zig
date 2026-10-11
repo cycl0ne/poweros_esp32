@@ -155,6 +155,9 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     // is no pointer.
     if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;
     if (ops.set_overlay != null and ops.move_overlay != null) caps |= rtg.boards.RTGBC_OVERLAY;
+    if (ops.blend_pixels != null) caps |= rtg.boards.RTGBC_BLEND_PIXELS;
+    if (ops.blend_rect != null) caps |= rtg.boards.RTGBC_BLEND_RECT;
+    if (ops.scale_pixels != null) caps |= rtg.boards.RTGBC_SCALE_PIXELS;
     return caps;
 }
 

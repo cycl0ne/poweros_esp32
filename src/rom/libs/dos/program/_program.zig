@@ -93,6 +93,7 @@ const objects = @import("../packet/_packet.zig");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const loadfile = dos.loadfile;
+const std = @import("std");
 const SegList = dos.SegList;
 const ExecBase = sdk.interface.exec.ExecBase;
 const utility = sdk.utility;
@@ -173,7 +174,7 @@ fn failBool(db: *DosBase, code: i32) bool {
 /// - `db` - the library's base.
 /// - `fh` - the load file.
 /// - `buf` - what to fill.
-fn readAll(db: *DosBase, fh: *dos.FileHandle, buf: []u8) bool {
+pub fn readAll(db: *DosBase, fh: *dos.FileHandle, buf: []u8) bool {
     const dos_lib = db.iface();
     return dos_lib.Read(fh, buf.ptr, @intCast(buf.len)) == @as(isize, @intCast(buf.len));
 }
@@ -224,10 +225,14 @@ pub fn readSegment(db: *DosBase, fh: *dos.FileHandle, note: *Loaded, name: ?[*:0
         while (text[name_size] != 0) name_size += 1;
         name_size += 1; // and the NUL
     }
-    const block_size: u32 = @sizeOf(SegList) + loadfile.alignUp(head.mem_size) + loadfile.alignUp(name_size);
+    // The bytes on a SEGMENT_ALIGN boundary past the SegList: a block is
+    // only MEM_BLOCKSIZE-aligned, and a program's data keeps the alignment
+    // it was linked with only if its segment starts on one at least as
+    // coarse.
+    const block_size: u32 = @sizeOf(SegList) + loadfile.SEGMENT_ALIGN - 1 + loadfile.alignUp(head.mem_size) + loadfile.alignUp(name_size);
     const block = sys.AllocMem(block_size, exec.MEMF_EXTERNAL | exec.MEMF_CLEAR) orelse
         return fail(db, dos.ERROR_NO_FREE_STORE);
-    const bytes: [*]u8 = @ptrFromInt(@intFromPtr(block) + @sizeOf(SegList));
+    const bytes: [*]u8 = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(block) + @sizeOf(SegList), loadfile.SEGMENT_ALIGN));
     const seg: *SegList = @ptrCast(@alignCast(block));
     seg.* = .{
         .block_size = block_size,

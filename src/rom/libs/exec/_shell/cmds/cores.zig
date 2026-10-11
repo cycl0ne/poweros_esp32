@@ -3,11 +3,11 @@
 //! done, and whether the second one takes any task or only its own.
 
 const _shell = @import("../shell.zig");
-const cpu1 = @import("../../../../../arch/esp32s3/cpu1.zig");
-const intmatrix = @import("../../../../../arch/esp32s3/intmatrix.zig");
-const timer = @import("../../../../../arch/esp32s3/timer.zig");
-const rendezvous = @import("../../../../../arch/esp32s3/rendezvous.zig");
-const trap = @import("../../../../../arch/esp32s3/trap.zig");
+const cpu1 = @import("../../../../../arch/arch.zig").cpu1;
+const intmatrix = @import("../../../../../arch/arch.zig").intmatrix;
+const timer = @import("../../../../../arch/arch.zig").timer;
+const rendezvous = @import("../../../../../arch/arch.zig").rendezvous;
+const trap = @import("../../../../../arch/arch.zig").trap;
 const _cache = @import("../../cache/_cache.zig");
 const Shell = _shell.Shell;
 const Args = _shell.Args;

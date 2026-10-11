@@ -182,6 +182,12 @@ pub const RTGBC_BLIT_TEMPLATE: u32 = 1 << 19;
 pub const RTGBC_BLIT_PATTERN: u32 = 1 << 20;
 /// There is an engine, so there is something for WaitBlit to wait for.
 pub const RTGBC_ENGINE: u32 = 1 << 21;
+/// Its engine lays pixels of a caller's own over a buffer by their
+/// coverage (BlendPixels), a colour by its alpha (BlendRect), and a
+/// picture scaled between its pixels (ScalePixels).
+pub const RTGBC_BLEND_PIXELS: u32 = 1 << 22;
+pub const RTGBC_BLEND_RECT: u32 = 1 << 23;
+pub const RTGBC_SCALE_PIXELS: u32 = 1 << 24;
 
 /// What a board that refreshes itself has been through since the counters
 /// were last reset. A board with no such thing leaves a field 0. Size
@@ -407,6 +413,23 @@ pub const RtgBoardOps = extern struct {
     set_overlay: ?*const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32 = null,
     /// The image's top left is now at (x, y); as move_pointer.
     move_overlay: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
+
+    // --- more of the engine: pixels laid over a buffer by their coverage.
+    // Each answers RTGERR_NOT_SUPPORTED for a job it does not take, and
+    // the caller does that one itself. ---
+
+    /// Lay the pixels over the rectangle, each by its own coverage times
+    /// the alpha (0 to 255). The rectangle has been clipped to the buffer,
+    /// and the pixels' corner moved with it.
+    blend_pixels: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPixels, u32) callconv(.c) i32 = null,
+    /// Lay a colour, 0xAARRGGBB, over the rectangle by its alpha. The
+    /// rectangle has been clipped to the buffer.
+    blend_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, u32) callconv(.c) i32 = null,
+    /// Scale the pixels' part of the given width and height to the
+    /// rectangle's size, mixing neighbouring pixels, and lay the result
+    /// over it by its coverage. The rectangle lies wholly inside the
+    /// buffer.
+    scale_pixels: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPixels, u32, u32) callconv(.c) i32 = null,
 };
 
 /// Part of the display shown from a buffer: from display line `line`

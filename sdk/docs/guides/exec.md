@@ -430,6 +430,15 @@ and sends no reply, so a short command costs a function call and no
 message. `SendIO` clears the flag, so the request always comes back to
 its port and can be waited for beside everything else.
 
+**Flags of the command's own.** `IOF_QUICK` is the only flag `DoIO` and
+`SendIO` touch. The rest belong to the command - audio.device's
+`ADIOF_PERVOL`, SANA-II's `SANA2IOF_RAW` - and reach the device as they
+were set. A request used again keeps the flags it was last given, so
+they are set for every command that takes any. `sdk.exec.BeginIO` hands
+a request over with `IOF_QUICK` as the caller left it: set, it asks for
+an answer at once without committing to wait - one that comes back
+without the flag is collected with `WaitIO`.
+
 **A timed wait.** `WaitIO` waits on its port's signal alone. A task that
 waits for a reply, a timeout and Ctrl-C together waits with `Wait` on all
 of them and collects with `WaitIO` after:

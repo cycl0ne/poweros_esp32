@@ -11,6 +11,11 @@
 //! one bit is how WaitIO tells whether there is anything to wait for, and
 //! how ReplyIO tells whether there is anything to send.
 //!
+//! **IOF_QUICK is the only bit the I/O calls touch.** The rest of io_Flags
+//! is the command's: a device's own flags - audio.device's ADIOF_PERVOL,
+//! ADIOF_SYNCCYCLE - say what the command does, and reach the device
+//! through DoIO and SendIO as the caller set them.
+//!
 //! DoIO and SendIO leave the request's node type alone, so a device that
 //! keeps a request must mark it as a message, which PutMsg does. Without
 //! that, WaitIO reads a request replied the last time round as already
@@ -41,7 +46,7 @@ const IORequest = sdk.exec.IORequest;
 ///
 /// BEHAVIOR:
 /// It asks for a quick answer by setting `IOF_QUICK`, and the device
-/// decides:
+/// decides. The other flags are the command's and are left as they are:
 ///
 /// **Finished inside BeginIO.** The flag is still set, no message was sent,
 /// and the error is read straight out of the request. Nothing waits and
@@ -71,6 +76,9 @@ const IORequest = sdk.exec.IORequest;
 /// The request needs a reply port for the slow path. A request with none
 /// that the device does not finish quickly cannot be waited for.
 ///
+/// A request used again still carries the flags it was last given: set
+/// them for each command that takes any.
+///
 /// The error starts as `IOERR_OPENFAIL`, so a device that answers without
 /// setting it reports a failure rather than a false success.
 ///
@@ -90,7 +98,7 @@ const IORequest = sdk.exec.IORequest;
 pub fn DoIO(base: *ExecBase, io: *IORequest) i32 {
     io.err = sdk.exec.IOERR_OPENFAIL;
     const dev = io.device orelse return sdk.exec.IOERR_OPENFAIL;
-    io.flags = sdk.exec.IOF_QUICK;
+    io.flags |= sdk.exec.IOF_QUICK;
     dev.vector(sdk.exec.BeginIOFn, sdk.exec.DEV_BEGINIO)(dev, io);
     if (io.flags & sdk.exec.IOF_QUICK == 0) return base.iface().WaitIO(io);
     return io.err;

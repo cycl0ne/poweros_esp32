@@ -681,6 +681,13 @@ pub const Desktop = struct {
             // A refresh is answered between BeginRefresh and EndRefresh
             // before the message goes back, as intuition asks.
             if (said.class == wn.IDCMP_REFRESHWINDOW) d.refresh(said.window);
+            // A new size goes back once it is drawn: while the window is
+            // being sized, intuition takes the next step when it does.
+            if (said.class == wn.IDCMP_NEWSIZE) {
+                d.handle(said);
+                d.sys.ReplyMsg(message);
+                continue;
+            }
             d.sys.ReplyMsg(message);
             d.handle(said);
         }

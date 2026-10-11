@@ -181,6 +181,19 @@ pub const RtgCopy = extern struct {
     dest_y: i32 = 0,
 };
 
+/// Pixels of a caller's own, as BlendPixels and ScalePixels read them:
+/// the picture's first byte, the bytes from one of its rows to the next,
+/// its format, and the pixel the work starts from - the one that lands on
+/// the area's top left corner. The library only reads them.
+pub const RtgPixels = extern struct {
+    pixels: ?[*]const u8 = null,
+    pitch: u32 = 0,
+    format: PixelFormat = .bgra32,
+    pad: [3]u8 = .{ 0, 0, 0 },
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
 /// A colour taken apart, eight bits a channel.
 pub const RtgRGB = extern struct {
     red: u8 = 0,

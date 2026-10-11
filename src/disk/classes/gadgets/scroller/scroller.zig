@@ -291,7 +291,10 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
     // and the arrows are not: the border's own colour then runs down
     // both sides of it, which is what a knob of that same colour is
     // told apart by. A fifth of the thickness either side is what the
-    // shapes are drawn for.
+    // shapes are drawn for. Along, it stops a row short of each end, so
+    // that the knob stands clear of what the bar meets there - the title
+    // bar above a bar in the right border, the arrows below it - rather
+    // than running into it.
     var box = gc.Box{ .left = b.left + at.left, .top = b.top + at.top, .width = at.width, .height = at.height };
     if (border) {
         const thick = if (own.vertical != 0) box.width else box.height;
@@ -304,6 +307,15 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
                 box.top += inset;
                 box.height -= 2 * inset;
             }
+        }
+        if (own.vertical != 0) {
+            if (box.height > 2) {
+                box.top += 1;
+                box.height -= 2;
+            }
+        } else if (box.width > 2) {
+            box.left += 1;
+            box.width -= 2;
         }
     }
     support.place(base.intuition_base, own.inner.?, box);

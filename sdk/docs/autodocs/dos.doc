@@ -3270,11 +3270,16 @@ dos.library/WriteChars
 	The chain of segments, the first one with the entry point in its
 	`entry` - which a `SegCode` wraps for RunCommand or CreateNewProc -
 	and later UnLoadSeg; IoErr is 0. Null on failure, with IoErr set: ERROR_OBJECT_WRONG_TYPE for a file
-	that isn't a load file of this version, ERROR_BAD_HUNK for one that is
+	that isn't a load file, or is one for another CPU or word size,
+	ERROR_BAD_HUNK for one that is
 	damaged (too many or too large segments, relocations outside them, an
 	entry point outside the code), ERROR_NO_FREE_STORE, or Open's error.
 
    BEHAVIOR
+	The file's header names the CPU and the width of an address word it
+	was built for; both must be this machine's. A version-1 file names
+	neither and is taken as an Xtensa one.
+
 	Each segment gets one block of memory the CPU can run code from, its
 	bytes read in and the rest cleared. Once all are in, the relocations are
 	applied: each word named gets the base of its target segment added, the
