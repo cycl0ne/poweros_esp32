@@ -121,21 +121,5 @@ pub fn copy(own: *Data, ip: *IFFParseBase) bool {
     const to = @min(@max(own.mark_start, own.mark_end), own.buffer_len);
     if (from >= to) return false;
 
-    const iff = ip.AllocIFF() orelse return false;
-    defer ip.FreeIFF(iff);
-    const clip = ip.OpenClipboard(sdk.devices.clipboard.PRIMARY_CLIP) orelse return false;
-    iff.stream = @intFromPtr(clip);
-    ip.InitIFFasClip(iff);
-    defer {
-        ip.CloseClipboard(clip);
-    }
-    if (ip.OpenIFF(iff, iffparse.IFFF_WRITE) != 0) return false;
-    defer ip.CloseIFF(iff);
-
-    if (ip.PushChunk(iff, iffparse.MakeID("FTXT"), iffparse.ID_FORM, iffparse.IFFSIZE_UNKNOWN) != 0) return false;
-    if (ip.PushChunk(iff, 0, iffparse.MakeID("CHRS"), @intCast(to - from)) != 0) return false;
-    if (ip.WriteChunkBytes(iff, buffer + from, @intCast(to - from)) < 0) return false;
-    _ = ip.PopChunk(iff);
-    _ = ip.PopChunk(iff);
-    return true;
+    return iffparse.clip.writeText(ip, (buffer + from)[0 .. to - from]);
 }

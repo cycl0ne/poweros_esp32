@@ -17,6 +17,7 @@ pub const alerts = @import("alerts.zig");
 pub const fmt = @import("fmt.zig");
 pub const log = @import("log.zig");
 pub const cache = @import("cache.zig");
+pub const array = @import("array.zig");
 
 /// SysBase: exec.library's base, with its functions.
 pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
@@ -38,6 +39,9 @@ pub const Node = nodes.Node;
 pub const MinNode = nodes.MinNode;
 pub const List = lists.List;
 pub const MinList = lists.MinList;
+/// A growing array on exec memory (`array.zig`) - not to be taken for
+/// `List`, exec's list of nodes.
+pub const Array = array.Array;
 
 pub const Library = libraries.Library;
 pub const LibraryInit = libraries.LibraryInit;

@@ -408,6 +408,26 @@ palette of tools that should not take the keys from the window being
 worked in.
 
 
+### Text on the clipboard
+
+A program that copies or pastes text does it with iffparse.library, on
+its own task: `iffparse.clip.writeText(ip, text)` puts a text on the
+clipboard as a `FORM FTXT`, and `iffparse.clip.readText(sys, ip)` hands
+back the text there, in memory of the caller's to `FreeVec`.
+textedit.gadget's `copy`, `cut` and `paste`, the text datatype's
+`DTM_COPY` and `SYS:Programs/Sheet` all go through them, so text copied in
+one is pasted in any of the others:
+
+```zig
+const ip: *IFFParseBase = @ptrCast(sys.OpenLibrary(sdk.iffparse.IFFPARSENAME, 0) orelse return);
+defer sys.CloseLibrary(@ptrCast(ip));
+_ = sdk.iffparse.clip.writeText(ip, "Hello");
+if (sdk.iffparse.clip.readText(sys, ip)) |text| {
+    defer sys.FreeVec(text.ptr);
+    use(text);
+}
+```
+
 ## When a check fails
 
 Programs are built ReleaseSafe, so an overflow, an index out of bounds or a

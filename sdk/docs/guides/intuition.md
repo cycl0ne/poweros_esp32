@@ -349,6 +349,22 @@ is nothing more. The message's whole `code` goes where `WmHandleInput`'s
 `WMHI_NEWPREFS`, `WMHI_DISKINSERTED` and `WMHI_DISKREMOVED` follow
 their classes too.
 
+What the word has no room for is read from the object after it: the
+keys held with the message (`WINDOWA_Qualifier`, the
+`inputevent.IEQUALIFIER_*` bits) - which tells a Shift-click, or Shift
+and a cursor key, from the plain one - and the `GA_ID` of the gadget it
+came from (`WINDOWA_GadgetID`), or `WINDOW_NOGADGET` for a message no
+gadget sent:
+
+```zig
+const word = ib.SendMessage(object, @ptrCast(&handle));
+var qualifier: usize = 0;
+var gadget: usize = 0;
+_ = ib.GetAttr(wc.WINDOWA_Qualifier, object, &qualifier);
+_ = ib.GetAttr(wc.WINDOWA_GadgetID, object, &gadget);
+const shifted = qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+```
+
 Several windows: `WINDOWA_SigMask` is the signal a window object's
 messages arrive on, 0 while it is closed. A program with several
 windows, or a window and a timer, waits on all of them with `Wait` and
@@ -454,7 +470,11 @@ mapped, which belongs to the message and goes with the reply, so it is
 read before; a tag the map turns into `ICSPECIAL_CODE` has its value in
 `code` as well. A window object hands it over as `WMHI_IDCMPUPDATE` with
 that code, the list already gone, and the program reads what it wants
-from the gadget with `GetAttr`. This is how a program hears from a
+from the gadget with `GetAttr`. Which gadget told it is the `GA_ID` in
+the list, which the object reads before the reply (`WINDOWA_GadgetID`);
+one told while the gadget is still being worked carries
+`IEQUALIFIER_REPEAT` (`WINDOWA_Qualifier`), the one told as it finishes
+does not. This is how a program hears from a
 gadget as it changes - a getfile gadget's chosen file
 ([More than buttons](programs.md#more-than-buttons)), a canvas pressed,
 a textedit.gadget's view moving.
@@ -573,11 +593,20 @@ edge, one along the bottom. `GA_RightBorder` or `GA_BottomBorder` puts it
 there, drawn with the border each time the border is; it is placed from
 the edge it sits at (`GA_RelRight`, `GA_RelBottom`) and sized against
 the window (`GA_RelWidth`, `GA_RelHeight`), so it stays there as the
-window is sized. `WA_SizeBRight` and `WA_SizeBBottom` together give the
-sizing gadget room in both borders, which makes each deep enough for a
-bar that stops short of the corner. How deep the borders came out is
-known once the window is open, so the bars are made then, added with
-`AddGList` and drawn with `RefreshWindowFrame`.
+window is sized. A border is deep enough for a bar where the sizing
+gadget has its room (`WA_SizeBRight`, `WA_SizeBBottom`), and how deep it
+came out is known once the window is open - which is when a window
+opened without an object has its bars made, added with `AddGList` and
+drawn with `RefreshWindowFrame`.
+
+A window object makes the two scroll bars itself. `WINDOWA_VertScroller`
+and `WINDOWA_HorizScroller` each take the tags of a scroller.gadget
+besides its place - its `GA_ID`, `ICA_TARGET` and `ICA_MAP`, its
+`SCROLLER_` numbers - and the object opens scroller.gadget, gives the
+window a sizing gadget with its room in that border, places the bar
+there once the window is open, keeps the window from being sized
+smaller than the bar's arrows, puts it back at every open and disposes
+of it with itself. The program reads the bar back to set its numbers.
 
 A bar joined to a textedit.gadget made with `TEXTEDIT_Scrollers` false
 moves the text as it is dragged. The other way round, the text tells the
@@ -590,7 +619,6 @@ and `WMHI_NEWSIZE` the program sets the bar's `SCROLLER_Total`,
 ```zig
 const sr = sdk.gadgets.scroller;
 const te = sdk.gadgets.textedit;
-const pg = intuition.propgclass;
 
 const vert_map = [_]TagItem{
     .{ .tag = sr.SCROLLER_Top, .data = te.TEXTEDIT_TopVert },
@@ -598,30 +626,25 @@ const vert_map = [_]TagItem{
     .{},
 };
 
-// After WM_OPEN.
-const top: isize = @intCast(windowAttr(ib, window, wn.WA_BorderTop));
-const right: isize = @intCast(windowAttr(ib, window, wn.WA_BorderRight));
-const bottom: isize = @intCast(windowAttr(ib, window, wn.WA_BorderBottom));
-const bar = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-    .{ .tag = gc.GA_RightBorder, .data = 1 },
-    .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 1)) },
-    .{ .tag = gc.GA_Top, .data = @bitCast(top) },
-    .{ .tag = gc.GA_Width, .data = @bitCast(right) },
-    .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom)) },
-    .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
-    .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(bottom) },
-    .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
-    .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
+const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+    .{ .tag = wn.WA_Title, .data = @intFromPtr("Text") },
+    .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) }, // the editor in it
+    .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 10 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
+        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
+        .{},
+    }) },
     .{},
 }) orelse return dos.RETURN_FAIL;
-_ = ib.AddGList(window, bar, -1, 1);
-ib.RefreshWindowFrame(window);
+
+// After WM_OPEN: the bar, to set its numbers.
+var bar: usize = 0;
+_ = ib.GetAttr(wc.WINDOWA_VertScroller, object, &bar);
 ```
 
-The bar is the program's, not the window object's: the window is closed
-first (`WM_CLOSE`), which takes the bar out of it, and the bar disposed
-of after. `SYS:Programs/Notepad` has both bars this way, and
-`SYS:Programs/MultiView` has them round a picture
+`SYS:Programs/Notepad` has both bars this way, `SYS:Programs/Sheet` with
+the window as their target, and `SYS:Programs/MultiView` round a picture
 ([Showing one](datatypes.md#showing-one)).
 
 scrollgroup.gadget and listbrowser.gadget take bars in the border the

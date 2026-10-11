@@ -3021,6 +3021,39 @@ test "AllocVec remembers the size, FreeVec gives it all back" {
     try expectNoLeaks();
 }
 
+test "exec.Array, the SDK's: grows in AllocVec blocks, keeps its items, gives the block back" {
+    try setUp();
+    defer deinit();
+    const sys = SysBase.iface();
+
+    var numbers: sdk.exec.Array(u32) = .{};
+    try testing.expectEqual(@as(usize, 0), numbers.slice().len);
+    // Past several doublings, every item where it was put.
+    var at: u32 = 0;
+    while (at < 100) : (at += 1) try testing.expect(numbers.append(sys, at * 3));
+    try testing.expectEqual(@as(u32, 100), numbers.len);
+    try testing.expect(numbers.capacity >= 100);
+    for (numbers.slice(), 0..) |number, index| try testing.expectEqual(@as(u32, @intCast(index * 3)), number);
+    // A slice added at once, after them.
+    try testing.expect(numbers.appendSlice(sys, &.{ 7, 8, 9 }));
+    try testing.expectEqualSlices(u32, &.{ 297, 7, 8, 9 }, numbers.slice()[99..]);
+    // Cleared, the memory stays for the next.
+    const kept = numbers.capacity;
+    numbers.clear();
+    try testing.expectEqual(@as(usize, 0), numbers.slice().len);
+    try testing.expectEqual(kept, numbers.capacity);
+    numbers.deinit(sys);
+    try testing.expectEqual(@as(u32, 0), numbers.capacity);
+
+    // More than there is memory for: refused, the array as it was.
+    var bytes: sdk.exec.Array(u8) = .{};
+    try testing.expect(bytes.appendSlice(sys, "abc"));
+    try testing.expect(!bytes.ensure(sys, 0x0800_0000));
+    try testing.expectEqualStrings("abc", bytes.slice());
+    bytes.deinit(sys);
+    try expectNoLeaks();
+}
+
 test "CopyMem, CopyMemQuick and SetMem" {
     try setUp();
     defer deinit();

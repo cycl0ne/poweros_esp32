@@ -140,6 +140,18 @@ A request at or above the threshold (1024 here) gets memory of its own. A
 pool made with `MEMF_CLEAR` clears every block it hands out, and a pool
 has a lock of its own, so several tasks may share one.
 
+**A growing array.** `exec.Array(T)`, in the SDK and compiled into the
+program, keeps its items in one block from `AllocVec` and makes it twice
+as large whenever it is full. Each call that may grow it takes the
+ExecBase and answers false with no memory, the array as it was:
+
+```zig
+var keys: exec.Array(u32) = .{};
+defer keys.deinit(sys);
+if (!keys.append(sys, 42) or !keys.appendSlice(sys, &.{ 7, 8 })) return;
+for (keys.slice()) |key| use(key);
+```
+
 **How much there is.** `AvailMem(flags)` answers the free bytes of the
 regions with those attributes; with `MEMF_LARGEST` the largest single
 block, with `MEMF_TOTAL` the regions' whole size. Another task, on either

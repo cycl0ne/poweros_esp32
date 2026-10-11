@@ -196,13 +196,11 @@ pub fn read(sheet: *cells.Sheet, given: []u8) ReadResult {
 
 const Out = struct {
     sys: *ExecBase,
-    bytes: cells.List(u8) = .{},
+    bytes: sdk.exec.Array(u8) = .{},
     failed: bool = false,
 
     fn put(out: *Out, text: []const u8) void {
-        for (text) |char| {
-            if (!out.bytes.append(out.sys, char)) out.failed = true;
-        }
+        if (!out.bytes.appendSlice(out.sys, text)) out.failed = true;
     }
 };
 

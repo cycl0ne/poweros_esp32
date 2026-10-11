@@ -360,6 +360,7 @@ flowchart TB
     m_ilbm_datatype --> m_picture_datatype
     m_integer_gadget --> m_string_gadget
     m_intuition_library --> m_keyboard_gadget
+    m_intuition_library --> m_scroller_gadget
     m_jpeg_datatype --> m_dos_library
     m_jpeg_datatype --> m_jpeg_resource
     m_jpeg_datatype --> m_picture_datatype

@@ -33,13 +33,17 @@
 //!
 //! **Moving.** The cursor keys, Page Up and Page Down, Home and End, Tab
 //! (right) and Return (down) move the current cell; a press picks one, and
-//! a drag picks the rectangle of cells it goes over. A press on a column's
-//! letter or a row's number picks the whole column or row, the corner
-//! between them everything, and a drag along the letters or numbers several.
-//! A drag on the line at the right of a column's letter makes it wider or
-//! narrower. The scroll bars in the border and the mouse wheel scroll the
-//! cells. While more than one cell is picked, the status line gives the
-//! sum, the average and the count of the numbers among them.
+//! a drag picks the rectangle of cells it goes over. Shift with a cursor
+//! key, Page Up or Page Down, or with a press, picks the cells from the
+//! current one to where it goes, the current cell staying. A press on a
+//! column's letter or a row's number picks the whole column or row, the
+//! corner between them everything, and a drag along the letters or numbers
+//! several. A drag on the line at the right of a column's letter makes it
+//! wider or narrower. The scroll bars in the border - the window object's -
+//! and the mouse wheel scroll the cells; the picture the cells are drawn
+//! into is as big as the window shows, made anew when the window is sized.
+//! While more than one cell is picked, the status line gives the sum, the
+//! average and the count of the numbers among them.
 //!
 //! The menus, with their right-Amiga keys:
 //!
@@ -81,7 +85,6 @@ const exec = sdk.exec;
 const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const iffparse = sdk.iffparse;
-const clipboard = sdk.devices.clipboard;
 const wn = intuition.windows;
 const gc = intuition.gadgetclass;
 const lg = intuition.layoutgclass;
@@ -90,7 +93,6 @@ const mn = intuition.menus;
 const sc = intuition.screens;
 const classusr = intuition.classusr;
 const icc = intuition.icclass;
-const pg = intuition.propgclass;
 const sg = intuition.sghooks;
 const ie = sdk.devices.inputevent;
 const sr = sdk.gadgets.scroller;
@@ -118,7 +120,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (11.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
@@ -246,8 +248,9 @@ fn mix(under: graphics.Pen, over: graphics.Pen, part: u32) graphics.Pen {
     return out;
 }
 
-/// The two scroll bars in the border.
-const Bars = struct { vert: *Object, horiz: *Object };
+/// The two scroll bars in the border, the window object's; either is
+/// null when it could not be made.
+const Bars = struct { vert: ?*Object, horiz: ?*Object };
 
 const App = struct {
     sys: *ExecBase,
@@ -262,7 +265,7 @@ const App = struct {
     entry: *Object,
     grid: *Object,
     status: *Object,
-    bars: ?Bars = null,
+    bars: Bars = .{ .vert = null, .horiz = null },
     /// The picture the cells are drawn into, as big as the screen.
     rp: *graphics.RastPort,
     picture_w: i32,
@@ -286,6 +289,10 @@ const App = struct {
     /// Where a drag began: the corner of the area that stays.
     anchor_row: u32 = 0,
     anchor_col: u32 = 0,
+    /// The corner across from it, which a drag or Shift and a cursor key
+    /// moves.
+    far_row: u32 = 0,
+    far_col: u32 = 0,
     area: cells.Area = .{ .top = 0, .left = 0, .bottom = 0, .right = 0 },
     drag: Drag = .none,
     resizing: u32 = 0,
@@ -373,6 +380,23 @@ const App = struct {
 
     fn viewH(app: *App) i32 {
         return @min(gc.gadget(app.grid).height, app.picture_h);
+    }
+
+    /// The picture made as big as the gadget's box now, and the RastPort
+    /// the new one has; its font and pens come with it.
+    fn fitPicture(app: *App) void {
+        _ = app.ib.SetGadgetAttrsTagList(app.grid, app.window, &[_]TagItem{
+            .{ .tag = cv.CANVAS_Width, .data = 0 },
+            .{ .tag = cv.CANVAS_Height, .data = 0 },
+            .{},
+        });
+        var value: usize = 0;
+        _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.grid, &value);
+        app.rp = @ptrFromInt(value);
+        _ = app.ib.GetAttr(cv.CANVAS_Width, app.grid, &value);
+        app.picture_w = @intCast(value);
+        _ = app.ib.GetAttr(cv.CANVAS_Height, app.grid, &value);
+        app.picture_h = @intCast(value);
     }
 
     /// The rows wholly in view, at least one.
@@ -723,6 +747,8 @@ const App = struct {
         app.col = @min(col, max_cols - 1);
         app.anchor_row = app.row;
         app.anchor_col = app.col;
+        app.far_row = app.row;
+        app.far_col = app.col;
         app.area = .{ .top = app.row, .left = app.col, .bottom = app.row, .right = app.col };
         app.telling = false;
         app.reveal(app.row, app.col);
@@ -735,6 +761,21 @@ const App = struct {
         const row = @as(i64, app.row) + rows;
         const col = @as(i64, app.col) + cols;
         app.moveTo(@intCast(@max(0, @min(row, max_rows - 1))), @intCast(@max(0, @min(col, max_cols - 1))));
+    }
+
+    /// The corner of the cells picked across from the current cell moved,
+    /// the current cell staying where it is: Shift and a cursor key.
+    fn extendBy(app: *App, rows: i32, cols: i32) void {
+        const row = @as(i64, app.far_row) + rows;
+        const col = @as(i64, app.far_col) + cols;
+        app.far_row = @intCast(@max(0, @min(row, max_rows - 1)));
+        app.far_col = @intCast(@max(0, @min(col, max_cols - 1)));
+        app.area = between(app.row, app.col, app.far_row, app.far_col);
+        app.telling = false;
+        app.reveal(app.far_row, app.far_col);
+        app.showStatus();
+        app.draw();
+        app.followBars();
     }
 
     fn pickAll(app: *App) void {
@@ -785,7 +826,9 @@ const App = struct {
         return null;
     }
 
-    fn press(app: *App) void {
+    /// A press on the cells; with Shift on a cell, the cells from the
+    /// current one to it picked.
+    fn press(app: *App, shifted: bool) void {
         if (!app.settle()) return;
         const at = app.pointer();
         app.telling = false;
@@ -806,6 +849,8 @@ const App = struct {
             app.anchor_col = col;
             app.drag = .cols;
             app.area = .{ .top = 0, .left = col, .bottom = max_rows - 1, .right = col };
+            app.far_row = app.row;
+            app.far_col = col;
         } else if (at.x < app.header_w) {
             const row = app.rowAt(at.y);
             app.row = row;
@@ -813,16 +858,32 @@ const App = struct {
             app.anchor_row = row;
             app.drag = .rows;
             app.area = .{ .top = row, .left = 0, .bottom = row, .right = max_cols - 1 };
+            app.far_row = row;
+            app.far_col = app.col;
         } else {
             const row = app.rowAt(at.y);
             const col = app.colAt(at.x);
+            app.drag = .cells;
+            app.far_row = row;
+            app.far_col = col;
+            if (shifted) {
+                // From the current cell, which stays current; a drag goes
+                // on from there.
+                app.press_again = false;
+                app.anchor_row = app.row;
+                app.anchor_col = app.col;
+                app.area = between(app.row, app.col, row, col);
+                app.showStatus();
+                app.draw();
+                app.followBars();
+                return;
+            }
             app.press_again = row == app.row and col == app.col and app.area.cells() == 1;
             app.row = row;
             app.col = col;
             app.anchor_row = row;
             app.anchor_col = col;
             app.area = .{ .top = row, .left = col, .bottom = row, .right = col };
-            app.drag = .cells;
         }
         app.showCurrent();
         app.draw();
@@ -844,12 +905,9 @@ const App = struct {
                 const row = app.rowAt(at.y);
                 const col = app.colAt(at.x);
                 if (row != app.anchor_row or col != app.anchor_col) app.press_again = false;
-                app.area = .{
-                    .top = @min(row, app.anchor_row),
-                    .left = @min(col, app.anchor_col),
-                    .bottom = @max(row, app.anchor_row),
-                    .right = @max(col, app.anchor_col),
-                };
+                app.far_row = row;
+                app.far_col = col;
+                app.area = between(app.anchor_row, app.anchor_col, row, col);
                 app.reveal(row, col);
             },
             .cols => {
@@ -881,18 +939,19 @@ const App = struct {
     /// The bars set from the view: as far as the cells reach, and a screen
     /// further, so there is always somewhere to scroll to.
     fn followBars(app: *App) void {
-        const bars = app.bars orelse return;
+        const bars = app.bars;
         const reach = app.sheet.extent();
         const rows = app.visibleRows();
         const cols = app.visibleCols();
         const total_rows = @min(@max(reach.rows, app.row + 1, app.top_row + rows) + rows, max_rows);
         const total_cols = @min(@max(reach.cols, app.col + 1, app.left_col + cols) + cols, max_cols);
-        const pairs = [_]struct { gadget: *Object, total: u32, visible: u32, top: u32 }{
+        const pairs = [_]struct { gadget: ?*Object, total: u32, visible: u32, top: u32 }{
             .{ .gadget = bars.vert, .total = total_rows, .visible = rows, .top = app.top_row },
             .{ .gadget = bars.horiz, .total = total_cols, .visible = cols, .top = app.left_col },
         };
         for (pairs) |pair| {
-            _ = app.ib.SetGadgetAttrsTagList(pair.gadget, app.window, &[_]TagItem{
+            const gadget = pair.gadget orelse continue;
+            _ = app.ib.SetGadgetAttrsTagList(gadget, app.window, &[_]TagItem{
                 .{ .tag = sr.SCROLLER_Total, .data = pair.total },
                 .{ .tag = sr.SCROLLER_Visible, .data = pair.visible },
                 .{ .tag = sr.SCROLLER_Top, .data = pair.top },
@@ -903,9 +962,8 @@ const App = struct {
 
     /// The view moved to where the bars are.
     fn followScrollers(app: *App) void {
-        const bars = app.bars orelse return;
-        const top = @min(app.barTop(bars.vert), max_rows - 1);
-        const left = @min(app.barTop(bars.horiz), max_cols - 1);
+        const top = if (app.bars.vert) |scroller| @min(app.barTop(scroller), max_rows - 1) else app.top_row;
+        const left = if (app.bars.horiz) |scroller| @min(app.barTop(scroller), max_cols - 1) else app.left_col;
         if (top == app.top_row and left == app.left_col) return;
         app.top_row = top;
         app.left_col = left;
@@ -1129,7 +1187,7 @@ const App = struct {
         const bottom = @min(app.area.bottom, reach.rows - 1);
         const right = @min(app.area.right, reach.cols - 1);
         if (bottom < app.area.top or right < app.area.left) return null;
-        var out: cells.List(u8) = .{};
+        var out: exec.Array(u8) = .{};
         var failed = false;
         var row = app.area.top;
         while (row <= bottom) : (row += 1) {
@@ -1139,7 +1197,7 @@ const App = struct {
                 const cell = sheet.find(row, col) orelse continue;
                 var digits: [32]u8 = undefined;
                 const shown = cells.shownText(cell.value, number.max_digits, &digits);
-                for (shown) |char| failed = !out.append(app.sys, char) or failed;
+                failed = !out.appendSlice(app.sys, shown) or failed;
             }
             failed = !out.append(app.sys, '\n') or failed;
         }
@@ -1148,61 +1206,6 @@ const App = struct {
             return null;
         }
         return out.slice();
-    }
-
-    fn writeClip(app: *App, text: []const u8) bool {
-        const ip = app.iff() orelse return false;
-        const iff_handle = ip.AllocIFF() orelse return false;
-        defer ip.FreeIFF(iff_handle);
-        const clip = ip.OpenClipboard(clipboard.PRIMARY_CLIP) orelse return false;
-        defer ip.CloseClipboard(clip);
-        iff_handle.stream = @intFromPtr(clip);
-        ip.InitIFFasClip(iff_handle);
-        if (ip.OpenIFF(iff_handle, iffparse.IFFF_WRITE) != 0) return false;
-        defer ip.CloseIFF(iff_handle);
-        if (ip.PushChunk(iff_handle, ID_FTXT, iffparse.ID_FORM, iffparse.IFFSIZE_UNKNOWN) != 0) return false;
-        if (ip.PushChunk(iff_handle, 0, ID_CHRS, @intCast(text.len)) != 0) return false;
-        if (ip.WriteChunkBytes(iff_handle, text.ptr, @intCast(text.len)) < 0) return false;
-        _ = ip.PopChunk(iff_handle);
-        _ = ip.PopChunk(iff_handle);
-        return true;
-    }
-
-    /// Every CHRS chunk of the clipboard's FTXT, one after another, in
-    /// memory of its own for the caller to FreeVec; null for no text.
-    fn readClip(app: *App) ?[]u8 {
-        const sys = app.sys;
-        const ip = app.iff() orelse return null;
-        const iff_handle = ip.AllocIFF() orelse return null;
-        defer ip.FreeIFF(iff_handle);
-        const clip = ip.OpenClipboard(clipboard.PRIMARY_CLIP) orelse return null;
-        defer ip.CloseClipboard(clip);
-        iff_handle.stream = @intFromPtr(clip);
-        ip.InitIFFasClip(iff_handle);
-        if (ip.OpenIFF(iff_handle, iffparse.IFFF_READ) != 0) return null;
-        defer ip.CloseIFF(iff_handle);
-        if (ip.StopChunk(iff_handle, ID_FTXT, ID_CHRS) != 0) return null;
-        var length: usize = 0;
-        var gathered: ?[*]u8 = null;
-        while (ip.ParseIFF(iff_handle, iffparse.IFFPARSE_SCAN) == 0) {
-            const chunk = ip.CurrentChunk(iff_handle) orelse continue;
-            if (chunk.id != ID_CHRS or chunk.size <= 0) continue;
-            const size: usize = @intCast(chunk.size);
-            const bigger: [*]u8 = @ptrCast(sys.AllocVec(length + size, exec.MEMF_ANY) orelse break);
-            if (gathered) |old| {
-                @memcpy(bigger[0..length], old[0..length]);
-                sys.FreeVec(old);
-            }
-            gathered = bigger;
-            if (ip.ReadChunkBytes(iff_handle, bigger + length, chunk.size) != chunk.size) break;
-            length += size;
-        }
-        const text = gathered orelse return null;
-        if (length == 0) {
-            sys.FreeVec(text);
-            return null;
-        }
-        return text[0..length];
     }
 
     /// The picked cells kept for Sheet and put on the clipboard as text.
@@ -1216,7 +1219,11 @@ const App = struct {
         app.clip = null;
         app.clip_len = 0;
         const text = app.areaText() orelse return true;
-        if (app.writeClip(text)) {
+        const ip = app.iff() orelse {
+            app.sys.FreeVec(text.ptr);
+            return true;
+        };
+        if (iffparse.clip.writeText(ip, text)) {
             app.clip = text.ptr;
             app.clip_len = @intCast(text.len);
         } else app.sys.FreeVec(text.ptr);
@@ -1232,7 +1239,7 @@ const App = struct {
     /// What the clipboard holds put in at the current cell: Sheet's own
     /// cells when it is what Sheet put there, else its text.
     fn paste(app: *App) void {
-        const text = app.readClip();
+        const text = if (app.iff()) |ip| iffparse.clip.readText(app.sys, ip) else null;
         defer if (text) |held| app.sys.FreeVec(held.ptr);
         const own = if (text) |held| (app.clip != null and cells.sameText(held, app.clip.?[0..app.clip_len])) else app.block.entries.len > 0;
         var ok = true;
@@ -1389,8 +1396,10 @@ const App = struct {
         }
     }
 
-    /// A key that is not a character: the cursor keys and their kin.
-    fn rawKeyed(app: *App, code: u32) void {
+    /// A key that is not a character: the cursor keys and their kin; with
+    /// Shift, the cursor keys and Page Up and Down move the far corner of
+    /// the cells picked instead of the current cell.
+    fn rawKeyed(app: *App, code: u32, shifted: bool) void {
         if (code & 0x80 != 0) return;
         switch (code) {
             raw_up, raw_down, raw_left, raw_right, raw_page_up, raw_page_down, raw_home, raw_end, raw_f2 => {},
@@ -1398,6 +1407,15 @@ const App = struct {
         }
         if (!app.settle()) return;
         const page: i32 = @intCast(app.visibleRows());
+        if (shifted) switch (code) {
+            raw_up => return app.extendBy(-1, 0),
+            raw_down => return app.extendBy(1, 0),
+            raw_left => return app.extendBy(0, -1),
+            raw_right => return app.extendBy(0, 1),
+            raw_page_up => return app.extendBy(-page, 0),
+            raw_page_down => return app.extendBy(page, 0),
+            else => {},
+        };
         switch (code) {
             raw_up => app.moveBy(-1, 0),
             raw_down => app.moveBy(1, 0),
@@ -1453,13 +1471,19 @@ const App = struct {
         while (true) {
             const word = app.ib.SendMessage(app.object, @ptrCast(&input));
             if (word == wc.WMHI_LASTMSG) return true;
+            // What the word does not say: the keys held, the gadget.
+            var qualifier: usize = 0;
+            var gadget: usize = wc.WINDOW_NOGADGET;
+            _ = app.ib.GetAttr(wc.WINDOWA_Qualifier, app.object, &qualifier);
+            _ = app.ib.GetAttr(wc.WINDOWA_GadgetID, app.object, &gadget);
+            const shifted = qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
             switch (word & wc.WMHI_CLASSMASK) {
                 wc.WMHI_CLOSEWINDOW => if (app.mayLeave()) return false,
                 wc.WMHI_MENUPICK => {
                     const menu_number: u32 = @truncate(word & wc.WMHI_MENUMASK);
                     if (menu_number != mn.MENUNULL and !app.picked(menu_number)) return false;
                 },
-                wc.WMHI_GADGETDOWN => if (word & wc.WMHI_GADGETMASK == ID_GRID) app.press(),
+                wc.WMHI_GADGETDOWN => if (word & wc.WMHI_GADGETMASK == ID_GRID) app.press(shifted),
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_GRID => {
                         app.dragTo();
@@ -1475,17 +1499,19 @@ const App = struct {
                     else => {},
                 },
                 // A drag on the cells, or a bar moved.
-                wc.WMHI_IDCMPUPDATE => {
-                    if (app.drag != .none) app.dragTo();
-                    app.followScrollers();
+                wc.WMHI_IDCMPUPDATE => switch (gadget) {
+                    ID_GRID => if (app.drag != .none) app.dragTo(),
+                    ID_VERT, ID_HORIZ => app.followScrollers(),
+                    else => {},
                 },
                 wc.WMHI_VANILLAKEY => app.keyed(@truncate(word & wc.WMHI_KEYMASK)),
-                wc.WMHI_RAWKEY => app.rawKeyed(@truncate(word & wc.WMHI_KEYMASK)),
+                wc.WMHI_RAWKEY => app.rawKeyed(@truncate(word & wc.WMHI_KEYMASK), shifted),
                 wc.WMHI_MOUSEWHEEL => {
                     const notches: i16 = @bitCast(@as(u16, @truncate(word & 0xFFFF)));
                     app.scrollRows(@as(i32, notches) * 3);
                 },
                 wc.WMHI_NEWSIZE => {
+                    app.fitPicture();
                     app.reveal(app.row, app.col);
                     app.draw();
                     app.followBars();
@@ -1532,9 +1558,6 @@ const App = struct {
     }
 };
 
-const ID_FTXT = iffparse.MakeID("FTXT");
-const ID_CHRS = iffparse.MakeID("CHRS");
-
 /// What the status line adds up: the numbers among the cells picked.
 const Totals = struct {
     sum: f64 = 0,
@@ -1572,61 +1595,14 @@ fn entryKey(_: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
 
 const entry_hook = sdk.utility.Hook{ .entry = entryKey };
 
-fn windowAttr(ib: *IntuitionBase, window: *Window, attr: sdk.utility.Tag) isize {
-    var value: usize = 0;
-    const wanted = [_]TagItem{ .{ .tag = attr, .data = @intFromPtr(&value) }, .{} };
-    ib.GetWindowAttrs(window, &wanted);
-    return @bitCast(value);
-}
-
-/// A bar down the right border and one along the bottom one, each from the
-/// window's edge to the sizing gadget in the corner, telling the window
-/// as they move; made once the window is open and how deep its borders
-/// are is known.
-fn makeBars(ib: *IntuitionBase, window: *Window) ?Bars {
-    const left = windowAttr(ib, window, wn.WA_BorderLeft);
-    const top = windowAttr(ib, window, wn.WA_BorderTop);
-    const right = windowAttr(ib, window, wn.WA_BorderRight);
-    const bottom = windowAttr(ib, window, wn.WA_BorderBottom);
-    const vert = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_VERT },
-        .{ .tag = gc.GA_RightBorder, .data = 1 },
-        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 1)) },
-        .{ .tag = gc.GA_Top, .data = @bitCast(top) },
-        .{ .tag = gc.GA_Width, .data = @bitCast(right) },
-        .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom)) },
-        .{ .tag = gc.GA_RelVerify, .data = 1 },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
-        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(bottom) },
-        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
-        .{},
-    }) orelse return null;
-    const horiz = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_HORIZ },
-        .{ .tag = gc.GA_BottomBorder, .data = 1 },
-        .{ .tag = gc.GA_Left, .data = @bitCast(left) },
-        .{ .tag = gc.GA_RelBottom, .data = @bitCast(-(bottom - 1)) },
-        .{ .tag = gc.GA_RelWidth, .data = @bitCast(-(left + right)) },
-        .{ .tag = gc.GA_Height, .data = @bitCast(bottom) },
-        .{ .tag = gc.GA_RelVerify, .data = 1 },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
-        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(@divTrunc(bottom * 16, 11)) },
-        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
-        .{},
-    }) orelse {
-        ib.DisposeObject(vert);
-        return null;
+/// The cells from one corner to the other, whichever way round.
+fn between(row: u32, col: u32, other_row: u32, other_col: u32) cells.Area {
+    return .{
+        .top = @min(row, other_row),
+        .left = @min(col, other_col),
+        .bottom = @max(row, other_row),
+        .right = @max(col, other_col),
     };
-    _ = ib.AddGList(window, vert, -1, 1);
-    _ = ib.AddGList(window, horiz, -1, 1);
-    ib.RefreshWindowFrame(window);
-    return .{ .vert = vert, .horiz = horiz };
-}
-
-fn screenAttr(ib: *IntuitionBase, screen: *intuition.Screen, attr: sdk.utility.Tag) i32 {
-    var value: usize = 0;
-    ib.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = attr, .data = @intFromPtr(&value) }, .{} });
-    return @intCast(value);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -1677,16 +1653,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sheet.destroy();
 
-    // The cells are a picture as big as the screen, of which the window
-    // shows as much as it has room for.
-    const picture_w = @max(screenAttr(ib, screen, sc.SA_Width), 64);
-    const picture_h = @max(screenAttr(ib, screen, sc.SA_Height), 64);
+    // The cells are a picture the size of the gadget's box, made anew
+    // whenever the window is sized; this is the size it starts at, and
+    // what it asks the layout for.
+    const picture_w = 560;
+    const picture_h = 300;
     const grid = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_GRID },
         .{ .tag = gc.GA_Immediate, .data = 1 },
         .{ .tag = gc.GA_RelVerify, .data = 1 },
-        .{ .tag = cv.CANVAS_Width, .data = @intCast(picture_w) },
-        .{ .tag = cv.CANVAS_Height, .data = @intCast(picture_h) },
+        .{ .tag = cv.CANVAS_Width, .data = picture_w },
+        .{ .tag = cv.CANVAS_Height, .data = picture_h },
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{},
     });
@@ -1755,11 +1732,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DragBar, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
-        .{ .tag = wn.WA_SizeBRight, .data = 1 },
-        .{ .tag = wn.WA_SizeBBottom, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
         .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_NEWPREFS },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made_layout) },
+        // The bars tell the window as they move, and are let go of.
+        .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_VERT },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{},
+        }) },
+        .{ .tag = wc.WINDOWA_HorizScroller, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_HORIZ },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{},
+        }) },
         .{},
     }) orelse {
         ib.DisposeObject(made_layout);
@@ -1810,17 +1798,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened_window);
-    // The bars are Sheet's, not the window object's: the window is closed
-    // first, which takes them out of it, and then they go.
-    app.bars = makeBars(ib, app.window);
-    defer {
-        var shut = wc.WmClose{};
-        _ = ib.SendMessage(object, @ptrCast(&shut));
-        if (app.bars) |made| {
-            ib.DisposeObject(made.vert);
-            ib.DisposeObject(made.horiz);
-        }
-    }
+    var vert: usize = 0;
+    var horiz: usize = 0;
+    _ = ib.GetAttr(wc.WINDOWA_VertScroller, object, &vert);
+    _ = ib.GetAttr(wc.WINDOWA_HorizScroller, object, &horiz);
+    app.bars = .{ .vert = @ptrFromInt(vert), .horiz = @ptrFromInt(horiz) };
+    // The picture as big as the grid's box, now that it has one.
+    app.fitPicture();
 
     // The menus; a sheet without them still works, so a strip that will
     // not go on is left off rather than given up over.

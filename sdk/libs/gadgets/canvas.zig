@@ -27,6 +27,22 @@
 //!   _ = ib.GetAttr(cv.CANVAS_RastPort, canvas, &rp);
 //!   gb.RectFill(@ptrFromInt(rp), &.{ .max_x = 200, .max_y = 120 });
 //!   ib.QueueGadgetRefresh(canvas);
+//!
+//! **A picture that follows its box.** Set `CANVAS_Width` and
+//! `CANVAS_Height` to 0 with `SetGadgetAttrsTagList` and the picture is
+//! made anew as big as the gadget's box, keeping what fits of the old one;
+//! a program that draws the whole of what the window shows does that when
+//! its window is sized (`IDCMP_NEWSIZE`) and draws again. The RastPort is a
+//! new one then, with the old one's font and pens: read `CANVAS_RastPort`
+//! again. The program must not be drawing into the old one meanwhile - from
+//! another task of its own, say - since it is gone when the call returns.
+//!
+//!   _ = ib.SetGadgetAttrsTagList(canvas, window, &.{
+//!       .{ .tag = cv.CANVAS_Width, .data = 0 },
+//!       .{ .tag = cv.CANVAS_Height, .data = 0 },
+//!       .{},
+//!   });
+//!   _ = ib.GetAttr(cv.CANVAS_RastPort, canvas, &rp);
 
 const gadgets = @import("gadgets.zig");
 
@@ -35,12 +51,15 @@ pub const CANVAS_LIBRARY = "gadgets/canvas.gadget";
 pub const CANVAS_CLASS = "canvas.gadget";
 
 pub const CANVAS_Dummy = gadgets.GADGETS_Dummy + 24 * gadgets.GADGETS_Step;
-/// The picture's size in pixels (the gadget's size, or 160 by 120). Made
-/// only.
+/// The picture's size in pixels. Made: the gadget's size, or 160 by 120,
+/// when left out or 0 - and that is what it asks a layout for from then
+/// on. Set: the picture made anew at that size, 0 for the gadget's box,
+/// what fits of the old one kept and the rest cleared; `CANVAS_RastPort`
+/// and `CANVAS_BitMap` are new ones then. Read: the picture's size now.
 pub const CANVAS_Width = CANVAS_Dummy + 0x01;
 pub const CANVAS_Height = CANVAS_Dummy + 0x02;
-/// `*graphics.RastPort` onto the picture: the gadget's, for as long as the
-/// gadget is there. Read only.
+/// `*graphics.RastPort` onto the picture: the gadget's, until the picture
+/// is made anew at another size or the gadget goes. Read only.
 pub const CANVAS_RastPort = CANVAS_Dummy + 0x03;
 /// `*rtg.Surface`, the picture itself: a bitmap. Read only.
 pub const CANVAS_BitMap = CANVAS_Dummy + 0x04;

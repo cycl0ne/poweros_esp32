@@ -5788,6 +5788,7 @@ test "gadget shortcuts: a `_` names the key, the window works the gadget, and th
     // A key no gadget answers to is the program's, as it always was.
     rawKey(ib, 0x32); // 'x'
     try testing.expectEqual(wc.WMHI_VANILLAKEY | 'x', it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(wc.WINDOW_NOGADGET, getAttr(ib, object, wc.WINDOWA_GadgetID));
 
     // The button's key: reported as a press that finished.
     rawKey(ib, 0x18); // 'o'
@@ -5801,6 +5802,9 @@ test "gadget shortcuts: a `_` names the key, the window works the gadget, and th
     };
     _input.handle(ib, &shifted_o);
     try testing.expectEqual(wc.WMHI_GADGETUP | 1, it.SendMessage(object, @ptrCast(&handle)));
+    // The word says the gadget; the object says it too, and the keys held.
+    try testing.expectEqual(@as(usize, 1), getAttr(ib, object, wc.WINDOWA_GadgetID));
+    try testing.expect(getAttr(ib, object, wc.WINDOWA_Qualifier) & sdk.devices.inputevent.IEQUALIFIER_LSHIFT != 0);
 
     // The scroller's key moves it on a thing, and back with Shift held.
     rawKey(ib, 0x34); // 'v'
@@ -5829,6 +5833,55 @@ test "gadget shortcuts: a `_` names the key, the window works the gadget, and th
     try testing.expectEqual(ib.input.active.?, name);
     rawKey(ib, 0x18); // 'o', into the line now
     try testing.expectEqual(@as(usize, 'o'), firstChar(ib, name));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.DisposeObject(object);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "windowclass: an update says which gadget told it, and whether it was interim" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const wc = intuition.windowclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("U") },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{},
+    }).?;
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+
+    // Told while still being worked: the gadget's GA_ID, and REPEAT.
+    const moving = ib.utility_base.CloneTagItems(&[_]TagItem{ .{ .tag = gc.GA_ID, .data = 7 }, .{} }).?;
+    try testing.expect(_window.sendUpdate(ib, win, moving, true));
+    try testing.expectEqual(wc.WMHI_IDCMPUPDATE, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(@as(usize, 7), getAttr(ib, object, wc.WINDOWA_GadgetID));
+    try testing.expect(getAttr(ib, object, wc.WINDOWA_Qualifier) & ie.IEQUALIFIER_REPEAT != 0);
+
+    // Told as it finished, by something with no GA_ID: no gadget, no REPEAT.
+    const done = ib.utility_base.CloneTagItems(&[_]TagItem{ .{ .tag = gc.GA_Top, .data = 3 }, .{} }).?;
+    try testing.expect(_window.sendUpdate(ib, win, done, false));
+    try testing.expectEqual(wc.WMHI_IDCMPUPDATE, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(wc.WINDOW_NOGADGET, getAttr(ib, object, wc.WINDOWA_GadgetID));
+    try testing.expect(getAttr(ib, object, wc.WINDOWA_Qualifier) & ie.IEQUALIFIER_REPEAT == 0);
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+
+    // Made without bars: none to read.
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, object, wc.WINDOWA_VertScroller));
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, object, wc.WINDOWA_HorizScroller));
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.DisposeObject(object);

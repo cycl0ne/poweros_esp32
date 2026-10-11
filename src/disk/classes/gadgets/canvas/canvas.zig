@@ -10,6 +10,17 @@
 //!
 //! A press goes active and every move after it, and the release, tell the
 //! target the pointer's place in the picture.
+//!
+//! `OM_SET` of `CANVAS_Width` or `CANVAS_Height` makes the picture anew at
+//! the new size (0: the gadget's box, from the GadgetInfo when there is
+//! one): a new bitmap, what fits of the old picture blitted into it and
+//! the rest cleared, and a new RastPort that draws as the old one did - its
+//! font, pens, draw mode and style. The old ones go at once, which is safe
+//! from intuition's drawing because `SetGadgetAttrsTagList` and every
+//! `GM_RENDER` intuition sends hold intuition's lock; the program, which
+//! draws without one, is the one that asked, and reads the new RastPort
+//! after. What the gadget asks a layout for (`GM_DOMAIN`) stays the size
+//! it was made with, so following its box never makes it ask for more.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -26,12 +37,13 @@ const cv = gadgets.canvas;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = cv.CANVAS_CLASS,
-    .version = 1,
-    .date = "02.10.2026",
+    .version = 2,
+    .date = "11.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -44,6 +56,9 @@ comptime {
 pub const Data = extern struct {
     width: u32 = 0,
     height: u32 = 0,
+    /// The size it was made with: what it asks a layout for.
+    nominal_width: u32 = 0,
+    nominal_height: u32 = 0,
     bitmap: ?*sdk.rtg.Surface = null,
     rast_port: ?*graphics.RastPort = null,
     /// Where the pointer was last told to be.
@@ -53,6 +68,63 @@ pub const Data = extern struct {
 
 const default_width = 160;
 const default_height = 120;
+
+/// A bitmap of `width` by `height` in the display's format, cleared, and
+/// a RastPort onto it; null with no memory.
+fn makePicture(gb: *GraphicsBase, width: u32, height: u32) ?struct { bitmap: *sdk.rtg.Surface, rast_port: *graphics.RastPort } {
+    const bitmap = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = width },
+        .{ .tag = graphics.BMTAG_Height, .data = height },
+        .{ .tag = graphics.BMTAG_Clear, .data = 1 },
+        .{},
+    }) orelse return null;
+    const rast_port = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} }) orelse {
+        gb.FreeBitMap(bitmap);
+        return null;
+    };
+    return .{ .bitmap = bitmap, .rast_port = rast_port };
+}
+
+/// The picture made anew at `width` by `height`, what fits of the old one
+/// kept and its RastPort's font, pens, draw mode and style carried over.
+/// False with no memory: the picture stays as it was.
+fn resize(gb: *GraphicsBase, own: *Data, width: u32, height: u32) bool {
+    if (width == own.width and height == own.height) return true;
+    const picture = makePicture(gb, width, height) orelse return false;
+    if (own.bitmap) |old| {
+        _ = gb.BltBitMap(old, 0, 0, picture.bitmap, 0, 0, @intCast(@min(width, own.width)), @intCast(@min(height, own.height)));
+    }
+    if (own.rast_port) |old| {
+        var font: usize = 0;
+        var front: u32 = 0;
+        var back: u32 = 0;
+        var mode: u32 = 0;
+        var text_style: u32 = 0;
+        gb.GetRPAttrs(old, &[_]TagItem{
+            .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
+            .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&front) },
+            .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&back) },
+            .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) },
+            .{ .tag = graphics.RPTAG_TextStyle, .data = @intFromPtr(&text_style) },
+            .{},
+        });
+        gb.SetRPAttrs(picture.rast_port, &[_]TagItem{
+            .{ .tag = graphics.RPTAG_Font, .data = font },
+            .{ .tag = graphics.RPTAG_APen, .data = front },
+            .{ .tag = graphics.RPTAG_BPen, .data = back },
+            .{ .tag = graphics.RPTAG_DrMd, .data = mode },
+            .{ .tag = graphics.RPTAG_TextStyle, .data = text_style },
+            .{},
+        });
+        gb.FreeRastPort(old);
+    }
+    if (own.bitmap) |old| gb.FreeBitMap(old);
+    own.bitmap = picture.bitmap;
+    own.rast_port = picture.rast_port;
+    own.width = width;
+    own.height = height;
+    return true;
+}
 
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const info = r.gadget_info orelse return;
@@ -109,16 +181,16 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const ub = base.utility_base;
             const given_w: u32 = if (ub.FindTagItem(gc.GA_Width, new.attr_list)) |item| @truncate(item.data) else default_width;
             const given_h: u32 = if (ub.FindTagItem(gc.GA_Height, new.attr_list)) |item| @truncate(item.data) else default_height;
-            own.width = @max(@as(u32, @truncate(ub.GetTagData(cv.CANVAS_Width, given_w, new.attr_list))), 1);
-            own.height = @max(@as(u32, @truncate(ub.GetTagData(cv.CANVAS_Height, given_h, new.attr_list))), 1);
-            own.bitmap = gb.AllocBitMapTagList(&[_]TagItem{
-                .{ .tag = graphics.BMTAG_Width, .data = own.width },
-                .{ .tag = graphics.BMTAG_Height, .data = own.height },
-                .{ .tag = graphics.BMTAG_Clear, .data = 1 },
-                .{},
-            });
-            if (own.bitmap) |bitmap| {
-                own.rast_port = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} });
+            // 0, as left out: the gadget's own size.
+            const asked_w: u32 = @truncate(ub.GetTagData(cv.CANVAS_Width, 0, new.attr_list));
+            const asked_h: u32 = @truncate(ub.GetTagData(cv.CANVAS_Height, 0, new.attr_list));
+            own.width = @max(if (asked_w != 0) asked_w else given_w, 1);
+            own.height = @max(if (asked_h != 0) asked_h else given_h, 1);
+            own.nominal_width = own.width;
+            own.nominal_height = own.height;
+            if (makePicture(gb, own.width, own.height)) |picture| {
+                own.bitmap = picture.bitmap;
+                own.rast_port = picture.rast_port;
             }
             if (own.rast_port == null) {
                 // No picture to hand out: the gadget is not made.
@@ -136,6 +208,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 _ = ib.SendSuperMessage(cl, obj, @ptrCast(&set));
             }
             return made;
+        },
+        classusr.OM_SET, classusr.OM_UPDATE => {
+            const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
+            const changed = ib.SendSuperMessage(cl, o, msg);
+            const ub = base.utility_base;
+            const width_item = ub.FindTagItem(cv.CANVAS_Width, set.attr_list);
+            const height_item = ub.FindTagItem(cv.CANVAS_Height, set.attr_list);
+            if (width_item == null and height_item == null) return changed;
+            const own = classes.instData(Data, cl, o.?);
+            // 0: the box the gadget has now.
+            const g = gc.gadget(o.?);
+            const box = if (set.gadget_info) |info| gc.boxFor(g, info) else gc.Box{ .width = g.width, .height = g.height };
+            const width: u32 = if (width_item) |item| (if (item.data != 0) @truncate(item.data) else @intCast(@max(box.width, 1))) else own.width;
+            const height: u32 = if (height_item) |item| (if (item.data != 0) @truncate(item.data) else @intCast(@max(box.height, 1))) else own.height;
+            if (!resize(gb, own, width, height)) return changed;
+            ib.QueueGadgetRefresh(o.?);
+            return changed;
         },
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
@@ -164,7 +253,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             ask.domain = switch (ask.which) {
                 gc.GDOMAIN_MINIMUM => .{ .width = 16, .height = 16 },
-                gc.GDOMAIN_NOMINAL => .{ .width = @intCast(own.width), .height = @intCast(own.height) },
+                gc.GDOMAIN_NOMINAL => .{ .width = @intCast(own.nominal_width), .height = @intCast(own.nominal_height) },
                 else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = gc.GDOMAIN_UNLIMITED },
             };
             return 1;

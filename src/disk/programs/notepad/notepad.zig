@@ -10,8 +10,10 @@
 //! that is not there yet is the file the text is saved to.
 //!
 //! The scroll bars are in the window's border, one down the right and one
-//! along the bottom, the sizing gadget in the corner between them. Each is
-//! joined to the text: its `ICA_TARGET` is the gadget and its `ICA_MAP`
+//! along the bottom, the sizing gadget in the corner between them; the
+//! window object makes them (`WINDOWA_VertScroller`,
+//! `WINDOWA_HorizScroller`) with Notepad's tags. Each is joined to the
+//! text: its `ICA_TARGET` is the gadget and its `ICA_MAP`
 //! turns its top into `TEXTEDIT_TopVert` or `TEXTEDIT_TopHoriz`, so a drag
 //! moves the text without Notepad hearing of it. The other way, the gadget
 //! tells the window where its view is (`IDCMP_IDCMPUPDATE`) and Notepad
@@ -57,7 +59,6 @@ const classusr = intuition.classusr;
 const icc = intuition.icclass;
 const te = sdk.gadgets.textedit;
 const sr = sdk.gadgets.scroller;
-const pg = intuition.propgclass;
 const st = sdk.gadgets.string;
 const cb = sdk.gadgets.checkbox;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -71,7 +72,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.2";
+const VERSION = "1.3";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -177,8 +178,8 @@ const Notepad = struct {
     object: *Object,
     window: *Window,
     editor: *Object,
-    /// The scroll bars in the border; null when they could not be made.
-    bars: ?Bars = null,
+    /// The scroll bars in the border.
+    bars: Bars = .{ .vert = null, .horiz = null },
     /// Opened the first time they are wanted.
     asl_lib: ?*exec.Library = null,
     iff_lib: ?*exec.Library = null,
@@ -447,13 +448,14 @@ const Notepad = struct {
 
     /// The bars set from where the text's view is.
     fn followEditor(np: *Notepad) void {
-        const bars = np.bars orelse return;
-        const pairs = [_]struct { bar: *Object, total: sdk.utility.Tag, visible: sdk.utility.Tag, top: sdk.utility.Tag }{
+        const bars = np.bars;
+        const pairs = [_]struct { bar: ?*Object, total: sdk.utility.Tag, visible: sdk.utility.Tag, top: sdk.utility.Tag }{
             .{ .bar = bars.vert, .total = te.TEXTEDIT_TotalVert, .visible = te.TEXTEDIT_VisibleVert, .top = te.TEXTEDIT_TopVert },
             .{ .bar = bars.horiz, .total = te.TEXTEDIT_TotalHoriz, .visible = te.TEXTEDIT_VisibleHoriz, .top = te.TEXTEDIT_TopHoriz },
         };
         for (pairs) |pair| {
-            _ = np.ib.SetGadgetAttrsTagList(pair.bar, np.window, &[_]TagItem{
+            const scroller = pair.bar orelse continue;
+            _ = np.ib.SetGadgetAttrsTagList(scroller, np.window, &[_]TagItem{
                 .{ .tag = sr.SCROLLER_Total, .data = np.ask(pair.total) },
                 .{ .tag = sr.SCROLLER_Visible, .data = np.ask(pair.visible) },
                 .{ .tag = sr.SCROLLER_Top, .data = np.ask(pair.top) },
@@ -791,8 +793,9 @@ const Notepad = struct {
     }
 };
 
-/// The two scroll bars in the border.
-const Bars = struct { vert: *Object, horiz: *Object };
+/// The two scroll bars in the border, the window object's; either is
+/// null when it could not be made.
+const Bars = struct { vert: ?*Object, horiz: ?*Object };
 
 /// What a bar tells the text as it is dragged; its GA_ID goes no further,
 /// or the text would take it for its own.
@@ -806,58 +809,6 @@ const horiz_map = [_]TagItem{
     .{ .tag = gc.GA_ID, .data = sdk.utility.TAG_IGNORE },
     .{},
 };
-
-fn windowAttr(ib: *IntuitionBase, window: *Window, attr: sdk.utility.Tag) isize {
-    var value: usize = 0;
-    const wanted = [_]TagItem{ .{ .tag = attr, .data = @intFromPtr(&value) }, .{} };
-    ib.GetWindowAttrs(window, &wanted);
-    return @bitCast(value);
-}
-
-/// A bar down the right border and one along the bottom one, each from the
-/// window's edge to the sizing gadget in the corner, joined to the text;
-/// made once the window is open and how deep its borders are is known.
-fn makeBars(ib: *IntuitionBase, window: *Window, editor: *Object) ?Bars {
-    const left = windowAttr(ib, window, wn.WA_BorderLeft);
-    const top = windowAttr(ib, window, wn.WA_BorderTop);
-    const right = windowAttr(ib, window, wn.WA_BorderRight);
-    const bottom = windowAttr(ib, window, wn.WA_BorderBottom);
-    const vert = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_VERT },
-        .{ .tag = gc.GA_RightBorder, .data = 1 },
-        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 1)) },
-        .{ .tag = gc.GA_Top, .data = @bitCast(top) },
-        .{ .tag = gc.GA_Width, .data = @bitCast(right) },
-        .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom)) },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
-        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(bottom) },
-        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
-        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
-        .{},
-    }) orelse return null;
-    const horiz = ib.NewObjectTagList(null, sr.SCROLLER_CLASS, &[_]TagItem{
-        .{ .tag = gc.GA_ID, .data = ID_HORIZ },
-        .{ .tag = gc.GA_BottomBorder, .data = 1 },
-        .{ .tag = gc.GA_Left, .data = @bitCast(left) },
-        .{ .tag = gc.GA_RelBottom, .data = @bitCast(-(bottom - 1)) },
-        .{ .tag = gc.GA_RelWidth, .data = @bitCast(-(left + right)) },
-        .{ .tag = gc.GA_Height, .data = @bitCast(bottom) },
-        .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
-        .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(@divTrunc(bottom * 16, 11)) },
-        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
-        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&horiz_map) },
-        .{},
-    }) orelse {
-        ib.DisposeObject(vert);
-        return null;
-    };
-    _ = ib.AddGList(window, vert, -1, 1);
-    _ = ib.AddGList(window, horiz, -1, 1);
-    // A bar keeps at least its arrows and as much again.
-    _ = ib.WindowLimits(window, left + right + 4 * bottom, top + bottom + 4 * right, -1, -1);
-    ib.RefreshWindowFrame(window);
-    return .{ .vert = vert, .horiz = horiz };
-}
 
 fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
     return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
@@ -893,11 +844,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(editor_lib);
-    const scroller_lib = sys.OpenLibrary(sr.SCROLLER_LIBRARY, 0) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, sr.SCROLLER_LIBRARY)});
-        return dos.RETURN_FAIL;
-    };
-    defer sys.CloseLibrary(scroller_lib);
 
     const screen = ib.LockPubScreen(null) orelse {
         _ = Printf(dl, MSG_NOSCREEN, .{});
@@ -939,11 +885,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_DragBar, .data = 1 },
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
-        .{ .tag = wn.WA_SizeBRight, .data = 1 },
-        .{ .tag = wn.WA_SizeBBottom, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
         .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        // Each bar joined to the text, a drag moving it.
+        .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_VERT },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
+            .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&vert_map) },
+            .{},
+        }) },
+        .{ .tag = wc.WINDOWA_HorizScroller, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_HORIZ },
+            .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(editor) },
+            .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&horiz_map) },
+            .{},
+        }) },
         .{},
     }) orelse {
         ib.DisposeObject(layout);
@@ -960,17 +917,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var window_ptr: usize = 0;
     _ = ib.GetAttr(wc.WINDOWA_Window, object, &window_ptr);
     const window: *Window = @ptrFromInt(window_ptr);
-    // The bars are Notepad's, not the window object's: the window is
-    // closed first, which takes them out of it, and then they go.
-    const bars = makeBars(ib, window, editor);
-    defer {
-        var shut = wc.WmClose{};
-        _ = ib.SendMessage(object, @ptrCast(&shut));
-        if (bars) |made| {
-            ib.DisposeObject(made.vert);
-            ib.DisposeObject(made.horiz);
-        }
-    }
+    var vert: usize = 0;
+    var horiz: usize = 0;
+    _ = ib.GetAttr(wc.WINDOWA_VertScroller, object, &vert);
+    _ = ib.GetAttr(wc.WINDOWA_HorizScroller, object, &horiz);
+    const bars = Bars{ .vert = @ptrFromInt(vert), .horiz = @ptrFromInt(horiz) };
 
     // The menus; a program without them still edits, so a strip that will
     // not go on is left off rather than given up over.

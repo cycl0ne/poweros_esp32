@@ -47,6 +47,9 @@ const clipboard = @import("../../devices/clipboard.zig");
 
 pub const IFFPARSENAME = "iffparse.library";
 
+/// Text put on the clipboard and taken from it (`clip.zig`).
+pub const clip = @import("clip.zig");
+
 /// The four characters of an id as the number they make: the first
 /// character is the highest byte, so the number sorts and compares as
 /// the characters do.

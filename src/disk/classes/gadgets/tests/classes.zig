@@ -1837,6 +1837,52 @@ test "canvas.gadget: a picture to draw into, kept with the gadget, presses told 
     try rig.down();
 }
 
+test "canvas.gadget: the picture made anew at another size, 0 its box's, what fits of it kept" {
+    var heard = Heard{ .tag = cv.CANVAS_X, .ib = undefined };
+    var rig = try Rig.up(&canvas.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const gb = rig.kib.graphics_base;
+    const picture = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const old: *sdk.graphics.RastPort = @ptrFromInt(attr(ib, picture, cv.CANVAS_RastPort));
+    const red = sdk.graphics.penRGB(255, 0, 0);
+    gb.SetRPAttrs(old, &[_]TagItem{ .{ .tag = sdk.graphics.RPTAG_APen, .data = red }, .{} });
+    gb.RectFill(old, &.{ .min_x = 2, .min_y = 2, .max_x = 5, .max_y = 5 });
+    var drawn: sdk.graphics.Pen = 0;
+    try testing.expect(gb.ReadPixel(old, 3, 3, &drawn));
+
+    // Wider by a number, as high as its box by 0: what was drawn is still
+    // there, the rest is clear, and the pen drawn with came along.
+    _ = ib.SetAttrsTagList(picture, &[_]TagItem{
+        .{ .tag = cv.CANVAS_Width, .data = 30 },
+        .{ .tag = cv.CANVAS_Height, .data = 0 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 30), attr(ib, picture, cv.CANVAS_Width));
+    try testing.expectEqual(@as(usize, 10), attr(ib, picture, cv.CANVAS_Height));
+    const new: *sdk.graphics.RastPort = @ptrFromInt(attr(ib, picture, cv.CANVAS_RastPort));
+    var kept: sdk.graphics.Pen = 0;
+    try testing.expect(gb.ReadPixel(new, 3, 3, &kept));
+    try testing.expectEqual(drawn, kept);
+    var clear: sdk.graphics.Pen = 1;
+    try testing.expect(gb.ReadPixel(new, 25, 5, &clear));
+    try testing.expect(clear & 0x00FF_FFFF == 0);
+    var pen: u32 = 0;
+    gb.GetRPAttrs(new, &[_]TagItem{ .{ .tag = sdk.graphics.RPTAG_APen, .data = @intFromPtr(&pen) }, .{} });
+    try testing.expectEqual(red, pen);
+
+    // What it asks a layout for stays what it was made with.
+    var nominal = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(picture, @ptrCast(&nominal));
+    try testing.expectEqual(@as(i32, 20), nominal.domain.width);
+    try testing.expectEqual(@as(i32, 10), nominal.domain.height);
+    ib.DisposeObject(picture);
+    try rig.down();
+}
+
 test "qrcode.gadget: the smallest version that holds the text, its modules as the standard lays them" {
     var heard = Heard{ .tag = qc.QR_Version, .ib = undefined };
     var rig = try Rig.up(&qrcode.Library.resident_tag, &heard);
@@ -2316,6 +2362,78 @@ const Display = struct {
         return @as([*]const u16, @ptrCast(@alignCast(row)))[x];
     }
 };
+
+test "windowclass: scroll bars in its borders, made with the program's tags, kept from one open to the next" {
+    const kib = try host_rom.intuition.setUp();
+    // The window object opens the class by its path, as ramlib takes it.
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    const display = try Display.up(kib);
+    const wn = intuition.windows;
+    const wc = intuition.windowclass;
+
+    const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("B") },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 38 },
+        .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = 5 },
+            .{ .tag = sr.SCROLLER_Total, .data = 100 },
+            .{ .tag = sr.SCROLLER_Visible, .data = 10 },
+            .{},
+        }) },
+        // A bar with none of the program's tags at all.
+        .{ .tag = wc.WINDOWA_HorizScroller, .data = 0 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), attr(ib, object, wc.WINDOWA_VertScroller));
+
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(ib.SendMessage(object, @ptrCast(&open)));
+    const vert: *Object = @ptrFromInt(attr(ib, object, wc.WINDOWA_VertScroller));
+    const horiz: *Object = @ptrFromInt(attr(ib, object, wc.WINDOWA_HorizScroller));
+    try testing.expectEqual(@as(usize, 5), attr(ib, vert, gc.GA_ID));
+    try testing.expectEqual(@as(usize, 100), attr(ib, vert, sr.SCROLLER_Total));
+    // Both borders as deep as a sizing gadget makes them, which the bars
+    // fill, and the window no smaller than their arrows and as much again.
+    const wanted = struct {
+        fn of(i: *IntuitionBase, window: *intuition.Window, tag: utility.Tag) i32 {
+            var value: usize = 0;
+            i.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} });
+            return @intCast(value);
+        }
+    }.of;
+    const left = wanted(ib, w, wn.WA_BorderLeft);
+    const right = wanted(ib, w, wn.WA_BorderRight);
+    const bottom = wanted(ib, w, wn.WA_BorderBottom);
+    try testing.expect(right > left);
+    try testing.expect(bottom > left);
+    // As far as the window's size now allows: a smaller one is refused.
+    try testing.expect(wanted(ib, w, wn.WA_MinWidth) >= @min(left + right + 4 * bottom, wanted(ib, w, wn.WA_Width)));
+
+    // Closed and opened again: the same bars, their numbers as they were.
+    var shut = wc.WmClose{};
+    _ = ib.SendMessage(object, @ptrCast(&shut));
+    _ = ib.SetAttrsTagList(vert, &[_]TagItem{ .{ .tag = sr.SCROLLER_Total, .data = 200 }, .{} });
+    _ = ib.SendMessage(object, @ptrCast(&open));
+    try testing.expectEqual(@intFromPtr(vert), attr(ib, object, wc.WINDOWA_VertScroller));
+    try testing.expectEqual(@intFromPtr(horiz), attr(ib, object, wc.WINDOWA_HorizScroller));
+    try testing.expectEqual(@as(usize, 200), attr(ib, vert, sr.SCROLLER_Total));
+
+    // Gone with the object: the scroller's library has no bar left, and
+    // no opener, so it goes when asked.
+    var screen_ptr: usize = 0;
+    ib.GetWindowAttrs(w, &[_]TagItem{ .{ .tag = wn.WA_Screen, .data = @intFromPtr(&screen_ptr) }, .{} });
+    const screen: *intuition.Screen = @ptrFromInt(screen_ptr);
+    ib.DisposeObject(object);
+    _ = kexec.SysBase.iface().RemLibrary(scroller_lib);
+    try testing.expect(ib.FindClass(sr.SCROLLER_CLASS) == null);
+    try testing.expect(ib.CloseScreen(screen));
+    ByTail.remove();
+    display.down(kib);
+    try host_rom.intuition.tearDown(kib);
+}
 
 test "scrollgroup.gadget: a part of its contents in view, the rest cut off, moved by a scroller or the wheel" {
     const kib = try host_rom.intuition.setUp();

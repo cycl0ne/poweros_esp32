@@ -18,7 +18,19 @@
 //!
 //! `WM_HANDLEINPUT` turns one message into one word and replies to it
 //! there and then - the program never holds a message, so there is
-//! nothing it can forget to reply.
+//! nothing it can forget to reply. What the word has no room for - the
+//! keys held with the message, the gadget it came from - is kept to be
+//! read (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`); an update's `GA_ID` is
+//! read from its tag list before the reply, since the list goes with the
+//! message.
+//!
+//! The scroll bars in the borders are scroller.gadgets, which the object
+//! opens the library of when it is made with one. They are made at the
+//! first open, once the borders' depth is known, from the object's place
+//! and size and the program's tags behind them; at every later open they
+//! are placed again for the borders that window has and put back. Closing
+//! the window takes them out of it with the layout, and they go when the
+//! object goes.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -29,6 +41,8 @@ const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
 const wn = intuition.windows;
 const wc = intuition.windowclass;
+const pg = intuition.propgclass;
+const sr = sdk.gadgets.scroller;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -43,7 +57,23 @@ pub const Data = extern struct {
     title: ?[*:0]const u8 = null,
     /// The window while it is open.
     window: ?*intuition.Window = null,
+    /// What `WINDOWA_Qualifier` and `WINDOWA_GadgetID` read: the message
+    /// `WM_HANDLEINPUT` answered last.
+    qualifier: u32 = 0,
+    gadget_id: usize = wc.WINDOW_NOGADGET,
+    /// The border bars asked for (`BAR_`), the program's tags for each,
+    /// copied, and the bars once made.
+    bars: u32 = 0,
+    vert_tags: ?[*]TagItem = null,
+    horiz_tags: ?[*]TagItem = null,
+    vert: ?*Object = null,
+    horiz: ?*Object = null,
+    /// scroller.gadget, open while there are bars to make.
+    scroller_lib: ?*exec.Library = null,
 };
+
+const BAR_VERT: u32 = 1 << 0;
+const BAR_HORIZ: u32 = 1 << 1;
 
 /// What the window hears whatever it is told: what `WM_HANDLEINPUT` is
 /// for. The keys are among them because a key may be one that works a
@@ -97,11 +127,21 @@ fn open(ib: *IntuitionBase, p: *Data) ?*intuition.Window {
         .{ .tag = if (own_width) wn.WA_InnerWidth else ignore, .data = @intCast(@max(nominal.domain.width, 1)) },
         .{ .tag = if (own_height) wn.WA_InnerHeight else ignore, .data = @intCast(@max(nominal.domain.height, 1)) },
         .{ .tag = if (own_place) wn.WA_Position else ignore, .data = wn.WPOS_CENTERSCREEN },
+        // A bar needs its border as deep as a sizing gadget makes it.
+        .{ .tag = if (p.bars != 0) wn.WA_SizeGadget else ignore, .data = 1 },
+        .{ .tag = if (p.bars & BAR_VERT != 0) wn.WA_SizeBRight else ignore, .data = 1 },
+        .{ .tag = if (p.bars & BAR_HORIZ != 0) wn.WA_SizeBBottom else ignore, .data = 1 },
         .{ .tag = if (tags != null) utility.TAG_MORE else utility.TAG_DONE, .data = @intFromPtr(tags) },
     };
     const window = it.OpenWindowTagList(&first) orelse return null;
     p.window = window;
 
+    // The bars after the layout, so the smallest size they keep is on top
+    // of the one the layout set when it was added.
+    defer {
+        placeBars(ib, p, window);
+        keepBarRoom(ib, p, window);
+    }
     const layout = p.layout orelse return window;
     // Inside the border - or, in a GimmeZeroZero window, the whole of the
     // inner part, whose corner is its own 0,0.
@@ -121,6 +161,103 @@ fn open(ib: *IntuitionBase, p: *Data) ?*intuition.Window {
     _ = it.AddGList(window, layout, -1, 1);
     it.RefreshGList(layout, window, 1);
     return window;
+}
+
+/// The border bars made, or placed again for this window's borders, and
+/// put in it. A bar down the right border reaches from below the title
+/// bar to the sizing gadget, one along the bottom from the left border to
+/// it; each fills its border's depth, and its arrows are as long as the
+/// bottom border is deep - half again for the bar that runs across, whose
+/// arrows are drawn longer - so the two sets look alike.
+fn placeBars(ib: *IntuitionBase, p: *Data, window: *intuition.Window) void {
+    if (p.bars == 0 or p.scroller_lib == null) return;
+    const it = ib.iface();
+    const left: isize = @bitCast(windowAttr(ib, window, wn.WA_BorderLeft));
+    const top: isize = @bitCast(windowAttr(ib, window, wn.WA_BorderTop));
+    const right: isize = @bitCast(windowAttr(ib, window, wn.WA_BorderRight));
+    const bottom: isize = @bitCast(windowAttr(ib, window, wn.WA_BorderBottom));
+    const Bar = struct { want: u32, tags: ?[*]TagItem, made: *?*Object, place: [7]TagItem };
+    const bars = [_]Bar{
+        .{ .want = BAR_VERT, .tags = p.vert_tags, .made = &p.vert, .place = .{
+            .{ .tag = gc.GA_RightBorder, .data = 1 },
+            .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 1)) },
+            .{ .tag = gc.GA_Top, .data = @bitCast(top) },
+            .{ .tag = gc.GA_Width, .data = @bitCast(right) },
+            .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom)) },
+            .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+            .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(bottom) },
+        } },
+        .{ .want = BAR_HORIZ, .tags = p.horiz_tags, .made = &p.horiz, .place = .{
+            .{ .tag = gc.GA_BottomBorder, .data = 1 },
+            .{ .tag = gc.GA_Left, .data = @bitCast(left) },
+            .{ .tag = gc.GA_RelBottom, .data = @bitCast(-(bottom - 1)) },
+            .{ .tag = gc.GA_RelWidth, .data = @bitCast(-(left + right)) },
+            .{ .tag = gc.GA_Height, .data = @bitCast(bottom) },
+            .{ .tag = pg.PGA_Freedom, .data = pg.FREEHORIZ },
+            .{ .tag = sr.SCROLLER_Arrows, .data = @bitCast(@divTrunc(bottom * 16, 11)) },
+        } },
+    };
+    for (bars) |bar| {
+        if (p.bars & bar.want == 0) continue;
+        var tags: [8]TagItem = undefined;
+        @memcpy(tags[0..7], &bar.place);
+        if (bar.made.*) |made| {
+            // Placed again: the program's numbers are its own by now.
+            tags[7] = .{};
+            _ = it.SetAttrsTagList(made, &tags);
+        } else {
+            tags[7] = if (bar.tags) |more| .{ .tag = utility.TAG_MORE, .data = @intFromPtr(more) } else .{};
+            bar.made.* = it.NewObjectTagList(null, sr.SCROLLER_CLASS, &tags);
+        }
+        if (bar.made.*) |made| _ = it.AddGList(window, made, -1, 1);
+    }
+}
+
+/// The window kept from being sized smaller than its bars' arrows and as
+/// much again, on top of what the layout needs - but never more than the
+/// window is now, which `WindowLimits` would refuse outright; the border
+/// drawn with the bars in it.
+fn keepBarRoom(ib: *IntuitionBase, p: *Data, window: *intuition.Window) void {
+    if (p.vert == null and p.horiz == null) return;
+    const it = ib.iface();
+    const left: i32 = @intCast(windowAttr(ib, window, wn.WA_BorderLeft));
+    const top: i32 = @intCast(windowAttr(ib, window, wn.WA_BorderTop));
+    const right: i32 = @intCast(windowAttr(ib, window, wn.WA_BorderRight));
+    const bottom: i32 = @intCast(windowAttr(ib, window, wn.WA_BorderBottom));
+    const width: i32 = @intCast(windowAttr(ib, window, wn.WA_Width));
+    const height: i32 = @intCast(windowAttr(ib, window, wn.WA_Height));
+    const min_width: i32 = @intCast(windowAttr(ib, window, wn.WA_MinWidth));
+    const min_height: i32 = @intCast(windowAttr(ib, window, wn.WA_MinHeight));
+    const wanted_width = @min(@max(min_width, left + right + 4 * bottom), width);
+    const wanted_height = @min(@max(min_height, top + bottom + 4 * right), height);
+    _ = it.WindowLimits(window, wanted_width, wanted_height, 0, 0);
+    it.RefreshWindowFrame(window);
+}
+
+/// A bar's tags copied, when the object is made with it: whether there is
+/// one, and false when there was no memory to copy them.
+fn takeBar(ib: *IntuitionBase, p: *Data, attrs: ?[*]const TagItem, attr: utility.Tag, want: u32, into: *?[*]TagItem) bool {
+    const ub = ib.utility_base;
+    const item = ub.FindTagItem(attr, attrs) orelse return true;
+    p.bars |= want;
+    if (item.data == 0) return true;
+    into.* = ub.CloneTagItems(@ptrFromInt(item.data)) orelse return false;
+    return true;
+}
+
+/// The bars, their tags and their library given back.
+fn dropBars(ib: *IntuitionBase, p: *Data) void {
+    const it = ib.iface();
+    it.DisposeObject(p.vert);
+    it.DisposeObject(p.horiz);
+    if (p.vert_tags) |tags| ib.utility_base.FreeTagItems(tags);
+    if (p.horiz_tags) |tags| ib.utility_base.FreeTagItems(tags);
+    if (p.scroller_lib) |lib| ib.sys_base.CloseLibrary(lib);
+    p.vert = null;
+    p.horiz = null;
+    p.vert_tags = null;
+    p.horiz_tags = null;
+    p.scroller_lib = null;
 }
 
 /// The window closed; the layout stays the object's.
@@ -151,6 +288,7 @@ fn keyGadget(ib: *IntuitionBase, p: *Data, said: u32, qualifier: u32, code: ?*u3
     if (answer & gc.GMKR_VERIFY == 0) return wc.WMHI_LASTMSG;
     var id: usize = 0;
     _ = it.GetAttr(gc.GA_ID, worked, &id);
+    p.gadget_id = id;
     if (code) |out| out.* = @bitCast(termination);
     return wc.WMHI_GADGETUP | (id & wc.WMHI_GADGETMASK);
 }
@@ -165,7 +303,14 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
         const said = im.code;
         const address = im.iaddress;
         const qualifier = im.qualifier;
+        // An update's tag list is the message's, and goes with the reply.
+        const update_id: usize = if (class == wn.IDCMP_IDCMPUPDATE)
+            ib.utility_base.GetTagData(gc.GA_ID, wc.WINDOW_NOGADGET, @ptrCast(@alignCast(address)))
+        else
+            wc.WINDOW_NOGADGET;
         it.ReplyIMsg(im);
+        p.qualifier = qualifier;
+        p.gadget_id = wc.WINDOW_NOGADGET;
         // A key that works a gadget of the layout is that gadget's, not
         // the program's: what it did is reported in the gadget's name, or
         // not at all.
@@ -181,6 +326,7 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
                 // The gadget outlives the message: it is the program's.
                 var id: usize = 0;
                 _ = it.GetAttr(gc.GA_ID, @ptrCast(address), &id);
+                p.gadget_id = id;
                 const kind = if (class == wn.IDCMP_GADGETUP) wc.WMHI_GADGETUP else wc.WMHI_GADGETDOWN;
                 break :blk kind | (id & wc.WMHI_GADGETMASK);
             },
@@ -193,7 +339,10 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
             wn.IDCMP_DISKINSERTED => wc.WMHI_DISKINSERTED,
             wn.IDCMP_DISKREMOVED => wc.WMHI_DISKREMOVED,
             wn.IDCMP_NEWPREFS => wc.WMHI_NEWPREFS,
-            wn.IDCMP_IDCMPUPDATE => wc.WMHI_IDCMPUPDATE | (said & wc.WMHI_GADGETMASK),
+            wn.IDCMP_IDCMPUPDATE => blk: {
+                p.gadget_id = update_id;
+                break :blk wc.WMHI_IDCMPUPDATE | (said & wc.WMHI_GADGETMASK);
+            },
             wn.IDCMP_MOUSEWHEEL => wc.WMHI_MOUSEWHEEL | (said & 0xFFFF),
             else => continue,
         };
@@ -222,21 +371,26 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 .layout = @ptrFromInt(ub.GetTagData(wc.WINDOWA_Layout, 0, new.attr_list)),
                 .title = @ptrFromInt(ub.GetTagData(wn.WA_Title, 0, new.attr_list)),
             };
-            if (new.attr_list != null) {
-                p.tags = ub.CloneTagItems(new.attr_list) orelse {
-                    // Given up on through the superclass: the layout is
-                    // not ours until the object is made.
-                    p.layout = null;
-                    var gone = classusr.Msg{ .method_id = classusr.OM_DISPOSE };
-                    _ = it.SendSuperMessage(cl, obj, &gone);
-                    return 0;
-                };
+            const copied = takeBar(ib, p, new.attr_list, wc.WINDOWA_VertScroller, BAR_VERT, &p.vert_tags) and
+                takeBar(ib, p, new.attr_list, wc.WINDOWA_HorizScroller, BAR_HORIZ, &p.horiz_tags);
+            if (copied and new.attr_list != null) p.tags = ub.CloneTagItems(new.attr_list);
+            if (!copied or (new.attr_list != null and p.tags == null)) {
+                // Given up on through the superclass: the layout is not
+                // ours until the object is made.
+                p.layout = null;
+                dropBars(ib, p);
+                var gone = classusr.Msg{ .method_id = classusr.OM_DISPOSE };
+                _ = it.SendSuperMessage(cl, obj, &gone);
+                return 0;
             }
+            // Without the class there are no bars; the window works without.
+            if (p.bars != 0) p.scroller_lib = ib.sys_base.OpenLibrary(sr.SCROLLER_LIBRARY, 0);
             return made;
         },
         classusr.OM_DISPOSE => {
             const p = own(cl, o orelse return 0);
             _ = close(ib, p);
+            dropBars(ib, p);
             it.DisposeObject(p.layout);
             if (p.tags) |tags| ub.FreeTagItems(tags);
             return it.SendSuperMessage(cl, o, msg);
@@ -263,6 +417,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     break :blk if (port) |mp| @as(usize, 1) << @intCast(mp.sig_bit) else 0;
                 } else 0,
                 wn.WA_Title => get.storage.* = @intFromPtr(p.title),
+                wc.WINDOWA_Qualifier => get.storage.* = p.qualifier,
+                wc.WINDOWA_GadgetID => get.storage.* = p.gadget_id,
+                wc.WINDOWA_VertScroller => get.storage.* = @intFromPtr(p.vert),
+                wc.WINDOWA_HorizScroller => get.storage.* = @intFromPtr(p.horiz),
                 else => return it.SendSuperMessage(cl, o, msg),
             }
             return 1;

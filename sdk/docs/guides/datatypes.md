@@ -251,13 +251,11 @@ MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
 ```
 
 It knows no formats. It opens the file through the library, puts the
-object in a layout that fills the window, and puts a scroll bar in the
-window's right border and one in its bottom border (`GA_RightBorder`,
-`GA_BottomBorder`), each placed from the edge it sits at so that a
-resize keeps it there, and each reaching to the sizing gadget in the
-corner - which is why the window is opened with `WA_SizeBRight` and
-`WA_SizeBBottom`. The bars are made once the window is open, because
-how deep a border came out is known only then.
+object in a layout that fills the window, and has the window object put
+a scroll bar in the window's right border and one in its bottom border
+(`WINDOWA_VertScroller`, `WINDOWA_HorizScroller`), each reaching to the
+sizing gadget in the corner and staying there as the window is sized.
+Their targets are made first, since the bars are made with them.
 
 A bar dragged scrolls the object without the program: each bar's
 `ICA_TARGET` is a **model**, with an `ICA_MAP` turning `SCROLLER_Top`

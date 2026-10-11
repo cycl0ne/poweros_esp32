@@ -43,43 +43,6 @@ pub const max_text: usize = 1024;
 /// The most steps that can be undone.
 const max_steps = 100;
 
-/// A growing array, its memory from exec.
-pub fn List(comptime T: type) type {
-    return struct {
-        items: [*]T = undefined,
-        len: u32 = 0,
-        capacity: u32 = 0,
-
-        const Self = @This();
-
-        pub fn append(list: *Self, sys: *ExecBase, item: T) bool {
-            if (list.len == list.capacity) {
-                // Small to begin with: most steps hold one record.
-                const bigger: u32 = if (list.capacity == 0) 4 else list.capacity * 2;
-                const memory: [*]T = @ptrCast(@alignCast(sys.AllocVec(bigger * @sizeOf(T), exec.MEMF_ANY) orelse return false));
-                if (list.capacity != 0) {
-                    @memcpy(memory[0..list.len], list.items[0..list.len]);
-                    sys.FreeVec(list.items);
-                }
-                list.items = memory;
-                list.capacity = bigger;
-            }
-            list.items[list.len] = item;
-            list.len += 1;
-            return true;
-        }
-
-        pub fn slice(list: *const Self) []T {
-            return list.items[0..list.len];
-        }
-
-        pub fn deinit(list: *Self, sys: *ExecBase) void {
-            if (list.capacity != 0) sys.FreeVec(list.items);
-            list.* = .{};
-        }
-    };
-}
-
 /// A copy of `text` of its own, with a 0 after it; null for no text, or
 /// no memory (`failed` then says so).
 fn copyText(sys: *ExecBase, text: []const u8, failed: *bool) ?[*]u8 {
@@ -157,7 +120,7 @@ const Record = union(enum) {
     shift: struct { columns: bool, at: u32, count: u32, insert: bool },
 };
 
-const Step = struct { records: List(Record) = .{} };
+const Step = struct { records: exec.Array(Record) = .{} };
 
 /// The cells of an area kept apart from the sheet, to be put back
 /// elsewhere: each with its place from the area's top left corner.
@@ -167,7 +130,7 @@ pub const Block = struct {
     /// Where the area was, which a formula's references move from.
     row: u32 = 0,
     col: u32 = 0,
-    entries: List(Entry) = .{},
+    entries: exec.Array(Entry) = .{},
 
     pub const Entry = struct { row: u32, col: u32, text: [*]u8, len: u16 };
 
@@ -188,10 +151,10 @@ pub const Sheet = struct {
     generation: u32 = 0,
     scratch: *eval.Scratch = undefined,
     /// The cells waiting to be worked out, as slot numbers.
-    pending: List(u32) = .{},
+    pending: exec.Array(u32) = .{},
     /// A formula named a cell that could not be put on `pending`.
     starved: bool = false,
-    steps: List(Step) = .{},
+    steps: exec.Array(Step) = .{},
     /// How many of `steps` are done; those after it can be redone.
     position: u32 = 0,
     /// The step being made, between `begin` and `end`.
@@ -671,7 +634,7 @@ pub const Sheet = struct {
                 if (index >= limit) return .no_room;
             }
         }
-        var keys: List(u32) = .{};
+        var keys: exec.Array(u32) = .{};
         defer keys.deinit(sheet.sys);
         for (sheet.slots[0..sheet.capacity]) |cell| {
             if (cell.key != free_key and !keys.append(sheet.sys, cell.key)) return .no_memory;
@@ -747,7 +710,7 @@ pub const Sheet = struct {
     pub fn clear(sheet: *Sheet, area: Area) bool {
         sheet.begin();
         var ok = true;
-        var keys: List(u32) = .{};
+        var keys: exec.Array(u32) = .{};
         defer keys.deinit(sheet.sys);
         for (sheet.slots[0..sheet.capacity]) |cell| {
             if (cell.key == free_key or !area.holds(rowOf(cell.key), colOf(cell.key))) continue;
@@ -790,7 +753,7 @@ pub const Sheet = struct {
         sheet.begin();
         var ok = true;
         // Emptied first, as part of this one step.
-        var keys: List(u32) = .{};
+        var keys: exec.Array(u32) = .{};
         defer keys.deinit(sheet.sys);
         const area = Area{ .top = row, .left = col, .bottom = bottom, .right = right };
         for (sheet.slots[0..sheet.capacity]) |cell| {

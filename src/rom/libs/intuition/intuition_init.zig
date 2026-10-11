@@ -102,7 +102,11 @@ pub const LIBRARY_VERSION = 0;
 /// front to the front and sends one nothing covers to the back, Shift
 /// always to the back; the bar's gadgets have the shape of their
 /// drawings' grids, depth and zoom flush with the window's right edge.
-pub const LIBRARY_REVISION = 39;
+/// 40: windowclass keeps the qualifier and the gadget of the message it
+/// answered last (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`) and makes
+/// scroll bars in its window's borders (`WINDOWA_VertScroller`,
+/// `WINDOWA_HorizScroller`).
+pub const LIBRARY_REVISION = 40;
 const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

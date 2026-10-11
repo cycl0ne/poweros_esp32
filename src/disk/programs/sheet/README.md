@@ -28,7 +28,7 @@ and a file dragged from the desktop and let go on its window is opened.
 - **The scroll bars** are in the window's border.
 
 While the window is the active one, the screen's title bar says
-`Sheet 1.0`. The window's own title says the file's name, with a `*` in
+`Sheet 1.1`. The window's own title says the file's name, with a `*` in
 front while the sheet has changed since it was read or saved.
 
 ## Cells
@@ -135,6 +135,7 @@ On the cells:
 | Del | empties the cells picked |
 | cursor keys | move the current cell |
 | Page Up, Page Down | move a window's height of rows |
+| Shift with a cursor key, Page Up or Page Down | picks the cells from the current one to where the key goes, the current cell staying |
 | Home, End | the first cell of the row, the last one with anything in it |
 | Return, Tab | move down, move right |
 | Escape | picks only the current cell |
@@ -152,7 +153,8 @@ In the line at the top:
 | Escape | puts back what the cell held |
 
 Pressing a cell makes it current; pressing it again and letting go there
-edits it. A drag over cells picks the rectangle it goes over. A press on a
+edits it. A drag over cells picks the rectangle it goes over, and a press
+with Shift the cells from the current one to the one pressed. A press on a
 column's letter or a row's number picks the whole column or row, a drag
 along them several, and the corner between them every cell. A drag on the
 line at the right of a column's letter makes the column wider or
@@ -218,9 +220,9 @@ over a stack of values, so no formula nests deeper than the program's
 stack. Working the sheet out uses a stack of its own as well: a formula
 that names one not yet worked out puts it on that stack and is tried
 again after it, so a column of a thousand formulas each naming the one
-above costs memory, not stack. The grid is a `canvas.gadget` as big as
-the screen, drawn into by the program and shown as far as the window has
-room.
+above costs memory, not stack. The grid is a `canvas.gadget` whose
+picture is made as big as its box whenever the window is sized, and the
+scroll bars are the window object's.
 
 The host tests run with the system's:
 

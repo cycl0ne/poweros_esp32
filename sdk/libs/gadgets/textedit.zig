@@ -75,7 +75,6 @@ const utility = @import("../utility/utility.zig");
 const classusr = @import("../intuition/classusr.zig");
 const windows = @import("../intuition/windows.zig");
 const iffparse = @import("../iffparse/iffparse.zig");
-const clipboard = @import("../../devices/clipboard.zig");
 const gadgets = @import("gadgets.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const IntuitionBase = @import("../../interface/intuition.zig").IntuitionBase;
@@ -202,16 +201,13 @@ pub const TepFind = extern struct {
     flags: u32 = 0,
 };
 
-const ID_FTXT = iffparse.MakeID("FTXT");
-const ID_CHRS = iffparse.MakeID("CHRS");
-
 /// What is selected in `editor`, written to the clipboard. Whether any
 /// went. On the program's own process: the gadget is asked under
 /// intuition's lock, and the clipboard is written after it.
 pub fn copy(sys: *ExecBase, ib: *IntuitionBase, ip: *IFFParseBase, editor: *Object, window: *windows.Window) bool {
     const selected = takeSelection(sys, ib, editor, window) orelse return false;
     defer sys.FreeVec(selected.ptr);
-    return writeClip(ip, selected);
+    return iffparse.clip.writeText(ip, selected);
 }
 
 /// What is selected written to the clipboard and taken out of the text, as
@@ -219,7 +215,7 @@ pub fn copy(sys: *ExecBase, ib: *IntuitionBase, ip: *IFFParseBase, editor: *Obje
 pub fn cut(sys: *ExecBase, ib: *IntuitionBase, ip: *IFFParseBase, editor: *Object, window: *windows.Window) bool {
     const selected = takeSelection(sys, ib, editor, window) orelse return false;
     defer sys.FreeVec(selected.ptr);
-    if (!writeClip(ip, selected)) return false;
+    if (!iffparse.clip.writeText(ip, selected)) return false;
     var out = TepInsert{};
     return ib.DoGadgetMethodA(editor, window, null, @ptrCast(&out)) != 0;
 }
@@ -227,7 +223,7 @@ pub fn cut(sys: *ExecBase, ib: *IntuitionBase, ip: *IFFParseBase, editor: *Objec
 /// The clipboard's text put in place of what is selected, or at the
 /// cursor. Whether there was text to put.
 pub fn paste(sys: *ExecBase, ib: *IntuitionBase, ip: *IFFParseBase, editor: *Object, window: *windows.Window) bool {
-    const text = readClip(sys, ip) orelse return false;
+    const text = iffparse.clip.readText(sys, ip) orelse return false;
     defer sys.FreeVec(text.ptr);
     var in = TepInsert{ .text = text.ptr, .length = @intCast(text.len) };
     return ib.DoGadgetMethodA(editor, window, null, @ptrCast(&in)) != 0;
@@ -243,59 +239,4 @@ fn takeSelection(sys: *ExecBase, ib: *IntuitionBase, editor: *Object, window: *w
     var take = TepText{ .method_id = TEM_SELECTION, .buffer = memory, .size = length };
     const got: u32 = @truncate(ib.DoGadgetMethodA(editor, window, null, @ptrCast(&take)));
     return memory[0..@min(got, length)];
-}
-
-fn writeClip(ip: *IFFParseBase, text: []const u8) bool {
-    if (text.len == 0) return false;
-    const iff = ip.AllocIFF() orelse return false;
-    defer ip.FreeIFF(iff);
-    const clip = ip.OpenClipboard(clipboard.PRIMARY_CLIP) orelse return false;
-    defer ip.CloseClipboard(clip);
-    iff.stream = @intFromPtr(clip);
-    ip.InitIFFasClip(iff);
-    if (ip.OpenIFF(iff, iffparse.IFFF_WRITE) != 0) return false;
-    defer ip.CloseIFF(iff);
-    if (ip.PushChunk(iff, ID_FTXT, iffparse.ID_FORM, iffparse.IFFSIZE_UNKNOWN) != 0) return false;
-    if (ip.PushChunk(iff, 0, ID_CHRS, @intCast(text.len)) != 0) return false;
-    if (ip.WriteChunkBytes(iff, text.ptr, @intCast(text.len)) < 0) return false;
-    _ = ip.PopChunk(iff);
-    _ = ip.PopChunk(iff);
-    return true;
-}
-
-/// Every CHRS chunk of the clipboard's FTXT, one after another, in memory
-/// of its own for the caller to FreeVec; null for no text.
-fn readClip(sys: *ExecBase, ip: *IFFParseBase) ?[]u8 {
-    const iff = ip.AllocIFF() orelse return null;
-    defer ip.FreeIFF(iff);
-    const clip = ip.OpenClipboard(clipboard.PRIMARY_CLIP) orelse return null;
-    defer ip.CloseClipboard(clip);
-    iff.stream = @intFromPtr(clip);
-    ip.InitIFFasClip(iff);
-    if (ip.OpenIFF(iff, iffparse.IFFF_READ) != 0) return null;
-    defer ip.CloseIFF(iff);
-    if (ip.StopChunk(iff, ID_FTXT, ID_CHRS) != 0) return null;
-    var length: usize = 0;
-    var gathered: ?[*]u8 = null;
-    // A clip is read once, front to back, so the text grows as the chunks
-    // come.
-    while (ip.ParseIFF(iff, iffparse.IFFPARSE_SCAN) == 0) {
-        const chunk = ip.CurrentChunk(iff) orelse continue;
-        if (chunk.id != ID_CHRS or chunk.size <= 0) continue;
-        const size: usize = @intCast(chunk.size);
-        const bigger: [*]u8 = @ptrCast(sys.AllocVec(length + size, exec.MEMF_ANY) orelse break);
-        if (gathered) |old| {
-            @memcpy(bigger[0..length], old[0..length]);
-            sys.FreeVec(old);
-        }
-        gathered = bigger;
-        if (ip.ReadChunkBytes(iff, bigger + length, chunk.size) != chunk.size) break;
-        length += size;
-    }
-    const text = gathered orelse return null;
-    if (length == 0) {
-        sys.FreeVec(text);
-        return null;
-    }
-    return text[0..length];
 }
