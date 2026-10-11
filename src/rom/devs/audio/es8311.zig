@@ -11,9 +11,13 @@
 //!
 //! It is a mono part with one speaker output. The stream it is given is
 //! still stereo, because that is what the I2S frame is; the part takes
-//! the left channel of it.
+//! the left channel of it, so the mixer puts both sides into each half.
 
 const std = @import("std");
+const mixer = @import("mixer.zig");
+
+/// One output: both sides in each half of the frame.
+pub const sides: mixer.Sides = .mono;
 
 /// Where it answers by default, with its address pin low.
 pub const address: u16 = 0x18;
