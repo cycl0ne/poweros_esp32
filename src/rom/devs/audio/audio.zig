@@ -6,19 +6,24 @@
 //! period, a volume and a count of cycles. This machine has no four-voice
 //! hardware, so the device is the hardware: a task mixes the four into
 //! one stereo stream (`mixer.zig`) and a DMA channel hands that stream to
-//! the I2S controller, which clocks it into an ES8311 codec
-//! (`es8311.zig`) and out to the speaker.
+//! the chip's I2S controller (`esp32s3/i2s.zig`, `esp32p4/i2s.zig`).
+//!
+//! Where the stream goes is the board's: an ES8311 codec (`es8311.zig`)
+//! set up over I2C, with an amplifier in front of the speaker, or an
+//! amplifier that takes I2S itself and needs nothing set up - the
+//! CrowPanel's pair, one a speaker. Either has an enable line the device
+//! drives while the stream runs.
 //!
 //! Nothing is touched until the first OpenDevice. That starts the task,
-//! which brings the codec up over i2c.device, turns the amplifier on,
-//! takes a DMA channel from dma.resource and starts the stream. From
-//! then on the DMA raises an interrupt every time it finishes a buffer,
-//! the interrupt signals the task, and the task mixes the next one - so
-//! the stream is fed ahead of itself and nothing waits on a bus at the
-//! moment a sample is due.
+//! which brings the codec up over i2c.device if there is one, turns the
+//! amplifier on, takes a DMA channel from dma.resource and starts the
+//! stream. From then on the DMA raises an interrupt every time it
+//! finishes a buffer, the interrupt signals the task, and the task mixes
+//! the next one - so the stream is fed ahead of itself and nothing waits
+//! on a bus at the moment a sample is due.
 //!
-//! A board with no codec has no audio.device: `src/main.zig` links it
-//! only where the board's description has `audio`.
+//! A board with neither has no audio.device: only the ROM tags of a board
+//! that has one link it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -38,13 +43,16 @@ const st = expansion.systemtags;
 const BoardPin = expansion.BoardPin;
 const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
-const i2s = @import("i2s.zig");
-const gpio = @import("sdk").hardware.gpio;
+const i2s = switch (sdk.hardware.chip) {
+    .esp32s3 => @import("esp32s3/i2s.zig"),
+    .esp32p4 => @import("esp32p4/i2s.zig"),
+};
+const gpio = sdk.hardware.gpio;
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "23.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "11.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -127,15 +135,17 @@ const AudioBase = extern struct {
     last_key: i16 = 0,
     /// Allocations waiting for channels to come free.
     waiting: exec.List = .{},
-    /// What the board's codec and amplifier parts say, read at init: the
-    /// codec's I2C unit and address, the pads of its I2S lines, and the
-    /// amplifier's enable line. `has_codec` clear: the board has none this
-    /// device can drive.
+    /// What the board's parts say, read at init: where the stream goes
+    /// (`has_output`), whether that is a codec to set up (`has_codec`) and
+    /// its I2C unit and address, the pads of the I2S lines - MCLK only for
+    /// a codec, `no_pad` otherwise - the amplifier's enable line, and the
+    /// output's chip name.
     has_codec: u8 = 0,
-    pad3: u8 = 0,
+    has_output: u8 = 0,
     codec_address: u16 = 0,
     bus_unit: u32 = 0,
-    mclk_pin: u8 = 0,
+    output_name: [*:0]const u8 = "",
+    mclk_pin: u8 = no_pad,
     bclk_pin: u8 = 0,
     ws_pin: u8 = 0,
     data_out_pin: u8 = 0,
@@ -147,8 +157,12 @@ const AudioBase = extern struct {
     held_count: u8 = 0,
     /// The pads are this device's: taken, or no resource to take them from.
     pads_held: u8 = 0,
-    pad7: u8 = 0,
+    /// Which side the output's speakers take first (PART_SidesSwapped).
+    sides: mixer.Sides = .left_first,
 };
+
+/// An I2S line the board does not bring out: MCLK, for an amplifier.
+const no_pad: u8 = 0xFF;
 
 fn audioBase(dev: *exec.Device) *AudioBase {
     return @alignCast(@fieldParentPtr("dev", dev));
@@ -196,7 +210,8 @@ fn amplifier(ab: *AudioBase, on: bool) void {
     gpio.setLevel(line.number, if (line.active_low != 0) !on else on);
 }
 
-/// The pads the controller drives: the three clocks and the data out.
+/// The pads the controller drives: the clocks the output takes and the
+/// data out.
 fn connectPads(ab: *AudioBase) void {
     const pads = [_]struct { pin: u8, signal: u32 }{
         .{ .pin = ab.mclk_pin, .signal = i2s.signal_mclk },
@@ -205,6 +220,7 @@ fn connectPads(ab: *AudioBase) void {
         .{ .pin = ab.data_out_pin, .signal = i2s.signal_data_out },
     };
     for (pads) |pad| {
+        if (pad.pin == no_pad) continue;
         gpio.toMatrix(pad.pin);
         gpio.connectOut(pad.pin, pad.signal, false);
         gpio.outputEnable(pad.pin, true);
@@ -231,65 +247,81 @@ fn step(ab: *AudioBase, what: [*:0]const u8) void {
 /// the order the parts want it.
 fn bringUp(ab: *AudioBase) bool {
     const sys = ab.sys_base;
-    if (ab.has_codec == 0) {
-        sdk.exec.kprintf(sys, "%s: the board has no codec\n", .{DEVICE_NAME});
+    if (ab.has_output == 0) {
+        sdk.exec.kprintf(sys, "%s: the board has no codec or I2S amplifier\n", .{DEVICE_NAME});
         return false;
     }
     if (!takePads(ab)) return false;
 
-    ab.port = sys.CreateMsgPort() orelse return false;
-    ab.i2c_io = .{};
-    ab.i2c_io.req.req.message.reply_port = ab.port;
-    ab.i2c_io.req.req.message.length = @sizeOf(i2c.IOExtI2C);
-    if (sys.OpenDevice(i2c.DEVICE_NAME, ab.bus_unit, &ab.i2c_io.req.req, 0) != 0) {
-        sdk.exec.kprintf(sys, "%s: no %s unit %d\n", .{ DEVICE_NAME, i2c.DEVICE_NAME, ab.bus_unit });
-        return false;
+    if (ab.has_codec != 0) {
+        ab.port = sys.CreateMsgPort() orelse return false;
+        ab.i2c_io = .{};
+        ab.i2c_io.req.req.message.reply_port = ab.port;
+        ab.i2c_io.req.req.message.length = @sizeOf(i2c.IOExtI2C);
+        if (sys.OpenDevice(i2c.DEVICE_NAME, ab.bus_unit, &ab.i2c_io.req.req, 0) != 0) {
+            sdk.exec.kprintf(sys, "%s: no %s unit %d\n", .{ DEVICE_NAME, i2c.DEVICE_NAME, ab.bus_unit });
+            return false;
+        }
+        ab.timer_io = .{};
+        ab.timer_io.node.message.reply_port = ab.port;
+        ab.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
+        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &ab.timer_io.node, 0) != 0) return false;
+        step(ab, "i2c.device and timer.device open");
     }
-    ab.timer_io = .{};
-    ab.timer_io.node.message.reply_port = ab.port;
-    ab.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &ab.timer_io.node, 0) != 0) return false;
-    step(ab, "i2c.device and timer.device open");
 
     // The stream's memory: the buffers the DMA reads and the descriptors
-    // that ring them, both where the DMA can reach them.
+    // that ring them, both where the DMA can reach them. Where the data
+    // cache covers that memory, the silence it starts with is written
+    // back, or the DMA plays whatever was there before.
     const memory = sys.AllocVec(buffer_bytes * buffers, exec.MEMF_INTERNAL | exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
     ab.stream = @ptrCast(@alignCast(memory));
+    var stream_bytes: u32 = buffer_bytes * buffers;
+    _ = sys.CachePreDMA(memory, &stream_bytes, 0);
 
+    // A channel of the engine that serves the controller: one the
+    // controller cannot be connected to is given back, and the next tried.
     const db: *dmares.DmaBase = @ptrCast(sys.OpenResource(dmares.DMANAME) orelse return false);
     ab.dma = db;
-    var ch: u32 = 0;
-    while (ch < dmares.DMA_CHANNELS) : (ch += 1) {
-        if (db.AllocDMAChannel(ch, DEVICE_NAME) == null) break;
+    const ch = for (0..dmares.DMA_CHANNELS) |n| {
+        const candidate: u32 = @intCast(n);
+        if (db.AllocDMAChannel(candidate, DEVICE_NAME) != null) continue;
+        // A ring that never stops: the stream is endless, and a buffer
+        // handed back would be a buffer the DMA stopped at.
+        if (db.ConnectDMAChannel(candidate, i2s.dma_peripheral, dmares.DMACF_LOOP)) break candidate;
+        db.FreeDMAChannel(candidate);
     } else {
         sdk.exec.kprintf(sys, "%s: no DMA channel free\n", .{DEVICE_NAME});
         return false;
-    }
+    };
     ab.channel = ch;
     ab.has_channel = 1;
-    // A ring that never stops: the stream is endless, and a buffer handed
-    // back would be a buffer the DMA stopped at.
-    if (!db.ConnectDMAChannel(ch, i2s.dma_peripheral, dmares.DMACF_LOOP)) return false;
     // A descriptor a buffer, linked head to tail: the DMA runs round them
-    // for ever and says at the end of each which one has been played.
+    // for ever and says at the end of each which one has been played. The
+    // links are written after AllocDMAChain wrote the chains back, so
+    // they are written back again.
     const stream: [*]u8 = @ptrCast(memory);
     for (0..buffers) |i| {
         ab.chain[i] = db.AllocDMAChain(dmares.DMA_OUT, stream + i * buffer_bytes, buffer_bytes, 0) orelse return false;
     }
     for (0..buffers) |i| {
-        ab.chain[i].?.next = ab.chain[(i + 1) % buffers];
+        const one = ab.chain[i].?;
+        one.next = ab.chain[(i + 1) % buffers];
+        var descriptor_bytes: u32 = @sizeOf(dmares.DMADescriptor);
+        _ = sys.CachePreDMA(@ptrCast(one), &descriptor_bytes, 0);
     }
     step(ab, "DMA channel and buffers");
 
     // The codec, over the bus it shares with the touch controller.
-    for (es8311.bring_up) |one| {
-        if (!writeCodec(ab, one.reg, one.value)) {
-            sdk.exec.kprintf(sys, "%s: the codec does not answer at 0x%02x\n", .{ DEVICE_NAME, @as(u32, ab.codec_address) });
-            return false;
+    if (ab.has_codec != 0) {
+        for (es8311.bring_up) |one| {
+            if (!writeCodec(ab, one.reg, one.value)) {
+                sdk.exec.kprintf(sys, "%s: the codec does not answer at 0x%02x\n", .{ DEVICE_NAME, @as(u32, ab.codec_address) });
+                return false;
+            }
+            if (one.delay_ms != 0) wait(ab, @as(u32, one.delay_ms) * 1000);
         }
-        if (one.delay_ms != 0) wait(ab, @as(u32, one.delay_ms) * 1000);
+        step(ab, "codec up");
     }
-    step(ab, "codec up");
 
     // The controller, its pads, and the stream running. The codec counts
     // everything in the master clock, so the clocks come before its
@@ -302,11 +334,11 @@ fn bringUp(ab: *AudioBase) bool {
     sys.AddIntServer(dmares.dmaIntNumber(ch, dmares.DMA_OUT), &ab.int);
     i2s.start();
 
-    _ = writeCodec(ab, es8311.reg_volume, es8311.volumeFor(codec_volume));
+    if (ab.has_codec != 0) _ = writeCodec(ab, es8311.reg_volume, es8311.volumeFor(codec_volume));
     amplifier(ab, true);
-    sdk.exec.kprintf(sys, "%s: ES8311 at 0x%02x, %d Hz stereo, %d channels mixed\n", .{
+    sdk.exec.kprintf(sys, "%s: %s, %d Hz stereo, %d channels mixed\n", .{
         DEVICE_NAME,
-        @as(u32, ab.codec_address),
+        ab.output_name,
         i2s.sample_rate,
         @as(u32, mixer.channels),
     });
@@ -322,11 +354,16 @@ fn takePads(ab: *AudioBase) bool {
         ab.pads_held = 1;
         return true;
     }));
-    var wanted: [5]u8 = .{ ab.mclk_pin, ab.bclk_pin, ab.ws_pin, ab.data_out_pin, 0 };
-    var count: u8 = 4;
+    var wanted: [5]u8 = @splat(0);
+    var count: u8 = 0;
+    for ([_]u8{ ab.mclk_pin, ab.bclk_pin, ab.ws_pin, ab.data_out_pin }) |pad| {
+        if (pad == no_pad) continue;
+        wanted[count] = pad;
+        count += 1;
+    }
     if (ab.amplifier.kind == expansion.boardpin.BPIN_GPIO) {
-        wanted[4] = ab.amplifier.number;
-        count = 5;
+        wanted[count] = ab.amplifier.number;
+        count += 1;
     }
     if (gpio_resource.allocPads(gb, wanted[0..count], DEVICE_NAME)) |refused| {
         sdk.exec.kprintf(sys, "%s: GPIO%d is %s's\n", .{ DEVICE_NAME, refused.pad, refused.holder });
@@ -384,7 +421,7 @@ fn freeBuffer(ab: *AudioBase) []i16 {
 /// One buffer's worth of sound, and whatever that finished replied.
 fn mixBuffer(ab: *AudioBase) void {
     const out = freeBuffer(ab);
-    const done = mixer.fill(&ab.voices, out);
+    const done = mixer.fill(&ab.voices, out, ab.sides);
     var bytes: u32 = @intCast(out.len * 2);
     _ = ab.sys_base.CachePreDMA(@ptrCast(out.ptr), &bytes, 0);
     if (done.finished == 0) return;
@@ -918,15 +955,16 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         .data = ab,
         .code = &intServer,
     };
-    findCodec(ab);
+    findOutput(ab);
     return dev;
 }
 
-/// The board's codec - an ES8311, the chip this device drives - and its
-/// amplifier, read into the base. A board without the codec, or whose I2S
-/// lines are not pads of the chip, leaves `has_codec` clear, and every
-/// open fails.
-fn findCodec(ab: *AudioBase) void {
+/// Where the stream goes, read into the base: the board's codec - an
+/// ES8311, the codec this device drives - and its amplifier, or on a board
+/// without one an amplifier that takes I2S itself. One whose I2S lines are
+/// not pads of the chip is no output; with none, `has_output` stays clear
+/// and every open fails.
+fn findOutput(ab: *AudioBase) void {
     const sys = ab.sys_base;
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
     defer sys.CloseLibrary(utility_lib);
@@ -934,25 +972,55 @@ fn findCodec(ab: *AudioBase) void {
     const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    const codec = eb.FindBoardPart(null, st.PARTKIND_CODEC, st.CHIP_ES8311) orelse return;
-    const tags = codec.tags;
-    const lines = [_]sdk.utility.Tag{ st.PART_PinMCLK, st.PART_PinBCLK, st.PART_PinWS, st.PART_PinDataOut };
+    if (eb.FindBoardPart(null, st.PARTKIND_CODEC, st.CHIP_ES8311)) |codec| {
+        const tags = codec.tags;
+        if (!readLines(ab, ub, tags)) return;
+        const mclk = BoardPin.of(ub.GetTagData(st.PART_PinMCLK, 0, tags));
+        if (mclk.kind != expansion.boardpin.BPIN_GPIO) return;
+        ab.mclk_pin = mclk.number;
+        ab.codec_address = @truncate(ub.GetTagData(st.PART_Address, es8311.address, tags));
+        ab.bus_unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, tags));
+        if (eb.FindBoardPart(null, st.PARTKIND_AMPLIFIER, st.CHIP_ANY)) |amp| {
+            ab.amplifier = BoardPin.of(ub.GetTagData(st.PART_PinEnable, 0, amp.tags));
+        }
+        ab.output_name = codec.node.name orelse "es8311";
+        ab.sides = sidesOf(ub, tags);
+        ab.has_codec = 1;
+        ab.has_output = 1;
+        return;
+    }
+    // No codec: an amplifier on I2S, which is its own enable line's.
+    var found = eb.FindBoardPart(null, st.PARTKIND_AMPLIFIER, st.CHIP_ANY);
+    while (found) |amp| : (found = eb.FindBoardPart(amp, st.PARTKIND_AMPLIFIER, st.CHIP_ANY)) {
+        if (ub.GetTagData(st.PART_Bus, st.BUS_NONE, amp.tags) != st.BUS_I2S) continue;
+        if (!readLines(ab, ub, amp.tags)) return;
+        ab.amplifier = BoardPin.of(ub.GetTagData(st.PART_PinEnable, 0, amp.tags));
+        ab.output_name = amp.node.name orelse "amplifier";
+        ab.sides = sidesOf(ub, amp.tags);
+        ab.has_output = 1;
+        return;
+    }
+}
+
+/// Which side the part's speakers take first in a frame.
+fn sidesOf(ub: *sdk.interface.utility.UtilityBase, tags: ?[*]const sdk.utility.TagItem) mixer.Sides {
+    return if (ub.GetTagData(st.PART_SidesSwapped, 0, tags) != 0) .right_first else .left_first;
+}
+
+/// The bit clock, the word clock and the data out of a part's tags, into
+/// the base. False if one is not a pad of the chip.
+fn readLines(ab: *AudioBase, ub: *sdk.interface.utility.UtilityBase, tags: ?[*]const sdk.utility.TagItem) bool {
+    const lines = [_]sdk.utility.Tag{ st.PART_PinBCLK, st.PART_PinWS, st.PART_PinDataOut };
     var pads: [lines.len]u8 = undefined;
     for (lines, 0..) |tag, at| {
         const line = BoardPin.of(ub.GetTagData(tag, 0, tags));
-        if (line.kind != expansion.boardpin.BPIN_GPIO) return;
+        if (line.kind != expansion.boardpin.BPIN_GPIO) return false;
         pads[at] = line.number;
     }
-    ab.mclk_pin = pads[0];
-    ab.bclk_pin = pads[1];
-    ab.ws_pin = pads[2];
-    ab.data_out_pin = pads[3];
-    ab.codec_address = @truncate(ub.GetTagData(st.PART_Address, es8311.address, tags));
-    ab.bus_unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, tags));
-    if (eb.FindBoardPart(null, st.PARTKIND_AMPLIFIER, st.CHIP_ANY)) |amp| {
-        ab.amplifier = BoardPin.of(ub.GetTagData(st.PART_PinEnable, 0, amp.tags));
-    }
-    ab.has_codec = 1;
+    ab.bclk_pin = pads[0];
+    ab.ws_pin = pads[1];
+    ab.data_out_pin = pads[2];
+    return true;
 }
 
 const vectors = [_]*const anyopaque{

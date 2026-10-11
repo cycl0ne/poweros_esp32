@@ -32,6 +32,11 @@ pub fn leftOf(channel: usize) bool {
     return channel == 0 or channel == 3;
 }
 
+/// Which side goes first in a frame. I2S sends the left side first, and
+/// most boards' speakers take it so; a board whose right speaker plays
+/// the first half has the sides the other way round.
+pub const Sides = enum(u8) { left_first, right_first };
+
 /// One channel: what it is playing, where it has got to and how loud.
 pub const Channel = extern struct {
     /// The samples, and how many. Null is a channel playing nothing.
@@ -70,9 +75,9 @@ pub fn stepFor(clock: u32, period: u16, rate: u32) u32 {
 }
 
 /// `frames` stereo frames into `out`, taken from whichever channels are
-/// playing. `out` holds two samples a frame, left first. Answers which
-/// channels ended.
-pub fn fill(list: *[channels]Channel, out: []i16) Done {
+/// playing. `out` holds two samples a frame, in the order `sides` gives.
+/// Answers which channels ended.
+pub fn fill(list: *[channels]Channel, out: []i16, sides: Sides) Done {
     var done: Done = .{};
     const frames = out.len / 2;
     for (0..frames) |frame| {
@@ -95,8 +100,10 @@ pub fn fill(list: *[channels]Channel, out: []i16) Done {
             if (leftOf(i)) left += value else right += value;
             c.position +%= c.step;
         }
-        out[frame * 2] = clip(left);
-        out[frame * 2 + 1] = clip(right);
+        const first = if (sides == .left_first) left else right;
+        const second = if (sides == .left_first) right else left;
+        out[frame * 2] = clip(first);
+        out[frame * 2 + 1] = clip(second);
     }
     return done;
 }
@@ -147,7 +154,7 @@ test "a channel plays its samples, once or over and over" {
         .cycles = 1,
     };
     var out: [8]i16 = @splat(0);
-    const done = fill(&list, &out);
+    const done = fill(&list, &out, .left_first);
     // Left is channel 0: the two samples, then silence once it has ended.
     try testing.expectEqual(@as(i16, 100 * 64 * 4), out[0]);
     try testing.expectEqual(@as(i16, -100 * 64 * 4), out[2]);
@@ -160,14 +167,14 @@ test "a channel plays its samples, once or over and over" {
     // Two cycles: the samples come round again.
     list[0] = .{ .data = &samples, .length = samples.len, .step = one, .volume = 64, .cycles = 2 };
     var twice: [8]i16 = @splat(0);
-    _ = fill(&list, &twice);
+    _ = fill(&list, &twice, .left_first);
     try testing.expectEqual(@as(i16, 100 * 64 * 4), twice[0]);
     try testing.expectEqual(@as(i16, 100 * 64 * 4), twice[4]);
 
     // Endless: still playing after the samples ran out.
     list[0] = .{ .data = &samples, .length = samples.len, .step = one, .volume = 64, .endless = 1 };
     var forever: [16]i16 = @splat(0);
-    const none = fill(&list, &forever);
+    const none = fill(&list, &forever, .left_first);
     try testing.expectEqual(@as(u32, 0), none.finished);
     try testing.expect(list[0].playing());
 }
@@ -180,18 +187,32 @@ test "the sides, the volume and the clip" {
     list[1] = .{ .data = &loud, .length = 1, .step = 0, .volume = 64, .endless = 1 };
     list[2] = .{ .data = &loud, .length = 1, .step = 0, .volume = 64, .endless = 1 };
     var out: [2]i16 = @splat(0);
-    _ = fill(&list, &out);
+    _ = fill(&list, &out, .left_first);
     try testing.expectEqual(@as(i16, 0), out[0]);
     try testing.expectEqual(std.math.maxInt(i16), out[1]);
 
     // Half the volume is half the sample.
     list[2] = .{};
     list[1].volume = 32;
-    _ = fill(&list, &out);
+    _ = fill(&list, &out, .left_first);
     try testing.expectEqual(@as(i16, 127 * 32 * 4), out[1]);
 
     // A silent channel is silent.
     list[1].volume = 0;
-    _ = fill(&list, &out);
+    _ = fill(&list, &out, .left_first);
     try testing.expectEqual(@as(i16, 0), out[1]);
+}
+
+test "sides the other way round: the right side goes first" {
+    const left_note = [_]i8{100};
+    const right_note = [_]i8{-50};
+    var list: [channels]Channel = @splat(.{});
+    list[0] = .{ .data = &left_note, .length = 1, .step = 0, .volume = 64, .endless = 1 };
+    list[1] = .{ .data = &right_note, .length = 1, .step = 0, .volume = 64, .endless = 1 };
+    var out: [4]i16 = @splat(0);
+    _ = fill(&list, &out, .right_first);
+    for (0..2) |frame| {
+        try testing.expectEqual(@as(i16, -50 * 64 * 4), out[frame * 2]);
+        try testing.expectEqual(@as(i16, 100 * 64 * 4), out[frame * 2 + 1]);
+    }
 }

@@ -40,6 +40,12 @@ pub const PERI_CLK_CTRL02: usize = map.HP_SYS_CLKRST + 0x038;
 pub const PERI_CLK_CTRL03: usize = map.HP_SYS_CLKRST + 0x03C;
 pub const PERI_CLK_CTRL10: usize = map.HP_SYS_CLKRST + 0x040;
 pub const PERI_CLK_CTRL11: usize = map.HP_SYS_CLKRST + 0x044;
+/// I2S1's receive and transmit clocks: PERI_CLK_CTRL15 its receiver's
+/// divider and the transmitter's enable and source, PERI_CLK_CTRL16 and 17
+/// the transmitter's divider and the master clock's choice.
+pub const PERI_CLK_CTRL15: usize = map.HP_SYS_CLKRST + 0x054;
+pub const PERI_CLK_CTRL16: usize = map.HP_SYS_CLKRST + 0x058;
+pub const PERI_CLK_CTRL17: usize = map.HP_SYS_CLKRST + 0x05C;
 pub const PERI_CLK_CTRL21: usize = map.HP_SYS_CLKRST + 0x098;
 pub const PERI_CLK_CTRL110: usize = map.HP_SYS_CLKRST + 0x068;
 pub const PERI_CLK_CTRL111: usize = map.HP_SYS_CLKRST + 0x06C;
@@ -88,6 +94,11 @@ pub const Peripheral = enum {
     dma2d,
     /// The JPEG codec.
     jpeg,
+    /// The second I2S controller: its bus clock, its master clock's pad
+    /// and its reset. Its transmit and receive clocks - enable, source,
+    /// fractional divider - are its driver's to set (`update`, on
+    /// PERI_CLK_CTRL15 to 17).
+    i2s1,
 };
 
 /// One bit in one register.
@@ -177,6 +188,10 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
         .jpeg => .{
             .clocks = &.{bit(SOC_CLK_CTRL1, 8)},
             .resets = &.{bit(HP_RST_EN0, 30)},
+        },
+        .i2s1 => .{
+            .clocks = &.{ bit(SOC_CLK_CTRL2, 15), bit(LP_HP_CLK_CTRL, 11) },
+            .resets = &.{bit(HP_RST_EN2, 5)},
         },
     };
 }

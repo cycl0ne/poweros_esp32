@@ -17,8 +17,8 @@ const openDevice = ramlib.openDevice;
 
 pub const LIBRARY_NAME = "ramlib.library";
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "09.10.2026";
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "11.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

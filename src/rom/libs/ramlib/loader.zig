@@ -92,11 +92,14 @@ pub fn load(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32, own_
     return made;
 }
 
-/// Whether the module is there: a library on exec's list, a device that
-/// was loaded. Under the lists' lock.
+/// Whether the module is there: a library on exec's list, a device on
+/// exec's list or one that was loaded. A device that is listed and refused
+/// the open - its hardware missing, its unit taken - is not made again:
+/// its ROM tag or its file would make a second one beside it. Under the
+/// lists' lock.
 fn isThere(rlb: *RamLibBase, tail: [*:0]const u8, kind: u32) bool {
     if (kind == ramlib.KIND_LIBRARY) return libraryListed(rlb, tail);
-    return alreadyLoaded(rlb, tail);
+    return deviceListed(rlb, tail) or alreadyLoaded(rlb, tail);
 }
 
 /// The record of a module of that name being loaded now, if one is.
@@ -283,6 +286,15 @@ fn libraryListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
     return true;
 }
 
+/// Whether exec has a device of that name, read under the device list's
+/// own lock.
+fn deviceListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
+    const sys = rlb.sys_base;
+    const list = sys.LockExecList(exec.EXECLIST_DEVICES) orelse return false;
+    defer sys.UnlockExecList(exec.EXECLIST_DEVICES);
+    return sys.FindName(list, name) != null;
+}
+
 /// A library that was loaded and has expunged itself since: its base is
 /// gone and its code is used by nothing, so the segments go with the note.
 fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
@@ -395,6 +407,72 @@ test "a name being loaded is not waited for by its own loader, and its record go
     sys.ReleaseSemaphore(&rlb.lock);
     try testing.expect(rlb.loading.isEmpty());
     try testing.expectEqual(@as(i16, 0), rlb.lock.nest_count);
+    try kexec.expectNoLeaks();
+}
+
+fn refuseOpen(_: *exec.Device, _: *exec.IORequest, _: u32, _: u32) callconv(.c) i32 {
+    return exec.IOERR_OPENFAIL;
+}
+
+fn stayPut(_: *exec.Device) callconv(.c) ?*anyopaque {
+    return null;
+}
+
+fn nothing(_: *exec.Device, _: *exec.IORequest) callconv(.c) void {}
+
+fn noAbort(_: *exec.Device, _: *exec.IORequest) callconv(.c) i32 {
+    return 0;
+}
+
+const refusing_vectors = [_]*const anyopaque{
+    exec.libraries.vec(refuseOpen),
+    exec.libraries.vec(exec.libraries.libClose),
+    exec.libraries.vec(stayPut),
+    exec.libraries.vec(exec.libraries.libExtFunc),
+    exec.libraries.vec(nothing),
+    exec.libraries.vec(noAbort),
+};
+
+const refusing_table = exec.InitTable{
+    .data_size = @sizeOf(exec.Device),
+    .vectors = &refusing_vectors,
+    .vector_count = refusing_vectors.len,
+};
+
+test "a device that is there and refuses the open is not made again" {
+    const kexec = @import("../exec/exec.zig");
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+
+    const Tag = struct {
+        var tag: exec.Resident = undefined;
+    };
+    Tag.tag = .{ .match_tag = &Tag.tag, .flags = exec.RTF_AUTOINIT, .version = 1, .type = .device, .name = "refusing.device", .init = &refusing_table };
+    const made: *exec.Device = @ptrCast(@alignCast(sys.InitResident(&Tag.tag, null).?));
+
+    // No dos: a load that went past the list would reach for a file.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    sys.NewList(&rlb.loaded);
+    sys.NewList(&rlb.loading);
+    sys.InitSemaphore(&rlb.lock);
+
+    // It is there, so the open's failure is its own: nothing is made, and
+    // the list still holds the one device.
+    try testing.expect(load(&rlb, "refusing.device", ramlib.KIND_DEVICE, 0, true));
+    try testing.expect(load(&rlb, "DEVS:refusing.device", ramlib.KIND_DEVICE, 0, true));
+    var count: u32 = 0;
+    const list = sys.LockExecList(exec.EXECLIST_DEVICES).?;
+    var it = list.iterator();
+    while (it.next()) |node| {
+        if (std.mem.eql(u8, std.mem.span(node.name.?), "refusing.device")) count += 1;
+    }
+    sys.UnlockExecList(exec.EXECLIST_DEVICES);
+    try testing.expectEqual(@as(u32, 1), count);
+    try testing.expect(rlb.loading.isEmpty());
+
+    sys.Remove(&made.node);
+    kexec.freeLibraryMemory(kexec.SysBase, made);
     try kexec.expectNoLeaks();
 }
 

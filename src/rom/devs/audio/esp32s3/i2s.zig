@@ -23,6 +23,7 @@
 //! After ESP-IDF's i2s_ll.h and i2s_reg.h for this chip.
 
 const hardware = @import("sdk").hardware;
+const divide = @import("../divider.zig").divide;
 const reg = hardware.mmio.reg;
 const system = hardware.system;
 const signals = hardware.signals;
@@ -143,41 +144,6 @@ pub fn init() void {
     reg(tx_timing).* = 0;
     reg(int_clr).* = 0xFFFF_FFFF;
     apply();
-}
-
-const Divider = struct { whole: u32, x: u32, y: u32, z: u32, yn1: bool };
-
-/// The divider that makes `want` out of `from`: a whole number and a
-/// fraction, the fraction as the controller counts it - `z` clocks of one
-/// length among `x + 1`, and `yn1` when the fraction is past a half.
-fn divide(from: u32, want: u32) Divider {
-    const whole = from / want;
-    const rest = from - whole * want;
-    if (rest == 0) return .{ .whole = whole, .x = 0, .y = 0, .z = 0, .yn1 = false };
-    // The fraction is rest/want, in lowest terms.
-    const common = gcd(rest, want);
-    const numerator = rest / common;
-    const denominator = want / common;
-    const yn1 = numerator * 2 > denominator;
-    const z = if (yn1) denominator - numerator else numerator;
-    return .{
-        .whole = whole,
-        .x = denominator / z - 1,
-        .y = denominator % z,
-        .z = z,
-        .yn1 = yn1,
-    };
-}
-
-fn gcd(a: u32, b: u32) u32 {
-    var x = a;
-    var y = b;
-    while (y != 0) {
-        const t = y;
-        y = x % y;
-        x = t;
-    }
-    return x;
 }
 
 /// The configuration handed over to the controller's own clock, which is

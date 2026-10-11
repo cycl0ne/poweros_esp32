@@ -3,9 +3,11 @@
 //! module (16 MB of flash, 32 MB of PSRAM), UART0 through a CH340K on a
 //! USB-C connector - the console, and the way it is flashed, its reset on
 //! DTR/RTS - a 1024x600 IPS panel (EK79007) on MIPI-DSI with a GT911
-//! touch controller, an ESP32-C6 for Wi-Fi on SDIO, an ES8311 codec with
-//! an amplifier and two microphones, and an SD slot. Its parts come into
-//! the list as their drivers do.
+//! touch controller, an ESP32-C6 for Wi-Fi on SDIO, two I2S amplifiers
+//! for a left and a right speaker, two PDM microphones, and an SD slot.
+//! The schematic also draws an ES8311 codec and an ES7210 microphone
+//! converter on the I2C bus; neither is fitted, and nothing answers at
+//! their addresses. Its parts come into the list as their drivers do.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -103,6 +105,28 @@ const panel = [_]Tag{
     .done,
 };
 
+// --- the speakers ------------------------------------------------------------------
+
+/// Two NS4168s on the same I2S lines - WS GPIO21, BCLK GPIO22, data
+/// GPIO23, no master clock - one per speaker. Each takes the half of the
+/// frame its CTRL voltage picks, and the board has them the other way
+/// round: U3 plays the frame's left half on the right speaker (J6), U13
+/// the right half on the left speaker (J4). GPIO30 switches a P-MOSFET
+/// that feeds both CTRL pins: low is on, and a pull-up keeps them off
+/// through the boot.
+const speakers = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_AMPLIFIER),
+    .value(st.PART_Chip, st.CHIP_NS4168),
+    .pointer(st.PART_ChipName, "ns4168"),
+    .value(st.PART_Bus, st.BUS_I2S),
+    .value(st.PART_PinBCLK, pins.gpio(22)),
+    .value(st.PART_PinWS, pins.gpio(21)),
+    .value(st.PART_PinDataOut, pins.gpio(23)),
+    .value(st.PART_PinEnable, pins.gpioLow(30)),
+    .value(st.PART_SidesSwapped, 1),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -124,6 +148,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &i2c_bus),
     .pointer(st.SYSTAG_Part, &touch_panel),
     .pointer(st.SYSTAG_Part, &panel),
+    .pointer(st.SYSTAG_Part, &speakers),
     .done,
 };
 

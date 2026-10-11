@@ -186,6 +186,27 @@ const panel = [_]Tag{
     .done,
 };
 
+// --- the audio jack ---------------------------------------------------------------
+
+/// The ES8311 behind the 3.5 mm jack, with no amplifier between: its
+/// control port on the I2C bus at 0x18, its data on I2S - MCLK GPIO13,
+/// BCLK GPIO12, WS GPIO10, data to it GPIO9, from it GPIO11. GPIO6
+/// switches its supply off when driven; left alone it stays on.
+const codec = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_ES8311),
+    .pointer(st.PART_ChipName, "es8311"),
+    .value(st.PART_Bus, st.BUS_I2C),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0x18),
+    .value(st.PART_PinMCLK, pins.gpio(13)),
+    .value(st.PART_PinBCLK, pins.gpio(12)),
+    .value(st.PART_PinWS, pins.gpio(10)),
+    .value(st.PART_PinDataOut, pins.gpio(9)),
+    .value(st.PART_PinDataIn, pins.gpio(11)),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -206,6 +227,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &hdmi),
     .pointer(st.SYSTAG_Part, &panel),
+    .pointer(st.SYSTAG_Part, &codec),
     .done,
 };
 

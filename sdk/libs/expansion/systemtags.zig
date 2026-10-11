@@ -93,6 +93,10 @@ pub const PART_Address = PART_Dummy + 6;
 /// How far it is turned against the screen, in degrees (a touch panel
 /// mounted on its side).
 pub const PART_Turn = PART_Dummy + 7;
+/// Non-zero: a stereo output whose speakers take the I2S frame the other
+/// way round - its first half, the one I2S calls left, plays on the right
+/// speaker and its second on the left.
+pub const PART_SidesSwapped = PART_Dummy + 8;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -242,6 +246,10 @@ pub const CHIP_EK79007: u32 = 17;
 /// I2C (PART_BusUnit, PART_Address its main page), RGB888 on the link, a
 /// monitor behind it.
 pub const CHIP_LT8912B: u32 = 18;
+/// A class-D amplifier that takes I2S itself (PARTKIND_AMPLIFIER on
+/// BUS_I2S): bit clock, word clock and data, no master clock and nothing
+/// to set up; PART_PinEnable switches it on.
+pub const CHIP_NS4168: u32 = 19;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

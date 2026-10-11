@@ -10,4 +10,6 @@ comptime {
     // The I2C bus, and the GT911 on it.
     _ = @import("../../rom/devs/i2c/i2c.zig");
     _ = @import("../../rom/devs/touch/touch.zig");
+    // The speakers' amplifiers on I2S.
+    _ = @import("../../rom/devs/audio/audio.zig");
 }

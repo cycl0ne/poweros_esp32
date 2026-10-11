@@ -22,6 +22,7 @@ test {
     _ = @import("devs/touch/st7123.zig");
     _ = @import("devs/audio/mixer.zig");
     _ = @import("devs/audio/es8311.zig");
+    _ = @import("devs/audio/divider.zig");
     _ = @import("libs/utility/date/datesplit.zig");
     _ = @import("libs/utility/date/datejoin.zig");
     _ = @import("libs/rtg_driver/dcsboard/sequence.zig");

@@ -9,4 +9,6 @@ comptime {
     _ = @import("../../rom/libs/rtg_driver/dsiboard/dsiboard.zig");
     // The I2C bus.
     _ = @import("../../rom/devs/i2c/i2c.zig");
+    // The codec behind the audio jack.
+    _ = @import("../../rom/devs/audio/audio.zig");
 }
