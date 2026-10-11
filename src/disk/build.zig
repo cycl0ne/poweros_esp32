@@ -273,6 +273,7 @@ pub const files = [_]File{
     .{ .disk = "programs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Notepad.md", .source = "programs/notepad/README.md" },
     .{ .disk = "programs/Prefs.md", .source = "programs/prefs/README.md" },
+    .{ .disk = "programs/Sheet.md", .source = "programs/sheet/README.md" },
 };
 
 pub fn build(b: *std.Build) void {
