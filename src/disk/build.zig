@@ -266,14 +266,14 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Deep.ilbm", .source = "tests/datatypes/Deep.ilbm" },
     .{ .disk = "tests/datatypes/Ham.ilbm", .source = "tests/datatypes/Ham.ilbm" },
     .{ .disk = "tests/datatypes/Reading.md", .source = "tests/datatypes/Reading.md" },
-    // SYS:Programs - what each program is and how it is used, beside it.
-    .{ .disk = "programs/Battery.md", .source = "programs/battery/README.md" },
-    .{ .disk = "programs/CPULoad.md", .source = "programs/cpuload/README.md" },
-    .{ .disk = "programs/FontView.md", .source = "programs/fontview/README.md" },
-    .{ .disk = "programs/MultiView.md", .source = "programs/multiview/README.md" },
-    .{ .disk = "programs/Notepad.md", .source = "programs/notepad/README.md" },
-    .{ .disk = "programs/Prefs.md", .source = "programs/prefs/README.md" },
-    .{ .disk = "programs/Sheet.md", .source = "programs/sheet/README.md" },
+    // SYS:Programs/Docs - what each program is and how it is used.
+    .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
+    .{ .disk = "programs/Docs/CPULoad.md", .source = "programs/cpuload/README.md" },
+    .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
+    .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
+    .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },
+    .{ .disk = "programs/Docs/Prefs.md", .source = "programs/prefs/README.md" },
+    .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
 };
 
 pub fn build(b: *std.Build) void {

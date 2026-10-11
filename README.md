@@ -114,8 +114,9 @@ Espressif's QEMU. The ESP32-P4 is next.
   script from its. Programs add windows files are dropped on, icons and
   Tools items (MultiView, Notepad, Sheet, FontView and the file requester
   take a file let go on them). Each program in `SYS:Programs` has its
-  readme beside it (`Notepad.md`, opened in MultiView), and puts its name
-  and version in the screen's title while one of its windows is active.
+  readme in `SYS:Programs/Docs` (`Notepad.md`, opened in MultiView), and
+  puts its name and version in the screen's title while one of its
+  windows is active.
   See the [desktop guide](sdk/docs/guides/anvil.md)
   and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
 - **Graphics and windows:** rtg.library for the displays, with the
