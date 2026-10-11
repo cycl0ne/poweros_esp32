@@ -7,6 +7,7 @@ const intuition = sdk.intuition;
 const wn = intuition.windows;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _gadget = @import("../gadget/_gadget.zig");
+const _input = @import("../input/_input.zig");
 const ie = sdk.devices.inputevent;
 const _window = @import("_window.zig");
 const Window = _window.Window;
@@ -40,10 +41,17 @@ const unlock = _window.unlock;
 /// keeps enough of it there to take hold of again: its top never above
 /// the screen's, 64 pixels of its width across, and its title bar above
 /// the bottom. A box that does not fit where it is given is moved. When the size
-/// changed, what was the right and bottom border is cleared to the
-/// background and the border drawn where it now is, and the program is
+/// changed, the border is drawn where it now is, and so is every gadget;
+/// where a gadget that moves with an edge was, and - in a window that is
+/// not GimmeZeroZero - where the right and bottom border were, the
+/// window's ground is put back. All of it is drawn into pictures kept
+/// aside, a strip of the border or an area at a time, and put on the
+/// window in one copy each, so nothing of it is cleared on the window
+/// first. Where the ground went back is the window's damage, as is what
+/// the size added: what the program drew there is gone. The program is
 /// told `IDCMP_NEWSIZE`; either way it is told `IDCMP_CHANGEWINDOW`.
-/// Whatever the change uncovered is repaired.
+/// Whatever the change uncovered is repaired, and the damage is the
+/// program's `IDCMP_REFRESHWINDOW`.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -56,7 +64,14 @@ const unlock = _window.unlock;
 ///
 /// NOTES:
 /// - A smart window keeps its contents through a move. After a size, what
-///   is new inside it is the background: redraw on IDCMP_NEWSIZE.
+///   is new inside it is the background, and damage: redraw everything
+///   on IDCMP_NEWSIZE, or only the damage on the IDCMP_REFRESHWINDOW that
+///   follows.
+/// - While the user sizes a window with its size gadget, each step waits
+///   until the program has replied the last step's `IDCMP_NEWSIZE` - for
+///   three ticks at most - and a frame has passed since the last step
+///   began. A program that redraws on it and replies after drawing has
+///   the window follow its drawing, a step at a time.
 ///
 /// BUGS:
 /// None known.
@@ -85,24 +100,17 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     const dh = new_h - window.height;
     if (dx == 0 and dy == 0 and dw == 0 and dh == 0) return;
 
-    // What is about to move is cleared where it is now, before the layer
-    // is told, because afterwards its old place is no longer the window's
-    // to draw in.
-    const cleared = dw != 0 or dh != 0;
-    if (cleared) _gadget.clearRelative(ib, window);
+    // Where the gadgets that move with an edge are now: what the size
+    // will leave behind, while their boxes are still measured against the
+    // old size. Nothing is cleared yet - it is painted over afterwards,
+    // with what ends up there.
+    const sized = dw != 0 or dh != 0;
+    var behind: _gadget.Behind = .{};
+    if (sized) _gadget.leftBehind(ib, window, &behind);
     // A GimmeZeroZero window's interior goes with it: its layer moves and
     // sizes with the border's, by the same amounts.
     if (!ib.layers_base.MoveSizeLayer(window.layer, dx, dy, dw, dh)) {
-        // The layer would not move, so the window is the size it was -
-        // but its gadgets have just been cleared off it. They are put
-        // back: a window that cannot be resized is a window that stays
-        // as it was, not an empty one that no later drawing repairs,
-        // since nothing else will draw it again until its program has
-        // some reason to.
-        if (cleared) {
-            drawBorder(ib, window);
-            _gadget.renderAll(ib, window);
-        }
+        // The layer would not move, so the window stays as it was.
         var why: usize = 0;
         const asked = [_]sdk.utility.TagItem{ .{ .tag = sdk.layers.LATAG_GetLastError, .data = @intFromPtr(&why) }, .{} };
         ib.layers_base.GetLayerAttrs(window.layer, &asked);
@@ -125,36 +133,22 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     // The room every gadget is measured against has changed. Their boxes
     // are worked out afresh each time they are used, so this is for a
     // class that arranges something of its own.
-    if (dw != 0 or dh != 0) _gadget.layout(ib, window, window.gadgets, false);
+    if (sized) _gadget.layout(ib, window, window.gadgets, false);
 
-    if (dw != 0 or dh != 0) {
-        // Where the right and bottom border were is inside the window now.
-        // It is put back the way the window paints its ground, not filled
-        // with the pen that usually matches it, since a window may have a
-        // backfill of its own.
-        const gb = ib.graphics_base;
-        const inner_right = new_w - window.border_right;
-        const inner_bottom = new_h - window.border_bottom;
-        ib.layers_base.LockLayer(window.layer);
-        const x0 = old_w - window.border_right;
-        gb.EraseRect(window.rp, &.{
-            .min_x = x0,
-            .min_y = window.border_top,
-            .max_x = @min(old_w, inner_right),
-            .max_y = @min(old_h, inner_bottom),
-        });
-        const y0 = old_h - window.border_bottom;
-        gb.EraseRect(window.rp, &.{
-            .min_x = window.border_left,
-            .min_y = y0,
-            .max_x = @min(old_w, inner_right),
-            .max_y = @min(old_h, inner_bottom),
-        });
-        ib.layers_base.UnlockLayer(window.layer);
+    if (sized) {
+        // Where the right and bottom border were is inside the window now,
+        // and gets the window's ground. A GimmeZeroZero window's interior
+        // is a layer of its own, which paints its new part itself.
+        if (window.inner_layer == null) {
+            const inner_right = @min(old_w, new_w - window.border_right);
+            const inner_bottom = @min(old_h, new_h - window.border_bottom);
+            behind.add(.{ .min_x = old_w - window.border_right, .min_y = window.border_top, .max_x = inner_right, .max_y = inner_bottom });
+            behind.add(.{ .min_x = window.border_left, .min_y = old_h - window.border_bottom, .max_x = inner_right, .max_y = inner_bottom });
+        }
         drawBorder(ib, window);
-        _gadget.renderAll(ib, window);
-        send(ib, window, wn.IDCMP_NEWSIZE, 0);
-        @import("../input/_input.zig").windowEvent(ib, window, ie.IECLASS_EVENT, ie.IECODE_NEWSIZE);
+        _gadget.redrawRoom(ib, window, &behind);
+        _input.sendNewSize(ib, window);
+        _input.windowEvent(ib, window, ie.IECLASS_EVENT, ie.IECODE_NEWSIZE);
     }
     send(ib, window, wn.IDCMP_CHANGEWINDOW, 0);
     repairScreen(ib, s);

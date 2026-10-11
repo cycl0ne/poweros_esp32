@@ -99,4 +99,8 @@ void DoHookClipRects(*utility.Hook hook, *graphics.RastPort rp, *const graphics.
 /// What an LERR_ code means, in words. A code this library does not know
 /// is "unknown error" rather than null.
 [*:0]const u8 LayersErrorText(i32 code)
+/// Say that part of a layer has to be drawn again: `area`, in the layer's
+/// coordinates, joins its damage, and the layer is owed a refresh. Nothing
+/// is painted. False if there was no memory for it.
+bool DamageLayer(*layers.Layer layer, *const graphics.Rect area)
 ##end

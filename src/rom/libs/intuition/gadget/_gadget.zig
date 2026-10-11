@@ -180,26 +180,30 @@ pub fn toDomainFor(ib: *IntuitionBase, w: *Window, o: *Object, x: i32, y: i32) s
     return .{ .x = x - gi.domain_left, .y = y - gi.domain_top };
 }
 
-/// One gadget drawn.
+/// One gadget drawn. Drawn whole or for what changed, it is drawn aside
+/// (`renderAside`); drawn for a mark or toggled, in place, since what it
+/// draws then may be nothing, or depend on what is there.
 pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
     var gi = infoFor(ib, w, o);
     const it = ib.iface();
     const rp = it.ObtainGIRPort(&gi) orelse return;
     defer it.ReleaseGIRPort(rp);
     var msg = gc.GpRender{ .gadget_info = &gi, .rast_port = rp, .redraw = redraw };
-    if (redraw == gc.GREDRAW_UPDATE and renderAside(ib, o, &gi, rp, &msg)) return;
+    const whole_or_update = redraw == gc.GREDRAW_REDRAW or redraw == gc.GREDRAW_UPDATE;
+    if (whole_or_update and renderAside(ib, o, &gi, rp, &msg)) return;
     _ = it.SendMessage(o, @ptrCast(&msg));
 }
 
-/// A gadget drawn again over itself without ever showing half of it: drawn
+/// A gadget drawn over itself without ever showing half of it: drawn
 /// into a picture kept aside, and its box of that put on the window in one
 /// copy. The picture reaches from the window's corner to the box's far
 /// corner, so the gadget draws at its own coordinates exactly as on the
 /// window; only the box is filled, drawn and copied, and a clip holds the
 /// drawing to it. The box starts as what the gadget is drawn over in
-/// place: the screen's background pen, or for a gadget in the border the
-/// border itself - its colour, active or not, and its frame - since a
-/// border gadget is drawn over the border and paints only its own shapes.
+/// place: the window's ground, painted as its layer paints it, or for a
+/// gadget in the border the border itself - its colour, active or not, and
+/// its frame - since a border gadget is drawn over the border and paints
+/// only its own shapes.
 /// False, and nothing drawn, when the picture cannot be had or would be
 /// larger than `aside_most`: the caller draws in place.
 fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
@@ -220,21 +224,23 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
     const aside = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse return false;
     defer gb.FreeRastPort(aside);
 
-    gb.SetRPAttrs(aside, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = gi.draw_info.pens[intuition.screens.BACKGROUNDPEN] }, .{} });
-    gb.RectFill(aside, &area);
-
-    // The window's font and pens; the clip holds the drawing to the box.
+    // The window's ground, font and pens; the clip holds the drawing to
+    // the box.
+    var ground: usize = 0;
     var font: usize = 0;
     var front: usize = 0;
     var back: usize = 0;
     var mode: usize = 0;
     gb.GetRPAttrs(rp, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) },
         .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
         .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&front) },
         .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&back) },
         .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) },
         .{},
     });
+    gb.SetRPAttrs(aside, &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = ground }, .{} });
+    gb.EraseRect(aside, &area);
     gb.SetRPAttrs(aside, &[_]TagItem{
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&area) },
         .{ .tag = graphics.RPTAG_Font, .data = font },
@@ -296,6 +302,215 @@ pub fn renderRange(ib: *IntuitionBase, w: *Window, first: *Object, count: i32) v
 /// window is uncovered.
 pub fn renderAll(ib: *IntuitionBase, w: *Window) void {
     renderRange(ib, w, w.gadgets orelse return, -1);
+}
+
+// --- after a size -------------------------------------------------------------
+//
+// A window being sized is drawn again at every step of the pointer, so
+// nothing of it may be cleared on the window first and drawn over after:
+// what is between the two shows, step after step. The border is
+// `drawBorder`'s, a strip at a time. Everything else intuition draws - the
+// gadgets of the window's room and the ground where the size left
+// something behind - is drawn here, an area at a time, each into a picture
+// of the area kept aside and put on the window in one copy, so every pixel
+// of it changes once, to what it ends up as. Where the ground goes on
+// something the program drew, that is the program's to draw again: it is
+// added to the window's damage, and the refresh after the size tells it.
+
+/// Where a size leaves something of the window's room behind: the old
+/// place of each gadget that moves or grows with an edge, and - in a window
+/// whose room is the whole window - where its right and bottom border were.
+/// In the room's coordinates, the ones its gadgets are measured in.
+pub const Behind = struct {
+    places: [behind_max]graphics.Rect = undefined,
+    count: usize = 0,
+
+    /// One more place. With no room left it joins the last one, which then
+    /// reaches over whatever lay between the two as well.
+    pub fn add(behind: *Behind, place: graphics.Rect) void {
+        if (place.isEmpty()) return;
+        if (behind.count == behind.places.len) {
+            const last = &behind.places[behind.count - 1];
+            last.* = graphics.Rect.unionWith(last.*, place);
+            return;
+        }
+        behind.places[behind.count] = place;
+        behind.count += 1;
+    }
+};
+
+/// How many places `Behind` keeps apart. A window has a few gadgets on its
+/// edges, not dozens.
+const behind_max = 16;
+
+/// Before a window changes size: the place of every gadget of its room
+/// placed against its right or bottom edge, or sized by them, which the
+/// size will leave. A gadget in the border is not counted: the border is
+/// drawn whole after a size, and where it was is the caller's to count.
+pub fn leftBehind(ib: *IntuitionBase, w: *Window, behind: *Behind) void {
+    var next = w.gadgets;
+    while (next) |o| : (next = gadgetOf(ib, o).next) {
+        if (gadgetOf(ib, o).flags & gadgetclass.GFLG_RELATIVE == 0) continue;
+        if (inBorder(ib, w, o)) continue;
+        const b = box(ib, w, o);
+        behind.add(.{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height });
+    }
+}
+
+/// After a size: the places it left behind, cut to the room's inside, and
+/// every gadget of the room drawn again (`paintArea`). The places left
+/// behind are the room's damage as well: what the program drew there is
+/// under the ground now. The border and its gadgets are `drawBorder`'s.
+pub fn redrawRoom(ib: *IntuitionBase, w: *Window, behind: *const Behind) void {
+    const whole = roomWhole(w);
+    // Inside the border: in a window whose room is the whole window, what
+    // is left behind in the border is the border's to draw.
+    const inside = if (w.inner_layer != null) whole else graphics.Rect{
+        .min_x = w.border_left,
+        .min_y = w.border_top,
+        .max_x = w.width - w.border_right,
+        .max_y = w.height - w.border_bottom,
+    };
+    for (behind.places[0..behind.count]) |place| {
+        const there = graphics.Rect.intersect(place, inside);
+        paintArea(ib, w, there);
+        if (!there.isEmpty()) _ = ib.layers_base.DamageLayer(_window.innerLayer(w), &there);
+    }
+    var next = w.gadgets;
+    while (next) |o| : (next = gadgetOf(ib, o).next) {
+        if (inBorder(ib, w, o)) continue;
+        const b = box(ib, w, o);
+        paintArea(ib, w, graphics.Rect.intersect(.{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height }, whole));
+    }
+}
+
+/// The window's room, in its own coordinates.
+fn roomWhole(w: *Window) graphics.Rect {
+    const room = info(w);
+    return .{ .max_x = room.domain_width, .max_y = room.domain_height };
+}
+
+/// `area` of the window's room - in the coordinates its gadgets are
+/// measured in - drawn again without ever showing half of it: the window's
+/// ground, as its layer paints it, and over it every gadget of the room
+/// that reaches into the area, back to front, each as `ObtainGIRPort`
+/// would hand it its RastPort. All of it is drawn into a picture of the
+/// area kept aside, which is put on the window in one copy. An area
+/// larger than `aside_most` is drawn a band of rows at a time, and without
+/// the memory for a picture a band is drawn in place.
+pub fn paintArea(ib: *IntuitionBase, w: *Window, area: graphics.Rect) void {
+    if (area.isEmpty()) return;
+    const width: u64 = @intCast(area.width());
+    const height: u64 = @intCast(area.height());
+    const most: u64 = aside_most / (width * 4);
+    const rows: i32 = @intCast(@max(@as(u64, 1), @min(most, height)));
+    var top = area.min_y;
+    while (top < area.max_y) : (top += rows) {
+        const band = graphics.Rect{ .min_x = area.min_x, .min_y = top, .max_x = area.max_x, .max_y = @min(top + rows, area.max_y) };
+        if (!paintAside(ib, w, band)) paintInPlace(ib, w, band);
+    }
+}
+
+/// One band of `paintArea`, through a picture; false, and nothing drawn,
+/// without the memory for one.
+fn paintAside(ib: *IntuitionBase, w: *Window, area: graphics.Rect) bool {
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+    const gi_rp = w.gi_rp orelse return false;
+    const surface = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(area.width()) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(area.height()) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(w.rp) },
+        .{},
+    }) orelse return false;
+    defer gb.FreeBitMap(surface);
+
+    // A RastPort that draws in the room's coordinates and sends what falls
+    // in the area to the picture. Its own surface is the display's, as a
+    // window's RastPort's is: what bounds its clip and says its format.
+    // The ground is painted as the room's layer paints it, and the gadgets
+    // are drawn in the font they are handed on the window.
+    var ground: usize = 0;
+    var font: usize = 0;
+    gb.GetRPAttrs(_window.innerRastPort(w), &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) }, .{} });
+    gb.GetRPAttrs(gi_rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} });
+    var target = graphics.ClipTarget{ .rect = area, .surface = surface, .dx = -area.min_x, .dy = -area.min_y };
+    const whole = roomWhole(w);
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
+        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
+        .{},
+    }) orelse return false;
+    defer gb.FreeRastPort(rp);
+    gb.EraseRect(rp, &area);
+
+    const Draw = struct {
+        ib: *IntuitionBase,
+        w: *Window,
+        rp: *graphics.RastPort,
+        font: usize,
+        whole: graphics.Rect,
+        fn each(draw: *const @This(), o: *Object) void {
+            var gi = infoFor(draw.ib, draw.w, o);
+            const clip = graphics.Rect.intersect(draw.whole, gi.clip);
+            draw.ib.graphics_base.SetRPAttrs(draw.rp, &[_]TagItem{
+                .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) },
+                .{ .tag = graphics.RPTAG_APen, .data = draw.w.detail_pen },
+                .{ .tag = graphics.RPTAG_BPen, .data = draw.w.block_pen },
+                .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+                .{ .tag = graphics.RPTAG_Font, .data = draw.font },
+                .{},
+            });
+            var msg = gc.GpRender{ .gadget_info = &gi, .rast_port = draw.rp, .redraw = gc.GREDRAW_REDRAW };
+            _ = draw.ib.iface().SendMessage(o, @ptrCast(&msg));
+        }
+    };
+    const draw = Draw{ .ib = ib, .w = w, .rp = rp, .font = font, .whole = whole };
+    eachInRoom(ib, w, area, &draw, Draw.each);
+
+    var gi = info(w);
+    const shown = it.ObtainGIRPort(&gi) orelse return true;
+    defer it.ReleaseGIRPort(shown);
+    gb.BltBitMapRastPort(surface, 0, 0, shown, area.min_x, area.min_y, area.width(), area.height());
+    return true;
+}
+
+/// One band of `paintArea` drawn in place: the ground, then the gadgets.
+fn paintInPlace(ib: *IntuitionBase, w: *Window, area: graphics.Rect) void {
+    const it = ib.iface();
+    var gi = info(w);
+    if (it.ObtainGIRPort(&gi)) |rp| {
+        ib.graphics_base.EraseRect(rp, &area);
+        it.ReleaseGIRPort(rp);
+    }
+    const Draw = struct {
+        ib: *IntuitionBase,
+        w: *Window,
+        fn each(draw: *const @This(), o: *Object) void {
+            render(draw.ib, draw.w, o, gc.GREDRAW_REDRAW);
+        }
+    };
+    eachInRoom(ib, w, area, &Draw{ .ib = ib, .w = w }, Draw.each);
+}
+
+/// Every gadget of the window's room - not one in its border - whose box
+/// reaches into `area`, back to front, handed to `each`.
+fn eachInRoom(ib: *IntuitionBase, w: *Window, area: graphics.Rect, context: anytype, comptime each: fn (@TypeOf(context), *Object) void) void {
+    const first = w.gadgets orelse return;
+    var count: u32 = 0;
+    var next: ?*Object = first;
+    while (next) |o| : (next = gadgetOf(ib, o).next) count += 1;
+    while (count > 0) {
+        count -= 1;
+        const o = nth(ib, first, count) orelse continue;
+        if (inBorder(ib, w, o)) continue;
+        const b = box(ib, w, o);
+        if (b.left >= area.max_x or b.left + b.width <= area.min_x) continue;
+        if (b.top >= area.max_y or b.top + b.height <= area.min_y) continue;
+        each(context, o);
+    }
 }
 
 /// `o`, and then every member of a group inside it, depth first: a
@@ -390,26 +605,6 @@ pub fn layout(ib: *IntuitionBase, w: *Window, first: ?*Object, initial: bool) vo
         var gi = infoFor(ib, w, o);
         var msg = gc.GpLayout{ .gadget_info = &gi, .initial = @intFromBool(initial) };
         _ = ib.iface().SendMessage(o, @ptrCast(&msg));
-    }
-}
-
-/// Before a window changes size: every gadget placed against its right or
-/// bottom edge, or sized by it, cleared where it is now, since it will be
-/// drawn again somewhere else.
-pub fn clearRelative(ib: *IntuitionBase, w: *Window) void {
-    const gb = ib.graphics_base;
-    var next = w.gadgets;
-    while (next) |o| : (next = gadgetOf(ib, o).next) {
-        if (gadgetOf(ib, o).flags & gadgetclass.GFLG_RELATIVE == 0) continue;
-        const b = box(ib, w, o);
-        ib.layers_base.LockLayer(w.layer);
-        defer ib.layers_base.UnlockLayer(w.layer);
-        // Put back the way the window paints its ground, not filled with
-        // the pen that happens to match it: a window given a backfill of
-        // its own has one, and a gadget's old place is exactly the kind of
-        // area it is there to paint.
-        const r = graphics.Rect{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height };
-        gb.EraseRect(w.rp, &r);
     }
 }
 

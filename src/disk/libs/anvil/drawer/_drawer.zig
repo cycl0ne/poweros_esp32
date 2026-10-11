@@ -21,6 +21,13 @@
 //! along the rows, one after another as they are read. **As text**, a row
 //! for each file (`textview.zig`).
 //!
+//! **Drawing** an area again - after a scroll, a new size, a refresh -
+//! draws its ground and what shows over it into a picture of the area and
+//! puts that on the window in one copy, so the window never shows the area
+//! cleared. A window sized while icons are shown draws nothing: the icons
+//! stay where they lie, and what the window grows by - and where its
+//! border was - comes as a refresh.
+//!
 //! **Following**: the drawer is watched with StartNotify and read again
 //! when it changes - whoever changed it.
 
@@ -536,58 +543,134 @@ fn clearInside(d: *Desktop, dr: *Drawer) void {
     d.gb.EraseRect(dr.rp, &whole);
 }
 
-/// What shows of the drawer drawn: its icons, or its rows.
-pub fn drawShown(d: *Desktop, dr: *Drawer) void {
-    hold(d, dr);
-    defer release(d, dr);
+/// How far past its box a selected icon's plate reaches, with a pixel to
+/// spare.
+const plate_reach = 4;
+
+/// What shows of the drawer in a box `width` by `height` drawn through
+/// `rp`, whose (0, 0) is the point `at` of the drawer's ground: its icons
+/// that reach into the box, or its rows. The rows are laid out across the
+/// inside, whatever part of it the box is.
+fn drawOn(d: *Desktop, dr: *Drawer, rp: *graphics.RastPort, at: icons.Origin, width: i32, height: i32) void {
     if (dr.view == .icon) {
         var it = dr.icons.iterator();
         while (it.next()) |node| {
             const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-            const b = ic.shownBox(&d.drawer_look, dr.origin);
-            if (b.max_x <= 0 or b.max_y <= 0 or b.min_x >= dr.inner_width or b.min_y >= dr.inner_height) continue;
-            ic.draw(d.gb, dr.rp, &d.drawer_look, dr.origin);
+            const b = ic.shownBox(&d.drawer_look, at);
+            if (b.max_x + plate_reach <= 0 or b.max_y + plate_reach <= 0) continue;
+            if (b.min_x - plate_reach >= width or b.min_y - plate_reach >= height) continue;
+            ic.draw(d.gb, rp, &d.drawer_look, at);
         }
         return;
     }
     const cols = textview.columns(&d.drawer_look, dr.inner_width);
-    var y: i32 = -dr.origin.y;
+    var y: i32 = -at.y;
     var it = dr.icons.iterator();
     while (it.next()) |node| : (y += cols.row_height) {
         if (y + cols.row_height <= 0) continue;
-        if (y >= dr.inner_height) break;
+        if (y >= height) break;
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-        textview.drawRow(d.gb, d.dl, dr.rp, &d.drawer_look, cols, ic, y, dr.origin.x, dr.inner_width);
+        textview.drawRow(d.gb, d.dl, rp, &d.drawer_look, cols, ic, y, at.x, width);
     }
 }
 
-/// The inside cleared and drawn again.
-pub fn drawInside(d: *Desktop, dr: *Drawer) void {
-    clearInside(d, dr);
-    drawShown(d, dr);
+/// What shows of the drawer drawn over what is there: its icons, or its
+/// rows.
+pub fn drawShown(d: *Desktop, dr: *Drawer) void {
+    hold(d, dr);
+    defer release(d, dr);
+    drawOn(d, dr, dr.rp, dr.origin, dr.inner_width, dr.inner_height);
 }
 
-/// Between BeginRefresh and EndRefresh: what was uncovered cleared and
-/// drawn. Cleared first, since a part reported uncovered may already
-/// have icons drawn in it - a window's whole inside is, when it opens -
-/// and a name drawn twice over itself comes out heavier.
+/// The inside drawn again.
+pub fn drawInside(d: *Desktop, dr: *Drawer) void {
+    drawArea(d, dr, .{ .max_x = dr.inner_width, .max_y = dr.inner_height });
+}
+
+/// `area` of the inside drawn again: its ground and what shows over it,
+/// drawn into a picture of the area - the ground painted as the window's
+/// layer paints it, in the window's font - and put on the window in one
+/// copy. Without the memory for the picture it is cleared and drawn in
+/// place.
+fn drawArea(d: *Desktop, dr: *Drawer, area: Rect) void {
+    if (area.isEmpty()) return;
+    if (drawAside(d, dr, area)) return;
+    hold(d, dr);
+    defer release(d, dr);
+    d.gb.EraseRect(dr.rp, &area);
+    const at = icons.Origin{ .x = dr.origin.x + area.min_x, .y = dr.origin.y + area.min_y };
+    drawOn(d, dr, dr.rp, at, area.width(), area.height());
+}
+
+/// `drawArea` through a picture; false, and nothing drawn, without the
+/// memory for one.
+fn drawAside(d: *Desktop, dr: *Drawer, area: Rect) bool {
+    const gb = d.gb;
+    var font: usize = 0;
+    var ground: usize = 0;
+    gb.GetRPAttrs(dr.rp, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
+        .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) },
+        .{},
+    });
+    const surface = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(area.width()) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(area.height()) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(dr.rp) },
+        .{},
+    }) orelse return false;
+    defer gb.FreeBitMap(surface);
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = font },
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
+        .{},
+    }) orelse return false;
+    defer gb.FreeRastPort(rp);
+    gb.EraseRect(rp, &.{ .max_x = area.width(), .max_y = area.height() });
+    const at = icons.Origin{ .x = dr.origin.x + area.min_x, .y = dr.origin.y + area.min_y };
+    drawOn(d, dr, rp, at, area.width(), area.height());
+    hold(d, dr);
+    defer release(d, dr);
+    gb.BltBitMapRastPort(surface, 0, 0, dr.rp, area.min_x, area.min_y, area.width(), area.height());
+    return true;
+}
+
+/// Between BeginRefresh and EndRefresh: what was uncovered drawn again, a
+/// piece at a time - each part of the inside the refresh lets through
+/// drawn whole (`drawArea`), so whatever was there already, icons
+/// included, is drawn over once and never twice.
 pub fn refresh(d: *Desktop, dr: *Drawer) void {
     d.ib.BeginRefresh(dr.window);
-    hold(d, dr);
-    clearInside(d, dr);
-    drawShown(d, dr);
-    release(d, dr);
-    d.ib.EndRefresh(dr.window, true);
+    defer d.ib.EndRefresh(dr.window, true);
+    var pieces: usize = 0;
+    d.gb.GetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&pieces) }, .{} });
+    // The inside as big as it is now, which is the layer's: while the
+    // window is being sized, the next step can come before this refresh,
+    // and add to what it owes past the size the last IDCMP_NEWSIZE
+    // measured. Ending the refresh clears all of it, drawn or not.
+    var bounds: Rect = .{};
+    d.lb.GetLayerAttrs(dr.layer, &[_]TagItem{ .{ .tag = sdk.layers.LATAG_GetBounds, .data = @intFromPtr(&bounds) }, .{} });
+    const whole = Rect{ .max_x = bounds.width(), .max_y = bounds.height() };
+    // A RastPort with no pieces lets the whole of it through.
+    if (pieces == 0) return drawArea(d, dr, whole);
+    var piece: ?*const graphics.ClipTarget = @ptrFromInt(pieces);
+    while (piece) |each| : (piece = each.next) drawArea(d, dr, Rect.intersect(each.rect, whole));
 }
 
 /// The window resized: the inside measured, the view kept on the ground,
-/// the bars set, everything drawn.
+/// the bars set. Icons stay where they lie, so unless the view had to move
+/// to stay on the ground nothing they show changes - what the window grew
+/// by, and where its border was, comes as a refresh. Rows are laid out
+/// across the width, and are drawn again.
 pub fn resized(d: *Desktop, dr: *Drawer) void {
     measure(d, dr);
     const reach = extent(d, dr);
+    const was = dr.origin;
     dr.origin.x = @max(0, @min(dr.origin.x, reach.max_x - dr.inner_width));
     dr.origin.y = @max(0, @min(dr.origin.y, reach.max_y - dr.inner_height));
     setBars(d, dr);
+    if (dr.view == .icon and dr.origin.x == was.x and dr.origin.y == was.y) return;
     drawInside(d, dr);
 }
 
@@ -623,11 +706,11 @@ pub fn inside(d: *Desktop, dr: *Drawer, x: i32, y: i32) icons.Origin {
     return .{ .x = x - windowAttr(d, dr.window, wn.WA_BorderLeft), .y = y - windowAttr(d, dr.window, wn.WA_BorderTop) };
 }
 
-/// One icon drawn again where it shows: the inside cleared there and
-/// every icon that reaches into it drawn - or, viewed as text, its row.
+/// One icon drawn again where it shows (`drawArea`): the part of the
+/// inside its plate reaches over, with every icon there - or, viewed as
+/// text, its row.
 pub fn redrawIcon(d: *Desktop, dr: *Drawer, ic: *Icon) void {
-    hold(d, dr);
-    defer release(d, dr);
+    const whole = Rect{ .max_x = dr.inner_width, .max_y = dr.inner_height };
     if (dr.view != .icon) {
         const cols = textview.columns(&d.drawer_look, dr.inner_width);
         var y: i32 = -dr.origin.y;
@@ -635,24 +718,18 @@ pub fn redrawIcon(d: *Desktop, dr: *Drawer, ic: *Icon) void {
         while (it.next()) |node| : (y += cols.row_height) {
             if (node != &ic.node) continue;
             const row = Rect{ .min_x = 0, .min_y = y, .max_x = dr.inner_width, .max_y = y + cols.row_height };
-            d.gb.EraseRect(dr.rp, &row);
-            textview.drawRow(d.gb, d.dl, dr.rp, &d.drawer_look, cols, ic, y, dr.origin.x, dr.inner_width);
-            return;
+            return drawArea(d, dr, Rect.intersect(row, whole));
         }
         return;
     }
-    // The plate a selected icon has reaches a little past its box.
     const b = ic.shownBox(&d.drawer_look, dr.origin);
-    const area = Rect{ .min_x = b.min_x - 4, .min_y = b.min_y - 4, .max_x = b.max_x + 4, .max_y = b.max_y + 4 };
-    d.gb.EraseRect(dr.rp, &area);
-    var it = dr.icons.iterator();
-    while (it.next()) |node| {
-        const other: *Icon = @alignCast(@fieldParentPtr("node", node));
-        const ob = other.shownBox(&d.drawer_look, dr.origin);
-        if (ob.min_x - 4 < area.max_x and area.min_x < ob.max_x + 4 and ob.min_y - 4 < area.max_y and area.min_y < ob.max_y + 4) {
-            other.draw(d.gb, dr.rp, &d.drawer_look, dr.origin);
-        }
-    }
+    const area = Rect{
+        .min_x = b.min_x - plate_reach,
+        .min_y = b.min_y - plate_reach,
+        .max_x = b.max_x + plate_reach,
+        .max_y = b.max_y + plate_reach,
+    };
+    drawArea(d, dr, Rect.intersect(area, whole));
 }
 
 /// The icons in the box `band` of the inside - the rows it crosses,

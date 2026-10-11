@@ -16,9 +16,10 @@
 //!     gadget is shown pressed, and acts when let go over it (close sends
 //!     IDCMP_CLOSEWINDOW, depth sends the window to the back if it is in
 //!     front and to the front if it is not); the drag bar moves the window
-//!     and the size gadget sizes it for as long as the button is held; the
-//!     inside is IDCMP_MOUSEBUTTONS. A move with nothing held is
-//!     IDCMP_MOUSEMOVE to the active window.
+//!     and the size gadget sizes it for as long as the button is held - a
+//!     step at a time, each when the program has answered the last
+//!     (`pace`); the inside is IDCMP_MOUSEBUTTONS. A move with nothing held
+//!     is IDCMP_MOUSEMOVE to the active window.
 //!   - a key: IDCMP_RAWKEY to the active window, unless it is a
 //!     right-Amiga shortcut of one of its menu items.
 //!   - the menu button: the active window's menus (input/menus.zig), which
@@ -67,6 +68,9 @@ const task_pri = 20;
 /// The borders are drawn from here, and sysiclass fills polygons.
 const stack_size = 16384;
 const ring_size = 64;
+/// How many ticks - a tenth of a second each - a program has to answer a
+/// step of its window's sizing before the sizing goes on without it.
+const size_answer_ticks = 3;
 
 /// What the pointer is doing with the button held: `gadget` is a border
 /// gadget pressed, `active` a gadget of the window's own being fed input,
@@ -168,6 +172,20 @@ pub const State = extern struct {
     side_window: ?*Window = null,
     side_release: u8 = 0,
     pad3: [3]u8 = .{ 0, 0, 0 },
+    /// A sizing, paced (`pace`): a step is owed - the pointer has moved
+    /// since the last - and the ticks left for the window's program to
+    /// answer the last step's IDCMP_NEWSIZE, `size_message` until it comes
+    /// back to `size_port`; null with none out.
+    size_owed: u8 = 0,
+    size_ticks: u8 = 0,
+    pad4: [2]u8 = .{ 0, 0 },
+    size_message: ?*wn.IntuiMessage = null,
+    /// When the last step began: the next waits until a frame has passed
+    /// since.
+    size_began: timer.TimeVal = .{},
+    /// Where a step's IDCMP_NEWSIZE comes back: it signals the input task
+    /// once that runs.
+    size_port: exec.MsgPort = .{ .flags = exec.PA_IGNORE },
     /// The on-screen keyboard (`keyboard.zig`).
     keyboard: @import("keyboard.zig").State = .{},
 };
@@ -257,10 +275,19 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
         ib.verify.port.sig_task = &st.task;
         ib.verify.port.flags = exec.PA_SIGNAL;
     }
+    // And so do the answers to a sizing's steps.
+    var size_mask: u32 = 0;
+    const size_signal = sys.AllocSignal(-1);
+    if (size_signal >= 0) {
+        size_mask = @as(u32, 1) << @intCast(size_signal);
+        st.size_port.sig_bit = @intCast(size_signal);
+        st.size_port.sig_task = &st.task;
+        st.size_port.flags = exec.PA_SIGNAL;
+    }
     const head: *volatile u32 = &st.head;
     const tail: *volatile u32 = &st.tail;
     while (true) {
-        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask);
+        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask | size_mask);
         if (got & verify_mask != 0) {
             _window.lock(ib);
             verify.poll(ib);
@@ -277,6 +304,7 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
             // and nothing held.
             @import("keyboard.zig").follow(ib);
         }
+        pace(ib);
     }
 }
 
@@ -293,6 +321,7 @@ pub fn start(ib: *IntuitionBase) void {
     // copies. Nothing does I/O with `st.io` itself again.
     const port = sys.CreateMsgPort() orelse return;
     defer sys.DeleteMsgPort(port);
+    st.size_port.msg_list.init(.message);
     st.io = .{};
     st.io.req.message.reply_port = port;
     st.io.req.message.length = @sizeOf(exec.IOStdReq);
@@ -388,6 +417,8 @@ pub fn forget(ib: *IntuitionBase, w: *Window) void {
         if (st.mode == .active) abort(ib);
         st.window = null;
         st.mode = .none;
+        // An answer that comes later is freed as one not waited for.
+        sizeBegins(ib);
     }
 }
 
@@ -570,7 +601,10 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         locate(ib);
         pointer.followed(ib);
     }
-    if (e.class == ie.IECLASS_TIMER) pointer.tick(ib);
+    if (e.class == ie.IECLASS_TIMER) {
+        pointer.tick(ib);
+        paceTick(ib);
+    }
     // An alert up takes everything.
     if (ib.alert.active) return @import("../misc/_misc.zig").alertInput(ib, e);
     // A menu session takes everything while it lasts, and so does a
@@ -651,7 +685,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
                 release(ib);
                 if (stateOf(ib).mode == .none) hover(ib);
             } else if (e.code == ie.IECODE_NOBUTTON) {
-                moved(ib);
+                moved(ib, false);
             } else {
                 otherButton(ib, e.code);
             }
@@ -975,6 +1009,7 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
             _window.drawGadget(ib, w, .size, true);
             // A window that asked is asked first; its reply lets the
             // sizing begin.
+            sizeBegins(ib);
             if (w.idcmp & wn.IDCMP_SIZEVERIFY != 0) {
                 st.mode = .verify;
                 return verify.start(ib, w, wn.IDCMP_SIZEVERIFY, 0, .size);
@@ -1019,7 +1054,8 @@ fn gadgetOf(part: Part) _window.Gadget {
     };
 }
 
-fn moved(ib: *IntuitionBase) void {
+/// The pointer moved, or - `last` - a button let go where it is now.
+fn moved(ib: *IntuitionBase, last: bool) void {
     const st = stateOf(ib);
     // A finger moves what it pressed only once it has gone past its
     // wobble; from then on it follows from where it came down.
@@ -1038,13 +1074,11 @@ fn moved(ib: *IntuitionBase) void {
             w.width,
             w.height,
         ),
-        // Through SizeWindow, which keeps the window where it is: dragged
-        // past the screen's edge, it stops growing there.
-        .size => if (st.window) |w| ib.iface().SizeWindow(
-            @ptrCast(w),
-            st.box_width + st.x - st.grab_x - w.width,
-            st.box_height + st.y - st.grab_y - w.height,
-        ),
+        // A step of the sizing is owed, and taken from the input task's
+        // loop when its time has come (`pace`); the last one at once.
+        .size => if (pacing(ib) and !last) {
+            st.size_owed = 1;
+        } else sizeStep(ib),
         .screen_drag => if (st.screen) |s| _kscreen.moveTo(ib, s, st.box_top + st.disp_y - st.grab_y),
         .screen_depth => if (st.screen) |s| {
             const over: u8 = @intFromBool(_kscreen.onDepthGadget(ib, s, st.x, st.y));
@@ -1071,6 +1105,107 @@ fn moved(ib: *IntuitionBase) void {
             }
         },
     }
+}
+
+// --- a sizing, a step at a time -------------------------------------------------
+//
+// The user sizes a window faster than most programs draw it. Each step of
+// the sizing tells the program IDCMP_NEWSIZE; a step taken before the
+// program has drawn the last one leaves it drawing a size the window no
+// longer has, and the two chase each other with the window flickering in
+// between. So while the input task sizes a window, the pointer's moves
+// only say that a step is owed, and the task's loop takes it when two
+// things are true: the program has replied the last step's IDCMP_NEWSIZE
+// - or had `size_answer_ticks` to - and a frame has passed since the last
+// step began. The pointer's place is read when the step is taken, so the
+// moves in between cost nothing. A program that does not listen for the
+// class is not waited for, and letting go of the size gadget takes the
+// last step at once.
+//
+// Only the input task's loop paces: a host test drives `handle` directly
+// and every move sizes the window at once.
+
+/// Whether the steps of a sizing are paced: the input task runs, with a
+/// port of its own for the answers.
+fn pacing(ib: *IntuitionBase) bool {
+    const st = stateOf(ib);
+    return st.started == 1 and st.size_port.flags == exec.PA_SIGNAL;
+}
+
+/// A sizing begins, or the window being sized is gone: nothing owed and
+/// no answer awaited.
+fn sizeBegins(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    st.size_owed = 0;
+    st.size_message = null;
+}
+
+/// One step of a sizing: the window to the size the pointer gives it.
+/// Through SizeWindow, which keeps the window where it is: dragged past the
+/// screen's edge, it stops growing there.
+fn sizeStep(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const w = st.window orelse return;
+    st.size_owed = 0;
+    ib.iface().SizeWindow(
+        @ptrCast(w),
+        st.box_width + st.x - st.grab_x - w.width,
+        st.box_height + st.y - st.grab_y - w.height,
+    );
+}
+
+/// IDCMP_NEWSIZE to a window that has been sized. A step of the input
+/// task's sizing sends it with the reply coming back to the task's own
+/// port, and the next step waits for it; any other size sends it as every
+/// message is sent.
+pub fn sendNewSize(ib: *IntuitionBase, w: *Window) void {
+    const st = stateOf(ib);
+    const stepping = pacing(ib) and st.mode == .size and st.window == w and ib.sys_base.FindTask(null) == &st.task;
+    if (!stepping) return _window.send(ib, w, wn.IDCMP_NEWSIZE, 0);
+    const message = _window.post(ib, w, wn.IDCMP_NEWSIZE, 0, null, st.qualifier, &st.size_port) orelse return;
+    st.size_message = message;
+    st.size_ticks = size_answer_ticks;
+}
+
+/// A tick while an answer is awaited: silence past `size_answer_ticks` is
+/// as good as an answer.
+fn paceTick(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    if (st.size_message == null) return;
+    if (st.size_ticks == 0) {
+        st.size_message = null;
+        return;
+    }
+    st.size_ticks -= 1;
+}
+
+/// From the input task's loop: the answers that have come back taken in,
+/// and the step owed taken once its program has answered the last and a
+/// frame has passed since that one began. Only the step is taken under the
+/// screen semaphore: the state it is decided on is this task's own, and a
+/// window closed meanwhile is found when the semaphore is held.
+fn pace(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const sys = ib.sys_base;
+    while (sys.GetMsg(&st.size_port)) |m| {
+        if (st.size_message) |awaited| {
+            if (&awaited.msg == m) st.size_message = null;
+        }
+        _window.freeMessage(ib, m);
+    }
+    if (st.mode != .size or st.size_owed == 0 or st.size_message != null) return;
+
+    const _misc = @import("../misc/_misc.zig");
+    if (_misc.now(ib)) |now| {
+        const since = now -% st.size_began.toMicros();
+        if (since < _misc.frame_us) _misc.wait(ib, _misc.frame_us - since);
+    }
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    // The window may have closed meanwhile.
+    if (st.mode != .size or st.size_owed == 0) return;
+    if (_misc.now(ib)) |now| st.size_began = timer.TimeVal.fromMicros(now);
+    sizeStep(ib);
 }
 
 // --- gadgets drawn at another task's asking ----------------------------------------
@@ -1283,6 +1418,7 @@ pub fn sizeVerified(ib: *IntuitionBase, purpose: verify.Purpose, answer: verify.
     };
     if (answer != .abort) {
         if (purpose == .size) {
+            sizeBegins(ib);
             st.mode = .size;
             return;
         }
@@ -1305,7 +1441,7 @@ fn release(ib: *IntuitionBase) void {
     // A drag or a sizing ends where the pointer was let go: the moves just
     // before the release may have been given up for it, when events came
     // faster than they were handled.
-    if (st.mode == .drag or st.mode == .size or st.mode == .screen_drag) moved(ib);
+    if (st.mode == .drag or st.mode == .size or st.mode == .screen_drag) moved(ib, true);
     const mode = st.mode;
     // A finger lifted inside its wobble was a tap.
     const tapped = st.finger != 0 and st.slop != 0;
@@ -1389,7 +1525,10 @@ fn pressSysGadget(ib: *IntuitionBase, w: *Window, o: *Object, part: Part) void {
     st.box_height = w.height;
     switch (part) {
         .drag => st.mode = .drag,
-        .size => st.mode = .size,
+        .size => {
+            sizeBegins(ib);
+            st.mode = .size;
+        },
         else => {
             st.mode = .sys_gadget;
             st.active = o;

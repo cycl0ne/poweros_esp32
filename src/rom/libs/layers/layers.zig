@@ -78,6 +78,7 @@ test {
     _ = @import("backfill/dohookcliprects.zig");
     _ = @import("backfill/installlayerhook.zig");
     _ = @import("damage/beginupdate.zig");
+    _ = @import("damage/damagelayer.zig");
     _ = @import("damage/endupdate.zig");
     _ = @import("damage/installclipregion.zig");
     _ = @import("errors/layerserrortext.zig");
@@ -1137,6 +1138,54 @@ test "layers: a simple layer's damage covered again is no longer owed, and is ow
     try testing.expect(base(lb).MoveLayer(front, 0, 8));
     try testing.expectEqual(layers.LAYERREFRESH, owed(lb, back));
     try testing.expectEqual(Rect{ .min_x = 8, .max_x = 16, .max_y = 8 }, damageBounds(lb, back));
+
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+test "layers: DamageLayer owes a layer an area, cut to what a simple one can see, and paints nothing" {
+    const lb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    var surface: rtg.Surface = undefined;
+    const screen, const info = try scene(lb, &surface, &pixels);
+
+    // Two layers each half covered by one in front of it: a simple one at
+    // the top, a smart one below.
+    const simple_where = Rect{ .max_x = 16, .max_y = 8 };
+    const simple = try layerAt(lb, info, &simple_where, layers.LAYERSIMPLE);
+    const smart_where = Rect{ .min_y = 8, .max_x = 16, .max_y = 16 };
+    const smart = try layerAt(lb, info, &smart_where, layers.LAYERSMART);
+    const cover_where = Rect{ .min_x = 8, .max_x = 16, .max_y = 16 };
+    _ = try layerAt(lb, info, &cover_where, layers.LAYERSIMPLE);
+    fill(lb, simple, graphics.penRGB(255, 0, 0), .{ .max_x = 16, .max_y = 8 });
+    try testing.expectEqual(@as(u32, 0), owed(lb, simple));
+
+    // The simple one is owed only what it can see; the covered part keeps
+    // nothing, and is owed when it is uncovered. What is there stays.
+    try testing.expect(base(lb).DamageLayer(simple, &.{ .min_x = 2, .min_y = 1, .max_x = 14, .max_y = 6 }));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, simple));
+    try testing.expectEqual(Rect{ .min_x = 2, .min_y = 1, .max_x = 8, .max_y = 6 }, damageBounds(lb, simple));
+    try testing.expectEqual(red, pixelAt(&surface, 3, 2));
+    // More than the layer is cut to it.
+    try testing.expect(base(lb).DamageLayer(simple, &.{ .min_x = -5, .min_y = -5, .max_x = 100, .max_y = 100 }));
+    try testing.expectEqual(Rect{ .max_x = 8, .max_y = 8 }, damageBounds(lb, simple));
+    // An update draws it, and then nothing is owed.
+    try testing.expect(base(lb).BeginUpdate(simple));
+    fill(lb, simple, graphics.penRGB(0, 0, 255), .{ .max_x = 16, .max_y = 8 });
+    base(lb).EndUpdate(simple, true);
+    try testing.expectEqual(blue, pixelAt(&surface, 3, 2));
+    try testing.expectEqual(@as(u32, 0), owed(lb, simple));
+
+    // The smart one keeps what is covered, so that stays owed too.
+    try testing.expect(base(lb).DamageLayer(smart, &.{ .min_x = 2, .min_y = 1, .max_x = 14, .max_y = 6 }));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, smart));
+    try testing.expectEqual(Rect{ .min_x = 2, .min_y = 1, .max_x = 14, .max_y = 6 }, damageBounds(lb, smart));
+    // Nothing of it at all: true, and nothing more owed.
+    try testing.expect(base(lb).DamageLayer(smart, &.{ .min_x = 20, .max_x = 30, .max_y = 4 }));
+    try testing.expectEqual(Rect{ .min_x = 2, .min_y = 1, .max_x = 14, .max_y = 6 }, damageBounds(lb, smart));
 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);

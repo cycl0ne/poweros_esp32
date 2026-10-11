@@ -44,6 +44,7 @@ const ScrollLayer = @import("super/scrolllayer.zig").ScrollLayer;
 const InstallLayerHook = @import("backfill/installlayerhook.zig").InstallLayerHook;
 const DoHookClipRects = @import("backfill/dohookcliprects.zig").DoHookClipRects;
 const LayersErrorText = @import("errors/layerserrortext.zig").LayersErrorText;
+const DamageLayer = @import("damage/damagelayer.zig").DamageLayer;
 
 /// Its functions, as the SDK has them (sdk/fd/layers_lib.fd).
 const interface = sdk.interface.layers;
@@ -98,6 +99,7 @@ const contract_files = [_][]const u8{
     @embedFile("backfill/installlayerhook.zig"),
     @embedFile("backfill/dohookcliprects.zig"),
     @embedFile("errors/layerserrortext.zig"),
+    @embedFile("damage/damagelayer.zig"),
 };
 
 fn lvoNewLayerInfo(lb: *LayersBase, rp: *graphics.RastPort) callconv(.c) ?*layers.LayerInfo {
@@ -175,6 +177,9 @@ fn lvoDoHookClipRects(lb: *LayersBase, hook: *utility.Hook, rp: *graphics.RastPo
 fn lvoLayersErrorText(lb: *LayersBase, code: i32) callconv(.c) [*:0]const u8 {
     return LayersErrorText(lb, code);
 }
+fn lvoDamageLayer(lb: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) callconv(.c) bool {
+    return DamageLayer(lb, @ptrCast(@alignCast(layer)), area);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -208,6 +213,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoInstallLayerHook),
     vec(lvoDoHookClipRects),
     vec(lvoLayersErrorText),
+    vec(lvoDamageLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -215,7 +221,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the standard four, then this library's own" {
-    try testing.expectEqual(@as(usize, 29), vectors.len);
+    try testing.expectEqual(@as(usize, 30), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

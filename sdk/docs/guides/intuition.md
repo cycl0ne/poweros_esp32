@@ -219,6 +219,25 @@ switch (class) {
 }
 ```
 
+While the user sizes a window with its size gadget, intuition takes the
+next step of the sizing only when the program has replied the last
+step's `IDCMP_NEWSIZE` - or has had three tenths of a second to - and at
+most one step a frame. A program that draws on `IDCMP_NEWSIZE` and
+replies after drawing has the window follow its drawing a step at a
+time, rather than drawing a size the window no longer has. What is
+drawn again whole is best drawn into a bitmap of its own
+(`AllocBitMapTagList`, with the window's RastPort as `BMTAG_Friend`) and
+put on the window with one `BltBitMapRastPort`: drawn in place, the
+window shows it cleared for as long as the drawing takes, and on a
+display that is shown straight from memory that flickers.
+
+A program need not draw everything again on a size. What the size added,
+where the right and bottom border were, and where a gadget that moves
+with an edge was are the window's ground afterwards, and its damage: the
+`IDCMP_REFRESHWINDOW` that follows the size asks for exactly those, and
+a window whose drawing stays where it is with the size - icons from the
+top left, say - draws only them, between `BeginRefresh` and `EndRefresh`.
+
 ### Messages
 
 Each thing a window was asked to tell (`WA_IDCMP`, changed later with
@@ -233,6 +252,8 @@ several messages, so a program takes them until `GetIMsg` answers null.
 **Copy what is needed and reply at once.** The message is intuition's
 again after the reply, one not replied holds back the moves and key
 repeats behind it, and every one is replied before the window closes.
+`IDCMP_NEWSIZE` is the one a program that draws on it replies after
+drawing (above).
 
 **One port for many windows.** A program with several windows can give
 each the same port of its own (`WA_UserPort`) and wait on that one

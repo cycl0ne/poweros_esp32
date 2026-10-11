@@ -2326,6 +2326,104 @@ test "windows: a size stops at the screen's edge and leaves the window where it 
     try tearDown(ib);
 }
 
+test "windows: a size draws each gadget where it now is and the ground where it was, leaves the program's drawing alone, and owes it what the ground covered" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const gb = ib.graphics_base;
+    const display = try Display.up(ib);
+    const paint = paintClass(ib);
+    const red: u16 = 0xF800;
+    const green: u16 = 0x07E0;
+
+    for ([_]bool{ false, true }) |gimme| {
+        // A red square ten pixels in from the bottom right corner of the
+        // room its gadgets are measured in.
+        const g = it.NewObjectTagList(paint, null, &[_]TagItem{
+            .{ .tag = gc.GA_RelRight, .data = @bitCast(@as(isize, -9)) },
+            .{ .tag = gc.GA_RelBottom, .data = @bitCast(@as(isize, -9)) },
+            .{ .tag = gc.GA_Width, .data = 6 },
+            .{ .tag = gc.GA_Height, .data = 6 },
+            .{},
+        }).?;
+        intuition.instData(Paint, paint, g).pen = graphics.penRGB(255, 0, 0);
+        const w = it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Width, .data = 40 },
+            .{ .tag = wn.WA_Height, .data = 30 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_GimmeZeroZero, .data = @intFromBool(gimme) },
+            .{ .tag = wn.WA_MaxWidth, .data = 0xFFFF },
+            .{ .tag = wn.WA_MaxHeight, .data = 0xFFFF },
+            .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(g) },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_REFRESHWINDOW },
+            .{},
+        }).?;
+        var got: [4]u32 = undefined;
+        _ = drainClasses(ib, w, &got);
+        const left: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderLeft));
+        const top: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderTop));
+        const right: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderRight));
+        // Where the room's corner is on the display.
+        const room_x: usize = if (gimme) @intCast(left) else 0;
+        const room_y: usize = if (gimme) @intCast(top) else 0;
+        const room_w: usize = if (gimme) @intCast(40 - left - right) else 40;
+        const room_h: usize = if (gimme) @intCast(30 - top - @as(i32, @intCast(windowAttr(ib, w, wn.WA_BorderBottom)))) else 30;
+        const old_x = room_x + room_w - 10;
+        const old_y = room_y + room_h - 10;
+        try testing.expectEqual(red, display.pixel(old_x + 1, old_y + 1));
+        // The ground, from a part of the inside nothing is drawn on.
+        const ground = display.pixel(@intCast(left + 12), @intCast(top + 10));
+
+        // The program's own drawing, away from the gadget.
+        const rp: *graphics.RastPort = @ptrFromInt(windowAttr(ib, w, wn.WA_RastPort));
+        const layer: *sdk.layers.Layer = @ptrFromInt(windowAttr(ib, w, wn.WA_Layer));
+        const x0: i32 = if (gimme) 2 else left + 2;
+        const y0: i32 = if (gimme) 2 else top + 2;
+        ib.layers_base.LockLayer(layer);
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0, 255, 0) }, .{} });
+        gb.RectFill(rp, &.{ .min_x = x0, .min_y = y0, .max_x = x0 + 4, .max_y = y0 + 4 });
+        ib.layers_base.UnlockLayer(layer);
+        const mine_x: usize = @intCast(left + 3);
+        const mine_y: usize = @intCast(top + 3);
+        try testing.expectEqual(green, display.pixel(mine_x, mine_y));
+
+        it.SizeWindow(w, 10, 6);
+        // The square where the size took it, its old place the ground, and
+        // where the right border was the ground too - unless the room is
+        // a layer of its own, which paints what it grew by itself.
+        try testing.expectEqual(red, display.pixel(old_x + 11, old_y + 7));
+        try testing.expectEqual(ground, display.pixel(old_x + 1, old_y + 1));
+        try testing.expectEqual(ground, display.pixel(@intCast(40 - right + 1), @intCast(top + 2)));
+        // What the program drew is as it was.
+        try testing.expectEqual(green, display.pixel(mine_x, mine_y));
+
+        // What the ground went on is the program's to draw again: it is
+        // told, and it is in the damage - the gadget's old place, and where
+        // the right border was - but its own drawing is not.
+        const told = drainClasses(ib, w, &got);
+        try testing.expect(told >= 1);
+        try testing.expectEqual(wn.IDCMP_REFRESHWINDOW, got[0]);
+        it.BeginRefresh(w);
+        const dirty: *graphics.Region = @ptrFromInt(windowAttr(ib, w, wn.WA_Damage));
+        const room_old_x: i32 = @intCast(room_w - 9);
+        const room_old_y: i32 = @intCast(room_h - 9);
+        try testing.expect(gb.PointInRegion(dirty, room_old_x, room_old_y));
+        if (!gimme) try testing.expect(gb.PointInRegion(dirty, 40 - right + 1, top + 2));
+        try testing.expect(!gb.PointInRegion(dirty, x0 + 1, y0 + 1));
+        it.EndRefresh(w, true);
+
+        const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+        it.CloseWindow(w);
+        it.DisposeObject(g);
+        try testing.expect(it.CloseScreen(screen));
+    }
+    try testing.expect(it.FreeClass(paint));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: with IPREFS_OffScreen a window hangs past the edges, and enough of it stays" {
     const ib = try setUp();
     defer kexec.deinit();

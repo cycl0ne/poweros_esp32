@@ -364,7 +364,7 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
 /// A simple layer's damage cut to what it can see, and the layer no longer
 /// owed a refresh when none is left. Without the memory to cut it, the
 /// damage stays as it was: too much is drawn again, never too little.
-fn trimDamage(lb: *LayersBase, layer: *Layer) void {
+pub fn trimDamage(lb: *LayersBase, layer: *Layer) void {
     const gb = lb.graphics_base;
     if (info_mod.isEmpty(gb, layer.damage)) return;
     const seen = info_mod.copyRegion(gb, layer.visible) orelse return;
