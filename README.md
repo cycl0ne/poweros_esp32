@@ -113,7 +113,10 @@ Espressif's QEMU. The ESP32-P4 is next.
   `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
   script from its. Programs add windows files are dropped on, icons and
   Tools items (MultiView, Notepad, FontView and the file requester take
-  a file let go on them). See the [desktop guide](sdk/docs/guides/anvil.md)
+  a file let go on them). Each program in `SYS:Programs` has its readme
+  beside it (`Notepad.md`, opened in MultiView), and puts its name and
+  version in the screen's title while one of its windows is active.
+  See the [desktop guide](sdk/docs/guides/anvil.md)
   and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
 - **Graphics and windows:** rtg.library for the displays, with the
   ESP32-P4's 2D engine (the PPA and the 2D-DMA) filling, copying,

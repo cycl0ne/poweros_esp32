@@ -43,8 +43,11 @@ const tx = sdk.gadgets.text;
 const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "CPULoad";
-const VERSION_STRING = "\x00$VER: CPULoad 1.0 (04.10.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+/// What the screen's bar says while one of its windows is active.
+const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const template = "INTERVAL/K/N,HISTORY/K/N";
 const arg_interval = 0;
@@ -227,6 +230,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         pair(wn.WA_Title, @intFromPtr("CPU Load")),
+        pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
         pair(wn.WA_CloseGadget, 1),
         pair(wn.WA_DragBar, 1),
         pair(wn.WA_DepthGadget, 1),

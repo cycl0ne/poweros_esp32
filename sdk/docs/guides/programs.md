@@ -82,9 +82,12 @@ export fn _program_entry(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) 
     defer sys.CloseLibrary(layers_lib);
     const lb: *LayersBase = @ptrCast(layers_lib);
 
-    // A window on the default screen, with a close gadget that tells us so.
+    // A window on the default screen, with a close gadget that tells us so,
+    // and the program's name and version in the screen's title while it is
+    // the active window.
     const w = ib.OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Hello") },
+        .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr("Hello 1.0") },
         .{ .tag = wn.WA_InnerWidth, .data = 240 },
         .{ .tag = wn.WA_InnerHeight, .data = 60 },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },

@@ -97,8 +97,11 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION_STRING = "\x00$VER: Prefs 1.4 (8.10.2026)\r\n";
+const VERSION = "1.5";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+/// What the screen's bar says while one of its windows is active.
+const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOMEMORY = "No memory for the settings\n";
@@ -607,6 +610,7 @@ const Editor = struct {
         const layout = picker.build(ib) orelse return null;
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             pair(wn.WA_Title, @intFromPtr("A colour")),
+            pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
             pair(wn.WA_CloseGadget, 1),
             pair(wn.WA_DragBar, 1),
             pair(wn.WA_DepthGadget, 1),
@@ -1469,6 +1473,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         pair(wn.WA_Title, @intFromPtr("Preferences")),
+        pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
         pair(wn.WA_CloseGadget, 1),
         pair(wn.WA_DragBar, 1),
         pair(wn.WA_DepthGadget, 1),

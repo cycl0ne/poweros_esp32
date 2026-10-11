@@ -71,8 +71,11 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION_STRING = "\x00$VER: Notepad 1.1 (07.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+/// What the screen's bar says while one of its windows is active.
+const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const template = "FILE";
 
@@ -575,6 +578,7 @@ const Notepad = struct {
         };
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             .{ .tag = wn.WA_Title, .data = @intFromPtr("Find and Replace") },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(np.screen) },
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
             .{ .tag = wn.WA_CloseGadget, .data = 1 },
@@ -926,6 +930,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         .{ .tag = wn.WA_Title, .data = @intFromPtr("Notepad") },
+        .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
         .{ .tag = wn.WA_InnerWidth, .data = 600 },
         .{ .tag = wn.WA_InnerHeight, .data = 380 },

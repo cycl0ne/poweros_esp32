@@ -52,8 +52,11 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION_STRING = "\x00$VER: MultiView 1.1 (09.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+/// What the screen's bar says while one of its windows is active.
+const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const template = "FILE,CLIP/K/N,SCALE/S,PUBSCREEN/K";
 const arg_file = 0;
@@ -437,6 +440,7 @@ const Shown = struct {
         const at = place.*;
         const window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             .{ .tag = wn.WA_Title, .data = @intFromPtr(title) },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(shown.screen) },
             .{ .tag = if (at != null) wn.WA_Left else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.left)) else 0 },
             .{ .tag = if (at != null) wn.WA_Top else utility.TAG_IGNORE, .data = if (at) |p| @bitCast(@as(isize, p.top)) else 0 },
