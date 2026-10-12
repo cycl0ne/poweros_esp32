@@ -66,8 +66,8 @@ const exfat_fs = @import("exfat/fs.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 2;
-const BUILD_DATE = "08.10.2026";
+const HANDLER_REVISION = 3;
+const BUILD_DATE = "12.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -450,8 +450,18 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
 /// very handler for an answer - Info holds it while it asks every device
 /// - so waiting for it would never end; the node is renewed at a later
 /// packet instead.
+///
+/// Taking a node off the list (RemDosEntry) needs the entry and delete
+/// locks besides the list; putting one on needs the list alone. Only
+/// what this renewal does is asked for: dos holds the entry lock while
+/// it starts the handler, so at ACTION_STARTUP - nothing to take off yet
+/// - the card's volume goes on the list at once, before anyone asks.
 fn renewVolume(dl: *DosBase, st: *State, port: *MsgPort) void {
-    const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
+    const takes_off = st.volume != null or anyGone(st);
+    const flags = if (takes_off)
+        dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE
+    else
+        dos.LDF_ALL | dos.LDF_WRITE;
     _ = dl.AttemptLockDosList(flags) orelse return;
     defer dl.UnLockDosList(flags);
     partVolume(dl, st);
@@ -519,13 +529,17 @@ fn partVolume(dl: *DosBase, st: *State) void {
 /// it: a program holding the list may be waiting on this handler for an
 /// answer, and a node left a packet longer costs nothing.
 fn sweepIfFree(dl: *DosBase, st: *State) void {
-    for (st.gone) |slot| {
-        if (slot != null) break;
-    } else return;
+    if (!anyGone(st)) return;
     const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
     _ = dl.AttemptLockDosList(flags) orelse return;
     defer dl.UnLockDosList(flags);
     sweepGone(dl, st);
+}
+
+/// Whether volume nodes whose card has gone are still on the list.
+fn anyGone(st: *const State) bool {
+    for (st.gone) |slot| if (slot != null) return true;
+    return false;
 }
 
 /// Volume nodes no lock points at any more, taken off the device list
