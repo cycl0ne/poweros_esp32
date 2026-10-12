@@ -43,7 +43,7 @@ with `dos`, `exec`, `rdargs`, `Printf` and `TagItem` standing for
     |
  dos.library    names to handlers, buffers, processes, the device list
     |  DosPacket (ACTION_FINDINPUT, ACTION_READ, ACTION_LOCATE_OBJECT ...)
- handler        flashfs-handler (DH0:), fat-handler (SD0:, USB0:), ram-handler,
+ handler        flashfs-handler (DH0:), fat-handler (SD0:, DU0:), ram-handler,
     |           con-handler (CON:, RAW:, AUX:), pipe-handler, nil-handler
  exec device    flash.device, sdcard.device, usb/disk.device, console.device,
                 serial.device
@@ -156,7 +156,7 @@ characters.
 |---|---|
 | `DH0:` | the flash disk's partition, volume `System` |
 | `SD0:` | the card in the slot, FAT32 or exFAT, mounted at boot on a board with a slot |
-| `USB0:`, `USB1:`, ... | a USB stick, or a card reader's slot, FAT32 or exFAT: made by usb/disk.device when the first one is plugged in, and kept ([USB guide](usb.md#sticks-and-card-readers)) |
+| `DU0:`, `DU1:`, ... | a USB stick, or a card reader's slot, FAT32 or exFAT: made by usb/disk.device when the first one is plugged in, and kept ([USB guide](usb.md#sticks-and-card-readers)) |
 | `RAM:` | a file system in memory, volume `Ram Disk` |
 | `CON:`, `RAW:`, `AUX:` | [consoles](#consoles) |
 | `PIPE:` | pipes: `PIPE:name` meets whoever opens the same name |

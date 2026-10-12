@@ -2,7 +2,7 @@
 //! The device's DOS process: the drives' nodes on dos's list.
 //!
 //! **A unit's node** is made the first time a medium comes into the unit:
-//! `USB<n>` on the device list, as a MountList entry would make it -
+//! `DU<n>` on the device list, as a MountList entry would make it -
 //! fat-handler, the DosType for FAT, a startup message naming this
 //! device and the unit - and its handler started at once, which reads
 //! the medium and puts its volume on the list. The handler finds the
@@ -85,7 +85,7 @@ fn nameLength(unit: *const Unit) usize {
     return length;
 }
 
-/// `USB<n>` on the device list, with what its handler is started with.
+/// `DU<n>` on the device list, with what its handler is started with.
 fn makeNode(dl: *DosBase, unit: *Unit) void {
     const node = dl.MakeDosEntry(@ptrCast(&unit.name), dos.DLT_DEVICE) orelse return;
     unit.environ = .{ .dos_type = dos.ID_MSDOS_DISK };

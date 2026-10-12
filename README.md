@@ -88,7 +88,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
   255 characters; a log-structured flash file system (`DH0:`), FAT32 and
   exFAT on SD cards (`SD0:`, mounted at boot on a board with a slot)
-  and USB sticks (`USB0:` on, made as they are plugged in),
+  and USB sticks (`DU0:` on, made as they are plugged in),
   `RAM:`, `PIPE:`, `NIL:`; partitions from
   the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
   [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
@@ -186,7 +186,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   in `DEVS:usb/`, each loaded only when something it drives is plugged
   in - `usb/hid.device` makes a USB keyboard and mouse the system's own
   keyboard and mouse, `usb/disk.device` a stick or a card reader's slot
-  a drive (`USB0:`, `USB1:`, ...) with its volume on the desktop,
+  a drive (`DU0:`, `DU1:`, ...) with its volume on the desktop,
   `usb/ftdi.device` and `usb/acm.device` FTDI and CDC-ACM serial
   adapters serial lines (`AUX2:`, `AUX3:`), `usb/ecm.device` a CDC
   Ethernet adapter the network's `usb0`. Things are plugged in and

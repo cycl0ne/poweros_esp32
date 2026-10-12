@@ -2,7 +2,7 @@
 //! usb/disk.device's shared parts: the base, a unit, a bound interface,
 //! and the messages between the device's task and its DOS process.
 //!
-//! **A unit is a drive**, `USB<n>:`, and outlives the stick in it: an
+//! **A unit is a drive**, `DU<n>:`, and outlives the stick in it: an
 //! interface bound takes the lowest units free for its logical units, and
 //! a stick pulled out leaves its unit free and without a medium. What the
 //! medium is - in or not, how often it changed, its size, its write
@@ -29,7 +29,7 @@ const bot = @import("bot.zig");
 
 pub const DEVICE_NAME = "disk.device";
 
-/// The drives there can be, `USB0:` to `USB7:`.
+/// The drives there can be, `DU0:` to `DU7:`.
 pub const max_units = 8;
 /// The logical units one interface may have that get a drive.
 pub const max_luns = 4;
@@ -65,7 +65,7 @@ pub const Unit = extern struct {
     told: u8 = 0,
     pad: u8 = 0,
     tell: exec.Message = .{},
-    /// "USB<n>", its node's name.
+    /// "DU<n>", its node's name.
     name: [8]u8 = @splat(0),
     /// What the node points at.
     startup: dos.FileSysStartupMsg = .{},

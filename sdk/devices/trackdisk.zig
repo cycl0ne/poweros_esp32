@@ -45,7 +45,7 @@ const exec = @import("../libs/exec/exec.zig");
 
 /// The block devices that speak this API: the board's flash (unit 0 is
 /// the flash disk), the card slot, and USB sticks and card readers
-/// (a unit each, `USB<n>:`).
+/// (a unit each, `DU<n>:`).
 pub const FLASHNAME = "flash.device";
 pub const SDCARDNAME = "sdcard.device";
 pub const USBDISKNAME = "usb/disk.device";

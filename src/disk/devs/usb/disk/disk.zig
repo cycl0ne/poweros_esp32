@@ -2,7 +2,7 @@
 //! usb/disk.device: USB sticks and card readers as block devices. A class
 //! driver (sdk/devices/usbclass.zig) for mass storage that speaks SCSI over
 //! Bulk-Only Transport, and the block device API
-//! (sdk/devices/trackdisk.zig) on its units: unit n is the drive `USB<n>:`.
+//! (sdk/devices/trackdisk.zig) on its units: unit n is the drive `DU<n>:`.
 //!
 //!   CMD_READ         io_Length bytes from io_Offset into io_Data; both
 //!                    whole blocks of the medium, and on it.
@@ -25,12 +25,12 @@
 //!
 //! **Units are drives, not sticks.** An interface bound - a stick, a card
 //! reader - takes the lowest free unit for each of its logical units, so
-//! a stick pulled out and put back is `USB0:` again, and a reader's two
+//! a stick pulled out and put back is `DU0:` again, and a reader's two
 //! slots are two drives. A unit with nothing bound to it opens all the
 //! same and has no medium, as an empty card slot has none: a handler sits
 //! on it before a stick is there.
 //!
-//! **`USB<n>:` is made by the device**, the first time a medium comes into
+//! **`DU<n>:` is made by the device**, the first time a medium comes into
 //! unit n, and stays (mount.zig): nothing USB is loaded at boot where no
 //! stick is plugged in, and a node that locks point at is never taken off
 //! the list. Nothing in the MountList is needed; an entry there of the
@@ -68,7 +68,7 @@ const scsi = @import("scsi.zig");
 
 pub const DEVICE_NAME = _disk.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -361,8 +361,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     for (&base.units, 0..) |*unit, number| {
         unit.* = .{ .number = @intCast(number) };
         unit.changes.init(.message);
-        @memcpy(unit.name[0..3], "USB");
-        unit.name[3] = '0' + @as(u8, @intCast(number));
+        @memcpy(unit.name[0..2], "DU");
+        unit.name[2] = '0' + @as(u8, @intCast(number));
     }
     base.usb_base = @ptrCast(sys_base.OpenLibrary(usb.USBNAME, 1) orelse return null);
     base.dos_base = @ptrCast(sys_base.OpenLibrary(dos.DOSNAME, 0) orelse return null);

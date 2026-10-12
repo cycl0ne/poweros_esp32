@@ -5,7 +5,7 @@
 //!   SCSI UNIT/N,DEVICE/K
 //!
 //! UNIT (default 0) of DEVICE (default usb/disk.device, whose unit n is
-//! `USB<n>:`) is sent INQUIRY - its type, whether its medium comes out,
+//! `DU<n>:`) is sent INQUIRY - its type, whether its medium comes out,
 //! its vendor and product - and TEST UNIT READY: ready, or the sense key
 //! and codes the command ended with, which the device reads with
 //! SCSIF_AUTOSENSE. A unit with nothing bound to it has no device behind

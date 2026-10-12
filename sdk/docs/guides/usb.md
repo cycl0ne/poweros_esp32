@@ -18,7 +18,7 @@ controller.
 
 ```
  above them             keyboard.device,   fat-handler      con-handler       bsdsocket.library
-                        mouse.device       on USB<n>:       on AUX2:, AUX3:   on usb0
+                        mouse.device       on DU<n>:        on AUX2:, AUX3:   on usb0
                              ^                  ^                ^                 ^
  class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device
  DEVS:usb/                                                  usb/acm.device
@@ -35,7 +35,7 @@ controller.
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards and mice of the boot class, into keyboard.device and mouse.device |
-| `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `USB<n>:` each |
+| `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
@@ -257,12 +257,12 @@ the screen comes up only while there is none.
 `usb/disk.device` drives mass storage that speaks SCSI over Bulk-Only
 Transport - nearly every stick and card reader. Its units are drives:
 each logical unit of what is plugged in takes the lowest unit free, so
-a stick is `USB0:`, a second one `USB1:`, and a card reader's two slots
+a stick is `DU0:`, a second one `DU1:`, and a card reader's two slots
 are two drives. A stick pulled out frees its unit, and the next one
-plugged in is `USB0:` again.
+plugged in is `DU0:` again.
 
 **The drive is made by the device.** The first time a medium comes into
-unit n, the device puts `USB<n>` on the device list, as a MountList
+unit n, the device puts `DU<n>` on the device list, as a MountList
 entry would - fat-handler, FAT's DosType - and starts the handler, which
 reads the stick's partition table and boot sector and puts its volume
 on the list; the desktop shows it. The node stays from then on: a stick
