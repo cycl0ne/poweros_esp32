@@ -257,6 +257,11 @@ fn freeAddress(bus: *Bus, address: u8) void {
 
 // --- a device coming and going ----------------------------------------------------
 
+/// How often a device just reset is asked for its first eight bytes, and
+/// how long apart.
+const first_tries = 4;
+const first_retry_ms = 100;
+
 /// What was plugged into `parent`'s `port` (null, 0: the root hub), at
 /// `speed`, set up and offered to its drivers; null if it could not be
 /// spoken to at all.
@@ -278,9 +283,18 @@ pub fn attach(bus: *Bus, parent: ?*Hub, port: u8, speed: u8) ?*Device {
     device.public.descriptor.max_packet_size0 = if (speed == usbhc.USB_SPEED_LOW) 8 else 64;
 
     // Endpoint 0's packet size, at address 0: eight bytes are enough,
-    // and every device sends them.
+    // and every device sends them. A device may not answer yet in the
+    // first moments after its reset - a stick has been seen to need more
+    // than the ten milliseconds the specification gives it - so it is
+    // asked again, a little later, a few times.
     var first: [8]u8 = undefined;
-    const first_got = getDescriptor(bus, device, d.USB_DT_DEVICE, 0, 0, &first) orelse 0;
+    var first_got: u32 = 0;
+    var tries: u32 = 0;
+    while (tries < first_tries) : (tries += 1) {
+        if (tries > 0) delay(bus, first_retry_ms);
+        first_got = getDescriptor(bus, device, d.USB_DT_DEVICE, 0, 0, &first) orelse 0;
+        if (first_got >= 8 and first[7] != 0) break;
+    }
     if (first_got < 8 or first[7] == 0) {
         sys.FreeMem(memory, @sizeOf(Device));
         return null;

@@ -542,10 +542,18 @@ fn halted(host: *Host, n: u32, hcint: u32) void {
     const tsiz = reg(host, dwc.hc(n) + dwc.HCTSIZ).*;
     const bytes_left = tsiz & dwc.HCTSIZ_XFERSIZE_MASK;
     const packets_left = (tsiz & dwc.HCTSIZ_PKTCNT_MASK) >> dwc.HCTSIZ_PKTCNT_SHIFT;
-    const moved = channel.round_bytes -| bytes_left;
-    var packets = channel.round_packets -| packets_left;
-    if (packets == 0) packets = 1;
     const in = stageIn(channel, req);
+    var packets = channel.round_packets -| packets_left;
+    // What an IN round moved is what its size field no longer counts. An
+    // OUT round's is its packets': the ESP32-P4's high-speed core leaves
+    // the size of an OUT transfer as it was programmed and counts only
+    // the packets down - read as bytes, a block sent whole would look
+    // unsent, and go again.
+    const moved = if (in)
+        channel.round_bytes -| bytes_left
+    else
+        @min(channel.round_bytes, packets * @as(u32, @max(req.max_packet, 1)));
+    if (packets == 0) packets = 1;
 
     switch (channel.stage) {
         .setup => {
