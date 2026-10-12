@@ -15,7 +15,8 @@
 //!   03  pin output, a bit per pin
 //!   04  pin input, a bit per pin
 //!   05  backlight, 0 to 255 - **inverted**, 0 is full brightness
-//!   06  analogue input, two bytes, high byte first
+//!   06  analogue input, two bytes, low byte first: 0 to 1023 over the
+//!       part's own 3.3 V supply
 //!
 //! A write is the register number and the value in one transfer. A read
 //! writes the register number and then reads without letting go of the bus,
@@ -34,8 +35,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 
 pub const RESOURCE_NAME = types.EXPANDERNAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 0;
-const BUILD_DATE = "17.9.2026";
+const RESOURCE_REVISION = 1;
+const BUILD_DATE = "11.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -229,7 +230,7 @@ fn lvoReadADC(lib: *ExpanderBase) callconv(.c) i32 {
     defer sys.ReleaseSemaphore(&lib.lock);
     var value: [2]u8 = .{ 0, 0 };
     if (!readReg(lib, reg_adc, &value, 2)) return -1;
-    return @as(i32, value[0]) << 8 | value[1];
+    return @as(i32, value[1]) << 8 | value[0];
 }
 
 // --- the resource ---------------------------------------------------------

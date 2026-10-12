@@ -25,6 +25,9 @@ pub const EXPANDERNAME = "expander.resource";
 
 /// How many pins it has.
 pub const PIN_COUNT: u32 = 8;
+/// Its analogue input, as a board names it: a BoardPin of kind
+/// BPIN_EXPANDER and this number, past the digital pins.
+pub const PIN_ANALOG: u8 = PIN_COUNT;
 
 /// Backlight brightness, as SetBacklight takes it.
 pub const BACKLIGHT_OFF: u32 = 0;

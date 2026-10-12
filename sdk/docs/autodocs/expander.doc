@@ -45,7 +45,7 @@ expander.resource/SetPin
 expander.resource/ReadADC                            expander.resource/ReadADC
 
    NAME
-	ReadADC -- The analogue input, 0 to 65535, or -1 if the part does not answer.
+	ReadADC -- The analogue input, 0 to 1023 for 0 V to the part's own 3.3 V supply, or -1 if the part does not answer.
 
    SYNOPSIS
 	    i32 ReadADC()

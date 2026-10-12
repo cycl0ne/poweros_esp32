@@ -91,7 +91,8 @@ pub const ExpanderBase = opaque {
         return libraries.call(self, LVO.Backlight, Fn.Backlight, .{});
     }
 
-    /// The analogue input, 0 to 65535, or -1 if the part does not answer.
+    /// The analogue input, 0 to 1023 for 0 V to the part's own 3.3 V supply,
+    /// or -1 if the part does not answer.
     pub fn ReadADC(self: *ExpanderBase) i32 {
         return libraries.call(self, LVO.ReadADC, Fn.ReadADC, .{});
     }

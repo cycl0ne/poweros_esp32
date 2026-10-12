@@ -13,7 +13,7 @@ Generated from the source by `./zig build autodoc`.
 - [ClaimPin](#claimpin) - Take `pin` (0 to PIN_COUNT-1) for `name`, which is kept for the listing and must outlive the claim.
 - [GetPin](#getpin) - What `pin` reads: 0 or 1, or -1 if the pin is out of range or the part does not answer.
 - [PinOwner](#pinowner) - Who holds `pin`, or null if nobody does.
-- [ReadADC](#readadc) - The analogue input, 0 to 65535, or -1 if the part does not answer.
+- [ReadADC](#readadc) - The analogue input, 0 to 1023 for 0 V to the part's own 3.3 V supply, or -1 if the part does not answer.
 - [ReleasePin](#releasepin) - Give `pin` back.
 - [SetBacklight](#setbacklight) - The backlight, BACKLIGHT_OFF (0) to BACKLIGHT_FULL (100).
 - [SetPin](#setpin) - Drive `pin` high or low.
@@ -67,7 +67,7 @@ Who holds `pin`, or null if nobody does.
 
 ## ReadADC
 
-The analogue input, 0 to 65535, or -1 if the part does not answer.
+The analogue input, 0 to 1023 for 0 V to the part's own 3.3 V supply, or -1 if the part does not answer.
 
 **SYNOPSIS**
 
