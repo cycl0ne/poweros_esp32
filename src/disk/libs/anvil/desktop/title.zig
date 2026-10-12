@@ -2,11 +2,16 @@
 //! The screen's title while the desktop is in front: how much memory is
 //! free, the internal and the external (PSRAM) apart, since a picture or
 //! a drawer of icons takes the one and anything an interrupt reads the
-//! other. Made again every two seconds.
+//! other - and on a board that measures its battery, the charge left.
+//! Made again every two seconds.
+
+const battery = @import("sdk").resources.battery;
 
 /// "Anvil   Internal 123 KB free   PSRAM 4,512 KB free" into `into`, NUL
 /// after it; how long. Without external memory its part is left out.
-pub fn memoryTitle(into: []u8, internal: usize, external: usize) usize {
+/// With a battery's state that has a cell, "   Battery 70%" after it,
+/// and ", charging" or ", external power" where the board can tell.
+pub fn memoryTitle(into: []u8, internal: usize, external: usize, cell: ?*const battery.BatteryState) usize {
     var n: usize = 0;
     n += put(into[n..], "Anvil   Internal ");
     n += kilobytes(into[n..], internal);
@@ -16,8 +21,35 @@ pub fn memoryTitle(into: []u8, internal: usize, external: usize) usize {
         n += kilobytes(into[n..], external);
         n += put(into[n..], " KB free");
     }
+    if (cell) |state| {
+        if (state.flags & battery.BATTF_PRESENT != 0) {
+            n += put(into[n..], "   Battery ");
+            n += number(into[n..], state.percent);
+            n += put(into[n..], "%");
+            if (state.flags & battery.BATTF_CHARGING != 0) {
+                n += put(into[n..], ", charging");
+            } else if (state.flags & battery.BATTF_EXTERNAL != 0) {
+                n += put(into[n..], ", external power");
+            }
+        }
+    }
     into[n] = 0;
     return n;
+}
+
+fn number(into: []u8, value: u32) usize {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var left = value;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    var i: usize = 0;
+    while (i < count) : (i += 1) into[i] = digits[count - 1 - i];
+    return count;
 }
 
 fn put(into: []u8, text: []const u8) usize {

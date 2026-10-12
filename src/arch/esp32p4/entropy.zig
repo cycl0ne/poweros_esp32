@@ -11,13 +11,19 @@
 //! noise of taking them is what the generator draws on. As ESP-IDF v6.1
 //! does it (bootloader_random_esp32p4.c).
 //!
-//! The controller stays on for good. A driver that wants the ADC for
-//! readings takes it over later and must keep it sampling, or the
-//! generator falls back to timing noise alone.
+//! The controller stays on for good. On a board that measures its
+//! battery on a pad of ADC 1 (`sense`), the controller samples that pad
+//! instead of channel 10 - at 12 dB, with the start-up code the chip's
+//! calibration gives (`sdk.hardware.saradc`), the reference set, the
+//! test bit that ties the input to the supply off and the pad's input
+//! and pulls off - so battery.resource reads the last sample whenever it
+//! likes; the noise of taking it is the same.
 
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
 const map = hardware.map;
+const saradc = hardware.saradc;
+const gpio = hardware.gpio;
 const regi2c = @import("regi2c.zig");
 
 // HP_SYS_CLKRST: the ADC's reset, its bus clock, its function clock with
@@ -62,6 +68,7 @@ const sar1_dig_force: u32 = 1 << 31;
 // that leave it measuring.
 const sar1_initial_code_low = 0x0;
 const sar1_initial_code_high = 0x1;
+const sar1_dref = 0x2;
 const dtest_ent_vdd_grp1 = 0x9;
 const sar1_initial_code: u16 = 2166;
 
@@ -69,7 +76,11 @@ const sar1_initial_code: u16 = 2166;
 /// channel, 0-1 the attenuation).
 const pattern: u32 = 10 << 2 | 3;
 
-pub fn init() void {
+/// The ADC sampling, the generator's clock on: the battery's pad where
+/// `sense` is one of ADC 1's. Once, at boot, before anything reads
+/// RNG_DATA.
+pub fn init(sense: ?u8) void {
+    const channel: ?u8 = if (sense) |pad| saradc.channelOf(pad) else null;
     reg(hp_rst_en2).* |= rst_en_adc;
     reg(hp_rst_en2).* &= ~rst_en_adc;
     reg(soc_clk_ctrl2).* |= adc_apb_clk_en;
@@ -84,12 +95,28 @@ pub fn init() void {
     reg(pmu_rf_pwc).* |= perif_i2c_rstb;
 
     regi2c.writeMask(.sar_adc, dtest_ent_vdd_grp1, 3, 0, 0);
-    regi2c.writeMask(.sar_adc, dtest_ent_vdd_grp1, 4, 4, 1);
-    regi2c.writeMask(.sar_adc, sar1_initial_code_high, 3, 0, @truncate(sar1_initial_code >> 8));
-    regi2c.writeMask(.sar_adc, sar1_initial_code_low, 7, 0, @truncate(sar1_initial_code));
+    var initial_code = sar1_initial_code;
+    var entry = pattern;
+    if (channel) |at| {
+        // The battery's pad: an input with nothing else on it, the
+        // reference, and its calibration's start-up code.
+        const pad = sense.?;
+        gpio.toMatrix(pad);
+        gpio.outputEnable(pad, false);
+        gpio.inputEnable(pad, false);
+        gpio.noPull(pad);
+        regi2c.writeMask(.sar_adc, dtest_ent_vdd_grp1, 4, 4, 0);
+        regi2c.writeMask(.sar_adc, sar1_dref, 6, 4, 4);
+        if (saradc.calibration(at)) |cal| initial_code = cal.init_code;
+        entry = @as(u32, at) << 2 | 3;
+    } else {
+        regi2c.writeMask(.sar_adc, dtest_ent_vdd_grp1, 4, 4, 1);
+    }
+    regi2c.writeMask(.sar_adc, sar1_initial_code_high, 3, 0, @truncate(initial_code >> 8));
+    regi2c.writeMask(.sar_adc, sar1_initial_code_low, 7, 0, @truncate(initial_code));
 
-    // The pattern table's first four entries all channel 10, one used.
-    reg(sar1_patt_tab1).* = pattern << 18 | pattern << 12 | pattern << 6 | pattern;
+    // The pattern table's first four entries all the one channel, one used.
+    reg(sar1_patt_tab1).* = entry << 18 | entry << 12 | entry << 6 | entry;
     setField(ctrl_reg, sar1_patt_len_shift, 0xF, 0);
 
     reg(meas1_mux).* |= sar1_dig_force;

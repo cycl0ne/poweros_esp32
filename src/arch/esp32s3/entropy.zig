@@ -12,14 +12,19 @@
 //! is reached over the chip's internal I2C bus, through the boot ROM's
 //! regi2c calls, as clock.zig reaches the PLL.
 //!
-//! The controller stays on for good. A driver that wants the ADCs for
-//! readings takes them over later and must keep them sampling, or the
-//! generator falls back to timing noise alone.
+//! The controller stays on for good. On a board that measures its
+//! battery on a pad of the first unit (`sense`), that unit samples the
+//! pad instead of its channel 10 - at 12 dB, with the start-up code the
+//! chip's calibration gives (`sdk.hardware.saradc`) and the pad's input
+//! and pulls off - so battery.resource reads the last sample whenever it
+//! likes; the noise of taking it is the same.
 
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
 const map = hardware.map;
 const system = hardware.system;
+const saradc = hardware.saradc;
+const gpio = hardware.gpio;
 
 // SYSCON
 const wifi_clk_en = map.SYSCON + 0x14;
@@ -57,9 +62,11 @@ const regi2c_write_mask: *const fn (block: u8, host: u8, reg_add: u8, msb: u8, l
 /// A pattern table entry: channel 10 at 12 dB attenuation.
 const pattern: u32 = 10 << 2 | 3;
 
-/// The ADCs sampling, the generator's clock on. Once, at boot, before
-/// anything reads RNG_DATA.
-pub fn init() void {
+/// The ADCs sampling, the generator's clock on: unit 1 the battery's pad
+/// where `sense` is one of its pads. Once, at boot, before anything reads
+/// RNG_DATA.
+pub fn init(sense: ?u8) void {
+    const channel: ?u8 = if (sense) |pad| saradc.channelOf(pad) else null;
     reg(wifi_clk_en).* |= wifi_clk_rng_en;
     reg(rtc_clk_conf).* |= dig_clk8m_en;
     system.enable(.apb_saradc);
@@ -79,8 +86,24 @@ pub fn init() void {
     regi2c_write_mask(i2c_sar_adc, host_id, 0x7, 2, 2, 1); // ENT_TSENS
     regi2c_write_mask(i2c_sar_adc, host_id, 0x7, 4, 4, 1); // ENCAL_REF
 
+    // Unit 1 on the battery's pad: an input with nothing else on it, the
+    // reference and the start-up code a reading is calibrated against.
+    if (channel) |at| {
+        const pad = sense.?;
+        gpio.toMatrix(pad);
+        gpio.outputEnable(pad, false);
+        gpio.inputEnable(pad, false);
+        gpio.pullUp(pad, false);
+        regi2c_write_mask(i2c_sar_adc, host_id, 0x2, 6, 4, 4); // DREF
+        if (saradc.calibration(at)) |cal| {
+            regi2c_write_mask(i2c_sar_adc, host_id, 0x1, 3, 0, @truncate(cal.init_code >> 8));
+            regi2c_write_mask(i2c_sar_adc, host_id, 0x0, 7, 0, @truncate(cal.init_code));
+        }
+    }
+
     // One entry per unit: unit 1's is entry 0, unit 2's entry 1.
-    setField(sar1_patt_tab1, 18, 0x3F, pattern);
+    const unit1_pattern: u32 = if (channel) |at| @as(u32, at) << 2 | 3 else pattern;
+    setField(sar1_patt_tab1, 18, 0x3F, unit1_pattern);
     setField(sar2_patt_tab1, 12, 0x3F, pattern);
     setField(adc_ctrl, 15, 0xF, 0); // SAR1_PATT_LEN: one entry
     setField(adc_ctrl, 19, 0xF, 0); // SAR2_PATT_LEN: one entry

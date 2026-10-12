@@ -25,6 +25,8 @@ pub const UART0: usize = 0x6000_0000;
 pub const SPI1: usize = 0x6000_2000;
 pub const SPI0: usize = 0x6000_3000;
 pub const GPIO: usize = 0x6000_4000;
+/// The eFuse controller: the blocks as read, the MAC and the calibrations.
+pub const EFUSE: usize = 0x6000_7000;
 pub const RTC_CNTL: usize = 0x6000_8000;
 /// SENS: the SAR ADCs' analog controls, beside RTC_CNTL.
 pub const SENS: usize = 0x6000_8800;

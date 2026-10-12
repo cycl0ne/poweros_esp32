@@ -117,6 +117,8 @@ pub const Desktop = struct {
     start_error: i32 = 0,
 
     libraries: [8]?*exec.Library = @splat(null),
+    /// The board's battery, for the title; a resource, never closed.
+    battery: ?*sdk.interface.battery.BatteryBase = null,
     ib: *IntuitionBase = undefined,
     gb: *GraphicsBase = undefined,
     ub: *UtilityBase = undefined,
@@ -233,6 +235,7 @@ pub const Desktop = struct {
         // library the desktop still comes up, with a colour and the
         // screen's font.
         d.dt = @ptrCast(d.open(.datatypes, sdk.datatypes.DATATYPESNAME, 0));
+        d.battery = @ptrCast(@alignCast(d.sys.OpenResource(sdk.resources.battery.BATTERYNAME)));
         d.df = @ptrCast(d.open(.diskfont, sdk.diskfont.DISKFONTNAME, 0));
         d.has_scroller = d.open(.scroller, sdk.gadgets.scroller.SCROLLER_LIBRARY, 0) != null;
 
@@ -610,7 +613,9 @@ pub const Desktop = struct {
         }
         const internal = d.sys.AvailMem(exec.MEMF_INTERNAL);
         const external = d.sys.AvailMem(exec.MEMF_EXTERNAL);
-        _ = title_text.memoryTitle(&d.title, internal, external);
+        var cell: sdk.resources.battery.BatteryState = .{};
+        const measured = if (d.battery) |bb| bb.ReadBattery(&cell) else false;
+        _ = title_text.memoryTitle(&d.title, internal, external, if (measured) &cell else null);
         if (d.backdrop) |window| d.ib.SetWindowTitles(window, wn.TITLE_UNCHANGED, &d.title);
         var it = d.drawers.iterator();
         while (it.next()) |node| {

@@ -152,6 +152,14 @@ pub const PART_PinCrsDv = PART_Dummy + 0x3C;
 pub const PART_PinRefClock = PART_Dummy + 0x3D;
 pub const PART_PinMDC = PART_Dummy + 0x3E;
 pub const PART_PinMDIO = PART_Dummy + 0x3F;
+/// A battery's lines beside its sense (PART_Pin): asserted while
+/// external power is there, and while the charger charges.
+pub const PART_PinExternal = PART_Dummy + 0x40;
+pub const PART_PinCharging = PART_Dummy + 0x41;
+/// What a sensed voltage is multiplied by to give the one it was
+/// divided down from, in thousandths: 2000 behind a divider that
+/// halves it, 3000 behind one that leaves a third.
+pub const PART_SenseScale = PART_Dummy + 0x42;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -189,6 +197,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinRefClock => "REF_CLK",
         PART_PinMDC => "MDC",
         PART_PinMDIO => "MDIO",
+        PART_PinExternal => "EXT",
+        PART_PinCharging => "CHRG",
         else => null,
     };
 }
@@ -268,6 +278,8 @@ pub const CHIP_NS4168: u32 = 19;
 /// BUS_MEMORY): on the ESP32-S3 the full-speed one, unit 0; on the
 /// ESP32-P4 the high-speed one, unit 0, and the full-speed one, unit 1.
 pub const CHIP_DWC2: u32 = 20;
+/// A one-cell lithium charger whose status reaches only its LED.
+pub const CHIP_TP4054: u32 = 21;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

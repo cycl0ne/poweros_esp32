@@ -39,6 +39,7 @@ comptime {
     _ = @import("rom/libs/utility/utility.zig");
     _ = @import("rom/libs/expansion/expansion.zig");
     _ = @import("rom/resources/gpio/gpio.zig");
+    _ = @import("rom/resources/battery/battery.zig");
     // The board's description: its system tag list, a ROM tag of its own,
     // and the drivers its parts want.
     _ = &@import("boards/boards.zig").system.system_tag;
@@ -124,7 +125,7 @@ export fn kmain() callconv(.c) noreturn {
     exec.debug_hardware.* = &alert.debug_hardware;
     exec.task_hardware.* = context.hardware;
     intmatrix.init();
-    entropy.init();
+    entropy.init(batterySense());
     var regions: [ram.max_regions]exec.MemRegion = undefined;
     // exec.library from its ROM tag; its init does RawIOInit, sets up the
     // rest, scans the ROM tags, creates the exec task and starts the
@@ -193,4 +194,12 @@ export fn kmain() callconv(.c) noreturn {
 /// A kernel status line; the raw port puts the uptime in front.
 fn note(comptime format: [:0]const u8, args: anytype) void {
     exec.kprintf(std.fmt.comptimePrint("{s}\n", .{format}), args);
+}
+
+/// The pad the board measures its battery on, where it has one: the
+/// entropy source samples it, for battery.resource to read
+/// (`entropy.init`).
+fn batterySense() ?u8 {
+    const line = sdk.expansion.BoardPin.of(boards.partFact(st.PARTKIND_BATTERY, st.PART_Pin, 0));
+    return if (line.kind == sdk.expansion.boardpin.BPIN_GPIO) line.number else null;
 }

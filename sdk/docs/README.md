@@ -175,6 +175,7 @@ All are in the ROM.
 | dma.resource | the chip's DMA engines, their channels one owner each | [md](autodocs/dma.md) · [doc](autodocs/dma.doc) |
 | jpeg.resource | the ESP32-P4's JPEG codec: a file decoded into pixels | [md](autodocs/jpeg.md) · [doc](autodocs/jpeg.doc) |
 | expander.resource | the board's IO expander: the pins the panel, the touch controller and the card hang on, the backlight, an analogue input | [md](autodocs/expander.md) · [doc](autodocs/expander.doc) |
+| battery.resource | the board's battery: whether a cell is there, its voltage and charge, external power and charging, a signal when that changes | [md](autodocs/battery.md) · [doc](autodocs/battery.doc) |
 | watchdog.resource | the chip's watchdog timer, armed, fed and disarmed by programs | [md](autodocs/watchdog.md) · [doc](autodocs/watchdog.doc) |
 
 ## Handlers

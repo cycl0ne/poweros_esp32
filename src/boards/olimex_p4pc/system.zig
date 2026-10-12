@@ -247,6 +247,26 @@ const sd_slot = [_]Tag{
     .done,
 };
 
+// --- the battery ------------------------------------------------------------------
+
+/// A TP4054 charges the LiPo cell on BAT1 from the 5 V input (USB-C, or
+/// PoE), and a step-up converter runs the board from the cell when that
+/// is gone. The cell's voltage reaches GPIO20 (ADC1, channel 4) halved,
+/// 470 k over 470 k; the 5 V input reaches GPIO32 through 220 k over
+/// 470 k, high while it is there. Both only once their solder jumpers
+/// are closed (BAT_SENS_E1 and E2, PWR_SENS_E1), which the board ships
+/// open. The charger's CHRG drives only its LED.
+const battery = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_BATTERY),
+    .value(st.PART_Chip, st.CHIP_TP4054),
+    .pointer(st.PART_ChipName, "tp4054"),
+    .value(st.PART_Bus, st.BUS_ADC),
+    .value(st.PART_Pin, pins.gpio(20)),
+    .value(st.PART_SenseScale, 2000),
+    .value(st.PART_PinExternal, pins.gpio(32)),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -273,6 +293,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &codec),
     .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &sd_slot),
+    .pointer(st.SYSTAG_Part, &battery),
     .done,
 };
 

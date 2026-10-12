@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+//! battery.resource's functions: the board's battery - whether a cell is
+//! there, its voltage and its charge, external power and charging where
+//! the board can tell - and who is told when that changes. A resource: no
+//! Open or Close, its first function in the first slot. The base comes
+//! from OpenResource("battery.resource").
+##include libs/exec/exec as exec
+##include resources/battery as battery
+##basetype BatteryBase
+##name battery.resource
+##bias 0
+##public
+/// The battery as last measured, into `state`. False if the board has no
+/// battery whose voltage it can measure; `state` then says what it can
+/// tell all the same.
+bool ReadBattery(*battery.BatteryState state)
+/// `signals` sent to `task` whenever a cell comes or goes, external power
+/// comes or goes, charging starts or ends, or the charge passes
+/// BATTERY_LOW or BATTERY_CRITICAL; null without memory.
+?*battery.BatteryNotify AddBatteryNotify(*exec.Task task, u32 signals)
+/// No more of that.
+void RemBatteryNotify(?*battery.BatteryNotify notify)
+##end

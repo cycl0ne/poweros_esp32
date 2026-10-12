@@ -37,3 +37,4 @@ pub const icon = @import("icon.zig");
 pub const anvil = @import("anvil.zig");
 pub const usb = @import("usb.zig");
 pub const usbclass = @import("usbclass.zig");
+pub const battery = @import("battery.zig");

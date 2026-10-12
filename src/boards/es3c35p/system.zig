@@ -244,11 +244,16 @@ const led = [_]Tag{
     .done,
 };
 
-/// The battery, measured through a divider on an ADC pad.
+/// A TP4054 charges the cell on JP1 from USB. Its voltage reaches GPIO8
+/// (ADC1, channel 7) halved, 100 k over 100 k. The charger's CHRG and
+/// USB's 5 V reach no pin.
 const battery = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_BATTERY),
+    .value(st.PART_Chip, st.CHIP_TP4054),
+    .pointer(st.PART_ChipName, "tp4054"),
     .value(st.PART_Bus, st.BUS_ADC),
     .value(st.PART_Pin, pins.gpio(8)),
+    .value(st.PART_SenseScale, 2000),
     .done,
 };
 

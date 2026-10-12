@@ -78,11 +78,30 @@ test "the ground: a picture scaled to cover, centred, and which colours are ligh
 
 test "the title: kilobytes free, the thousands parted, PSRAM only when there is some" {
     var text: [96]u8 = undefined;
-    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288);
+    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288, null);
     try testing.expectEqualStrings("Anvil   Internal 123 KB free   PSRAM 4,512 KB free", text[0..n]);
     try testing.expectEqual(@as(u8, 0), text[n]);
-    const m = title.memoryTitle(&text, 1_234_567 * 1024, 0);
+    const m = title.memoryTitle(&text, 1_234_567 * 1024, 0, null);
     try testing.expectEqualStrings("Anvil   Internal 1,234,567 KB free", text[0..m]);
+}
+
+test "the title: the battery's charge where a cell is measured" {
+    const battery = @import("sdk").resources.battery;
+    var text: [96]u8 = undefined;
+    var state = battery.BatteryState{ .flags = battery.BATTF_MEASURED | battery.BATTF_PRESENT, .percent = 70 };
+    var n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 32,747 KB free   Battery 70%", text[0..n]);
+    state.flags |= battery.BATTF_KNOWS_EXTERNAL | battery.BATTF_EXTERNAL;
+    n = title.memoryTitle(&text, 446 * 1024, 0, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free   Battery 70%, external power", text[0..n]);
+    state.flags |= battery.BATTF_CHARGING;
+    state.percent = 100;
+    n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 32,747 KB free   Battery 100%, charging", text[0..n]);
+    // Measured, but no cell: nothing said.
+    state.flags = battery.BATTF_MEASURED;
+    n = title.memoryTitle(&text, 446 * 1024, 0, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free", text[0..n]);
 }
 
 test "a drawer's path: its parent, a name joined on, its last part" {

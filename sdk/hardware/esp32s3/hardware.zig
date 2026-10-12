@@ -18,6 +18,7 @@ pub const uart = @import("uart.zig");
 pub const usb_serial_jtag = @import("usb_serial_jtag.zig");
 /// The USB OTG controllers: where, their interrupts, what turns them on.
 pub const usb_otg = @import("usb_otg.zig");
+pub const saradc = @import("saradc.zig");
 pub const i2c = @import("i2c.zig");
 pub const systimer = @import("systimer.zig");
 pub const rtc_cntl = @import("rtc_cntl.zig");

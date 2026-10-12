@@ -251,12 +251,16 @@ const usb = [_]Tag{
 
 /// A CS8501 charges the cell on the two-pin battery connector from USB
 /// and boosts it to 5 V without USB. The battery's voltage reaches the
-/// expander's analogue input through 20 k over 10 k, a third of it.
+/// expander's analogue input through 20 k over 10 k, a third of it. The
+/// charger's CHARGE and DONE drive only its LEDs, and nothing reads USB's
+/// 5 V.
 const battery = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_BATTERY),
     .value(st.PART_Chip, st.CHIP_CS8501),
     .pointer(st.PART_ChipName, "cs8501"),
     .value(st.PART_Bus, st.BUS_ADC),
+    .value(st.PART_Pin, pins.expander(sdk.resources.expander.PIN_ANALOG)),
+    .value(st.PART_SenseScale, 3000),
     .done,
 };
 
