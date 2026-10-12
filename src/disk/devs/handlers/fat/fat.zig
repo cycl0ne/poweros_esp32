@@ -27,7 +27,13 @@
 //! old one is dropped unwritten, the locks on it stop being any good, and
 //! the new card is mounted - so the volume node is put where the new
 //! card's name says, as soon as the list can be had without waiting
-//! (`renewVolume`). A handler started with no card, or with a card it
+//! (`renewVolume`). A handler nobody asks anything hears of a change by
+//! its change interrupt (TD_ADDCHANGEINT), which the device causes when a
+//! card goes in or out: it looks at once, and then tells input
+//! (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED), so a window showing the
+//! device list looks again and finds the volume already where the card
+//! says. A device whose medium stays answers TD_ADDCHANGEINT with an
+//! error, and is only asked before each packet. A handler started with no card, or with a card it
 //! cannot read, stays and answers ERROR_NO_DISK or ERROR_NOT_A_DOS_DISK
 //! until there is one.
 //!
@@ -54,6 +60,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const trackdisk = sdk.devices.trackdisk;
+const inputevent = sdk.devices.inputevent;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -66,7 +73,7 @@ const exfat_fs = @import("exfat/fs.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 3;
+const HANDLER_REVISION = 4;
 const BUILD_DATE = "12.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -288,7 +295,106 @@ const State = struct {
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
     watching: bool = false,
+    /// The change interrupt the device causes when the card comes or
+    /// goes, the request it is kept with and that request's port, and the
+    /// signal it gives the process; no signal (0) when the device has
+    /// none to give.
+    change_int: exec.Interrupt = .{},
+    change_io: exec.IOStdReq = .{},
+    change_port: ?*MsgPort = null,
+    change_mask: u32 = 0,
+    process: ?*exec.Task = null,
+    /// input.device, for telling it a disk came or went.
+    input: Input = .{},
 };
+
+/// Its change interrupt: the process signalled, to look at the card on
+/// its own time.
+fn changeInterrupt(is_data: ?*anyopaque) callconv(.c) void {
+    const st: *State = @ptrCast(@alignCast(is_data.?));
+    st.media.sys.Signal(st.process.?, st.change_mask);
+}
+
+/// The change interrupt given to the device, on a request and a port of
+/// its own: the device keeps it until the handler ends. A device that
+/// does not take it (a medium that stays) answers at once, and then the
+/// handler only asks before each packet.
+fn listenForChanges(sys: *ExecBase, st: *State, process: *exec.Task) void {
+    const signal = sys.AllocSignal(-1);
+    if (signal < 0) return;
+    const port = sys.CreateMsgPort() orelse {
+        sys.FreeSignal(signal);
+        return;
+    };
+    st.process = process;
+    st.change_mask = @as(u32, 1) << @intCast(signal);
+    st.change_int = .{ .node = .{ .type = .interrupt, .name = HANDLER_NAME }, .data = st, .code = @ptrCast(&changeInterrupt) };
+    st.change_io = st.io;
+    st.change_io.req.message.reply_port = port;
+    st.change_io.req.command = trackdisk.TD_ADDCHANGEINT;
+    st.change_io.data = &st.change_int;
+    st.change_io.length = @sizeOf(exec.Interrupt);
+    sys.SendIO(&st.change_io.req);
+    if (sys.CheckIO(&st.change_io.req) != null) {
+        _ = sys.WaitIO(&st.change_io.req);
+        sys.DeleteMsgPort(port);
+        sys.FreeSignal(signal);
+        st.change_mask = 0;
+        return;
+    }
+    st.change_port = port;
+}
+
+/// The device said its card came or went: looked at now - nobody may be
+/// asking anything - the volume node renewed, and input told.
+fn mediumChanged(sys: *ExecBase, dl: *DosBase, st: *State, port: *MsgPort) void {
+    if (st.bodies.checkMedium()) st.renew = true;
+    renewSoon(dl, st, port);
+    const class = if (st.media.present()) inputevent.IECLASS_DISKINSERTED else inputevent.IECLASS_DISKREMOVED;
+    st.input.announce(sys, class);
+}
+
+/// `renewVolume` until it has had the list: another handler starting or
+/// renewing beside this one may hold it for a moment, so a try that fails
+/// is made again a tick later - a few times, and after that the next
+/// packet does it.
+fn renewSoon(dl: *DosBase, st: *State, port: *MsgPort) void {
+    var tries: u32 = 0;
+    while (true) : (tries += 1) {
+        renewVolume(dl, st, port);
+        if (!st.renew or tries == renew_tries) break;
+        dl.Delay(1);
+    }
+}
+
+/// input.device, opened the first time a disk is announced, and kept.
+const Input = struct {
+    port: ?*MsgPort = null,
+    io: exec.IOStdReq = .{},
+    open: bool = false,
+    event: inputevent.InputEvent = .{},
+
+    fn announce(input: *Input, sys: *ExecBase, class: u32) void {
+        if (!input.open) {
+            const port = input.port orelse sys.CreateMsgPort() orelse return;
+            input.port = port;
+            input.io = .{};
+            input.io.req.message.reply_port = port;
+            input.io.req.message.length = @sizeOf(exec.IOStdReq);
+            if (sys.OpenDevice(sdk.devices.input.INPUTNAME, 0, &input.io.req, 0) != 0) return;
+            input.open = true;
+        }
+        input.event = .{ .class = class };
+        input.io.req.command = sdk.devices.input.IND_WRITEEVENT;
+        input.io.length = @sizeOf(inputevent.InputEvent);
+        input.io.data = @ptrCast(&input.event);
+        _ = sys.DoIO(&input.io.req);
+    }
+};
+
+/// How often the volume node is tried for, a tick apart, before the next
+/// packet is left to do it.
+const renew_tries = 25;
 
 /// The handler process: ACTION_STARTUP (the device from the startup
 /// message, the volume if there is one), then packets for good.
@@ -321,8 +427,11 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     // A card that is not there or not readable is not an error: the
     // handler stays for the one that will be.
     st.bodies.mount();
+    // The volume on the list before the startup is answered, so it is
+    // there before anyone asks.
     st.renew = true;
-    renewVolume(dl, st, &me.msg_port);
+    renewSoon(dl, st, &me.msg_port);
+    listenForChanges(sys, st, &me.task);
     if (node) |device_node| device_node.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
@@ -332,7 +441,8 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     while (true) {
         if (st.watching) st.watchers.collect();
         while (sys.GetMsg(packets)) |message| handle(dl, st, DosPacket.fromMessage(message), packets);
-        _ = sys.Wait(packets.sigMask() | replies);
+        const got = sys.Wait(packets.sigMask() | replies | st.change_mask);
+        if (got & st.change_mask != 0) mediumChanged(sys, dl, st, packets);
     }
 }
 

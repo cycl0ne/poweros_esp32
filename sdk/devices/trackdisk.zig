@@ -15,6 +15,12 @@
 //!   TD_CHANGESTATE   io_Actual: 0 if a medium is in.
 //!   TD_GETGEOMETRY   fills a DriveGeometry.
 //!   TD_GETNUMTRACKS  io_Actual: the tracks (cylinders) of the unit.
+//!   TD_ADDCHANGEINT  io_Data an exec `Interrupt` whose code is a
+//!                    `SoftIntFn`: caused (exec's Cause) every time a
+//!                    medium goes in or out. The request is kept and not
+//!                    answered until it is sent again as TD_REMCHANGEINT,
+//!                    so it goes with SendIO, on a request of its own.
+//!   TD_REMCHANGEINT  that same request, taken off again and answered.
 //!   TDCMD_ERASE      ours: erases the blocks io_Offset..io_Offset+io_Length.
 //!
 //! What the medium being flash, not a floppy, changes:
@@ -24,12 +30,14 @@
 //!   flash must be erased before it is written, and the medium can be read
 //!   through the CPU's address space without a request at all.
 //! - No motor, seek, index or raw-track commands (TD_MOTOR, TD_SEEK,
-//!   TD_RAWREAD, TD_RAWWRITE, TD_GETDRIVETYPE), no removal interrupts
-//!   (TD_ADDCHANGEINT, TD_REMCHANGEINT) and no ETD_* (the extended requests
-//!   that check a change number). A unit whose medium can be taken out
-//!   says so in DGF_REMOVABLE and answers TD_CHANGESTATE and TD_CHANGENUM
-//!   for real; a file system that wants to know asks before each packet,
-//!   rather than being told by an interrupt.
+//!   TD_RAWREAD, TD_RAWWRITE, TD_GETDRIVETYPE) and no ETD_* (the extended
+//!   requests that check a change number). A unit whose medium can be taken
+//!   out says so in DGF_REMOVABLE, answers TD_CHANGESTATE and TD_CHANGENUM
+//!   for real, and causes the change interrupts of TD_ADDCHANGEINT when the
+//!   medium comes or goes - so a file system that nobody is asking anything
+//!   still notices, looks at the medium on its own task, and is the one
+//!   that tells input (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED). A unit
+//!   whose medium stays answers the two with IOERR_NOCMD.
 //! - No TDERR_* past the ones a solid-state medium can give, and one more
 //!   of ours for the medium that is not there at all.
 

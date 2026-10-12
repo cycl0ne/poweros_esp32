@@ -231,6 +231,7 @@ flowchart TB
     m_diskfont_library --> m_truetype_library
     m_emac_device --> m_timer_device
     m_fat_handler --> m_dos_library
+    m_fat_handler --> m_input_device
     m_fat_handler -.-> m_sdcard_device
     m_filter_library --> m_bsdsocket_library
     m_filter_library --> m_timer_device
@@ -252,7 +253,6 @@ flowchart TB
     m_sdcard_device --> m_dma_resource
     m_sdcard_device --> m_expander_resource
     m_sdcard_device --> m_gpio_resource
-    m_sdcard_device --> m_input_device
     m_sdcard_device --> m_timer_device
     m_slip_device --> m_serial_device
     m_slip_device --> m_timer_device

@@ -68,9 +68,9 @@ If EXISTS S:User-Startup
 EndIf
 
 ; The card in the board's slot, as SD0:, before the desktop comes up so
-; it shows the card from the start; a card put in later is found when the
-; slot is next spoken to. A board without a slot has no device to open,
-; and nothing is mounted.
+; it shows the card from the start; a card put in or taken out later is
+; noticed within a second, and the desktop follows. A board without a slot
+; has no device to open, and nothing is mounted.
 C:Mount >NIL: SD0:
 
 ; The USB buses whose socket can only be a host - on a board whose

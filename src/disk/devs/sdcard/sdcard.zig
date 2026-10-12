@@ -16,6 +16,9 @@
 //!   TD_PROTSTATUS    io_Actual: not 0 if the card refuses to be written.
 //!   TD_CHANGENUM     io_Actual: how often a card has been identified.
 //!   TD_CHANGESTATE   io_Actual: 0 while a card is in.
+//!   TD_ADDCHANGEINT  io_Data an Interrupt, caused whenever a card goes in
+//!                    or out; the request is kept until it comes back as
+//!   TD_REMCHANGEINT  which takes it off and answers it.
 //!
 //! **Two ways a slot is wired.** The board's card-slot part says which.
 //! On the chip's SD/MMC host (`sdmmc.zig`) the card is spoken to in its
@@ -57,10 +60,14 @@
 //! controller's own 64-byte buffer, which the CPU fills and empties.
 //!
 //! **A card can be taken out.** Nothing here is told when that happens -
-//! the slot has no switch - so it is found out the next time the card is
-//! spoken to and does not answer. The unit then says there is no card,
-//! counts the change, and tries to identify one afresh on the next
-//! command. A handler that asks TD_CHANGENUM before each packet sees it.
+//! the slot has no switch - so the task asks: a card that is in is asked
+//! for its status once a second while nothing else is going on, and an
+//! empty slot is looked at as often. A card that does not answer - then,
+//! or to any command - has gone: the unit says there is no card, counts
+//! the change, and tries to identify one afresh on the next command. A
+//! card come or gone causes the handlers' change interrupts
+//! (TD_ADDCHANGEINT), and the handler looks at the slot on its own task -
+//! and tells input, so a window showing the device list looks again.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -87,8 +94,8 @@ const Work = _sdcard.Work;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "11.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -151,10 +158,11 @@ fn portMask(sb: *SdCardBase) u32 {
     return sb.port.?.sigMask();
 }
 
-/// How often an empty slot is looked at. Long enough that the looking
-/// costs nothing worth counting, short enough that a card put in is
-/// noticed while the hand is still moving away.
-const empty_poll_us: u32 = 1_000_000;
+/// How often the slot is looked at while nothing else is going on. Long
+/// enough that the looking costs nothing worth counting, short enough that
+/// a card put in or taken out is noticed while the hand is still moving
+/// away.
+const poll_us: u32 = 1_000_000;
 
 /// `us` microseconds on the timer, as a deadline to wait against.
 fn armDeadline(sb: *SdCardBase, us: u32) void {
@@ -483,29 +491,39 @@ fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes
     return 0;
 }
 
-/// A card going in or out told to input.device, which hands it to
-/// intuition, which tells every window that asked
-/// (`IDCMP_DISKINSERTED`, `IDCMP_DISKREMOVED`). Nothing here waits on
-/// it or minds if it cannot be sent: it is how a window showing what is
-/// mounted hears that it should look again.
-fn announce(sb: *SdCardBase, class: u32) void {
+/// A card went in or out: every handler that asked (TD_ADDCHANGEINT)
+/// has its interrupt caused, and looks at the slot on its own task.
+fn changed(sb: *SdCardBase) void {
     const sys = sb.sys_base;
-    const io = sb.input_io orelse blk: {
-        const port = sb.port orelse return;
-        const made = sys.CreateIORequest(port, @sizeOf(exec.IOStdReq)) orelse return;
-        const req: *exec.IOStdReq = @ptrCast(@alignCast(made));
-        if (sys.OpenDevice(sdk.devices.input.INPUTNAME, 0, &req.req, 0) != 0) {
-            sys.DeleteIORequest(@ptrCast(req));
-            return;
-        }
-        sb.input_io = req;
-        break :blk req;
-    };
-    sb.input_event = .{ .class = class };
-    io.req.command = sdk.devices.input.IND_WRITEEVENT;
-    io.length = @sizeOf(sdk.devices.inputevent.InputEvent);
-    io.data = @ptrCast(&sb.input_event);
-    _ = sys.DoIO(&io.req);
+    sys.AcquireLock(&sb.change_lock);
+    defer sys.ReleaseLock(&sb.change_lock);
+    var it = sb.changes.iterator();
+    while (it.next()) |node| {
+        const io = _sdcard.requestOf(@fieldParentPtr("node", node));
+        const data = _sdcard.stdReq(io).data orelse continue;
+        sys.Cause(@ptrCast(@alignCast(data)));
+    }
+}
+
+/// `io` off the change interrupts, if it is on them; whether it was. The
+/// lock is held.
+fn takeChange(sb: *SdCardBase, io: *exec.IORequest) bool {
+    var it = sb.changes.iterator();
+    while (it.next()) |node| {
+        if (_sdcard.requestOf(@fieldParentPtr("node", node)) != io) continue;
+        sb.sys_base.Remove(node);
+        return true;
+    }
+    return false;
+}
+
+/// Whether the card that is in still answers: asked for its status.
+fn stillThere(sb: *SdCardBase) bool {
+    if (sb.slot.spi != 0) {
+        var bus = SpiBus{ .sb = sb };
+        return Spi.command(&bus, card.SEND_STATUS, 0) != null;
+    }
+    return command(sb, card.SEND_STATUS, @as(u32, sb.card.address) << 16, .short, null).ok();
 }
 
 /// The card stopped answering. Whatever it was is gone; the next command
@@ -516,7 +534,7 @@ fn lost(sb: *SdCardBase) void {
     sb.present = 0;
     sb.change_num +%= 1;
     say(sb, "the card stopped answering");
-    announce(sb, sdk.devices.inputevent.IECLASS_DISKREMOVED);
+    changed(sb);
 }
 
 /// A card in the slot, identified if it has not been already. False if
@@ -540,7 +558,7 @@ fn ready(sb: *SdCardBase) bool {
     sb.present = 1;
     sb.change_num +%= 1;
     report(sb);
-    announce(sb, sdk.devices.inputevent.IECLASS_DISKINSERTED);
+    changed(sb);
     return true;
 }
 
@@ -897,17 +915,15 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
             slowIO(sb, io);
             sys.ReplyIO(io);
         }
-        // With a card in, nothing is done until something asks: a card
-        // that goes is found by the command that fails on it. With the
-        // slot empty there is nothing to fail, so the slot is looked at
-        // now and then - that is how a card put in is noticed by a
-        // window that is only showing what is mounted, with nobody
-        // reading from it.
-        if (sb.present != 0 or sb.has_slot == 0) {
+        if (sb.has_slot == 0) {
             _ = sys.Wait(queue_port.sigMask());
             continue;
         }
-        armDeadline(sb, empty_poll_us);
+        // Nobody may be reading from the slot, so it is looked at now and
+        // then: a card that is in asked whether it still answers, an
+        // empty slot whether one has come - that is how a card going in
+        // or out is noticed with nothing asking, and the handlers told.
+        armDeadline(sb, poll_us);
         // The timer answers on the task's own port, not on the queue, so
         // the wait has to listen for both.
         const got = sys.Wait(queue_port.sigMask() | portMask(sb));
@@ -915,7 +931,11 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
         // A request that came in is served first; the slot is looked at
         // only when nothing but the timer woke it.
         if (got & queue_port.sigMask() != 0) continue;
-        _ = ready(sb);
+        if (sb.present == 0) {
+            _ = ready(sb);
+        } else if (!stillThere(sb) and !stillThere(sb)) {
+            lost(sb);
+        }
     }
 }
 
@@ -1089,6 +1109,26 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         // A card erases for itself, and nothing below the handler is
         // buffered, so these three answer where they stand.
         td.TDCMD_ERASE, exec.CMD_UPDATE, exec.CMD_CLEAR => {},
+        // A handler's change interrupt: kept, and not answered, until the
+        // same request comes back as TD_REMCHANGEINT.
+        td.TD_ADDCHANGEINT => if (req.data == null) {
+            io.err = exec.IOERR_BADADDRESS;
+        } else {
+            const sys = sb.sys_base;
+            // Kept, so in progress: CheckIO and WaitIO go by the type.
+            io.flags &= ~exec.IOF_QUICK;
+            io.message.node.type = .message;
+            sys.AcquireLock(&sb.change_lock);
+            sys.AddTail(&sb.changes, &io.message.node);
+            sys.ReleaseLock(&sb.change_lock);
+            return;
+        },
+        td.TD_REMCHANGEINT => {
+            const sys = sb.sys_base;
+            sys.AcquireLock(&sb.change_lock);
+            _ = takeChange(sb, io);
+            sys.ReleaseLock(&sb.change_lock);
+        },
         // What the device already knows, without asking the card: a
         // handler asks these between packets and must not be made to
         // wait for them.
@@ -1103,10 +1143,19 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 }
 
 /// A request the task hasn't started yet is taken off its queue and
-/// replied; one it is busy with can't be stopped.
+/// replied, and so is a change interrupt; one the task is busy with can't
+/// be stopped.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const sb = _sdcard.sdCardBase(dev);
     const sys = sb.sys_base;
+    sys.AcquireLock(&sb.change_lock);
+    const was_change = takeChange(sb, io);
+    sys.ReleaseLock(&sb.change_lock);
+    if (was_change) {
+        io.err = exec.IOERR_ABORTED;
+        sys.ReplyIO(io);
+        return 0;
+    }
     sys.Disable();
     defer sys.Enable();
     var it = sb.unit.msg_port.msg_list.iterator();
@@ -1248,6 +1297,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     const sb = _sdcard.sdCardBase(dev);
     sb.sys_base = sys_base;
     sb.seg_list = seg_list;
+    sb.changes.init(.message);
+    sys_base.InitLock(&sb.change_lock, DEVICE_NAME, exec.LOCKORDER_DRIVER, 0);
     // No slot, or no controller behind it: there is no device to make.
     // Deciding it here, before anything is allocated or started, is what
     // lets the whole of it go - exec frees the base when this answers

@@ -5,12 +5,13 @@
 //!   DiskChange DEVICE/A
 //!
 //! A handler for a drive whose medium can be taken out looks at it before
-//! every packet, so it notices a card going in or out as soon as anything
-//! asks it anything. A drive nobody is using is asked nothing, and its
-//! volume on the device list can then be a card that has gone or a card
-//! that is not there yet. This asks it one harmless question, which is
-//! enough: the handler looks at the medium first and puts its volume
-//! where the card now says.
+//! every packet, and when its device says the medium came or went (its
+//! change interrupt, as sdcard.device and usb/disk.device give one). A
+//! drive whose device cannot say so, and that nobody is using, is asked
+//! nothing, and its volume on the device list can then be a medium that
+//! has gone or one that is not there yet. This asks it one harmless
+//! question, which is enough: the handler looks at the medium first and
+//! puts its volume where the medium now says.
 //!
 //!   DiskChange SD0:
 //!
