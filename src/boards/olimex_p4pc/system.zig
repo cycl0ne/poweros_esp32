@@ -256,14 +256,19 @@ const sd_slot = [_]Tag{
 /// 470 k, high while it is there. Both only once their solder jumpers
 /// are closed (BAT_SENS_E1 and E2, PWR_SENS_E1), which the board ships
 /// open. The charger's CHRG drives only its LED.
+///
+/// The list leaves the two lines out, for the jumpers as shipped: open,
+/// GPIO32 floats and reads as a 5 V input that is not there. A board
+/// whose jumpers are closed adds them:
+///
+///     .value(st.PART_Pin, pins.gpio(20)),
+///     .value(st.PART_SenseScale, 2000),
+///     .value(st.PART_PinExternal, pins.gpio(32)),
 const battery = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_BATTERY),
     .value(st.PART_Chip, st.CHIP_TP4054),
     .pointer(st.PART_ChipName, "tp4054"),
     .value(st.PART_Bus, st.BUS_ADC),
-    .value(st.PART_Pin, pins.gpio(20)),
-    .value(st.PART_SenseScale, 2000),
-    .value(st.PART_PinExternal, pins.gpio(32)),
     .done,
 };
 
