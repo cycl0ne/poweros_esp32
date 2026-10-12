@@ -249,6 +249,7 @@ const DEVICE_SPEAKS = 28;
 const DEVICE_UNIT_PART = 32;
 const DEVICE_UNITS = 36;
 const DEVICE_UNIT_LABELS = 40;
+const DEVICE_UNIT_CHIP = 44;
 
 comptime {
     if (@sizeOf(usize) == 4) {
@@ -256,7 +257,7 @@ comptime {
         if (@offsetOf(resident.Resident, "flags") != TAG_FLAGS or @offsetOf(resident.Resident, "name") != TAG_NAME or
             @offsetOf(resident.Resident, "id_string") != TAG_ID_STRING or @offsetOf(Device, "speaks") != DEVICE_SPEAKS or
             @offsetOf(Device, "unit_part") != DEVICE_UNIT_PART or @offsetOf(Device, "units") != DEVICE_UNITS or
-            @offsetOf(Device, "unit_labels") != DEVICE_UNIT_LABELS)
+            @offsetOf(Device, "unit_labels") != DEVICE_UNIT_LABELS or @offsetOf(Device, "unit_chip") != DEVICE_UNIT_CHIP)
             @compileError("loadfile: a ROM tag's fields are not where a load file has them");
     }
 }
@@ -278,6 +279,7 @@ pub const DeviceTag = struct {
     unit_part: u32 = 0,
     units: u32 = 0,
     labels: u32 = 0,
+    unit_chip: u32 = 0xFFFF_FFFF,
 };
 
 /// The device tag found in a module's load file, into `into`: false for a
@@ -307,6 +309,7 @@ pub fn readDevice(source: Source, found: FoundTag, into: *DeviceTag) bool {
     into.unit_part = readWord(source, found, found.tag + DEVICE_UNIT_PART) orelse return false;
     into.units = readWord(source, found, found.tag + DEVICE_UNITS) orelse return false;
     into.labels = readWord(source, found, found.tag + DEVICE_UNIT_LABELS) orelse return false;
+    into.unit_chip = readWord(source, found, found.tag + DEVICE_UNIT_CHIP) orelse return false;
     return true;
 }
 

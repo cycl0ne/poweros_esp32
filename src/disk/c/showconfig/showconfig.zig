@@ -2,7 +2,7 @@
 //! ShowConfig: the board this machine is, and every part soldered on it,
 //! as expansion.library hands them out. Built against the SDK only.
 //!
-//!   ShowConfig
+//!   ShowConfig DEVICES/S,SPEAKS/K
 //!
 //! First the board's own facts - its name, its flash and PSRAM, where its
 //! console is - then a line per part: which one of its kind, the kind, the
@@ -14,6 +14,14 @@
 //! Last, a table of every pad the chip has and who holds it, as
 //! gpio.resource keeps the list - the system's own and each driver's that
 //! has come up - with `<not used>` for a free one.
+//!
+//! DEVICES lists the devices instead, by what they speak, as
+//! expansion.library's ObtainDeviceUnits finds them - the ROM's and those
+//! in DEVS:, none opened or loaded: a line per unit, with the name to
+//! open, the unit, the version, where the device is, the command sets it
+//! speaks, and what the board calls the unit. SPEAKS=serial (or stream,
+//! sana2, block, ... - `devifName`'s names) lists only the devices that
+//! speak that, and implies DEVICES.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -29,10 +37,12 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.6 (11.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.7 (12.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "";
+const template = "DEVICES/S,SPEAKS/K";
+const arg_devices = 0;
+const arg_speaks = 1;
 
 const MSG_NOLIBRARY = "%s: no %s\n";
 
@@ -43,7 +53,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [1]usize = @splat(0);
+    var argv: [2]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -62,6 +72,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    if (argv[arg_devices] != 0 or argv[arg_speaks] != 0) {
+        const speaks: ?[*:0]const u8 = if (argv[arg_speaks] != 0) @ptrFromInt(argv[arg_speaks]) else null;
+        return printDevices(dl, eb, speaks);
+    }
 
     const root = eb.SystemTags();
     const name: [*:0]const u8 = @ptrFromInt(ub.GetTagData(st.SYSTAG_Name, @intFromPtr("(no name)"), root));
@@ -95,9 +109,70 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = dl.PutStr("-           ");
         }
         printLines(dl, ub, tags);
+        const label = ub.GetTagData(st.PART_Label, 0, tags);
+        if (label != 0) _ = Printf(dl, "  \"%s\"", .{@as([*:0]const u8, @ptrFromInt(label))});
         _ = dl.PutStr("\n");
     }
     printHolders(sys, dl);
+    return dos.RETURN_OK;
+}
+
+/// Every unit of every device that speaks `speaks` - a command set's
+/// name, or null for every device that says what it speaks - a line each.
+fn printDevices(dl: *DosBase, eb: *ExpansionBase, speaks: ?[*:0]const u8) i32 {
+    const devices = expansion.devices;
+    var wanted: u32 = 0;
+    if (speaks) |name| {
+        var length: usize = 0;
+        while (name[length] != 0) length += 1;
+        wanted = devices.devifByName(name[0..length]);
+        if (wanted == 0) {
+            _ = Printf(dl, "%s: SPEAKS is one of", .{COMMAND_NAME});
+            var set: u32 = 1;
+            while (devices.devifName(set)) |known| : (set += 1) _ = Printf(dl, " %s", .{known});
+            _ = dl.PutStr("\n");
+            return dos.RETURN_ERROR;
+        }
+    }
+    const list = eb.ObtainDeviceUnits(wanted, null) orelse {
+        _ = Printf(dl, "%s: not enough memory\n", .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
+    defer eb.ReleaseDeviceUnits(list);
+    if (list.isEmpty()) {
+        _ = dl.PutStr("no device\n");
+        return dos.RETURN_WARN;
+    }
+    _ = dl.PutStr("device                   unit  version  where  speaks           unit is\n");
+    var it = list.iterator();
+    while (it.next()) |node| {
+        const unit: *const devices.DeviceUnit = @ptrCast(@alignCast(node));
+        var sets: [48:0]u8 = @splat(0);
+        var at: usize = 0;
+        var index: usize = 0;
+        while (unit.speaks[index] != 0) : (index += 1) {
+            const name = devices.devifName(unit.speaks[index]) orelse "?";
+            if (index != 0 and at + 1 < sets.len) {
+                sets[at] = ',';
+                at += 1;
+            }
+            var char: usize = 0;
+            while (name[char] != 0 and at + 1 < sets.len) : (char += 1) {
+                sets[at] = name[char];
+                at += 1;
+            }
+        }
+        const where: [*:0]const u8 = if (unit.flags & devices.DUF_ROM != 0) "ROM" else "DEVS:";
+        _ = Printf(dl, "%-24s %4u  %3u.%-3u  %-5s  %-15s  %s\n", .{
+            unit.node.name.?,
+            unit.unit,
+            @as(u32, unit.version),
+            @as(u32, unit.revision),
+            where,
+            @as([*:0]const u8, &sets),
+            unit.label orelse "-",
+        });
+    }
     return dos.RETURN_OK;
 }
 
@@ -183,6 +258,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_BUTTON => "button",
         st.PARTKIND_HEADER => "header",
         st.PARTKIND_USB => "usb",
+        st.PARTKIND_UART => "uart",
         else => "?",
     };
 }

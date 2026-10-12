@@ -40,6 +40,42 @@ pub const DEVIF_USBHC: u32 = 12;
 /// drives (sdk/devices/usbclass.zig).
 pub const DEVIF_USBCLASS: u32 = 13;
 
+/// Each command set's name, for a program that lists or asks for them:
+/// "serial" for DEVIF_SERIAL; null past the last.
+pub fn devifName(set: u32) ?[*:0]const u8 {
+    return switch (set) {
+        DEVIF_STREAM => "stream",
+        DEVIF_SERIAL => "serial",
+        DEVIF_RS485 => "rs485",
+        DEVIF_SANA2 => "sana2",
+        DEVIF_BLOCK => "block",
+        DEVIF_AUDIO => "audio",
+        DEVIF_KEYBOARD => "keyboard",
+        DEVIF_MOUSE => "mouse",
+        DEVIF_TOUCH => "touch",
+        DEVIF_I2C => "i2c",
+        DEVIF_TIMER => "timer",
+        DEVIF_USBHC => "usbhc",
+        DEVIF_USBCLASS => "usbclass",
+        else => null,
+    };
+}
+
+/// The command set a name says, letter case aside - as `devifName` gives
+/// it - or 0 for none.
+pub fn devifByName(name: []const u8) u32 {
+    var set: u32 = 1;
+    while (devifName(set)) |known| : (set += 1) {
+        var index: usize = 0;
+        while (index < name.len and known[index] != 0) : (index += 1) {
+            const char = if (name[index] >= 'A' and name[index] <= 'Z') name[index] + ('a' - 'A') else name[index];
+            if (char != known[index]) break;
+        }
+        if (index == name.len and known[index] == 0) return set;
+    }
+    return 0;
+}
+
 /// A unit of a device, as ObtainDeviceUnits lists it: a node of the list
 /// it answers, given back whole with ReleaseDeviceUnits.
 pub const DeviceUnit = extern struct {

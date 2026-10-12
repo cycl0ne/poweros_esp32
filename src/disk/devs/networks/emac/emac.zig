@@ -473,21 +473,29 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: a unit per network part the board lists: on an ESP32-P4 board, its Ethernet PHY.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_SANA2, 0 };
+
 /// No flags but AUTOINIT: the device is on the disk, in DEVS:networks/,
 /// and is made when something opens it - ramlib loads the file and hands
 /// this tag to InitResident.
 ///
 /// It is in `.resident`, which the link script KEEPs: nothing in the file
 /// refers to the tag, whoever loads the file looks for it.
-export const emac_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &emac_device_tag,
-    .flags = exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 0,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+export const emac_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&emac_device_tag),
+        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 0,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .unit_part = sdk.expansion.systemtags.PARTKIND_NET,
 };
 
 /// A device is not a command. Whoever runs this file gets nothing done and

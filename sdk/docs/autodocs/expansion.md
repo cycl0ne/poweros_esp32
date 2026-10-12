@@ -332,9 +332,11 @@ opened, loaded or started to find out. A device both in the ROM and in
 DEVS: is listed once, the higher version and revision.
 
 Its units: with a part kind (`unit_part`), one per part of that kind
-on the board, numbered by the part's PART_BusUnit - or the part's
-place among its kind - and labelled by its PART_Label; without, units
-0 to `units` - 1, labelled by the device's own labels. A node's
+and chip (`unit_chip`) on the board, numbered by the part's
+PART_BusUnit - or the part's place among its kind - and labelled by its
+PART_Label; without, units 0 to `units` - 1, labelled by the device's
+own labels. A device whose units come and go - a connection each -
+counts none, and is not listed. A node's
 `node.name` is what OpenDevice takes: the ROM device's name, or the
 path under DEVS: of a file ("usb/acm.device"). The devices come by
 name, each one's units in order.

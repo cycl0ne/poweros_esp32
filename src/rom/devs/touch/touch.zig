@@ -902,15 +902,23 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: its one unit, the panel's touch controller; it is in the ROM of a board with one.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_TOUCH, 0 };
+
 /// Cold start after i2c.device (35) and expander.resource (30), which the
 /// first open needs.
-export const touch_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &touch_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 28,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..],
-    .init = &init_table,
+export const touch_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&touch_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 28,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..],
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .units = 1,
 };

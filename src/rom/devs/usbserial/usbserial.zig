@@ -168,12 +168,22 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-export const usbserial_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &usbserial_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: its one unit, the chip's USB-Serial-JTAG port.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_STREAM, sdk.expansion.devices.DEVIF_SERIAL, 0 };
+const device_unit_labels = [_][*:0]const u8{"USB-Serial-JTAG"};
+
+export const usbserial_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&usbserial_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .units = 1,
+    .unit_labels = &device_unit_labels,
 };

@@ -472,13 +472,23 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-export const timer_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &timer_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .type = .device,
-    .pri = 50,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: its five units, kinds of request rather than hardware.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_TIMER, 0 };
+const device_unit_labels = [_][*:0]const u8{ "MICROHZ", "VBLANK", "ECLOCK", "WAITUNTIL", "WAITECLOCK" };
+
+export const timer_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&timer_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .type = .device,
+        .pri = 50,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .units = 5,
+    .unit_labels = &device_unit_labels,
 };

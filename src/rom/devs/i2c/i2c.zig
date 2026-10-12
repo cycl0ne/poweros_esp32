@@ -762,15 +762,23 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: a unit per I2C bus the board lists, its number the controller's.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_I2C, 0 };
+
 /// Cold start, before dos.library: a driver that wants the bus is welcome
 /// to open it as soon as it comes up.
-export const i2c_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &i2c_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 35,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+export const i2c_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&i2c_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 35,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .unit_part = sdk.expansion.systemtags.PARTKIND_I2CBUS,
 };

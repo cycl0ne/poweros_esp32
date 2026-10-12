@@ -5,8 +5,8 @@
 //! drawers but `handlers` read for theirs (loadfile.readDevice) - nothing
 //! opened, loaded or started. A device both in the ROM and on the disk is
 //! one record, the higher version's. The records, sorted by name, then
-//! become a node per unit: one per board part of the device's part kind,
-//! or as many as it counts.
+//! become a node per unit: one per board part of the device's part kind
+//! and chip, or as many as it counts.
 //!
 //! The records are gathered in one block of their own, freed before the
 //! list is answered; each node is one allocation with its command sets,
@@ -47,6 +47,7 @@ pub const Record = struct {
     /// DEVIF_*, ended by 0.
     speaks: [loadfile.max_speaks + 1]u32 = @splat(0),
     unit_part: u32 = 0,
+    unit_chip: u32 = st.CHIP_ANY,
     units: u32 = 0,
     /// Each counted unit's label; empty for none.
     labels: [max_labels][label_bytes:0]u8 = @splat(@splat(0)),
@@ -121,6 +122,7 @@ pub fn fromRom(sys: *ExecBase, gathered: *Gathered, wanted: u32) void {
         while (count < loadfile.max_speaks and device.speaks[count] != 0) : (count += 1) record.speaks[count] = device.speaks[count];
         if (!speaksAny(&record.speaks, wanted)) continue;
         record.unit_part = device.unit_part;
+        record.unit_chip = device.unit_chip;
         record.units = @min(device.units, max_units);
         if (device.unit_labels) |labels| {
             for (record.labels[0..@min(record.units, max_labels)], 0..) |*into, unit| copyString(into, labels[unit]);
@@ -199,6 +201,7 @@ fn readFile(dl: *DosBase, gathered: *Gathered, drawer: []const u8, file: []const
     record.revision = tag.revision;
     record.speaks = tag.speaks;
     record.unit_part = tag.unit_part;
+    record.unit_chip = tag.unit_chip;
     record.units = @min(tag.units, max_units);
     for (record.labels[0..@min(record.units, max_labels)], 0..) |*into, unit| {
         _ = loadfile.readUnitLabel(source, found, &tag, @intCast(unit), into[0..into.len]);
@@ -223,8 +226,8 @@ pub fn makeUnits(eb: *ExpansionBase, gathered: *Gathered, list: *exec.List) bool
             }
             continue;
         }
-        var part = self.FindBoardPart(null, record.unit_part, st.CHIP_ANY);
-        while (part) |it| : (part = self.FindBoardPart(it, record.unit_part, st.CHIP_ANY)) {
+        var part = self.FindBoardPart(null, record.unit_part, record.unit_chip);
+        while (part) |it| : (part = self.FindBoardPart(it, record.unit_part, record.unit_chip)) {
             const unit: u32 = @intCast(ub.GetTagData(st.PART_BusUnit, it.unit, it.tags));
             const label: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(st.PART_Label, 0, it.tags));
             if (!addUnit(eb.sys_base, list, record, unit, label)) return false;

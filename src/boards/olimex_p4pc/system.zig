@@ -247,6 +247,20 @@ const sd_slot = [_]Tag{
     .done,
 };
 
+// --- the UART ---------------------------------------------------------------------
+
+/// UART0 on the UEXT connector (GPIO37 TX, GPIO38 RX), as a serial line a
+/// program may open (serial.device unit 0). The console is the USB port.
+const uart = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 0),
+    .pointer(st.PART_Label, "UEXT"),
+    .value(st.PART_PinDataOut, pins.gpio(37)),
+    .value(st.PART_PinDataIn, pins.gpio(38)),
+    .done,
+};
+
 // --- the battery ------------------------------------------------------------------
 
 /// A TP4054 charges the LiPo cell on BAT1 from the 5 V input (USB-C, or
@@ -283,8 +297,8 @@ pub const root = [_]Tag{
     // LDO 4 feeds the I/O bank (VDDPST_5) the card slot's pads and its
     // supply switch are on.
     .value(st.SYSTAG_Ldo4Voltage, 3300),
-    // The USB port is the one connector a host reaches; UART0 goes to a
-    // header.
+    // The USB port is the one connector a host reaches; UART0 goes to the
+    // UEXT connector (`uart`).
     .value(st.SYSTAG_Console, st.CONSOLE_USBJTAG),
     // UART0 reaches no host here: the log goes to the USB console too.
     .value(st.SYSTAG_LogMirror, 1),
@@ -299,6 +313,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &sd_slot),
     .pointer(st.SYSTAG_Part, &battery),
+    .pointer(st.SYSTAG_Part, &uart),
     .done,
 };
 

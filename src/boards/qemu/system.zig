@@ -108,6 +108,27 @@ const rs485 = [_]Tag{
     .done,
 };
 
+// --- the UARTs --------------------------------------------------------------------
+
+/// UART1 and UART2 as serial lines a program may open (serial.device
+/// units 1 and 2), on the emulator's second and third serial ports. The
+/// `qemu*` steps give the second a backend when asked (`-Dslip=`,
+/// `-Drs485=`) and the third none. UART0 is the console.
+const uart1 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 1),
+    .pointer(st.PART_Label, "QEMU's second serial port"),
+    .done,
+};
+const uart2 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 2),
+    .pointer(st.PART_Label, "QEMU's third serial port"),
+    .done,
+};
+
 // --- the USB port -----------------------------------------------------------------
 
 /// The emulator's DWC2 at the S3's OTG controller's address
@@ -147,6 +168,8 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &rs485),
     .pointer(st.SYSTAG_Part, &usb),
+    .pointer(st.SYSTAG_Part, &uart1),
+    .pointer(st.SYSTAG_Part, &uart2),
     .done,
 };
 

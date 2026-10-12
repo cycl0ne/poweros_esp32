@@ -86,12 +86,20 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-export const serial_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &serial_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: a unit per UART the board lists (PARTKIND_UART), its number the UART's.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_STREAM, sdk.expansion.devices.DEVIF_SERIAL, 0 };
+
+export const serial_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&serial_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .unit_part = sdk.expansion.systemtags.PARTKIND_UART,
 };

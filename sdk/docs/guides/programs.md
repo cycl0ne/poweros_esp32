@@ -530,8 +530,20 @@ A device says what it speaks in its ROM tag: a `ResidentDevice`
 (sdk/libs/exec/resident.zig, `RTF_DEVICEINFO`), with its command sets and
 where its units come from - the board's parts of a kind, one unit each,
 labelled by the part's `PART_Label`, or a count with labels of its own.
-The call reads DEVS: each time, so a program asks once and keeps the
-answer. `C:test/DeviceUnits [SPEAKS n]` prints the list.
+A device whose units come and go - telnet.device's and ssh.device's,
+a connection each - counts none and is not listed; a network device's
+units are the board's network parts of its chip, so openeth.device is
+listed in QEMU and wifi.device on a board with the S3's radio. The call
+reads DEVS: each time, so a program asks once and keeps the answer.
+`ShowConfig DEVICES [SPEAKS=serial]` prints the list:
+
+```
+1.System:> ShowConfig SPEAKS=serial
+device                   unit  version  where  speaks           unit is
+serial.device               1    1.2    ROM    stream,serial    QEMU's second serial port
+usb/acm.device              0    1.0    DEVS:  serial,usbclass  ACM 0
+usbserial.device            0    1.3    ROM    stream,serial    USB-Serial-JTAG
+```
 
 ## The system log
 

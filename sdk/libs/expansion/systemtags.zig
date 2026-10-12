@@ -237,6 +237,10 @@ pub const PARTKIND_HEADER: u32 = 16;
 /// a hub on the board held in reset until the bus starts, and
 /// PART_PinSwitch the line that gives the socket's pads to it.
 pub const PARTKIND_USB: u32 = 17;
+/// A UART a program may use: PART_BusUnit says which of the chip's UARTs
+/// - serial.device's unit - and PART_Label where the board brings it
+/// out. One the system keeps for itself, a console, is not listed.
+pub const PARTKIND_UART: u32 = 18;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.

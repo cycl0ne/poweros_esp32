@@ -232,7 +232,10 @@ ESP32-P4 boards and in Espressif's QEMU.
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; USB sticks at high speed (`usb/disk.device`, `DU0:`, about 22 MB/s reading), keyboards and mice of full or low speed behind its hub by split transactions; a microSD card as `SD0:` (4 bits at 20 MHz, about 2.8 MB/s both ways); the battery's voltage and external power once its solder jumpers are closed (shipped open) and their two lines are in its board list; audio.device for its ES8311 is in its image, not tried there yet |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`) |
 
-`C:ShowConfig` lists what the running board has.
+`C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
+every device by what it speaks - serial lines, block devices, network
+devices, ... (`SPEAKS=serial`) - with its units on this board, none of
+them opened or loaded to find out.
 
 You need Linux or macOS, `esptool` (v5) to flash, and for the emulator
 Espressif's QEMU. Always build with the `./zig` wrapper: it fetches the

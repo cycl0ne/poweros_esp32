@@ -1268,17 +1268,25 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: its one unit; it is in the ROM of a board with a codec or an amplifier.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_AUDIO, 0 };
+
 /// Cold start at 26: after i2c.device (35), dma.resource (70) and
 /// timer.device, which its first open needs, and before the shell.
-export const audio_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &audio_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 26,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+export const audio_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&audio_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 26,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .units = 1,
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -1296,7 +1304,7 @@ const wave = [_]i8{ 10, 20, 30, 40, 50, 60, 70, 80 };
 
 fn testDevice() !*AudioBase {
     try kexec.setUp();
-    const made = kexec.InitResident(kexec.SysBase, &audio_device_tag, null) orelse return error.NoDevice;
+    const made = kexec.InitResident(kexec.SysBase, &audio_device_tag.resident, null) orelse return error.NoDevice;
     return audioBase(@ptrCast(@alignCast(made)));
 }
 

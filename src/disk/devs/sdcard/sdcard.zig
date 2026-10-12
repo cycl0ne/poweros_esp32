@@ -1396,21 +1396,29 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: a unit per card slot the board lists.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_BLOCK, 0 };
+
 /// No flags but AUTOINIT: the device is on the disk, in DEVS:, and is
 /// made when something opens it - ramlib loads the file and hands this
 /// tag to InitResident. The priority orders nothing here.
 ///
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
 /// refers to the tag, whoever loads the file looks for it.
-export const sdcard_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &sdcard_device_tag,
-    .flags = exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 0,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+export const sdcard_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&sdcard_device_tag),
+        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 0,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .unit_part = sdk.expansion.systemtags.PARTKIND_SDSLOT,
 };
 
 /// A device is not a command. Whoever runs this file gets nothing done and

@@ -169,8 +169,6 @@ const Kind = struct {
     }
 };
 
-
-
 fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*exec.Device {
     dev.revision = DEVICE_REVISION;
     return Kind.Driver.init(dev, seg_list, sys);

@@ -247,6 +247,21 @@ const usb = [_]Tag{
     .done,
 };
 
+// --- the UART ---------------------------------------------------------------------
+
+/// UART0, as a serial line a program may open (serial.device unit 0): on
+/// the USB-C socket marked UART1 or the header marked UART2, as SW1 is
+/// set. The kernel's log goes out on it as well (see `console`).
+const uart = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 0),
+    .pointer(st.PART_Label, "USB-C UART1 or header UART2, by SW1"),
+    .value(st.PART_PinDataOut, pins.gpio(43)),
+    .value(st.PART_PinDataIn, pins.gpio(44)),
+    .done,
+};
+
 // --- the rest ---------------------------------------------------------------------
 
 /// A CS8501 charges the cell on the two-pin battery connector from USB
@@ -305,6 +320,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &battery),
     .pointer(st.SYSTAG_Part, &header),
     .pointer(st.SYSTAG_Part, &radio),
+    .pointer(st.SYSTAG_Part, &uart),
     .done,
 };
 

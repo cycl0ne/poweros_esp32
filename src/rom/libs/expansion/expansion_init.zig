@@ -47,6 +47,8 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_KEYBOARD => "keyboard",
         st.PARTKIND_MOUSE => "mouse",
         st.PARTKIND_NET => "net",
+        st.PARTKIND_USB => "usb",
+        st.PARTKIND_UART => "uart",
         else => "part",
     };
 }

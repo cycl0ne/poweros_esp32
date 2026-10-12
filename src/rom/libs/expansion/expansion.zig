@@ -132,6 +132,31 @@ const test_clock_device: exec.ResidentDevice = .{
     .units = 3,
     .unit_labels = &clock_labels,
 };
+const touch_speaks = [_]u32{ devices.DEVIF_TOUCH, 0 };
+const test_touch_device: exec.ResidentDevice = .{
+    .resident = .{
+        .match_tag = @ptrCast(&test_touch_device),
+        .flags = exec.RTF_DEVICEINFO,
+        .version = 1,
+        .type = .device,
+        .name = "test-touch.device",
+    },
+    .speaks = &touch_speaks,
+    .unit_part = st.PARTKIND_TOUCH,
+    .unit_chip = st.CHIP_GT911,
+};
+const other_touch_device: exec.ResidentDevice = .{
+    .resident = .{
+        .match_tag = @ptrCast(&other_touch_device),
+        .flags = exec.RTF_DEVICEINFO,
+        .version = 1,
+        .type = .device,
+        .name = "other-touch.device",
+    },
+    .speaks = &touch_speaks,
+    .unit_part = st.PARTKIND_TOUCH,
+    .unit_chip = st.CHIP_ST7123,
+};
 const test_plain_device: exec.Resident = .{
     .match_tag = &test_plain_device,
     .version = 1,
@@ -159,7 +184,7 @@ const Board = struct {
     root: [8]TagItem = undefined,
     resident: exec.Resident = undefined,
     bus0: [bus0.len]TagItem = bus0,
-    table: [5]?*const exec.Resident = undefined,
+    table: [7]?*const exec.Resident = undefined,
 
     fn build(board: *Board) void {
         board.touch[2].data = @intFromPtr("gt911");
@@ -180,7 +205,7 @@ const Board = struct {
             .init = &board.root,
         };
         board.bus0[3].data = @intFromPtr("header P3");
-        board.table = .{ &board.resident, &test_bus_device.resident, &test_clock_device.resident, &test_plain_device, null };
+        board.table = .{ &board.resident, &test_bus_device.resident, &test_clock_device.resident, &test_touch_device.resident, &other_touch_device.resident, &test_plain_device, null };
     }
 };
 
@@ -426,11 +451,13 @@ test "counted units with the device's labels; 0 asks for every device that says"
     try testing.expectEqual(@as(u32, 2), units[2].unit);
     ReleaseDeviceUnits(eb, clocks);
     // Every device that says what it speaks, by name: the bus device's
-    // two, then the clock's three. The plain device says nothing.
+    // two, the clock's three, the touch device's one. The plain device
+    // says nothing, and the other touch device's chip is not on the board.
     const all = ObtainDeviceUnits(eb, 0, null).?;
-    try testing.expectEqual(@as(usize, 5), unitsOf(all, &units));
+    try testing.expectEqual(@as(usize, 6), unitsOf(all, &units));
     try testing.expectEqualStrings("test-bus.device", std.mem.span(units[0].node.name.?));
     try testing.expectEqualStrings("test-clock.device", std.mem.span(units[4].node.name.?));
+    try testing.expectEqualStrings("test-touch.device", std.mem.span(units[5].node.name.?));
     ReleaseDeviceUnits(eb, all);
     // A command set nobody speaks: an empty list, not null.
     const none = ObtainDeviceUnits(eb, devices.DEVIF_SANA2, null).?;
@@ -510,6 +537,7 @@ test "a device's tag read from a load file's bytes" {
     put32(&file, tag + 32, 0);
     put32(&file, tag + 36, 2);
     put32(&file, tag + 40, 0x70);
+    put32(&file, tag + 44, st.CHIP_ANY);
     @memcpy(file[seg + 0x40 ..][0..11], "acm.device\x00");
     @memcpy(file[seg + 0x50 ..][0..15], "acm.device 1.3\x00");
     put32(&file, seg + 0x60, devices.DEVIF_STREAM);
@@ -531,6 +559,7 @@ test "a device's tag read from a load file's bytes" {
     try testing.expectEqual(devices.DEVIF_SERIAL, device.speaks[1]);
     try testing.expectEqual(@as(u32, 0), device.speaks[2]);
     try testing.expectEqual(@as(u32, 2), device.units);
+    try testing.expectEqual(st.CHIP_ANY, device.unit_chip);
     var label: [8]u8 = undefined;
     try testing.expectEqualStrings("one", loadfile.readUnitLabel(source, found, &device, 0, &label).?);
     try testing.expect(loadfile.readUnitLabel(source, found, &device, 1, &label) == null);

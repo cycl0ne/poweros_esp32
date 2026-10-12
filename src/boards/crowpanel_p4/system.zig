@@ -159,6 +159,9 @@ pub const root = [_]Tag{
     // drops out while the boot's 2D-engine copies run, and the screen
     // stays dark.
     .value(st.SYSTAG_Ldo4Voltage, 3300),
+    // UART0 is the console, so no UART of the board's is a program's: its
+    // connectors marked UART1 and UART3-IN are not listed while
+    // serial.device routes no pads to the chip's other UARTs.
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),

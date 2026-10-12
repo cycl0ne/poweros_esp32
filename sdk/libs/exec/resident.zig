@@ -57,13 +57,20 @@ pub const ResidentDevice = extern struct {
     resident: Resident,
     /// The command sets it speaks, DEVIF_*, ended by 0.
     speaks: [*]const u32,
-    /// Its units are the board's parts of this kind (PARTKIND_*), a unit's
-    /// number its part's PART_BusUnit; 0: `units` says.
+    /// Its units are the board's parts of this kind (PARTKIND_*) and of
+    /// the chip `unit_chip`: a unit's number its part's PART_BusUnit - the
+    /// controller it is, for a UART or a bus - or else its place among the
+    /// parts of its kind. 0: `units` says.
     unit_part: u32 = 0,
-    /// With no part kind: units 0 to units - 1.
+    /// With no part kind: units 0 to units - 1; 0 for a device whose units
+    /// come and go (a connection each) and are listed by none.
     units: u32 = 1,
     /// A label for each of those, or null for none.
     unit_labels: ?[*]const [*:0]const u8 = null,
+    /// With a part kind, the chip its parts must be (CHIP_*), so devices
+    /// for different chips of one kind - a network device for each MAC -
+    /// each find their own; 0xFFFF_FFFF (CHIP_ANY): any.
+    unit_chip: u32 = 0xFFFF_FFFF,
 };
 
 /// The revision an ID string gives - "acm.device 1.2 (12.10.2026)": the

@@ -536,15 +536,25 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
+/// What the device speaks, for ObtainDeviceUnits (expansion.library),
+/// and where its units come from: unit 0, the flash disk.
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_BLOCK, 0 };
+const device_unit_labels = [_][*:0]const u8{"flash disk"};
+
 /// Before dos.library (-128), after timer.device (50): the file system
 /// opens it as soon as dos starts a handler on it.
-export const flash_device_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &flash_device_tag,
-    .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
-    .version = DEVICE_VERSION,
-    .pri = 40,
-    .type = .device,
-    .name = DEVICE_NAME,
-    .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
-    .init = &init_table,
+export const flash_device_tag: exec.ResidentDevice linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&flash_device_tag),
+        .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .version = DEVICE_VERSION,
+        .pri = 40,
+        .type = .device,
+        .name = DEVICE_NAME,
+        .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
+        .init = &init_table,
+    },
+    .speaks = &device_speaks,
+    .units = 1,
+    .unit_labels = &device_unit_labels,
 };
