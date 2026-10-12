@@ -186,8 +186,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   reached by split transactions: hubs, each device's descriptors,
   configuration and strings, pipes to its endpoints, and class drivers
   in `DEVS:usb/`, each loaded only when something it drives is plugged
-  in - `usb/hid.device` makes a USB keyboard and mouse the system's own
-  keyboard and mouse, `usb/disk.device` a stick or a card reader's slot
+  in - `usb/hid.device` makes a USB keyboard, mouse or tablet the
+  system's own keyboard and mouse, `usb/disk.device` a stick or a card reader's slot
   a drive (`DU0:`, `DU1:`, ...) with its volume on the desktop,
   `usb/ftdi.device` and `usb/acm.device` FTDI and CDC-ACM serial
   adapters serial lines (`AUX2:`, `AUX3:`), `usb/ecm.device` a CDC

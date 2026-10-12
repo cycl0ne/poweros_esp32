@@ -103,8 +103,11 @@ pub const Pointer = extern struct {
 pub fn mousePointer(e: *const InputEvent, qualifier: *u32, out: *[2]InputEvent) usize {
     qualifier.* = (qualifier.* & ~button_qualifiers) | (e.qualifier & button_qualifiers);
     const relative = e.qualifier & ie.IEQUALIFIER_RELATIVEMOUSE;
+    // A tablet's place stays one: intuition puts it on the screen.
+    const subclass: u32 = if (relative == 0 and e.subclass == ie.IESUBCLASS_TABLET) ie.IESUBCLASS_TABLET else 0;
     out[0] = .{
         .class = ie.IECLASS_RAWMOUSE,
+        .subclass = subclass,
         .code = e.code,
         .qualifier = qualifier.* | relative,
         .x = e.x,
@@ -113,6 +116,7 @@ pub fn mousePointer(e: *const InputEvent, qualifier: *u32, out: *[2]InputEvent) 
     if (relative != 0 or e.code == ie.IECODE_WHEEL) return 1;
     out[1] = .{
         .class = ie.IECLASS_NEWPOINTERPOS,
+        .subclass = subclass,
         .code = e.code,
         .qualifier = qualifier.*,
         .x = e.x,
@@ -250,6 +254,16 @@ test "dispatch: by priority, each seeing the last one's output, a null ends it" 
     dispatch(&handlers, &e);
     try testing.expectEqual(@as(u32, 1), c.calls);
     try testing.expectEqual(@as(u32, 3), e.code);
+}
+
+test "mousePointer: a tablet's place keeps its subclass on the pointer too" {
+    var qualifier: u32 = 0;
+    var out: [2]InputEvent = undefined;
+    const place = InputEvent{ .class = ie.IECLASS_RAWMOUSE, .subclass = ie.IESUBCLASS_TABLET, .code = ie.IECODE_NOBUTTON, .x = 100, .y = 200 };
+    try testing.expectEqual(@as(usize, 2), mousePointer(&place, &qualifier, &out));
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[0].subclass);
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[1].subclass);
+    try testing.expectEqual(@as(i32, 200), out[1].y);
 }
 
 test "mousePointer: the raw event, the qualifiers kept, and the pointer after it" {

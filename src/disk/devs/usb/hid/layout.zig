@@ -17,12 +17,14 @@
 //! `walk` reads the items and hands the Input and Output items of the
 //! first application collection of a usage to a reader:
 //!
-//! - **A mouse** (Generic Desktop, Mouse): the relative X, Y and wheel
-//!   and the first three buttons are noted where they lie, all from the
-//!   report that carries the first of them. A descriptor with no such
-//!   mouse, an absolute X or Y, or one wider than 32 bits gives no
-//!   layout; the mouse is then put in its boot protocol, whose report
-//!   `boot_mouse` describes.
+//! - **A mouse** (Generic Desktop, Mouse): its X, Y and wheel and the
+//!   first three buttons are noted where they lie, all from the report
+//!   that carries the first of them. X and Y relative are a mouse's move;
+//!   both absolute, with their logical range, a tablet's place - QEMU's
+//!   `usb-tablet`. A descriptor with no such mouse, an X and a Y of two
+//!   kinds, or one wider than 32 bits gives no layout; a mouse of the boot
+//!   subclass is then put in its boot protocol, whose report `boot_mouse`
+//!   describes.
 //! - **A keyboard** (Generic Desktop, Keyboard): its keys on the
 //!   keyboard page, from the report that carries the first of them -
 //!   as runs of bits, a key each, held down while set (the modifiers,
@@ -73,6 +75,13 @@ pub const MouseLayout = struct {
     x: Field = .{},
     y: Field = .{},
     wheel: Field = .{},
+    /// X and Y say where, not how far: a tablet's, each from its logical
+    /// minimum to its maximum.
+    absolute: bool = false,
+    x_min: i32 = 0,
+    x_max: i32 = 0,
+    y_min: i32 = 0,
+    y_max: i32 = 0,
 
     /// Whether `report` is this layout's: its ID matches.
     pub fn owns(layout: *const MouseLayout, report: []const u8) bool {
@@ -161,6 +170,7 @@ const MAIN_COLLECTION = 10;
 const MAIN_END_COLLECTION = 12;
 const GLOBAL_USAGE_PAGE = 0;
 const GLOBAL_LOGICAL_MIN = 1;
+const GLOBAL_LOGICAL_MAX = 2;
 const GLOBAL_REPORT_SIZE = 7;
 const GLOBAL_REPORT_ID = 8;
 const GLOBAL_REPORT_COUNT = 9;
@@ -179,6 +189,10 @@ const LONG_ITEM: u8 = 0xFE;
 const Globals = struct {
     page: u32 = 0,
     logical_min: i32 = 0,
+    /// The logical maximum read as signed, and as unsigned for a field
+    /// that counts from zero up past the signed range.
+    logical_max: i32 = 0,
+    logical_max_unsigned: u32 = 0,
     size: u32 = 0,
     count: u32 = 0,
     report_id: u8 = 0,
@@ -305,6 +319,10 @@ fn walk(descriptor: []const u8, application: u32, reader: anytype) bool {
             ITEM_GLOBAL => switch (tag) {
                 GLOBAL_USAGE_PAGE => globals.page = data,
                 GLOBAL_LOGICAL_MIN => globals.logical_min = signedOf(bytes),
+                GLOBAL_LOGICAL_MAX => {
+                    globals.logical_max = signedOf(bytes);
+                    globals.logical_max_unsigned = data;
+                },
                 GLOBAL_REPORT_SIZE => globals.size = data,
                 GLOBAL_REPORT_ID => globals.report_id = @truncate(data),
                 GLOBAL_REPORT_COUNT => globals.count = data,
@@ -341,8 +359,8 @@ fn walk(descriptor: []const u8, application: u32, reader: anytype) bool {
 }
 
 /// Where `descriptor` - a report descriptor - says its mouse's report
-/// keeps the buttons, the move and the wheel; null when it describes no
-/// relative mouse this can read.
+/// keeps the buttons, the move or the place, and the wheel; null when it
+/// describes no mouse this can read.
 pub fn mouseLayout(descriptor: []const u8) ?MouseLayout {
     var reader: MouseReader = .{};
     if (!walk(descriptor, USAGE_MOUSE, &reader)) return null;
@@ -441,7 +459,21 @@ fn note(layout: *MouseLayout, have_id: *bool, globals: Globals, usage: u32, offs
         have_id.* = true;
     }
     if (usage == USAGE_X or usage == USAGE_Y) {
-        if (!relative or globals.size == 0 or globals.size > 32) return false;
+        if (globals.size == 0 or globals.size > 32) return false;
+        // X and Y both a move or both a place.
+        if ((layout.x.size != 0 or layout.y.size != 0) and layout.absolute == relative) return false;
+        layout.absolute = !relative;
+        if (layout.absolute) {
+            const max: i64 = if (globals.logical_max >= globals.logical_min) globals.logical_max else globals.logical_max_unsigned;
+            if (max <= globals.logical_min or max > 0x7FFF_FFFF) return false;
+            if (usage == USAGE_X) {
+                layout.x_min = globals.logical_min;
+                layout.x_max = @intCast(max);
+            } else {
+                layout.y_min = globals.logical_min;
+                layout.y_max = @intCast(max);
+            }
+        }
     } else if (globals.size == 0 or globals.size > 32 or (usage == USAGE_WHEEL and !relative)) return true;
     if (offset > 0xFFFF) return false;
     slot.* = field;
@@ -532,12 +564,43 @@ test "a field past a short report's end reads 0" {
     try testing.expectEqual(@as(i32, -3), boot_mouse.y.value(&.{ 0, 1, 0xFD }));
 }
 
-test "no mouse, or an absolute one, gives no layout" {
+test "no mouse, or an X and a Y of two kinds, gives no layout" {
     try testing.expect(mouseLayout(wide_descriptor[75..]) == null);
-    var absolute = boot_descriptor;
-    absolute[47] = 0x02;
-    try testing.expect(mouseLayout(&absolute) == null);
     try testing.expect(mouseLayout(&.{}) == null);
+    // X absolute, Y relative: X and Y a field each.
+    const mixed = [_]u8{
+        0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x30, 0x15, 0x00, 0x26, 0xFF,
+        0x7F, 0x75, 0x10, 0x95, 0x01, 0x81, 0x02, 0x09, 0x31, 0x15, 0x81, 0x25,
+        0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06, 0xC0,
+    };
+    try testing.expect(mouseLayout(&mixed) == null);
+}
+
+/// QEMU's `usb-tablet`: three buttons and five bits of padding, X and Y
+/// absolute from 0 to 0x7FFF in 16 bits each, a relative wheel.
+const tablet_descriptor = [_]u8{
+    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09,
+    0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01,
+    0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01, 0x05, 0x01, 0x09, 0x30,
+    0x09, 0x31, 0x15, 0x00, 0x26, 0xFF, 0x7F, 0x35, 0x00, 0x46, 0xFF, 0x7F,
+    0x75, 0x10, 0x95, 0x02, 0x81, 0x02, 0x05, 0x01, 0x09, 0x38, 0x15, 0x81,
+    0x25, 0x7F, 0x35, 0x00, 0x45, 0x00, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
+    0xC0, 0xC0,
+};
+
+test "a tablet: X and Y a place, with their range" {
+    const layout = mouseLayout(&tablet_descriptor).?;
+    try testing.expect(layout.absolute);
+    try testing.expectEqual(Field{ .offset = 8, .size = 16 }, layout.x);
+    try testing.expectEqual(Field{ .offset = 24, .size = 16 }, layout.y);
+    try testing.expectEqual(Field{ .offset = 40, .size = 8, .signed = true }, layout.wheel);
+    try testing.expectEqual(@as(i32, 0), layout.x_min);
+    try testing.expectEqual(@as(i32, 0x7FFF), layout.x_max);
+    try testing.expectEqual(@as(i32, 0x7FFF), layout.y_max);
+    // A range up to 0xFFFF reads unsigned, though its two bytes are -1.
+    var wide = tablet_descriptor;
+    wide[42] = 0xFF;
+    try testing.expectEqual(@as(i32, 0xFFFF), mouseLayout(&wide).?.x_max);
 }
 
 /// The boot keyboard's descriptor as the HID specification gives it:

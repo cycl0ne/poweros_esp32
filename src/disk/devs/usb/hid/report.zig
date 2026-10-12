@@ -16,7 +16,9 @@
 //! **A mouse's report** is read where its layout says the buttons, the
 //! move and the wheel lie (layout.zig: the mouse's own descriptor, or the
 //! boot protocol's report): a move by that much, each button that
-//! changed, and the wheel's notches. A report of another ID is not the
+//! changed, and the wheel's notches. A tablet's says where: its X and Y
+//! become a place across it, 0 to IETABLET_MAX (IESUBCLASS_TABLET), and
+//! its buttons are pressed there. A report of another ID is not the
 //! mouse's and means nothing here.
 
 const sdk = @import("sdk");
@@ -167,28 +169,42 @@ pub fn buttonsOf(layout: *const MouseLayout, report: []const u8) u8 {
 pub fn mouseEvents(layout: *const MouseLayout, old_buttons: u8, report: []const u8, out: []InputEvent) usize {
     if (!layout.owns(report) or report.len < 3 or out.len < 5) return 0;
     var count: usize = 0;
-    const dx = layout.x.value(report);
-    const dy = layout.y.value(report);
-    if (dx != 0 or dy != 0) {
-        out[count] = .{
+    // A tablet's place, every report - mouse.device passes on only a
+    // change - and its buttons there; a mouse's move and its buttons by
+    // no distance.
+    var button_event = InputEvent{ .class = ie.IECLASS_RAWMOUSE, .qualifier = ie.IEQUALIFIER_RELATIVEMOUSE };
+    if (layout.absolute) {
+        const place = InputEvent{
             .class = ie.IECLASS_RAWMOUSE,
+            .subclass = ie.IESUBCLASS_TABLET,
             .code = ie.IECODE_NOBUTTON,
-            .qualifier = ie.IEQUALIFIER_RELATIVEMOUSE,
-            .x = dx,
-            .y = dy,
+            .x = across(layout.x.value(report), layout.x_min, layout.x_max),
+            .y = across(layout.y.value(report), layout.y_min, layout.y_max),
         };
+        out[count] = place;
         count += 1;
+        button_event = place;
+    } else {
+        const dx = layout.x.value(report);
+        const dy = layout.y.value(report);
+        if (dx != 0 or dy != 0) {
+            out[count] = .{
+                .class = ie.IECLASS_RAWMOUSE,
+                .code = ie.IECODE_NOBUTTON,
+                .qualifier = ie.IEQUALIFIER_RELATIVEMOUSE,
+                .x = dx,
+                .y = dy,
+            };
+            count += 1;
+        }
     }
     const buttons = buttonsOf(layout, report);
     const codes = [3]u32{ ie.IECODE_LBUTTON, ie.IECODE_RBUTTON, ie.IECODE_MBUTTON };
     for (codes, 0..) |code, bit| {
         const mask = @as(u8, 1) << @intCast(bit);
         if ((old_buttons ^ buttons) & mask == 0) continue;
-        out[count] = .{
-            .class = ie.IECLASS_RAWMOUSE,
-            .code = if (buttons & mask != 0) code else code | ie.IECODE_UP_PREFIX,
-            .qualifier = ie.IEQUALIFIER_RELATIVEMOUSE,
-        };
+        out[count] = button_event;
+        out[count].code = if (buttons & mask != 0) code else code | ie.IECODE_UP_PREFIX;
         count += 1;
     }
     const wheel = layout.wheel.value(report);
@@ -198,6 +214,14 @@ pub fn mouseEvents(layout: *const MouseLayout, old_buttons: u8, report: []const 
         count += 1;
     }
     return count;
+}
+
+/// A tablet's value from `min` to `max` as a place from 0 to
+/// IETABLET_MAX, clamped to the edges.
+pub fn across(value: i32, min: i32, max: i32) i32 {
+    if (max <= min) return 0;
+    const from: i64 = @min(@max(@as(i64, value), min), max) - min;
+    return @intCast(@divTrunc(from * ie.IETABLET_MAX, @as(i64, max) - min));
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -294,4 +318,29 @@ test "a mouse's move, a button and the wheel" {
 
 test {
     _ = layout_file;
+}
+
+test "a tablet: its place across, and a button pressed there" {
+    var out: [8]InputEvent = undefined;
+    const tablet = MouseLayout{
+        .buttons = .{ .{ .offset = 0, .size = 1 }, .{ .offset = 1, .size = 1 }, .{ .offset = 2, .size = 1 } },
+        .x = .{ .offset = 8, .size = 16 },
+        .y = .{ .offset = 24, .size = 16 },
+        .absolute = true,
+        .x_max = 0x7FFF,
+        .y_max = 0x7FFF,
+    };
+    // Halfway across, the top edge; the left button.
+    const count = mouseEvents(&tablet, 0, &.{ 0x01, 0x00, 0x40, 0x00, 0x00 }, &out);
+    try testing.expectEqual(@as(usize, 2), count);
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[0].subclass);
+    try testing.expectEqual(@as(u32, 0), out[0].qualifier & ie.IEQUALIFIER_RELATIVEMOUSE);
+    try testing.expectEqual(across(0x4000, 0, 0x7FFF), out[0].x);
+    try testing.expectEqual(@as(i32, 0), out[0].y);
+    try testing.expectEqual(ie.IECODE_LBUTTON, out[1].code);
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[1].subclass);
+    try testing.expectEqual(out[0].x, out[1].x);
+    try testing.expectEqual(ie.IETABLET_MAX, across(0x7FFF, 0, 0x7FFF));
+    try testing.expectEqual(ie.IETABLET_MAX, across(0x9000, 0, 0x7FFF));
+    try testing.expectEqual(@as(i32, 0), across(-5, 0, 0x7FFF));
 }

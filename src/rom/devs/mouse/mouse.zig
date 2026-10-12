@@ -16,7 +16,8 @@
 //! other source's, so readers see one mouse. A button two sources hold is
 //! down once, and a source that closes lets go of what it still holds. A
 //! source's move is a place or, marked IEQUALIFIER_RELATIVEMOUSE, a
-//! distance, and goes to the readers as it came. Every board has the
+//! distance, and goes to the readers as it came; a place across a
+//! tablet (IESUBCLASS_TABLET) keeps that subclass. Every board has the
 //! device; with no source it opens all the same and its readers wait.
 //!
 //! **The emulator's mouse** is a source the device keeps itself, on the
@@ -51,8 +52,8 @@ pub const DEVICE_NAME = mouse.MOUSENAME;
 const DEVICE_VERSION = 1;
 /// 1: the wheel (IECODE_WHEEL). 2: sources (MOUSEF_SOURCE,
 /// MOUSE_ADDEVENT), and on every board.
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "11.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

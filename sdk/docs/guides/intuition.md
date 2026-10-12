@@ -822,6 +822,13 @@ from the button. A window with `WA_RMBTrap` gets no menus by a tap
 either, and a finger dragged along the bar past its wobble pulls the
 screen down as before.
 
+A tablet - a USB one, QEMU's `usb-tablet` - says where it is across a
+surface of its own: its raw mouse events and the `IECLASS_NEWPOINTERPOS`
+after each carry `IESUBCLASS_TABLET`, `x` and `y` from 0 to
+`IETABLET_MAX`. intuition puts the pointer as far across the front
+screen, and what it passes on - to windows, to gadgets - is in that
+screen's pixels like any other pointer event.
+
 A finger's pointer events say they are one: input.device marks the
 `IECLASS_NEWPOINTERPOS` it makes for the pointer finger with
 `IESUBCLASS_FINGER`. intuition lets a finger's press on a drag bar or a

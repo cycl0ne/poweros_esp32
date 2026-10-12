@@ -227,8 +227,15 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
                 }
             },
             // The pointer follows at once, on its own task, while
-            // intuition's may be busy.
+            // intuition's may be busy. A tablet's place is put on the
+            // front screen first, and passed on in its pixels.
             ie.IECLASS_NEWPOINTERPOS => {
+                if (ev.subclass == ie.IESUBCLASS_TABLET) {
+                    var at = tabletMove(ib, st, ev);
+                    pointer.moved(ib, at.x, at.y);
+                    if (push(st, &at)) any = true;
+                    continue;
+                }
                 st.mouse_x = ev.x;
                 st.mouse_y = ev.y;
                 pointer.moved(ib, ev.x, ev.y);
@@ -242,18 +249,45 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
     return events;
 }
 
+/// The rightmost and lowest pixel the pointer reaches: the front
+/// screen's, down to its bottom edge where it is pulled down.
+fn pointerLimits(ib: *IntuitionBase) struct { right: i32, bottom: i32 } {
+    const first = ib.screen_list.head;
+    if (first == null or first.?.succ == null) return .{ .right = 0, .bottom = 0 };
+    const front: *Screen = @ptrCast(@alignCast(first.?));
+    return .{ .right = @max(front.width - 1, 0), .bottom = @max(front.top + front.height - 1, 0) };
+}
+
+/// A tablet's place as the pointer position it makes: as far across the
+/// pointer's reach as it is across the tablet, the button it carries
+/// kept. On input.device's task.
+fn tabletMove(ib: *IntuitionBase, st: *State, ev: *const InputEvent) InputEvent {
+    const limits = pointerLimits(ib);
+    st.mouse_x = tabletAcross(ev.x, limits.right);
+    st.mouse_y = tabletAcross(ev.y, limits.bottom);
+    return .{
+        .class = ie.IECLASS_NEWPOINTERPOS,
+        .code = ev.code,
+        .qualifier = ev.qualifier,
+        .x = st.mouse_x,
+        .y = st.mouse_y,
+        .time = ev.time,
+    };
+}
+
+/// A tablet coordinate, 0 to IETABLET_MAX, as a pixel from 0 to `last`.
+pub fn tabletAcross(value: i32, last: i32) i32 {
+    const clamped: i64 = @min(@max(value, 0), ie.IETABLET_MAX);
+    return @intCast(@divTrunc(clamped * last + @divTrunc(ie.IETABLET_MAX, 2), ie.IETABLET_MAX));
+}
+
 /// A relative mouse's event as the pointer position it makes: the
 /// distance added to where the pointer was, kept on the front screen, the
 /// button it carries kept. On input.device's task.
 fn relativeMove(ib: *IntuitionBase, st: *State, ev: *const InputEvent) InputEvent {
-    var right: i32 = 0;
-    var bottom: i32 = 0;
-    const first = ib.screen_list.head;
-    if (first != null and first.?.succ != null) {
-        const front: *Screen = @ptrCast(@alignCast(first.?));
-        right = @max(front.width - 1, 0);
-        bottom = @max(front.top + front.height - 1, 0);
-    }
+    const limits = pointerLimits(ib);
+    const right = limits.right;
+    const bottom = limits.bottom;
     st.mouse_x = @min(@max(st.mouse_x + ev.x, 0), right);
     st.mouse_y = @min(@max(st.mouse_y + ev.y, 0), bottom);
     return .{
@@ -1727,6 +1761,14 @@ fn releaseScreenDepth(ib: *IntuitionBase) void {
 }
 
 const testing = @import("std").testing;
+
+test "a tablet's place: as far across the screen as across the tablet" {
+    try testing.expectEqual(@as(i32, 0), tabletAcross(0, 1023));
+    try testing.expectEqual(@as(i32, 1023), tabletAcross(ie.IETABLET_MAX, 1023));
+    try testing.expectEqual(@as(i32, 512), tabletAcross(0x8000, 1023));
+    try testing.expectEqual(@as(i32, 0), tabletAcross(-3, 599));
+    try testing.expectEqual(@as(i32, 599), tabletAcross(0x20000, 599));
+}
 
 test "a full input ring gives up a move, never a button" {
     var st = State{};

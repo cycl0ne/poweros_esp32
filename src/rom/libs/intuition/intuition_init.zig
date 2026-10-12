@@ -110,8 +110,10 @@ pub const LIBRARY_VERSION = 0;
 /// pointer: its distances are added up into pointer positions, kept on
 /// the front screen, its buttons pressed where the pointer is; the
 /// keyboard on the screen stays away while a keyboard is plugged in.
-pub const LIBRARY_REVISION = 41;
-const BUILD_DATE = "11.10.2026";
+/// 42: a tablet's place (IESUBCLASS_TABLET) puts the pointer as far across
+/// the front screen.
+pub const LIBRARY_REVISION = 42;
+const BUILD_DATE = "12.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

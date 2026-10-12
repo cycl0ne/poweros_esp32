@@ -49,7 +49,9 @@ pub const MOUSE_READSTATE: u16 = devices.CMD_NONSTD + 1;
 /// a button at once:
 ///   - `x` and `y`: where the pointer is now, or with
 ///     IEQUALIFIER_RELATIVEMOUSE in `qualifier` how far it went (0 and 0:
-///     it did not move);
+///     it did not move); with `subclass` IESUBCLASS_TABLET, how far
+///     across its tablet, 0 to IETABLET_MAX (devices/inputevent), which
+///     the readers' events then carry too;
 ///   - `code`: IECODE_LBUTTON, IECODE_RBUTTON or IECODE_MBUTTON, with
 ///     IECODE_UP_PREFIX when it was let go, or IECODE_NOBUTTON for a move
 ///     alone; IECODE_WHEEL for the wheel, `x` and `y` its notches right

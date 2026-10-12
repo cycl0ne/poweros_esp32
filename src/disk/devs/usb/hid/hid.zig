@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: MIT
-//! usb/hid.device: USB keyboards and mice, as sources of keyboard.device
-//! and mouse.device. A class driver (sdk/devices/usbclass.zig): it binds
-//! HID interfaces of the boot subclass and keeps a read outstanding on
-//! each one's interrupt endpoint; every report becomes key-downs and
-//! key-ups for keyboard.device or moves, buttons and the wheel for
-//! mouse.device (report.zig), so a USB keyboard is the system's keyboard
-//! with nothing else knowing.
+//! usb/hid.device: USB keyboards, mice and tablets, as sources of
+//! keyboard.device and mouse.device. A class driver
+//! (sdk/devices/usbclass.zig): it binds HID interfaces of the boot
+//! subclass, and any other HID interface whose report descriptor
+//! describes a keyboard or a mouse, and keeps a read outstanding on each
+//! one's interrupt endpoint; every report becomes key-downs and key-ups
+//! for keyboard.device, or moves or a tablet's places, buttons and the
+//! wheel for mouse.device (report.zig), so a USB keyboard is the system's
+//! keyboard with nothing else knowing.
 //!
 //! **Which report.** A keyboard or a mouse is asked for its report
 //! descriptor first: where that describes its report (layout.zig), it
 //! stays in its report protocol and is read by it - a mouse may send a
 //! wider report than the boot one, a keyboard a bit for every key, and
 //! not every device that says it has the boot protocol switches to it.
-//! Without one it is put in the boot protocol. A keyboard's LEDs go out
-//! in the report its descriptor gives them, with that report's ID.
+//! Without one a boot interface is put in the boot protocol, and any
+//! other is declined: it has no boot report to fall back on. A
+//! keyboard's LEDs go out in the report its descriptor gives them, with
+//! that report's ID.
 //!
 //! **One task for every keyboard and mouse.** Each bound interface is a
 //! `Function`: its pipe, its source's request, its last report. The
@@ -50,7 +54,7 @@ const layout_file = @import("layout.zig");
 
 pub const DEVICE_NAME = "hid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -263,8 +267,10 @@ fn letGo(hb: *HidBase, function: *Function) void {
 
 // --- the class driver's calls -------------------------------------------------------
 
-/// A HID interface of the boot subclass taken, keyboard or mouse; any
-/// other declined. The contract is usbclass's (sdk/fd/usbclass_lib.fd).
+/// A HID interface taken: one of the boot subclass, keyboard or mouse,
+/// and any other whose report descriptor describes a mouse - a tablet,
+/// say - or a keyboard; the rest declined. The contract is usbclass's
+/// (sdk/fd/usbclass_lib.fd).
 ///
 /// INPUTS:
 /// - `hb` - the driver's base.
@@ -274,8 +280,9 @@ pub fn USBClassBind(hb: *HidBase, binding: *usb.USBBinding) bool {
     const ub = hb.usb_base orelse return false;
     const device = binding.device.?;
     const interface = binding.interface.?;
-    if (interface.interface_class != d.USB_CLASS_HID or interface.interface_subclass != d.HID_SUBCLASS_BOOT) return false;
-    const kind: Kind = switch (interface.interface_protocol) {
+    if (interface.interface_class != d.USB_CLASS_HID) return false;
+    const boot = interface.interface_subclass == d.HID_SUBCLASS_BOOT;
+    const boot_kind: ?Kind = if (!boot) null else switch (interface.interface_protocol) {
         d.HID_PROTOCOL_KEYBOARD => .keyboard,
         d.HID_PROTOCOL_MOUSE => .mouse,
         else => return false,
@@ -289,12 +296,20 @@ pub fn USBClassBind(hb: *HidBase, binding: *usb.USBBinding) bool {
     }
     const free_slot = slot_index orelse return false;
 
-    // By its own report where it describes one, else the boot protocol;
-    // and a report only when something changes.
+    // By its own report where it describes one, else the boot protocol -
+    // which only a boot interface has; and a report only when something
+    // changes.
     const number = interface.interface_number;
-    const described = describedOf(hb, device, interface, kind);
-    const protocol = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_PROTOCOL, .value = if (described != .none) 1 else 0, .index = number, .length = 0 };
-    _ = ub.DoUSBControl(device, &protocol, null, null);
+    const described = describedOf(hb, device, interface, boot_kind);
+    const kind: Kind = boot_kind orelse switch (described) {
+        .none => return false,
+        .keyboard => .keyboard,
+        .mouse => .mouse,
+    };
+    if (boot) {
+        const protocol = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_PROTOCOL, .value = if (described != .none) 1 else 0, .index = number, .length = 0 };
+        _ = ub.DoUSBControl(device, &protocol, null, null);
+    }
     const idle = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_IDLE, .value = 0, .index = number, .length = 0 };
     _ = ub.DoUSBControl(device, &idle, null, null);
 
@@ -338,8 +353,9 @@ const Described = union(enum) {
 };
 
 /// Where the interface's report descriptor says its report keeps what a
-/// `kind` says; none when it has none this can read.
-fn describedOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.InterfaceDescriptor, kind: Kind) Described {
+/// `kind` says - with no kind, a mouse's or else a keyboard's; none when
+/// it has none this can read.
+fn describedOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.InterfaceDescriptor, kind: ?Kind) Described {
     const sys = hb.sys_base;
     const ub = hb.usb_base.?;
     const length = reportDescriptorLength(ub, device, interface);
@@ -356,10 +372,13 @@ fn describedOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.Interfa
     var actual: u32 = 0;
     if (ub.DoUSBControl(device, &setup, memory, &actual) != 0) return .none;
     const descriptor = @as([*]const u8, @ptrCast(memory))[0..@min(actual, length)];
-    return switch (kind) {
-        .keyboard => if (layout_file.keyboardLayout(descriptor)) |layout| .{ .keyboard = layout } else .none,
-        .mouse => if (layout_file.mouseLayout(descriptor)) |layout| .{ .mouse = layout } else .none,
-    };
+    if (kind != .keyboard) {
+        if (layout_file.mouseLayout(descriptor)) |layout| return .{ .mouse = layout };
+    }
+    if (kind != .mouse) {
+        if (layout_file.keyboardLayout(descriptor)) |layout| return .{ .keyboard = layout };
+    }
+    return .none;
 }
 
 /// The length of the interface's report descriptor, from the HID
@@ -505,6 +524,8 @@ const speaks = [_]u32{ devices.DEVIF_USBCLASS, 0 };
 const matches = [_]usbclass.USBMatch{
     .{ .fields = usbclass.USBMATCH_CLASS | usbclass.USBMATCH_SUBCLASS | usbclass.USBMATCH_PROTOCOL, .interface_class = d.USB_CLASS_HID, .interface_subclass = d.HID_SUBCLASS_BOOT, .interface_protocol = d.HID_PROTOCOL_KEYBOARD },
     .{ .fields = usbclass.USBMATCH_CLASS | usbclass.USBMATCH_SUBCLASS | usbclass.USBMATCH_PROTOCOL, .interface_class = d.USB_CLASS_HID, .interface_subclass = d.HID_SUBCLASS_BOOT, .interface_protocol = d.HID_PROTOCOL_MOUSE },
+    // Any other HID interface: its report descriptor decides.
+    .{ .fields = usbclass.USBMATCH_CLASS, .interface_class = d.USB_CLASS_HID },
     .{},
 };
 

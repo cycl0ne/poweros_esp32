@@ -37,7 +37,7 @@ controller.
 | `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
-| `usb/hid.device` | `DEVS:usb/` | keyboards and mice of the boot class, into keyboard.device and mouse.device |
+| `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
 | `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
@@ -281,7 +281,14 @@ what they report from **sources**: an open with `KBDF_SOURCE` or
 that goes lets go of what it held. Repeat, the qualifiers and dead keys
 stay keyboard.device's and input.device's, whichever keyboard the keys
 came from. A USB mouse says how far it went; intuition adds that up into
-where the pointer is. `C:test/KeySource` is a source from the shell, and
+where the pointer is. A tablet says where it is on a surface of its own
+- QEMU's `usb-tablet`, which follows the host's pointer over the
+emulator's window: hid.device hands mouse.device that place as a
+fraction of the surface (`IESUBCLASS_TABLET`, 0 to `IETABLET_MAX`), and
+intuition puts the pointer as far across the front screen. hid.device
+takes the boot subclass's keyboards and mice, and any other HID interface
+whose report descriptor describes a keyboard or a mouse; a mouse with an
+absolute X and Y is a tablet. `C:test/KeySource` is a source from the shell, and
 `KBD_READSOURCES` says how many keyboards there are - the keyboard on
 the screen comes up only while there is none.
 

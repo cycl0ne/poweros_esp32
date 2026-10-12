@@ -20,7 +20,8 @@
 //!   - the mouse: its IECLASS_RAWMOUSE event, the device's qualifiers taking
 //!     the buttons', and for a mouse that says where it is an
 //!     IECLASS_NEWPOINTERPOS after it with the same button, linked
-//!     (`events.mousePointer`). A mouse that says only how far it went has
+//!     (`events.mousePointer`) - a tablet's still a place across it
+//!     (IESUBCLASS_TABLET), which intuition puts on the screen. A mouse that says only how far it went has
 //!     no pointer to give, and neither has the wheel (IECODE_WHEEL, whose
 //!     `x` and `y` are notches); those go down the chain on their own;
 //!   - the repeat timer: the held key again with IEQUALIFIER_REPEAT, and the
@@ -51,8 +52,8 @@ const events = @import("events.zig");
 
 pub const DEVICE_NAME = input.INPUTNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "08.10.2026";
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

@@ -47,6 +47,9 @@ pub const Mouse = extern struct {
     qualifier: u32 = 0,
     /// IEQUALIFIER_RELATIVEMOUSE when the last move was a distance.
     relative: u32 = 0,
+    /// IESUBCLASS_TABLET when the last place was across a tablet, 0 when
+    /// it was a pixel.
+    subclass: u32 = 0,
     /// How many sources hold each button down, in `buttons`' order.
     holders: [buttons.len]u16 = @splat(0),
     pad: u16 = 0,
@@ -56,7 +59,7 @@ pub const Mouse = extern struct {
     /// moved, then a button each. Answers how many.
     pub fn change(m: *Mouse, own: *u32, now: Now, out: *[4]InputEvent) usize {
         var n: usize = 0;
-        if (m.moveTo(now.x, now.y)) |e| {
+        if (m.moveTo(now.x, now.y, 0)) |e| {
             out[n] = e;
             n += 1;
         }
@@ -71,12 +74,14 @@ pub const Mouse = extern struct {
         return n;
     }
 
-    /// The pointer put at `x`, `y`: the move, or null when it is there.
-    pub fn moveTo(m: *Mouse, x: i32, y: i32) ?InputEvent {
-        if (x == m.x and y == m.y and m.relative == 0) return null;
+    /// The pointer put at `x`, `y` - pixels, or a tablet's place with
+    /// `subclass` IESUBCLASS_TABLET: the move, or null when it is there.
+    pub fn moveTo(m: *Mouse, x: i32, y: i32, subclass: u32) ?InputEvent {
+        if (x == m.x and y == m.y and m.relative == 0 and m.subclass == subclass) return null;
         m.x = x;
         m.y = y;
         m.relative = 0;
+        m.subclass = subclass;
         return m.event(ie.IECODE_NOBUTTON, false);
     }
 
@@ -128,7 +133,8 @@ pub const Mouse = extern struct {
         }
         const relative = e.qualifier & ie.IEQUALIFIER_RELATIVEMOUSE != 0;
         var n: usize = 0;
-        const moved = if (relative) m.moveBy(e.x, e.y) else m.moveTo(e.x, e.y);
+        const subclass: u32 = if (e.subclass == ie.IESUBCLASS_TABLET) ie.IESUBCLASS_TABLET else 0;
+        const moved = if (relative) m.moveBy(e.x, e.y) else m.moveTo(e.x, e.y, subclass);
         if (moved) |move| {
             out[n] = move;
             n += 1;
@@ -161,7 +167,7 @@ pub const Mouse = extern struct {
 
     fn event(m: *const Mouse, code: u32, relative: bool) InputEvent {
         if (relative) return .{ .class = ie.IECLASS_RAWMOUSE, .code = code, .qualifier = m.qualifier | ie.IEQUALIFIER_RELATIVEMOUSE };
-        return .{ .class = ie.IECLASS_RAWMOUSE, .code = code, .qualifier = m.qualifier, .x = m.x, .y = m.y };
+        return .{ .class = ie.IECLASS_RAWMOUSE, .subclass = m.subclass, .code = code, .qualifier = m.qualifier, .x = m.x, .y = m.y };
     }
 };
 
@@ -289,6 +295,21 @@ test "sources: a distance is passed on as one, a place moves the pointer" {
     // Not a mouse's event: nothing.
     const key = InputEvent{ .class = ie.IECLASS_RAWKEY, .code = 0x20 };
     try testing.expectEqual(@as(usize, 0), m.take(&own, &key, &out));
+}
+
+test "sources: a tablet's place, and a button there, keep the tablet's subclass" {
+    var m = Mouse{};
+    var own: u32 = 0;
+    var out: [2]InputEvent = undefined;
+    const press = InputEvent{ .class = ie.IECLASS_RAWMOUSE, .subclass = ie.IESUBCLASS_TABLET, .code = ie.IECODE_LBUTTON, .x = 0x8000, .y = 0x4000 };
+    try testing.expectEqual(@as(usize, 2), m.take(&own, &press, &out));
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[0].subclass);
+    try testing.expectEqual(@as(i32, 0x8000), out[0].x);
+    try testing.expectEqual(ie.IESUBCLASS_TABLET, out[1].subclass);
+    // The same numbers as pixels are another place.
+    const pixel = InputEvent{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_NOBUTTON, .x = 0x8000, .y = 0x4000 };
+    try testing.expectEqual(@as(usize, 1), m.take(&own, &pixel, &out));
+    try testing.expectEqual(@as(u32, 0), out[0].subclass);
 }
 
 test "sources: one that goes away lets go of its buttons, not of the others'" {

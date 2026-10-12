@@ -77,6 +77,15 @@ pub const IECLASS_NEWPOINTERPOS: u32 = 0x13;
 /// drag that waits out a finger's wobble, menus opened by a tap - looks
 /// here. 0 is a mouse's, or a program's own event.
 pub const IESUBCLASS_FINGER: u32 = 1;
+/// IECLASS_RAWMOUSE's and IECLASS_NEWPOINTERPOS's `subclass` when the
+/// place comes from a tablet - a pointer that says where it is on a
+/// surface of its own, as QEMU's `usb-tablet` does: `x` and `y` are how
+/// far across it, 0 at the left and top edge to IETABLET_MAX at the right
+/// and bottom. intuition puts the pointer as far across the screen in
+/// front, and passes it on in that screen's pixels.
+pub const IESUBCLASS_TABLET: u32 = 2;
+/// A tablet place's far edge.
+pub const IETABLET_MAX: i32 = 0xFFFF;
 /// A finger on a touch panel: `subclass` is TOUCH_DOWN, TOUCH_MOVE or
 /// TOUCH_UP (devices/touch), `code` the contact's id, `x` and `y` where it
 /// is in the panel's pixels. Every finger is reported this way; the first

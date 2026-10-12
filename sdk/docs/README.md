@@ -161,7 +161,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | wifi.device | `DEVS:networks/` | the chip's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | slip.device | `DEVS:networks/` | IP over a serial line (SLIP), on any device with serial.device's API | [`network.zig`](../devices/network.zig), [`slip.zig`](../devices/slip.zig) |
 | usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket | [`usbhc.zig`](../devices/usbhc.zig) |
-| usb/hid.device | `DEVS:usb/` | USB keyboards and mice, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
+| usb/hid.device | `DEVS:usb/` | USB keyboards, mice and tablets, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
 | usb/disk.device | `DEVS:usb/` | USB sticks and card readers as block devices, a unit a drive (`DU<n>:`), and SCSI commands to them; a class driver | [`trackdisk.zig`](../devices/trackdisk.zig), [`scsidisk.zig`](../devices/scsidisk.zig) |
 | usb/ftdi.device | `DEVS:usb/` | FTDI's USB serial chips, a unit a line, with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
 | usb/acm.device | `DEVS:usb/` | the communications class's USB serial lines (CDC-ACM), with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
