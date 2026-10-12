@@ -36,10 +36,6 @@ const ExecBase = sdk.interface.exec.ExecBase;
 /// The UART the port runs on.
 pub const port: uart.Port = .uart1;
 
-/// UART1's signals in the GPIO matrix (U1TXD_OUT_IDX, U1RXD_IN_IDX).
-const signal_tx: u32 = 15;
-const signal_rx: u32 = 15;
-
 /// Where the FIFOs raise their interrupts.
 const rx_threshold: u32 = 64;
 const tx_threshold: u32 = 32;
@@ -62,11 +58,11 @@ pub fn start(tx_pad: u8, rx_pad: u8, line: Line) void {
     uart.setUp(port);
     pads.toMatrix(tx_pad);
     pads.outputEnable(tx_pad, true);
-    pads.connectOut(tx_pad, signal_tx, false);
+    pads.connectOut(tx_pad, uart.txSignal(port), false);
     pads.toMatrix(rx_pad);
     pads.inputEnable(rx_pad, true);
     pads.pullUp(rx_pad, true);
-    pads.connectIn(signal_rx, rx_pad);
+    pads.connectIn(uart.rxSignal(port), rx_pad);
 
     r(uart.RS485_CONF).* = (r(uart.RS485_CONF).* & ~uart.RS485TX_RX_EN) | uart.RS485_EN | uart.RS485RXBY_TX_EN;
     _ = setLine(line);

@@ -26,15 +26,16 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",         "dir",       "delete",   "makedir",       "rename",
-    "avail",        "assign",    "version",  "addbuffers",    "which",
-    "list",         "format",    "protect",  "changetaskpri", "wait",
-    "info",         "platform",  "copy",     "rdb",           "i2c",
-    "backlight",    "rtg",       "showinfo", "setmap",        "mount",
-    "showconfig",   "date",      "setdate",  "setprefs",      "fixfonts",
-    "adddatatypes", "listfonts", "log",      "requestfile",   "requestchoice",
-    "diskchange",   "modbus",    "more",     "relabel",       "loadanvil",
-    "iconx",        "usb",       "usbinfo",  "battery",
+    "type",          "dir",        "delete",   "makedir",       "rename",
+    "avail",         "assign",     "version",  "addbuffers",    "which",
+    "list",          "format",     "protect",  "changetaskpri", "wait",
+    "info",          "platform",   "copy",     "rdb",           "i2c",
+    "backlight",     "rtg",        "showinfo", "setmap",        "mount",
+    "showconfig",    "date",       "setdate",  "setprefs",      "fixfonts",
+    "adddatatypes",  "listfonts",  "log",      "requestfile",   "requestchoice",
+    "requestdevice", "diskchange", "modbus",   "more",          "relabel",
+    "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
+    "setclock",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -105,6 +106,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget" },
     .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget" },
     .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget" },
+    .{ .disk = "classes/gadgets/getdevice.gadget", .source = "classes/gadgets/getdevice/getdevice.zig", .name = "getdevice.gadget" },
     .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget" },
     .{ .disk = "classes/gadgets/meter.gadget", .source = "classes/gadgets/meter/meter.zig", .name = "meter.gadget" },
     .{ .disk = "classes/gadgets/arc.gadget", .source = "classes/gadgets/arc/arc.zig", .name = "arc.gadget" },

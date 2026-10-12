@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! asl.library: the requesters a program asks a question with - which
-//! file, which font, which screen mode.
+//! file, which font, which screen mode, which device.
 //!
 //! A requester is made once with `AllocAslRequest`, put up as often as
 //! wanted with `AslRequest`, and given back with `FreeAslRequest`. What
@@ -40,6 +40,7 @@ pub const ASLNAME = "asl.library";
 pub const ASL_FileRequest: u32 = 0;
 pub const ASL_FontRequest: u32 = 1;
 pub const ASL_ScreenModeRequest: u32 = 2;
+pub const ASL_DeviceRequest: u32 = 3;
 
 /// Where asl's tags begin.
 pub const ASL_TB = utility.TAG_USER + 0x0008_0000;
@@ -272,3 +273,51 @@ pub const ASLSM_InitialHeight = ASL_TB + 6;
 /// The mode the requester starts on.
 pub const ASLSM_InitialDisplayID = ASL_TB + 10;
 pub const ASLSM_FilterFunc = ASL_TB + 49;
+
+// --- the device requester ---------------------------------------------------
+
+/// What a device requester was answered with: one unit of a device, as
+/// expansion.library's ObtainDeviceUnits lists it - what OpenDevice
+/// takes.
+pub const DeviceRequester = extern struct {
+    /// The device's name, as OpenDevice takes it: a device in the ROM by
+    /// its name, one in DEVS: by its path there (`usb/acm.device`).
+    device: ?[*:0]u8 = null,
+    /// The unit to open.
+    unit: u32 = 0,
+    /// What the board calls the unit, or the device's own label for it;
+    /// empty for neither.
+    label: ?[*:0]u8 = null,
+    left_edge: i32 = 0,
+    top_edge: i32 = 0,
+    width: i32 = 0,
+    height: i32 = 0,
+    user_data: usize = 0,
+};
+
+pub const ASLDR_Window = ASL_TB + 2;
+pub const ASLDR_Screen = ASL_TB + 40;
+pub const ASLDR_PubScreenName = ASL_TB + 41;
+pub const ASLDR_SleepWindow = ASL_TB + 43;
+pub const ASLDR_IntuiMsgFunc = ASL_TB + 70;
+pub const ASLDR_UserData = ASL_TB + 52;
+pub const ASLDR_TextAttr = ASL_TB + 51;
+pub const ASLDR_TitleText = ASL_TB + 1;
+pub const ASLDR_PositiveText = ASL_TB + 18;
+pub const ASLDR_NegativeText = ASL_TB + 19;
+pub const ASLDR_InitialLeftEdge = ASL_TB + 3;
+pub const ASLDR_InitialTopEdge = ASL_TB + 4;
+pub const ASLDR_InitialWidth = ASL_TB + 5;
+pub const ASLDR_InitialHeight = ASL_TB + 6;
+/// The device the requester starts on, by the name OpenDevice takes.
+pub const ASLDR_InitialDevice = ASL_TB + 10;
+/// And its unit.
+pub const ASLDR_InitialUnit = ASL_TB + 11;
+/// The command set the units listed speak: a `DEVIF_*` of
+/// sdk/libs/expansion/devices.zig - `DEVIF_SERIAL` for the serial lines,
+/// `DEVIF_SANA2` for the networks. 0, as when it is not given, lists
+/// every device that says what it speaks.
+pub const ASLDR_Speaks = ASL_TB + 12;
+/// A `*utility.Hook` asked about every unit, with the
+/// `*const expansion.devices.DeviceUnit` as the message: true shows it.
+pub const ASLDR_FilterFunc = ASL_TB + 49;

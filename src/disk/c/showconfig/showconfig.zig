@@ -37,7 +37,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.7 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.8 (12.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -259,6 +259,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_HEADER => "header",
         st.PARTKIND_USB => "usb",
         st.PARTKIND_UART => "uart",
+        st.PARTKIND_RTC => "rtc",
         else => "?",
     };
 }

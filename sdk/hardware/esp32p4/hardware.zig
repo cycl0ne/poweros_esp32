@@ -21,6 +21,8 @@ pub const usb_otg = @import("usb_otg.zig");
 pub const saradc = @import("saradc.zig");
 pub const i2c = @import("i2c.zig");
 pub const systimer = @import("systimer.zig");
+/// The LP slow clock's count, which a reset does not stop.
+pub const rtc_timer = @import("rtc_timer.zig");
 /// The two general DMA engines' channels (AHB and AXI), for
 /// dma.resource and the drivers that drive a channel directly.
 pub const gdma = @import("gdma.zig");

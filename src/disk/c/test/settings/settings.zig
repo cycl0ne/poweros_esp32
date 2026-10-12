@@ -14,6 +14,9 @@
 //!   "Sound", with a number field "Volume" from 0 to 64.
 //! - **Copy**: a fuel gauge showing hundredths, and buttons that move it
 //!   on and put it back.
+//! - **Files**: fields that ask asl.library: getfile.gadget for a file,
+//!   getfont.gadget for a font, getdevice.gadget for a serial line - what
+//!   is picked in one is printed.
 //! - **About**: a line of text.
 //!
 //! The tabs are the page gadget's `ICA_TARGET`, and an `ICA_MAP` turns
@@ -45,6 +48,8 @@ const ch = sdk.gadgets.chooser;
 const fgg = sdk.gadgets.fuelgauge;
 const gfi = sdk.gadgets.getfile;
 const gfo = sdk.gadgets.getfont;
+const gde = sdk.gadgets.getdevice;
+const devices = sdk.expansion.devices;
 const tx = sdk.gadgets.text;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -54,7 +59,7 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Settings";
-const VERSION_STRING = "\x00$VER: Settings 1.0 (28.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Settings 1.1 (12.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PAGE/K/N";
@@ -67,6 +72,7 @@ const MSG_NOWINDOW = "No window\n";
 const MSG_HELLO = "Press the tabs and the gadgets. The close gadget or Ctrl-C end it\n";
 const MSG_GADGET = "Gadget %lu (%s): code %ld\n";
 const MSG_PICKED = "%s: %s\n";
+const MSG_DEVICE = "%s: %s unit %u (%s)\n";
 
 const ID_TABS = 1;
 const ID_PORT = 2;
@@ -76,6 +82,7 @@ const ID_STEP = 5;
 const ID_RESET = 6;
 const ID_FILE = 7;
 const ID_FONT = 8;
+const ID_DEVICE = 9;
 
 /// How much a press on Step moves the gauge on, in hundredths.
 const step_by = 10;
@@ -90,6 +97,7 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_RESET => "Reset",
         ID_FILE => "File",
         ID_FONT => "Font",
+        ID_DEVICE => "Serial line",
         else => "?",
     };
 }
@@ -118,6 +126,7 @@ const Shown = struct {
     gauge: *Object,
     file: *Object,
     font: *Object,
+    device: *Object,
 };
 
 /// A layout in a frame with `title` in its top edge, holding `tags` -
@@ -181,9 +190,9 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         .{ .tag = tx.TEXT_Clipped, .data = 1 },
         .{},
     });
-    // The two fields that open a requester: one for a file, one for a
-    // font. Their target is the window, so the program hears what was
-    // picked as an IDCMP message without asking.
+    // The fields that open a requester: one for a file, one for a font,
+    // one for a serial line. Their target is the window, so the program
+    // hears what was picked as an IDCMP message without asking.
     const file = ib.NewObjectTagList(null, gfi.GETFILE_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_FILE },
         .{ .tag = gfi.GETFILE_TitleText, .data = @intFromPtr("Which file?") },
@@ -200,7 +209,17 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         .{},
     });
 
-    const parts = [_]?*Object{ port, keymap, volume, gauge, step, reset, about, file, font };
+    const device = ib.NewObjectTagList(null, gde.GETDEVICE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_DEVICE },
+        .{ .tag = gde.GETDEVICE_TitleText, .data = @intFromPtr("Which serial line?") },
+        .{ .tag = gde.GETDEVICE_Speaks, .data = devices.DEVIF_SERIAL },
+        .{ .tag = gde.GETDEVICE_Device, .data = @intFromPtr("serial.device") },
+        .{ .tag = gde.GETDEVICE_Unit, .data = 1 },
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+        .{},
+    });
+
+    const parts = [_]?*Object{ port, keymap, volume, gauge, step, reset, about, file, font, device };
     for (parts) |part| if (part == null) {
         for (parts) |made| ib.DisposeObject(made);
         return null;
@@ -249,6 +268,8 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(file) },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(font) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(device) },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{},
     });
@@ -305,7 +326,7 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
         if (book == null) for (made_pages) |built| ib.DisposeObject(built);
         return null;
     };
-    return .{ .layout = whole, .tabs = tabs.?, .gauge = gauge.?, .file = file.?, .font = font.? };
+    return .{ .layout = whole, .tabs = tabs.?, .gauge = gauge.?, .file = file.?, .font = font.?, .device = device.? };
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -339,7 +360,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const wanted = [_][*:0]const u8{
         ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,    ig.INTEGER_LIBRARY,
         ch.CHOOSER_LIBRARY,  fgg.GAUGE_LIBRARY,   tx.TEXT_LIBRARY,
-        gfi.GETFILE_LIBRARY, gfo.GETFONT_LIBRARY,
+        gfi.GETFILE_LIBRARY, gfo.GETFONT_LIBRARY, gde.GETDEVICE_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
@@ -427,6 +448,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     }
                     if (ib.GetAttr(gfo.GETFONT_Name, shown.font, &storage) != 0 and storage != 0) {
                         _ = Printf(dl, MSG_PICKED, .{ nameOf(ID_FONT), @as([*:0]const u8, @ptrFromInt(storage)) });
+                    }
+                    var unit: usize = 0;
+                    var label: usize = 0;
+                    if (ib.GetAttr(gde.GETDEVICE_Device, shown.device, &storage) != 0 and storage != 0 and
+                        ib.GetAttr(gde.GETDEVICE_Unit, shown.device, &unit) != 0 and
+                        ib.GetAttr(gde.GETDEVICE_Label, shown.device, &label) != 0)
+                    {
+                        _ = Printf(dl, MSG_DEVICE, .{ nameOf(ID_DEVICE), @as([*:0]const u8, @ptrFromInt(storage)), @as(u32, @truncate(unit)), @as([*:0]const u8, @ptrFromInt(label)) });
                     }
                 },
                 else => {},

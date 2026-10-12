@@ -22,6 +22,8 @@ pub const saradc = @import("saradc.zig");
 pub const i2c = @import("i2c.zig");
 pub const systimer = @import("systimer.zig");
 pub const rtc_cntl = @import("rtc_cntl.zig");
+/// The RTC slow clock's count, which a reset does not stop.
+pub const rtc_timer = @import("rtc_timer.zig");
 /// The general DMA engine's channels, for dma.resource and the drivers
 /// that drive a channel directly.
 pub const gdma = @import("gdma.zig");

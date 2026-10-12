@@ -19,7 +19,7 @@ const ExpansionBase = expansion_base.ExpansionBase;
 /// The name it is opened by. The SDK's.
 pub const LIBRARY_NAME = expansion.EXPANSIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 2;
+pub const LIBRARY_REVISION = 3;
 const BUILD_DATE = "12.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -49,6 +49,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_NET => "net",
         st.PARTKIND_USB => "usb",
         st.PARTKIND_UART => "uart",
+        st.PARTKIND_RTC => "rtc",
         else => "part",
     };
 }

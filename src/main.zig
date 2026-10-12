@@ -41,6 +41,7 @@ comptime {
     _ = @import("rom/resources/gpio/gpio.zig");
     _ = @import("rom/resources/usbport/usbport.zig");
     _ = @import("rom/resources/battery/battery.zig");
+    _ = @import("rom/resources/battclock/battclock.zig");
     // The board's description: its system tag list, a ROM tag of its own,
     // and the drivers its parts want.
     _ = &@import("boards/boards.zig").system.system_tag;

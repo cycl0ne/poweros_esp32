@@ -17,8 +17,13 @@ EndIf
 C:net/AddNetInterface ALL QUIET
 
 ; The clock set from a time server: DHCP's, ENVARC:Sys/net/timeserver's,
-; or pool.ntp.org, in the local time of ENVARC:Sys/timezone.
+; or pool.ntp.org, in the local time of ENVARC:Sys/timezone - and, when a
+; server answered, kept in the clock that keeps the date over a reset or
+; a power cut (battclock.resource).
 C:net/TimeSync QUIET
+If NOT WARN
+  C:SetClock SAVE
+EndIf
 
 ; The system log to a syslog server, when ENVARC:Sys/net/syslog names one
 ; (host or host:port): what the log holds now, then every line as it

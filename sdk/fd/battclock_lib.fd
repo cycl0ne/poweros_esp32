@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+//! battclock.resource's functions: the clock that keeps the date while
+//! the system is off or restarting - a clock chip on the board, or the
+//! chip's own RTC timer. A resource: no Open or Close, its first function
+//! in the first slot. The base comes from OpenResource("battclock.resource").
+##include resources/battclock as battclock
+##basetype BattClockBase
+##name battclock.resource
+##bias 0
+##public
+/// Put the clock in working order and set it to 1 January 1978.
+void ResetBattClock()
+/// The seconds since 1 January 1978 the clock says; 0 for a clock that
+/// held no date, which is reset.
+u32 ReadBattClock()
+/// Set the clock to `seconds` since 1 January 1978.
+void WriteBattClock(u32 seconds)
+##end

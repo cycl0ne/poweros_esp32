@@ -18,7 +18,9 @@
 //! elsewhere an error.
 //!
 //! The date is the system time timer.device keeps (TR_SETSYSTIME), which
-//! has no battery behind it; C:net/TimeSync sets it from a time server.
+//! battclock.resource sets at the boot from the clock that keeps the date
+//! while the system is off; C:net/TimeSync sets it from a time server,
+//! and `C:SetClock SAVE` keeps a date set here in that clock.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;

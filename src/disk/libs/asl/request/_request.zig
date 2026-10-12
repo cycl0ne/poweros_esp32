@@ -22,12 +22,13 @@ const intuition = sdk.intuition;
 const AslBase = @import("../asl_base.zig").AslBase;
 const TagItem = utility.TagItem;
 
-/// The three public structures at one address: which one it is is the
+/// The four public structures at one address: which one it is is the
 /// requester's kind.
 pub const Public = extern union {
     file: asl.FileRequester,
     font: asl.FontRequester,
     mode: asl.ScreenModeRequester,
+    device: asl.DeviceRequester,
 };
 
 /// Where a requester opens: on a window's screen, on a screen, or on the
@@ -96,6 +97,13 @@ pub const Requester = extern struct {
     front_pen_count: u32 = 0,
     back_pens: ?[*]const graphics.Pen = null,
     back_pen_count: u32 = 0,
+    /// A device requester's own: the device and unit it starts on and is
+    /// answered with, the unit's label, and the command set it lists.
+    /// The two texts are what `public.device` points at.
+    device: [dos.name_max + 1]u8 = @splat(0),
+    unit_label: [dos.name_max + 1]u8 = @splat(0),
+    unit: u32 = 0,
+    speaks: u32 = 0,
     /// A multi-select answer: the block holding the `WBArg`s and the
     /// names after them, and the one lock on the drawer they all name.
     /// Every pair carries that same lock, since every name picked is in
@@ -144,12 +152,13 @@ fn setUserData(r: *Requester, value: usize) void {
     switch (r.kind) {
         asl.ASL_FontRequest => r.public.font.user_data = value,
         asl.ASL_ScreenModeRequest => r.public.mode.user_data = value,
+        asl.ASL_DeviceRequest => r.public.device.user_data = value,
         else => r.public.file.user_data = value,
     }
 }
 
 /// The tags every kind of requester answers to, which are the same
-/// numbers for all three. True when `item` was one of them.
+/// numbers for all four. True when `item` was one of them.
 fn takeCommonTag(r: *Requester, item: *const TagItem) bool {
     const v = item.data;
     const n: i32 = @bitCast(@as(u32, @truncate(v)));
@@ -233,6 +242,17 @@ fn takeFontTag(r: *Requester, item: *const TagItem) void {
     }
 }
 
+/// The tags only a device requester answers to.
+fn takeDeviceTag(r: *Requester, item: *const TagItem) void {
+    const v = item.data;
+    switch (item.tag) {
+        asl.ASLDR_InitialDevice => copyInto(&r.device, @ptrFromInt(v)),
+        asl.ASLDR_InitialUnit => r.unit = @truncate(v),
+        asl.ASLDR_Speaks => r.speaks = @truncate(v),
+        else => {},
+    }
+}
+
 /// What the tags say, read by both `AllocAslRequest` and `AslRequest`.
 pub fn takeTags(r: *Requester, tags: ?[*]const TagItem) void {
     const ub = r.base.utility_base;
@@ -242,6 +262,7 @@ pub fn takeTags(r: *Requester, tags: ?[*]const TagItem) void {
         switch (r.kind) {
             asl.ASL_FileRequest => takeFileTag(r, item),
             asl.ASL_FontRequest => takeFontTag(r, item),
+            asl.ASL_DeviceRequest => takeDeviceTag(r, item),
             // The screen mode requester reads its own in its item
             // (`todo/asl` 7).
             else => {},
@@ -259,6 +280,11 @@ pub fn takeTags(r: *Requester, tags: ?[*]const TagItem) void {
             // the next request on it.
             r.public.font.attr.name = @ptrCast(&r.family);
             r.public.font.attr.y_size = @truncate(r.size);
+        },
+        asl.ASL_DeviceRequest => {
+            r.public.device.device = @ptrCast(&r.device);
+            r.public.device.unit = r.unit;
+            r.public.device.label = @ptrCast(&r.unit_label);
         },
         else => {},
     }

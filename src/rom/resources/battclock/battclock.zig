@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: MPL-2.0
+//! battclock.resource: the clock that keeps the date while the system is
+//! off or restarting, in seconds since 1 January 1978.
+//!
+//! The clock is the board's clock chip when its system list names one -
+//! a PCF8563 on I2C (PARTKIND_RTC, `source/pcf8563.zig`), which keeps the
+//! date on its own cell while the board is off - and otherwise the chip's
+//! own RTC timer (`source/rtctimer.zig`), which counts through a reset
+//! but not through a power cut. At its start the resource sets the system
+//! time from the clock; `C:SetClock` loads, saves and resets it.
+//!
+//! Each call is a file of its own under `clock/`. The jump table is
+//! battclock_lvo.zig, the ROM tag and init battclock_init.zig, the base
+//! battclock_base.zig. This file holds the names the rest of the kernel
+//! reaches the resource by, and the tests of the clocks' arithmetic.
+
+const std = @import("std");
+const sdk = @import("sdk");
+const utility = sdk.utility;
+
+const battclock_base = @import("battclock_base.zig");
+const battclock_init = @import("battclock_init.zig");
+
+// The tag is an export in .resident, found there by its address; this
+// keeps it in whatever is built from battclock.resource.
+comptime {
+    _ = &battclock_init.battclock_resource_tag;
+}
+
+/// The resource's base.
+pub const BattClockBase = battclock_base.BattClockBase;
+/// What the resource is on exec's list as.
+pub const RESOURCE_NAME = battclock_init.RESOURCE_NAME;
+
+// --- tests ------------------------------------------------------------------------
+
+const testing = std.testing;
+const rtctimer = @import("source/rtctimer.zig");
+const pcf8563 = @import("source/pcf8563.zig");
+
+test {
+    _ = @import("battclock_lvo.zig");
+}
+
+/// About the RC slow clock's period: 7.35 µs.
+const period: u32 = 7 << rtctimer.period_shift | 1 << (rtctimer.period_shift - 2) | 1 << (rtctimer.period_shift - 3);
+
+test "the RTC timer's count in microseconds, past 64 bits of product" {
+    try testing.expectEqual(@as(u64, 0), rtctimer.microsOf(0, period));
+    try testing.expectEqual(@as(u64, 7), rtctimer.microsOf(1, period));
+    try testing.expectEqual(@as(u64, 7_375_000), rtctimer.microsOf(1_000_000, period));
+    // Forty years of cycles: the product would pass 64 bits.
+    const cycles: u64 = 40 * 365 * 24 * 3600 * 136_000;
+    const expected = cycles / 8 * 59;
+    try testing.expectEqual(expected, rtctimer.microsOf(cycles, period));
+}
+
+test "a reckoning gives the date it was set to, and moves on with the count" {
+    const at: u64 = 5_000_000;
+    const reckoning = rtctimer.setTo(period, at, 1_000_000_000);
+    try testing.expect(rtctimer.holdsDate(&reckoning, at));
+    try testing.expectEqual(@as(i64, 1_000_000_000), rtctimer.dateAt(&reckoning, at));
+    try testing.expectEqual(@as(i64, 1_000_000_000 + 7_375_000), rtctimer.dateAt(&reckoning, at + 1_000_000));
+}
+
+test "a reckoning whose count went back, or whose bytes do not add up, holds no date" {
+    const reckoning = rtctimer.setTo(period, 5_000_000, 1_000_000_000);
+    // A power-on started the count over.
+    try testing.expect(!rtctimer.holdsDate(&reckoning, 4_999_999));
+    var spoiled = reckoning;
+    spoiled.known_date += 1;
+    try testing.expect(!rtctimer.holdsDate(&spoiled, 5_000_000));
+    var no_magic = reckoning;
+    no_magic.magic = 0;
+    no_magic = rtctimer.sealed(no_magic);
+    try testing.expect(!rtctimer.holdsDate(&no_magic, 5_000_000));
+    const empty: rtctimer.Reckoning = std.mem.zeroes(rtctimer.Reckoning);
+    try testing.expect(!rtctimer.holdsDate(&empty, 0));
+}
+
+test "a new period keeps the date at the count it is taken at" {
+    const reckoning = rtctimer.setTo(period, 5_000_000, 1_000_000_000);
+    const later: u64 = 9_000_000;
+    const before = rtctimer.dateAt(&reckoning, later);
+    const faster = rtctimer.carriedOver(&reckoning, period - 1000, later);
+    try testing.expectEqual(before, rtctimer.dateAt(&faster, later));
+    try testing.expectEqual(period - 1000, faster.period);
+    try testing.expect(rtctimer.holdsDate(&faster, later));
+}
+
+test "the period timed between two edges of the slow clock" {
+    // 1024 cycles in 7.5 ms of the system timer's 16 MHz: 7.32421875 µs.
+    const first: rtctimer.Edge = .{ .count = 100, .ticks = 1_000_000 };
+    const last: rtctimer.Edge = .{ .count = 1124, .ticks = 1_000_000 + 120_000 };
+    try testing.expectEqual(@as(u32, 3_840_000), rtctimer.periodBetween(first, last));
+}
+
+test "the PCF8563's registers: a date both ways, across the century bit" {
+    const dates = [_]utility.ClockData{
+        .{ .sec = 0, .min = 0, .hour = 0, .mday = 1, .month = 1, .year = 1978, .wday = 0 },
+        .{ .sec = 59, .min = 59, .hour = 23, .mday = 31, .month = 12, .year = 1999, .wday = 5 },
+        .{ .sec = 7, .min = 42, .hour = 13, .mday = 12, .month = 10, .year = 2026, .wday = 1 },
+        .{ .sec = 59, .min = 59, .hour = 23, .mday = 31, .month = 12, .year = 2099, .wday = 4 },
+    };
+    for (dates) |date| {
+        const regs = pcf8563.registersOf(date);
+        try testing.expectEqual(date, pcf8563.dateOf(regs).?);
+    }
+    const regs = pcf8563.registersOf(dates[2]);
+    try testing.expectEqual([7]u8{ 0x07, 0x42, 0x13, 0x12, 1, 0x80 | 0x10, 0x26 }, regs);
+}
+
+test "the PCF8563's registers: a low cell, a non-BCD digit and an early year are no date" {
+    var regs = pcf8563.registersOf(.{ .sec = 7, .min = 42, .hour = 13, .mday = 12, .month = 10, .year = 2026, .wday = 1 });
+    var low = regs;
+    low[0] |= 0x80;
+    try testing.expectEqual(@as(?utility.ClockData, null), pcf8563.dateOf(low));
+    var bad = regs;
+    bad[1] = 0x5A;
+    try testing.expectEqual(@as(?utility.ClockData, null), pcf8563.dateOf(bad));
+    // A chip from the factory: 1900, and month 0.
+    regs = .{ 0, 0, 0, 1, 0, 1, 0 };
+    try testing.expectEqual(@as(?utility.ClockData, null), pcf8563.dateOf(regs));
+    var month_zero = pcf8563.registersOf(.{ .sec = 0, .min = 0, .hour = 0, .mday = 1, .month = 1, .year = 2026, .wday = 4 });
+    month_zero[5] = 0x80;
+    try testing.expectEqual(@as(?utility.ClockData, null), pcf8563.dateOf(month_zero));
+}

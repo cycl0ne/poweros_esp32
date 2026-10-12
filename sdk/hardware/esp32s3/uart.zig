@@ -13,6 +13,7 @@ const map = @import("map.zig");
 const hardware = @import("hardware.zig");
 const intbits = @import("intbits.zig");
 const system = @import("system.zig");
+const signals = @import("signals.zig");
 const reg = @import("mmio.zig").reg;
 
 /// A UART's registers, by its number (0-2).
@@ -191,6 +192,26 @@ pub const Port = enum(u2) {
 
 comptime {
     if (intbits.INTB_UART2 != intbits.INTB_UART0 + 2) @compileError("UART sources aren't consecutive");
+}
+
+/// The GPIO matrix's signal that carries the UART's TX out to a pad
+/// (`gpio.connectOut`).
+pub fn txSignal(port: Port) u32 {
+    return switch (port) {
+        .uart0 => signals.U0TXD_OUT,
+        .uart1 => signals.U1TXD_OUT,
+        .uart2 => signals.U2TXD_OUT,
+    };
+}
+
+/// The GPIO matrix's signal that carries a pad in to the UART's RX
+/// (`gpio.connectIn`).
+pub fn rxSignal(port: Port) u32 {
+    return switch (port) {
+        .uart0 => signals.U0RXD_IN,
+        .uart1 => signals.U1RXD_IN,
+        .uart2 => signals.U2RXD_IN,
+    };
 }
 
 fn r(port: Port, offset: usize) *volatile u32 {

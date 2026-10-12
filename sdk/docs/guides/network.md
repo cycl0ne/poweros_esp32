@@ -251,9 +251,11 @@ revocation.
 
 **The clock** must be right for any date to be checked, so a session
 refuses to open (`TLSERR_CLOCK`) while the clock is still where a cold
-boot leaves it: `C:net/TimeSync`, which the boot runs, sets it. The
-clock keeps local time; the session works the UTC out by
-`ENVARC:Sys/timezone`.
+boot leaves it: `C:net/TimeSync`, which the boot runs, sets it, and
+saves it (`C:SetClock SAVE`) to the clock battclock.resource keeps -
+a board's clock chip, or the chip's RTC timer, which keeps it over a
+reset - so the boot after starts with the date. The clock keeps local
+time; the session works the UTC out by `ENVARC:Sys/timezone`.
 
 **Waiting.** A record is decrypted whole, and what a read does not take
 waits in the session, where `WaitSelect` does not see it: ask
@@ -321,7 +323,7 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
-| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
+| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync` and, when a server answered, `SetClock SAVE`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:
 

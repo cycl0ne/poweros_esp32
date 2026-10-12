@@ -56,10 +56,11 @@ pub const integer = @import("integer.zig");
 pub const chooser = @import("chooser.zig");
 pub const clicktab = @import("clicktab.zig");
 pub const page = @import("page.zig");
-/// What getfile.gadget and getfont.gadget both are.
+/// What getfile.gadget, getfont.gadget and getdevice.gadget all are.
 pub const getclass = @import("getclass.zig");
 pub const getfile = @import("getfile.zig");
 pub const getfont = @import("getfont.zig");
+pub const getdevice = @import("getdevice.zig");
 pub const spinner = @import("spinner.zig");
 pub const meter = @import("meter.zig");
 pub const arc = @import("arc.zig");

@@ -21,8 +21,8 @@ const Requester = _request.Requester;
 ///
 /// INPUTS:
 /// - `ab` - asl.library's base.
-/// - `kind` - `ASL_FileRequest`, `ASL_FontRequest` or
-///   `ASL_ScreenModeRequest`.
+/// - `kind` - `ASL_FileRequest`, `ASL_FontRequest`,
+///   `ASL_ScreenModeRequest` or `ASL_DeviceRequest`.
 /// - `tags` - what the requester starts as; null for none. `AslRequest`
 ///   reads the same tags and may change any of them for one showing.
 ///
@@ -40,7 +40,10 @@ const Requester = _request.Requester;
 /// A file requester starts with its three fields empty unless
 /// `ASLFR_InitialFile`, `ASLFR_InitialDrawer` or `ASLFR_InitialPattern`
 /// says otherwise, and with no place of its own, so the first showing is
-/// put in the middle of the screen it opens on.
+/// put in the middle of the screen it opens on. A device requester lists
+/// every device that says what it speaks unless `ASLDR_Speaks` names a
+/// command set, and starts on no unit unless `ASLDR_InitialDevice` names
+/// one.
 ///
 /// CONTEXT:
 /// - Waits: for memory.
@@ -72,7 +75,7 @@ const Requester = _request.Requester;
 /// defer ab.FreeAslRequest(req);
 /// ```
 pub fn AllocAslRequest(ab: *AslBase, kind: u32, tags: ?[*]const TagItem) ?*anyopaque {
-    if (kind > asl.ASL_ScreenModeRequest) return null;
+    if (kind > asl.ASL_DeviceRequest) return null;
     const sys = ab.sys_base;
     const block = sys.AllocVec(@sizeOf(Requester), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const r: *Requester = @ptrCast(@alignCast(block));

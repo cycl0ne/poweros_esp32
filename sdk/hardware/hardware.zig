@@ -48,6 +48,9 @@ pub const saradc = own.saradc;
 pub const i2c = own.i2c;
 pub const systimer = own.systimer;
 pub const rtc_cntl = own.rtc_cntl;
+/// The slow clock's count, which a reset does not stop, and the RTC
+/// memory a clock on it keeps its reckoning in.
+pub const rtc_timer = own.rtc_timer;
 /// The general DMA engine's channels, for dma.resource and the drivers
 /// that drive a channel directly. The ESP32-P4 has two engines, AHB and
 /// AXI, so its calls name the engine as well as the channel.

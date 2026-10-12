@@ -48,8 +48,8 @@ const Work = _rs485.Work;
 
 pub const DEVICE_NAME = _rs485.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "03.10.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

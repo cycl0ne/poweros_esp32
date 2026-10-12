@@ -117,7 +117,7 @@ first time something opens it.
 | intuition.library | ROM | screens, windows, gadgets, menus, requesters, BOOPSI, styles | [md](autodocs/intuition.md) · [doc](autodocs/intuition.doc) |
 | keymap.library | ROM | raw keys into characters | [md](autodocs/keymap.md) · [doc](autodocs/keymap.doc) |
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
-| asl.library | `LIBS:` | the file and font requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
+| asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
@@ -181,6 +181,7 @@ All are in the ROM.
 | jpeg.resource | the ESP32-P4's JPEG codec: a file decoded into pixels | [md](autodocs/jpeg.md) · [doc](autodocs/jpeg.doc) |
 | expander.resource | the board's IO expander: the pins the panel, the touch controller and the card hang on, the backlight, an analogue input | [md](autodocs/expander.md) · [doc](autodocs/expander.doc) |
 | battery.resource | the board's battery: whether a cell is there, its voltage and charge, external power and charging, a signal when that changes | [md](autodocs/battery.md) · [doc](autodocs/battery.doc) |
+| battclock.resource | the date kept while the system is off or restarts: the board's clock chip, else the chip's RTC timer; the system time set from it at the boot | [md](autodocs/battclock.md) · [doc](autodocs/battclock.doc) |
 | watchdog.resource | the chip's watchdog timer, armed, fed and disarmed by programs | [md](autodocs/watchdog.md) · [doc](autodocs/watchdog.doc) |
 
 ## Handlers
@@ -252,6 +253,7 @@ of its own besides. How a class is written is in
 | clicktab.gadget | a row of tabs, one in front | [`clicktab.zig`](../libs/gadgets/clicktab.zig) |
 | getfile.gadget | a file name, typed or asked for | [`getfile.zig`](../libs/gadgets/getfile.zig) |
 | getfont.gadget | a font, named or asked for | [`getfont.zig`](../libs/gadgets/getfont.zig) |
+| getdevice.gadget | a device's unit, named or asked for among those that speak a command set | [`getdevice.zig`](../libs/gadgets/getdevice.zig) |
 | tapedeck.gadget | the buttons of a tape deck or a player | [`tapedeck.zig`](../libs/gadgets/tapedeck.zig) |
 | calendar.gadget | a month, to pick a day from | [`calendar.zig`](../libs/gadgets/calendar.zig) |
 | canvas.gadget | a picture a program draws into | [`canvas.zig`](../libs/gadgets/canvas.zig) |

@@ -3,9 +3,14 @@
 //! Its API is IOExtSer requests, their commands, parameters and errors
 //! (sdk/devices/serial.zig). The USB-Serial-JTAG port is usbserial.device.
 //!
-//!   unit 0  UART0 (the ROM's pins, GPIO43 TX and GPIO44 RX)
-//!   unit 1  UART1 (no pins routed yet)
-//!   unit 2  UART2 (no pins routed yet)
+//!   unit 0     UART0, on the ROM's pads (exec's raw port)
+//!   unit 1, 2  UART1, UART2
+//!   unit 3, 4  UART3, UART4 (the ESP32-P4)
+//!
+//! A unit's pads are the ones the board's UART part for it names; the
+//! unit takes them at its first open and gives them back at its last
+//! close (unit.zig). ObtainDeviceUnits lists the units the board has a
+//! part for.
 //!
 //!   CMD_READ         io_Length bytes: it waits for all of them,
 //!                    or in EOF mode (SERF_EOFMODE) for a termination
@@ -61,21 +66,22 @@ const unit = @import("unit.zig");
 
 pub const DEVICE_NAME = sdk.devices.serial.SERIALNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
+const DEVICE_REVISION = 3;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The units' ports, by unit number.
-const ports = [_]unit.Port{ .uart0, .uart1, .uart2 };
+/// The units' ports, by unit number: the chip's UARTs.
+const ports = unit.Port.uarts;
 
 /// exec has copied the tag's name, version and ID string into the base.
 fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Device {
     _ = seg_list;
     dev.revision = DEVICE_REVISION;
     unit.initDevice(dev, sys_base, &ports);
+    unit.findPads(dev, sys_base);
     return dev;
 }
 

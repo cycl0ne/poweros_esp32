@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! What getfile.gadget and getfont.gadget both are: a field with a
-//! button beside it, the button opening one of asl.library's requesters.
+//! What getfile.gadget, getfont.gadget and getdevice.gadget all are: a
+//! field with a button beside it, the button opening one of asl.library's
+//! requesters.
 //!
-//! It is here rather than beside either class because a module's root
-//! directory is the only place it may import from, and the two classes
+//! It is here rather than beside any of the classes because a module's
+//! root directory is the only place it may import from, and the classes
 //! are separate programs. `ClassLibrary` is here for the same reason.
 //!
-//! The two differ only in which requester the button opens and how the
+//! They differ only in which requester the button opens and how the
 //! answer is written into the field, so the gadget itself is written
 //! once and each class says which it is. They are separate libraries
 //! because a program that asks for a file should not have to load the
@@ -54,7 +55,7 @@ const TagItem = utility.TagItem;
 const Base = @import("classlibrary.zig").Base;
 
 /// Which requester the button opens.
-pub const Kind = enum { file, font };
+pub const Kind = enum { file, font, device };
 
 /// What a class of this shape says about itself.
 pub const Spec = struct {
@@ -63,28 +64,33 @@ pub const Spec = struct {
     kind: Kind,
     /// Where its attributes start.
     dummy: utility.Tag,
+    /// The library's version, revision and date.
+    version: u16 = 1,
+    revision: u16 = 1,
+    date: []const u8 = "08.10.2026",
 };
 
-/// The attributes, at the same places in both classes.
+/// The attributes, at the same places in every class.
 pub fn titleText(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x01;
 }
 pub fn readOnly(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x02;
 }
-/// The drawer, or the font's name.
+/// The drawer, the font's name, or the device's.
 pub fn firstValue(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x03;
 }
-/// The file's own name, or the font's size.
+/// The file's own name, the font's size, or the device's unit.
 pub fn secondValue(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x04;
 }
-/// The two joined, or the font's style.
+/// The two joined, the font's style, or the unit's label.
 pub fn thirdValue(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x05;
 }
-/// The pattern, or the font as a TextAttr.
+/// The pattern, the font as a TextAttr, or the command set the
+/// device requester lists.
 pub fn fourthValue(comptime spec: Spec) utility.Tag {
     return spec.dummy + 0x06;
 }
@@ -116,9 +122,9 @@ pub const Data = extern struct {
     title: ?[*:0]const u8 = null,
     /// The pattern the file requester shows, copied.
     pattern: [name_room]u8 = @splat(0),
-    /// A file's drawer, or a font's name.
+    /// A file's drawer, a font's name, or a device's.
     drawer: [drawer_room]u8 = @splat(0),
-    /// A file's own name.
+    /// A file's own name, or the label of a device's unit.
     file: [name_room]u8 = @splat(0),
     /// The two joined, which is what the field shows.
     shown: [shown_room]u8 = @splat(0),
@@ -127,6 +133,9 @@ pub const Data = extern struct {
     size: u16 = 8,
     style: u16 = 0,
     attr: graphics.TextAttr = .{ .name = "", .y_size = 8 },
+    /// A device's unit, and the command set its requester lists.
+    unit: u32 = 0,
+    speaks: u32 = 0,
     /// The button is held, and the pointer is still on it.
     held: u8 = 0,
     over: u8 = 0,
@@ -232,6 +241,44 @@ fn splitFont(own: *Data) void {
     own.attr = .{ .name = asString(&own.drawer), .y_size = own.size, .style = @truncate(own.style) };
 }
 
+/// A device's name and unit as the field shows them.
+fn joinDevice(own: *Data) void {
+    @memset(&own.shown, 0);
+    var at: usize = 0;
+    var i: usize = 0;
+    while (own.drawer[i] != 0 and at + 1 < own.shown.len) : (i += 1) {
+        own.shown[at] = own.drawer[i];
+        at += 1;
+    }
+    if (at != 0 and at + 12 < own.shown.len) {
+        own.shown[at] = ' ';
+        at += 1;
+        at += writeNumber(own.shown[at..], own.unit);
+    }
+    own.shown[at] = 0;
+}
+
+/// A name and a unit typed into the field: a number after the last space
+/// is the unit, and without one the whole of it is the name, unit 0.
+fn splitDevice(own: *Data) void {
+    var length: usize = 0;
+    while (length < own.shown.len and own.shown[length] != 0) length += 1;
+    var cut = length;
+    while (cut > 0 and own.shown[cut - 1] != ' ') cut -= 1;
+    var unit: u32 = 0;
+    var digits: usize = cut;
+    while (digits < length and own.shown[digits] >= '0' and own.shown[digits] <= '9') : (digits += 1) {
+        unit = unit *% 10 +% (own.shown[digits] - '0');
+    }
+    const numbered = cut != 0 and digits == length and digits > cut;
+    const name_end = if (numbered) cut - 1 else length;
+    @memset(&own.drawer, 0);
+    @memset(&own.file, 0);
+    const name_len = @min(name_end, own.drawer.len - 1);
+    @memcpy(own.drawer[0..name_len], own.shown[0..name_len]);
+    own.unit = if (numbered) unit else 0;
+}
+
 /// A number written into `into`, without a NUL. How many characters it
 /// took.
 fn writeNumber(into: []u8, value: u32) usize {
@@ -269,6 +316,7 @@ pub fn Library(comptime spec: Spec) type {
             switch (spec.kind) {
                 .file => joinPath(own),
                 .font => joinFont(own),
+                .device => joinDevice(own),
             }
             showText(base, own);
         }
@@ -282,6 +330,7 @@ pub fn Library(comptime spec: Spec) type {
             switch (spec.kind) {
                 .file => splitPath(own),
                 .font => splitFont(own),
+                .device => splitDevice(own),
             }
         }
 
@@ -300,6 +349,13 @@ pub fn Library(comptime spec: Spec) type {
                     .{ .tag = firstValue(spec), .data = @intFromPtr(&own.drawer) },
                     .{ .tag = secondValue(spec), .data = own.size },
                     .{ .tag = fourthValue(spec), .data = @intFromPtr(&own.attr) },
+                    .{ .tag = gc.GA_ID, .data = id },
+                    .{},
+                },
+                .device => [_]TagItem{
+                    .{ .tag = firstValue(spec), .data = @intFromPtr(&own.drawer) },
+                    .{ .tag = secondValue(spec), .data = own.unit },
+                    .{ .tag = thirdValue(spec), .data = @intFromPtr(&own.file) },
                     .{ .tag = gc.GA_ID, .data = id },
                     .{},
                 },
@@ -453,6 +509,7 @@ pub fn Library(comptime spec: Spec) type {
             const picked = switch (spec.kind) {
                 .file => askFile(base, al, own, &job.info),
                 .font => askFont(base, al, own, &job.info),
+                .device => askDevice(base, al, own, &job.info),
             };
             if (!picked) return;
             refresh(base, own);
@@ -500,6 +557,25 @@ pub fn Library(comptime spec: Spec) type {
             return true;
         }
 
+        fn askDevice(base: *Base, al: *AslBase, own: *Data, info: *classusr.GadgetInfo) bool {
+            _ = base;
+            const request = al.AllocAslRequest(asl.ASL_DeviceRequest, &[_]TagItem{
+                .{ .tag = asl.ASLDR_Window, .data = @intFromPtr(info.window) },
+                .{ .tag = if (own.title != null) asl.ASLDR_TitleText else utility.TAG_IGNORE, .data = @intFromPtr(own.title) },
+                .{ .tag = if (own.drawer[0] != 0) asl.ASLDR_InitialDevice else utility.TAG_IGNORE, .data = @intFromPtr(&own.drawer) },
+                .{ .tag = asl.ASLDR_InitialUnit, .data = own.unit },
+                .{ .tag = asl.ASLDR_Speaks, .data = own.speaks },
+                .{},
+            }) orelse return false;
+            defer al.FreeAslRequest(request);
+            if (!al.AslRequest(request, null)) return false;
+            const answer: *asl.DeviceRequester = @ptrCast(@alignCast(request));
+            copyInto(&own.drawer, answer.device);
+            copyInto(&own.file, answer.label);
+            own.unit = answer.unit;
+            return true;
+        }
+
         /// The process started. Nothing happens if one is already open,
         /// which is what keeps a second press from asking twice.
         fn ask(base: *Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
@@ -543,11 +619,15 @@ pub fn Library(comptime spec: Spec) type {
                     own.read_only = @intFromBool(item.data != 0);
                 } else if (item.tag == firstValue(spec)) {
                     copyInto(&own.drawer, @ptrFromInt(item.data));
+                    // A device named by the program has no label until
+                    // the requester picks it.
+                    if (spec.kind == .device) @memset(&own.file, 0);
                     changed = true;
                 } else if (item.tag == secondValue(spec)) {
                     switch (spec.kind) {
                         .file => copyInto(&own.file, @ptrFromInt(item.data)),
                         .font => own.size = @truncate(item.data),
+                        .device => own.unit = @truncate(item.data),
                     }
                     changed = true;
                 } else if (item.tag == thirdValue(spec) and spec.kind == .font) {
@@ -555,6 +635,8 @@ pub fn Library(comptime spec: Spec) type {
                     changed = true;
                 } else if (item.tag == fourthValue(spec) and spec.kind == .file) {
                     copyInto(&own.pattern, @ptrFromInt(item.data));
+                } else if (item.tag == fourthValue(spec) and spec.kind == .device) {
+                    own.speaks = @truncate(item.data);
                 } else if (item.tag == fifthValue(spec) and spec.kind == .file) {
                     own.save_mode = @intFromBool(item.data != 0);
                 } else if (item.tag == sixthValue(spec) and spec.kind == .file) {
@@ -576,14 +658,18 @@ pub fn Library(comptime spec: Spec) type {
                 storage.* = switch (spec.kind) {
                     .file => @intFromPtr(&own.file),
                     .font => own.size,
+                    .device => own.unit,
                 };
             } else if (attr == thirdValue(spec)) {
                 storage.* = switch (spec.kind) {
                     .file => @intFromPtr(&own.shown),
                     .font => own.style,
+                    .device => @intFromPtr(&own.file),
                 };
             } else if (attr == fourthValue(spec) and spec.kind == .font) {
                 storage.* = @intFromPtr(&own.attr);
+            } else if (attr == fourthValue(spec) and spec.kind == .device) {
+                storage.* = own.speaks;
             } else if (attr == titleText(spec)) {
                 storage.* = @intFromPtr(own.title);
             } else if (attr == readOnly(spec)) {
@@ -753,9 +839,9 @@ pub fn Library(comptime spec: Spec) type {
 
         pub const Made = @import("classlibrary.zig").ClassLibrary(.{
             .name = spec.name,
-            .version = 1,
-            .revision = 1,
-            .date = "08.10.2026",
+            .version = spec.version,
+            .revision = spec.revision,
+            .date = spec.date,
             .super = classusr.GADGETCLASS,
             .Instance = Data,
             .dispatch = Self.dispatch,

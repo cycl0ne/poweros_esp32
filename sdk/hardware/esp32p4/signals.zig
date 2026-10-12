@@ -5,7 +5,7 @@
 //! without its `_PAD_IN_IDX` / `_PAD_OUT_IDX`; where the same number is an
 //! input and an output, one name serves both.
 
-// UART0 and UART1: a pair per number, input first.
+// The five UARTs: a pair per number, input first.
 pub const UART0_RXD: u32 = 10;
 pub const UART0_TXD: u32 = 10;
 pub const UART0_CTS: u32 = 11;
@@ -14,6 +14,18 @@ pub const UART1_RXD: u32 = 13;
 pub const UART1_TXD: u32 = 13;
 pub const UART1_CTS: u32 = 14;
 pub const UART1_RTS: u32 = 14;
+pub const UART2_RXD: u32 = 16;
+pub const UART2_TXD: u32 = 16;
+pub const UART2_CTS: u32 = 17;
+pub const UART2_RTS: u32 = 17;
+pub const UART3_RXD: u32 = 19;
+pub const UART3_TXD: u32 = 19;
+pub const UART3_CTS: u32 = 20;
+pub const UART3_RTS: u32 = 20;
+pub const UART4_RXD: u32 = 22;
+pub const UART4_TXD: u32 = 22;
+pub const UART4_CTS: u32 = 23;
+pub const UART4_RTS: u32 = 23;
 
 // I2S0, as a transmitter.
 pub const I2S0_O_BCK: u32 = 25;

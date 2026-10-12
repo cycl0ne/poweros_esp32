@@ -298,8 +298,9 @@ as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
 written to input.device as a keyboard's are),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), `clicktab` with `page` (a
-row of tabs over pages of gadgets), `getfile` with `getfont` (a
-field with a button beside it that opens asl.library's requester), and
+row of tabs over pages of gadgets), `getfile`, `getfont` and
+`getdevice` (a field with a button beside it that opens asl.library's
+requester), and
 `textedit` (text of many lines to edit, with undo, the clipboard,
 finding and line numbers - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
@@ -321,7 +322,7 @@ const port = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &.{
 });
 ```
 
-A `getfile` or `getfont` gadget opens its requester on a process of its
+A `getfile`, `getfont` or `getdevice` gadget opens its requester on a process of its
 own, because the press that asks for it arrives on the input handler,
 which may neither draw nor wait. What was picked is written into the
 field and told to the gadget's `ICA_TARGET`, so a gadget whose target is
@@ -540,10 +541,40 @@ reads DEVS: each time, so a program asks once and keeps the answer.
 ```
 1.System:> ShowConfig SPEAKS=serial
 device                   unit  version  where  speaks           unit is
-serial.device               1    1.2    ROM    stream,serial    QEMU's second serial port
+serial.device               1    1.3    ROM    stream,serial    QEMU's second serial port
+serial.device               2    1.3    ROM    stream,serial    QEMU's third serial port
 usb/acm.device              0    1.0    DEVS:  serial,usbclass  ACM 0
 usbserial.device            0    1.3    ROM    stream,serial    USB-Serial-JTAG
 ```
+
+For a person to pick from, asl.library's device requester shows the
+same list, a line per unit with what the board calls it
+(`ASL_DeviceRequest`, `ASLDR_Speaks`; the answer is a
+`DeviceRequester`: the device's name, the unit and its label), and a
+`getdevice` gadget is a field that opens it - what a terminal's settings
+window is made of. `C:RequestDevice serial` asks from a script and
+writes `"serial.device" 1`.
+
+```zig
+const gd = sdk.gadgets.getdevice;
+
+const line = ib.NewObjectTagList(null, gd.GETDEVICE_CLASS, &.{
+    .{ .tag = gd.GETDEVICE_TitleText, .data = @intFromPtr("Which serial line?") },
+    .{ .tag = gd.GETDEVICE_Speaks, .data = devices.DEVIF_SERIAL },
+    .{ .tag = gd.GETDEVICE_Device, .data = @intFromPtr("serial.device") },
+    .{ .tag = gd.GETDEVICE_Unit, .data = 1 },
+    .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+    .{},
+});
+// After WMHI_IDCMPUPDATE: GETDEVICE_Device and GETDEVICE_Unit are what
+// OpenDevice takes.
+```
+
+A UART's unit is open on the pads its board part names
+(`PART_PinDataOut`, `PART_PinDataIn`): serial.device takes them from
+gpio.resource at the unit's first open and gives them back at its last
+close, so another driver may have the connector's pins while no program
+has the line.
 
 ## The system log
 

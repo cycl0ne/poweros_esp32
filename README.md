@@ -94,7 +94,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
   told when a file or a drawer changes (`RAM:`, `DH0:`, `SD0:`); consoles with line editing,
   Tab completion of file names, and copy and paste; volumes renamed
-  (`C:Relabel`); a shell with scripts and resident commands, 44
+  (`C:Relabel`); a shell with scripts and resident commands, 46
   commands in `C:` (`dir all | more` pages through anything), test
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
@@ -146,7 +146,10 @@ ESP32-P4 boards and in Espressif's QEMU.
   made of - a form larger than its window, scrolled
   (`C:test/Scroll`), and a list in columns under headings that sort it,
   its rows a tree (`C:test/ListBrowser`).
-  `LIBS:asl.library` asks for a file or a font.
+  `LIBS:asl.library` asks for a file, a font, or a device's unit - the
+  serial lines, the networks, the drives this board has, listed by what
+  their devices speak - and `getfile`, `getfont` and `getdevice` are
+  fields that ask with it (`C:RequestDevice` from a script).
 - **Motion:** motion.library, one clock for everything that moves -
   eased values, timers that do not drift, timelines; a style change
   fades, a gauge fills, a list glides. See the
@@ -202,7 +205,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   over RTU on the RS-485 bus and over TCP; `C:Modbus` reads and writes
   a device from the shell, and `SYS:Programs/Battery` shows a battery a
   Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
-- **Devices:** timer, serial, USB serial, RS-485 (in frames), flash, SD
+- **Devices:** timer, serial (on the UART connectors the board lists),
+  USB serial, RS-485 (in frames), flash, SD
   card, I2C, touch, keyboard and mouse (on every board, fed by sources -
   the emulator's window, a USB keyboard or mouse, `C:test/KeySource` -
   the mouse with its wheel), input, console, a USB host controller,
@@ -213,7 +217,12 @@ ESP32-P4 boards and in Espressif's QEMU.
   ports), JPEG (the ESP32-P4's codec) and platform resources; the battery (`battery.resource`: whether a cell is there,
   its voltage and charge, external power and charging where the board
   wires them, and a signal when that changes - `C:Battery`, and the
-  charge in the desktop's title); `LIBS:crypto.library` on the chip's SHA,
+  charge in the desktop's title); the date kept while the system is off
+  or restarts (`battclock.resource`: a PCF8563 clock chip where the board
+  lists one, else the chip's own RTC timer, which a reset does not stop;
+  the boot sets the system time from it, `C:SetClock` loads, saves and
+  resets it, and a time server's date is saved to it);
+  `LIBS:crypto.library` on the chip's SHA,
   AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
   ECDSA and Ed25519 signatures, ML-KEM-768.
 - **Boards are data:** which parts are fitted and how they are wired is a
@@ -230,7 +239,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards, mice, sticks, an FTDI serial adapter and a CDC Ethernet adapter through a hub, plugged in and out while it runs (`-Dusb-disk` plugs in a stick) |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; USB sticks at high speed (`usb/disk.device`, `DU0:`, about 22 MB/s reading), keyboards and mice of full or low speed behind its hub by split transactions; a microSD card as `SD0:` (4 bits at 20 MHz, about 2.8 MB/s both ways); the battery's voltage and external power once its solder jumpers are closed (shipped open) and their two lines are in its board list; audio.device for its ES8311 is in its image, not tried there yet |
-| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`) |
+| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`); the connectors marked UART1 and UART3-IN as `serial.device` units 1 and 3, not yet tried on the board |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network

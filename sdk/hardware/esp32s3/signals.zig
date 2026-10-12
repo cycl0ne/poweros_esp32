@@ -6,6 +6,14 @@
 //! without its `_IDX`; where the same number is an input and an output,
 //! one name serves both.
 
+// The three UARTs: a pair per number, input first.
+pub const U0RXD_IN: u32 = 12;
+pub const U0TXD_OUT: u32 = 12;
+pub const U1RXD_IN: u32 = 15;
+pub const U1TXD_OUT: u32 = 15;
+pub const U2RXD_IN: u32 = 18;
+pub const U2TXD_OUT: u32 = 18;
+
 // I2S0, as a transmitter.
 pub const I2S0O_BCK: u32 = 22;
 pub const I2S0_MCLK: u32 = 23;

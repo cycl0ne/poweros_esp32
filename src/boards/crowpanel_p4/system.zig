@@ -145,6 +145,34 @@ const usb = [_]Tag{
     .done,
 };
 
+// --- the UARTs --------------------------------------------------------------------
+
+/// The four-pin connector marked UART1 (J2: RX, TX, 3V3, GND), at 3.3 V:
+/// GPIO47 TX and GPIO48 RX, on UART1 (serial.device unit 1).
+const uart1 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 1),
+    .pointer(st.PART_Label, "connector UART1"),
+    .value(st.PART_PinDataOut, pins.gpio(47)),
+    .value(st.PART_PinDataIn, pins.gpio(48)),
+    .done,
+};
+
+/// The four-pin connector marked UART3-IN (J10: TX, RX, 5V, GND), which
+/// also takes the board's 5 V supply: its lines are 5 V ones, through a
+/// BSS138 level shifter each, to GPIO34 TX and GPIO33 RX, on UART3
+/// (serial.device unit 3).
+const uart3 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_UART),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_BusUnit, 3),
+    .pointer(st.PART_Label, "connector UART3-IN, 5 V"),
+    .value(st.PART_PinDataOut, pins.gpio(34)),
+    .value(st.PART_PinDataIn, pins.gpio(33)),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -159,9 +187,8 @@ pub const root = [_]Tag{
     // drops out while the boot's 2D-engine copies run, and the screen
     // stays dark.
     .value(st.SYSTAG_Ldo4Voltage, 3300),
-    // UART0 is the console, so no UART of the board's is a program's: its
-    // connectors marked UART1 and UART3-IN are not listed while
-    // serial.device routes no pads to the chip's other UARTs.
+    // UART0 is the console; the connectors marked UART1 and UART3-IN are
+    // the board's UARTs a program may open.
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_Cores, 2),
     .value(st.SYSTAG_ScreenWidth, screen.width),
@@ -171,6 +198,8 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &panel),
     .pointer(st.SYSTAG_Part, &speakers),
     .pointer(st.SYSTAG_Part, &usb),
+    .pointer(st.SYSTAG_Part, &uart1),
+    .pointer(st.SYSTAG_Part, &uart3),
     .done,
 };
 

@@ -32,8 +32,8 @@ fn AllocAslRequest(ab: *AslBase, kind: u32, tags: ?[*]const TagItem) ?*anyopaque
 **INPUTS**
 
 - `ab` - asl.library's base.
-- `kind` - `ASL_FileRequest`, `ASL_FontRequest` or
-  `ASL_ScreenModeRequest`.
+- `kind` - `ASL_FileRequest`, `ASL_FontRequest`,
+  `ASL_ScreenModeRequest` or `ASL_DeviceRequest`.
 - `tags` - what the requester starts as; null for none. `AslRequest`
   reads the same tags and may change any of them for one showing.
 
@@ -53,7 +53,10 @@ drawer, file and pattern.
 A file requester starts with its three fields empty unless
 `ASLFR_InitialFile`, `ASLFR_InitialDrawer` or `ASLFR_InitialPattern`
 says otherwise, and with no place of its own, so the first showing is
-put in the middle of the screen it opens on.
+put in the middle of the screen it opens on. A device requester lists
+every device that says what it speaks unless `ASLDR_Speaks` names a
+command set, and starts on no unit unless `ASLDR_InitialDevice` names
+one.
 
 **CONTEXT**
 
@@ -133,7 +136,10 @@ between, which is why a program with a window of its own hands one in
 
 A drawer is read while the requester is up rather than before it
 shows, so a drawer of some thousands of entries can be answered as
-soon as the wanted one is there.
+soon as the wanted one is there. A device requester lists the units
+expansion.library's ObtainDeviceUnits answers for its command set,
+one line each - the device, the unit, and what the board calls it -
+and nothing is opened or loaded to find them.
 
 What it was answered with is in the request structure and holds until
 the next call on that requester or until `FreeAslRequest`.
@@ -154,8 +160,7 @@ library's: they are not to be unlocked by the program.
 
 **NOTES**
 
-The font and the screen mode requesters answer false for now: only the
-file requester is built (`todo/asl` 6 and 7).
+The screen mode requester is not built yet and answers false.
 
 **SEE ALSO**
 

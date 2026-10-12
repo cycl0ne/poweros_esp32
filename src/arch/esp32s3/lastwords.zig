@@ -14,9 +14,12 @@
 //! and the bytes, since after a power-on the memory holds whatever it
 //! holds: a block that does not add up is not words.
 
+const sdk = @import("sdk");
 const _log = @import("../../rom/libs/exec/log/_log.zig");
 
-/// RTC slow memory's first byte: nothing else of this system uses it.
+/// RTC slow memory's first byte. Its first 4 KiB are the last words';
+/// battclock.resource keeps its clock after them
+/// (sdk.hardware.rtc_timer.clock_memory).
 const rtc_slow_memory = 0x5000_0000;
 
 /// How much of the log is kept.
@@ -84,4 +87,5 @@ fn keepText(text: []const u8) void {
 
 comptime {
     if (@sizeOf(LastWords) > 8 * 1024) @compileError("the last words do not fit RTC slow memory");
+    if (rtc_slow_memory + @sizeOf(LastWords) > sdk.hardware.rtc_timer.clock_memory) @compileError("the last words run into the clock's memory");
 }

@@ -8,10 +8,19 @@
 //! (`vectors`) is the same for both.
 //!
 //! What is here is the ports' own: their line - the rate and frame on a
-//! UART's registers, the break, the modem lines - and their input, which
-//! comes in by interrupt: each port's receive interrupt goes to exec's
-//! AddIntServer, and the server hands the bytes and what the port saw to
-//! the unit.
+//! UART's registers, the break, the modem lines - their pads, and their
+//! input, which comes in by interrupt: each port's receive interrupt goes
+//! to exec's AddIntServer, and the server hands the bytes and what the
+//! port saw to the unit.
+//!
+//! A UART's pads are the board's: its UART part (PARTKIND_UART) for the
+//! unit, PART_BusUnit the unit's number, names them in PART_PinDataOut and
+//! PART_PinDataIn (`findPads`). The unit's first open takes them from
+//! gpio.resource and joins them to the UART through the GPIO matrix; its
+//! last close lets the TX pad go and gives both back. UART0's pads are
+//! exec's raw port's, set up before any driver, and are never moved. A
+//! unit without pads runs its UART unjoined: QEMU joins its serial ports
+//! to the UARTs whatever pads are routed.
 //!
 //! The code builds against the SDK: the device keeps the SysBase its init
 //! gets and calls exec (and timer.device) through the SDK's interfaces.
@@ -22,28 +31,45 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const uart = sdk.hardware.uart;
 const usbjtag = @import("usbjtag.zig");
+const pads = sdk.hardware.gpio;
+const gpio_resource = sdk.resources.gpio;
+const GpioBase = gpio_resource.GpioBase;
+const expansion = sdk.expansion;
+const st = expansion.systemtags;
 const vec = exec.vec;
 const types = sdk.devices.serial;
 const serialunit = sdk.devices.serialunit;
 const IOExtSer = types.IOExtSer;
 
-/// A unit's port: one of the chip's UARTs, or the USB-Serial-JTAG port,
-/// which has no line (no rate, frame or breaks).
+/// A unit's port: one of the chip's UARTs - three on the ESP32-S3, five
+/// on the ESP32-P4 - or the USB-Serial-JTAG port, which has no line (no
+/// rate, frame or breaks).
 pub const Port = enum(u32) {
     uart0,
     uart1,
     uart2,
+    uart3,
+    uart4,
     usb,
 
-    /// The UART, or null for the USB port.
+    /// The UART, or null for the USB port and a UART this chip lacks.
     fn uartPort(port: Port) ?uart.Port {
         return switch (port) {
-            .uart0 => .uart0,
-            .uart1 => .uart1,
-            .uart2 => .uart2,
             .usb => null,
+            inline else => |known| if (@hasField(uart.Port, @tagName(known)))
+                @field(uart.Port, @tagName(known))
+            else
+                null,
         };
     }
+
+    /// The chip's UARTs as ports, in their order: serial.device's units.
+    pub const uarts = blk: {
+        const fields = @typeInfo(uart.Port).@"enum".fields;
+        var list: [fields.len]Port = undefined;
+        for (fields, 0..) |field, index| list[index] = @field(Port, field.name);
+        break :blk list;
+    };
 
     fn source(port: Port) u32 {
         return if (port.uartPort()) |p| p.source() else usbjtag.source;
@@ -86,9 +112,14 @@ pub const Port = enum(u32) {
 /// The chip's fastest rate.
 const max_baud = 5_000_000;
 
-/// A unit's line: its port.
+/// No pad: a unit whose board names none.
+const no_pad: u8 = 0xFF;
+
+/// A unit's line: its port, and the pads its board joins it to.
 const Line = struct {
     port: Port,
+    tx_pad: u8 = no_pad,
+    rx_pad: u8 = no_pad,
 
     pub fn write(line: *Line, sys: *ExecBase, bytes: []const u8) bool {
         _ = sys;
@@ -209,21 +240,98 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
     }
 }
 
-/// Unit `unit_number`, opened as the SDK's unit opens it.
+/// The pads of the board's UART parts, each in the unit its PART_BusUnit
+/// names (the part's place among the UARTs without one). A part for a
+/// unit the device lacks, for UART0, or with a line that is not a pad of
+/// the chip is passed over. Nothing is taken yet: the unit's first open
+/// does that.
+pub fn findPads(dev: *exec.Device, sys_base: *ExecBase) void {
+    const sb = serialBase(dev);
+    const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
+    defer sys_base.CloseLibrary(utility_lib);
+    const ub: *sdk.interface.utility.UtilityBase = @ptrCast(utility_lib);
+    const expansion_lib = sys_base.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
+    defer sys_base.CloseLibrary(expansion_lib);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
+    var part = eb.FindBoardPart(null, st.PARTKIND_UART, st.CHIP_ANY);
+    while (part) |found| : (part = eb.FindBoardPart(found, st.PARTKIND_UART, st.CHIP_ANY)) {
+        const number = ub.GetTagData(st.PART_BusUnit, found.unit, found.tags);
+        if (number >= sb.unit_count) continue;
+        const line = &unitsOf(sb)[number].serial.line;
+        if (line.port == .uart0 or line.port.uartPort() == null) continue;
+        const tx = expansion.BoardPin.of(ub.GetTagData(st.PART_PinDataOut, 0, found.tags));
+        const rx = expansion.BoardPin.of(ub.GetTagData(st.PART_PinDataIn, 0, found.tags));
+        if (tx.kind != expansion.boardpin.BPIN_GPIO or rx.kind != expansion.boardpin.BPIN_GPIO) continue;
+        line.tx_pad = tx.number;
+        line.rx_pad = rx.number;
+    }
+}
+
+/// A unit's pads taken from gpio.resource and joined to its UART, for its
+/// first open: false when another driver holds one. A unit without pads
+/// has nothing to take.
+fn takePads(sb: *SerialBase, line: *const Line) bool {
+    if (line.tx_pad == no_pad) return true;
+    const port = line.port.uartPort() orelse return true;
+    const sys = sb.sys_base;
+    const port_pads = [_]u8{ line.tx_pad, line.rx_pad };
+    if (sys.OpenResource(gpio_resource.GPIONAME)) |resource| {
+        const gb: *GpioBase = @ptrCast(@alignCast(resource));
+        if (gpio_resource.allocPads(gb, &port_pads, sb.dev.node.name.?)) |refused| {
+            exec.kprintf(sys, "%s: GPIO%d is %s's\n", .{ sb.dev.node.name.?, refused.pad, refused.holder });
+            return false;
+        }
+    }
+    pads.toMatrix(line.tx_pad);
+    pads.connectOut(line.tx_pad, uart.txSignal(port), false);
+    pads.outputEnable(line.tx_pad, true);
+    pads.toMatrix(line.rx_pad);
+    pads.inputEnable(line.rx_pad, true);
+    pads.pullUp(line.rx_pad, true);
+    pads.connectIn(uart.rxSignal(port), line.rx_pad);
+    return true;
+}
+
+/// A unit's pads given back at its last close: the TX pad no longer
+/// driven, the UART's RX reading a high line, both pads free for another
+/// driver.
+fn givePads(sb: *SerialBase, line: *const Line) void {
+    if (line.tx_pad == no_pad) return;
+    const port = line.port.uartPort() orelse return;
+    pads.outputEnable(line.tx_pad, false);
+    pads.connectIn(uart.rxSignal(port), pads.in_high);
+    const sys = sb.sys_base;
+    if (sys.OpenResource(gpio_resource.GPIONAME)) |resource| {
+        const gb: *GpioBase = @ptrCast(@alignCast(resource));
+        gpio_resource.freePads(gb, &.{ line.tx_pad, line.rx_pad });
+    }
+}
+
+/// Unit `unit_number`, opened as the SDK's unit opens it. Its first open
+/// takes its pads (SerErr_DevBusy when another driver holds them).
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
     _ = flags;
     const sb = serialBase(dev);
     if (unit_number >= sb.unit_count) return exec.IOERR_OPENFAIL;
-    const err = unitsOf(sb)[unit_number].serial.open(io);
-    if (err != 0) return err;
+    const pu = &unitsOf(sb)[unit_number];
+    const first = pu.serial.unit.open_cnt == 0;
+    if (first and !takePads(sb, &pu.serial.line)) return types.SerErr_DevBusy;
+    const err = pu.serial.open(io);
+    if (err != 0) {
+        if (first) givePads(sb, &pu.serial.line);
+        return err;
+    }
     dev.open_cnt += 1;
     dev.flags &= ~exec.LIBF_DELEXP;
     return 0;
 }
 
-/// The last close of a device RemDevice marked LIBF_DELEXP expunges it.
+/// The unit's last close gives its pads back. The last close of a device
+/// RemDevice marked LIBF_DELEXP expunges it.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
-    SerialUnit.of(io).close(io);
+    const serial = SerialUnit.of(io);
+    serial.close(io);
+    if (serial.unit.open_cnt == 0) givePads(serialBase(dev), &serial.line);
     dev.open_cnt -= 1;
     return null;
 }

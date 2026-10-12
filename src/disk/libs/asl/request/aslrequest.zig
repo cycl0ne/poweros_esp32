@@ -9,6 +9,7 @@ const AslBase = @import("../asl_base.zig").AslBase;
 const _request = @import("_request.zig");
 const file = @import("../file/ask.zig");
 const font = @import("../font/ask.zig");
+const device = @import("../device/ask.zig");
 
 /// A requester put up, and answered or given up.
 ///
@@ -45,7 +46,10 @@ const font = @import("../font/ask.zig");
 ///
 /// A drawer is read while the requester is up rather than before it
 /// shows, so a drawer of some thousands of entries can be answered as
-/// soon as the wanted one is there.
+/// soon as the wanted one is there. A device requester lists the units
+/// expansion.library's ObtainDeviceUnits answers for its command set,
+/// one line each - the device, the unit, and what the board calls it -
+/// and nothing is opened or loaded to find them.
 ///
 /// What it was answered with is in the request structure and holds until
 /// the next call on that requester or until `FreeAslRequest`.
@@ -63,8 +67,7 @@ const font = @import("../font/ask.zig");
 /// library's: they are not to be unlocked by the program.
 ///
 /// NOTES:
-/// The font and the screen mode requesters answer false for now: only the
-/// file requester is built (`todo/asl` 6 and 7).
+/// The screen mode requester is not built yet and answers false.
 ///
 /// SEE ALSO:
 /// `AllocAslRequest`, `FreeAslRequest`
@@ -84,6 +87,7 @@ pub fn AslRequest(ab: *AslBase, requester: *anyopaque, tags: ?[*]const TagItem) 
     return switch (r.kind) {
         asl.ASL_FileRequest => file.ask(ab, r),
         asl.ASL_FontRequest => font.ask(ab, r),
+        asl.ASL_DeviceRequest => device.ask(ab, r),
         else => false,
     };
 }

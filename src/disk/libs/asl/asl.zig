@@ -10,8 +10,10 @@
 //!
 //! The file requester is `file/`: the window, the list of entries read a
 //! piece at a time between rounds of input, and what the program is
-//! answered with. The font and the screen mode requesters are not built
-//! yet.
+//! answered with. The font requester is `font/`, the device requester -
+//! the units of the devices that speak a command set, as
+//! expansion.library lists them - `device/`. The screen mode requester
+//! is not built yet.
 //!
 //! The jump table is asl_lvo.zig, the ROM tag, init, open and expunge
 //! asl_init.zig, the base asl_base.zig.

@@ -14,10 +14,13 @@
 //! and the bytes, since after a power-on the memory holds whatever it
 //! holds: a block that does not add up is not words.
 
+const sdk = @import("sdk");
 const _log = @import("../../rom/libs/exec/log/_log.zig");
 
-/// LP RAM's first byte: nothing else of this system uses it, and the LP
-/// ROM keeps its own data at the other end.
+/// LP RAM's first byte. Its first 4 KiB are the last words';
+/// battclock.resource keeps its clock after them
+/// (sdk.hardware.rtc_timer.clock_memory), and the LP ROM keeps its own
+/// data at the other end.
 const lp_ram = 0x5010_8000;
 
 /// How much of the log is kept.
@@ -85,4 +88,5 @@ fn keepText(text: []const u8) void {
 
 comptime {
     if (@sizeOf(LastWords) > 0x7A80) @compileError("the last words do not fit below the LP ROM's data");
+    if (lp_ram + @sizeOf(LastWords) > sdk.hardware.rtc_timer.clock_memory) @compileError("the last words run into the clock's memory");
 }
