@@ -7,12 +7,13 @@
 //! mouse.device (report.zig), so a USB keyboard is the system's keyboard
 //! with nothing else knowing.
 //!
-//! **Which report.** A keyboard is put in its boot protocol and sends the
-//! boot report. A mouse is asked for its report descriptor first: where
-//! that describes the mouse's report (layout.zig), the mouse stays in its
-//! report protocol and is read by it - a mouse may send a wider report
-//! than the boot one, and not every mouse that says it has the boot
-//! protocol switches to it. Without one it is put in the boot protocol.
+//! **Which report.** A keyboard or a mouse is asked for its report
+//! descriptor first: where that describes its report (layout.zig), it
+//! stays in its report protocol and is read by it - a mouse may send a
+//! wider report than the boot one, a keyboard a bit for every key, and
+//! not every device that says it has the boot protocol switches to it.
+//! Without one it is put in the boot protocol. A keyboard's LEDs go out
+//! in the report its descriptor gives them, with that report's ID.
 //!
 //! **One task for every keyboard and mouse.** Each bound interface is a
 //! `Function`: its pipe, its source's request, its last report. The
@@ -49,8 +50,8 @@ const layout_file = @import("layout.zig");
 
 pub const DEVICE_NAME = "hid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "11.10.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -83,8 +84,9 @@ const Function = struct {
     buffer: [64]u8 = @splat(0),
     keys: report.KeySet = .{},
     buttons: u8 = 0,
-    /// Where a mouse's report keeps what it says.
-    layout: layout_file.MouseLayout = layout_file.boot_mouse,
+    /// Where a keyboard's or a mouse's report keeps what it says.
+    keyboard_layout: layout_file.KeyboardLayout = layout_file.boot_keyboard,
+    mouse_layout: layout_file.MouseLayout = layout_file.boot_mouse,
     /// Its LEDs as last set (bit 1: Caps Lock).
     leds: u8 = 0,
     /// Whether its read is out.
@@ -201,15 +203,15 @@ fn handOn(hb: *HidBase, function: *Function, bytes: []const u8) void {
     var count: usize = 0;
     switch (function.kind) {
         .keyboard => {
-            const keys = report.keysOf(bytes) orelse return;
+            const keys = report.keysOf(&function.keyboard_layout, bytes) orelse return;
             count = report.keyEvents(function.keys, keys, &events);
             const caps_down = keys.has(report.RAWKEY_CAPSLOCK) and !function.keys.has(report.RAWKEY_CAPSLOCK);
             function.keys = keys;
             if (caps_down) setLeds(hb, function, function.leds ^ 0x02);
         },
         .mouse => {
-            count = report.mouseEvents(&function.layout, function.buttons, bytes, &events);
-            if (function.layout.owns(bytes)) function.buttons = report.buttonsOf(&function.layout, bytes);
+            count = report.mouseEvents(&function.mouse_layout, function.buttons, bytes, &events);
+            if (function.mouse_layout.owns(bytes)) function.buttons = report.buttonsOf(&function.mouse_layout, bytes);
         },
     }
     if (count == 0) return;
@@ -219,19 +221,24 @@ fn handOn(hb: *HidBase, function: *Function, bytes: []const u8) void {
     _ = sys.DoIO(&function.source.req);
 }
 
-/// The keyboard's lights: an output report of one byte.
+/// The keyboard's lights: its LEDs' output report, a byte - after the
+/// report's ID where it has one. None for a keyboard without LEDs.
 fn setLeds(hb: *HidBase, function: *Function, leds: u8) void {
     const ub = hb.usb_base.?;
     function.leds = leds;
-    var byte = leds;
+    const layout = &function.keyboard_layout;
+    if (!layout.leds) return;
+    const id = layout.led_report_id;
+    var bytes = [2]u8{ id, leds };
+    const sent: []u8 = if (id != 0) bytes[0..2] else bytes[1..2];
     const setup = usb.SetupPacket{
         .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE,
         .request = d.HID_REQ_SET_REPORT,
-        .value = @as(u16, d.HID_REPORT_OUTPUT) << 8,
+        .value = @as(u16, d.HID_REPORT_OUTPUT) << 8 | id,
         .index = function.interface_number,
-        .length = 1,
+        .length = @intCast(sent.len),
     };
-    _ = ub.DoUSBControl(function.device, &setup, &byte, null);
+    _ = ub.DoUSBControl(function.device, &setup, sent.ptr, null);
 }
 
 /// A function let go of, on the task: its read taken back, its pipe and
@@ -282,11 +289,11 @@ pub fn USBClassBind(hb: *HidBase, binding: *usb.USBBinding) bool {
     }
     const free_slot = slot_index orelse return false;
 
-    // A mouse by its own report where it describes one, else the boot
-    // protocol; and a report only when something changes.
+    // By its own report where it describes one, else the boot protocol;
+    // and a report only when something changes.
     const number = interface.interface_number;
-    const described: ?layout_file.MouseLayout = if (kind == .mouse) mouseLayoutOf(hb, device, interface) else null;
-    const protocol = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_PROTOCOL, .value = if (described != null) 1 else 0, .index = number, .length = 0 };
+    const described = describedOf(hb, device, interface, kind);
+    const protocol = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_PROTOCOL, .value = if (described != .none) 1 else 0, .index = number, .length = 0 };
     _ = ub.DoUSBControl(device, &protocol, null, null);
     const idle = usb.SetupPacket{ .request_type = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE, .request = d.HID_REQ_SET_IDLE, .value = 0, .index = number, .length = 0 };
     _ = ub.DoUSBControl(device, &idle, null, null);
@@ -297,7 +304,12 @@ pub fn USBClassBind(hb: *HidBase, binding: *usb.USBBinding) bool {
         sys.FreeMem(memory, @sizeOf(Function));
         return false;
     };
-    function.* = .{ .kind = kind, .device = device, .interface_number = number, .pipe = pipe, .layout = described orelse layout_file.boot_mouse };
+    function.* = .{ .kind = kind, .device = device, .interface_number = number, .pipe = pipe };
+    switch (described) {
+        .none => {},
+        .keyboard => |layout| function.keyboard_layout = layout,
+        .mouse => |layout| function.mouse_layout = layout,
+    }
     function.source.req.message.reply_port = port;
     function.source.req.message.length = @sizeOf(exec.IOStdReq);
     const source_name: [*:0]const u8 = if (kind == .keyboard) kb.KEYBOARDNAME else mouse.MOUSENAME;
@@ -317,14 +329,22 @@ pub fn USBClassBind(hb: *HidBase, binding: *usb.USBBinding) bool {
     return true;
 }
 
-/// Where a mouse's report descriptor says its report keeps the buttons,
-/// the move and the wheel; null when it has none this can read.
-fn mouseLayoutOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.InterfaceDescriptor) ?layout_file.MouseLayout {
+/// What a report descriptor says: a keyboard's layout, a mouse's, or
+/// none this can read.
+const Described = union(enum) {
+    none,
+    keyboard: layout_file.KeyboardLayout,
+    mouse: layout_file.MouseLayout,
+};
+
+/// Where the interface's report descriptor says its report keeps what a
+/// `kind` says; none when it has none this can read.
+fn describedOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.InterfaceDescriptor, kind: Kind) Described {
     const sys = hb.sys_base;
     const ub = hb.usb_base.?;
     const length = reportDescriptorLength(ub, device, interface);
-    if (length == 0) return null;
-    const memory = sys.AllocMem(length, 0) orelse return null;
+    if (length == 0) return .none;
+    const memory = sys.AllocMem(length, 0) orelse return .none;
     defer sys.FreeMem(memory, length);
     const setup = usb.SetupPacket{
         .request_type = d.USB_DIR_IN | d.USB_TYPE_STANDARD | d.USB_RECIP_INTERFACE,
@@ -334,8 +354,12 @@ fn mouseLayoutOf(hb: *HidBase, device: *usb.USBDevice, interface: *const d.Inter
         .length = @intCast(length),
     };
     var actual: u32 = 0;
-    if (ub.DoUSBControl(device, &setup, memory, &actual) != 0) return null;
-    return layout_file.mouseLayout(@as([*]const u8, @ptrCast(memory))[0..@min(actual, length)]);
+    if (ub.DoUSBControl(device, &setup, memory, &actual) != 0) return .none;
+    const descriptor = @as([*]const u8, @ptrCast(memory))[0..@min(actual, length)];
+    return switch (kind) {
+        .keyboard => if (layout_file.keyboardLayout(descriptor)) |layout| .{ .keyboard = layout } else .none,
+        .mouse => if (layout_file.mouseLayout(descriptor)) |layout| .{ .mouse = layout } else .none,
+    };
 }
 
 /// The length of the interface's report descriptor, from the HID

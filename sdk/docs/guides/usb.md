@@ -217,12 +217,14 @@ driver itself, none of its units - and calls through its jump table:
 `usb/hid.device` is the example: one task for every keyboard and mouse
 it drives, a source on keyboard.device or mouse.device per interface
 (`KBDF_SOURCE`, `KBD_ADDEVENT`), each report turned into key-downs and
-key-ups, or into moves, buttons and the wheel. A keyboard is put in its
-boot protocol. A mouse is read by its own report descriptor - where
-its report keeps the buttons, X, Y and the wheel, and its report ID -
-since many mice send a wider report than the boot one (16-bit moves)
-and do not switch when asked; only a mouse whose descriptor says
-nothing it can use is put in the boot protocol.
+key-ups, or into moves, buttons and the wheel. A keyboard or a mouse
+is read by its own report descriptor - where its report keeps the
+keys, or the buttons, X, Y and the wheel, and its report ID - since
+many send another report than the boot one (a mouse 16-bit moves, a
+keyboard a bit for every key, or its keys in a report of their own)
+and do not switch when asked; only one whose descriptor says nothing
+it can use is put in the boot protocol. A keyboard's Caps Lock light
+goes out in the LED report its descriptor gives.
 
 A device's name in exec is its name after the last `/`: a driver in
 `DEVS:usb/` must not be called as a device in the ROM is -

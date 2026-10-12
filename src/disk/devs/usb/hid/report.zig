@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
-//! A boot report into events: what a keyboard's or a mouse's report
-//! means, with no hardware and no system, so the host tests hold it.
+//! A report into events: what a keyboard's or a mouse's report means,
+//! with no hardware and no system, so the host tests hold it.
 //!
-//! **A keyboard's report** (8 bytes: the modifier byte, a reserved byte,
-//! up to six keys by their HID usage) is turned into the set of rawkeys
-//! it holds down, and compared with the last report's set: a rawkey in
-//! the new set only went down, one in the old only went up. Comparing
-//! rawkeys rather than usages lets two keys that are one rawkey - the
-//! left and right Control - hold it down together. A report of "too many
-//! keys" (every key slot 0x01) changes nothing.
+//! **A keyboard's report** is read where its layout says the keys lie
+//! (layout.zig: the keyboard's own descriptor, or the boot protocol's
+//! report - the modifier byte, a reserved byte, six slots): each bit set
+//! in a run of key bits, and each slot's usage, is a key held down. The
+//! keys' usages become the set of rawkeys held down, which is compared
+//! with the last report's set: a rawkey in the new set only went down,
+//! one in the old only went up. Comparing rawkeys rather than usages lets
+//! two keys that are one rawkey - the left and right Control - hold it
+//! down together. A report of "too many keys" (a slot of usage 0x01), or
+//! of another ID, changes nothing.
 //!
 //! **A mouse's report** is read where its layout says the buttons, the
 //! move and the wheel lie (layout.zig: the mouse's own descriptor, or the
@@ -21,6 +24,8 @@ const ie = sdk.devices.inputevent;
 const InputEvent = ie.InputEvent;
 const layout_file = @import("layout.zig");
 const MouseLayout = layout_file.MouseLayout;
+const KeyboardLayout = layout_file.KeyboardLayout;
+const Field = layout_file.Field;
 
 /// No rawkey for this usage.
 const none: u8 = 0xFF;
@@ -83,20 +88,43 @@ pub const KeySet = struct {
     }
 };
 
-/// What a keyboard report holds down; null for a report of "too many
-/// keys", which says nothing about which.
-pub fn keysOf(report: []const u8) ?KeySet {
+/// The keyboard page's usage a slot holds when more keys are down than
+/// the report has room for.
+const usage_rollover: u32 = 0x01;
+
+/// What a keyboard report read by `layout` holds down; null for a report
+/// of "too many keys", which says nothing about which, and for one that
+/// is not the layout's.
+pub fn keysOf(layout: *const KeyboardLayout, report: []const u8) ?KeySet {
+    if (!layout.owns(report)) return null;
     var set: KeySet = .{};
-    if (report.len < 3) return set;
-    for (modifier_keys, 0..) |rawkey, bit| {
-        if (report[0] & (@as(u8, 1) << @intCast(bit)) != 0) set.add(rawkey);
+    for (layout.bits[0..layout.bits_count]) |run| {
+        var index: u16 = 0;
+        while (index < run.count) : (index += 1) {
+            const bit = Field{ .offset = run.offset + index, .size = 1 };
+            if (bit.value(report) != 0) addUsage(&set, @as(u32, run.first_usage) + index);
+        }
     }
-    for (report[2..@min(report.len, 8)]) |usage| {
-        if (usage == 0x01) return null;
-        const rawkey = from_usage[usage];
-        if (rawkey != none) set.add(rawkey);
+    const slots = layout.slots;
+    var index: u32 = 0;
+    while (slots.size != 0 and index < slots.count) : (index += 1) {
+        const slot = Field{ .offset = @intCast(slots.offset + index * slots.size), .size = slots.size, .signed = slots.logical_min < 0 };
+        const value = slot.value(report);
+        if (value < slots.logical_min) continue;
+        const usage = @as(u32, slots.first_usage) + @as(u32, @intCast(value - slots.logical_min));
+        if (usage == usage_rollover) return null;
+        addUsage(&set, usage);
     }
     return set;
+}
+
+/// A key held down, by its keyboard page usage: a modifier's rawkey, or
+/// the one `from_usage` gives.
+fn addUsage(set: *KeySet, usage: u32) void {
+    if (usage >= 0xE0 and usage <= 0xE7) return set.add(modifier_keys[usage - 0xE0]);
+    if (usage >= from_usage.len) return;
+    const rawkey = from_usage[usage];
+    if (rawkey != none) set.add(rawkey);
 }
 
 /// The events from `old` to `new`, into `out`: key-ups first, then
@@ -177,10 +205,12 @@ pub fn mouseEvents(layout: *const MouseLayout, old_buttons: u8, report: []const 
 const std = @import("std");
 const testing = std.testing;
 
+const boot_keys = &layout_file.boot_keyboard;
+
 test "a key pressed and let go is a down and an up" {
     var out: [8]InputEvent = undefined;
-    const empty = keysOf(&.{ 0, 0, 0, 0, 0, 0, 0, 0 }).?;
-    const a_down = keysOf(&.{ 0, 0, 0x04, 0, 0, 0, 0, 0 }).?;
+    const empty = keysOf(boot_keys, &.{ 0, 0, 0, 0, 0, 0, 0, 0 }).?;
+    const a_down = keysOf(boot_keys, &.{ 0, 0, 0x04, 0, 0, 0, 0, 0 }).?;
     try testing.expectEqual(@as(usize, 1), keyEvents(empty, a_down, &out));
     try testing.expectEqual(@as(u32, 0x20), out[0].code);
     try testing.expectEqual(@as(usize, 1), keyEvents(a_down, empty, &out));
@@ -189,16 +219,64 @@ test "a key pressed and let go is a down and an up" {
 
 test "both Controls are one key: it goes up when the last one does" {
     var out: [8]InputEvent = undefined;
-    const both = keysOf(&.{ 0x11, 0, 0, 0, 0, 0, 0, 0 }).?;
-    const right = keysOf(&.{ 0x10, 0, 0, 0, 0, 0, 0, 0 }).?;
-    const none_held = keysOf(&.{ 0, 0, 0, 0, 0, 0, 0, 0 }).?;
+    const both = keysOf(boot_keys, &.{ 0x11, 0, 0, 0, 0, 0, 0, 0 }).?;
+    const right = keysOf(boot_keys, &.{ 0x10, 0, 0, 0, 0, 0, 0, 0 }).?;
+    const none_held = keysOf(boot_keys, &.{ 0, 0, 0, 0, 0, 0, 0, 0 }).?;
     try testing.expectEqual(@as(usize, 0), keyEvents(both, right, &out));
     try testing.expectEqual(@as(usize, 1), keyEvents(right, none_held, &out));
     try testing.expectEqual(@as(u32, 0x63 | ie.IECODE_UP_PREFIX), out[0].code);
 }
 
 test "a report of too many keys changes nothing" {
-    try testing.expect(keysOf(&.{ 0, 0, 1, 1, 1, 1, 1, 1 }) == null);
+    try testing.expect(keysOf(boot_keys, &.{ 0, 0, 1, 1, 1, 1, 1, 1 }) == null);
+}
+
+test "a keyboard that reports every key as a bit" {
+    // Report 1: the modifiers, then a bit for each usage from 0 to 119.
+    const bits = KeyboardLayout{
+        .report_id = 1,
+        .bits = .{ .{ .offset = 8, .count = 8, .first_usage = 0xE0 }, .{ .offset = 16, .count = 120, .first_usage = 0 }, .{}, .{} },
+        .bits_count = 2,
+    };
+    // Backspace (usage 0x2A: the sixth byte of bits, bit 2) and left Shift.
+    const held = keysOf(&bits, &.{ 0x01, 0x02, 0, 0, 0, 0, 0, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0 }).?;
+    try testing.expect(held.has(0x41));
+    try testing.expect(held.has(0x60));
+    try testing.expect(!held.has(0x20));
+    // Read as a boot report, that same byte is a slot holding A.
+    try testing.expect(keysOf(boot_keys, &.{ 0x01, 0x02, 0, 0, 0, 0, 0, 0x04 }).?.has(0x20));
+    // Another report - the consumer keys, say - is not the keyboard's.
+    try testing.expect(keysOf(&bits, &.{ 0x03, 0xE9, 0x00 }) == null);
+}
+
+/// A keyboard that reports every key as a bit, as one sends it on its
+/// second interface: the modifiers, then a bit for each usage from 0 to
+/// 0x8F, no report ID; three LEDs.
+const bits_keyboard = [_]u8{
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x05, 0x07, 0x95, 0x08, 0x75, 0x01,
+    0x15, 0x00, 0x25, 0x01, 0x19, 0xE0, 0x29, 0xE7, 0x81, 0x02, 0x05, 0x07,
+    0x95, 0x90, 0x75, 0x01, 0x15, 0x00, 0x25, 0x01, 0x19, 0x00, 0x29, 0x8F,
+    0x81, 0x02, 0x05, 0x08, 0x95, 0x03, 0x75, 0x01, 0x19, 0x01, 0x29, 0x03,
+    0x91, 0x02, 0x95, 0x05, 0x75, 0x01, 0x91, 0x01, 0xC0,
+};
+
+test "a keyboard of bits read by its own descriptor" {
+    const layout = layout_file.keyboardLayout(&bits_keyboard).?;
+    try testing.expectEqual(@as(u8, 0), layout.report_id);
+    try testing.expect(layout.leds);
+    var report: [19]u8 = @splat(0);
+    // Backspace: usage 0x2A, the bit 0x2A after the modifier byte.
+    report[1 + 0x2A / 8] = 1 << (0x2A % 8);
+    const held = keysOf(&layout, &report).?;
+    try testing.expect(held.has(0x41));
+    try testing.expect(!held.has(0x20));
+    // F12 (usage 0x45) with right Alt.
+    report = @splat(0);
+    report[0] = 0x40;
+    report[1 + 0x45 / 8] = 1 << (0x45 % 8);
+    const second = keysOf(&layout, &report).?;
+    try testing.expect(second.has(0x6F));
+    try testing.expect(second.has(0x65));
 }
 
 test "a mouse's move, a button and the wheel" {
