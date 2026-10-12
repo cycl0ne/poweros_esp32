@@ -278,6 +278,18 @@ pub const HID_PROTOCOL_MOUSE: u8 = 2;
 /// SET_REPORT's wValue high byte: an output report (a keyboard's LEDs).
 pub const HID_REPORT_OUTPUT: u8 = 2;
 
+// --- mass storage -----------------------------------------------------------------
+
+/// bInterfaceSubClass: the command set is SCSI's, transparent.
+pub const MSC_SUBCLASS_SCSI: u8 = 0x06;
+/// bInterfaceProtocol: Bulk-Only Transport - a command block, the data,
+/// a status, each on a bulk endpoint.
+pub const MSC_PROTOCOL_BULK_ONLY: u8 = 0x50;
+/// Bulk-Only's class requests: the interface reset, and the highest
+/// logical unit number.
+pub const MSC_REQ_RESET: u8 = 0xFF;
+pub const MSC_REQ_GET_MAX_LUN: u8 = 0xFE;
+
 comptime {
     if (@sizeOf(SetupPacket) != 8 or @sizeOf(DeviceDescriptor) != 18 or
         @sizeOf(ConfigDescriptor) != 9 or @sizeOf(InterfaceDescriptor) != 9 or

@@ -44,9 +44,11 @@
 const exec = @import("../libs/exec/exec.zig");
 
 /// The block devices that speak this API: the board's flash (unit 0 is
-/// the flash disk) and the card slot.
+/// the flash disk), the card slot, and USB sticks and card readers
+/// (a unit each, `USB<n>:`).
 pub const FLASHNAME = "flash.device";
 pub const SDCARDNAME = "sdcard.device";
+pub const USBDISKNAME = "usb/disk.device";
 
 /// The bytes of a TD_SECTOR-sized block. Our units report their own block
 /// size in the DriveGeometry; this is only the traditional default.

@@ -4,6 +4,7 @@
 pub const timer = @import("timer.zig");
 pub const serial = @import("serial.zig");
 pub const trackdisk = @import("trackdisk.zig");
+pub const scsidisk = @import("scsidisk.zig");
 pub const usbserial = @import("usbserial.zig");
 pub const rs485 = @import("rs485.zig");
 pub const i2c = @import("i2c.zig");

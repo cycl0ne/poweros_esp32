@@ -1104,7 +1104,8 @@ fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, net
 /// that hub. A `usb-serial` (an FTDI FT232) without a `chardev=` gets a
 /// pty of its own, whose name QEMU prints as it starts. A device plugged
 /// in or out while the machine runs goes through the monitor (Ctrl-A C):
-/// `device_add usb-kbd,id=kbd`, `device_del kbd`.
+/// `device_add usb-kbd,id=kbd`, `device_del kbd` - the stick is
+/// `usbstick`.
 fn qemuUsb(b: *std.Build, devices: ?[]const u8, disk: ?[]const u8) []const []const u8 {
     var args: std.ArrayList([]const u8) = .empty;
     if (devices) |list| {
@@ -1132,7 +1133,7 @@ fn qemuUsb(b: *std.Build, devices: ?[]const u8, disk: ?[]const u8) []const []con
     if (disk) |file| {
         args.appendSlice(b.allocator, &.{
             "-drive",  b.fmt("if=none,id=usbdisk,format=raw,file={s}", .{file}),
-            "-device", "usb-storage,drive=usbdisk",
+            "-device", "usb-storage,drive=usbdisk,id=usbstick",
         }) catch @panic("OOM");
     }
     return args.items;

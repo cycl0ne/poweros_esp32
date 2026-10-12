@@ -58,6 +58,13 @@ patch "$rgb_c" 's/#define RGB_VERSION_MINOR 6/#define RGB_VERSION_MINOR 7/' 'RGB
 # usb-hub, usb-storage, usb-serial, usb-net).
 git apply "$root/scripts/qemu/esp32s3_dwc2.patch"
 
+# The DWC2 model looks a channel's device up by its address each time it
+# services the channel again, and asserts when none is there: a device
+# unplugged while a transfer to it was retried or in flight took the
+# emulator down. Such a transfer now ends as one no device answers - a
+# transaction error and the channel halted - as on a real bus.
+git apply "$root/scripts/qemu/dwc2_unplugged.patch"
+
 # Espressif's release flags (.github/workflows/scripts/configure-native.sh),
 # minus -Werror. SDL provides the window for the virtual display. Newer glibc turns const-qualifier mismatches in
 # QEMU 9.2 into warnings, which -Werror (on by default in a git checkout)

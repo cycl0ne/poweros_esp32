@@ -46,7 +46,7 @@ const tests = [_][]const u8{
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
-    "jpeg",        "keysource",  "usbdevice",
+    "jpeg",        "keysource",  "usbdevice",   "scsi",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -140,6 +140,7 @@ const modules = [_]Program{
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
     .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
     .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
+    .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 

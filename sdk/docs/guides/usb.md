@@ -1,8 +1,8 @@
 # USB
 
 A USB socket on a board is a bus: the chip's controller is its host, and
-keyboards, mice and hubs are plugged into it and pulled out while the
-system runs. `usb.library`, in `LIBS:`, runs a bus: it finds what is
+keyboards, mice, sticks and hubs are plugged into it and pulled out while
+the system runs. `usb.library`, in `LIBS:`, runs a bus: it finds what is
 plugged in, gives each device an address and a configuration, drives
 the hubs itself, and hands every other interface to a class driver in
 `DEVS:usb/`. A class driver is the device the rest of the system already
@@ -15,9 +15,9 @@ device from a program, and writing a class driver or a controller.
 ## The pieces
 
 ```
- programs, input.device      keyboard.device, mouse.device (sources)
-                                        ^
- class drivers, DEVS:usb/     usb/hid.device  (DEVIF_USBCLASS)
+ programs, input.device      keyboard.device, mouse.device (sources)     fat-handler on USB<n>:
+                                        ^                                     ^  DEVIF_BLOCK
+ class drivers, DEVS:usb/     usb/hid.device  (DEVIF_USBCLASS)            usb/disk.device
                                         |  USBClassBind, USBClassUnbind
  the bus                      usb.library: a process per bus, hubs, pipes
                                         |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
@@ -31,6 +31,7 @@ device from a program, and writing a class driver or a controller.
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards and mice of the boot class, into keyboard.device and mouse.device |
+| `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `USB<n>:` each |
 | `C:USB` | | starts and stops a bus |
 | `C:USBInfo` | | lists what is on the buses |
 
@@ -243,6 +244,44 @@ where the pointer is. `C:test/KeySource` is a source from the shell, and
 `KBD_READSOURCES` says how many keyboards there are - the keyboard on
 the screen comes up only while there is none.
 
+## Sticks and card readers
+
+`usb/disk.device` drives mass storage that speaks SCSI over Bulk-Only
+Transport - nearly every stick and card reader. Its units are drives:
+each logical unit of what is plugged in takes the lowest unit free, so
+a stick is `USB0:`, a second one `USB1:`, and a card reader's two slots
+are two drives. A stick pulled out frees its unit, and the next one
+plugged in is `USB0:` again.
+
+**The drive is made by the device.** The first time a medium comes into
+unit n, the device puts `USB<n>` on the device list, as a MountList
+entry would - fat-handler, FAT's DosType - and starts the handler, which
+reads the stick's partition table and boot sector and puts its volume
+on the list; the desktop shows it. The node stays from then on: a stick
+going takes only its volume, and the next one in the unit brings its
+own. Nothing in the MountList is needed, and nothing USB is loaded at
+boot where no stick is plugged in.
+
+**A card reader's slots** are looked at once a second (TEST UNIT
+READY): a card put in comes in as a stick does, one taken out goes.
+A stick pulled out in the middle of a transfer ends that transfer at
+once; the handler then asks about the volume, as for a card pulled out
+of the board's slot.
+
+Beside the block commands the units answer `HD_SCSICMD`
+(sdk/devices/scsidisk.zig): a SCSI command block sent to the unit as it
+is, with its data and, on request, the sense of a command that fails.
+`C:test/SCSI` asks a unit what it is and whether a medium is in:
+
+```
+1.System:> C:test/SCSI 0
+usb/disk.device unit 0: QEMU QEMU HARDDISK, disk
+ready
+```
+
+The bus runs at full speed, as for every device so far, so a stick
+moves at most about a megabyte a second.
+
 ## Writing a controller
 
 A host controller is a device that speaks `DEVIF_USBHC`
@@ -281,3 +320,10 @@ In the monitor (Ctrl-A C on the serial console), `device_del kb1` pulls
 the keyboard out, `device_add usb-kbd,id=kb2` plugs one in, `info usb`
 lists them. QEMU's keyboards and mice are full speed, and its controller
 has no device mode.
+
+`-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file
+- one made with `mkfs.fat` will do; `qemu` leaves the file as it was,
+`qemu-disk` writes to it. The stick is `usbstick` in the monitor:
+`device_del usbstick` pulls it out, and another goes in with
+`drive_add 0 if=none,id=s2,format=raw,file=<image>` and
+`device_add usb-storage,drive=s2,id=stick2`.
