@@ -143,10 +143,10 @@ const modules = [_]Program{
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 
-/// Drivers of the ESP32-S3's own hardware, built for it alone: the SD card
-/// on its SPI and SDMMC host, RS-485 on its UART, Ethernet in Espressif
-/// QEMU's S3 machine. The ESP32-P4's come as drivers of their own.
-const s3_only = [_][]const u8{ "sdcard.device", "rs485.device", "openeth.device" };
+/// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on
+/// its UART, Ethernet in Espressif QEMU's S3 machine. The ESP32-P4's come
+/// as drivers of their own.
+const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
 /// Drivers of the ESP32-P4's own hardware: its Ethernet MAC.
 const p4_only = [_][]const u8{"emac.device"};
 

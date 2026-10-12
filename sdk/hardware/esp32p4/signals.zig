@@ -50,3 +50,9 @@ pub const I2C0_SCL: u32 = 68;
 pub const I2C0_SDA: u32 = 69;
 pub const I2C1_SCL: u32 = 70;
 pub const I2C1_SDA: u32 = 71;
+
+// The SD/MMC host's first slot, whose lines are the IO_MUX's own on
+// GPIO39 to 44; only its card-detect and write-protect inputs come
+// through the matrix.
+pub const SD_CARD_DETECT_N_1: u32 = 126;
+pub const SD_CARD_WRITE_PRT_1: u32 = 130;

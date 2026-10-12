@@ -265,7 +265,7 @@ system working on the old ones until the next boot, and a file system
 that finds its partition smaller than it was is not going to like it:
 change a partition's size only when what is on it can go.
 
-A card in the slot is mounted as `SD0:` by `Mount SD0:`, from its entry in
+A card in the slot is mounted as `SD0:` at boot by `Mount SD0:`, from its entry in
 `DEVS:MountList`, and fat-handler finds the volume from the card's
 own partition table and boot sector - not from a RigidDiskBlock. A
 RigidDiskBlock on a card is for a program that reads it.

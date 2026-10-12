@@ -162,6 +162,9 @@ pub const Slot = extern struct {
     pad: u8 = 0,
     /// The chip select, as a BoardPin's data, on SPI.
     select: u32 = 0,
+    /// The switch of the card's supply, as a BoardPin's data; 0 for a
+    /// slot whose card is always powered.
+    power: u32 = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {

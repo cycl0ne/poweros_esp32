@@ -11,6 +11,11 @@
 //! dma.resource's channels are taken here and the five of them stay free
 //! for the panel, the sound and the flash.
 //!
+//! The controller is the same on both chips; what each chip puts around
+//! it - the controller's clock and reset, its clock's phases, how the
+//! slot's pads reach it - is in `esp32s3/sdhost.zig` and
+//! `esp32p4/sdhost.zig`.
+//!
 //! Two clocks matter. The controller's own is the 160 MHz clock divided
 //! by `clock_div`; the card's is that divided again by `CLKDIV`, and a
 //! card is spoken to slowly until it has been identified and quickly
@@ -24,9 +29,10 @@
 
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
-const gpio = hardware.gpio;
-const system = hardware.system;
-const signals = hardware.signals;
+const chip_host = switch (hardware.chip) {
+    .esp32s3 => @import("esp32s3/sdhost.zig"),
+    .esp32p4 => @import("esp32p4/sdhost.zig"),
+};
 
 const base = hardware.map.SDMMC;
 
@@ -55,9 +61,6 @@ const poll_demand = base + 0x84;
 const dbaddr = base + 0x88;
 const idsts = base + 0x8C;
 const idinten = base + 0x90;
-/// Outside the controller proper: the clock this chip feeds it, and the
-/// phases of the clock it sends out and the one it samples on.
-const clock = base + 0x800;
 
 // CTRL
 const ctrl_controller_reset: u32 = 1 << 0;
@@ -205,57 +208,23 @@ pub const Pins = struct {
     write_protect: ?u8 = null,
 };
 
-// The GPIO matrix's signals of slot 0. This chip has no fixed pin
-// function for the controller, so every line goes through the matrix.
-const signal_clock_out: u32 = signals.SDHOST_CCLK_1;
-const signal_command: u32 = signals.SDHOST_CCMD_1;
-const signal_data = [4]u32{ signals.SDHOST_CDATA_10, signals.SDHOST_CDATA_11, signals.SDHOST_CDATA_12, signals.SDHOST_CDATA_13 };
-const signal_detect: u32 = signals.SDHOST_CARD_DETECT_N_1;
-const signal_write_protect: u32 = signals.SDHOST_CARD_WRITE_PRT_1;
+/// What `init` found.
+pub const Started = enum { ready, no_controller, pads_refused };
 
 /// The controller clocked, out of reset and ready for a command, with the
-/// card's clock at `identify_hz` and its pads connected. False if there is
-/// no controller at this address, which is what the emulator looks like.
+/// card's clock at `identify_hz` and its pads connected: `ready`. No
+/// controller at this address - which is what the emulator looks like -
+/// is `no_controller`; a slot on pads this chip's controller cannot
+/// reach is `pads_refused`.
 ///
-/// The command and the data lines are the card's to drive as well as
-/// ours, so each goes both ways through the matrix and keeps a pull-up,
-/// which is what an SD bus idles at. The clock is ours alone.
-pub fn init(pins: Pins) bool {
-    if (!present()) return false;
-
-    // The controller's own clock and the phases it works to: the core
-    // clock in step with the source, and the clock sent to the card a
-    // quarter period late, so a card that is slow to let go of a line
-    // still meets the hold time. `cmd_use_hold_reg` on a command is what
-    // puts that delayed clock on the wire.
-    const high = clock_div / 2 - 1;
-    const low = clock_div - 1;
-    const phase_dout: u32 = 1;
-    reg(clock).* = phase_dout | (high << 9) | (low << 13) | (low << 17) | (1 << 23);
-
+/// The controller's own clock and the phases it works to are the chip's
+/// (`controllerClock`). Without a detect line, whether a card is really
+/// there is found out by trying to identify one.
+pub fn init(pins: Pins) Started {
+    if (!present()) return .no_controller;
+    chip_host.controllerClock(clock_div);
     reset();
-
-    gpio.toMatrix(pins.clock);
-    gpio.outputEnable(pins.clock, true);
-    gpio.connectOut(pins.clock, signal_clock_out, false);
-    connectBoth(pins.command, signal_command);
-    for (pins.data, 0..) |pin, i| connectBoth(pin, signal_data[i]);
-
-    // A slot without the line tells the controller what it would have
-    // said: a card is in, and it is not write protected. Whether a card
-    // is really there is then found out by trying to identify one.
-    if (pins.detect) |pin| {
-        gpio.toMatrix(pin);
-        gpio.inputEnable(pin, true);
-        gpio.pullUp(pin, true);
-        gpio.connectIn(signal_detect, pin);
-    } else gpio.connectIn(signal_detect, gpio.in_low);
-    if (pins.write_protect) |pin| {
-        gpio.toMatrix(pin);
-        gpio.inputEnable(pin, true);
-        gpio.pullUp(pin, true);
-        gpio.connectIn(signal_write_protect, pin);
-    } else gpio.connectIn(signal_write_protect, gpio.in_low);
+    if (!chip_host.connect(pins)) return .pads_refused;
 
     // Power on, one card, nothing in eight-bit mode, and the longest
     // timeouts there are: a card may take a while over a write, and a
@@ -269,25 +238,16 @@ pub fn init(pins: Pins) bool {
     reg(rintsts).* = 0xFFFF_FFFF;
     reg(clksrc).* = 0;
     setClock(identify_hz);
-    return true;
+    return .ready;
 }
 
 /// Whether the machine has the controller: its clock on, out of reset,
 /// and asked for its version, which a machine without one - the emulator
 /// - answers with nothing.
 pub fn present() bool {
-    system.enable(.sdio_host);
+    chip_host.clockOn();
     const id = reg(verid).*;
     return id != 0 and id != 0xFFFF_FFFF;
-}
-
-fn connectBoth(pin: u8, signal: u32) void {
-    gpio.toMatrix(pin);
-    gpio.inputEnable(pin, true);
-    gpio.pullUp(pin, true);
-    gpio.outputEnable(pin, true);
-    gpio.connectOut(pin, signal, false);
-    gpio.connectIn(signal, pin);
 }
 
 /// The controller, its FIFO and its DMA back to where they start, with

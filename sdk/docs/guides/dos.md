@@ -154,7 +154,7 @@ characters.
 | Name | What it is |
 |---|---|
 | `DH0:` | the flash disk's partition, volume `System` |
-| `SD0:` | the card in the slot, FAT32 or exFAT, once `Mount SD0:` has run |
+| `SD0:` | the card in the slot, FAT32 or exFAT, mounted at boot on a board with a slot |
 | `RAM:` | a file system in memory, volume `Ram Disk` |
 | `CON:`, `RAW:`, `AUX:` | [consoles](#consoles) |
 | `PIPE:` | pipes: `PIPE:name` meets whoever opens the same name |
@@ -710,7 +710,8 @@ bootable partition with the highest boot priority, `C:`, `S:`, `LIBS:`,
 first shell, in a console window, reading `S:Startup-Sequence` - which
 ends by starting the desktop and closing that window.
 `Mount SD0:` puts a device on the list from its entry in
-`DEVS:MountList`. [Disks and partitions](rdb.md) has the partition
+`DEVS:MountList`; the startup-sequence does it for the card slot, and
+on a board without one nothing is left on the list. [Disks and partitions](rdb.md) has the partition
 table and how to change it.
 
 `Relabel(drive, name)` - and `C:Relabel DRIVE/A,NAME/A` - gives a volume

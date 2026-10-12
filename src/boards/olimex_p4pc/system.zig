@@ -228,6 +228,25 @@ const usb = [_]Tag{
     .done,
 };
 
+// --- the card slot ----------------------------------------------------------------
+
+/// A microSD slot on the SD/MMC host's first slot, four bits wide, on the
+/// IO_MUX's own pads for it (GPIO39 to 44). The card's supply is switched
+/// by GPIO45, low for on. The slot has no write-protect switch, and its
+/// card-detect line is not used: a card is found by speaking to it.
+const sd_slot = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_SDSLOT),
+    .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_PinClock, pins.gpio(43)),
+    .value(st.PART_PinCommand, pins.gpio(44)),
+    .value(st.PART_PinData0, pins.gpio(39)),
+    .value(st.PART_PinData1, pins.gpio(40)),
+    .value(st.PART_PinData2, pins.gpio(41)),
+    .value(st.PART_PinData3, pins.gpio(42)),
+    .value(st.PART_PinPower, pins.gpioLow(45)),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -236,6 +255,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_DiskOffset, build_options.disk_offset),
     .value(st.SYSTAG_PsramSize, 32 * 1024 * 1024),
     .value(st.SYSTAG_PsramSpeed, 200),
+    // LDO 4 feeds the I/O bank (VDDPST_5) the card slot's pads and its
+    // supply switch are on.
+    .value(st.SYSTAG_Ldo4Voltage, 3300),
     // The USB port is the one connector a host reaches; UART0 goes to a
     // header.
     .value(st.SYSTAG_Console, st.CONSOLE_USBJTAG),
@@ -250,6 +272,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &panel),
     .pointer(st.SYSTAG_Part, &codec),
     .pointer(st.SYSTAG_Part, &usb),
+    .pointer(st.SYSTAG_Part, &sd_slot),
     .done,
 };
 

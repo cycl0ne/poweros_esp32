@@ -105,6 +105,10 @@ pub const Peripheral = enum {
     /// The full-speed USB OTG controller: the bus clock and its 48 MHz
     /// clock, and its reset.
     usb_otg11,
+    /// The SD/MMC host: its bus clock and its reset. Its own clock - the
+    /// source, the divider and the edges it drives and samples on - is its
+    /// driver's to set (`update`, on PERI_CLK_CTRL01 and 02).
+    sdmmc,
     /// The second I2S controller: its bus clock, its master clock's pad
     /// and its reset. Its transmit and receive clocks - enable, source,
     /// fractional divider - are its driver's to set (`update`, on
@@ -207,6 +211,10 @@ inline fn partsOf(comptime peripheral: Peripheral) Parts {
         .usb_otg11 => .{
             .clocks = &.{ bit(SOC_CLK_CTRL1, 15), bit(LP_HP_USB_CLKRST_CTRL0, 4) },
             .resets = &.{bit(LP_HP_USB_CLKRST_CTRL1, 3)},
+        },
+        .sdmmc => .{
+            .clocks = &.{bit(SOC_CLK_CTRL1, 14)},
+            .resets = &.{bit(LP_HP_SDMMC_EMAC_RST_CTRL, 28)},
         },
         .i2s1 => .{
             .clocks = &.{ bit(SOC_CLK_CTRL2, 15), bit(LP_HP_CLK_CTRL, 11) },
