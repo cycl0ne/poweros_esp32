@@ -192,8 +192,10 @@ ESP32-P4 boards and in Espressif's QEMU.
   Ethernet adapter the network's `usb0`. Things are plugged in and
   pulled out while it runs.
   `C:USB` starts and stops a bus (at boot where the socket can only be a
-  host), `C:USBInfo` lists what is on it. See the
-  [USB guide](sdk/docs/guides/usb.md).
+  host), `C:USBInfo` lists what is on it. On the ESP32-S3 boards the bus
+  and the USB console share the chip's one USB port: `USB START` takes
+  it from the console, `USB STOP` gives it back (`usbport.resource`).
+  See the [USB guide](sdk/docs/guides/usb.md).
 - **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
   over RTU on the RS-485 bus and over TCP; `C:Modbus` reads and writes
   a device from the shell, and `SYS:Programs/Battery` shows a battery a
@@ -205,8 +207,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   four-channel audio
   (through an ES8311 codec or straight to I2S amplifiers),
   Telnet, SSH; watchdog, DMA (the general channels and the ESP32-P4's
-  2D-DMA), GPIO, IO expander, JPEG (the ESP32-P4's codec) and platform
-  resources; the battery (`battery.resource`: whether a cell is there,
+  2D-DMA), GPIO, IO expander, USB port (who holds the chip's USB
+  ports), JPEG (the ESP32-P4's codec) and platform resources; the battery (`battery.resource`: whether a cell is there,
   its voltage and charge, external power and charging where the board
   wires them, and a signal when that changes - `C:Battery`, and the
   charge in the desktop's title); `LIBS:crypto.library` on the chip's SHA,
@@ -221,8 +223,8 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven; the battery's voltage through the IO expander, not yet tried on the board |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; the battery's voltage on GPIO8, not yet tried on the board |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven; the battery's voltage through the IO expander, not yet tried on the board; a USB host on its USB-C socket (`USB START`, the console giving up the port; 5 V for the device from elsewhere), not yet tried on the board |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; the battery's voltage on GPIO8, not yet tried on the board; a USB host on its USB-C socket (`USB START`, the console giving up the port), not yet tried on the board |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards, mice, sticks, an FTDI serial adapter and a CDC Ethernet adapter through a hub, plugged in and out while it runs (`-Dusb-disk` plugs in a stick) |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; USB sticks (`usb/disk.device`) in its image, not tried there yet; a microSD card as `SD0:` (4 bits at 20 MHz, about 2.8 MB/s both ways); the battery's voltage and external power once its solder jumpers are closed (shipped open) and their two lines are in its board list; audio.device for its ES8311 is in its image, not tried there yet |

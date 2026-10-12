@@ -26,6 +26,7 @@ const usb = sdk.usb;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const usb_otg = sdk.hardware.usb_otg;
+const usbport = sdk.resources.usbport;
 
 pub const DEVICE_NAME = "usbotg.device";
 
@@ -52,6 +53,14 @@ pub const UsbOtgBase = extern struct {
     /// A board's hub reset line for each unit (`PART_PinReset`), as a
     /// BoardPin's data; 0 for none.
     hub_reset: [max_units]usize = @splat(0),
+    /// The line that gives a unit's socket its lines (`PART_PinSwitch`),
+    /// as a BoardPin's data; 0 for none.
+    socket_switch: [max_units]usize = @splat(0),
+    /// usbport.resource, which gives a controller its port; null without
+    /// it, and the port is taken as it is.
+    port_base: ?*usbport.UsbPortBase = null,
+    /// The IO expander, where a socket's switch is on it.
+    expander: ?*sdk.interface.expander.ExpanderBase = null,
     /// Each started controller's block, null while it is stopped.
     hosts: [max_units]?*Host = @splat(null),
     /// Who may start and stop a unit: one opener at a time.
@@ -138,6 +147,10 @@ pub const Host = struct {
     parked: exec.List = .{},
     /// The task's own port, for its timer.
     port: ?*exec.MsgPort = null,
+    /// The bid for the USB port the controller is on, and the task's
+    /// signal it is told by.
+    port_bid: usbport.USBPortHandle = .{},
+    port_signal: u32 = 0,
     /// The wake-up for parked transfers and timeouts, and a delay.
     tick_io: timer.TimeRequest = .{},
     tick_armed: u8 = 0,

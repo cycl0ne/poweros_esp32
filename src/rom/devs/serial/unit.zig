@@ -273,6 +273,22 @@ pub fn writeAside(dev: *exec.Device, unit_number: u32, bytes: []const u8) void {
     unitsOf(sb)[unit_number].serial.writeAside(bytes);
 }
 
+/// Unit `unit_number`'s writes held - one under way finished first - until
+/// `releaseWrites`: how usbserial.device gives up its port between two
+/// writes. From a task.
+pub fn holdWrites(dev: *exec.Device, unit_number: u32) void {
+    const sb = serialBase(dev);
+    if (unit_number >= sb.unit_count) return;
+    unitsOf(sb)[unit_number].serial.holdWrites();
+}
+
+/// Unit `unit_number`'s writes going again.
+pub fn releaseWrites(dev: *exec.Device, unit_number: u32) void {
+    const sb = serialBase(dev);
+    if (unit_number >= sb.unit_count) return;
+    unitsOf(sb)[unit_number].serial.releaseWrites();
+}
+
 /// A unit's receive interrupt server: the port's bytes and what it saw
 /// to the unit, which serves the waiting reads.
 fn rxServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {

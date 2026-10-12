@@ -51,3 +51,10 @@ pub const SDHOST_CDATA_12: u32 = 182;
 pub const SDHOST_CDATA_13: u32 = 183;
 pub const SDHOST_CARD_DETECT_N_1: u32 = 194;
 pub const SDHOST_CARD_WRITE_PRT_1: u32 = 196;
+
+// The USB OTG controller's session inputs, which say which end of a cable
+// it is: as a host, the A end with a valid VBUS.
+pub const USB_OTG_IDDIG_IN: u32 = 58;
+pub const USB_OTG_AVALID_IN: u32 = 59;
+pub const USB_SRP_BVALID_IN: u32 = 60;
+pub const USB_OTG_VBUSVALID_IN: u32 = 61;

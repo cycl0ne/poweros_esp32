@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! USBInfo: what is on the USB buses. Built against the SDK only.
 //!
-//!   USBInfo [DEVICE/K/N] [FULL/S]
+//!   USBInfo [DEVICE/K/N] [FULL/S] [PORTS/S]
 //!
 //!   USBInfo            every device: where it is, how fast, what it is,
 //!                      and who drives each of its interfaces
 //!   USBInfo FULL       with each device's interfaces and endpoints
 //!   USBInfo DEVICE 3   the device at address 3 only
+//!   USBInfo PORTS      the chip's USB ports and who holds each
+//!                      (usbport.resource) instead
 //!
 //! The list is copied under usb.library's lock and printed after it, so a
 //! device plugged in meanwhile is not held up by the printing.
@@ -19,14 +21,16 @@ const d = usb.descriptors;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UsbBase = sdk.interface.usb.UsbBase;
+const usbport = sdk.resources.usbport;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "USBInfo";
-const VERSION_STRING = "\x00$VER: USBInfo 1.0 (11.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: USBInfo 1.1 (12.10.2026)\r\n";
 
-const template = "DEVICE/K/N,FULL/S";
+const template = "DEVICE/K/N,FULL/S,PORTS/S";
 const arg_device = 0;
 const arg_full = 1;
+const arg_ports = 2;
 
 const max_devices = 32;
 const config_bytes = 256;
@@ -62,7 +66,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -70,6 +74,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const only: i32 = if (argv[arg_device] != 0) @as(*const i32, @ptrFromInt(argv[arg_device])).* else -1;
     const full = argv[arg_full] != 0;
+    if (argv[arg_ports] != 0) return printPorts(sys, dl);
 
     const usb_lib = sys.OpenLibrary(usb.USBNAME, 1) orelse {
         _ = Printf(dl, "no %s\n", .{usb.USBNAME});
@@ -119,6 +124,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     for (copies[0..count]) |*copy| {
         printDevice(dl, copy);
         if (full) printConfig(dl, copy);
+    }
+    return dos.RETURN_OK;
+}
+
+/// Each of the chip's USB ports and who holds it; one nobody holds is
+/// with the controller the chip starts it with.
+fn printPorts(sys: *ExecBase, dl: *DosBase) i32 {
+    const found = sys.OpenResource(usbport.USBPORTNAME) orelse {
+        _ = Printf(dl, "no %s\n", .{usbport.USBPORTNAME});
+        return dos.RETURN_WARN;
+    };
+    const pb: *usbport.UsbPortBase = @ptrCast(@alignCast(found));
+    var port: u32 = 0;
+    while (port < usbport.USBPORT_PORTS) : (port += 1) {
+        const holder: [*:0]const u8 = pb.USBPortOwner(port) orelse "nobody";
+        _ = Printf(dl, "port %u: %s\n", .{ port, holder });
     }
     return dos.RETURN_OK;
 }

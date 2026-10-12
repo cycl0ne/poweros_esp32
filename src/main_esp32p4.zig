@@ -45,6 +45,7 @@ comptime {
     _ = @import("rom/libs/utility/utility.zig");
     _ = @import("rom/libs/expansion/expansion.zig");
     _ = @import("rom/resources/gpio/gpio.zig");
+    _ = @import("rom/resources/usbport/usbport.zig");
     _ = @import("rom/resources/battery/battery.zig");
     _ = @import("rom/resources/dma/dma.zig");
     _ = @import("rom/libs/dos/dos.zig");

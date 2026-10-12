@@ -58,10 +58,9 @@ fn pollFor(host: *Host, offset: usize, mask: u32, want: u32, ms: u32) bool {
     return true;
 }
 
-/// The core brought up as a host, its root port powered. False if the
-/// controller does not answer as a DWC2.
+/// The core, powered and with its port, brought up as a host, its root
+/// port powered. False if the controller does not answer as a DWC2.
 pub fn bringUp(host: *Host) bool {
-    usb_otg.powerOn(host.number);
     const id = reg(host, dwc.GSNPSID).*;
     if (id & 0xFFFF_F000 != 0x4F54_2000 and id & 0xFFFF_F000 != 0x4F54_3000 and id & 0xFFFF_F000 != 0x4F54_4000) {
         sdk.exec.kprintf(host.sys, "%s: unit %d: no DWC2 there (0x%x)\n", .{ _usbotg.DEVICE_NAME, host.number, id });
@@ -151,13 +150,12 @@ pub fn interruptsOn(host: *Host) void {
     reg(host, dwc.GAHBCFG).* |= dwc.GAHBCFG_GLBLINTRMSK;
 }
 
-/// The core stopped: its interrupt line off, its port unpowered, the
-/// controller held in reset.
+/// The core stopped: its interrupt line off, its port unpowered. The
+/// controller stays powered until its port is given back.
 pub fn shutDown(host: *Host) void {
     reg(host, dwc.GAHBCFG).* &= ~dwc.GAHBCFG_GLBLINTRMSK;
     reg(host, dwc.GINTMSK).* = 0;
     portWrite(host, 0, dwc.HPRT_PRTPWR);
-    usb_otg.powerOff(host.number);
 }
 
 /// HPRT with `set` set and `clear` cleared, the bits that a 1 changes

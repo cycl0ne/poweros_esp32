@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! The ESP32-P4's USB OTG controllers: where they are, their interrupts,
-//! and what turns each on. Unit 0 is the high-speed one on its own UTMI
+//! what turns each on, and their session inputs as a host. Unit 0 is the high-speed one on its own UTMI
 //! PHY (the chip's DP/DM pins); unit 1 the full-speed one on the second
 //! full-speed PHY (GPIO26 D-, GPIO27 D+), USB-Serial-JTAG being on the
 //! first. The core's registers are `sdk.hardware.usb_dwc`.
@@ -11,6 +11,8 @@
 const map = @import("map.zig");
 const intbits = @import("intbits.zig");
 const system = @import("system.zig");
+const gpio = @import("gpio.zig");
+const signals = @import("signals.zig");
 
 /// A controller: its registers, its interrupt source, and whether its PHY
 /// is the high-speed UTMI one.
@@ -54,4 +56,16 @@ pub inline fn powerOff(unit: u32) void {
         system.holdInReset(.usb_otg11);
         system.clockOff(.usb_otg11);
     }
+}
+
+/// Controller `unit` told it is a host. The full-speed one's session
+/// inputs are held through the GPIO matrix at the A end of a cable, with
+/// a valid VBUS, as ESP-IDF sets them (usb_phy.c); the high-speed one's
+/// session is overridden in its own registers as it is brought up.
+pub fn hostMode(unit: u32) void {
+    if (unit == 0) return;
+    gpio.connectIn(signals.USB_OTG11_IDDIG, gpio.in_low);
+    gpio.connectIn(signals.USB_SRP_BVALID, gpio.in_low);
+    gpio.connectIn(signals.USB_OTG11_VBUSVALID, gpio.in_high);
+    gpio.connectIn(signals.USB_OTG11_AVALID, gpio.in_high);
 }

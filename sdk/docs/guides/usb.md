@@ -26,12 +26,15 @@ controller.
  the bus                usb.library: a process per bus, hubs, pipes
                              |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
  the controller         usbotg.device (the chip's DWC2), a unit per socket
+                             |  OwnUSBPort, ReleaseUSBPort
+ the port               usbport.resource (ROM): who holds the chip's USB ports
                              |
  the board              PARTKIND_USB in its system tag list
 ```
 
 | Piece | Where | What it is |
 |---|---|---|
+| `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards and mice of the boot class, into keyboard.device and mouse.device |
@@ -40,7 +43,7 @@ controller.
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
 | `C:USB` | | starts and stops a bus |
-| `C:USBInfo` | | lists what is on the buses |
+| `C:USBInfo` | | lists what is on the buses, and who holds the ports |
 
 ## A bus
 
@@ -62,6 +65,31 @@ USB-A sockets are behind a hub - they work from the first picture on. A
 socket that is also the console's - the ESP32-S3 boards', whose one USB
 port is the serial console and the JTAG as the chip starts - is left to
 `USB START` by hand.
+
+**The ESP32-S3's port.** The chip has one USB port, GPIO19 and GPIO20,
+and two controllers that can have it: USB-Serial-JTAG - the console and
+the JTAG, whose it is as the chip starts - and the OTG controller.
+`usbport.resource` keeps who holds it. usbserial.device bids for it at
+the lowest priority; a bus that starts bids above it, the console lets
+go between two of its writes, and the resource switches the port to the
+OTG controller and sets its pads for a host. `USB STOP` gives it back.
+While the bus has the port, the console and the JTAG are off the cable:
+`USB START` typed on the USB console ends that session, and the bus is
+reached through the board's other console or the screen. A board whose
+socket's lines are shared with something else has them switched to the
+port as the bus starts (`PART_PinSwitch`: the 7B's CAN transceiver).
+
+```
+1.System:> USBInfo PORTS
+port 0: usbserial.device
+1.System:> USB START
+1.System:> USBInfo PORTS
+port 0: usbotg.device
+```
+
+On the ESP32-P4 each controller has a port of its own - USB-Serial-JTAG
+port 0, the full-speed OTG controller port 1, the high-speed one port 2
+- and nothing is switched; the resource only keeps who holds which.
 
 A started bus has a process of its own. It sets up the root hub, then
 each device as it comes: the port debounced and reset, the device asked
@@ -384,6 +412,16 @@ of the chip's controllers (`PART_BusUnit`), and how the socket is wired
 - its roles (`PART_UsbRoles`), its speed (`PART_UsbSpeed`), where its
 5 V comes from (`PART_UsbVbus`), a hub's reset line (`PART_PinReset`),
 a switch that gives it its pads (`PART_PinSwitch`).
+
+A controller starts by bidding for its port with `OwnUSBPort`
+(`sdk/resources/usbport.zig`): a `USBPortHandle` with its priority
+(`USBPORTPRI_HOST`), its name, the task and signals it is told by, its
+controller (`USBCTL_OTG`, the unit) and its role. A port held by someone
+of lower priority is wanted from that holder, which lets go when it can;
+the bidder waits for its signals - usbotg.device a second at most - and
+reads `state`: `USBPORT_HELD` once the port is switched to it. A
+controller that stops lets go with `ReleaseUSBPort(USBPORTF_REMOVE)`
+before it powers down, and the port goes to the next bidder.
 
 ## In QEMU
 

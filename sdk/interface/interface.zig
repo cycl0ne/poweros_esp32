@@ -38,3 +38,4 @@ pub const anvil = @import("anvil.zig");
 pub const usb = @import("usb.zig");
 pub const usbclass = @import("usbclass.zig");
 pub const battery = @import("battery.zig");
+pub const usbport = @import("usbport.zig");

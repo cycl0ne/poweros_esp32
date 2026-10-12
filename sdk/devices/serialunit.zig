@@ -477,6 +477,19 @@ pub fn Unit(comptime Line: type) type {
             _ = u.writeLocked(bytes);
         }
 
+        /// The writes held: a write under way finished first, and no other
+        /// begun until `releaseWrites`, so the caller changes the line
+        /// between two of them - usbserial.device gives up its port so.
+        /// From a task.
+        pub fn holdWrites(u: *Self) void {
+            u.sys.ObtainSemaphore(&u.write_lock);
+        }
+
+        /// The writes going again after `holdWrites`.
+        pub fn releaseWrites(u: *Self) void {
+            u.sys.ReleaseSemaphore(&u.write_lock);
+        }
+
         /// CMD_START: the held requests, in order and in the caller's time,
         /// then the buffered input to the waiting reads.
         fn startIO(u: *Self) void {

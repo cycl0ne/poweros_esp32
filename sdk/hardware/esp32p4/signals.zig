@@ -56,3 +56,10 @@ pub const I2C1_SDA: u32 = 71;
 // through the matrix.
 pub const SD_CARD_DETECT_N_1: u32 = 126;
 pub const SD_CARD_WRITE_PRT_1: u32 = 130;
+
+// The full-speed USB OTG controller's session inputs, which say which end
+// of a cable it is: as a host, the A end with a valid VBUS.
+pub const USB_OTG11_IDDIG: u32 = 110;
+pub const USB_OTG11_AVALID: u32 = 111;
+pub const USB_SRP_BVALID: u32 = 112;
+pub const USB_OTG11_VBUSVALID: u32 = 113;

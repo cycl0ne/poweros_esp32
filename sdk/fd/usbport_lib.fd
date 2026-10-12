@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+//! usbport.resource's functions: who holds each of the chip's USB ports,
+//! and which controller it is given to - on the ESP32-S3 the console's
+//! USB-Serial-JTAG port or the USB OTG controller, which share the one.
+//! A resource: no Open or Close, its first function in the first slot.
+//! The base comes from OpenResource("usbport.resource").
+##include resources/usbport as usbport
+##basetype UsbPortBase
+##name usbport.resource
+##bias 0
+##public
+/// Bid for the port of `handle`'s controller: true if it holds it now,
+/// else it is told by its signals when it does.
+bool OwnUSBPort(*usbport.USBPortHandle handle)
+/// Let go of the port, or of the bid; with USBPORTF_REMOVE leave the
+/// bidders too.
+void ReleaseUSBPort(*usbport.USBPortHandle handle, u32 flags)
+/// Who holds `port`, or null if nobody does.
+?[*:0]const u8 USBPortOwner(u32 port)
+##end
