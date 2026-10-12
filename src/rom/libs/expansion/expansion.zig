@@ -11,14 +11,19 @@
 //! part with FindBoardPart and reads the rest from the tags; it carries no
 //! board facts of its own.
 //!
+//! A program finds the devices of a kind - every serial line, every block
+//! device - with ObtainDeviceUnits: the devices whose ROM tag says they
+//! speak that command set, in the ROM and in DEVS:, each with its units on
+//! this board, none of them opened or loaded (`device/`).
+//!
 //! A disk's driver starts before dos.library, so it cannot put its
 //! partitions on dos's list itself: it makes a device node for each with
 //! MakeDosNode and hands it over with AddBootNode, and this library keeps
 //! the nodes until dos's init takes them with EnterBootNodes. From then on
 //! a node goes straight onto dos's list.
 //!
-//! Each call is a file of its own, under `part/` for the board and `boot/`
-//! for the disks. The jump table is
+//! Each call is a file of its own, under `part/` for the board, `boot/`
+//! for the disks and `device/` for the devices. The jump table is
 //! expansion_lvo.zig, the ROM tag and init expansion_init.zig, the base
 //! expansion_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of it working as a whole.
@@ -59,7 +64,12 @@ const MakeDosNode = @import("boot/makedosnode.zig").MakeDosNode;
 const AddBootNode = @import("boot/addbootnode.zig").AddBootNode;
 const EnterBootNodes = @import("boot/enterbootnodes.zig").EnterBootNodes;
 const BootNode = @import("boot/_boot.zig").BootNode;
+const ObtainDeviceUnits = @import("device/obtaindeviceunits.zig").ObtainDeviceUnits;
+const ReleaseDeviceUnits = @import("device/releasedeviceunits.zig").ReleaseDeviceUnits;
+const _device = @import("device/_device.zig");
 const dos = sdk.dos;
+const loadfile = dos.loadfile;
+const devices = expansion.devices;
 
 test {
     _ = expansion_base;
@@ -71,6 +81,8 @@ test {
     _ = @import("boot/makedosnode.zig");
     _ = @import("boot/addbootnode.zig");
     _ = @import("boot/enterbootnodes.zig");
+    _ = @import("device/obtaindeviceunits.zig");
+    _ = @import("device/releasedeviceunits.zig");
 }
 
 const TagItem = utility.TagItem;
@@ -81,11 +93,50 @@ const bus0 = [_]TagItem{
     .{ .tag = st.PART_Kind, .data = st.PARTKIND_I2CBUS },
     .{ .tag = st.PART_PinSCL, .data = pins.gpio(9) },
     .{ .tag = st.PART_PinSDA, .data = pins.gpio(8) },
+    .{ .tag = st.PART_Label, .data = 0 }, // replaced below
     .{ .tag = utility.TAG_DONE, .data = 0 },
 };
 const bus1 = [_]TagItem{
     .{ .tag = st.PART_Kind, .data = st.PARTKIND_I2CBUS },
+    .{ .tag = st.PART_BusUnit, .data = 2 },
     .{ .tag = utility.TAG_DONE, .data = 0 },
+};
+
+// Devices in the test ROM: one whose units are the board's I2C buses, one
+// that counts its units and names them, one that says nothing of what it
+// speaks.
+const bus_speaks = [_]u32{ devices.DEVIF_STREAM, devices.DEVIF_I2C, 0 };
+const test_bus_device: exec.ResidentDevice = .{
+    .resident = .{
+        .match_tag = @ptrCast(&test_bus_device),
+        .flags = exec.RTF_DEVICEINFO,
+        .version = 3,
+        .type = .device,
+        .name = "test-bus.device",
+        .id_string = "test-bus.device 3.4 (12.10.2026)\r\n",
+    },
+    .speaks = &bus_speaks,
+    .unit_part = st.PARTKIND_I2CBUS,
+};
+const clock_speaks = [_]u32{ devices.DEVIF_TIMER, 0 };
+const clock_labels = [_][*:0]const u8{ "fast", "slow", "wall" };
+const test_clock_device: exec.ResidentDevice = .{
+    .resident = .{
+        .match_tag = @ptrCast(&test_clock_device),
+        .flags = exec.RTF_DEVICEINFO,
+        .version = 1,
+        .type = .device,
+        .name = "test-clock.device",
+    },
+    .speaks = &clock_speaks,
+    .units = 3,
+    .unit_labels = &clock_labels,
+};
+const test_plain_device: exec.Resident = .{
+    .match_tag = &test_plain_device,
+    .version = 1,
+    .type = .device,
+    .name = "test-plain.device",
 };
 const touch = [_]TagItem{
     .{ .tag = st.PART_Kind, .data = st.PARTKIND_TOUCH },
@@ -107,14 +158,15 @@ const Board = struct {
     touch: [touch.len]TagItem = touch,
     root: [8]TagItem = undefined,
     resident: exec.Resident = undefined,
-    table: [2]?*const exec.Resident = undefined,
+    bus0: [bus0.len]TagItem = bus0,
+    table: [5]?*const exec.Resident = undefined,
 
     fn build(board: *Board) void {
         board.touch[2].data = @intFromPtr("gt911");
         board.root = .{
             .{ .tag = st.SYSTAG_Name, .data = @intFromPtr("Test board") },
             .{ .tag = st.SYSTAG_Console, .data = st.CONSOLE_USBJTAG },
-            .{ .tag = st.SYSTAG_Part, .data = @intFromPtr(&bus0) },
+            .{ .tag = st.SYSTAG_Part, .data = @intFromPtr(&board.bus0) },
             .{ .tag = st.SYSTAG_Part, .data = @intFromPtr(&board.touch) },
             .{ .tag = st.SYSTAG_Part, .data = @intFromPtr(&bus1) },
             .{ .tag = st.SYSTAG_Part, .data = @intFromPtr(&slot) },
@@ -127,7 +179,8 @@ const Board = struct {
             .name = expansion.SYSTEM_RESIDENT,
             .init = &board.root,
         };
-        board.table = .{ &board.resident, null };
+        board.bus0[3].data = @intFromPtr("header P3");
+        board.table = .{ &board.resident, &test_bus_device.resident, &test_clock_device.resident, &test_plain_device, null };
     }
 };
 
@@ -328,4 +381,167 @@ test "dos.library takes the kept nodes in at its start, and boots from the highe
     // for leaks.
     _ = takeDown(eb);
     try kdos.testTearDown(db);
+}
+
+/// The nodes of a list ObtainDeviceUnits answered, as an array.
+fn unitsOf(list: *exec.List, into: []*const devices.DeviceUnit) usize {
+    var count: usize = 0;
+    var it = list.iterator();
+    while (it.next()) |node| : (count += 1) into[count] = @ptrCast(@alignCast(node));
+    return count;
+}
+
+test "devices by what they speak: units from the board's parts, labelled" {
+    var board: Board = .{};
+    const eb = try setUp(&board);
+    defer kexec.deinit();
+    const list = ObtainDeviceUnits(eb, devices.DEVIF_I2C, null).?;
+    var units: [8]*const devices.DeviceUnit = undefined;
+    try testing.expectEqual(@as(usize, 2), unitsOf(list, &units));
+    // The first bus by its place among its kind, labelled; the second by
+    // its PART_BusUnit.
+    try testing.expectEqualStrings("test-bus.device", std.mem.span(units[0].node.name.?));
+    try testing.expectEqual(@as(u32, 0), units[0].unit);
+    try testing.expectEqualStrings("header P3", std.mem.span(units[0].label.?));
+    try testing.expectEqual(@as(u32, 2), units[1].unit);
+    try testing.expect(units[1].label == null);
+    try testing.expectEqual(@as(u16, 3), units[0].version);
+    try testing.expectEqual(@as(u16, 4), units[0].revision);
+    try testing.expectEqual(devices.DUF_ROM, units[0].flags);
+    try testing.expectEqual(devices.DEVIF_STREAM, units[0].speaks[0]);
+    try testing.expectEqual(devices.DEVIF_I2C, units[0].speaks[1]);
+    try testing.expectEqual(@as(u32, 0), units[0].speaks[2]);
+    ReleaseDeviceUnits(eb, list);
+    try tearDown(eb);
+}
+
+test "counted units with the device's labels; 0 asks for every device that says" {
+    var board: Board = .{};
+    const eb = try setUp(&board);
+    defer kexec.deinit();
+    const clocks = ObtainDeviceUnits(eb, devices.DEVIF_TIMER, null).?;
+    var units: [8]*const devices.DeviceUnit = undefined;
+    try testing.expectEqual(@as(usize, 3), unitsOf(clocks, &units));
+    try testing.expectEqualStrings("slow", std.mem.span(units[1].label.?));
+    try testing.expectEqual(@as(u32, 2), units[2].unit);
+    ReleaseDeviceUnits(eb, clocks);
+    // Every device that says what it speaks, by name: the bus device's
+    // two, then the clock's three. The plain device says nothing.
+    const all = ObtainDeviceUnits(eb, 0, null).?;
+    try testing.expectEqual(@as(usize, 5), unitsOf(all, &units));
+    try testing.expectEqualStrings("test-bus.device", std.mem.span(units[0].node.name.?));
+    try testing.expectEqualStrings("test-clock.device", std.mem.span(units[4].node.name.?));
+    ReleaseDeviceUnits(eb, all);
+    // A command set nobody speaks: an empty list, not null.
+    const none = ObtainDeviceUnits(eb, devices.DEVIF_SANA2, null).?;
+    try testing.expect(none.isEmpty());
+    ReleaseDeviceUnits(eb, none);
+    ReleaseDeviceUnits(eb, null);
+    try tearDown(eb);
+}
+
+test "one device in two places is listed once, the higher version's" {
+    var gathered: _device.Gathered = .{};
+    var older: _device.Record = .{ .version = 1, .revision = 9 };
+    @memcpy(older.tag_name[0..11], "foo.device\x00");
+    @memcpy(older.name[0..11], "foo.device\x00");
+    var newer = older;
+    newer.version = 2;
+    newer.revision = 0;
+    @memcpy(newer.name[0..15], "usb/foo.device\x00");
+    _device.add(&gathered, &older);
+    _device.add(&gathered, &newer);
+    try testing.expectEqual(@as(u32, 1), gathered.count);
+    try testing.expectEqualStrings("usb/foo.device", std.mem.span(@as([*:0]const u8, &gathered.list[0].name)));
+    // An older one after it changes nothing.
+    _device.add(&gathered, &older);
+    try testing.expectEqual(@as(u16, 2), gathered.list[0].version);
+    try testing.expect(_device.speaksAny(&.{ 1, 2, 0 }, 2));
+    try testing.expect(!_device.speaksAny(&.{ 1, 0, 2 }, 2));
+    try testing.expect(_device.speaksAny(&.{0}, 0));
+}
+
+test "an ID string's revision" {
+    try testing.expectEqual(@as(u16, 2), exec.resident.revisionOf("acm.device 1.2 (12.10.2026)\r\n"));
+    try testing.expectEqual(@as(u16, 42), exec.resident.revisionOf("intuition.library 1.42 (12.10.2026)"));
+    try testing.expectEqual(@as(u16, 0), exec.resident.revisionOf("timer.device"));
+    try testing.expectEqual(@as(u16, 0), exec.resident.revisionOf("a 1. b"));
+}
+
+/// A load file in memory, for `loadfile`'s reader.
+const Bytes = struct {
+    data: []const u8,
+    fn readAt(context: *anyopaque, offset: u32, into: []u8) bool {
+        const self: *Bytes = @ptrCast(@alignCast(context));
+        if (offset > self.data.len or self.data.len - offset < into.len) return false;
+        @memcpy(into, self.data[offset..][0..into.len]);
+        return true;
+    }
+};
+
+fn put32(into: []u8, at: usize, value: u32) void {
+    std.mem.writeInt(u32, into[at..][0..4], value, .little);
+}
+
+test "a device's tag read from a load file's bytes" {
+    // The header, then a data segment of 128 bytes: the tag at 0x10 as a
+    // file has it, four-byte words, every pointer an offset in the
+    // segment - its name at 0x40, its ID string at 0x50, its command sets
+    // at 0x60, its labels' pointers at 0x70 and the labels at 0x78.
+    var file: [20 + 16 + 128]u8 = @splat(0);
+    @memcpy(file[0..4], &loadfile.MAGIC);
+    std.mem.writeInt(u16, file[4..6], loadfile.VERSION, .little);
+    std.mem.writeInt(u16, file[6..8], 1, .little);
+    std.mem.writeInt(u16, file[10..12], loadfile.native_machine, .little);
+    file[16] = 4;
+    file[20] = @intFromEnum(loadfile.SegmentKind.data);
+    put32(&file, 24, 128);
+    put32(&file, 28, 128);
+    const seg = 36;
+    const tag = seg + 0x10;
+    std.mem.writeInt(u16, file[tag..][0..2], 0x4AFC, .little);
+    put32(&file, tag + 4, 0x10);
+    file[tag + 12] = exec.RTF_DEVICEINFO;
+    file[tag + 13] = 1;
+    file[tag + 14] = @intFromEnum(exec.NodeType.device);
+    put32(&file, tag + 16, 0x40);
+    put32(&file, tag + 20, 0x50);
+    put32(&file, tag + 28, 0x60);
+    put32(&file, tag + 32, 0);
+    put32(&file, tag + 36, 2);
+    put32(&file, tag + 40, 0x70);
+    @memcpy(file[seg + 0x40 ..][0..11], "acm.device\x00");
+    @memcpy(file[seg + 0x50 ..][0..15], "acm.device 1.3\x00");
+    put32(&file, seg + 0x60, devices.DEVIF_STREAM);
+    put32(&file, seg + 0x64, devices.DEVIF_SERIAL);
+    put32(&file, seg + 0x6C, 0);
+    put32(&file, seg + 0x68, 0);
+    put32(&file, seg + 0x70, 0x78);
+    put32(&file, seg + 0x74, 0);
+    @memcpy(file[seg + 0x78 ..][0..4], "one\x00");
+
+    var bytes = Bytes{ .data = &file };
+    const source = loadfile.Source{ .context = &bytes, .readAt = Bytes.readAt };
+    const found = loadfile.findResident(source).?;
+    var device: loadfile.DeviceTag = .{};
+    try testing.expect(loadfile.readDevice(source, found, &device));
+    try testing.expectEqualStrings("acm.device", std.mem.span(@as([*:0]const u8, &device.name)));
+    try testing.expectEqual(@as(u8, 1), device.version);
+    try testing.expectEqual(@as(u16, 3), device.revision);
+    try testing.expectEqual(devices.DEVIF_SERIAL, device.speaks[1]);
+    try testing.expectEqual(@as(u32, 0), device.speaks[2]);
+    try testing.expectEqual(@as(u32, 2), device.units);
+    var label: [8]u8 = undefined;
+    try testing.expectEqualStrings("one", loadfile.readUnitLabel(source, found, &device, 0, &label).?);
+    try testing.expect(loadfile.readUnitLabel(source, found, &device, 1, &label) == null);
+    try testing.expect(loadfile.readUnitLabel(source, found, &device, 2, &label) == null);
+
+    // A tag that does not say what it speaks is no device's here.
+    file[tag + 12] = 0;
+    try testing.expect(!loadfile.readDevice(source, found, &device));
+    file[tag + 12] = exec.RTF_DEVICEINFO;
+    // Command sets that run past the segment's end: refused.
+    put32(&file, tag + 28, 0x7C);
+    put32(&file, seg + 0x7C, devices.DEVIF_STREAM);
+    try testing.expect(!loadfile.readDevice(source, found, &device));
 }

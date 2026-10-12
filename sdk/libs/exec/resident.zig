@@ -66,6 +66,30 @@ pub const ResidentDevice = extern struct {
     unit_labels: ?[*]const [*:0]const u8 = null,
 };
 
+/// The revision an ID string gives - "acm.device 1.2 (12.10.2026)": the
+/// number after the point of the first version in it; 0 when it gives
+/// none.
+pub fn revisionOf(id_string: []const u8) u16 {
+    var at: usize = 0;
+    while (at + 3 < id_string.len) : (at += 1) {
+        if (id_string[at] != ' ' or !isDigit(id_string[at + 1])) continue;
+        var point = at + 1;
+        while (point < id_string.len and isDigit(id_string[point])) point += 1;
+        if (point + 1 >= id_string.len or id_string[point] != '.' or !isDigit(id_string[point + 1])) continue;
+        var revision: u16 = 0;
+        var digit = point + 1;
+        while (digit < id_string.len and isDigit(id_string[digit]) and revision < 6553) : (digit += 1) {
+            revision = revision * 10 + (id_string[digit] - '0');
+        }
+        return revision;
+    }
+    return 0;
+}
+
+fn isDigit(char: u8) bool {
+    return char >= '0' and char <= '9';
+}
+
 /// struct Resident (a ROM tag).
 pub const Resident = extern struct {
     /// rt_MatchWord: RTC_MATCHWORD.

@@ -105,6 +105,10 @@ pub const PART_UsbSpeed = PART_Dummy + 10;
 /// Where the 5 V a USB host gives what is plugged in comes from
 /// (USBVBUS_*). Absent, USBVBUS_NONE.
 pub const PART_UsbVbus = PART_Dummy + 11;
+/// What the board calls the part, for a person choosing it: a string,
+/// "header UART2", "USB-C UART1". ObtainDeviceUnits gives it as the
+/// label of the unit the part is.
+pub const PART_Label = PART_Dummy + 12;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;

@@ -18,6 +18,8 @@ const SystemTags = @import("part/systemtags.zig").SystemTags;
 const MakeDosNode = @import("boot/makedosnode.zig").MakeDosNode;
 const AddBootNode = @import("boot/addbootnode.zig").AddBootNode;
 const EnterBootNodes = @import("boot/enterbootnodes.zig").EnterBootNodes;
+const ObtainDeviceUnits = @import("device/obtaindeviceunits.zig").ObtainDeviceUnits;
+const ReleaseDeviceUnits = @import("device/releasedeviceunits.zig").ReleaseDeviceUnits;
 
 /// expansion.library's interface, as the SDK generates it from
 /// sdk/fd/expansion_lib.fd.
@@ -48,6 +50,8 @@ const contract_files = [_][]const u8{
     @embedFile("boot/makedosnode.zig"),
     @embedFile("boot/addbootnode.zig"),
     @embedFile("boot/enterbootnodes.zig"),
+    @embedFile("device/obtaindeviceunits.zig"),
+    @embedFile("device/releasedeviceunits.zig"),
 };
 
 fn lvoFindBoardPart(eb: *ExpansionBase, old: ?*const BoardPart, kind: u32, chip: u32) callconv(.c) ?*const BoardPart {
@@ -65,6 +69,12 @@ fn lvoAddBootNode(eb: *ExpansionBase, boot_pri: i32, node: *dos.DosList) callcon
 fn lvoEnterBootNodes(eb: *ExpansionBase) callconv(.c) ?*dos.DosList {
     return EnterBootNodes(eb);
 }
+fn lvoObtainDeviceUnits(eb: *ExpansionBase, speaks: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*exec.List {
+    return ObtainDeviceUnits(eb, speaks, tags);
+}
+fn lvoReleaseDeviceUnits(eb: *ExpansionBase, list: ?*exec.List) callconv(.c) void {
+    ReleaseDeviceUnits(eb, list);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -78,6 +88,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMakeDosNode),
     vec(lvoAddBootNode),
     vec(lvoEnterBootNodes),
+    vec(lvoObtainDeviceUnits),
+    vec(lvoReleaseDeviceUnits),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

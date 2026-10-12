@@ -503,6 +503,36 @@ from, nothing can be held, and the machine stops:
 `NP_StackSize`'s size. The bottom 16 bytes of a stack are the guard's, not
 the task's.
 
+## Finding a device
+
+A program that needs a kind of device - a terminal a serial line, a disk
+tool a block device - asks for the command set, not for a name.
+expansion.library's `ObtainDeviceUnits` lists every unit of every device
+whose ROM tag says it speaks that set (`DEVIF_*`,
+sdk/libs/expansion/devices.zig): the ROM's devices and those in DEVS: and
+its drawers, none of them opened, loaded or started to find out. A node
+is a `DeviceUnit`: `node.name` what OpenDevice takes ("usb/acm.device"
+for a file in DEVS:usb/), the unit, the device's version, what it speaks,
+and a label - what the board calls the unit, or the device's own name for
+it.
+
+```zig
+const list = eb.ObtainDeviceUnits(devices.DEVIF_SERIAL, null) orelse return;
+defer eb.ReleaseDeviceUnits(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const unit: *const devices.DeviceUnit = @ptrCast(@alignCast(node));
+    // unit.node.name, unit.unit, unit.label ...
+}
+```
+
+A device says what it speaks in its ROM tag: a `ResidentDevice`
+(sdk/libs/exec/resident.zig, `RTF_DEVICEINFO`), with its command sets and
+where its units come from - the board's parts of a kind, one unit each,
+labelled by the part's `PART_Label`, or a count with labels of its own.
+The call reads DEVS: each time, so a program asks once and keeps the
+answer. `C:test/DeviceUnits [SPEAKS n]` prints the list.
+
 ## The system log
 
 Everything written to the serial console - `sdk.exec.kprintf`, which is

@@ -68,7 +68,7 @@ const scsi = @import("scsi.zig");
 
 pub const DEVICE_NAME = _disk.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -424,7 +424,7 @@ const init_table = exec.InitTable{
 
 const speaks = [_]u32{ devices.DEVIF_BLOCK, devices.DEVIF_USBCLASS, 0 };
 
-const labels = [_][*:0]const u8{ "USB0", "USB1", "USB2", "USB3", "USB4", "USB5", "USB6", "USB7" };
+const labels = [_][*:0]const u8{ "DU0:", "DU1:", "DU2:", "DU3:", "DU4:", "DU5:", "DU6:", "DU7:" };
 
 /// What it drives: mass storage, SCSI over Bulk-Only.
 const matches = [_]usbclass.USBMatch{

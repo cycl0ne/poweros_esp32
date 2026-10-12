@@ -233,6 +233,94 @@ pub fn readString(source: Source, found: FoundTag, offset: u32, into: []u8) ?[:0
     return null;
 }
 
+// --- a device's tag, read from its file ------------------------------------------
+
+const resident = @import("../exec/resident.zig");
+const NodeType = @import("../exec/nodes.zig").NodeType;
+
+/// Where a ROM tag's fields lie in a load file, whose address words are
+/// four bytes (its header says so): a Resident's, then a
+/// ResidentDevice's own. Written out rather than taken from the types, so
+/// a build with wider pointers - the host tests' - reads a file the same.
+const TAG_FLAGS = 12;
+const TAG_NAME = 16;
+const TAG_ID_STRING = 20;
+const DEVICE_SPEAKS = 28;
+const DEVICE_UNIT_PART = 32;
+const DEVICE_UNITS = 36;
+const DEVICE_UNIT_LABELS = 40;
+
+comptime {
+    if (@sizeOf(usize) == 4) {
+        const Device = resident.ResidentDevice;
+        if (@offsetOf(resident.Resident, "flags") != TAG_FLAGS or @offsetOf(resident.Resident, "name") != TAG_NAME or
+            @offsetOf(resident.Resident, "id_string") != TAG_ID_STRING or @offsetOf(Device, "speaks") != DEVICE_SPEAKS or
+            @offsetOf(Device, "unit_part") != DEVICE_UNIT_PART or @offsetOf(Device, "units") != DEVICE_UNITS or
+            @offsetOf(Device, "unit_labels") != DEVICE_UNIT_LABELS)
+            @compileError("loadfile: a ROM tag's fields are not where a load file has them");
+    }
+}
+
+/// The most command sets a device's tag is read for.
+pub const max_speaks = 8;
+
+/// A device's ROM tag as its load file has it - a `ResidentDevice`: its
+/// name, version and revision, what it speaks and where its units come
+/// from; `labels` is where its unit labels' pointers lie, for
+/// `readUnitLabel`.
+pub const DeviceTag = struct {
+    name: [32:0]u8 = @splat(0),
+    version: u8 = 0,
+    /// From its ID string ("acm.device 1.2 (date)"); 0 when that has none.
+    revision: u16 = 0,
+    /// DEVIF_*, ended by 0.
+    speaks: [max_speaks + 1]u32 = @splat(0),
+    unit_part: u32 = 0,
+    units: u32 = 0,
+    labels: u32 = 0,
+};
+
+/// The device tag found in a module's load file, into `into`: false for a
+/// tag that is not a device's saying what it speaks (RTF_DEVICEINFO), or
+/// one whose name or command sets lie past its segment. A device that
+/// speaks more than `max_speaks` sets is read for the first of them.
+pub fn readDevice(source: Source, found: FoundTag, into: *DeviceTag) bool {
+    into.* = .{};
+    var head: [3]u8 = undefined;
+    if (!readBytes(source, found, found.tag + TAG_FLAGS, &head)) return false;
+    if (head[0] & resident.RTF_DEVICEINFO == 0 or head[2] != @intFromEnum(NodeType.device)) return false;
+    into.version = head[1];
+    const name_at = readWord(source, found, found.tag + TAG_NAME) orelse return false;
+    _ = readString(source, found, name_at, into.name[0..into.name.len]) orelse return false;
+    const id_at = readWord(source, found, found.tag + TAG_ID_STRING) orelse return false;
+    if (id_at != 0) {
+        var id: [64]u8 = undefined;
+        if (readString(source, found, id_at, &id)) |text| into.revision = resident.revisionOf(text);
+    }
+    const speaks_at = readWord(source, found, found.tag + DEVICE_SPEAKS) orelse return false;
+    var count: u32 = 0;
+    while (count < max_speaks) : (count += 1) {
+        const set = readWord(source, found, speaks_at + count * 4) orelse return false;
+        if (set == 0) break;
+        into.speaks[count] = set;
+    }
+    into.unit_part = readWord(source, found, found.tag + DEVICE_UNIT_PART) orelse return false;
+    into.units = readWord(source, found, found.tag + DEVICE_UNITS) orelse return false;
+    into.labels = readWord(source, found, found.tag + DEVICE_UNIT_LABELS) orelse return false;
+    return true;
+}
+
+/// Unit `index`'s label, of a device tag `readDevice` read, into `into`;
+/// null for a device without labels, past its units, or one whose label
+/// does not fit. A label pointer of 0 is none: offset 0 of a module's data
+/// segment is its version string, never a label.
+pub fn readUnitLabel(source: Source, found: FoundTag, tag: *const DeviceTag, index: u32, into: []u8) ?[:0]u8 {
+    if (tag.labels == 0 or index >= tag.units) return null;
+    const at = readWord(source, found, tag.labels + index * 4) orelse return null;
+    if (at == 0) return null;
+    return readString(source, found, at, into);
+}
+
 fn word16(bytes: *const [2]u8) u16 {
     return @as(u16, bytes[0]) | @as(u16, bytes[1]) << 8;
 }

@@ -4,8 +4,10 @@
 //! tag list (sdk/libs/expansion/systemtags.zig) - and this library hands
 //! each part out as a BoardPart, so a module asks for its part rather than
 //! knowing any board. A disk's driver hands it the device nodes of the
-//! disk's partitions, which dos.library takes in once it is up. Open it
-//! with OpenLibrary("expansion.library", 1).
+//! disk's partitions, which dos.library takes in once it is up. A program
+//! finds the devices of a kind - every serial line, every block device -
+//! by the command sets they say they speak, with their units on this
+//! board. Open it with OpenLibrary("expansion.library", 1).
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
 ##include libs/dos/dos as dos
@@ -35,4 +37,11 @@ bool AddBootNode(i32 boot_pri, *dos.DosList node)
 /// dos.library's, at its start: every node AddBootNode kept, onto dos's
 /// list in boot priority order. The one to boot from, or null.
 ?*dos.DosList EnterBootNodes()
+/// Every unit of every device that speaks `speaks` (DEVIF_*; 0: every
+/// device that says what it speaks), the ROM's and those in DEVS:, none
+/// opened or loaded: a list of DeviceUnit nodes, null without memory.
+/// `tags`: none yet, null.
+?*exec.List ObtainDeviceUnits(u32 speaks, ?[*]const utility.TagItem tags)
+/// The list ObtainDeviceUnits answered, and its nodes, freed.
+void ReleaseDeviceUnits(?*exec.List list)
 ##end

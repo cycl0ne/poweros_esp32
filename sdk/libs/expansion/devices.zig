@@ -2,7 +2,11 @@
 //! What a device speaks: the command sets (`DEVIF_*`) a device lists in
 //! its `ResidentDevice` tag. A program that needs a kind of device - a
 //! serial line, a block device, a USB host controller - looks for the
-//! command set, not for a name, and finds every device that speaks it.
+//! command set, not for a name, and finds every device that speaks it:
+//! ObtainDeviceUnits lists the units of every such device, a
+//! `DeviceUnit` each.
+
+const exec = @import("../exec/exec.zig");
 
 /// Bytes read and written as a stream: CMD_READ, CMD_WRITE, CMD_FLUSH.
 pub const DEVIF_STREAM: u32 = 1;
@@ -35,3 +39,26 @@ pub const DEVIF_USBHC: u32 = 12;
 /// AbortIO, and a `ResidentUSBClass` tag whose match table says what it
 /// drives (sdk/devices/usbclass.zig).
 pub const DEVIF_USBCLASS: u32 = 13;
+
+/// A unit of a device, as ObtainDeviceUnits lists it: a node of the list
+/// it answers, given back whole with ReleaseDeviceUnits.
+pub const DeviceUnit = extern struct {
+    /// `name`: what OpenDevice takes - a ROM device's name, or a disk
+    /// device's path under DEVS: ("usb/acm.device").
+    node: exec.Node = .{},
+    /// The unit to open.
+    unit: u32 = 0,
+    /// What the board calls the unit (its part's PART_Label), or the
+    /// device's own label for it; null for neither.
+    label: ?[*:0]const u8 = null,
+    /// The device's version and revision, from its ROM tag.
+    version: u16 = 0,
+    revision: u16 = 0,
+    /// The command sets it speaks, DEVIF_*, ended by 0.
+    speaks: [*]const u32,
+    /// DUF_*.
+    flags: u32 = 0,
+};
+
+/// DeviceUnit.flags: the device is in the ROM, not a file in DEVS:.
+pub const DUF_ROM: u32 = 1 << 0;

@@ -5,8 +5,10 @@ soldered on it. The board's ROM carries a description of it - the system
 tag list (sdk/libs/expansion/systemtags.zig) - and this library hands
 each part out as a BoardPart, so a module asks for its part rather than
 knowing any board. A disk's driver hands it the device nodes of the
-disk's partitions, which dos.library takes in once it is up. Open it
-with OpenLibrary("expansion.library", 1).
+disk's partitions, which dos.library takes in once it is up. A program
+finds the devices of a kind - every serial line, every block device -
+by the command sets they say they speak, with their units on this
+board. Open it with OpenLibrary("expansion.library", 1).
 
 Generated from the source by `./zig build autodoc`.
 
@@ -16,6 +18,8 @@ Generated from the source by `./zig build autodoc`.
 - [EnterBootNodes](#enterbootnodes) - Hands dos.library the disks' device nodes kept for it, and says which one to boot from.
 - [FindBoardPart](#findboardpart) - The next part of the board after `old` whose kind and chip match.
 - [MakeDosNode](#makedosnode) - Makes a device node for a disk's partition, with what its handler is started with.
+- [ObtainDeviceUnits](#obtaindeviceunits) - Every unit of every device that speaks `speaks`, on this board.
+- [ReleaseDeviceUnits](#releasedeviceunits) - The list ObtainDeviceUnits answered, and every node on it, freed.
 - [SystemTags](#systemtags) - The root of the system tag list.
 
 ## AddBootNode
@@ -289,6 +293,152 @@ None known.
 const node = eb.MakeDosNode("DH0", "flash.device", 0, 0, &pb.environment) orelse return;
 node.misc.handler.handler = "flashfs-handler";
 if (!eb.AddBootNode(pb.environment.boot_pri, node)) sys.FreeVec(node);
+```
+
+## ObtainDeviceUnits
+
+Every unit of every device that speaks `speaks`, on this board.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainDeviceUnits(eb: *ExpansionBase, speaks: u32, tags: ?[*]const utility.TagItem) ?*exec.List
+```
+
+**SINCE**
+
+1.2. LVO -40.
+
+**INPUTS**
+
+- `speaks` - the command set asked for, DEVIF_*
+  (sdk/libs/expansion/devices.zig); 0 for every device that says what
+  it speaks.
+- `tags` - none are read yet: null.
+
+**RESULT**
+
+A list of `DeviceUnit` nodes, one per unit - empty when there is none -
+to be given back with ReleaseDeviceUnits; null without the memory for
+it.
+
+**BEHAVIOR**
+
+A device is listed when its ROM tag is a `ResidentDevice` (RTF_DEVICEINFO)
+that names `speaks` among its command sets: the ROM's devices, read
+where their tags are, and the files in DEVS: and its drawers - all but
+`handlers` - read for their tag from the file's bytes. Nothing is
+opened, loaded or started to find out. A device both in the ROM and in
+DEVS: is listed once, the higher version and revision.
+
+Its units: with a part kind (`unit_part`), one per part of that kind
+on the board, numbered by the part's PART_BusUnit - or the part's
+place among its kind - and labelled by its PART_Label; without, units
+0 to `units` - 1, labelled by the device's own labels. A node's
+`node.name` is what OpenDevice takes: the ROM device's name, or the
+path under DEVS: of a file ("usb/acm.device"). The devices come by
+name, each one's units in order.
+
+**CONTEXT**
+
+- Waits: yes, for the files it reads, and for memory.
+- Interrupts: no.
+- Locks: none taken.
+- Process: needed for DEVS:; called from a Task, it lists the ROM's
+  devices alone.
+
+**OWNERSHIP**
+
+The list and its nodes are the caller's until ReleaseDeviceUnits; the
+nodes are a snapshot, and a device added or removed later is not in
+them.
+
+**NOTES**
+
+It reads every file in DEVS: and its drawers each time: ask once and
+keep the answer for as long as it is needed. A unit listed is one the
+board has; whether it is free is the device's to say when it is
+opened.
+
+**BUGS**
+
+At most 48 devices are listed, with 32 units each and labels for the
+first eight counted ones. A unit that comes and goes while the system
+runs - a USB adapter - is listed by the parts the board was built
+with, not by what is plugged in.
+
+**SEE ALSO**
+
+`ReleaseDeviceUnits`, `FindBoardPart`, sdk/libs/expansion/devices.zig
+
+**EXAMPLES**
+
+```zig
+const list = eb.ObtainDeviceUnits(devices.DEVIF_SERIAL, null) orelse return;
+defer eb.ReleaseDeviceUnits(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const unit: *const devices.DeviceUnit = @ptrCast(@alignCast(node));
+    _ = Printf(dl, "%s %lu\n", .{ unit.node.name.?, unit.unit });
+}
+```
+
+## ReleaseDeviceUnits
+
+The list ObtainDeviceUnits answered, and every node on it, freed.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseDeviceUnits(eb: *ExpansionBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.2. LVO -44.
+
+**INPUTS**
+
+- `list` - what ObtainDeviceUnits answered; null does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Each node is freed, then the list. The names and labels the nodes
+pointed at go with them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list and its nodes are gone; nothing read from them may be used
+after.
+
+**NOTES**
+
+A node taken off the list by the caller is the caller's to FreeVec.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainDeviceUnits`
+
+**EXAMPLES**
+
+```zig
+const list = eb.ObtainDeviceUnits(devices.DEVIF_BLOCK, null) orelse return;
+defer eb.ReleaseDeviceUnits(list);
 ```
 
 ## SystemTags
