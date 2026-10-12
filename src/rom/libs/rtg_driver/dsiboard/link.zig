@@ -11,10 +11,16 @@
 //! screens' buffers; showing
 //! them converts each band's rows into the copy, at the lines it covers,
 //! and from then on rows a caller has drawn (RefreshBitMap) are converted
-//! again wherever a band shows them. A band that repeats a buffer's first
-//! row has that row converted once, at its first line, and the stream
-//! sends that line again for each of its lines - its chain is built over
-//! the copy as it would be over the buffers (`streamBands`).
+//! again wherever a band shows them.
+//!
+//! **A band that repeats a row** - the empty part of the display above a
+//! screen pulled down - goes into the copy as lines of its own, so what
+//! is laid over it shows there too: it is converted from `blank`, a
+//! picture the size of the mode whose every row is that row, filled when
+//! the row first comes and again only when it changes. Without memory for
+//! it the row is converted once, at the band's first line, and the stream
+//! sends that line again for each of the band's lines - and the pointer
+//! does not show over it.
 //!
 //! **A rectangle kept out.** `show` and `refresh` take the pointer's
 //! rectangle (`pointer.zig`) and convert around it, never into it, so
@@ -63,6 +69,13 @@ pub const Link = struct {
     /// long at each repeated band's line.
     whole: rtg.RtgBitMap = .{},
     rows: [rtg.RTG_MAX_BANDS]rtg.RtgBitMap = @splat(.{}),
+    /// The repeated row as a whole picture, in RGB565, and the block it
+    /// is in; no picture while `blank.pixels` is null. `blank_filled`:
+    /// its rows hold a row yet.
+    blank: rtg.RtgBitMap = .{},
+    blank_memory: ?*anyopaque = null,
+    blank_size: u32 = 0,
+    blank_filled: bool = false,
     /// Rows converted, by the engine and by the CPU.
     engine_rows: u32 = 0,
     cpu_rows: u32 = 0,
@@ -91,7 +104,44 @@ pub fn allocate(link: *Link, sys: *ExecBase, width: u32, height: u32, format: rt
 
 pub fn free(link: *Link, sys: *ExecBase) void {
     if (link.memory) |memory| sys.FreeMem(memory, link.memory_size);
+    if (link.blank_memory) |memory| sys.FreeMem(memory, link.blank_size);
     link.* = .{};
+}
+
+/// `blank` holding `row`'s first row on every row: made the first time,
+/// filled again when that row is not what it holds. Null without memory
+/// for it.
+fn blankOf(link: *Link, sys: *ExecBase, row: *const rtg.RtgBitMap) ?*const rtg.RtgBitMap {
+    const source = row.pixels orelse return null;
+    if (row.format != .rgb565) return null;
+    if (link.blank.pixels == null) {
+        const line = sdk.hardware.DCACHE_LINE_SIZE;
+        const pitch = link.width * 2;
+        const size = pitch * link.height + line;
+        const memory = sys.AllocMem(size, exec.MEMF_EXTERNAL) orelse return null;
+        const pixels = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
+        link.blank = .{ .width = link.width, .height = link.height, .pitch = pitch, .format = .rgb565, .pixels = @ptrFromInt(pixels) };
+        link.blank_memory = memory;
+        link.blank_size = size;
+        link.blank_filled = false;
+    }
+    const blank = &link.blank;
+    const bytes = @min(row.width, blank.width) * 2;
+    const first: [*]u8 = @ptrCast(blank.pixels.?);
+    const wanted: [*]const u8 = @ptrCast(source);
+    if (link.blank_filled and sameBytes(first[0..bytes], wanted[0..bytes])) return blank;
+    var at: u32 = 0;
+    while (at < blank.height) : (at += 1) @memcpy(first[at * blank.pitch ..][0..bytes], wanted[0..bytes]);
+    // Out of the cache, for the engine to read.
+    var written: u32 = blank.pitch * blank.height;
+    _ = sys.CachePreDMA(@ptrCast(first), &written, 0);
+    link.blank_filled = true;
+    return blank;
+}
+
+fn sameBytes(a: []const u8, b: []const u8) bool {
+    for (a, b) |x, y| if (x != y) return false;
+    return true;
 }
 
 /// The display lines band `index` of `bands` covers: from its line to
@@ -114,6 +164,11 @@ pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.Rtg
     for (link.shown[0..count], 0..) |band, index| {
         const end = endOf(link.shown[0..count], index, link.height);
         if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
+            if (blankOf(link, sys, band.bitmap)) |blank| {
+                if (end > band.line) convertAround(link, engine, sys, blank, band.line, band.line, end - band.line, watched, keep);
+                into[index] = .{ .bitmap = &link.whole, .line = band.line, .origin = 0 };
+                continue;
+            }
             if (end > band.line) convertAround(link, engine, sys, band.bitmap, 0, band.line, 1, watched, keep);
             link.rows[index] = link.whole;
             link.rows[index].pixels = @ptrFromInt(link.pixels + @as(usize, band.line) * link.pitch);
@@ -138,7 +193,16 @@ pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.
         const end = endOf(shown, index, link.height);
         if (end <= band.line) continue;
         if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (y == 0) convertAround(link, engine, sys, bitmap, 0, band.line, 1, watched, keep);
+            if (y != 0) continue;
+            // Shown as lines of `blank`: converted again only when the row
+            // is not the one they hold.
+            if (link.blank.pixels != null) {
+                if (link.blank_filled and sameRow(link, bitmap)) continue;
+                const blank = blankOf(link, sys, bitmap) orelse continue;
+                convertAround(link, engine, sys, blank, band.line, band.line, end - band.line, watched, keep);
+                continue;
+            }
+            convertAround(link, engine, sys, bitmap, 0, band.line, 1, watched, keep);
             continue;
         }
         // The band's rows, and the part of them drawn.
@@ -149,6 +213,15 @@ pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.
         if (to <= from) continue;
         convertAround(link, engine, sys, bitmap, from, from + band.origin, to - from, watched, keep);
     }
+}
+
+/// Whether `row`'s first row is what `blank` holds.
+fn sameRow(link: *const Link, row: *const rtg.RtgBitMap) bool {
+    const source = row.pixels orelse return false;
+    const bytes = @min(row.width, link.blank.width) * 2;
+    const held: [*]const u8 = @ptrCast(link.blank.pixels.?);
+    const wanted: [*]const u8 = @ptrCast(source);
+    return sameBytes(held[0..bytes], wanted[0..bytes]);
 }
 
 /// `convert`, leaving `keep` alone: the lines above and below it whole,
