@@ -141,6 +141,9 @@ const modules = [_]Program{
     .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
     .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
     .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device" },
+    .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device" },
+    .{ .disk = "devs/usb/acm.device", .source = "devs/usb/serial/acm.zig", .name = "acm.device" },
+    .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 
@@ -230,6 +233,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Binary", .source = "devs/datatypes/Binary" },
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/ETH0" },
     .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/WLAN0" },
+    .{ .disk = "devs/NetInterfaces/USB0", .source = "devs/NetInterfaces/USB0" },
     // ENVARC: as a fresh disk has it: what each settings file says, and
     // its value to start with.
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },

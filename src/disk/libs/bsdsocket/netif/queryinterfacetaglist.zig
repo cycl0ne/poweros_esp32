@@ -106,5 +106,6 @@ fn state(interface: *const _netif.Interface) u32 {
     if (interface.dhcp != 0) bits |= bsd.IFSTATE_DHCP;
     if (interface.bound != 0) bits |= bsd.IFSTATE_BOUND;
     if (interface.link_local != 0) bits |= bsd.IFSTATE_LINKLOCAL;
+    if (interface.no_arp != 0 and interface.loopback == 0) bits |= bsd.IFSTATE_POINTTOPOINT;
     return bits;
 }

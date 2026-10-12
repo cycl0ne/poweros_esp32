@@ -150,6 +150,22 @@ pub fn forget(base: *UsbBase) void {
     base.drivers = null;
 }
 
+/// Whether some driver's table has an entry an interface of this class,
+/// subclass and protocol, on a device of this vendor and product,
+/// matches: how a device's configuration is chosen. On a process.
+pub fn anyTakes(base: *UsbBase, vendor_id: u16, product_id: u16, class: u8, subclass: u8, protocol: u8) bool {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.drivers_lock);
+    defer sys.ReleaseSemaphore(&base.drivers_lock);
+    const drivers = table(base) orelse return false;
+    for (drivers.list[0..drivers.count]) |*driver| {
+        for (driver.matches[0..driver.match_count]) |entry| {
+            if (usbclass.matches(entry, vendor_id, product_id, class, subclass, protocol)) return true;
+        }
+    }
+    return false;
+}
+
 /// A candidate: a driver and how specific its best entry for the
 /// interface is.
 const Candidate = struct { driver: *Driver, score: u32, priority: i8 };

@@ -25,6 +25,7 @@
 //! | `Address6`, `Prefix6`, `Gateway6` | an IPv6 address, its prefix length (64), and a router for the IPv6 default route |
 //! | `PrivacyAddresses` | `YES`: beside each address from a router's prefix a temporary one, renewed daily, that connections going out are made from (RFC 8981); `NO` (the default) |
 //! | `SerialDevice`, `SerialUnit`, `Baud` | the serial line under a SLIP device: a device with serial.device's API ("serial.device"), its unit (1) and speed (115200) |
+//! | `Start` | `BOOT` (the default): `AddNetInterface ALL` brings it up; `DEVICE`: its device does, when its hardware first comes (a USB adapter plugged in), and `ALL` leaves it |
 //!
 //! Every keyword not in the table is an error, reported with its line and
 //! column: a misspelt one would otherwise leave the interface without what
@@ -34,7 +35,7 @@ const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
 const Scanner = sdk.dos.keywords.Scanner;
 
-pub const Keyword = enum { device, unit, configure, address, netmask, gateway, nameserver, domain, mtu, read_requests, write_requests, tcp_send_space, tcp_recv_space, network, ipv6, interface_id, address6, prefix6, gateway6, privacy_addresses, serial_device, serial_unit, baud };
+pub const Keyword = enum { device, unit, configure, address, netmask, gateway, nameserver, domain, mtu, read_requests, write_requests, tcp_send_space, tcp_recv_space, network, ipv6, interface_id, address6, prefix6, gateway6, privacy_addresses, serial_device, serial_unit, baud, start };
 
 const names = [_]struct { name: []const u8, keyword: Keyword }{
     .{ .name = "DEVICE", .keyword = .device },
@@ -60,6 +61,7 @@ const names = [_]struct { name: []const u8, keyword: Keyword }{
     .{ .name = "SERIALDEVICE", .keyword = .serial_device },
     .{ .name = "SERIALUNIT", .keyword = .serial_unit },
     .{ .name = "BAUD", .keyword = .baud },
+    .{ .name = "START", .keyword = .start },
 };
 
 /// IPv6 text as the file gave it, and where, for the program to read -
@@ -108,11 +110,13 @@ pub const Config = struct {
     serial_device: [64:0]u8 = @splat(0),
     serial_unit: ?u32 = null,
     baud: u32 = 0,
+    /// Brought up by its device rather than by `ALL`.
+    by_device: bool = false,
 };
 
 /// What is wrong, and where.
 pub const Problem = struct {
-    kind: enum { none, unknown, equal, number, text, address, configure, missing, ipv6, interface_id, yes_no } = .none,
+    kind: enum { none, unknown, equal, number, text, address, configure, missing, ipv6, interface_id, yes_no, start } = .none,
     /// The token it is about, and where it began.
     token: [sdk.dos.keywords.max_token:0]u8 = @splat(0),
     line: u32 = 0,
@@ -188,6 +192,7 @@ pub fn read(scanner: *Scanner, config: *Config) Problem {
             .ipv6 => config.ipv6 = if (keywordIs(value, "AUTO")) bsd.IFIPV6_AUTO else if (keywordIs(value, "FIXED")) bsd.IFIPV6_FIXED else if (keywordIs(value, "OFF")) bsd.IFIPV6_OFF else return problem(scanner, .ipv6),
             .interface_id => config.interface_id = if (keywordIs(value, "STABLE")) bsd.IFID_STABLE else if (keywordIs(value, "EUI64")) bsd.IFID_EUI64 else return problem(scanner, .interface_id),
             .privacy_addresses => config.privacy_addresses = if (keywordIs(value, "YES")) true else if (keywordIs(value, "NO")) false else return problem(scanner, .yes_no),
+            .start => config.by_device = if (keywordIs(value, "DEVICE")) true else if (keywordIs(value, "BOOT")) false else return problem(scanner, .start),
             .address6, .gateway6 => {
                 const into = if (keyword == .address6) &config.address6 else &config.gateway6;
                 if (scanner.len >= into.text.len) return problem(scanner, .address);
@@ -368,6 +373,20 @@ test "a SLIP line's keywords" {
     try testing.expectEqual(@as(?u32, null), config.serial_unit);
     config = .{};
     try testing.expectEqual(.number, readText("Device = x\nConfigure = DHCP\nBaud = fast\n", &config).kind);
+}
+
+test "who brings it up" {
+    var config: Config = .{};
+    try testing.expectEqual(.none, readText("Device = usb/ecm.device\nConfigure = DHCP\nStart = device\n", &config).kind);
+    try testing.expect(config.by_device);
+    config = .{};
+    try testing.expectEqual(.none, readText("Device = x\nConfigure = DHCP\nStart = BOOT\n", &config).kind);
+    try testing.expect(!config.by_device);
+    config = .{};
+    try testing.expectEqual(.none, readText("Device = x\nConfigure = DHCP\n", &config).kind);
+    try testing.expect(!config.by_device);
+    config = .{};
+    try testing.expectEqual(.start, readText("Device = x\nConfigure = DHCP\nStart = later\n", &config).kind);
 }
 
 test "DHCP needs no address" {

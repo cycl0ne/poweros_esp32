@@ -8,7 +8,8 @@
 //!   UHCMD_CONTROLXFER  a control transfer: setup, data, status
 //!   UHCMD_BULKXFER     a bulk transfer, in rounds of the channel's buffer
 //!   UHCMD_INTXFER      an interrupt transfer, asked every `interval` ms
-//!                      until the device answers
+//!                      until the device answers; the request's next
+//!                      transfer not before `interval` after that
 //!   UHCMD_ISOXFER      IOERR_NOCMD
 //!   UHCMD_USBRESET     every transfer answered, the controller started
 //!                      afresh
@@ -54,7 +55,7 @@ const roothub = @import("roothub.zig");
 
 pub const DEVICE_NAME = _usbotg.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

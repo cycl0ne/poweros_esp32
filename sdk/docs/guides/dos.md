@@ -742,7 +742,10 @@ boards, UART0 in QEMU - which every Open of it shares. The same handler
 runs a console on any device that reads and writes a stream: a node
 whose startup is a FileSysStartupMsg naming the device and its unit, as
 `C:net/ShellServer` adds one for each connection (`TELNET<n>:` on
-telnet.device, `SSH<n>:` on ssh.device). Such a device's
+telnet.device, `SSH<n>:` on ssh.device), and as `DEVS:MountList` has
+for the serial lines: `AUX1:` on the second UART, `AUX2:` on a USB FTDI
+adapter, `AUX3:` on a USB CDC-ACM one (`Mount AUX2:`, then `Run NewShell
+AUX2:`). Such a device's
 `IOERR_ENDOFSTREAM` - the peer gone, or its input ended - ends the
 console's input as Ctrl-\ does, raw or cooked.
 

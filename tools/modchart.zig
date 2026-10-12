@@ -67,11 +67,14 @@ const run_time = [_][2][]const u8{
     .{ "tls.library", "bsdsocket.library" },
     // The class drivers in DEVS:usb/ whose tags match what is plugged in.
     .{ "usb.library", "hid.device" },
+    .{ "usb.library", "disk.device" },
     // The class a file's type names.
     .{ "datatypes.library", datatype_classes },
     // Opened by an SDK helper the module calls (sdk.anvil.DropTarget),
     // which names it where the module's code does not.
     .{ "asl.library", "anvil.library" },
+    // The serial unit (sdk.devices.serialunit), for a break's time.
+    .{ "serial.device", "timer.device" },
 };
 
 /// Where the ROM's modules are under <src dir>, and what their folder adds

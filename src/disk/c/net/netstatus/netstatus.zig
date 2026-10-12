@@ -24,7 +24,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "NetStatus";
-const VERSION_STRING = "\x00$VER: NetStatus 1.3 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: NetStatus 1.4 (12.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACES/S,ROUTES/S,SOCKETS/S,ARP/S,NEIGHBORS/S,COUNTS/S,ALL/S";
@@ -241,14 +241,17 @@ fn interfaces(dl: *DosBase, sb: *SocketBase, first: *bool) bool {
         });
         addresses6(dl, sb, name, table6[0..shown6]);
         const link = device orelse continue;
-        // A line between two ends has no address of its own.
-        const station = for (hardware) |octet| {
+        // A line between two ends has no address of its own; an
+        // Ethernet link may have none yet (a USB adapter not plugged in).
+        const known = for (hardware) |octet| {
             if (octet != 0) break true;
         } else false;
-        if (station) {
+        if (state & bsd.IFSTATE_POINTTOPOINT != 0) {
+            _ = Printf(dl, "         a line on %s unit %u", .{ link, unit });
+        } else if (known) {
             _ = Printf(dl, "         %02x:%02x:%02x:%02x:%02x:%02x on %s unit %u", .{ hardware[0], hardware[1], hardware[2], hardware[3], hardware[4], hardware[5], link, unit });
         } else {
-            _ = Printf(dl, "         a line on %s unit %u", .{ link, unit });
+            _ = Printf(dl, "         no address yet on %s unit %u", .{ link, unit });
         }
         if (speed >= 1_000_000) {
             _ = Printf(dl, ", %ld Mbit/s", .{speed / 1_000_000});

@@ -22,7 +22,11 @@
 //! NAK timeout, which the task's tick checks. An interrupt endpoint that
 //! has nothing halts the channel: the request is parked and asked again
 //! once its interval has passed, so a keyboard nobody types on holds no
-//! channel, and costs a wake-up per interval.
+//! channel, and costs a wake-up per interval. One that answers is not
+//! asked again before its interval either: the next transfer on the same
+//! request waits parked until then, so an endpoint that always has
+//! something to say - a network adapter's notifications - is read once
+//! per interval, not as fast as its driver asks.
 //!
 //! **The data toggle** is counted from the packets a round moved, and
 //! left in the request: the controller's own PID field is not read back.
@@ -237,6 +241,18 @@ pub fn takeRequests(host: *Host) void {
         if (host.root.status & d.USB_PORT_STAT_ENABLE == 0) {
             _usbotg.reply(host, req, usbhc.UHIOERR_DETACHED);
             continue;
+        }
+        if (req.std.req.command == usbhc.UHCMD_INTXFER and req.nak_timeout == 0) {
+            // Its interval since the last answer not over yet: parked
+            // until it is. A turn further off than one interval is not
+            // this request's - a new one's word - and is not waited for.
+            const next: u32 = @truncate(req.hc_private[_usbotg.PRIV_NEXT]);
+            const time = _usbotg.now(host);
+            if (!_usbotg.reached(time, next) and next -% time <= @max(req.interval, 1)) {
+                req.hc_private[_usbotg.PRIV_DUE] = next;
+                sys.AddTail(&host.parked, _usbotg.nodeOf(req));
+                continue;
+            }
         }
         if (req.nak_timeout != 0) {
             req.hc_private[_usbotg.PRIV_FLAGS] |= _usbotg.PRIVF_DEADLINE;
@@ -494,6 +510,9 @@ fn finish(host: *Host, n: u32, err: i8) void {
     channel.request = null;
     channel.stage = .idle;
     req.std.actual = channel.done;
+    if (req.std.req.command == usbhc.UHCMD_INTXFER) {
+        req.hc_private[_usbotg.PRIV_NEXT] = _usbotg.now(host) +% @max(req.interval, 1);
+    }
     _usbotg.reply(host, req, err);
 }
 

@@ -37,6 +37,35 @@ AUX1:
 	Priority  = 5
 #
 
+/* A console on the first USB serial adapter with an FTDI chip in it:
+ * NewShell AUX2: gives a terminal on the adapter's other end a shell.
+ * usb/ftdi.device's unit 0 is the first such adapter plugged in, and
+ * opens before one is: the shell waits for it.
+ */
+AUX2:
+	Handler   = con-handler
+	Device    = usb/ftdi.device
+	Unit      = 0
+	Baud      = 115200
+	Control   = "8N1/NONE"
+	StackSize = 16384
+	Priority  = 5
+#
+
+/* The same on the first USB serial line of the communications class
+ * (CDC-ACM): a microcontroller's USB serial port, or another board's
+ * console - an ESP32-S3's USB port is one.
+ */
+AUX3:
+	Handler   = con-handler
+	Device    = usb/acm.device
+	Unit      = 0
+	Baud      = 115200
+	Control   = "8N1/NONE"
+	StackSize = 16384
+	Priority  = 5
+#
+
 /* The card in the slot, on a board that has one. Both halves are on
  * this disk rather than in the ROM: the handler is HANDLERS:fat-handler,
  * which dos loads the first time the device is used, and it opens

@@ -157,8 +157,11 @@ pub const PRIV_FLAGS = 0;
 /// hc_private[1]: a parked transfer's next turn; a transfer's deadline
 /// when it has a NAK timeout. In the task's milliseconds.
 pub const PRIV_DUE = 1;
-/// hc_private[2]: not used yet.
-pub const PRIV_SPARE = 2;
+/// hc_private[2]: an interrupt transfer's earliest next turn, set as it
+/// is answered and kept for the next transfer on the same request (a
+/// pipe's): an endpoint is asked at most once per interval, also one
+/// that always has something to say.
+pub const PRIV_NEXT = 2;
 /// hc_private[3]: AbortIO asked for it - a word of its own, written by
 /// BeginIO and AbortIO only, so the task never writes over it.
 pub const PRIV_ABORT = 3;

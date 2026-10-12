@@ -601,6 +601,8 @@ pub const IFSTATE_DHCP: u32 = 1 << 2;
 pub const IFSTATE_BOUND: u32 = 1 << 3;
 /// The address is a link-local one, taken while DHCP gets no answer.
 pub const IFSTATE_LINKLOCAL: u32 = 1 << 4;
+/// A line between two ends (SLIP): no hardware addresses, no ARP.
+pub const IFSTATE_POINTTOPOINT: u32 = 1 << 5;
 
 /// ConfigureInterfaceTagList takes the IFA_ tags that make sense on a
 /// running interface: IFA_Address, IFA_NetMask, IFA_Gateway, IFA_MTU,

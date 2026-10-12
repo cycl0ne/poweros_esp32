@@ -383,6 +383,21 @@ pub fn start(stack: *StackBase, interface: *Interface) void {
     _ = addAddress(stack, interface, address, 64, .tentative);
 }
 
+/// `interface`'s Ethernet address changed - another adapter on its
+/// device: the addresses made from the old one (the link-local one, and
+/// those made from routers' prefixes) let go, and the link-local one made
+/// and checked again. The next router advertisement makes the others.
+/// Under the lock.
+pub fn newHardware(stack: *StackBase, interface: *Interface) void {
+    if (interface.ip6.enabled == 0 or interface.loopback != 0) return;
+    for (&interface.ip6.addresses) |*entry| {
+        if (entry.state == .unused) continue;
+        if (entry.address.isLinkLocal() or entry.autoconf != 0) removeAddress(stack, entry);
+    }
+    const address = addressFor(stack, interface, &link_local_prefix, 0);
+    _ = addAddress(stack, interface, address, 64, .tentative);
+}
+
 /// IPv6 off for `interface`, which is going: every address, neighbor and
 /// report let go.
 pub fn stop(stack: *StackBase, interface: *Interface) void {

@@ -169,7 +169,8 @@ ESP32-P4 boards and in Espressif's QEMU.
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
   multicast with IGMP and MLD) on Ethernet (the ESP32-P4's MAC, and
-  QEMU's), the ESP32-S3's Wi-Fi (WPA2) and SLIP over a serial line, and
+  QEMU's), USB Ethernet adapters, the ESP32-S3's Wi-Fi (WPA2) and SLIP
+  over a serial line, and
   a shell over Telnet or SSH (`C:net/ShellServer`, `SSH` with password
   or ssh-ed25519 keys and a
   post-quantum key exchange, and the files over sftp and scp) - and the
@@ -185,8 +186,11 @@ ESP32-P4 boards and in Espressif's QEMU.
   in `DEVS:usb/`, each loaded only when something it drives is plugged
   in - `usb/hid.device` makes a USB keyboard and mouse the system's own
   keyboard and mouse, `usb/disk.device` a stick or a card reader's slot
-  a drive (`USB0:`, `USB1:`, ...) with its volume on the desktop. Things
-  are plugged in and pulled out while it runs.
+  a drive (`USB0:`, `USB1:`, ...) with its volume on the desktop,
+  `usb/ftdi.device` and `usb/acm.device` FTDI and CDC-ACM serial
+  adapters serial lines (`AUX2:`, `AUX3:`), `usb/ecm.device` a CDC
+  Ethernet adapter the network's `usb0`. Things are plugged in and
+  pulled out while it runs.
   `C:USB` starts and stops a bus (at boot where the socket can only be a
   host), `C:USBInfo` lists what is on it. See the
   [USB guide](sdk/docs/guides/usb.md).
@@ -219,7 +223,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 |---|---|---|
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven; the battery's voltage through the IO expander, not yet tried on the board |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; the battery's voltage on GPIO8, not yet tried on the board |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards, mice and sticks through a hub, plugged in and out while it runs (`-Dusb-disk` plugs in a stick) |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards, mice, sticks, an FTDI serial adapter and a CDC Ethernet adapter through a hub, plugged in and out while it runs (`-Dusb-disk` plugs in a stick) |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run (the emulator runs some loaded programs wrongly; the boards run them); serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru with its call chain and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; USB sticks (`usb/disk.device`) in its image, not tried there yet; a microSD card as `SD0:` (4 bits at 20 MHz, about 2.8 MB/s both ways); the battery's voltage and external power once its solder jumpers are closed (shipped open) and their two lines are in its board list; audio.device for its ES8311 is in its image, not tried there yet |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), four-channel audio in stereo on its speakers (`C:test/Audio`) |
@@ -308,7 +312,7 @@ More build steps and options:
 | `-Dssh=2222` | forward that host port to the machine's port 22 (`C:net/ShellServer SSH`); qemu-display forwards 2222 itself |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |
 | `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
-| `-Dusb=usb-hub,usb-kbd,usb-mouse` | the `qemu*` steps' USB devices, QEMU's names (`usb-tablet`, `usb-serial`, `usb-net` too); an item with `=` is a property of the one before (`usb-kbd,id=kb1`, for `device_del kb1` in the monitor) |
+| `-Dusb=usb-hub,usb-kbd,usb-mouse` | the `qemu*` steps' USB devices, QEMU's names (`usb-tablet`, `usb-serial` on a pty, `usb-net` on a network of its own, 10.0.3.0/24, too); an item with `=` is a property of the one before (`usb-kbd,id=kb1`, for `device_del kb1` in the monitor) |
 | `-Dusb-disk=stick.img` | a USB stick in the `qemu*` steps, its contents that image |
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |

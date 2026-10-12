@@ -86,8 +86,8 @@ tags and constants, each with its doc comment.
   the bus in QEMU.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
-  class driver, keyboards and mice as sources, writing a controller, and
-  USB in QEMU.
+  class driver, keyboards and mice as sources, sticks, serial and
+  Ethernet adapters, writing a controller, and USB in QEMU.
 - [Displays](guides/rtg.md) - rtg.library: drivers and boards, modes,
   buffers, handing on what was drawn, showing a buffer, several at once
   in bands, the engine, turning the picture, the pointer, events,
@@ -163,6 +163,9 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket | [`usbhc.zig`](../devices/usbhc.zig) |
 | usb/hid.device | `DEVS:usb/` | USB keyboards and mice, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
 | usb/disk.device | `DEVS:usb/` | USB sticks and card readers as block devices, a unit a drive (`USB<n>:`), and SCSI commands to them; a class driver | [`trackdisk.zig`](../devices/trackdisk.zig), [`scsidisk.zig`](../devices/scsidisk.zig) |
+| usb/ftdi.device | `DEVS:usb/` | FTDI's USB serial chips, a unit a line, with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
+| usb/acm.device | `DEVS:usb/` | the communications class's USB serial lines (CDC-ACM), with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
+| usb/ecm.device | `DEVS:usb/` | USB Ethernet adapters (CDC-ECM) as a network device, a unit a link; a class driver | [`network.zig`](../devices/network.zig) |
 
 ## Resources
 

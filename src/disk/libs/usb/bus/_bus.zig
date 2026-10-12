@@ -331,25 +331,77 @@ pub fn attach(bus: *Bus, parent: ?*Hub, port: u8, speed: u8) ?*Device {
     return device;
 }
 
-/// The device's descriptors, configuration and strings read, and its
-/// first configuration set. False if it did not answer.
-fn setUp(bus: *Bus, device: *Device) bool {
+/// Configuration `index`'s descriptors read into the device. False if it
+/// did not answer them.
+fn readConfig(bus: *Bus, device: *Device, index: u8) bool {
     const sys = bus.usb_base.sys_base;
-    const descriptor_bytes: *[@sizeOf(d.DeviceDescriptor)]u8 = @ptrCast(&device.public.descriptor);
-    const got = getDescriptor(bus, device, d.USB_DT_DEVICE, 0, 0, descriptor_bytes) orelse return false;
-    if (got < @sizeOf(d.DeviceDescriptor)) return false;
-
     var head: [@sizeOf(d.ConfigDescriptor)]u8 = undefined;
-    const head_got = getDescriptor(bus, device, d.USB_DT_CONFIG, 0, 0, &head) orelse return false;
+    const head_got = getDescriptor(bus, device, d.USB_DT_CONFIG, index, 0, &head) orelse return false;
     if (head_got < head.len) return false;
     const config_head: *align(1) const d.ConfigDescriptor = @ptrCast(&head);
     const total: u32 = @max(config_head.total_length, @sizeOf(d.ConfigDescriptor));
     const config_memory = sys.AllocMem(total, exec.MEMF_CLEAR) orelse return false;
     device.config_memory = @ptrCast(config_memory);
     device.config_size = total;
-    const config_got = getDescriptor(bus, device, d.USB_DT_CONFIG, 0, 0, device.config_memory.?[0..total]) orelse return false;
+    const config_got = getDescriptor(bus, device, d.USB_DT_CONFIG, index, 0, device.config_memory.?[0..total]) orelse {
+        dropConfig(bus, device);
+        return false;
+    };
     device.public.config = device.config_memory;
     device.public.config_length = config_got;
+    return true;
+}
+
+fn dropConfig(bus: *Bus, device: *Device) void {
+    if (device.config_memory) |config| bus.usb_base.sys_base.FreeMem(config, device.config_size);
+    device.config_memory = null;
+    device.public.config = null;
+    device.public.config_length = 0;
+}
+
+/// Whether a class driver takes an interface of the configuration read;
+/// a hub is the library's own, and counts.
+fn driverTakes(bus: *Bus, device: *Device) bool {
+    const bytes = device.public.config.?[0..device.public.config_length];
+    const ids = device.public.descriptor;
+    var at: usize = 0;
+    while (at + 2 <= bytes.len) {
+        const length = bytes[at];
+        if (length < 2 or at + length > bytes.len) break;
+        if (bytes[at + 1] == d.USB_DT_INTERFACE and length >= 9 and bytes[at + 3] == 0) {
+            const class = bytes[at + 5];
+            if (class == d.USB_CLASS_HUB) return true;
+            if (_bind.anyTakes(bus.usb_base, ids.vendor_id, ids.product_id, class, bytes[at + 6], bytes[at + 7])) return true;
+        }
+        at += length;
+    }
+    return false;
+}
+
+/// The device's descriptors, configuration and strings read, and its
+/// configuration chosen and set. False if it did not answer.
+fn setUp(bus: *Bus, device: *Device) bool {
+    const descriptor_bytes: *[@sizeOf(d.DeviceDescriptor)]u8 = @ptrCast(&device.public.descriptor);
+    const got = getDescriptor(bus, device, d.USB_DT_DEVICE, 0, 0, descriptor_bytes) orelse return false;
+    if (got < @sizeOf(d.DeviceDescriptor)) return false;
+
+    // The first configuration a class driver takes something in - a
+    // device may offer a vendor's own first and a standard class's after
+    // it - else the first.
+    const count = @max(device.public.descriptor.num_configurations, 1);
+    var index: u8 = 0;
+    while (index < count) : (index += 1) {
+        if (!readConfig(bus, device, index)) {
+            if (index == 0) return false;
+            continue;
+        }
+        if (count == 1 or driverTakes(bus, device)) break;
+        dropConfig(bus, device);
+    } else {
+        // None taken: the first, as the device lists it.
+        if (!readConfig(bus, device, 0)) return false;
+    }
+    const config_head: *align(1) const d.ConfigDescriptor = @ptrCast(device.config_memory.?);
 
     readStrings(bus, device);
 

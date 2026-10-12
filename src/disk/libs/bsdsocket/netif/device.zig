@@ -26,8 +26,9 @@
 //! back - by ConfigureInterfaceTagList's IFA_State or by itself - is
 //! seen. While it is off, the interface is down: nothing is sent, and a
 //! read the device answers with S2ERR_OUTOFSERVICE waits idle instead of
-//! going back at once. When it comes back the reads go out again and DHCP
-//! renews its lease.
+//! going back at once. When it comes back the reads go out again, the
+//! device's address is asked again - a USB adapter plugged in brings its
+//! own - and DHCP renews its lease.
 //!
 //! **Groups.** The Ethernet groups the interface's IPv6 listens on - all
 //! nodes, and each address's solicited-node group - are joined on the
@@ -268,13 +269,36 @@ fn watch(stack: *StackBase, device: *Device) void {
 }
 
 /// The link on or off: the interface up or down with it, and on the way
-/// up DHCP renewing. Under the lock.
+/// up its address asked again and DHCP renewing. Under the lock.
 pub fn setLink(stack: *StackBase, device: *Device, online: bool) void {
     if (online == (device.offline == 0)) return;
     const interface = device.interface;
     device.offline = @intFromBool(!online);
     interface.up = @intFromBool(online);
-    if (online) @import("../dhcp/_dhcp.zig").linkUp(stack, interface);
+    if (!online) return;
+    if (device.point_to_point == 0) askStation(stack, device);
+    @import("../dhcp/_dhcp.zig").linkUp(stack, interface);
+}
+
+/// The address the device runs with, asked again as its link comes up:
+/// a device whose hardware comes and goes - a USB adapter - runs with
+/// the address of the one plugged in now. A changed address is the
+/// interface's from then on, and IPv6 makes its link-local address
+/// again from it. The device answers at once. Under the lock.
+fn askStation(stack: *StackBase, device: *Device) void {
+    const sys = stack.sys_base;
+    const port = sys.CreateMsgPort() orelse return;
+    defer sys.DeleteMsgPort(port);
+    var req = device.opened;
+    req.req.message.reply_port = port;
+    req.req.command = net.S2_GETSTATIONADDRESS;
+    req.req.flags = 0;
+    if (sys.DoIO(&req.req) != 0) return;
+    const station: [6]u8 = req.src_addr[0..6].*;
+    if (eqlStation(station, device.station)) return;
+    device.station = station;
+    device.interface.hardware = station;
+    _ip6.newHardware(stack, device.interface);
 }
 
 /// `request` sent to read the next packet of its type, with a new frame;

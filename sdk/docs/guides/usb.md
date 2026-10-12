@@ -10,20 +10,24 @@ speaks to: a USB keyboard is keyboard.device's keyboard, so nothing
 above it knows where the keys came from.
 
 This guide is the bus first, then looking at what is on it, driving a
-device from a program, and writing a class driver or a controller.
+device from a program, writing a class driver, the drivers there are -
+keyboards and mice, sticks, serial and Ethernet adapters - and writing a
+controller.
 
 ## The pieces
 
 ```
- programs, input.device      keyboard.device, mouse.device (sources)     fat-handler on USB<n>:
-                                        ^                                     ^  DEVIF_BLOCK
- class drivers, DEVS:usb/     usb/hid.device  (DEVIF_USBCLASS)            usb/disk.device
-                                        |  USBClassBind, USBClassUnbind
- the bus                      usb.library: a process per bus, hubs, pipes
-                                        |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
- the controller               usbotg.device (the chip's DWC2), a unit per socket
-                                        |
- the board                    PARTKIND_USB in its system tag list
+ above them             keyboard.device,   fat-handler      con-handler       bsdsocket.library
+                        mouse.device       on USB<n>:       on AUX2:, AUX3:   on usb0
+                             ^                  ^                ^                 ^
+ class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device
+ DEVS:usb/                                                  usb/acm.device
+                             |  USBClassBind, USBClassUnbind (DEVIF_USBCLASS)
+ the bus                usb.library: a process per bus, hubs, pipes
+                             |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
+ the controller         usbotg.device (the chip's DWC2), a unit per socket
+                             |
+ the board              PARTKIND_USB in its system tag list
 ```
 
 | Piece | Where | What it is |
@@ -32,6 +36,9 @@ device from a program, and writing a class driver or a controller.
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards and mice of the boot class, into keyboard.device and mouse.device |
 | `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `USB<n>:` each |
+| `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
+| `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
+| `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
 | `C:USB` | | starts and stops a bus |
 | `C:USBInfo` | | lists what is on the buses |
 
@@ -59,9 +66,10 @@ port is the serial console and the JTAG as the chip starts - is left to
 A started bus has a process of its own. It sets up the root hub, then
 each device as it comes: the port debounced and reset, the device asked
 at address 0 for its first eight bytes, given an address, asked for its
-descriptors, its first configuration and its strings, and set to that
-configuration. A hub is the library's own; every other interface is
-offered to the class drivers. A device that goes takes everything that
+descriptors and its strings, and set to a configuration: the first of
+its configurations with an interface some driver in `DEVS:usb/` takes,
+or its first if none has. A hub is the library's own; every other
+interface is offered to the class drivers. A device that goes takes everything that
 hangs off it with it: each driver is told, the device leaves the list,
 and its address is free again.
 
@@ -282,6 +290,73 @@ ready
 The bus runs at full speed, as for every device so far, so a stick
 moves at most about a megabyte a second.
 
+## Serial adapters
+
+`usb/ftdi.device` drives FTDI's serial chips - the FT232R and FT232BM,
+the FT2232, FT232H and FT230X - matched by vendor and product, since
+they say nothing of a class. `usb/acm.device` drives the communications
+class's serial lines (CDC-ACM): a microcontroller board's USB port, a
+modem, an ESP32-S3's own USB-Serial-JTAG port. Both have serial.device's
+API (sdk/devices/serial.zig) through the same unit code as the ROM's
+serial ports (sdk/devices/serialunit.zig): the rate and the frame with
+SDCMD_SETPARAMS, breaks, the modem lines in SDCMD_QUERY, reads that end
+at a termination character.
+
+**Units are lines, not adapters.** An adapter plugged in takes the
+lowest free unit (four in each driver); pulled out, it leaves the unit
+without a line - a read waits, a write fails with `SerErr_NoDSR` - until
+the next one comes. A program may open a unit before anything is
+plugged in, as it may a serial port with nothing on its cable.
+
+`DEVS:MountList` has `AUX2:` on usb/ftdi.device unit 0 and `AUX3:` on
+usb/acm.device unit 0, both con-handler at 115200 baud, 8N1: a shell on
+the far end of an FTDI cable is
+
+```
+1.System:> Mount AUX2:
+1.System:> Run NewShell AUX2:
+```
+
+DTR and RTS are both on while an adapter is bound - on together, so a
+board that resets on DTR alone, as an ESP32 does, is not reset. An FTDI
+chip sends what came in every 4 ms at the latest; a CDC-ACM device when
+it likes, usually at once. The line's errors and breaks the adapter
+reports come as the ROM's ports' do: `io_Status` and SDCMD_QUERY.
+
+## Ethernet adapters
+
+`usb/ecm.device` drives Ethernet adapters of the communications class's
+Ethernet Control Model (CDC-ECM) - adapters that speak it, a phone's or
+a Linux board's USB network, QEMU's `usb-net` - as a network device
+(sdk/devices/network.zig). Its units are links: an adapter plugged in
+takes the lowest free unit (two), and the unit runs with the adapter's
+Ethernet address. Pulled out, the unit loses its carrier and goes off
+line - what was waiting is answered - until the next one comes, whose
+address it then takes.
+
+**The interface is made by the device.** The first time an adapter
+comes into unit n, the device's own DOS process runs `C:net/AddNetInterface
+USB<n>`, which brings up `DEVS:NetInterfaces/USB<n>` as `usb<n>` - DHCP,
+in the file `USB0` has. The file says `Start = DEVICE`, so the boot's
+`AddNetInterface ALL` leaves it out, and nothing of the device is loaded
+where no adapter is ever plugged in. The interface stays from then on:
+down while the unit has no adapter, up with the next, whose address the
+stack then takes - IPv6 makes its link-local address again from it - and
+DHCP asks again:
+
+```
+1.System:> NetStatus INTERFACES
+Name     Address         Netmask         State               MTU ...
+usb0     10.0.3.15       255.255.255.0   up dhcp bound      1500 ...
+         40:54:00:12:34:57 on usb/ecm.device unit 0, 12 Mbit/s, gateway 10.0.3.2
+```
+
+Many adapters speak a vendor's own protocol, or Microsoft's RNDIS,
+beside or instead of ECM. One that has an ECM configuration as well is
+set to it, as usb.library sets a device to the first configuration a
+driver takes; QEMU's `usb-net` has RNDIS first and ECM second. The bus
+runs at full speed: an adapter moves at most about a megabyte a second.
+
 ## Writing a controller
 
 A host controller is a device that speaks `DEVIF_USBHC`
@@ -294,6 +369,10 @@ keeps no table of devices.
 
 - `UHCMD_CONTROLXFER`, `UHCMD_BULKXFER`, `UHCMD_INTXFER`;
   `UHCMD_ISOXFER` is in the set, `IOERR_NOCMD` until a controller does it.
+- An interrupt endpoint is asked once per interval: one with nothing
+  to say is asked again when its interval has passed, and a request's
+  next transfer after an answer waits out the interval too, so a device
+  that always answers is not asked as fast as its driver sends.
 - Its root port is a hub: control transfers to the root hub's address -
   0 until SET_ADDRESS gives it one - are answered with a hub's
   descriptors and the port's status, and an interrupt transfer on its
@@ -320,6 +399,17 @@ In the monitor (Ctrl-A C on the serial console), `device_del kb1` pulls
 the keyboard out, `device_add usb-kbd,id=kb2` plugs one in, `info usb`
 lists them. QEMU's keyboards and mice are full speed, and its controller
 has no device mode.
+
+`usb-serial` is an FTDI FT232. Without a `chardev=` it gets a pty of its
+own, whose name QEMU prints as it starts (`char device redirected to
+/dev/pts/5`); a terminal on it (`screen /dev/pts/5 115200`) is the far
+end of `AUX2:`. QEMU attaches the device only once the pty is open.
+
+`usb-net` is a CDC Ethernet adapter. Without a `netdev=` it gets a user
+network of its own, 10.0.3.0/24 - DHCP hands out 10.0.3.15, the gateway
+is 10.0.3.2 - beside the machine's Ethernet on 10.0.2.0/24. In the
+monitor, `netdev_add user,id=n1,net=10.0.3.0/24` and `device_add
+usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 
 `-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file
 - one made with `mkfs.fat` will do; `qemu` leaves the file as it was,

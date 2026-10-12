@@ -1,0 +1,18 @@
+/* DEVS:NetInterfaces/USB0 - the interface C:net/AddNetInterface USB0
+ * brings up as usb0: the first USB Ethernet adapter plugged in (CDC-ECM,
+ * DEVS:usb/ecm.device).
+ *
+ * Start = DEVICE leaves it out of the startup-sequence's AddNetInterface
+ * ALL: usb/ecm.device brings it up itself the first time an adapter is
+ * plugged in, so nothing of it is loaded before. The interface then
+ * stays, down while no adapter is plugged in, and runs with the Ethernet
+ * address of whichever adapter is. A fixed address instead of DHCP would
+ * be
+ *   Configure = FIXED; Address = 192.168.7.2; NetMask = 255.255.255.0
+ * A keyword this file does not know is an error, with its line and
+ * column; see C:net/AddNetInterface for the list.
+ */
+Device     = usb/ecm.device
+Unit       = 0
+Configure  = DHCP
+Start      = DEVICE

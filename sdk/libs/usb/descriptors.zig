@@ -278,6 +278,32 @@ pub const HID_PROTOCOL_MOUSE: u8 = 2;
 /// SET_REPORT's wValue high byte: an output report (a keyboard's LEDs).
 pub const HID_REPORT_OUTPUT: u8 = 2;
 
+// --- communications (CDC) ---------------------------------------------------------
+
+/// A class-specific interface descriptor: CDC's functional descriptors,
+/// after the interface they describe.
+pub const USB_DT_CS_INTERFACE: u8 = 0x24;
+/// bInterfaceSubClass of a communications interface: a serial line
+/// (Abstract Control Model), Ethernet (Ethernet Control Model).
+pub const CDC_SUBCLASS_ACM: u8 = 0x02;
+pub const CDC_SUBCLASS_ECM: u8 = 0x06;
+/// A functional descriptor's bDescriptorSubtype: the union of a control
+/// interface and the data interfaces it drives; Ethernet's (the MAC
+/// address string, the largest frame).
+pub const CDC_FD_UNION: u8 = 0x06;
+pub const CDC_FD_ETHERNET: u8 = 0x0F;
+/// Class requests: a serial line's coding, its DTR and RTS, a break.
+pub const CDC_REQ_SET_LINE_CODING: u8 = 0x20;
+pub const CDC_REQ_SET_CONTROL_LINE_STATE: u8 = 0x22;
+pub const CDC_REQ_SEND_BREAK: u8 = 0x23;
+/// Class request: which frames an Ethernet function passes up.
+pub const CDC_REQ_SET_ETHERNET_PACKET_FILTER: u8 = 0x43;
+/// Notifications on the control interface's interrupt endpoint, each an
+/// 8-byte header (bNotification at 1, wValue at 2) and its data.
+pub const CDC_NOTIFY_NETWORK_CONNECTION: u8 = 0x00;
+pub const CDC_NOTIFY_SERIAL_STATE: u8 = 0x20;
+pub const CDC_NOTIFY_SPEED_CHANGE: u8 = 0x2A;
+
 // --- mass storage -----------------------------------------------------------------
 
 /// bInterfaceSubClass: the command set is SCSI's, transparent.

@@ -5,12 +5,16 @@
 //!   AddNetInterface NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S
 //!
 //! Each NAME is a file in DEVS:NetInterfaces/ (config.zig says what it
-//! may hold); ALL is every file there. The interface takes the file's name
+//! may hold); ALL is every file there but those that say `Start =
+//! DEVICE`, which their device brings up by name when its hardware first
+//! comes - usb/ecm.device, `USB0`, when an adapter is plugged in. The interface takes the file's name
 //! in lower case - ETH0 becomes eth0 - and is added to bsdsocket.library
 //! with the file's device, address or DHCP, routes and name servers. With
 //! DHCP it waits up to TIMEOUT seconds (10) for an address and says which
-//! it got, unless NOWAIT: then DHCP goes on without it. An interface that
-//! is up already is left as it is. QUIET says nothing, not even that a
+//! it got, unless NOWAIT: then DHCP goes on without it. An interface
+//! whose link stays down for a second - no cable in its socket - is not
+//! waited for; DHCP starts when the link comes. An interface
+//! that is up already is left as it is. QUIET says nothing, not even that a
 //! device is missing - what the boot runs, on every board, whether it has
 //! the device or not.
 //!
@@ -42,7 +46,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.5 (09.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.6 (12.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -67,12 +71,14 @@ const MSG_CONFIGURE = "%s: Configure is DHCP or FIXED, not '%s', in %s, line %u 
 const MSG_IPV6 = "%s: IPv6 is AUTO, FIXED or OFF, not '%s', in %s, line %u column %u\n";
 const MSG_INTERFACEID = "%s: InterfaceID is STABLE or EUI64, not '%s', in %s, line %u column %u\n";
 const MSG_YESNO = "%s: PrivacyAddresses is YES or NO, not '%s', in %s, line %u column %u\n";
+const MSG_START = "%s: Start is BOOT or DEVICE, not '%s', in %s, line %u column %u\n";
 const MSG_MISSING = "%s: %s says nothing about its %s\n";
 const MSG_FAILED = "%s: %s could not be added: %s (errno %d)\n";
 const MSG_UP = "%s: %s/%u on %s\n";
 const MSG_ALREADY = "%s is up already\n";
 const MSG_WAITING = "%s: waiting for DHCP\n";
 const MSG_NOANSWER = "%s: no address from DHCP yet; it goes on trying\n";
+const MSG_NOLINK = "%s: no link; DHCP starts when it comes\n";
 const MSG_LINKLOCAL = "%s: no DHCP server; %s for now\n";
 
 const Options = struct {
@@ -113,7 +119,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     } else if (argv[arg_name] != 0) {
         const names: [*]const ?[*:0]const u8 = @ptrFromInt(argv[arg_name]);
         var index: usize = 0;
-        while (names[index]) |name| : (index += 1) result = @max(result, addOne(sys, dl, sb, name, options));
+        while (names[index]) |name| : (index += 1) result = @max(result, addOne(sys, dl, sb, name, options, false));
     } else {
         _ = dl.PrintFault(dos.ERROR_REQUIRED_ARG_MISSING, COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -131,13 +137,14 @@ fn addAll(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, options: Options) i32 {
     var result: i32 = dos.RETURN_OK;
     while (dl.ExNext(lock, fib)) {
         if (fib.dir_entry_type > 0) continue;
-        result = @max(result, addOne(sys, dl, sb, @ptrCast(&fib.file_name), options));
+        result = @max(result, addOne(sys, dl, sb, @ptrCast(&fib.file_name), options, true));
     }
     return result;
 }
 
-/// The interface one file describes.
-fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, options: Options) i32 {
+/// The interface one file describes - one its device brings up is not
+/// for `all`.
+fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, options: Options, all: bool) i32 {
     var path: [128:0]u8 = @splat(0);
     var interface_name: [bsd.IFNAMSIZ:0]u8 = @splat(0);
     const path_text = join(&path, directory, name);
@@ -160,6 +167,7 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
         say(dl, found, path_text);
         return dos.RETURN_ERROR;
     }
+    if (all and config.by_device) return dos.RETURN_OK;
 
     if (config.network[0] != 0 and !joinNetwork(sys, dl, &config, options)) {
         const missing: i32 = bsd.ENXIO;
@@ -232,9 +240,17 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
     if (config.dhcp) {
         if (!options.wait) return dos.RETURN_OK;
         if (!options.quiet) _ = Printf(dl, MSG_WAITING, .{interface});
-        if (!waitForAddress(dl, sb, interface, options.timeout_ticks)) {
-            if (!options.quiet) _ = Printf(dl, MSG_NOANSWER, .{interface});
-            return dos.RETURN_WARN;
+        // A network being joined brings its link only once it is joined.
+        switch (waitForAddress(dl, sb, interface, options.timeout_ticks, config.network[0] != 0)) {
+            .bound => {},
+            .no_link => {
+                if (!options.quiet) _ = Printf(dl, MSG_NOLINK, .{interface});
+                return dos.RETURN_OK;
+            },
+            .no_answer => {
+                if (!options.quiet) _ = Printf(dl, MSG_NOANSWER, .{interface});
+                return dos.RETURN_WARN;
+            },
         }
     }
     if (!options.quiet) report(dl, sb, interface, &config);
@@ -259,18 +275,28 @@ fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Opt
     return true;
 }
 
+const Waited = enum { bound, no_link, no_answer };
+
+/// How long a link may be down before it is not waited for: long
+/// enough for the device to have said so.
+const no_link_ticks = 50;
+
 /// Until DHCP has an address for the interface, or a link-local one
-/// stands in, or the time is up.
-fn waitForAddress(dl: *DosBase, sb: *SocketBase, interface: [*:0]const u8, ticks: u32) bool {
+/// stands in, or its link has been down a second - unless one is
+/// `coming` - or the time is up.
+fn waitForAddress(dl: *DosBase, sb: *SocketBase, interface: [*:0]const u8, ticks: u32, coming: bool) Waited {
     var waited: u32 = 0;
+    var down: u32 = 0;
     while (waited <= ticks) : (waited += 10) {
         var state: u32 = 0;
         const tags = [_]TagItem{ .{ .tag = bsd.IFQ_State, .data = @intFromPtr(&state) }, .{} };
-        if (sb.QueryInterfaceTagList(interface, &tags) < 0) return false;
-        if (state & (bsd.IFSTATE_BOUND | bsd.IFSTATE_LINKLOCAL) != 0) return true;
+        if (sb.QueryInterfaceTagList(interface, &tags) < 0) return .no_answer;
+        if (state & (bsd.IFSTATE_BOUND | bsd.IFSTATE_LINKLOCAL) != 0) return .bound;
+        down = if (state & bsd.IFSTATE_UP != 0) 0 else down + 10;
+        if (!coming and down >= no_link_ticks) return .no_link;
         dl.Delay(10);
     }
-    return false;
+    return .no_answer;
 }
 
 /// The address the interface has, as it has it now.
@@ -305,6 +331,7 @@ fn say(dl: *DosBase, found: config_file.Problem, file: [*:0]const u8) void {
         .ipv6 => Printf(dl, MSG_IPV6, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .interface_id => Printf(dl, MSG_INTERFACEID, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .yes_no => Printf(dl, MSG_YESNO, .{ COMMAND_NAME, token, file, found.line, found.column }),
+        .start => Printf(dl, MSG_START, .{ COMMAND_NAME, token, file, found.line, found.column }),
         .missing => Printf(dl, MSG_MISSING, .{ COMMAND_NAME, file, token }),
         .none => 0,
     };

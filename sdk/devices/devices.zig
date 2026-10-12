@@ -3,6 +3,8 @@
 
 pub const timer = @import("timer.zig");
 pub const serial = @import("serial.zig");
+/// A serial unit over any line, for the devices that speak serial.device's API.
+pub const serialunit = @import("serialunit.zig");
 pub const trackdisk = @import("trackdisk.zig");
 pub const scsidisk = @import("scsidisk.zig");
 pub const usbserial = @import("usbserial.zig");

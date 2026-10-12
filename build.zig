@@ -1102,7 +1102,10 @@ fn qemuRun(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, net
 /// root port: QEMU puts a hub on it by itself when a device other than a
 /// hub is plugged in without `port=1`, and the devices then sit behind
 /// that hub. A `usb-serial` (an FTDI FT232) without a `chardev=` gets a
-/// pty of its own, whose name QEMU prints as it starts. A device plugged
+/// pty of its own, whose name QEMU prints as it starts; a `usb-net` (a
+/// CDC Ethernet adapter) without a `netdev=` a user network of its own,
+/// 10.0.3.0/24 for the first (DHCP hands out 10.0.3.15), 10.0.4.0/24 for
+/// the next - beside the machine's own Ethernet on 10.0.2.0/24. A device plugged
 /// in or out while the machine runs goes through the monitor (Ctrl-A C):
 /// `device_add usb-kbd,id=kbd`, `device_del kbd` - the stick is
 /// `usbstick`.
@@ -1120,11 +1123,19 @@ fn qemuUsb(b: *std.Build, devices: ?[]const u8, disk: ?[]const u8) []const []con
             const last = &specs.items[specs.items.len - 1];
             last.* = b.fmt("{s},{s}", .{ last.*, item });
         }
+        var nets: u32 = 0;
         for (specs.items, 0..) |spec, index| {
             const serial = std.mem.eql(u8, spec, "usb-serial") or std.mem.startsWith(u8, spec, "usb-serial,");
             if (serial and std.mem.indexOf(u8, spec, "chardev=") == null) {
                 const id = b.fmt("usbserial{d}", .{index});
                 args.appendSlice(b.allocator, &.{ "-chardev", b.fmt("pty,id={s}", .{id}), "-device", b.fmt("{s},chardev={s}", .{ spec, id }) }) catch @panic("OOM");
+                continue;
+            }
+            const network = std.mem.eql(u8, spec, "usb-net") or std.mem.startsWith(u8, spec, "usb-net,");
+            if (network and std.mem.indexOf(u8, spec, "netdev=") == null) {
+                const id = b.fmt("usbnet{d}", .{index});
+                nets += 1;
+                args.appendSlice(b.allocator, &.{ "-netdev", b.fmt("user,id={s},net=10.0.{d}.0/24", .{ id, 2 + nets }), "-device", b.fmt("{s},netdev={s}", .{ spec, id }) }) catch @panic("OOM");
             } else {
                 args.appendSlice(b.allocator, &.{ "-device", spec }) catch @panic("OOM");
             }
@@ -1139,9 +1150,11 @@ fn qemuUsb(b: *std.Build, devices: ?[]const u8, disk: ?[]const u8) []const []con
     return args.items;
 }
 
-/// The emulator's network, as QEMU's arguments. Without them QEMU gives
-/// the machine's Ethernet MAC its user network: NAT to the host's, with a
-/// gateway and DHCP server at 10.0.2.2 and DNS at 10.0.2.3. `net` names another
+/// The emulator's network, as QEMU's arguments: the machine's Ethernet MAC
+/// on QEMU's user network - NAT to the host's, with a gateway and DHCP
+/// server at 10.0.2.2 and DNS at 10.0.2.3 - named here rather than left
+/// to QEMU's default, which a USB adapter's network of its own (`qemuUsb`)
+/// would take away. `net` names another
 /// backend for the MAC (a tap device puts the machine on the real
 /// network) or `none`; `dump` writes every frame to a pcap file, which
 /// needs the backend to have a name, so it makes the user network explicit.
@@ -1156,7 +1169,6 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     }
     const telnet_forwarded: ?u16 = if (telnet) |port| (if (port == 0) null else port) else null;
     const ssh_forwarded: ?u16 = if (ssh_port) |port| (if (port == 0) null else port) else null;
-    if (net == null and dump == null and telnet_forwarded == null and ssh_forwarded == null) return &.{};
     const telnet_forward = if (telnet_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:23", .{port}) else "";
     const ssh_forward = if (ssh_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:22", .{port}) else "";
     const forward = b.fmt("{s}{s}", .{ telnet_forward, ssh_forward });

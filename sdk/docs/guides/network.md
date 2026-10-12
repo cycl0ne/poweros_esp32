@@ -287,6 +287,13 @@ behind it are:
 
 With DHCP, `AddInterfaceTagList` answers at once and the address comes
 when the server answers; `IFQ_State` and `IFQ_Address` show when it has.
+`IFQ_State`'s `IFSTATE_UP` follows the link: an interface whose device
+is off its link - no cable, no USB adapter plugged in - is down, and
+DHCP starts when the link comes. A link that comes back has its
+device's address asked again: a USB adapter brings its own, which the
+interface takes from then on, and IPv6 makes its link-local address
+again from it. `IFSTATE_POINTTOPOINT` marks a line between two ends,
+which has no hardware address at all.
 IPv6 takes a link-local address at once, and addresses from routers'
 prefixes as they are advertised. A router whose advertisement sets the M
 flag hands out addresses by DHCPv6: the stack asks for them, renews and
@@ -339,6 +346,7 @@ Configure  = DHCP
 | `Address6`, `Prefix6`, `Gateway6` | a fixed IPv6 address, its prefix length, and an IPv6 router |
 | `PrivacyAddresses` | `YES`: temporary addresses (below); `NO`, the default |
 | `SerialDevice`, `SerialUnit`, `Baud` | the serial line under `slip.device` (below) |
+| `Start` | `BOOT` (the default): `AddNetInterface ALL` brings it up; `DEVICE`: its device does, when its hardware first comes |
 
 **Privacy addresses** (RFC 8981): an address made from a router's prefix
 ends the same on that network at every boot, so whatever the machine
@@ -357,7 +365,12 @@ column. A board without the file's device skips the interface, with its
 `Network` not joined, and the device is looked for once; with
 `QUIET`, as `S:Network-Startup` runs it, it says nothing, so one set of
 files serves every board (without, it names the interface it could not
-add and ends with `WARN`).
+add and ends with `WARN`). With DHCP, `AddNetInterface` waits for the
+address up to `TIMEOUT` seconds, but not for an interface whose link
+stays down for a second - no cable - unless it is joining a Wi-Fi
+`Network`. A file that says `Start = DEVICE` is left out of `ALL`: its
+device brings it up by name when its hardware first comes, as
+usb/ecm.device does `USB0` when an Ethernet adapter is plugged in.
 
 ## The network device API
 
@@ -416,6 +429,18 @@ only while the cable has a partner, so the interface's DHCP waits for
 the link, and a link that drops takes the unit off line until it is
 back; each change is in the system log (`C:Log`) with the speed and
 duplex the two ends agreed on.
+
+## USB Ethernet: ecm.device
+
+`DEVS:usb/ecm.device` is a USB Ethernet adapter of the communications
+class (CDC-ECM) as a unit with Ethernet framing, its station address the
+adapter's. usb.library hands it the adapters as they are plugged in, the
+first to unit 0. The first adapter in a unit has the device bring up
+its interface, `DEVS:NetInterfaces/USB0` for unit 0 (`Start = DEVICE`),
+as `usb0`; it stays from then on, down while no adapter is plugged in.
+The unit is on line while an adapter is plugged in and says it has a
+link. The adapters
+and the bus are described in `sdk/docs/guides/usb.md`.
 
 ## Wireless devices
 

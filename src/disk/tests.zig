@@ -44,6 +44,8 @@ test {
     _ = @import("devs/usb/hid/report.zig");
     _ = @import("devs/usb/disk/scsi.zig");
     _ = @import("devs/usb/disk/bot.zig");
+    _ = @import("devs/usb/serial/ftdi_rates.zig");
+    _ = @import("devs/usb/ecm/cdc.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");
