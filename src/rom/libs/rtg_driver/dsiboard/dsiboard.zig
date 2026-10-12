@@ -34,7 +34,7 @@
 //! RGB565.
 //!
 //! **The pointer** and the overlay are laid into that copy, never into the
-//! screens (`pointer.zig`). A panel streams its screens straight until a
+//! screens, and rows going into the copy go around them (`pointer.zig`). A panel streams its screens straight until a
 //! pointer or an overlay is first to be seen - which on a board touched
 //! with a finger is never - and from then on streams a copy of its own,
 //! in RGB565, kept as HDMI's is.
@@ -392,14 +392,17 @@ fn stopStream(panel: *Panel) void {
 /// the one before it is no longer read.
 fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const sys = panel.sys;
-    const kept: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));
-    for (bands[0..kept], 0..) |band, index| panel.shown[index] = band;
-    panel.shown_count = kept;
+    const band_count: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));
+    for (bands[0..band_count], 0..) |band, index| panel.shown[index] = band;
+    panel.shown_count = band_count;
     var sent = bands;
     if (panel.composing) {
-        const count = link_file.show(&panel.link, &panel.engine, sys, bands, panel.streaming, &panel.stream_bands);
+        sys.ObtainSemaphore(&panel.pointer.lock);
+        const kept = pointer_file.keepOut(&panel.pointer, &panel.link);
+        const count = link_file.show(&panel.link, &panel.engine, sys, bands, panel.streaming, kept, &panel.stream_bands);
+        pointer_file.mend(&panel.pointer, &panel.link, kept);
+        sys.ReleaseSemaphore(&panel.pointer.lock);
         sent = panel.stream_bands[0..count];
-        pointer_file.relay(&panel.pointer, &panel.link, sys);
     }
     const made = chain_file.build(sys, sent, panel.mode.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
     if (!panel.streaming) {
@@ -636,8 +639,12 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const panel = panelOf(board);
     _ = panel.sys.CachePreDMA(start, &bytes, 0);
     if (panel.composing) {
-        link_file.refresh(&panel.link, &panel.engine, panel.sys, bitmap, y, count, panel.streaming);
-        pointer_file.relay(&panel.pointer, &panel.link, panel.sys);
+        const sys = panel.sys;
+        sys.ObtainSemaphore(&panel.pointer.lock);
+        const kept = pointer_file.keepOut(&panel.pointer, &panel.link);
+        link_file.refresh(&panel.link, &panel.engine, sys, bitmap, y, count, panel.streaming, kept);
+        pointer_file.mend(&panel.pointer, &panel.link, kept);
+        sys.ReleaseSemaphore(&panel.pointer.lock);
     }
     return err.RTGERR_OK;
 }

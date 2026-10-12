@@ -16,6 +16,11 @@
 //! sends that line again for each of its lines - its chain is built over
 //! the copy as it would be over the buffers (`streamBands`).
 //!
+//! **A rectangle kept out.** `show` and `refresh` take the pointer's
+//! rectangle (`pointer.zig`) and convert around it, never into it, so
+//! what is laid there stays while the rows about it change; the pointer's
+//! side then fills it from the screens and lays the pointer again.
+//!
 //! **The conversion** is the engine's: a 2D-DMA copy, rows of the buffer
 //! into rows of the copy - its send channel widening RGB565 to RGB888 as
 //! it reads, for an RGB888 copy - under the engine's semaphore and on its
@@ -35,6 +40,10 @@ const Engine = engine_file.Engine;
 
 /// From an address in PSRAM to the same bytes past the data cache.
 const uncached_offset: usize = 0x4000_0000;
+
+/// A rectangle of the copy: columns `x0` to `x1`, lines `y0` to `y1`, the
+/// ends not in it.
+pub const Rect = struct { x0: u32, y0: u32, x1: u32, y1: u32 };
 
 pub const Link = struct {
     /// The copy: `width` x `height` pixels of `format` - `bgr24` or
@@ -94,8 +103,9 @@ fn endOf(bands: []const rtg.RtgBand, index: usize, height: u32) u32 {
 /// `bands` shown: every band's rows converted into the copy, and the
 /// bands the stream is to send in their place written into `into` - the
 /// copy's own lines, a repeated band's one line again. How many.
-/// `watched`: the stream runs, and its frames time the engine.
-pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.RtgBand, watched: bool, into: *[rtg.RTG_MAX_BANDS]rtg.RtgBand) u32 {
+/// `watched`: the stream runs, and its frames time the engine. `keep`
+/// is left as it is.
+pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.RtgBand, watched: bool, keep: ?Rect, into: *[rtg.RTG_MAX_BANDS]rtg.RtgBand) u32 {
     sys.ObtainSemaphore(&engine.lock);
     defer sys.ReleaseSemaphore(&engine.lock);
     const count: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));
@@ -104,13 +114,13 @@ pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.Rtg
     for (link.shown[0..count], 0..) |band, index| {
         const end = endOf(link.shown[0..count], index, link.height);
         if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (end > band.line) convert(link, engine, sys, band.bitmap, 0, band.line, 1, watched);
+            if (end > band.line) convertAround(link, engine, sys, band.bitmap, 0, band.line, 1, watched, keep);
             link.rows[index] = link.whole;
             link.rows[index].pixels = @ptrFromInt(link.pixels + @as(usize, band.line) * link.pitch);
             link.rows[index].height = 1;
             into[index] = .{ .bitmap = &link.rows[index], .line = band.line, .flags = rtg.RTGBANDF_REPEAT };
         } else {
-            if (end > band.line) convert(link, engine, sys, band.bitmap, band.rowAt(band.line), band.line, end - band.line, watched);
+            if (end > band.line) convertAround(link, engine, sys, band.bitmap, band.rowAt(band.line), band.line, end - band.line, watched, keep);
             into[index] = .{ .bitmap = &link.whole, .line = band.line, .origin = 0 };
         }
     }
@@ -118,8 +128,8 @@ pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.Rtg
 }
 
 /// Rows `y` to `y + rows` of `bitmap` were drawn: converted again
-/// wherever a band shows them.
-pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.RtgBitMap, y: u32, rows: u32, watched: bool) void {
+/// wherever a band shows them, around `keep`.
+pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.RtgBitMap, y: u32, rows: u32, watched: bool, keep: ?Rect) void {
     sys.ObtainSemaphore(&engine.lock);
     defer sys.ReleaseSemaphore(&engine.lock);
     const shown = link.shown[0..link.shown_count];
@@ -128,7 +138,7 @@ pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.
         const end = endOf(shown, index, link.height);
         if (end <= band.line) continue;
         if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (y == 0) convert(link, engine, sys, bitmap, 0, band.line, 1, watched);
+            if (y == 0) convertAround(link, engine, sys, bitmap, 0, band.line, 1, watched, keep);
             continue;
         }
         // The band's rows, and the part of them drawn.
@@ -137,26 +147,43 @@ pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.
         const from = @max(first_row, y);
         const to = @min(end_row, y + rows);
         if (to <= from) continue;
-        convert(link, engine, sys, bitmap, from, from + band.origin, to - from, watched);
+        convertAround(link, engine, sys, bitmap, from, from + band.origin, to - from, watched, keep);
     }
+}
+
+/// `convert`, leaving `keep` alone: the lines above and below it whole,
+/// and beside it the columns left and right of it.
+fn convertAround(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, watched: bool, keep: ?Rect) void {
+    const end = line + rows;
+    const out = keep orelse return convert(link, engine, sys, source, row, line, rows, 0, link.width, watched);
+    if (out.y1 <= line or out.y0 >= end or out.x0 >= out.x1) return convert(link, engine, sys, source, row, line, rows, 0, link.width, watched);
+    if (out.y0 > line) convert(link, engine, sys, source, row, line, out.y0 - line, 0, link.width, watched);
+    const top = @max(out.y0, line);
+    const bottom = @min(out.y1, end);
+    const beside_row = row + (top - line);
+    if (out.x0 > 0) convert(link, engine, sys, source, beside_row, top, bottom - top, 0, out.x0, watched);
+    if (out.x1 < link.width) convert(link, engine, sys, source, beside_row, top, bottom - top, out.x1, link.width - out.x1, watched);
+    if (end > out.y1) convert(link, engine, sys, source, row + (out.y1 - line), out.y1, end - out.y1, 0, link.width, watched);
 }
 
 /// `rows` rows of `source` from `row` on converted into the copy from
-/// display line `line` on: by the engine, or by the CPU when it cannot.
-/// The engine's semaphore is held.
-fn convert(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, watched: bool) void {
+/// display line `line` on, `columns` pixels of each from column `x`: by
+/// the engine, or by the CPU when it cannot. The engine's semaphore is
+/// held.
+fn convert(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, columns: u32, watched: bool) void {
     if (rows == 0 or line >= link.height) return;
     const count = @min(rows, link.height - line, source.height - @min(row, source.height));
-    if (count == 0) return;
-    if (byEngine(link, engine, sys, source, row, line, count, watched)) {
+    const width = @min(columns, link.width -| x, source.width -| x);
+    if (count == 0 or width == 0) return;
+    if (byEngine(link, engine, sys, source, row, line, count, x, width, watched)) {
         link.engine_rows +%= count;
         return;
     }
-    byCpu(link, source, row, line, count);
+    byCpu(link, source, row, line, count, x, width);
     link.cpu_rows +%= count;
 }
 
-fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, watched: bool) bool {
+fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32, watched: bool) bool {
     if (!engine.ready or source.format != .rgb565 or source.pixels == null) return false;
     if (source.pitch % 2 != 0 or source.pitch / 2 > dma2d.field_max) return false;
     const parts = engine_file.descriptors(engine);
@@ -164,9 +191,8 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
     const wide = link.format == .bgr24;
     if (wide) dma2d.convertOut(engine_file.send_channel, .rgb565_to_rgb888);
     if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return false;
-    const width = @min(link.width, source.width);
-    dma2d.describe(parts.send, @intFromPtr(source.pixels.?), source.pitch / 2, source.height, 0, row, width, rows, dma2d.pbyte_2);
-    dma2d.describe(parts.receive, link.pixels, link.width, link.height, 0, line, width, rows, if (wide) dma2d.pbyte_3 else dma2d.pbyte_2);
+    dma2d.describe(parts.send, @intFromPtr(source.pixels.?), source.pitch / 2, source.height, x, row, width, rows, dma2d.pbyte_2);
+    dma2d.describe(parts.receive, link.pixels, link.width, link.height, x, line, width, rows, if (wide) dma2d.pbyte_3 else dma2d.pbyte_2);
     const signal = engine_file.prepare(engine, sys, watched);
     dma2d.runOut(engine_file.send_channel, parts.send_at);
     dma2d.runIn(engine_file.receive_channel, parts.receive_at);
@@ -174,12 +200,11 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
 }
 
 /// The CPU's conversion, through the copy's uncached view.
-fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32) void {
-    const width = @min(link.width, source.width);
+fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32) void {
     var r: u32 = 0;
     while (r < rows) : (r += 1) {
         const from: [*]const u16 = @ptrFromInt(@intFromPtr(source.pixels.?) + @as(usize, row + r) * source.pitch);
-        put(link, line + r, 0, from, width);
+        put(link, line + r, x, from + x, width);
     }
 }
 

@@ -5,19 +5,23 @@
 //! The screens never hold them. The stream reads the board's copy of what
 //! is shown (`link.zig`) - over HDMI always, on a panel from the first
 //! time a pointer or an overlay is to be seen - and the images are laid
-//! into that copy after whatever puts rows there: bands shown, rows
-//! refreshed. A move puts the picture back where the image was, from the
-//! shown buffers, and lays it at its new place, so it costs the image's
-//! size and not the picture's. The overlay is laid first, the pointer
-//! over it; a change to either puts both back and lays both again, as
-//! one may cover the other.
+//! into that copy. A move puts the picture back where the image was, from
+//! the shown buffers, and lays it at its new place, so it costs the
+//! image's size and not the picture's. The overlay is laid first, the
+//! pointer over it; a change to either puts both back and lays both
+//! again, as one may cover the other.
+//!
+//! **Rows going into the copy** - bands shown, rows refreshed - go around
+//! the rectangle the images cover (`keepOut`), so they are never out of
+//! the copy: while a screen is pulled down every line changes at every
+//! step, and the pointer would otherwise be missing from most frames.
+//! What lies under them is then filled from the shown buffers and they
+//! are laid again (`mend`).
 //!
 //! The images and where they are change under `lock`, a semaphore, and
-//! every write of them into the copy is made holding it, so a lay always
-//! uses the place an image is at now. Rows a refresh converted over the
-//! pointer get it back from that refresh's own lay, whichever task moved
-//! it in between; until then, for no longer than the conversion, those
-//! rows show the picture without it.
+//! every write into the copy that touches them - a change, and the rows
+//! shown or refreshed from the rectangle kept out to the mend - is made
+//! holding it, so the rectangle kept out is where the images still are.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -47,11 +51,11 @@ pub const Pointer = struct {
     }
 };
 
-/// The part of an image at (left, top) that is on the copy, as columns
-/// and lines; null when none of it is.
-const Clip = struct { x0: u32, y0: u32, x1: u32, y1: u32 };
+const Rect = link_file.Rect;
 
-fn clipOf(link: *const Link, image: *const rtg.RtgPointerImage, left: i32, top: i32) ?Clip {
+/// The part of an image at (left, top) that is on the copy; null when
+/// none of it is.
+fn clipOf(link: *const Link, image: *const rtg.RtgPointerImage, left: i32, top: i32) ?Rect {
     const x0 = @max(left, 0);
     const y0 = @max(top, 0);
     const x1 = @min(left + @as(i32, @intCast(image.width)), @as(i32, @intCast(link.width)));
@@ -64,11 +68,14 @@ fn clipOf(link: *const Link, image: *const rtg.RtgPointerImage, left: i32, top: 
 /// buffers.
 fn restoreImage(link: *const Link, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
     const image = given orelse return;
-    const clip = clipOf(link, image, left, top) orelse return;
-    var y = clip.y0;
-    while (y < clip.y1) : (y += 1) {
+    restoreRect(link, clipOf(link, image, left, top) orelse return);
+}
+
+fn restoreRect(link: *const Link, area: Rect) void {
+    var y = area.y0;
+    while (y < area.y1) : (y += 1) {
         const row = link_file.sourceRow(link, y) orelse continue;
-        link_file.put(link, y, clip.x0, row + clip.x0, clip.x1 - clip.x0);
+        link_file.put(link, y, area.x0, row + area.x0, area.x1 - area.x0);
     }
 }
 
@@ -110,12 +117,30 @@ fn lay(pointer: *const Pointer, link: *const Link) void {
     if (pointer.shown) layImage(link, pointer.image, pointer.left, pointer.top);
 }
 
-/// The images laid again, where they are now: after rows went into the
-/// copy. Nothing while there is no copy.
-pub fn relay(pointer: *Pointer, link: *const Link, sys: *ExecBase) void {
+/// The rectangle the images cover - the overlay's, and the pointer's
+/// while it is shown - for rows going into the copy to go around; null
+/// when nothing is laid. The lock is held, and stays held until `mend`.
+pub fn keepOut(pointer: *const Pointer, link: *const Link) ?Rect {
+    var area: ?Rect = null;
+    if (pointer.overlay) |image| area = join(area, clipOf(link, image, pointer.overlay_left, pointer.overlay_top));
+    if (pointer.shown) {
+        if (pointer.image) |image| area = join(area, clipOf(link, image, pointer.left, pointer.top));
+    }
+    return area;
+}
+
+fn join(one: ?Rect, other: ?Rect) ?Rect {
+    const a = one orelse return other;
+    const b = other orelse return a;
+    return .{ .x0 = @min(a.x0, b.x0), .y0 = @min(a.y0, b.y0), .x1 = @max(a.x1, b.x1), .y1 = @max(a.y1, b.y1) };
+}
+
+/// After rows went into the copy around `kept`: the picture under it
+/// filled from the shown buffers - what they show there may have changed
+/// - and the images laid again. The lock is held.
+pub fn mend(pointer: *const Pointer, link: *const Link, kept: ?Rect) void {
     if (link.pixels == 0) return;
-    sys.ObtainSemaphore(&pointer.lock);
-    defer sys.ReleaseSemaphore(&pointer.lock);
+    if (kept) |area| restoreRect(link, area);
     lay(pointer, link);
 }
 
