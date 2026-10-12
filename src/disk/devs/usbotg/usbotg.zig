@@ -65,7 +65,7 @@ const roothub = @import("roothub.zig");
 
 pub const DEVICE_NAME = _usbotg.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
+const DEVICE_REVISION = 4;
 const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -183,16 +183,19 @@ fn start(host: *Host) bool {
         return false;
     }
     if (host.bounce_memory == null) {
-        const memory = sys.AllocMem(_usbotg.max_channels * _usbotg.bounce_bytes + 64, exec.MEMF_INTERNAL | exec.MEMF_DMA | exec.MEMF_CLEAR) orelse {
+        // The high-speed controller's buffers larger; both in internal
+        // memory.
+        host.bounce_bytes = if (host.utmi != 0) _usbotg.hs_bounce_bytes else _usbotg.bounce_bytes;
+        const memory = sys.AllocMem(bounceSize(host), exec.MEMF_INTERNAL | exec.MEMF_DMA | exec.MEMF_CLEAR) orelse {
             givePortBack(host);
             usb_otg.powerOff(host.number);
             return false;
         };
         host.bounce_memory = memory;
     }
-    const aligned = (@intFromPtr(host.bounce_memory.?) + 63) & ~@as(usize, 63);
+    const aligned = (@intFromPtr(host.bounce_memory.?) + _usbotg.bounce_align - 1) & ~(_usbotg.bounce_align - 1);
     for (&host.channels, 0..) |*channel, n| {
-        channel.* = .{ .bounce = @ptrFromInt(aligned + n * _usbotg.bounce_bytes) };
+        channel.* = .{ .bounce = @ptrFromInt(aligned + n * host.bounce_bytes) };
     }
     host.int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
@@ -204,6 +207,11 @@ fn start(host: *Host) bool {
     _usbotg.delay(host, 10);
     hubReset(host, false);
     return true;
+}
+
+/// The bytes the channels' buffers take, with room to align them.
+fn bounceSize(host: *const Host) u32 {
+    return _usbotg.max_channels * host.bounce_bytes + _usbotg.bounce_align;
 }
 
 /// Everything stopped: the transfers answered, the interrupt unhooked,
@@ -330,7 +338,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         usbhc.UHCMD_QUERYDEVICE => {
             const info = usbhc.USBHCInfo{
                 .name = "dwc2",
-                .speed = usbhc.USB_SPEED_FULL,
+                .speed = if (host.controller.utmi) usbhc.USB_SPEED_HIGH else usbhc.USB_SPEED_FULL,
                 .channels = host.channel_count,
                 .ports = 1,
             };

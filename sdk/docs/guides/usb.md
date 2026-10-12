@@ -105,12 +105,17 @@ and its address is free again.
 |---|---|---|
 | ESP32-P4-PC | four USB-A behind an FE1.1s hub, on the P4's high-speed controller | started at boot; the hub gives each socket its 5 V |
 | CrowPanel | USB-C, wired as a device | - |
-| 7B, ES3C35P | the console's USB-C | not yet: the port stays the console's |
+| 7B, ES3C35P | the console's USB-C | by hand (`USB START`), the console giving up the port; not yet tried on the boards |
 | QEMU | the emulator's DWC2, with what `-Dusb` plugs in | started at boot |
 
-The high-speed controller runs its port at full speed for now: a hub on
-it is a full-speed hub, and a low-speed keyboard behind it is reached as
-on any full-speed port.
+**Speeds.** The ESP32-S3's port and the P4's full-speed controller run
+at full speed, 12 Mbit/s, a low-speed device on them at 1.5 Mbit/s. The
+P4's high-speed controller runs at high speed, 480 Mbit/s, where what is
+plugged in has it. Behind a high-speed hub - the ESP32-P4-PC's - a full-
+or low-speed device, most keyboards and mice, is reached through the
+hub's transaction translator: the controller sends it split
+transactions, a packet at a time, and the hub talks to it at its own
+speed. `USBInfo` shows each device's speed.
 
 ## What is on it
 
@@ -315,8 +320,9 @@ usb/disk.device unit 0: QEMU QEMU HARDDISK, disk
 ready
 ```
 
-The bus runs at full speed, as for every device so far, so a stick
-moves at most about a megabyte a second.
+A stick moves at most about a megabyte a second at full speed. On the
+ESP32-P4-PC, at high speed, a SanDisk stick read a 300 MB file at about
+22 MB/s (`Copy` to `NIL:`).
 
 ## Serial adapters
 
@@ -382,8 +388,8 @@ usb0     10.0.3.15       255.255.255.0   up dhcp bound      1500 ...
 Many adapters speak a vendor's own protocol, or Microsoft's RNDIS,
 beside or instead of ECM. One that has an ECM configuration as well is
 set to it, as usb.library sets a device to the first configuration a
-driver takes; QEMU's `usb-net` has RNDIS first and ECM second. The bus
-runs at full speed: an adapter moves at most about a megabyte a second.
+driver takes; QEMU's `usb-net` has RNDIS first and ECM second. At full
+speed an adapter moves at most about a megabyte a second.
 
 ## Writing a controller
 
@@ -405,6 +411,10 @@ keeps no table of devices.
   0 until SET_ADDRESS gives it one - are answered with a hub's
   descriptors and the port's status, and an interrupt transfer on its
   endpoint 1 waits for the port to change.
+- A low- or full-speed device behind a high-speed hub comes with
+  `hub_address` and `hub_port` set: the transaction translator its
+  transfers go to as split transactions. They are 0 for a device the
+  port reaches at its own speed.
 - Errors are `UHIOERR_*`: a stall, a timeout, a device gone.
 
 A controller is found by its board part: `PARTKIND_USB`, its chip, which

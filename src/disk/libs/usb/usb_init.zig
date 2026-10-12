@@ -14,7 +14,7 @@ const _bind = @import("bind/_bind.zig");
 
 pub const LIBRARY_NAME = usb.USBNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 2;
+pub const LIBRARY_REVISION = 3;
 const BUILD_DATE = "12.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

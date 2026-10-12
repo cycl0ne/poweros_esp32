@@ -34,10 +34,20 @@ pub const DEVICE_NAME = "usbotg.device";
 pub const max_units = 2;
 /// How many channels a controller has at most: the P4's high-speed one.
 pub const max_channels = 16;
-/// A channel's buffer in internal memory, which the controller's DMA
-/// reaches and the transfer passes through: a whole number of every
-/// packet size there is at full speed, and of cache lines.
+/// A channel's buffer on a full-speed controller, in internal memory,
+/// which its DMA reaches and the transfer passes through: a whole number
+/// of every packet size there is at full speed, and of cache lines.
 pub const bounce_bytes: u32 = 512;
+/// A channel's buffer on the high-speed controller: eight packets of a
+/// high-speed bulk endpoint. In internal memory too: the ESP32-P4's
+/// controller writing a long transfer into PSRAM was seen to stop partway,
+/// its packets received and never written.
+pub const hs_bounce_bytes: u32 = 4 * 1024;
+/// How the channels' buffers are aligned: the caches' line.
+pub const bounce_align: usize = 128;
+/// A complete-split of a periodic transfer that hears NYET this many
+/// times has nothing this interval.
+pub const max_nyets = 3;
 /// A transaction error is tried again this many times before the
 /// transfer fails.
 pub const max_errors = 3;
@@ -85,7 +95,14 @@ pub const Channel = struct {
     /// The empty packet that ends an OUT transfer of whole packets has
     /// gone.
     zero_sent: bool = false,
-    /// The channel's buffer, in internal memory.
+    /// The transfer goes as split transactions, through a high-speed
+    /// hub's transaction translator: a packet a round, each a start-split
+    /// and then complete-splits (`complete`) until the hub has the answer.
+    split: bool = false,
+    complete: bool = false,
+    /// A periodic complete-split's NYETs in a row.
+    nyets: u8 = 0,
+    /// The channel's buffer (`Host.bounce_bytes` of it).
     bounce: [*]u8 = undefined,
 };
 
@@ -158,8 +175,9 @@ pub const Host = struct {
     /// When the tick is due, in the task's milliseconds.
     tick_due: u32 = 0,
     root: RootHub = .{},
-    /// The memory the channels' buffers are in.
+    /// The memory the channels' buffers are in, and each channel's share.
     bounce_memory: ?*anyopaque = null,
+    bounce_bytes: u32 = bounce_bytes,
 };
 
 /// `port_events`: the device on the root port went.

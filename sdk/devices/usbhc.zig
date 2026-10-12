@@ -103,10 +103,13 @@ pub const IOUsbHC = extern struct {
     max_packet: u16 = 8,
     /// An interrupt endpoint's interval, in milliseconds.
     interval: u16 = 10,
-    /// The hub a low- or full-speed device hangs off and its port on it:
-    /// a low-speed device behind a full-speed hub is reached with a
-    /// preamble, and one behind a high-speed hub through that hub's
-    /// transaction translator. 0, 0 for a device on the root port.
+    /// The transaction translator a low- or full-speed device is reached
+    /// through: the high-speed hub it hangs off - straight, or behind
+    /// full-speed hubs - and that hub's port it is on, toward which the
+    /// controller sends split transactions. 0, 0 for a device reached at
+    /// its own speed: a high-speed one, or any on a root port that runs
+    /// at full speed, where a low-speed device behind a full-speed hub
+    /// is reached with a preamble.
     hub_address: u8 = 0,
     hub_port: u8 = 0,
     /// The data toggle the endpoint is at, 0 or 1: the next packet's.

@@ -5,17 +5,26 @@
 //! **The core** is reset, told to be a host and to use its own DMA
 //! (buffer DMA: a channel reads and writes memory at HCDMA), its FIFO is
 //! divided between what comes in and what goes out, and its root port is
-//! powered. The high-speed controller runs at full speed for now
-//! (HCFG_FSLSSUPP): a hub on it is then a full-speed hub, and a
-//! low-speed device behind it is reached as on the full-speed one.
+//! powered. The high-speed controller runs at high speed where the
+//! device on its port does.
 //!
 //! **A transfer is put on a channel** when one is free, not a channel
 //! per endpoint: eight channels kept by eight open endpoints would be
 //! gone with a hub, a keyboard, a mouse and a stick. Its data passes
-//! through the channel's buffer in internal memory, in rounds of it - the
-//! DMA reaches only that on the S3, and on the P4 the buffer's cache
-//! lines are written back before the controller reads and dropped after
-//! it writes. A control transfer goes SETUP, data, status on one channel.
+//! through the channel's buffer in internal memory, in rounds of it: 512
+//! bytes on a full-speed controller, 4 KiB on the high-speed one - on the
+//! P4 the buffer's cache lines written back before the controller reads
+//! and dropped after it writes.
+//! A control transfer goes SETUP, data, status on one channel.
+//!
+//! **Split transactions.** A low- or full-speed device behind a
+//! high-speed hub is reached through the hub's transaction translator
+//! (`IOUsbHC.hub_address`, `hub_port`): a packet a round, each a
+//! start-split, which hands the transaction to the hub, then
+//! complete-splits until the hub has the device's answer (NYET: not
+//! yet). A periodic one is asked in the next microframe each time, and
+//! after three NYETs has nothing this interval; a bulk or control one
+//! that the device NAKs starts its round again.
 //!
 //! **NAKs.** A bulk or control endpoint that has nothing yet is asked
 //! again by the channel itself until it answers, or until the request's
@@ -105,11 +114,14 @@ pub fn bringUp(host: *Host) bool {
             dwc.GOTGCTL_AVALIDOVEN | dwc.GOTGCTL_AVALIDOVVAL;
     }
 
-    // The FIFO: half for what comes in, a quarter for what goes out to
-    // bulk and control endpoints, the rest for the periodic ones.
-    const rx = host.fifo_words / 2;
-    const nptx = host.fifo_words / 4;
-    const ptx = host.fifo_words - rx - nptx;
+    // The FIFO, less a word per channel at its top, where buffer DMA
+    // keeps each channel's state: half for what comes in, a quarter for
+    // what goes out to bulk and control endpoints, the rest for the
+    // periodic ones.
+    const words = host.fifo_words - host.channel_count;
+    const rx = words / 2;
+    const nptx = words / 4;
+    const ptx = words - rx - nptx;
     reg(host, dwc.GRXFSIZ).* = rx;
     reg(host, dwc.GNPTXFSIZ).* = (nptx << 16) | rx;
     reg(host, dwc.HPTXFSIZ).* = (ptx << 16) | (rx + nptx);
@@ -118,9 +130,11 @@ pub fn bringUp(host: *Host) bool {
     reg(host, dwc.GRSTCTL).* = dwc.GRSTCTL_RXFFLSH;
     _ = pollFor(host, dwc.GRSTCTL, dwc.GRSTCTL_RXFFLSH, 0, 10);
 
+    // High speed where the device on the port has it: the UTMI PHY's own
+    // clock, and the frame interval the core sets for the speed it finds.
     var hcfg = reg(host, dwc.HCFG).* & ~(dwc.HCFG_FSLSPCLKSEL_MASK | dwc.HCFG_FSLSSUPP);
     if (host.utmi != 0) {
-        hcfg |= dwc.HCFG_FSLSSUPP | dwc.HCFG_FSLSPCLKSEL_30_60MHZ;
+        hcfg |= dwc.HCFG_FSLSPCLKSEL_30_60MHZ;
     } else {
         hcfg |= dwc.HCFG_FSLSPCLKSEL_48MHZ;
     }
@@ -396,10 +410,14 @@ pub fn failAll(host: *Host, err: i8) void {
 
 // --- channels ---------------------------------------------------------------------
 
-/// A channel stopped where it is; its interrupt then says so.
+/// A channel stopped where it is; its interrupt then says so. A periodic
+/// channel and a split are not disabled - with buffer DMA the core
+/// forbids it - and halt by themselves at the end of their microframe or
+/// of their phase.
 fn haltChannel(host: *Host, n: u32) void {
     const hcchar = reg(host, dwc.hc(n) + dwc.HCCHAR).*;
     if (hcchar & dwc.HCCHAR_CHENA == 0) return;
+    if (host.channels[n].split or isPeriodic(hcchar)) return;
     reg(host, dwc.hc(n) + dwc.HCCHAR).* = hcchar | dwc.HCCHAR_CHDIS | dwc.HCCHAR_CHENA;
 }
 
@@ -411,6 +429,17 @@ fn start(host: *Host, n: u32, req: *usbhc.IOUsbHC) void {
     channel.request = req;
     channel.stage = if (req.std.req.command == usbhc.UHCMD_CONTROLXFER) .setup else .data;
     program(host, n);
+}
+
+/// Whether a channel's endpoint, as HCCHAR says it, is periodic.
+fn isPeriodic(hcchar: u32) bool {
+    return (hcchar >> dwc.HCCHAR_EPTYPE_SHIFT) & 3 == dwc.HCCHAR_EPTYPE_INTERRUPT;
+}
+
+/// Whether a request's device is reached through a transaction
+/// translator, by split transactions.
+fn isSplit(req: *const usbhc.IOUsbHC) bool {
+    return req.hub_address != 0 and req.speed != usbhc.USB_SPEED_HIGH;
 }
 
 /// The transfer's direction for its current stage: true for IN.
@@ -438,6 +467,11 @@ fn program(host: *Host, n: u32) void {
     const in = stageIn(channel, req);
     const command = req.std.req.command;
     const total: u32 = @intCast(req.std.length);
+    // A round from its start; a split's moves one packet.
+    const split = isSplit(req);
+    channel.split = split;
+    channel.complete = false;
+    channel.nyets = 0;
 
     var bytes: u32 = 0;
     var pid: u32 = dwc.HCTSIZ_PID_DATA1;
@@ -452,7 +486,7 @@ fn program(host: *Host, n: u32) void {
         .status => {},
         .data => {
             const left = total - channel.done;
-            const room = _usbotg.bounce_bytes - _usbotg.bounce_bytes % mps;
+            const room = if (split) mps else host.bounce_bytes - host.bounce_bytes % mps;
             if (in) {
                 // Whole packets: the device may send a full one however
                 // little is left to fill.
@@ -493,12 +527,83 @@ fn program(host: *Host, n: u32) void {
         if (reg(host, dwc.HFNUM).* & 1 == 0) hcchar |= dwc.HCCHAR_ODDFRM;
     }
     const base = dwc.hc(n);
-    reg(host, base + dwc.HCSPLT).* = 0;
+    reg(host, base + dwc.HCSPLT).* = if (split)
+        dwc.HCSPLT_SPLTENA | (@as(u32, req.hub_address) << dwc.HCSPLT_HUBADDR_SHIFT) | (req.hub_port & dwc.HCSPLT_PRTADDR_MASK)
+    else
+        0;
     reg(host, base + dwc.HCINT).* = dwc.HCINT_ALL;
     reg(host, base + dwc.HCINTMSK).* = dwc.HCINT_CHHLTD | dwc.HCINT_AHBERR;
     reg(host, base + dwc.HCTSIZ).* = bytes | (packets << dwc.HCTSIZ_PKTCNT_SHIFT) | (pid << dwc.HCTSIZ_PID_SHIFT);
     reg(host, base + dwc.HCDMA).* = @intCast(@intFromPtr(dma_address));
     reg(host, base + dwc.HCCHAR).* = hcchar | dwc.HCCHAR_CHENA;
+}
+
+/// A split's start-split answered: the complete-split asked for - in
+/// the next microframe for a periodic one - with the size and address
+/// as the start-split left them.
+fn completeSplit(host: *Host, n: u32) void {
+    host.channels[n].complete = true;
+    const base = dwc.hc(n);
+    reg(host, base + dwc.HCSPLT).* |= dwc.HCSPLT_COMPSPLT;
+    reg(host, base + dwc.HCINT).* = dwc.HCINT_ALL;
+    var hcchar = reg(host, base + dwc.HCCHAR).* & ~(dwc.HCCHAR_CHDIS | dwc.HCCHAR_ODDFRM);
+    if (isPeriodic(hcchar) and reg(host, dwc.HFNUM).* & 1 == 0) hcchar |= dwc.HCCHAR_ODDFRM;
+    reg(host, base + dwc.HCCHAR).* = hcchar | dwc.HCCHAR_CHENA;
+}
+
+/// A split round halted short of its end. The start-split taken: the
+/// complete-split next. The hub without the answer yet (NYET): asked
+/// again, a periodic one three times at most. Nothing there (NAK): a
+/// periodic transfer waits for its next interval, any other starts its
+/// round again. A transaction error: the round again, a few times.
+fn splitHalted(host: *Host, n: u32, hcint: u32) void {
+    const channel = &host.channels[n];
+    const req = channel.request.?;
+    const periodic = req.std.req.command == usbhc.UHCMD_INTXFER;
+    if (req.hc_private[_usbotg.PRIV_FLAGS] & _usbotg.PRIVF_DEADLINE != 0 and
+        _usbotg.reached(_usbotg.now(host), @truncate(req.hc_private[_usbotg.PRIV_DUE])))
+        return finish(host, n, usbhc.UHIOERR_NAKTIMEOUT);
+    if (hcint & dwc.HCINT_XACTERR != 0 and hcint & (dwc.HCINT_NAK | dwc.HCINT_NYET | dwc.HCINT_ACK) == 0) {
+        channel.errors += 1;
+        if (channel.errors >= _usbotg.max_errors) return finish(host, n, usbhc.UHIOERR_CRCERROR);
+        return program(host, n);
+    }
+    if (hcint & dwc.HCINT_NYET != 0 and channel.complete) {
+        if (periodic) {
+            channel.nyets += 1;
+            if (channel.nyets >= _usbotg.max_nyets) return nothingYet(host, n);
+        }
+        return completeSplit(host, n);
+    }
+    if (hcint & dwc.HCINT_ACK != 0 and !channel.complete) {
+        channel.errors = 0;
+        return completeSplit(host, n);
+    }
+    if (hcint & dwc.HCINT_NAK != 0 and periodic) return nothingYet(host, n);
+    program(host, n);
+}
+
+/// A periodic transfer the device had nothing for: what earlier rounds
+/// moved is its answer, and with none it waits for its next interval.
+fn nothingYet(host: *Host, n: u32) void {
+    const channel = &host.channels[n];
+    const req = channel.request.?;
+    if (channel.done != 0) {
+        if (req.flags & usbhc.UHF_SHORT_NOT_OK != 0) return finish(host, n, usbhc.UHIOERR_RUNTPACKET);
+        return finish(host, n, 0);
+    }
+    park(host, n);
+}
+
+/// An interrupt transfer with nothing yet: off its channel, and asked
+/// again once its interval has passed.
+fn park(host: *Host, n: u32) void {
+    const channel = &host.channels[n];
+    const req = channel.request.?;
+    channel.request = null;
+    channel.stage = .idle;
+    req.hc_private[_usbotg.PRIV_DUE] = _usbotg.now(host) +% @max(req.interval, 1);
+    host.sys.AddTail(&host.parked, _usbotg.nodeOf(req));
 }
 
 /// The channel's transfer ended, answered `err` with what it moved.
@@ -529,6 +634,7 @@ fn halted(host: *Host, n: u32, hcint: u32) void {
         return finish(host, n, usbhc.UHIOERR_STALL);
     }
     if (hcint & dwc.HCINT_BBLERR != 0) return finish(host, n, usbhc.UHIOERR_OVERFLOW);
+    if (channel.split and hcint & dwc.HCINT_XFERCOMPL == 0) return splitHalted(host, n, hcint);
     if (hcint & (dwc.HCINT_XACTERR | dwc.HCINT_DATATGLERR | dwc.HCINT_FRMOVRUN) != 0) {
         channel.errors += 1;
         if (channel.errors >= _usbotg.max_errors) return finish(host, n, usbhc.UHIOERR_CRCERROR);
@@ -543,14 +649,8 @@ fn halted(host: *Host, n: u32, hcint: u32) void {
         if (flags & _usbotg.PRIVF_DEADLINE != 0 and
             _usbotg.reached(_usbotg.now(host), @truncate(req.hc_private[_usbotg.PRIV_DUE])))
             return finish(host, n, usbhc.UHIOERR_NAKTIMEOUT);
-        if (hcint & dwc.HCINT_NAK != 0 and req.std.req.command == usbhc.UHCMD_INTXFER) {
-            // Nothing yet: asked again once its interval has passed.
-            channel.request = null;
-            channel.stage = .idle;
-            req.hc_private[_usbotg.PRIV_DUE] = _usbotg.now(host) +% @max(req.interval, 1);
-            sys.AddTail(&host.parked, _usbotg.nodeOf(req));
-            return;
-        }
+        // Nothing yet: asked again once its interval has passed.
+        if (hcint & dwc.HCINT_NAK != 0 and req.std.req.command == usbhc.UHCMD_INTXFER) return park(host, n);
         // Halted for no reason it gave: started again.
         return program(host, n);
     }

@@ -53,7 +53,8 @@ pub const Device = struct {
     language: u16 = 0,
     /// Its hub half, if it is one.
     hub: ?*Hub = null,
-    /// The hub it hangs off's address and port, for the controller.
+    /// The transaction translator it is reached through, for the
+    /// controller (`IOUsbHC.hub_address`, `hub_port`): 0, 0 for none.
     hub_address: u8 = 0,
     hub_port: u8 = 0,
     /// Each interface's binding and the driver that has it.
@@ -262,6 +263,26 @@ fn freeAddress(bus: *Bus, address: u8) void {
 const first_tries = 4;
 const first_retry_ms = 100;
 
+/// The transaction translator `device`, plugged into `hub`'s `port`, is
+/// reached through: a low- or full-speed device behind a high-speed hub
+/// is reached through that hub's, at the port it is on; behind a hub of
+/// its own speed, through the one that hub is reached through. A
+/// high-speed device needs none, and neither does one on the root hub,
+/// whose port talks to it at its own speed.
+fn translatorOf(device: *Device, hub: *Hub, port: u8) void {
+    if (device.public.speed == usbhc.USB_SPEED_HIGH) return;
+    const upstream = hub.device;
+    // The root hub hangs off nothing.
+    if (upstream.public.hub == null) return;
+    if (upstream.public.speed == usbhc.USB_SPEED_HIGH) {
+        device.hub_address = upstream.public.address;
+        device.hub_port = port;
+    } else {
+        device.hub_address = upstream.hub_address;
+        device.hub_port = upstream.hub_port;
+    }
+}
+
 /// What was plugged into `parent`'s `port` (null, 0: the root hub), at
 /// `speed`, set up and offered to its drivers; null if it could not be
 /// spoken to at all.
@@ -277,8 +298,7 @@ pub fn attach(bus: *Bus, parent: ?*Hub, port: u8, speed: u8) ?*Device {
     if (parent) |hub| {
         device.public.hub = &hub.device.public;
         device.public.depth = hub.device.public.depth + 1;
-        device.hub_address = hub.device.public.address;
-        device.hub_port = port;
+        translatorOf(device, hub, port);
     }
     device.public.descriptor.max_packet_size0 = if (speed == usbhc.USB_SPEED_LOW) 8 else 64;
 
