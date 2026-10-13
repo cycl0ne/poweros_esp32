@@ -11,7 +11,8 @@ const usj = @import("sdk").hardware.usb_serial_jtag;
 pub const source = intbits.INTB_USB_SERIAL_JTAG;
 
 /// Cleared when the USB FIFO stays full (no host attached), so output does
-/// not stall on every byte. Re-armed as soon as the FIFO drains.
+/// not stall on every byte. Re-armed as soon as the FIFO drains, or the
+/// host sends a byte.
 var usb_alive = true;
 
 /// One byte into the FIFO for the host.
@@ -35,10 +36,13 @@ pub fn flush() void {
     if (usb_alive) reg(usj.EP1_CONF).* = usj.EP1_WR_DONE;
 }
 
-/// The next byte from the host, if any.
+/// The next byte from the host, if any - whether or not output was given
+/// up: a host that opens the port after the machine's first lines found
+/// nobody is heard all the same.
 pub fn read() ?u8 {
-    if (usb_alive and reg(usj.EP1_CONF).* & usj.EP1_OUT_EP_DATA_AVAIL != 0) return @truncate(reg(usj.EP1).*);
-    return null;
+    if (reg(usj.EP1_CONF).* & usj.EP1_OUT_EP_DATA_AVAIL == 0) return null;
+    usb_alive = true;
+    return @truncate(reg(usj.EP1).*);
 }
 
 /// The receive interrupt on: for every packet from the host. Route the

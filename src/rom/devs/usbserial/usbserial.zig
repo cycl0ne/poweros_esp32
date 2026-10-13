@@ -41,8 +41,8 @@ const UsbPortBase = usbport.UsbPortBase;
 
 pub const DEVICE_NAME = sdk.devices.usbserial.USBSERIALNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "13.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
