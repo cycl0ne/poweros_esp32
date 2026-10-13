@@ -64,6 +64,9 @@ pub const KIND_DEVICE: u32 = 1;
 pub const Loaded = struct {
     node: exec.Node = .{},
     seg_list: ?*dos.SegList = null,
+    /// What it was made as: a library's segments go once it has expunged
+    /// itself, a device's stay.
+    kind: u32 = KIND_LIBRARY,
     name_buf: [64]u8 = .{0} ** 64,
 };
 

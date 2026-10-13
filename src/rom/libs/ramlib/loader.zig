@@ -149,7 +149,7 @@ fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, v
     }
 
     const seg_list = find(rlb, name, kind, own_process) orelse return false;
-    const tag = scan(seg_list, tail, version) orelse {
+    const tag = scan(seg_list, tail, version, kind) orelse {
         // A file that is not a module, or not the one that was asked for.
         rlb.dos_base.UnLoadSeg(seg_list);
         return false;
@@ -160,11 +160,13 @@ fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, v
     }
     sys.ObtainSemaphore(&rlb.lock);
     defer sys.ReleaseSemaphore(&rlb.lock);
-    keep(rlb, tail, seg_list);
+    keep(rlb, tail, seg_list, kind);
     return true;
 }
 
-/// A ROM tag answers only the call that asks for its kind.
+/// A tag, in the ROM or in a file, answers only the call that asks for
+/// its kind: a device's file opened as a library would make a second
+/// device beside the one running.
 fn wantedKind(tag: *const exec.Resident, kind: u32) bool {
     return if (kind == ramlib.KIND_DEVICE) tag.type == .device else tag.type == .library;
 }
@@ -222,7 +224,7 @@ fn join(into: []u8, where: []const u8, name: [*:0]const u8) ?[*:0]const u8 {
 /// boot scan looks for, over every segment of the file. A tag is data, so
 /// it is read where the data is; the vectors it points at were relocated
 /// against the instruction bus and are ready to call.
-fn scan(seg_list: *dos.SegList, name: [*:0]const u8, version: u32) ?*const exec.Resident {
+fn scan(seg_list: *dos.SegList, name: [*:0]const u8, version: u32, kind: u32) ?*const exec.Resident {
     var seg: ?*dos.SegList = seg_list;
     while (seg) |s| : (seg = s.next) {
         const bytes = s.data orelse continue;
@@ -238,6 +240,7 @@ fn scan(seg_list: *dos.SegList, name: [*:0]const u8, version: u32) ?*const exec.
             if (tag.match_tag != tag) continue;
             if (tag.version < version) continue;
             if (!sameName(tag.name, name)) continue;
+            if (!wantedKind(tag, kind)) continue;
             return tag;
         }
     }
@@ -297,8 +300,11 @@ fn deviceListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
 
 /// A library that was loaded and has expunged itself since: its base is
 /// gone and its code is used by nothing, so the segments go with the note.
+/// A device's note stays: a device does not go, and its name asked for as
+/// a library says nothing about it - its code is running.
 fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
     const module = noteOf(rlb, name) orelse return;
+    if (module.kind != ramlib.KIND_LIBRARY) return;
     const sys = rlb.sys_base;
     sys.Remove(&module.node);
     if (module.seg_list) |seg_list| rlb.dos_base.UnLoadSeg(seg_list);
@@ -308,11 +314,11 @@ fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
 /// Note what was loaded, so that a flush has something to walk and a
 /// second ask does not load it twice. Without the memory for the note the
 /// module still works; it just cannot be found again.
-fn keep(rlb: *RamLibBase, name: [*:0]const u8, seg_list: *dos.SegList) void {
+fn keep(rlb: *RamLibBase, name: [*:0]const u8, seg_list: *dos.SegList, kind: u32) void {
     const sys = rlb.sys_base;
     const memory = sys.AllocVec(@sizeOf(ramlib.Loaded), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
     const module: *ramlib.Loaded = @ptrCast(@alignCast(memory));
-    module.* = .{ .seg_list = seg_list };
+    module.* = .{ .seg_list = seg_list, .kind = kind };
     var i: usize = 0;
     while (name[i] != 0 and i + 1 < module.name_buf.len) : (i += 1) module.name_buf[i] = name[i];
     module.name_buf[i] = 0;
@@ -341,20 +347,23 @@ test "the scan finds a module, and refuses one that was not asked for" {
     };
     var seg = dos.SegList{ .mem_size = buffer.len, .data = &buffer };
 
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "hello.library", 0));
+    const library = ramlib.KIND_LIBRARY;
+    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "hello.library", 0, library));
     // The name is a name, whatever case it is asked in.
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "HELLO.library", 2));
+    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&seg, "HELLO.library", 2, library));
     // Older than what was asked for is not what was asked for.
-    try testing.expect(scan(&seg, "hello.library", 3) == null);
+    try testing.expect(scan(&seg, "hello.library", 3, library) == null);
     // A file may hold another module; that is not this one.
-    try testing.expect(scan(&seg, "other.library", 0) == null);
+    try testing.expect(scan(&seg, "other.library", 0, library) == null);
+    // Nor is a library what an OpenDevice asked for.
+    try testing.expect(scan(&seg, "hello.library", 0, ramlib.KIND_DEVICE) == null);
 
     // A tag that does not point at itself is a coincidence in the bytes.
     tag.match_tag = @ptrCast(@alignCast(&buffer[0]));
-    try testing.expect(scan(&seg, "hello.library", 0) == null);
+    try testing.expect(scan(&seg, "hello.library", 0, library) == null);
     tag.match_tag = tag;
     tag.match_word = 0;
-    try testing.expect(scan(&seg, "hello.library", 0) == null);
+    try testing.expect(scan(&seg, "hello.library", 0, library) == null);
 }
 
 test "a module is called by the tail of its name" {
@@ -373,7 +382,30 @@ test "the scan walks every segment of the file" {
 
     var tail = dos.SegList{ .mem_size = second.len, .data = &second };
     var head = dos.SegList{ .mem_size = first.len, .data = &first, .next = &tail };
-    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&head, "test.device", 0));
+    try testing.expectEqual(@as(?*const exec.Resident, tag), scan(&head, "test.device", 0, ramlib.KIND_DEVICE));
+    // A device's file opened as a library: no library in it.
+    try testing.expect(scan(&head, "test.device", 0, ramlib.KIND_LIBRARY) == null);
+}
+
+test "a device's name asked for as a library leaves the device's segments alone" {
+    const kexec = @import("../exec/exec.zig");
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    // No dos: unloading the device's segments would reach for it.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    sys.NewList(&rlb.loaded);
+    var segments = dos.SegList{};
+
+    keep(&rlb, "running.device", &segments, ramlib.KIND_DEVICE);
+    const note = noteOf(&rlb, "running.device") orelse return error.NoMemory;
+    forget(&rlb, "running.device");
+    try testing.expect(noteOf(&rlb, "running.device") == note);
+    try testing.expect(note.seg_list == &segments);
+
+    sys.Remove(&note.node);
+    sys.FreeVec(note);
+    try kexec.expectNoLeaks();
 }
 
 test "a name being loaded is not waited for by its own loader, and its record goes with the last" {
