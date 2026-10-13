@@ -505,6 +505,34 @@ from, nothing can be held, and the machine stops:
 `NP_StackSize`'s size. The bottom 16 bytes of a stack are the guard's, not
 the task's.
 
+### A 64-bit field in a structure
+
+A 64-bit field is `align(4)` (`size: u64 align(4)`): a call with an odd
+number of stack arguments leaves the code below it 4 bytes off an 8-byte
+boundary, and a structure that asked for 8 would fail ReleaseSafe's
+`@alignCast` there. The SDK refuses one of its own structures that
+forgets.
+
+A default value - what `x.* = .{}` copies, or the fields a structure
+starts with - is a constant the compiler builds from the fields, and it
+aligns a structure whose 64-bit fields all sit on 8-byte places to 8,
+whatever the fields say. Put inside another structure at an offset that
+is not a multiple of 8, such a structure lands 4 bytes further on in the
+default than where the code reads it, and every field after it starts
+out with its neighbour's value. The build refuses that, naming the field:
+
+```
+error: libs.dos.dosasl.AChain.info is at offset 12, and
+libs.dos.dos.FileInfoBlock has its 64-bit fields on 8-byte places, so a
+default value puts it 4 bytes further on: give it an 8-byte place (see
+sdk/sdk.zig)
+```
+
+A field moved ahead of it, or one more word before it, gives it an 8-byte
+place. The SDK's structures and every program's and module's own are
+checked as they are built: whatever their public declarations hold, and
+the kernel's `rom_modules`.
+
 ## Finding a device
 
 A program that needs a kind of device - a terminal a serial line, a disk

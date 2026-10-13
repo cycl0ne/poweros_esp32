@@ -66,10 +66,11 @@ pub const AChain = extern struct {
     parent: ?*AChain = null,
     /// an_Lock: the directory this level searches in.
     lock: ?*FileLock = null,
+    /// an_Flags: DDF_*. Ahead of `info`, which this puts on an 8-byte place
+    /// (sdk/sdk.zig, 64-bit fields in constants).
+    flags: u8 = 0,
     /// an_Info: the entry this level is at.
     info: FileInfoBlock = .{},
-    /// an_Flags: DDF_*.
-    flags: u8 = 0,
 
     /// an_String: the level's name, or its pattern in tokens (upper case).
     pub fn string(a: *AChain) [*:0]u8 {

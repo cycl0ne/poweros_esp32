@@ -2,4 +2,4 @@
 //! The ROM tags the emulator's image carries beyond the ones every image
 //! has: none yet.
 
-comptime {}
+pub const modules = .{};

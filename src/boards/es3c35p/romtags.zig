@@ -4,15 +4,15 @@
 //! boot is not here - sdcard.device and fat-handler are on the disk - and a
 //! part the board lacks has no driver in the image.
 
-comptime {
+pub const modules = .{
     // The I2C bus, and rtg's transport over it.
-    _ = @import("../../rom/devs/i2c/i2c.zig");
-    _ = @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig");
+    @import("../../rom/devs/i2c/i2c.zig"),
+    @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig"),
     // The panel's own touch controller.
-    _ = @import("../../rom/devs/touch/touch.zig");
+    @import("../../rom/devs/touch/touch.zig"),
     // The codec and its amplifier.
-    _ = @import("../../rom/devs/audio/audio.zig");
+    @import("../../rom/devs/audio/audio.zig"),
     // The panel: a DCS controller on a QSPI bus.
-    _ = @import("../../rom/libs/rtg_driver/qspibus/qspibus.zig");
-    _ = @import("../../rom/libs/rtg_driver/dcsboard/dcsboard.zig");
-}
+    @import("../../rom/libs/rtg_driver/qspibus/qspibus.zig"),
+    @import("../../rom/libs/rtg_driver/dcsboard/dcsboard.zig"),
+};

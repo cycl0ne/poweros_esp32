@@ -24,46 +24,52 @@ const boards = @import("boards/boards.zig");
 const sdk = @import("sdk");
 const st = sdk.expansion.systemtags;
 
+/// The ROM's modules: their ROM tags go into .resident, where exec's boot
+/// scan finds them. A list rather than a row of imports, so the SDK's
+/// layout check (sdk/sdk.zig) walks every structure they hold.
+pub const rom_modules = .{
+    @import("rom/devs/timer/timer.zig"),
+    @import("rom/devs/flash/flash.zig"),
+    @import("rom/devs/serial/serial.zig"),
+    @import("rom/devs/usbserial/usbserial.zig"),
+    @import("rom/devs/input/input.zig"),
+    @import("rom/devs/keyboard/keyboard.zig"),
+    @import("rom/devs/mouse/mouse.zig"),
+    @import("rom/libs/keymap/keymap.zig"),
+    @import("rom/devs/console/console.zig"),
+    @import("rom/libs/utility/utility.zig"),
+    @import("rom/libs/expansion/expansion.zig"),
+    @import("rom/resources/gpio/gpio.zig"),
+    @import("rom/resources/usbport/usbport.zig"),
+    @import("rom/resources/battery/battery.zig"),
+    @import("rom/resources/battclock/battclock.zig"),
+    // The drivers the board's parts want.
+    @import("boards/boards.zig").romtags.modules,
+    @import("rom/libs/dos/dos.zig"),
+    @import("rom/libs/ramlib/ramlib.zig"),
+    @import("rom/handler/nil/nil.zig"),
+    @import("rom/handler/ram/ram.zig"),
+    @import("rom/handler/con/con.zig"),
+    @import("rom/handler/pipe/pipe.zig"),
+    @import("rom/handler/flashfs/flashfs.zig"),
+    @import("rom/shell/shell.zig"),
+    @import("rom/resources/watchdog/watchdog.zig"),
+    @import("rom/resources/dma/dma.zig"),
+    @import("rom/resources/platform/platform.zig"),
+    @import("rom/libs/rtg/rtg.zig"),
+    @import("rom/libs/graphics/graphics.zig"),
+    @import("rom/libs/layers/layers.zig"),
+    @import("rom/libs/intuition/intuition.zig"),
+    @import("rom/libs/motion/motion.zig"),
+    // The system's release, for a program to ask the running system.
+    @import("rom/release.zig"),
+};
+
 comptime {
     _ = @import("arch/esp32s3/trap.zig"); // exports xtensa_exception for start.S
-    // Resident modules: ROM tags in .resident, found by exec's boot scan.
-    _ = @import("rom/devs/timer/timer.zig");
-    _ = @import("rom/devs/flash/flash.zig");
-    _ = @import("rom/devs/serial/serial.zig");
-    _ = @import("rom/devs/usbserial/usbserial.zig");
-    _ = @import("rom/devs/input/input.zig");
-    _ = @import("rom/devs/keyboard/keyboard.zig");
-    _ = @import("rom/devs/mouse/mouse.zig");
-    _ = @import("rom/libs/keymap/keymap.zig");
-    _ = @import("rom/devs/console/console.zig");
-    _ = @import("rom/libs/utility/utility.zig");
-    _ = @import("rom/libs/expansion/expansion.zig");
-    _ = @import("rom/resources/gpio/gpio.zig");
-    _ = @import("rom/resources/usbport/usbport.zig");
-    _ = @import("rom/resources/battery/battery.zig");
-    _ = @import("rom/resources/battclock/battclock.zig");
-    // The board's description: its system tag list, a ROM tag of its own,
-    // and the drivers its parts want.
+    // The board's description: its system tag list, a ROM tag of its own.
     _ = &@import("boards/boards.zig").system.system_tag;
-    _ = @import("boards/boards.zig").romtags;
-    _ = @import("rom/libs/dos/dos.zig");
-    _ = @import("rom/libs/ramlib/ramlib.zig");
-    _ = @import("rom/handler/nil/nil.zig");
-    _ = @import("rom/handler/ram/ram.zig");
-    _ = @import("rom/handler/con/con.zig");
-    _ = @import("rom/handler/pipe/pipe.zig");
-    _ = @import("rom/handler/flashfs/flashfs.zig");
-    _ = @import("rom/shell/shell.zig");
-    _ = @import("rom/resources/watchdog/watchdog.zig");
-    _ = @import("rom/resources/dma/dma.zig");
-    _ = @import("rom/resources/platform/platform.zig");
-    _ = @import("rom/libs/rtg/rtg.zig");
-    _ = @import("rom/libs/graphics/graphics.zig");
-    _ = @import("rom/libs/layers/layers.zig");
-    _ = @import("rom/libs/intuition/intuition.zig");
-    _ = @import("rom/libs/motion/motion.zig");
-    // The system's release, for a program to ask the running system.
-    _ = @import("rom/release.zig");
+    _ = rom_modules;
 }
 
 pub const panic = std.debug.FullPanic(exec.kernelPanic);

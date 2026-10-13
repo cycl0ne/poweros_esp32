@@ -5,6 +5,6 @@
 //! which find the emulator's by the board's parts. It has no I2C, touch
 //! panel, codec or card slot, so none of their drivers is here.
 
-comptime {
-    _ = @import("../../rom/libs/rtg_driver/qemuboard/qemuboard.zig");
-}
+pub const modules = .{
+    @import("../../rom/libs/rtg_driver/qemuboard/qemuboard.zig"),
+};

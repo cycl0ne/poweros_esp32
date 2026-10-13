@@ -99,3 +99,200 @@ fn isFixed(comptime T: type) bool {
     }
     return false;
 }
+
+// --- 64-bit fields in constants -------------------------------------------
+//
+// A constant the compiler builds from fields - a default value, what
+// `x.* = .{}` copies - lays a structure out by the fields' own alignment:
+// a 64-bit number's is 8, whatever its field says. A structure whose 64-bit
+// fields all sit on 8-byte places, and whose size is a multiple of 8, comes
+// out 8-aligned there, though Zig aligns it to 4 and places it by 4. Inside
+// another structure at an offset that is not a multiple of 8, the constant
+// puts it 4 bytes further on than the code reads it, and every field after
+// it comes out of the default one word off: a -1 that belongs to one field
+// lands on the next. A structure with a 64-bit field off its 8-byte place,
+// or with a size its fields do not divide, is built byte by byte instead,
+// and comes out where the code reads it - and so does anything inside it.
+//
+// So every structure the SDK declares, and every one the program or module
+// being built declares in public - `@import("root")`, the kernel's
+// `rom_modules` among it - is walked through all its fields, and one that
+// holds such a structure at such an offset is refused.
+
+comptime {
+    const arch = @import("builtin").cpu.arch;
+    if (arch == .xtensa or arch == .riscv32) {
+        @setEvalBranchQuota(20_000_000);
+        checkConstants(@This(), 0);
+        checkConstants(@import("root"), 0);
+    }
+}
+
+/// `Namespace`'s fields, then its public declarations: the types among
+/// them, and the lists of types (`rom_modules`), down to a few levels.
+fn checkConstants(comptime Namespace: type, comptime depth: u32) void {
+    if (depth > 5 or outsideTree(Namespace)) return;
+    checkFields(Namespace);
+    const decls = switch (@typeInfo(Namespace)) {
+        .@"struct" => |s| s.decls,
+        .@"union" => |u| u.decls,
+        .@"enum" => |e| e.decls,
+        .@"opaque" => |o| o.decls,
+        else => return,
+    };
+    for (decls) |d| {
+        const Decl = @TypeOf(@field(Namespace, d.name));
+        if (Decl == type) {
+            checkConstants(@field(Namespace, d.name), depth + 1);
+        } else if (isListOfTypes(Decl)) {
+            checkList(@field(Namespace, d.name), depth + 1);
+        }
+    }
+}
+
+fn checkList(comptime list: anytype, comptime depth: u32) void {
+    for (@typeInfo(@TypeOf(list)).@"struct".fields) |field| {
+        const item = @field(list, field.name);
+        if (@TypeOf(item) == type) {
+            checkConstants(item, depth);
+        } else if (isListOfTypes(@TypeOf(item))) {
+            checkList(item, depth);
+        }
+    }
+}
+
+fn isListOfTypes(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => |s| s.is_tuple,
+        else => false,
+    };
+}
+
+/// The language's own library and the compiler's are not ours to check,
+/// and the chip's registers are addresses, with members only one chip has.
+fn outsideTree(comptime T: type) bool {
+    const name = @typeName(T);
+    for ([_][]const u8{ "std.", "builtin.", "hardware." }) |prefix| {
+        if (name.len >= prefix.len and @import("std").mem.eql(u8, name[0..prefix.len], prefix)) return true;
+    }
+    return false;
+}
+
+/// A structure, and everything it holds, refused if it places a structure
+/// that a constant aligns to 8 at an offset that is not a multiple of 8.
+fn checkFields(comptime T: type) void {
+    if (comptimeOnly(T)) return;
+    switch (@typeInfo(T)) {
+        .@"struct" => |s| {
+            if (s.layout == .@"packed") return;
+            const exact = builtByteWise(T);
+            for (s.fields) |field| {
+                if (field.is_comptime) continue;
+                checkFields(field.type);
+                if (exact or !isAggregate(field.type)) continue;
+                const offset = @offsetOf(T, field.name);
+                if (constantAlign(field.type) == 8 and offset % 8 != 0) {
+                    @compileError(@typeName(T) ++ "." ++ field.name ++ " is at offset " ++
+                        @import("std").fmt.comptimePrint("{d}", .{offset}) ++ ", and " ++
+                        @typeName(field.type) ++ " has its 64-bit fields on 8-byte places, " ++
+                        "so a default value puts it 4 bytes further on: give it an 8-byte place (see sdk/sdk.zig)");
+                }
+            }
+        },
+        .@"union" => |u| for (u.fields) |field| checkFields(field.type),
+        .array => |a| checkFields(a.child),
+        .optional => |o| checkFields(o.child),
+        else => {},
+    }
+}
+
+/// A type that exists only while compiling - a list of types, a class's
+/// description - and has no layout. Pointers are not followed: one to a
+/// structure is a word whatever the structure holds.
+fn comptimeOnly(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .type, .comptime_int, .comptime_float, .enum_literal, .null, .undefined, .@"fn", .noreturn => true,
+        .@"struct" => |s| for (s.fields) |field| {
+            if (!field.is_comptime and comptimeOnly(field.type)) break true;
+        } else false,
+        .@"union" => |u| for (u.fields) |field| {
+            if (comptimeOnly(field.type)) break true;
+        } else false,
+        .array => |a| comptimeOnly(a.child),
+        .optional => |o| comptimeOnly(o.child),
+        .pointer => |p| switch (@typeInfo(p.child)) {
+            .type, .comptime_int, .comptime_float, .enum_literal => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// A structure or a union, or a row or an optional of them: what a
+/// constant places by its own alignment rather than its fields' sizes.
+fn isAggregate(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => |s| s.layout != .@"packed",
+        .@"union" => true,
+        .array => |a| isAggregate(a.child),
+        .optional => |o| isAggregate(o.child),
+        else => false,
+    };
+}
+
+/// The alignment a constant gives a type: a number's natural one,
+/// whatever its field says; a structure's, the largest of its fields' - or
+/// 1 when it is built byte by byte.
+fn constantAlign(comptime T: type) comptime_int {
+    return switch (@typeInfo(T)) {
+        .int, .float => naturalAlign(@sizeOf(T)),
+        .@"enum" => |e| constantAlign(e.tag_type),
+        .array => |a| constantAlign(a.child),
+        .@"struct" => |s| switch (s.layout) {
+            .@"packed" => constantAlign(s.backing_integer.?),
+            else => if (builtByteWise(T)) 1 else most: {
+                var most = 1;
+                for (s.fields) |field| {
+                    if (!field.is_comptime) most = @max(most, constantAlign(field.type));
+                }
+                break :most most;
+            },
+        },
+        .@"union" => |u| most: {
+            var most = 1;
+            for (u.fields) |field| most = @max(most, constantAlign(field.type));
+            break :most most;
+        },
+        .optional => |o| if (@sizeOf(T) == @sizeOf(o.child)) @alignOf(T) else constantAlign(o.child),
+        else => @alignOf(T),
+    };
+}
+
+/// Whether a constant of the structure is built byte by byte: a field the
+/// compiler sees off its alignment - a number at an offset that is not a
+/// multiple of its size, as a 64-bit field `align(4)` on a 4-byte place -
+/// or a size its fields' alignment does not divide. A structure among the
+/// fields counts with Zig's own alignment of it, which is where the 8 a
+/// constant gives it goes unseen.
+fn builtByteWise(comptime T: type) bool {
+    var most = 1;
+    for (@typeInfo(T).@"struct".fields) |field| {
+        if (field.is_comptime) continue;
+        const seen = seenAlign(field.type);
+        most = @max(most, seen);
+        if (@offsetOf(T, field.name) % seen != 0) return true;
+    }
+    return @sizeOf(T) % most != 0;
+}
+
+fn seenAlign(comptime T: type) comptime_int {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union" => @alignOf(T),
+        .array => |a| seenAlign(a.child),
+        else => constantAlign(T),
+    };
+}
+
+fn naturalAlign(comptime size: comptime_int) comptime_int {
+    return if (size >= 8) 8 else if (size >= 4) 4 else if (size >= 2) 2 else 1;
+}
