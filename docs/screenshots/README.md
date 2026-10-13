@@ -1,6 +1,6 @@
 # Screenshots
 
-PowerOS 0.1 on the boards, and in Espressif's QEMU. The screenshots are
+PowerOS 0.2 on the boards, and in Espressif's QEMU. The screenshots are
 QEMU's (`./zig build qemu-display`, with the QEMU from
 `scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
 has; the photos are the boards'. Every program shown is on the flash

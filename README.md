@@ -7,7 +7,7 @@ devices, a DOS with file systems and a shell, a TCP/IP stack, and a
 windowed desktop on the board's display. Programs are loaded from disk at
 run time and built against a separate SDK.
 
-**Status: release 0.1.** It runs on two ESP32-S3 boards, on two
+**Status: release 0.2.** It runs on two ESP32-S3 boards, on two
 ESP32-P4 boards and in Espressif's QEMU.
 
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
@@ -52,7 +52,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 - **It is** made for the ESP32 family. It drives the chip itself, register
   by register, so everything between power-on and the desktop is in this
   tree.
-- **It is** young. 0.1 works end to end, but the API may change before
+- **It is** young. 0.2 works end to end, but the API may change before
   1.0, and not every part has run on every board.
 - **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
   programs use the system's own API - libraries opened by name, tag lists,

@@ -17,10 +17,10 @@ pub const NAME = sdk.release.NAME;
 /// The system's release. Change it here: the banner, the ROM tag, and
 /// whatever asks the running system, read it.
 pub const VERSION = 0;
-pub const REVISION = 1;
-const DATE = "24.9.2026";
+pub const REVISION = 2;
+const DATE = "13.10.2026";
 
-/// "0.1".
+/// "0.2".
 pub const RELEASE_STRING = std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION });
 
 /// What a console prints above its first output. The blank line sets it

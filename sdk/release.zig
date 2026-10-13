@@ -17,12 +17,12 @@ pub const NAME = "PowerOS";
 /// The SDK's version and revision: the ABI's. build.zig.zon's `version`
 /// says the same.
 pub const SDK_VERSION = 0;
-pub const SDK_REVISION = 1;
+pub const SDK_REVISION = 2;
 
-/// "0.1".
+/// "0.2".
 pub const SDK_VERSION_STRING = std.fmt.comptimePrint("{d}.{d}", .{ SDK_VERSION, SDK_REVISION });
 
 /// The ROM tag the running system's release is in: `version` is the
 /// release's version, and `id_string` names the system, the release and
-/// its date ("PowerOS 0.1 (24.9.2026)").
+/// its date ("PowerOS 0.2 (13.10.2026)").
 pub const RELEASE_RESIDENT = "release";
