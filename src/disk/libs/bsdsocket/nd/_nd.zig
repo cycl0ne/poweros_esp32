@@ -128,7 +128,7 @@ pub fn init(stack: *StackBase) void {
 }
 
 pub fn random(stack: *StackBase) u32 {
-    if (builtin.cpu.arch == .xtensa) return sdk.hardware.rng.read();
+    if (builtin.os.tag == .freestanding) return sdk.hardware.rng.read();
     const state = &stack.nd.random_state;
     state.* ^= state.* << 13;
     state.* ^= state.* >> 17;

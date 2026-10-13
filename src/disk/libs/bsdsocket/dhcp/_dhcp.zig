@@ -149,7 +149,7 @@ fn interfaceOf(stack: *StackBase, client: *Client) *Interface {
 }
 
 fn random(stack: *StackBase) u32 {
-    if (builtin.cpu.arch == .xtensa) return sdk.hardware.rng.read();
+    if (builtin.os.tag == .freestanding) return sdk.hardware.rng.read();
     const state = &stack.dhcp.random_state;
     state.* ^= state.* << 13;
     state.* ^= state.* >> 17;

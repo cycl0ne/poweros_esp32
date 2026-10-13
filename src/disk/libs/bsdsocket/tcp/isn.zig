@@ -17,7 +17,7 @@ const _timer = @import("../timer/_timer.zig");
 /// The key made, when the stack starts. On the host, where there is no
 /// generator, a fixed one: the tests want the same numbers every run.
 pub fn makeKey(stack: *StackBase) void {
-    if (builtin.cpu.arch == .xtensa) {
+    if (builtin.os.tag == .freestanding) {
         sdk.hardware.rng.fill(&stack.isn_key);
     } else {
         for (&stack.isn_key, 0..) |*byte, index| byte.* = @truncate(index * 29 + 7);

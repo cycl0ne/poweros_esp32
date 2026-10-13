@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! RandomBytes: bytes from the chip's random number generator.
 
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
-const _engine = @import("../engine/_engine.zig");
 
 /// Fills a buffer with random bytes.
 ///
@@ -57,7 +57,7 @@ const _engine = @import("../engine/_engine.zig");
 /// ```
 pub fn RandomBytes(cb: *CryptoBase, buffer: *anyopaque, length: u32) void {
     const bytes: [*]u8 = @ptrCast(buffer);
-    if (_engine.on_chip) return sdk.hardware.rng.fill(bytes[0..length]);
+    if (builtin.os.tag == .freestanding) return sdk.hardware.rng.fill(bytes[0..length]);
     // The host's tests: xorshift, which only has to be different bytes.
     for (bytes[0..length]) |*byte| {
         var state = cb.random_state;

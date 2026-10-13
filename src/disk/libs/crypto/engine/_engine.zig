@@ -22,7 +22,10 @@ const hardware = sdk.hardware;
 const system = hardware.system;
 const reg = hardware.mmio.reg;
 
-/// Whether this is the chip, with engines, or the host, without.
+/// Whether the engines this file drives - the ESP32-S3's - are there.
+/// On the P4 and on the host the library does their work in software.
+/// The random number generator is not one of them: RandomBytes asks
+/// for any chip.
 pub const on_chip = builtin.cpu.arch == .xtensa;
 
 /// SYSTEM's RSA memory power control: RSA_MEM_PD [0].

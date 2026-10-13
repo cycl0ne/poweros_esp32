@@ -162,7 +162,7 @@ pub fn remember(stack: *StackBase, name: []const u8, family: u8, addresses: []co
 
 /// 16 random bits: a DNS id.
 pub fn random16(stack: *StackBase) u16 {
-    if (builtin.cpu.arch == .xtensa) return @truncate(sdk.hardware.rng.read());
+    if (builtin.os.tag == .freestanding) return @truncate(sdk.hardware.rng.read());
     const state = &stack.names.random_state;
     state.* ^= state.* << 13;
     state.* ^= state.* >> 17;
