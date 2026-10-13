@@ -1,10 +1,29 @@
 # Screenshots
 
-PowerOS 0.2 on the boards, and in Espressif's QEMU. The screenshots are
-QEMU's (`./zig build qemu-display`, with the QEMU from
+PowerOS 0.2 on the boards, and in Espressif's QEMU. Most screenshots
+are QEMU's (`./zig build qemu-display`, with the QEMU from
 `scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
-has; the photos are the boards'. Every program shown is on the flash
-disk and runs from there.
+has; the Player's were taken on the Olimex with `C:ScreenDump`, and the
+photos are the boards'. Every program shown is on the flash disk and
+runs from there.
+
+## Music: `SYS:Programs/Player`
+
+<p>
+<img src="player-wave.png" width="49%" alt="Player: a mix's cover, tags and chapter, and its wave">
+<img src="player-bars.png" width="49%" alt="Player: the same mix as the spectrum's bars">
+</p>
+
+The Player on the Olimex ESP32-P4-PC's 2.8" 480×640 panel, playing a
+two-hour DJ mix from the SD card. Beside the cover - the picture the
+MP3's ID3 tag holds - its title, artist, year and genre, the chapter of
+the mix that is playing, and what kind of file it is; then where the
+song is, the tape deck, the volume and which picture. Under them the
+sound itself, in step with what is heard: the wave, held still where it
+rises through zero, or the spectrum from 40 Hz to 16 kHz with a mark
+where each band's peak was. A press on the picture goes to the next, a
+plasma among them. Taken on the board with
+`Run ScreenDump RAM:player.png DELAY 25` before the Player was started.
 
 ## Graphics: `C:test/Anim`
 

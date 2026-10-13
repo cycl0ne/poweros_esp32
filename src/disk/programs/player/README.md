@@ -1,0 +1,72 @@
+# Player
+
+Player plays sound files - WAV and MP3 - in a window, with a picture of
+the sound under its controls: a plasma, the wave, or the spectrum's bars.
+
+## Starting it
+
+Double-click its icon, double-click a `.mp3` or `.wav` file, or type in a
+shell:
+
+```
+Player FILES/M,VOLUME/K/N,LOOK/K
+```
+
+- `FILES` are played one after another.
+- `VOLUME` is in percent of as recorded (100), up to 200.
+- `LOOK` is the picture to start with: `PLASMA`, `WAVE` or `BARS`.
+
+A file dropped on the window from the desktop, picked with the button at
+the end of its file line, or typed into that line is played at once, in
+place of the files it was playing.
+
+## What the window shows
+
+- The song's cover: the picture its tags hold, or one lying beside the
+  file - `cover.jpg`, `folder.jpg`, `front.jpg`, `cover.png` or
+  `folder.png`. A picture that is not square shows its middle.
+- Beside it what the tags say: the title, in bold - or the file's name -
+  the artist, the album and its year, the genre, the track and the
+  composer; the chapter that is playing when the song is marked in
+  chapters, as a DJ mix or an audiobook is, or else a comment; and the
+  kind of file, its rate, mono or stereo, and its bit rate.
+- A slider across that is where the song is, with the time and the
+  song's length beside it. Drag it to go to another place; the time shows
+  where while it is held.
+- The buttons of a tape deck. Play starts, pause holds the sound and goes
+  on, stop goes back to the start; rewind and fast forward jump ten
+  seconds back or on.
+- The volume.
+- Which picture is shown.
+- The file.
+
+Under them, as big as the window lets it be, the picture:
+
+- **Plasma**: waves of colour that move faster with the bass, turn their
+  colours with the treble and light up with the loudness.
+- **Wave**: the sound itself, about a hundredth of a second of it, held
+  still where it crosses the middle going up; what was drawn before fades
+  away behind it.
+- **Bars**: the spectrum from 40 Hz at the left to 16 kHz at the right,
+  each bar a share of an octave, with a mark where its peak was.
+
+A press on the picture goes to the next one. The picture keeps in step
+with what is heard, not with what has been decoded: the sound card's own
+delay is taken off. When the sound stops, the picture settles for two
+seconds and then rests until something plays.
+
+A song is shown before it is heard: its names and its cover first, then
+its sound. Reading a large cover takes a moment, and the sound starts
+after it rather than stumbling while it is read.
+
+On a machine with no sound the window opens all the same and says so,
+and a song picked still shows its cover and tags - as it does when all
+sixteen of the sound's streams are in use.
+
+## Keys
+
+- Space pauses and goes on; when nothing plays, it starts.
+
+## Ending it
+
+The window's close gadget, or Ctrl-C in the shell it was started from.

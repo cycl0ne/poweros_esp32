@@ -9,6 +9,9 @@ test {
     _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
     _ = @import("programs/terminal/tests/terminal.zig");
+    _ = @import("programs/player/spectrum.zig");
+    _ = @import("programs/player/visual.zig");
+    _ = @import("c/screendump/png.zig");
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("devs/sdcard/sdspi.zig");

@@ -155,8 +155,72 @@ file's stream to a frame: a WAV exactly, an MP3 by its encoder's table or
 its bit rate. Decoding an MP3 takes about a tenth of a core at 44.1 kHz in
 stereo.
 
+### Tags, covers and chapters
+
+`GetAudioStreamAttrs` gives the rest of what the tags say, each answer
+where its tag points: the title, artist and album at full length, the
+album's own artist, the composer, the genre (an ID3v1 number is named),
+a comment, the year, the track and the album's count of them. An MP3's
+ID3v2 tag is read whole, frame by frame, however large; an ID3v1 tag at
+the end counts where it says nothing, and a WAV's INFO list says the
+same. Texts are Latin-1: quotes and dashes become their plain kin, an
+emoji is left out, anything else past Latin-1 is a `?`.
+
+The picture the tags hold - a cover, the front one where there are
+several - is kept only for a stream opened with `ACA_KeepPicture`, so a
+program that does not show it does not read it. `ACA_Picture` then
+answers the bytes of an image file - a JPEG or PNG - for
+datatypes.library to read. The chapters a mix or an audiobook is marked
+in (ID3v2 `CHAP` frames) come with `ACA_Chapters` and `ACA_ChapterList`:
+where each starts and ends, in milliseconds, and its title.
+
+```zig
+const stream = acb.OpenAudioStream(&[_]utility.TagItem{
+    .{ .tag = ac.ACA_Name, .data = @intFromPtr("SD0:Music/song.mp3") },
+    .{ .tag = ac.ACA_KeepPicture, .data = 1 },
+    .{},
+}, &err) orelse return;
+var year: u32 = 0;
+var cover: ?*const ac.AudioPicture = null;
+var chapters: u32 = 0;
+_ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+    .{ .tag = ac.ACA_Year, .data = @intFromPtr(&year) },
+    .{ .tag = ac.ACA_Picture, .data = @intFromPtr(&cover) },
+    .{ .tag = ac.ACA_Chapters, .data = @intFromPtr(&chapters) },
+    .{},
+});
+```
+
+Everything handed out is the stream's, good until it is closed.
+
 `C:Play FILE` plays a file this way, with `VOLUME` and `START` (seconds
-in); Ctrl-C stops it.
+in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
+what the desktop opens a `.mp3` or `.wav` file with (the `MP3` and `WAV`
+descriptors in `DEVS:DataTypes`), with the song's cover and tags and the
+chapter of a mix that is playing.
+
+## Keeping a picture in step
+
+A program that shows the sound - a level meter, a wave, a spectrum -
+shows what is heard, not what it last decoded: by then, a buffer or two
+is queued behind what plays. `AUDIOCMD_QUERY` with `std.data` null
+answers only the stream's `position`, which is cheap enough to ask for
+every picture. The frame being heard is that position less the output's
+`latency`, which is in the output's frames and so is scaled by the
+stream's rate over the output's:
+
+```zig
+io.std.req.command = audio.AUDIOCMD_QUERY;
+io.std.data = null;
+_ = sys.DoIO(&io.std.req);
+const heard = io.position -% info.latency * stream_rate / info.rate;
+```
+
+Each frame written is counted from the same start, so a program keeps
+what it wrote in a ring indexed by that count and reads the picture's
+samples at `heard`. The request asked with is best kept on a reply port
+of its own: a `DoIO` that has to wait takes its port's signal, which
+would otherwise tell the program that one of its writes came back.
 
 ## Recording
 

@@ -13,12 +13,12 @@ ESP32-P4 boards and in Espressif's QEMU.
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
 <p>
-<a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence, line numbers on"></a>
-<a href="docs/screenshots/README.md#cpu-load-sysprogramscpuload"><img src="docs/screenshots/cpuload.png" width="49%" alt="CPULoad: both cores, after a burst of C:test/Anim"></a>
+<a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-wave.png" width="49%" alt="Player on the Olimex's 2.8-inch panel: a mix's cover, tags and chapter, and its wave"></a>
+<a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-bars.png" width="49%" alt="Player on the Olimex's 2.8-inch panel: the same mix as the spectrum's bars"></a>
 </p>
 <p>
 <a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the System disk opened, its drawers and its programs"></a>
-<a href="docs/screenshots/README.md#two-screens-the-desktop-in-front-of-cteststyles-dark"><img src="docs/screenshots/desktop2.jpeg" width="49%" alt="The desktop's screen pulled down in front of a dark-style screen with CPU Load"></a>
+<a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence, line numbers on"></a>
 </p>
 <p>
 <a href="docs/screenshots/README.md#on-the-board"><img src="docs/screenshots/board-olimex-p4pc.jpg" width="49%" alt="The Olimex ESP32-P4-PC on a television over HDMI, with a USB keyboard and mouse: Plasma, Lines and CPU Load"></a>
@@ -29,7 +29,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
@@ -69,170 +69,74 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 ### What is in it
 
-- **Kernel (exec):** preemptive multitasking on both of the chip's cores - a
-  dispatcher per core, one ready list, tasks pinned to a core where they
-  must be - signals, message ports, semaphores, spinlocks with checked
-  rules, and every system list under a lock of its own, so neither core
-  ever stops the other; libraries and devices opened by name, each under
-  its own lock, loaded from disk on demand and expunged when memory runs
-  short; internal SRAM and the PSRAM (8 MiB on the ESP32-S3 boards, 32 on
-  the ESP32-P4 ones) as memory with attributes. A system log from the first byte of
-  the boot, with levels, on the USB console where UART0 is not wired, and
-  to a syslog server (`C:Log`). A Guru that names the failed check and
-  offers a ROM debugger - registers, memory, backtrace, breakpoints,
-  single step - on the serial ports, and unanswered restarts the machine,
-  whose next boot shows the last words before it. A program that fails is
-  held and asked about on the display - Software Failure, Suspend or
-  Reboot - while the system runs on. `SYS:Programs/CPULoad` charts how
-  busy each core is, in tasks and in interrupts; `C:Top` lists what each
-  task takes.
-- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
-  255 characters; a log-structured flash file system (`DH0:`), FAT32 and
-  exFAT on SD cards (`SD0:`, mounted at boot on a board with a slot)
-  and USB sticks (`DU0:` on, made as they are plugged in),
-  `RAM:`, `PIPE:`, `NIL:`; partitions from
-  the disk's RigidDiskBlock (`LIBS:rdb.library`, `C:RDB`, the
-  [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
-  told when a file or a drawer changes (`RAM:`, `DH0:`, `SD0:`); consoles with line editing,
-  Tab completion of file names, and copy and paste; volumes renamed
-  (`C:Relabel`); a shell with scripts and resident commands, 47
-  commands in `C:` (`dir all | more` pages through anything), test
-  programs in `C:test` and network tools in `C:net`.
-- **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
-  and hands back an object a program puts in a window - pictures (ILBM,
-  BMP, PNG, GIF, JPEG, on the ESP32-P4 decoded by its JPEG codec), text
-  (plain, FTXT, Markdown) and animations
-  (animated GIF, Lottie). `SYS:Programs/MultiView` shows any of them;
-  `LIBS:iffparse.library` and `DEVS:clipboard.device` carry IFF between
-  programs. See the [datatypes guide](sdk/docs/guides/datatypes.md).
-- **Icons:** `LIBS:icon.library` reads and writes icons - a PNG beside
-  the file, its fields in a chunk of its own, so any paint program makes
-  one - and gives a file without an icon the default that fits it: a
-  disk, a drawer, a program, a document, by its datatype's group. See the
-  [icons guide](sdk/docs/guides/icons.md).
-- **Desktop:** `LIBS:anvil.library`, started at boot by `C:LoadAnvil`:
-  the Workbench screen's ground - a colour, a gradient or a picture -
-  with an icon for each disk, drawers opened into windows of icons or
-  lists, programs started with the files picked, icons dragged to move
-  and copy files, a trash on the disk, Information on any file, and the
-  free memory in the screen's title; it follows its prefs as they
-  change, and starts the programs in `SYS:WBStartup`.
-  `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
-  script from its. Programs add windows files are dropped on, icons and
-  Tools items (MultiView, Notepad, Sheet, FontView and the file requester
-  take a file let go on them, Terminal sends it). Each program in `SYS:Programs` has its
-  readme in `SYS:Programs/Docs` (`Notepad.md`, opened in MultiView), and
-  puts its name and version in the screen's title while one of its
-  windows is active.
-  See the [desktop guide](sdk/docs/guides/anvil.md)
-  and the [screenshot](docs/screenshots/README.md#the-desktop-anvil).
-- **Graphics and windows:** rtg.library for the displays, with the
-  ESP32-P4's 2D engine (the PPA and the 2D-DMA) filling, copying,
-  blending and scaling for graphics.library on the DSI boards;
-  graphics.library with smooth curves and lines, rounded rectangles,
-  gradients, shadows and scaled pictures; layers.library; and
-  intuition.library - screens, pulled down by their title bar to show
-  the ones behind, windows, menus, requesters, and gadget classes in
-  layouts that fit any display; the mouse wheel scrolls or steps
-  whatever is under the pointer; on a touch panel a tap on the screen's
-  bar opens the menus, and a picture can be dragged across the screen
-  (`BeginDrag`). Everything is drawn from a
-  style a screen carries, so the look changes with no program changed
-  (the [styles guide](sdk/docs/guides/styles.md)). More gadget classes
-  in `SYS:classes/gadgets/`: tabs, number fields, pop-up lists, progress
-  bars, dials, knobs, a calendar, charts, rich text, QR codes and
-  barcodes, a keyboard on the screen for a board with none
-  (`C:test/Widgets`), text of many lines to edit, with undo, the
-  clipboard, finding and line numbers - what `SYS:Programs/Notepad` is
-  made of - a form larger than its window, scrolled
-  (`C:test/Scroll`), and a list in columns under headings that sort it,
-  its rows a tree (`C:test/ListBrowser`).
-  `LIBS:asl.library` asks for a file, a font, or a device's unit - the
-  serial lines, the networks, the drives this board has, listed by what
-  their devices speak - and `getfile`, `getfont` and `getdevice` are
-  fields that ask with it (`C:RequestDevice` from a script).
-- **Motion:** motion.library, one clock for everything that moves -
-  eased values, timers that do not drift, timelines; a style change
-  fades, a gauge fills, a list glides. See the
-  [motion guide](sdk/docs/guides/motion.md).
-- **Spreadsheet:** `SYS:Programs/Sheet` - cells of numbers, text and
-  formulas (operators, references with and without `$`, ranges, SUM,
-  AVERAGE, IF and two dozen more functions) worked out again on every
-  change; fill, copy and paste with the references moving along; rows
-  and columns put in and taken out; a hundred steps of undo; the sum of
-  the cells picked in its status line; CSV files, as every spreadsheet
-  reads them, decimal commas included.
-- **Terminal:** `SYS:Programs/Terminal` joins a window to a serial line -
-  a UART connector, the USB serial port, a USB serial adapter, picked
-  from the ones the board has - as a VT100 with colours, the line-drawing
-  set and copy and paste; its speed, frame, handshake and line ends set
-  in a window of its own; files sent and what comes in captured.
-- **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts,
-  the input, whether windows may be moved partly past the screen's
-  edges, and the desktop's ground, picture and drawers
-  (`ENV:Sys/anvil.prefs`), in one window; every open window takes a
-  change at once, and `C:SetPrefs` hands them over at boot.
-- **Fonts:** bitmap and TrueType, any size, smooth or in colour, shown
-  by `SYS:Programs/FontView`. See the
-  [fonts guide](sdk/docs/guides/fonts.md).
+- **Kernel (exec):** preemptive multitasking on both of the chip's cores,
+  signals, message ports, semaphores and checked spinlocks, every system
+  list under a lock of its own; libraries and devices opened by name,
+  loaded from disk when wanted and expunged when memory runs short;
+  internal SRAM and PSRAM as memory with attributes. A system log from
+  the first byte of the boot (`C:Log` sends it to a syslog server), a
+  Guru with a ROM debugger on the serial ports, and a program that fails
+  held and asked about while the system runs on. `C:Top` and
+  `SYS:Programs/CPULoad` show what each task and core takes.
+- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
+  log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
+  (`SD0:`) and USB sticks (`DU0:`), `RAM:`, `PIPE:`, `NIL:`; partitions
+  from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
+  notification when a file changes; consoles with line editing, file
+  name completion, and copy and paste; a shell with scripts and 48
+  commands in `C:` - `ScreenDump` saves a screen as a PNG - test programs
+  in `C:test` and network tools in `C:net`.
+- **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
+  and icons on the Workbench screen, with drag and drop, a trash and
+  Information on any file ([desktop guide](sdk/docs/guides/anvil.md));
+  `LIBS:icon.library` reads icons drawn as PNGs
+  ([icons guide](sdk/docs/guides/icons.md)). In `SYS:Programs`, each with
+  its readme in `SYS:Programs/Docs`: MultiView, Notepad, Sheet (a
+  spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
+  on a serial line), Player (WAV and MP3 with their cover, tags and
+  chapters, and a plasma, the wave or the spectrum of what is heard),
+  FontView, CPULoad, Battery and Prefs.
+- **Graphics and windows:** rtg.library for the displays - on the
+  ESP32-P4 its 2D engine fills, copies, blends and scales;
+  graphics.library with smooth curves, gradients, shadows and scaled
+  pictures; layers.library; intuition.library with screens, windows,
+  menus, requesters and gadget classes in layouts that fit any display,
+  everything drawn from a style a screen carries
+  ([styles guide](sdk/docs/guides/styles.md)). More gadgets in
+  `SYS:classes/gadgets/` - tabs, charts, dials, a calendar, rich text, QR
+  codes, a keyboard on the screen, text to edit with undo - the
+  requesters of `LIBS:asl.library`, and motion.library for whatever moves
+  ([motion guide](sdk/docs/guides/motion.md)).
+- **Datatypes and fonts:** `LIBS:datatypes.library` opens pictures (ILBM,
+  BMP, PNG, GIF, JPEG - on the ESP32-P4 by its codec), text (plain, FTXT,
+  Markdown) and animations (GIF, Lottie) by what is in them
+  ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
+  TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
+- **Sound:** `audio.device` mixes up to sixteen streams, each in its own
+  form, rate, volume and pan, out of an ES8311 codec or I2S amplifiers;
+  `LIBS:audiocodec.library` decodes WAV and MP3 as they play and reads
+  their tags, covers and chapters (`C:Play`,
+  [sound guide](sdk/docs/guides/audio.md)).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
-  UDP, IPv4 and IPv6 with privacy addresses, DHCP and DHCPv6, DNS,
-  multicast with IGMP and MLD) on Ethernet (the ESP32-P4's MAC, and
-  QEMU's), USB Ethernet adapters, the ESP32-S3's Wi-Fi (WPA2) and SLIP
-  over a serial line, and
-  a shell over Telnet or SSH (`C:net/ShellServer`, `SSH` with password
-  or ssh-ed25519 keys and a
-  post-quantum key exchange, and the files over sftp and scp) - and the
-  other way, `C:net/SSH` for a shell or a command on another machine
-  and `C:net/SCP` to copy files to and from it; a packet filter
-  (`LIBS:filter.library`, `C:net/Filter`) with rules per interface and
-  state for what this machine starts;
-  `LIBS:tls.library` with TLS 1.3 and 1.2, so `C:net/HTTPGet` fetches
-  `https://`. See the [network guide](sdk/docs/guides/network.md).
-- **USB:** `LIBS:usb.library` runs a USB host bus on the chip's OTG
-  controller (`DEVS:usbotg.device`), at high speed on the ESP32-P4's
-  high-speed port, full- and low-speed devices behind a high-speed hub
-  reached by split transactions: hubs, each device's descriptors,
-  configuration and strings, pipes to its endpoints, and class drivers
-  in `DEVS:usb/`, each loaded only when something it drives is plugged
-  in - `usb/hid.device` makes a USB keyboard, mouse or tablet the
-  system's own keyboard and mouse, `usb/disk.device` a stick or a card reader's slot
-  a drive (`DU0:`, `DU1:`, ...) with its volume on the desktop,
-  `usb/ftdi.device` and `usb/acm.device` FTDI and CDC-ACM serial
-  adapters serial lines (`AUX2:`, `AUX3:`), `usb/ecm.device` a CDC
-  Ethernet adapter the network's `usb0`. Things are plugged in and
-  pulled out while it runs.
-  `C:USB` starts and stops a bus (at boot where the socket can only be a
-  host), `C:USBInfo` lists what is on it. On the ESP32-S3 boards the bus
-  and the USB console share the chip's one USB port: `USB START` takes
-  it from the console, `USB STOP` gives it back (`usbport.resource`).
-  See the [USB guide](sdk/docs/guides/usb.md).
-- **Modbus:** `LIBS:modbus.library` asks devices and answers as one,
-  over RTU on the RS-485 bus and over TCP; `C:Modbus` reads and writes
-  a device from the shell, and `SYS:Programs/Battery` shows a battery a
-  Victron GX device reports. See the [Modbus guide](sdk/docs/guides/modbus.md).
-- **Devices:** timer, serial (on the UART connectors the board lists),
-  USB serial, RS-485 (in frames), flash, SD
-  card, I2C, touch, keyboard and mouse (on every board, fed by sources -
-  the emulator's window, a USB keyboard or mouse, `C:test/KeySource` -
-  the mouse with its wheel), input, console, a USB host controller,
-  audio - up to sixteen streams mixed, each 8-, 16- or 32-bit, mono or
-  stereo, at its own rate, volume and pan
-  (through an ES8311 codec or straight to I2S amplifiers), and
-  `LIBS:audiocodec.library` decoding WAV and MP3 as it plays (`C:Play`),
-  Telnet, SSH; watchdog, DMA (the general channels and the ESP32-P4's
-  2D-DMA), GPIO, IO expander, USB port (who holds the chip's USB
-  ports), JPEG (the ESP32-P4's codec) and platform resources; the battery (`battery.resource`: whether a cell is there,
-  its voltage and charge, external power and charging where the board
-  wires them, and a signal when that changes - `C:Battery`, and the
-  charge in the desktop's title); the date kept while the system is off
-  or restarts (`battclock.resource`: a PCF8563 clock chip where the board
-  lists one, else the chip's own RTC timer, which a reset does not stop;
-  the boot sets the system time from it, `C:SetClock` loads, saves and
-  resets it, and a time server's date is saved to it);
-  `LIBS:crypto.library` on the chip's SHA,
-  AES and RSA engines - hashes, AES-GCM, X25519, P-256 and P-384, RSA,
-  ECDSA and Ed25519 signatures, ML-KEM-768.
+  UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet, USB Ethernet
+  adapters, the ESP32-S3's Wi-Fi and SLIP; a shell over Telnet or SSH
+  with sftp and scp, an SSH client, a packet filter, and TLS 1.3 and 1.2
+  for `C:net/HTTPGet` ([network guide](sdk/docs/guides/network.md)).
+- **USB:** a host stack on the chip's OTG controller - at high speed on
+  the ESP32-P4, through hubs - with class drivers loaded as their devices
+  are plugged in: keyboards, mice and tablets, sticks and card readers,
+  FTDI and CDC-ACM serial adapters, CDC Ethernet
+  ([USB guide](sdk/docs/guides/usb.md)).
+- **Modbus:** `LIBS:modbus.library` over RS-485 and TCP, asking and
+  answering; `C:Modbus` in the shell, and `SYS:Programs/Battery` for a
+  battery a Victron GX device reports
+  ([Modbus guide](sdk/docs/guides/modbus.md)).
+- **Devices and resources:** timer, serial, USB serial, RS-485, flash, SD
+  card, I2C, touch, keyboard and mouse from any source, console,
+  watchdog, DMA, GPIO, IO expander, the JPEG codec, the battery
+  (`C:Battery`), the date kept while the system is off
+  (`C:SetClock`), and `LIBS:crypto.library` on the chip's SHA, AES and
+  RSA engines.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 
@@ -242,12 +146,12 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, card slot on SPI; RS-485 driven, not yet tried on the board; CAN described but not driven; the battery's voltage through the IO expander, not yet tried on the board; a USB host on its USB-C socket (`USB START`, the console giving up the port; 5 V for the device from elsewhere), not yet tried on the board |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker (audio.device 2's streams not yet tried on the board), card; the battery's voltage on GPIO8, not yet tried on the board; a USB host on its USB-C socket (`USB START`, the console giving up the port), not yet tried on the board |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs; USB keyboards, mice, sticks, an FTDI serial adapter and a CDC Ethernet adapter through a hub, plugged in and out while it runs (`-Dusb-disk` plugs in a stick) |
-| `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the `s3>` shell on UART0 and, from `newshell`, dos with the flash disk: its commands built for RISC-V, loaded and run; serial.device, timer.device, flash.device, the platform, GPIO and watchdog resources; a fault shows a Guru that names the program or the ROM it is in and the offset there, with its call chain, and offers the ROM debugger (breakpoints, a watchpoint, single step); `-Dselftest` boots into the chip's checks instead; the DMA resource is in its image, not tried there; no screen |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the shell on its USB console, dos and the flash disk, Ethernet (`emac.device`: DHCP, IPv6, TCP), the desktop on the DSI panel - or, with a monitor on the HDMI port, on it at 800×600 ([photo](docs/screenshots/README.md#on-the-board)) - both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`); flashed over the same port; a USB keyboard and mouse through its hub (`usb/hid.device`), the pointer on the panel and over HDMI; USB sticks at high speed (`usb/disk.device`, `DU0:`, about 22 MB/s reading), keyboards and mice of full or low speed behind its hub by split transactions; a microSD card as `SD0:` (4 bits at 20 MHz, about 2.8 MB/s both ways); the battery's voltage and external power once its solder jumpers are closed (shipped open) and their two lines are in its board list; sound through its ES8311 on the jack (`C:test/Audio`, three streams mixed with `CHORD`) - the jack's two sides are the codec's one output, the right one inverted |
-| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, dos and the flash disk, the desktop on its panel (MIPI-DSI) with touch, both cores, PSRAM at 200 MHz, the DMA resource on both general engines and the 2D-DMA, JPEG on the chip's codec (`C:test/Jpeg`), audio in stereo on its speakers (`C:test/Audio`; audio.device 2's streams not yet tried on the board); the connectors marked UART1 and UART3-IN as `serial.device` units 1 and 3, not yet tried on the board |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, the battery's voltage, a USB host |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); no sound |
+| `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or at 800×600 over HDMI ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; the battery once its solder jumpers are closed |
+| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, the UART1 and UART3-IN connectors |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network

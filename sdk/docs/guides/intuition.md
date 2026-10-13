@@ -108,6 +108,25 @@ draws.
 `PubScreenStatus(screen, 0)` lets visitors in, and `CloseScreen` answers
 false while a visitor - a lock or a window - remains.
 
+### A screen's pixels
+
+`AllocScreenBuffer(screen, SB_SCREEN_BITMAP)` hands out the screen's own
+buffer rather than making another: its `bitmap` has the pixels, their
+pitch and their form (`rtg.PixelFormat`), and `FreeScreenBuffer` lets it
+go. Read the screen locked, and copy what is wanted at once - the
+screen goes on being drawn in. The pointer is not in it: the display
+lays it over.
+
+`C:ScreenDump TO/A,SCREEN/K,DELAY/K/N` saves a public screen this way -
+the default one unless named - as a PNG; DELAY waits that many seconds
+first.
+
+```
+ScreenDump RAM:desktop.png
+ScreenDump SD0:player.png DELAY 5
+Type RAM:desktop.png HEX        ; the file over the console, as hex
+```
+
 ## Windows
 
 A window is a layer of its screen with a border intuition draws - a

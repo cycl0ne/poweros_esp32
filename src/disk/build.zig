@@ -35,7 +35,7 @@ const commands = [_][]const u8{
     "adddatatypes",  "listfonts",  "log",      "requestfile",   "requestchoice",
     "requestdevice", "diskchange", "modbus",   "more",          "relabel",
     "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
-    "setclock",      "top",        "play",
+    "setclock",      "top",        "play",     "screendump",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -62,6 +62,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
+    .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
 };
 
@@ -232,6 +233,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
     .{ .disk = "devs/datatypes/FTXT", .source = "devs/datatypes/FTXT" },
     .{ .disk = "devs/datatypes/8SVX", .source = "devs/datatypes/8SVX" },
+    .{ .disk = "devs/datatypes/MP3", .source = "devs/datatypes/MP3" },
+    .{ .disk = "devs/datatypes/WAV", .source = "devs/datatypes/WAV" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
     .{ .disk = "devs/datatypes/ASCII", .source = "devs/datatypes/ASCII" },
     .{ .disk = "devs/datatypes/Binary", .source = "devs/datatypes/Binary" },
@@ -284,6 +287,7 @@ pub const files = [_]File{
     .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
     .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },
+    .{ .disk = "programs/Docs/Player.md", .source = "programs/player/README.md" },
     .{ .disk = "programs/Docs/Prefs.md", .source = "programs/prefs/README.md" },
     .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
     .{ .disk = "programs/Docs/Terminal.md", .source = "programs/terminal/README.md" },
