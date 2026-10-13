@@ -94,8 +94,8 @@ const Work = _sdcard.Work;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "13.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -164,8 +164,14 @@ fn portMask(sb: *SdCardBase) u32 {
 /// away.
 const poll_us: u32 = 1_000_000;
 
-/// `us` microseconds on the timer, as a deadline to wait against.
+/// `us` microseconds on the timer, as a deadline to wait against. The
+/// port's signal is cleared first: a deadline taken back early is still
+/// replied, and WaitIO takes that reply without clearing the signal it
+/// raised. Left standing, it would end the next wait at once - whose
+/// deadline, taken back in turn, would end the one after, and the task
+/// would never wait again.
 fn armDeadline(sb: *SdCardBase, us: u32) void {
+    _ = sb.sys_base.SetSignal(0, portMask(sb));
     sb.timer_io.node.command = timer.TR_ADDREQUEST;
     sb.timer_io.time = timer.TimeVal.fromMicros(us);
     sb.sys_base.SendIO(&sb.timer_io.node);
