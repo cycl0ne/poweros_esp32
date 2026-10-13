@@ -12,6 +12,7 @@ Generated from the source by `./zig build autodoc`.
 - [AudioErrorText](#audioerrortext) - Says what an error code means.
 - [CloseAudioStream](#closeaudiostream) - Closes a stream.
 - [DecodeAudio](#decodeaudio) - Decodes the next frames of a stream.
+- [GetAudioStreamAttrs](#getaudiostreamattrs) - Says what a stream's tags say, each answer where its tag points.
 - [GetAudioStreamInfo](#getaudiostreaminfo) - Says what a stream is.
 - [IdentifyAudio](#identifyaudio) - Says what some sound is.
 - [OpenAudioStream](#openaudiostream) - Opens a stream on sound.
@@ -196,6 +197,85 @@ const got = acb.DecodeAudio(stream, &samples, 4096);
 if (got <= 0) return; // the end, or an error
 ```
 
+## GetAudioStreamAttrs
+
+Says what a stream's tags say, each answer where its tag points.
+
+**SYNOPSIS**
+
+```zig
+fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*]const utility.TagItem) u32
+```
+
+**SINCE**
+
+1.1. LVO -48.
+
+**INPUTS**
+
+- `stream`: an open stream.
+- `tags`: what is asked, each tag's data the address its answer goes
+  to: `ACA_Title`, `ACA_Artist`, `ACA_Album`, `ACA_AlbumArtist`,
+  `ACA_Composer`, `ACA_Genre` and `ACA_Comment` a `*[*:0]const u8`;
+  `ACA_Year`, `ACA_Track`, `ACA_Tracks` and `ACA_Chapters` a `*u32`;
+  `ACA_Picture` a `*?*const ac.AudioPicture`; `ACA_ChapterList` a
+  `*?[*]const ac.AudioChapter`.
+
+**RESULT**
+
+How many of the tags it answered; one it does not know is left as it
+is and not counted.
+
+**BEHAVIOR**
+
+The answers are what the stream's tags said when it was opened: an
+MP3's ID3v2 tag, over an ID3v1 tag at its end, or a WAV's INFO list.
+A text the tags do not hold is empty, a number 0. The names are whole,
+up to 127 characters - the info's are cut at 63 - and a comment up to
+255. A genre an MP3 gives by ID3v1's number is named. `ACA_Picture` is
+null unless the stream was opened with `ACA_KeepPicture` and its tags
+hold a picture: then it is that picture, the front cover where there
+are several. The chapters are an ID3v2 tag's CHAP frames, each with
+the title of its own TIT2 - up to 256 of them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+Every text, the picture and the chapters are the stream's: read them,
+and keep a copy of what is needed after `CloseAudioStream`.
+
+**NOTES**
+
+Texts are Latin-1; a character past it is a `?`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenAudioStream`, `GetAudioStreamInfo`
+
+**EXAMPLES**
+
+```zig
+var genre: [*:0]const u8 = "";
+var year: u32 = 0;
+var cover: ?*const ac.AudioPicture = null;
+_ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+    .{ .tag = ac.ACA_Genre, .data = @intFromPtr(&genre) },
+    .{ .tag = ac.ACA_Year, .data = @intFromPtr(&year) },
+    .{ .tag = ac.ACA_Picture, .data = @intFromPtr(&cover) },
+    .{},
+});
+```
+
 ## GetAudioStreamInfo
 
 Says what a stream is.
@@ -339,7 +419,8 @@ fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: 
 - `tags`: where the bytes come from - one of `ACA_Name` (a file to
   open), `ACA_FileHandle` (a file the program has open, read from where
   it is) or `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-  function) - and `ACA_Codec`, the kind, when the program knows it.
+  function) - and `ACA_Codec`, the kind, when the program knows it;
+  `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1).
 - `err`: where to say why it failed (ACERR_*), or null.
 
 **RESULT**
@@ -355,7 +436,10 @@ its data, an MP3's tags in front of the sound and its first frame -
 with what its encoder wrote about the rest, when it did - and the
 stream's info is filled in. A file's end is looked at first: tags there
 (ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
-where the front says nothing. A file can seek; a read function cannot.
+where the front says nothing. An ID3v2 tag is read whole, frame by
+frame, however large; its picture is read into memory of its own only
+with `ACA_KeepPicture` - the front cover, where there are several - and
+passed over otherwise. A file can seek; a read function cannot.
 
 **CONTEXT**
 
@@ -373,8 +457,9 @@ ACA_FileHandle stays the program's, and must stay open until then.
 
 **NOTES**
 
-A stream takes about 42 KiB: the read-ahead, the samples of a frame,
-and an MP3 decoder's state.
+A stream takes about 44 KiB: the read-ahead, the samples of a frame,
+an MP3 decoder's state and the tags; a kept picture is as large as it
+is.
 
 **BUGS**
 
@@ -382,7 +467,8 @@ None known.
 
 **SEE ALSO**
 
-`CloseAudioStream`, `DecodeAudio`, `GetAudioStreamInfo`, `IdentifyAudio`
+`CloseAudioStream`, `DecodeAudio`, `GetAudioStreamInfo`,
+`GetAudioStreamAttrs`, `IdentifyAudio`
 
 **EXAMPLES**
 

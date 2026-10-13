@@ -19,6 +19,11 @@
 //! stops where the tags begin (`end`). An ID3v1 tag's names are kept, for
 //! a file whose own tags at the front say nothing.
 //!
+//! **The tags** are kept at full length in `tags`: ID3v1's first, then
+//! what ID3v2 or a WAV's INFO list says over them. The info's names are
+//! cut from them once the kind's header is read (`nameInfo`). A picture is
+//! kept only when the program asked for it, in a block of its own.
+//!
 //! The stream is one allocation, cleared: every field's starting value is
 //! zero, so nothing large is ever built on a stack.
 
@@ -34,6 +39,40 @@ const layer3 = @import("../mp3/layer3.zig");
 /// How many bytes are read ahead: enough to find an MP3's first frame -
 /// it has to agree with the frames after it - and a WAV's header.
 pub const input_bytes = 16 * 1024;
+
+/// The longest a name is kept, and a comment; a frame's text read whole,
+/// at most.
+pub const name_bytes = 128;
+pub const comment_bytes = 256;
+pub const frame_text_bytes = 1024;
+
+/// What the tags say, at full length, NUL-terminated.
+pub const Tags = struct {
+    title: [name_bytes]u8,
+    artist: [name_bytes]u8,
+    album: [name_bytes]u8,
+    album_artist: [name_bytes]u8,
+    composer: [name_bytes]u8,
+    genre: [64]u8,
+    comment: [comment_bytes]u8,
+    /// The comment kept has no description of its own - the one a person
+    /// wrote, not one a program keeps for itself.
+    plain_comment: bool,
+    year: u32,
+    track: u32,
+    tracks: u32,
+    /// Whether the program wants the picture; the block the kept one is
+    /// in, null when none is; and what it is.
+    keep_picture: bool,
+    picture_block: ?[*]u8,
+    picture: ac.AudioPicture,
+    /// The chapters the tags mark, in a block of their own made at the
+    /// first, and how many.
+    chapters: ?[*]ac.AudioChapter,
+    chapter_count: u32,
+    /// A text frame's body, read whole to be looked at.
+    frame_text: [frame_text_bytes]u8,
+};
 
 pub const Codec = union(enum) {
     none,
@@ -62,6 +101,7 @@ pub const Stream = struct {
     eof: bool,
     failed: bool,
     info: ac.AudioStreamInfo,
+    tags: Tags,
     codec: Codec,
     /// Samples decoded and not handed out yet, the channels interleaved,
     /// `pcm_start` to `pcm_stop`.
@@ -76,6 +116,8 @@ pub fn destroy(stream: *Stream) void {
     if (stream.owns_file) {
         if (stream.file) |file| _ = base.dos_base.Close(file);
     }
+    if (stream.tags.picture_block) |block| base.sys_base.FreeVec(block);
+    if (stream.tags.chapters) |list| base.sys_base.FreeVec(list);
     base.sys_base.FreeVec(stream);
 }
 
@@ -196,7 +238,7 @@ pub fn scanTail(stream: *Stream) void {
     var tail: [128]u8 = undefined;
     if (end >= 128 and readAt(stream, end - 128, &tail)) {
         if (tail[0] == 'T' and tail[1] == 'A' and tail[2] == 'G') {
-            mp3.id3v1(&tail, &stream.info);
+            mp3.id3v1(&tail, &stream.tags);
             end -= 128;
         }
     }
@@ -242,13 +284,61 @@ pub fn le16(bytes: []const u8) u16 {
     return @as(u16, bytes[0]) | @as(u16, bytes[1]) << 8;
 }
 
-/// A NUL-terminated copy of `text` into one of the info's names, cut at
-/// its first NUL or where it no longer fits, trailing blanks dropped:
-/// Latin-1 as it is.
-pub fn copyName(into: *[64]u8, text: []const u8) void {
+/// A NUL-terminated copy of `text` into a name, cut at its first NUL or
+/// where it no longer fits, trailing blanks dropped: Latin-1 as it is.
+pub fn copyName(into: []u8, text: []const u8) void {
     var length: usize = 0;
     while (length < text.len and length < into.len - 1 and text[length] != 0) length += 1;
     while (length > 0 and text[length - 1] == ' ') length -= 1;
     @memcpy(into[0..length], text[0..length]);
     into[length] = 0;
+}
+
+/// The info's title, artist and album cut from the tags: once the kind's
+/// header is read, and the tags say all they will.
+pub fn nameInfo(stream: *Stream) void {
+    copyName(&stream.info.title, &stream.tags.title);
+    copyName(&stream.info.artist, &stream.tags.artist);
+    copyName(&stream.info.album, &stream.tags.album);
+}
+
+/// A year's first four digits, 0 when there are none: "2004",
+/// "2004-05-12".
+pub fn yearOf(text: []const u8) u32 {
+    var year: u32 = 0;
+    var digits: usize = 0;
+    for (text) |char| {
+        if (char < '0' or char > '9' or digits == 4) break;
+        year = year * 10 + (char - '0');
+        digits += 1;
+    }
+    return if (digits == 4) year else 0;
+}
+
+/// A track's number and the album's count of them: "3", "3/12".
+pub fn trackOf(text: []const u8, track: *u32, tracks: *u32) void {
+    var number: u32 = 0;
+    var at: usize = 0;
+    while (at < text.len and text[at] >= '0' and text[at] <= '9') : (at += 1) number = number *| 10 +| (text[at] - '0');
+    track.* = number;
+    tracks.* = 0;
+    if (at < text.len and text[at] == '/') {
+        at += 1;
+        var count: u32 = 0;
+        while (at < text.len and text[at] >= '0' and text[at] <= '9') : (at += 1) count = count *| 10 +| (text[at] - '0');
+        tracks.* = count;
+    }
+}
+
+/// A string's bytes up to its NUL: a name in a buffer, or a C string.
+pub fn upToNul(text: anytype) []const u8 {
+    const T = @TypeOf(text);
+    if (T == [*:0]const u8) {
+        var length: usize = 0;
+        while (text[length] != 0) length += 1;
+        return text[0..length];
+    }
+    var length: usize = 0;
+    while (length < text.len and text[length] != 0) length += 1;
+    return text[0..length];
 }

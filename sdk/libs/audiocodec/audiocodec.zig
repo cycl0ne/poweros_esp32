@@ -10,7 +10,11 @@
 //! left first), until the end - as much at a time as the program asks
 //! for, so a song is never decoded whole. `GetAudioStreamInfo` says what
 //! the sound is: its rate and channels, its length where it is known, and
-//! the title, artist and album its tags name. `SeekAudio` moves to a frame
+//! the title, artist and album its tags name. `GetAudioStreamAttrs` gives
+//! the rest of the tags - the names at full length, the year, the track,
+//! the genre, a comment, the chapters a mix or a book is marked in - and
+//! the picture they hold, a cover, when the stream was opened with
+//! `ACA_KeepPicture`. `SeekAudio` moves to a frame
 //! where the stream can be read from anywhere.
 //!
 //! The samples go to audio.device as they are: a stream of `AUDIO_S16`
@@ -52,6 +56,71 @@ pub const ACA_ReadFunc = ACA_Dummy + 0x03;
 pub const ACA_ReadData = ACA_Dummy + 0x04;
 /// `u32`: the kind (ACODEC_*) the bytes are, rather than finding out.
 pub const ACA_Codec = ACA_Dummy + 0x05;
+/// Bool: the picture the tags hold - a cover - is kept, for
+/// `ACA_Picture`. Without it a picture is passed over, which costs
+/// nothing however large it is.
+pub const ACA_KeepPicture = ACA_Dummy + 0x06;
+
+// --- GetAudioStreamAttrs's tags ---------------------------------------------------
+
+// Each tag's data is where the answer goes. A text is the stream's own,
+// NUL-terminated, Latin-1 - a character past it is a `?` - and empty when
+// the tags do not say; it is good until the stream is closed.
+
+/// `*[*:0]const u8`: the title, the artist, the album - at full length,
+/// where the info's are cut at 63 characters - the album's own artist,
+/// the composer.
+pub const ACA_Title = ACA_Dummy + 0x20;
+pub const ACA_Artist = ACA_Dummy + 0x21;
+pub const ACA_Album = ACA_Dummy + 0x22;
+pub const ACA_AlbumArtist = ACA_Dummy + 0x23;
+pub const ACA_Composer = ACA_Dummy + 0x24;
+/// `*[*:0]const u8`: the genre by its name - one given as an ID3v1 number
+/// is named as ID3 names it.
+pub const ACA_Genre = ACA_Dummy + 0x25;
+/// `*[*:0]const u8`: a comment: one with no description of its own,
+/// rather than one a program wrote for itself.
+pub const ACA_Comment = ACA_Dummy + 0x26;
+/// `*u32`: the year; the track's number and how many the album has. 0
+/// when the tags do not say.
+pub const ACA_Year = ACA_Dummy + 0x27;
+pub const ACA_Track = ACA_Dummy + 0x28;
+pub const ACA_Tracks = ACA_Dummy + 0x29;
+/// `*?*const AudioPicture`: the picture kept with `ACA_KeepPicture`, or
+/// null when there is none or it was not kept.
+pub const ACA_Picture = ACA_Dummy + 0x2A;
+/// `*u32`: how many chapters the tags mark - the tracks of a mix, the
+/// chapters of a book - and `*?[*]const AudioChapter`: them, in the order
+/// the tags give them, or null when there are none.
+pub const ACA_Chapters = ACA_Dummy + 0x2B;
+pub const ACA_ChapterList = ACA_Dummy + 0x2C;
+
+/// A chapter the tags mark: where it starts and ends in the sound, and
+/// its title.
+pub const AudioChapter = extern struct {
+    /// Milliseconds from the start of the sound.
+    start: u32,
+    end: u32,
+    /// NUL-terminated, Latin-1; empty when it has none.
+    title: [96]u8,
+};
+
+/// A picture the tags hold: the bytes of an image file as it is stored -
+/// a JPEG or a PNG, which datatypes.library reads - and what it shows.
+pub const AudioPicture = extern struct {
+    data: [*]const u8,
+    size: u32,
+    /// ACPIC_*: what it is a picture of, as ID3 numbers them.
+    kind: u32,
+    /// Its MIME type, "image/jpeg" or "image/png"; empty when not said.
+    mime: [32]u8,
+};
+
+/// `AudioPicture.kind`: what the picture shows. The front cover is the
+/// one kept where there are several.
+pub const ACPIC_OTHER: u32 = 0;
+pub const ACPIC_FRONTCOVER: u32 = 3;
+pub const ACPIC_BACKCOVER: u32 = 4;
 
 /// Up to `length` bytes into `buffer`: how many it put there, 0 at the
 /// end, below 0 when it cannot read.

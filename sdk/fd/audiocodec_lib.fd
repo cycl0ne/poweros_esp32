@@ -24,4 +24,7 @@ i32 SeekAudio(*audiocodec.AudioStream stream, u32 frame)
 u32 IdentifyAudio([*]const u8 bytes, u32 length)
 /// What an error code means, in words.
 [*:0]const u8 AudioErrorText(i32 code)
+/// The stream's tags, each into where its data points: how many of them
+/// were answered.
+u32 GetAudioStreamAttrs(*audiocodec.AudioStream stream, ?[*]const utility.TagItem tags)
 ##end

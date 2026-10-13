@@ -445,3 +445,282 @@ test "files: they seek; a tag at the end is no sound and names it; a WAV seeks e
     try testing.expect(rest > tone_frames / 4 and rest <= tone_frames / 2 + 1152);
     acb.CloseAudioStream(tone);
 }
+
+// --- ID3v2 tags made here ---------------------------------------------------------
+
+/// An ID3v2 tag built frame by frame, then the sound after it.
+const Id3 = struct {
+    bytes: [64 * 1024]u8 = undefined,
+    len: usize = 10,
+    version: u8,
+
+    fn put(t: *Id3, data: []const u8) void {
+        @memcpy(t.bytes[t.len..][0..data.len], data);
+        t.len += data.len;
+    }
+
+    fn size4(t: *Id3, value: usize) void {
+        const v: u32 = @intCast(value);
+        if (t.version == 4) {
+            t.put(&.{ @truncate(v >> 21 & 0x7F), @truncate(v >> 14 & 0x7F), @truncate(v >> 7 & 0x7F), @truncate(v & 0x7F) });
+        } else {
+            t.put(&.{ @truncate(v >> 24), @truncate(v >> 16), @truncate(v >> 8), @truncate(v) });
+        }
+    }
+
+    /// A frame: its name, its size, its flags, its body.
+    fn frame(t: *Id3, id: *const [4]u8, format: u8, body: []const u8) void {
+        t.put(id);
+        t.size4(body.len);
+        t.put(&.{ 0, format });
+        t.put(body);
+    }
+
+    /// The header put in front, `flags` its flags; the tag and `sound`
+    /// after it, as a file would hold them.
+    fn finish(t: *Id3, flags: u8, sound: []const u8) []const u8 {
+        const v: u32 = @intCast(t.len - 10);
+        @memcpy(t.bytes[0..10], &[_]u8{ 'I', 'D', '3', t.version, 0, flags, @truncate(v >> 21 & 0x7F), @truncate(v >> 14 & 0x7F), @truncate(v >> 7 & 0x7F), @truncate(v & 0x7F) });
+        t.put(sound);
+        return t.bytes[0..t.len];
+    }
+};
+
+var id3_tag: Id3 = .{ .version = 3 };
+
+/// A picture of `count` bytes that is no picture: a pattern, with 0xFF
+/// followed by what unsynchronisation guards against.
+fn pictureBytes(into: []u8) void {
+    for (into, 0..) |*b, i| b.* = switch (i % 7) {
+        0 => 0xFF,
+        1 => 0xE3,
+        2 => 0xFF,
+        3 => 0x00,
+        else => @truncate(i),
+    };
+}
+
+var picture_made: [20000]u8 = undefined;
+
+/// The 0 after every 0xFF put in: unsynchronised.
+fn unsynchronise(into: []u8, from: []const u8) usize {
+    var out: usize = 0;
+    for (from) |b| {
+        into[out] = b;
+        out += 1;
+        if (b == 0xFF) {
+            into[out] = 0;
+            out += 1;
+        }
+    }
+    return out;
+}
+
+fn attrs(acb: *AudioCodecBase, stream: *ac.AudioStream) struct {
+    title: [*:0]const u8 = "",
+    artist: [*:0]const u8 = "",
+    album: [*:0]const u8 = "",
+    album_artist: [*:0]const u8 = "",
+    composer: [*:0]const u8 = "",
+    genre: [*:0]const u8 = "",
+    comment: [*:0]const u8 = "",
+    year: u32 = 0,
+    track: u32 = 0,
+    tracks: u32 = 0,
+    chapters: u32 = 0,
+    chapter_list: ?[*]const ac.AudioChapter = null,
+    picture: ?*const ac.AudioPicture = null,
+    answered: u32 = 0,
+} {
+    var got: @typeInfo(@TypeOf(attrs)).@"fn".return_type.? = .{};
+    got.answered = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Title, .data = @intFromPtr(&got.title) },
+        .{ .tag = ac.ACA_Artist, .data = @intFromPtr(&got.artist) },
+        .{ .tag = ac.ACA_Album, .data = @intFromPtr(&got.album) },
+        .{ .tag = ac.ACA_AlbumArtist, .data = @intFromPtr(&got.album_artist) },
+        .{ .tag = ac.ACA_Composer, .data = @intFromPtr(&got.composer) },
+        .{ .tag = ac.ACA_Genre, .data = @intFromPtr(&got.genre) },
+        .{ .tag = ac.ACA_Comment, .data = @intFromPtr(&got.comment) },
+        .{ .tag = ac.ACA_Year, .data = @intFromPtr(&got.year) },
+        .{ .tag = ac.ACA_Track, .data = @intFromPtr(&got.track) },
+        .{ .tag = ac.ACA_Tracks, .data = @intFromPtr(&got.tracks) },
+        .{ .tag = ac.ACA_Chapters, .data = @intFromPtr(&got.chapters) },
+        .{ .tag = ac.ACA_ChapterList, .data = @intFromPtr(&got.chapter_list) },
+        .{ .tag = ac.ACA_Picture, .data = @intFromPtr(&got.picture) },
+        .{ .tag = utility.TAG_USER + 0x7777, .data = 0 },
+        .{},
+    });
+    return got;
+}
+
+fn openTagged(acb: *AudioCodecBase, memory: *Memory, keep: bool, err: *i32) ?*ac.AudioStream {
+    return acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_ReadFunc, .data = @intFromPtr(&Memory.read) },
+        .{ .tag = ac.ACA_ReadData, .data = @intFromPtr(memory) },
+        .{ .tag = ac.ACA_KeepPicture, .data = @intFromBool(keep) },
+        .{},
+    }, err);
+}
+
+test "ID3v2.3: every name, the year, the track, the genre, a comment, chapters, and a cover past the read-ahead" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+
+    const t = &id3_tag;
+    t.* = .{ .version = 3 };
+    // UTF-16 with a byte-order mark: "Mix " and an emoji (a surrogate
+    // pair, left out), then "Vol.2".
+    t.frame("TIT2", 0, &[_]u8{ 1, 0xFF, 0xFE, 'M', 0, 'i', 0, 'x', 0, ' ', 0, 0x3D, 0xD8, 0x0A, 0xDD, ' ', 0, 'V', 0, 'o', 0, 'l', 0, '.', 0, '2', 0 });
+    t.frame("TPE1", 0, "\x00Trance Hub");
+    t.frame("TALB", 0, "\x00Mixes");
+    t.frame("TPE2", 0, "\x00Various");
+    t.frame("TCOM", 0, "\x00Someone");
+    t.frame("TYER", 0, "\x002026");
+    t.frame("TRCK", 0, "\x003/12");
+    t.frame("TCON", 0, "\x00(17)");
+    // A program's own comment first; the plain one is the one kept.
+    t.frame("COMM", 0, "\x00engiTunNORM\x00 000001");
+    t.frame("COMM", 0, "\x00eng\x00Nice one");
+    // Two chapters, each with its title as a frame of its own.
+    t.frame("CHAP", 0, "ch0\x00\x00\x00\x00\x00\x00\x00\x03\xe8\xff\xff\xff\xff\xff\xff\xff\xffTIT2\x00\x00\x00\x06\x00\x00\x00First");
+    t.frame("CHAP", 0, "ch1\x00\x00\x00\x03\xe8\x00\x00\x07\xd0\xff\xff\xff\xff\xff\xff\xff\xffTIT2\x00\x00\x00\x07\x00\x00\x00Second");
+    // A back cover, then the front one, larger than the read-ahead.
+    t.frame("APIC", 0, "\x00image/jpeg\x00\x04back\x00\x01\x02\x03");
+    pictureBytes(&picture_made);
+    var head: [32]u8 = undefined;
+    const head_len = (try std.fmt.bufPrint(&head, "\x00image/png\x00\x03Cover\x00", .{})).len;
+    t.put("APIC");
+    t.size4(head_len + picture_made.len);
+    t.put(&.{ 0, 0 });
+    t.put(head[0..head_len]);
+    t.put(&picture_made);
+    t.put(&[_]u8{0} ** 100); // padding
+    const file = t.finish(0, mono_mp3);
+
+    var err: i32 = 0;
+    var memory: Memory = .{ .bytes = file };
+    const stream = openTagged(acb, &memory, true, &err) orelse return error.NoStream;
+    const got = attrs(acb, stream);
+    try testing.expectEqual(@as(u32, 13), got.answered);
+    try testing.expectEqualStrings("Mix Vol.2", std.mem.span(got.title));
+    try testing.expectEqualStrings("Trance Hub", std.mem.span(got.artist));
+    try testing.expectEqualStrings("Mixes", std.mem.span(got.album));
+    try testing.expectEqualStrings("Various", std.mem.span(got.album_artist));
+    try testing.expectEqualStrings("Someone", std.mem.span(got.composer));
+    try testing.expectEqualStrings("Rock", std.mem.span(got.genre));
+    try testing.expectEqualStrings("Nice one", std.mem.span(got.comment));
+    try testing.expectEqual(@as(u32, 2026), got.year);
+    try testing.expectEqual(@as(u32, 3), got.track);
+    try testing.expectEqual(@as(u32, 12), got.tracks);
+    try testing.expectEqual(@as(u32, 2), got.chapters);
+    const chapters = got.chapter_list orelse return error.NoChapters;
+    try testing.expectEqual(@as(u32, 1000), chapters[0].end);
+    try testing.expectEqual(@as(u32, 1000), chapters[1].start);
+    try testing.expectEqual(@as(u32, 2000), chapters[1].end);
+    try testing.expectEqualStrings("Second", std.mem.sliceTo(&chapters[1].title, 0));
+    const picture = got.picture orelse return error.NoPicture;
+    try testing.expectEqual(ac.ACPIC_FRONTCOVER, picture.kind);
+    try testing.expectEqualStrings("image/png", std.mem.sliceTo(&picture.mime, 0));
+    try testing.expectEqualSlices(u8, &picture_made, picture.data[0..picture.size]);
+    // The info's names are the same, and the sound after the tag is all
+    // there.
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqualStrings("Mix Vol.2", textOf(&info.title));
+    try testing.expectEqual(@as(u32, mono_frames), try decodeAll(acb, stream, 1, 1000, &.{}));
+    acb.CloseAudioStream(stream);
+
+    // Not asked to keep it, the picture is passed over; the rest is the
+    // same.
+    memory = .{ .bytes = file };
+    const plain = openTagged(acb, &memory, false, &err) orelse return error.NoStream;
+    const without = attrs(acb, plain);
+    try testing.expect(without.picture == null);
+    try testing.expectEqualStrings("Nice one", std.mem.span(without.comment));
+    try testing.expectEqual(@as(u32, mono_frames), try decodeAll(acb, plain, 1, 1000, &.{}));
+    acb.CloseAudioStream(plain);
+}
+
+test "ID3v2.4 in UTF-8 with a cover unsynchronised; ID3v2.3 unsynchronised whole" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    pictureBytes(&picture_made);
+
+    // Version 4: UTF-8 with what Latin-1 lacks, a date for the year, the
+    // genre by its name, and the cover's frame unsynchronised with its
+    // length before that in front.
+    const t = &id3_tag;
+    t.* = .{ .version = 4 };
+    t.frame("TIT2", 0, "\x03Caf\xc3\xa9 \xe2\x80\x93 \xe2\x80\x9cLive\xe2\x80\x9d \xf0\x9f\x92\xab \xef\xbd\x9c \xe4\xb8\xad");
+    t.frame("TDRC", 0, "\x032001-05-02");
+    t.frame("TCON", 0, "\x03Jazz");
+    var stored: [2 * 20000 + 64]u8 = undefined;
+    const body_head = "\x00image/jpeg\x00\x03\x00";
+    @memcpy(stored[0..4], &[_]u8{ 0, 0, 0x9C, 0x50 }); // what the body was before: not read
+    @memcpy(stored[4..][0..body_head.len], body_head);
+    const stored_len = 4 + body_head.len + unsynchronise(stored[4 + body_head.len ..], &picture_made);
+    t.frame("APIC", 0x03, stored[0..stored_len]);
+    const file4 = t.finish(0, mono_mp3);
+    var memory: Memory = .{ .bytes = file4 };
+    const four = openTagged(acb, &memory, true, &err) orelse return error.NoStream;
+    const got4 = attrs(acb, four);
+    try testing.expectEqualStrings("Caf\xe9 - \"Live\" | ?", std.mem.span(got4.title));
+    try testing.expectEqual(@as(u32, 2001), got4.year);
+    try testing.expectEqualStrings("Jazz", std.mem.span(got4.genre));
+    const picture4 = got4.picture orelse return error.NoPicture;
+    try testing.expectEqualSlices(u8, &picture_made, picture4.data[0..picture4.size]);
+    try testing.expectEqual(@as(u32, mono_frames), try decodeAll(acb, four, 1, 1000, &.{}));
+    acb.CloseAudioStream(four);
+
+    // Version 3, the whole tag unsynchronised: the frames' sizes are
+    // those of their bodies before it.
+    var plain: Id3 = .{ .version = 3 };
+    plain.frame("TIT2", 0, "\x00Whole");
+    plain.put("APIC");
+    plain.size4(body_head.len + picture_made.len);
+    plain.put(&.{ 0, 0 });
+    plain.put(body_head);
+    plain.put(&picture_made);
+    plain.frame("TPE1", 0, "\x00After");
+    t.* = .{ .version = 3 };
+    t.len = 10 + unsynchronise(t.bytes[10..], plain.bytes[10..plain.len]);
+    const file3 = t.finish(0x80, mono_mp3);
+    memory = .{ .bytes = file3 };
+    const three = openTagged(acb, &memory, true, &err) orelse return error.NoStream;
+    const got3 = attrs(acb, three);
+    try testing.expectEqualStrings("Whole", std.mem.span(got3.title));
+    try testing.expectEqualStrings("After", std.mem.span(got3.artist));
+    const picture3 = got3.picture orelse return error.NoPicture;
+    try testing.expectEqualSlices(u8, &picture_made, picture3.data[0..picture3.size]);
+    try testing.expectEqual(@as(u32, mono_frames), try decodeAll(acb, three, 1, 1000, &.{}));
+    acb.CloseAudioStream(three);
+}
+
+test "ID3v1 at a file's end: its year, its comment and track (v1.1), its genre" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var tag: [128]u8 = @splat(0);
+    @memcpy(tag[0..3], "TAG");
+    @memcpy(tag[3..8], "Title");
+    @memcpy(tag[93..97], "1999");
+    @memcpy(tag[97..105], "A remark");
+    tag[126] = 7;
+    tag[127] = 8;
+    try rig.write("WORK:v1.mp3", &.{ mono_mp3, &tag });
+    const stream = openFile(acb, "WORK:v1.mp3", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    const got = attrs(acb, stream);
+    try testing.expectEqual(@as(u32, 1999), got.year);
+    try testing.expectEqual(@as(u32, 7), got.track);
+    try testing.expectEqualStrings("A remark", std.mem.span(got.comment));
+    try testing.expectEqualStrings("Jazz", std.mem.span(got.genre));
+    try testing.expect(got.picture == null and got.chapter_list == null);
+}

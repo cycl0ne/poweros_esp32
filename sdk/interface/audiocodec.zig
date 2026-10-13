@@ -23,6 +23,7 @@ pub const LVO = struct {
     pub const SeekAudio = libraries.lvo(8);
     pub const IdentifyAudio = libraries.lvo(9);
     pub const AudioErrorText = libraries.lvo(10);
+    pub const GetAudioStreamAttrs = libraries.lvo(11);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -35,6 +36,7 @@ pub const Fn = struct {
     pub const SeekAudio = *const fn (*AudioCodecBase, *audiocodec.AudioStream, u32) callconv(.c) i32;
     pub const IdentifyAudio = *const fn (*AudioCodecBase, [*]const u8, u32) callconv(.c) u32;
     pub const AudioErrorText = *const fn (*AudioCodecBase, i32) callconv(.c) [*:0]const u8;
+    pub const GetAudioStreamAttrs = *const fn (*AudioCodecBase, *audiocodec.AudioStream, ?[*]const utility.TagItem) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -80,5 +82,11 @@ pub const AudioCodecBase = opaque {
     /// What an error code means, in words.
     pub fn AudioErrorText(self: *AudioCodecBase, code: i32) [*:0]const u8 {
         return libraries.call(self, LVO.AudioErrorText, Fn.AudioErrorText, .{code});
+    }
+
+    /// The stream's tags, each into where its data points: how many of them
+    /// were answered.
+    pub fn GetAudioStreamAttrs(self: *AudioCodecBase, stream: *audiocodec.AudioStream, tags: ?[*]const utility.TagItem) u32 {
+        return libraries.call(self, LVO.GetAudioStreamAttrs, Fn.GetAudioStreamAttrs, .{ stream, tags });
     }
 };

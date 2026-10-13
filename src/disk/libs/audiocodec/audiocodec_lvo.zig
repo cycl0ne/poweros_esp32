@@ -20,6 +20,7 @@ const DecodeAudio = @import("stream/decodeaudio.zig").DecodeAudio;
 const SeekAudio = @import("stream/seekaudio.zig").SeekAudio;
 const IdentifyAudio = @import("identify/identifyaudio.zig").IdentifyAudio;
 const AudioErrorText = @import("text/audioerrortext.zig").AudioErrorText;
+const GetAudioStreamAttrs = @import("stream/getaudiostreamattrs.zig").GetAudioStreamAttrs;
 
 /// audiocodec.library's interface, as the SDK generates it from
 /// sdk/fd/audiocodec_lib.fd.
@@ -52,6 +53,7 @@ const contract_files = [_][]const u8{
     @embedFile("stream/seekaudio.zig"),
     @embedFile("identify/identifyaudio.zig"),
     @embedFile("text/audioerrortext.zig"),
+    @embedFile("stream/getaudiostreamattrs.zig"),
 };
 
 fn lvoOpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: ?*i32) callconv(.c) ?*ac.AudioStream {
@@ -75,6 +77,9 @@ fn lvoIdentifyAudio(base: *AudioCodecBase, bytes: [*]const u8, length: u32) call
 fn lvoAudioErrorText(base: *AudioCodecBase, code: i32) callconv(.c) [*:0]const u8 {
     return AudioErrorText(base, code);
 }
+fn lvoGetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
+    return GetAudioStreamAttrs(base, stream, tags);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -90,6 +95,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSeekAudio),
     vec(lvoIdentifyAudio),
     vec(lvoAudioErrorText),
+    vec(lvoGetAudioStreamAttrs),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

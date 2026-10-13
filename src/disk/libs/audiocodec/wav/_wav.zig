@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! WAV: a RIFF file of chunks - `fmt ` says what the samples are, `data`
-//! holds them, a `LIST` of `INFO` names the sound - read front to back.
+//! holds them, a `LIST` of `INFO` names the sound - its title, artist,
+//! album, year, genre, comment and track - read front to back.
 //!
 //! The samples are PCM of 8 bits (unsigned), 16, 24 or 32 (signed), or
 //! 32-bit float, one channel or two, as a format tag of 1 or 3 says, or
@@ -88,7 +89,7 @@ pub fn open(stream: *Stream) i32 {
         } else if (_stream.same(chunk, "LIST") and chunk.len >= 12 and _stream.same(chunk[8..], "INFO")) {
             if (chunk.len < 8 + padded) _stream.fill(stream);
             const list = _stream.available(stream);
-            if (list.len >= 8 + padded) names(list[12..@intCast(8 + size)], &stream.info);
+            if (list.len >= 8 + padded) names(list[12..@intCast(8 + size)], &stream.tags);
         }
         _stream.skip(stream, 8 + padded);
     }
@@ -100,16 +101,26 @@ pub fn open(stream: *Stream) i32 {
     return ac.ACERR_OK;
 }
 
-/// The INFO list's names: INAM the title, IART the artist, IPRD the album.
-fn names(list: []const u8, info: *ac.AudioStreamInfo) void {
+/// The INFO list's names: INAM the title, IART the artist, IPRD the
+/// album, ICRD the date (its year), IGNR the genre, ICMT a comment, ITRK
+/// or IPRT the track.
+fn names(list: []const u8, tags: *_stream.Tags) void {
     var at: usize = 0;
     while (at + 8 <= list.len) {
         const size: usize = _stream.le32(list[at + 4 .. at + 8]);
         const body_end = @min(at + 8 + size, list.len);
         const body = list[at + 8 .. body_end];
-        if (_stream.same(list[at..], "INAM")) _stream.copyName(&info.title, body);
-        if (_stream.same(list[at..], "IART")) _stream.copyName(&info.artist, body);
-        if (_stream.same(list[at..], "IPRD")) _stream.copyName(&info.album, body);
+        const id = list[at..];
+        if (_stream.same(id, "INAM")) _stream.copyName(&tags.title, body);
+        if (_stream.same(id, "IART")) _stream.copyName(&tags.artist, body);
+        if (_stream.same(id, "IPRD")) _stream.copyName(&tags.album, body);
+        if (_stream.same(id, "IGNR")) _stream.copyName(&tags.genre, body);
+        if (_stream.same(id, "ICMT")) {
+            _stream.copyName(&tags.comment, body);
+            tags.plain_comment = true;
+        }
+        if (_stream.same(id, "ICRD")) tags.year = _stream.yearOf(body);
+        if (_stream.same(id, "ITRK") or _stream.same(id, "IPRT")) _stream.trackOf(body, &tags.track, &tags.tracks);
         at += 8 + size + (size & 1);
     }
 }

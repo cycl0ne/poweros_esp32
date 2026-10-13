@@ -26,7 +26,8 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// - `tags`: where the bytes come from - one of `ACA_Name` (a file to
 ///   open), `ACA_FileHandle` (a file the program has open, read from where
 ///   it is) or `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-///   function) - and `ACA_Codec`, the kind, when the program knows it.
+///   function) - and `ACA_Codec`, the kind, when the program knows it;
+///   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1).
 /// - `err`: where to say why it failed (ACERR_*), or null.
 ///
 /// RESULT:
@@ -40,7 +41,10 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// with what its encoder wrote about the rest, when it did - and the
 /// stream's info is filled in. A file's end is looked at first: tags there
 /// (ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
-/// where the front says nothing. A file can seek; a read function cannot.
+/// where the front says nothing. An ID3v2 tag is read whole, frame by
+/// frame, however large; its picture is read into memory of its own only
+/// with `ACA_KeepPicture` - the front cover, where there are several - and
+/// passed over otherwise. A file can seek; a read function cannot.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file.
@@ -55,14 +59,16 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// ACA_FileHandle stays the program's, and must stay open until then.
 ///
 /// NOTES:
-/// A stream takes about 42 KiB: the read-ahead, the samples of a frame,
-/// and an MP3 decoder's state.
+/// A stream takes about 44 KiB: the read-ahead, the samples of a frame,
+/// an MP3 decoder's state and the tags; a kept picture is as large as it
+/// is.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `CloseAudioStream`, `DecodeAudio`, `GetAudioStreamInfo`, `IdentifyAudio`
+/// `CloseAudioStream`, `DecodeAudio`, `GetAudioStreamInfo`,
+/// `GetAudioStreamAttrs`, `IdentifyAudio`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -82,11 +88,13 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     const read_fn: ?ac.ReadFn = @ptrFromInt(ub.GetTagData(ac.ACA_ReadFunc, 0, tags));
     const read_data: ?*anyopaque = @ptrFromInt(ub.GetTagData(ac.ACA_ReadData, 0, tags));
     const hint: u32 = @truncate(ub.GetTagData(ac.ACA_Codec, ac.ACODEC_UNKNOWN, tags));
+    const keep_picture = ub.GetTagData(ac.ACA_KeepPicture, 0, tags) != 0;
 
     // Cleared: every field of a stream starts at zero.
     const memory = sys.AllocVec(@sizeOf(Stream), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(err, ac.ACERR_NOMEMORY);
     const stream: *Stream = @ptrCast(@alignCast(memory));
     stream.base = base;
+    stream.tags.keep_picture = keep_picture;
 
     if (name) |path| {
         stream.file = dl.Open(path, dos.MODE_OLDFILE) orelse {
@@ -120,6 +128,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         _stream.destroy(stream);
         return failed(err, result);
     }
+    _stream.nameInfo(stream);
     if (err) |out| out.* = ac.ACERR_OK;
     return _stream.publicOf(stream);
 }
