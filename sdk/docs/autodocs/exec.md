@@ -938,6 +938,7 @@ how dos's processes stay processes through the call that starts them.
 The new task is enqueued as ready, and **if its priority is higher than
 the running task's it runs at once** - before this call returns, since
 the `Enable` at the end of it is a point at which a switch is taken.
+Its time (`timeRun`) counts from 0.
 
 **The bottom four words of its stack become its guard** (from
 `sp_lower`): a pattern the dispatcher looks at each time it switches
@@ -6139,13 +6140,18 @@ of its last exception, which is at most one of its ticks ago.
 The cycles are 64 bits wide, and run for longer than any machine
 stays on.
 
+Each task's share of the time in tasks is its own `timeRun()`,
+counted at the same moments; a listing reads it under the task lists'
+lock (`LockExecList(EXECLIST_TASK_READY)`, `CoreTask` for the running
+ones), and `C:Top` does.
+
 **BUGS**
 
 None known.
 
 **SEE ALSO**
 
-`CoreTask`, `SetTaskAffinity`
+`CoreTask`, `SetTaskAffinity`, `LockExecList`
 
 **EXAMPLES**
 

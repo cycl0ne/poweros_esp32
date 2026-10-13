@@ -602,11 +602,16 @@ pub fn blockCurrent(base: *ExecBase, task: *Task, signal_set: u32) void {
 pub fn interruptEnter(base: *ExecBase) void {
     const cpu = base.cpu();
     if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.takeSystemInterrupts(base, 1);
-    // The time since the last exit was the task's it resumed - or idle.
+    // The time since the last exit was the task's it resumed - or idle -
+    // and that task's own.
     if (cpu.int_depth == 0) {
         const now = cycles();
         const spent = now -% cpu.time_mark;
         if (cpu.this_task == cpu.idle_task) cpu.time_idle +%= spent else cpu.time_tasks +%= spent;
+        const task = cpu.this_task;
+        const low = task.time_run_low +% spent;
+        if (low < task.time_run_low) task.time_run_high +%= 1;
+        task.time_run_low = low;
         cpu.time_mark = now;
     }
     cpu.int_depth += 1;

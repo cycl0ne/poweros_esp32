@@ -45,8 +45,9 @@ pub const LIBRARY_VERSION = 1;
 /// DetachLibrary - SetTaskEndMsg and RemoveMsg, and Forbid and Permit gone.
 /// 7: SafePutToPort. 8: DoIO and SendIO keep the command's flags. 9: on a
 /// RISC-V chip, every core fences its instruction fetch after the
-/// instruction caches are invalidated (CacheClearU, CacheClearE).
-pub const LIBRARY_REVISION = 9;
+/// instruction caches are invalidated (CacheClearU, CacheClearE). 10:
+/// each task's own time (Task.timeRun), counted as the cores' are.
+pub const LIBRARY_REVISION = 10;
 const BUILD_DATE = "13.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

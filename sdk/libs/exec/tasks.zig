@@ -181,8 +181,29 @@ pub const Task = extern struct {
     /// nothing runs on its stack any more (`SetTaskEndMsg`). Set before the
     /// task may end: in the Task handed to AddTask, or with the call.
     end_msg: ?*Message = null,
+    /// How long it has run, in cycles of the core's clock, in two halves
+    /// (`timeRun` joins them): added at the outermost entry of every
+    /// exception, as the cores' own times are (`ReadCoreTimes`), so a
+    /// switch to another task is never missed. An idle task's is its
+    /// core's idle time; time in interrupts is no task's. Starts at 0 in
+    /// `AddTask`; read under the task lists' lock (`LockExecList`) to have
+    /// both halves of one moment.
+    ///
+    /// Two words, not a u64: a u64 at a word's alignment is laid out with
+    /// a word of padding in a constant that holds a Task - a default value
+    /// of a structure the Task is in - and not in the code that reads it,
+    /// and every field after it would come out of the constant one word
+    /// off.
+    time_run_low: u32 = 0,
+    time_run_high: u32 = 0,
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");
+    }
+
+    /// How long it has run, in cycles of the core's clock: `time_run_low`
+    /// and `time_run_high` together.
+    pub fn timeRun(task: *const Task) u64 {
+        return @as(u64, task.time_run_high) << 32 | task.time_run_low;
     }
 };

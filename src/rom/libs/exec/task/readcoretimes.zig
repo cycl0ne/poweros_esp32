@@ -58,11 +58,16 @@ const CoreTimes = sdk.exec.CoreTimes;
 /// The cycles are 64 bits wide, and run for longer than any machine
 /// stays on.
 ///
+/// Each task's share of the time in tasks is its own `timeRun()`,
+/// counted at the same moments; a listing reads it under the task lists'
+/// lock (`LockExecList(EXECLIST_TASK_READY)`, `CoreTask` for the running
+/// ones), and `C:Top` does.
+///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `CoreTask`, `SetTaskAffinity`
+/// `CoreTask`, `SetTaskAffinity`, `LockExecList`
 ///
 /// EXAMPLES:
 /// ```zig

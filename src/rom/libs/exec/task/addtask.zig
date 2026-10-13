@@ -39,6 +39,7 @@ const TaskFn = sdk.exec.TaskFn;
 /// The new task is enqueued as ready, and **if its priority is higher than
 /// the running task's it runs at once** - before this call returns, since
 /// the `Enable` at the end of it is a point at which a switch is taken.
+/// Its time (`timeRun`) counts from 0.
 ///
 /// **The bottom four words of its stack become its guard** (from
 /// `sp_lower`): a pattern the dispatcher looks at each time it switches
@@ -85,6 +86,8 @@ pub fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn, final_pc: ?TaskFn)
     task.final_pc = final_pc;
     task.sig_alloc |= sdk.exec.tasks.system_signals;
     task.id_nest_cnt = -1;
+    task.time_run_low = 0;
+    task.time_run_high = 0;
     _task.guardStack(task);
     task.sp_reg = _task.task_hardware.init_context(task.sp_upper, vec(_task.taskEntry), task);
 

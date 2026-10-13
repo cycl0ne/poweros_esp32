@@ -84,7 +84,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   whose next boot shows the last words before it. A program that fails is
   held and asked about on the display - Software Failure, Suspend or
   Reboot - while the system runs on. `SYS:Programs/CPULoad` charts how
-  busy each core is, in tasks and in interrupts.
+  busy each core is, in tasks and in interrupts; `C:Top` lists what each
+  task takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`, names of
   255 characters; a log-structured flash file system (`DH0:`), FAT32 and
   exFAT on SD cards (`SD0:`, mounted at boot on a board with a slot)
