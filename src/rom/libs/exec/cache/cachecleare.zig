@@ -48,6 +48,11 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// OWNERSHIP:
 /// Nothing is allocated.
 ///
+/// NOTES:
+/// With `CACRF_ClearI` on a RISC-V chip each core also fences its
+/// instruction fetch: the one that calls this at once, every other one at
+/// its next exception exit, before it resumes a task.
+///
 /// BUGS:
 /// None known.
 ///

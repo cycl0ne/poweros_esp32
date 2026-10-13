@@ -42,6 +42,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// Nothing is allocated.
 ///
 /// NOTES:
+/// On a RISC-V chip each core also fences its instruction fetch: the one
+/// that calls this at once, every other one at its next exception exit,
+/// before it resumes a task.
+///
 /// This is what a loader calls after relocating a program and before
 /// running it. `CodeAddress` is the other half: this makes the code real,
 /// that says where it can be executed from.

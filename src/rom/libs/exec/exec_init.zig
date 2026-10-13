@@ -43,9 +43,11 @@ pub const LIBRARY_VERSION = 1;
 /// lock of its own - LockExecList and UnlockExecList for a program that
 /// walks one, a library's own lock and pin around its vectors,
 /// DetachLibrary - SetTaskEndMsg and RemoveMsg, and Forbid and Permit gone.
-/// 7: SafePutToPort.
-pub const LIBRARY_REVISION = 8;
-const BUILD_DATE = "11.10.2026";
+/// 7: SafePutToPort. 8: DoIO and SendIO keep the command's flags. 9: on a
+/// RISC-V chip, every core fences its instruction fetch after the
+/// instruction caches are invalidated (CacheClearU, CacheClearE).
+pub const LIBRARY_REVISION = 9;
+const BUILD_DATE = "13.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

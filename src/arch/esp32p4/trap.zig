@@ -9,6 +9,7 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const sdk = @import("sdk");
 const exec = @import("../../rom/libs/exec/exec.zig");
+const exec_cache = @import("../../rom/libs/exec/cache/_cache.zig");
 
 /// Layout shared with start.S: the integer registers (x[0] unused, x[2] the
 /// interrupted stack pointer), the trap's CSRs, and the FPU's registers
@@ -120,6 +121,9 @@ export fn riscv_exception(frame: *Frame) callconv(.c) *Frame {
         const line = frame.mcause & 0x3F;
         longest_lines[core] = if (frame.mcause & cpu.MCAUSE_INTERRUPT != 0 and line >= 16) @as(u32, 1) << @intCast(line - 16) else 0;
     }
+    // Code the other core has loaded since this one last fenced its
+    // instruction fetch: fenced before anything is resumed.
+    exec_cache.syncFetch(core);
     return resumed;
 }
 

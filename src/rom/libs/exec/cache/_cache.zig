@@ -51,6 +51,14 @@
 //! never drops a dirty data line. The ROM's routines (sdk.hardware.cache)
 //! take whole ranges, and no line needs freezing.
 //!
+//! A RISC-V core may go on running instructions it fetched before an
+//! invalidate until it fences its own fetch (`fence.i`); no other core can
+//! do that for it. So after the instruction caches are invalidated, the
+//! core that did it fences at once and marks every other core
+//! (`fetch_stale`), and each of those fences at its next exception exit
+//! (`syncFetch`), before it resumes a task - which is how a task that
+//! moves to the other core reaches the code it loaded.
+//!
 //! The calls are a file each in this folder; this file is everything else.
 //! What the calls drive (`CacheHardware`), with the chip's controller
 //! behind it and the no-hardware stand-in for the host tests; the two
@@ -118,6 +126,21 @@ fn dropEngine(state: u32) void {
 /// keeping PSRAM busy, 16 KB took up to 0.8 ms - as long as the panel
 /// gives an interrupt - so a piece is 2 KB, about a tenth of that.
 const engine_piece = 2 * 1024;
+
+/// The cores still to fence their instruction fetch since another core
+/// last invalidated instruction-cache lines: bit n for core n. Set by the
+/// RISC-V chip's invalidates, cleared by each core in `syncFetch`.
+pub var fetch_stale: u32 = 0;
+
+/// This core's instruction fetch fenced, if another core has invalidated
+/// instruction-cache lines since it last did: what the RISC-V kernel's
+/// exception exit calls before it resumes a task.
+pub fn syncFetch(core: u32) void {
+    const mine = @as(u32, 1) << @intCast(core);
+    if (@atomicLoad(u32, &fetch_stale, .acquire) & mine == 0) return;
+    _ = @atomicRmw(u32, &fetch_stale, .And, ~mine, .acq_rel);
+    asm volatile ("fence.i" ::: .{ .memory = true });
+}
 
 /// What the calls drive. Ranges are whole lines, except writeback_line's.
 pub const CacheHardware = struct {
@@ -424,6 +447,7 @@ const p4 = struct {
         const state = takeEngine();
         defer dropEngine(state);
         _ = cache.Cache_Invalidate_All(cache.MAP_L1_ICACHES);
+        fenceFetch();
     }
 
     fn writebackP4(addr: usize, size: usize) void {
@@ -440,6 +464,15 @@ const p4 = struct {
 
     fn invalidateICacheP4(addr: usize, size: usize) void {
         inPieces(cache.MAP_L1_ICACHES, addr, size, cache.Cache_Invalidate_Addr);
+        fenceFetch();
+    }
+
+    /// This core's instruction fetch fenced, and every other core marked
+    /// to fence its own at its next exception exit.
+    fn fenceFetch() void {
+        asm volatile ("fence.i" ::: .{ .memory = true });
+        const mine = @as(u32, 1) << @intCast(exec_base.coreId());
+        _ = @atomicRmw(u32, &fetch_stale, .Or, ~mine, .release);
     }
 
     /// `operation` on the caches `cache_map` names, over `size` bytes at

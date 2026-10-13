@@ -1849,6 +1849,12 @@ known here.
 
 Nothing is allocated.
 
+**NOTES**
+
+With `CACRF_ClearI` on a RISC-V chip each core also fences its
+instruction fetch: the one that calls this at once, every other one at
+its next exception exit, before it resumes a task.
+
 **BUGS**
 
 None known.
@@ -1907,6 +1913,10 @@ which `CachePostDMA` covers.
 Nothing is allocated.
 
 **NOTES**
+
+On a RISC-V chip each core also fences its instruction fetch: the one
+that calls this at once, every other one at its next exception exit,
+before it resumes a task.
 
 This is what a loader calls after relocating a program and before
 running it. `CodeAddress` is the other half: this makes the code real,
