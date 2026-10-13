@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! audio.device: four channels of sound, mixed into the board's codec.
+//! audio.device: streams of sound, mixed into the board's codec or
+//! amplifiers.
 //!
-//! The channels are the ones the API is named for - allocated with a
-//! precedence, stolen by anything that outranks them, written to with a
-//! period, a volume and a count of cycles. This machine has no four-voice
-//! hardware, so the device is the hardware: a task mixes the four into
-//! one stereo stream (`mixer.zig`) and a DMA channel hands that stream to
-//! the chip's I2S controller (`esp32s3/i2s.zig`, `esp32p4/i2s.zig`).
+//! Each open is a stream (`sdk/devices/audio.zig`): its own sample form,
+//! rate, volume and pan, and a queue of writes. Up to sixteen play at
+//! once; a task mixes them into one stereo stream (`mixer.zig`) at the rate
+//! the output runs at, and a DMA channel hands that stream to the chip's
+//! I2S controller (`esp32s3/i2s.zig`, `esp32p4/i2s.zig`).
 //!
 //! Where the stream goes is the board's: an ES8311 codec (`es8311.zig`)
 //! set up over I2C, with an amplifier in front of the speaker, or an
@@ -38,7 +38,6 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const IOAudio = audio.IOAudio;
 
 const mixer = @import("mixer.zig");
-const alloc = @import("alloc.zig");
 const es8311 = @import("es8311.zig");
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
@@ -67,9 +66,9 @@ const no_i2s = struct {
 const gpio = sdk.hardware.gpio;
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "11.10.2026";
+const DEVICE_VERSION = 2;
+const DEVICE_REVISION = 0;
+const BUILD_DATE = "13.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -94,39 +93,42 @@ const buffers: u32 = 2;
 /// of what the part can do is as much as this speaker wants.
 const codec_volume: u32 = 50;
 
-/// One channel: who has it, the writes on it, and who waits for the end of
-/// its cycle.
-const ChannelState = extern struct {
-    /// Every write on the channel, in the order they play. The first is
-    /// the one playing - or the one a stopped channel holds. `handed`
-    /// says how many from the front the mixer has been given: none, the
-    /// one it plays, or that one and the one it holds behind it (and, for
-    /// a moment inside a mix, those it went on to).
+/// How many streams there are: a voice of the mixer each.
+const max_streams = mixer.max_voices;
+
+/// One stream: what an open made, and what every request on it points at
+/// (`io_Unit`).
+const Stream = extern struct {
+    unit: exec.Unit = .{},
+    /// Every write on the stream, in the order they play. The first is the
+    /// one playing - or the one a stopped stream holds. `handed` says how
+    /// many from the front the mixer has been given: none, the one it
+    /// plays, or that one and the one it holds behind it (and, for a
+    /// moment inside a mix, those it went on to).
     writes: exec.List = .{},
     handed: u32 = 0,
-    /// The first write's message has gone: it has started to play.
-    announced: u8 = 0,
-    /// The channel is someone's: their key, and how hard it is to take
-    /// away.
-    taken: u8 = 0,
-    key: i16 = 0,
-    precedence: i8 = 0,
-    pad: [3]u8 = .{ 0, 0, 0 },
-    /// ADCMD_WAITCYCLE requests, replied when the cycle playing ends.
-    waiters: exec.List = .{},
+    /// The stream is someone's.
+    in_use: u8 = 0,
+    /// The form the next write is in.
+    format: u8 = audio.AUDIO_S16,
+    channels: u8 = 2,
+    pad: u8 = 0,
+    rate: u32 = 0,
+    volume: u32 = audio.AUDIO_VOLUME_UNITY,
+    pan: i32 = 0,
 };
 
 const AudioBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
-    /// The voices, the channels' owners and the requests waiting, shared by
-    /// the task's mixer and every caller's BeginIO: a semaphore, since the
-    /// mixer holds it for a whole buffer.
+    /// The streams and their voices, shared by the task's mixer and every
+    /// caller's BeginIO: a semaphore, since the mixer holds it for a whole
+    /// buffer.
     lock: exec.SignalSemaphore = .{},
-    /// One unit a channel combination: `io_Unit` is the unit of the mask
-    /// the allocation got, and `ioa.channels` says which channels those
-    /// are.
-    units: [16]exec.Unit = @splat(.{}),
+    streams: [max_streams]Stream = @splat(.{}),
+    voices: [max_streams]mixer.Voice = @splat(.{}),
+    /// The device's volume, over every stream (AUDIOCMD_MASTER).
+    master: u32 = audio.AUDIO_VOLUME_UNITY,
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
     int: exec.Interrupt = .{},
@@ -151,24 +153,11 @@ const AudioBase = extern struct {
     /// one to mix into.
     stream: ?[*]i16 = null,
     chain: [buffers]?*dmares.DMADescriptor = @splat(null),
-    /// What the four channels are playing, and who owns them.
-    voices: [mixer.channels]mixer.Channel = @splat(.{}),
-    states: [mixer.channels]ChannelState = @splat(.{}),
-    /// The last key handed out.
-    last_key: i16 = 0,
-    /// Allocations waiting for channels to come free, highest precedence
-    /// first.
-    waiting: exec.List = .{},
-    /// ADCMD_LOCK requests, each with the channels it still locks in
-    /// `channels`, and those channels together: a lock is given up only
-    /// when its channels are freed.
-    locks: exec.List = .{},
-    lock_map: u8 = 0,
     /// The stream runs (the controller started), and the DMA's interrupt
     /// server is in.
     streaming: u8 = 0,
     int_added: u8 = 0,
-    pad4: u8 = 0,
+    pad4: [2]u8 = .{ 0, 0 },
     /// The task's signal to end, for an expunge.
     quit_mask: u32 = 0,
     /// What the board's parts say, read at init: where the stream goes
@@ -211,7 +200,8 @@ fn baseOf(io: *exec.IORequest) *AudioBase {
 }
 
 fn ioAudio(io: *exec.IORequest) *IOAudio {
-    return @alignCast(@fieldParentPtr("req", io));
+    const std_req: *exec.IOStdReq = @alignCast(@fieldParentPtr("req", io));
+    return @alignCast(@fieldParentPtr("std", std_req));
 }
 
 // --- the hardware ---------------------------------------------------------
@@ -376,11 +366,12 @@ fn bringUp(ab: *AudioBase) bool {
 
     if (ab.has_codec != 0) _ = writeCodec(ab, es8311.reg_volume, es8311.volumeFor(codec_volume));
     amplifier(ab, true);
-    sdk.exec.kprintf(sys, "%s: %s, %d Hz stereo, %d channels mixed\n", .{
+    sdk.exec.kprintf(sys, "%s: %s, %d Hz %s, up to %d streams mixed\n", .{
         DEVICE_NAME,
         ab.output_name,
         i2s.sample_rate,
-        @as(u32, mixer.channels),
+        @as([*:0]const u8, if (ab.sides == .mono) "mono" else "stereo"),
+        @as(u32, max_streams),
     });
     return true;
 }
@@ -447,7 +438,7 @@ fn giveBack(ab: *AudioBase) void {
     ab.pads_held = 0;
 }
 
-// --- the stream -----------------------------------------------------------
+// --- the mix --------------------------------------------------------------
 
 /// The buffer that has just been played, which is the one to mix into:
 /// the DMA is in the other one now.
@@ -470,181 +461,135 @@ fn mixBuffer(ab: *AudioBase) void {
     _ = ab.sys_base.CachePreDMA(@ptrCast(out.ptr), &bytes, 0);
 }
 
-/// `out` mixed from the channels, and what the mix came to answered: the
-/// writes played out replied, the ones that began announced, the cycles'
-/// waiters told. Under the device's lock.
+/// `out` mixed from the streams, and the writes that played out replied.
+/// Under the device's lock.
 fn mixInto(ab: *AudioBase, out: []i16) void {
-    const done = mixer.fill(&ab.voices, out, ab.sides, .{ .context = ab, .next = handNext });
-    for (0..mixer.channels) |channel| {
-        for (0..done.ended[channel]) |_| playedOut(ab, channel);
-        if (done.cycles[channel] != 0) replyWaiters(ab, channel, 0);
+    const done = mixer.fill(&ab.voices, out, ab.sides, mixer.masterGain(ab.master), .{ .context = ab, .next = handNext });
+    for (0..max_streams) |n| {
+        for (0..done.ended[n]) |_| playedOut(ab, n);
     }
 }
 
 /// The mixer has taken over the write it held and asks for the one after
 /// it: the first write it has not been given yet.
-fn handNext(context: *anyopaque, channel: usize) ?mixer.Queued {
+fn handNext(context: *anyopaque, n: usize) ?mixer.Queued {
     const ab: *AudioBase = @ptrCast(@alignCast(context));
-    const state = &ab.states[channel];
-    const io = writeAt(state, state.handed) orelse return null;
-    state.handed += 1;
+    const stream = &ab.streams[n];
+    const io = writeAt(stream, stream.handed) orelse return null;
+    stream.handed += 1;
     return queuedOf(io);
 }
 
-/// The write at the front played out by the mixer: its message, if it
-/// started and ended within one mix, the request replied, and the write
-/// after it - which the mixer went on with - the front, begun.
-fn playedOut(ab: *AudioBase, channel: usize) void {
-    const sys = ab.sys_base;
-    const state = &ab.states[channel];
-    const front = firstWrite(state) orelse return;
-    if (state.announced == 0) sendWriteMessage(ab, front);
-    _ = sys.RemHead(&state.writes);
-    state.handed -|= 1;
-    state.announced = 0;
-    sys.ReplyIO(&front.req);
-    if (state.handed != 0) {
-        if (firstWrite(state)) |next| {
-            sendWriteMessage(ab, next);
-            state.announced = 1;
-        }
-    }
+/// The write at the front played out by the mixer: replied, with the
+/// bytes it played, and the one after it - which the mixer went on with -
+/// the front.
+fn playedOut(ab: *AudioBase, n: usize) void {
+    const stream = &ab.streams[n];
+    const front = firstWrite(stream) orelse return;
+    _ = ab.sys_base.RemHead(&stream.writes);
+    stream.handed -|= 1;
+    front.std.actual = front.std.length * @max(front.loops, 1);
+    ab.sys_base.ReplyIO(&front.std.req);
 }
 
-/// A write's message, for one that asked for it: replied when the write
-/// starts to play.
-fn sendWriteMessage(ab: *AudioBase, io: *IOAudio) void {
-    if (io.req.flags & audio.ADIOF_WRITEMESSAGE == 0) return;
-    ab.sys_base.ReplyMsg(&io.write_msg);
-}
-
-/// The front write announced, if the mixer plays it now and it has not
-/// been: on a channel that has just been started.
-fn announceFront(ab: *AudioBase, channel: usize) void {
-    const state = &ab.states[channel];
-    if (state.announced != 0 or state.handed == 0 or ab.voices[channel].stopped != 0) return;
-    const front = firstWrite(state) orelse return;
-    sendWriteMessage(ab, front);
-    state.announced = 1;
-}
-
-/// What the mixer is handed of a write: its samples, how often, and its
-/// period and volume when it brings them (ADIOF_PERVOL).
+/// What the mixer is handed of a write: its frames, how often, and the
+/// form the stream had when it was sent.
 fn queuedOf(io: *IOAudio) mixer.Queued {
-    const pervol = io.req.flags & audio.ADIOF_PERVOL != 0;
+    const frame = audio.frameBytes(io.format, io.channels);
     return .{
-        .data = io.data,
-        .length = io.length,
-        .cycles = io.cycles,
-        .step = if (pervol) mixer.stepFor(audio.AUDIO_CLOCK, io.period, i2s.sample_rate) else 0,
-        .volume = if (pervol) @min(io.volume, audio.ADVOLUME_MAX) else 0,
+        .data = @ptrCast(io.std.data),
+        .frames = @intCast(io.std.length / frame),
+        .loops = io.loops,
+        .format = io.format,
+        .channels = io.channels,
     };
 }
 
-/// The channel's voice given the front write anew, and the one after it to
-/// hold - after the front has changed outside a mix. The period and volume
-/// stay, as the hardware's registers kept theirs; a channel that has none
-/// takes the write's. A stopped channel stays stopped, and announces its
-/// write when it is started.
-fn startFront(ab: *AudioBase, channel: usize) void {
-    const state = &ab.states[channel];
-    const voice = &ab.voices[channel];
-    silence(ab, channel);
-    state.handed = 0;
-    state.announced = 0;
-    const front = firstWrite(state) orelse return;
-    if (front.req.flags & audio.ADIOF_PERVOL != 0 or voice.step == 0) {
-        voice.step = mixer.stepFor(audio.AUDIO_CLOCK, front.period, i2s.sample_rate);
-        voice.volume = @min(front.volume, audio.ADVOLUME_MAX);
-    }
-    voice.data = front.data;
-    voice.length = front.length;
-    voice.cycles = front.cycles;
-    voice.endless = if (front.cycles == 0) 1 else 0;
-    state.handed = 1;
-    if (writeAt(state, 1)) |second| {
+/// The stream's voice given the front write anew, and the one after it to
+/// hold - after the front has changed outside a mix. The rate, the gains
+/// and whether it is stopped stay the stream's.
+fn startFront(ab: *AudioBase, n: usize) void {
+    const stream = &ab.streams[n];
+    const voice = &ab.voices[n];
+    silence(ab, n);
+    stream.handed = 0;
+    const front = firstWrite(stream) orelse return;
+    const first = queuedOf(front);
+    voice.data = first.data;
+    voice.frames = first.frames;
+    voice.format = first.format;
+    voice.channels = first.channels;
+    voice.loops = first.loops;
+    voice.endless = if (first.loops == 0) 1 else 0;
+    stream.handed = 1;
+    if (writeAt(stream, 1)) |second| {
         voice.queued = queuedOf(second);
-        state.handed = 2;
+        stream.handed = 2;
     }
-    announceFront(ab, channel);
 }
 
-/// A channel's voice with nothing to play. Its period and volume stay, and
-/// a stopped channel stays stopped.
-fn silence(ab: *AudioBase, channel: usize) void {
-    const voice = &ab.voices[channel];
-    voice.* = .{ .step = voice.step, .volume = voice.volume, .stopped = voice.stopped };
+/// A stream's voice with nothing to play. Its step, gains, count of frames
+/// played and whether it is stopped stay.
+fn silence(ab: *AudioBase, n: usize) void {
+    const voice = &ab.voices[n];
+    voice.* = .{
+        .step = voice.step,
+        .gain_left = voice.gain_left,
+        .gain_right = voice.gain_right,
+        .played = voice.played,
+        .stopped = voice.stopped,
+    };
 }
 
 /// The write at the front taken off: `err` its answer, and the next one
 /// started in its place.
-fn endFront(ab: *AudioBase, channel: usize, err: i8) void {
-    const sys = ab.sys_base;
-    const state = &ab.states[channel];
-    const front = firstWrite(state) orelse return;
-    _ = sys.RemHead(&state.writes);
-    front.req.err = err;
-    sys.ReplyIO(&front.req);
-    startFront(ab, channel);
+fn endFront(ab: *AudioBase, n: usize, err: i8) void {
+    const stream = &ab.streams[n];
+    const front = firstWrite(stream) orelse return;
+    _ = ab.sys_base.RemHead(&stream.writes);
+    front.std.req.err = err;
+    front.std.actual = 0;
+    ab.sys_base.ReplyIO(&front.std.req);
+    startFront(ab, n);
 }
 
-/// Every write on a channel and every wait for its cycle answered with
-/// `err`, and the voice silent - CMD_FLUSH.
-fn flushChannel(ab: *AudioBase, channel: usize, err: i8) void {
-    const sys = ab.sys_base;
-    const state = &ab.states[channel];
-    while (sys.RemHead(&state.writes)) |node| {
+/// Every write on a stream answered with `err`, and its voice silent -
+/// CMD_FLUSH.
+fn flushStream(ab: *AudioBase, n: usize, err: i8) void {
+    const stream = &ab.streams[n];
+    while (ab.sys_base.RemHead(&stream.writes)) |node| {
         const io = ioOf(node);
-        io.req.err = err;
-        sys.ReplyIO(&io.req);
+        io.std.req.err = err;
+        io.std.actual = 0;
+        ab.sys_base.ReplyIO(&io.std.req);
     }
-    replyWaiters(ab, channel, err);
-    silence(ab, channel);
-    state.handed = 0;
-    state.announced = 0;
+    silence(ab, n);
+    stream.handed = 0;
 }
 
-/// A channel back to where it started - CMD_RESET: flushed, its period
-/// and volume cleared, and started if it was stopped.
-fn resetChannel(ab: *AudioBase, channel: usize) void {
-    flushChannel(ab, channel, exec.IOERR_ABORTED);
-    ab.voices[channel] = .{};
-}
-
-/// Everything waiting for the channel's cycle to end told, with `err`.
-fn replyWaiters(ab: *AudioBase, channel: usize, err: i8) void {
-    const sys = ab.sys_base;
-    while (sys.RemHead(&ab.states[channel].waiters)) |node| {
-        const io = ioOf(node);
-        io.req.err = err;
-        sys.ReplyIO(&io.req);
-    }
-}
-
-fn firstWrite(state: *ChannelState) ?*IOAudio {
-    return ioOf(state.writes.first() orelse return null);
+fn firstWrite(stream: *Stream) ?*IOAudio {
+    return ioOf(stream.writes.first() orelse return null);
 }
 
 /// The write `n` places from the front.
-fn writeAt(state: *ChannelState, n: u32) ?*IOAudio {
-    var node = state.writes.first() orelse return null;
+fn writeAt(stream: *Stream, n: u32) ?*IOAudio {
+    var node = stream.writes.first() orelse return null;
     var left = n;
     while (left > 0) : (left -= 1) node = node.next() orelse return null;
     return ioOf(node);
 }
 
-/// The request a node of one of the device's lists belongs to.
+/// The request a node of a stream's writes belongs to.
 fn ioOf(node: *exec.Node) *IOAudio {
     const message: *exec.Message = @fieldParentPtr("node", node);
-    const req: *exec.IORequest = @fieldParentPtr("message", message);
-    return @alignCast(@fieldParentPtr("req", req));
+    return ioAudio(@fieldParentPtr("message", message));
 }
 
 /// Whether `io` is on `list`, by address.
 fn onList(list: *exec.List, io: *IOAudio) bool {
     var it = list.iterator();
     while (it.next()) |node| {
-        if (node == &io.req.message.node) return true;
+        if (node == &io.std.req.message.node) return true;
     }
     return false;
 }
@@ -707,175 +652,69 @@ fn start(ab: *AudioBase) bool {
     return ab.ready != 0;
 }
 
-// --- the channels ---------------------------------------------------------
+// --- the streams ----------------------------------------------------------
 
-/// A key that is not in use: counted up from 1, and round to 1 again
-/// before it would turn negative.
-fn newKey(ab: *AudioBase) i16 {
-    ab.last_key +%= 1;
-    if (ab.last_key <= 0) ab.last_key = 1;
-    return ab.last_key;
-}
-
-fn bit(channel: usize) u32 {
-    return @as(u32, 1) << @intCast(channel);
-}
-
-/// Whether the channel is the caller's: allocated, with the request's key.
-fn ownsChannel(ab: *AudioBase, io: *IOAudio, channel: usize) bool {
-    const state = &ab.states[channel];
-    return state.taken != 0 and state.key == io.alloc_key;
-}
-
-/// The channels a command for several of them acts on: those it names
-/// that are the caller's. One that is not drops out of `channels` and the
-/// request comes back ADIOERR_NOALLOCATION; the rest are served.
-fn ownedChannels(ab: *AudioBase, io: *IOAudio) u32 {
-    var owned: u32 = 0;
-    for (0..mixer.channels) |i| {
-        if (io.channels & bit(i) == 0) continue;
-        if (ownsChannel(ab, io, i)) owned |= bit(i) else io.req.err = audio.ADIOERR_NOALLOCATION;
+/// The number of the stream a request was opened on, or null for one that
+/// was not opened here.
+fn streamOf(ab: *AudioBase, io: *IOAudio) ?usize {
+    const unit = io.std.req.unit orelse return null;
+    for (&ab.streams, 0..) |*stream, n| {
+        if (&stream.unit == unit and stream.in_use != 0) return n;
     }
-    io.channels = owned;
-    return owned;
-}
-
-/// The channel a command for one channel acts on: the lowest it names,
-/// and `channels` narrowed to it. Null - and `channels` 0 - when that one
-/// is not the caller's or none is named.
-fn ownedChannel(ab: *AudioBase, io: *IOAudio) ?usize {
-    for (0..mixer.channels) |i| {
-        if (io.channels & bit(i) == 0) continue;
-        if (!ownsChannel(ab, io, i)) break;
-        io.channels = bit(i);
-        return i;
-    }
-    io.channels = 0;
-    io.req.err = audio.ADIOERR_NOALLOCATION;
     return null;
 }
 
-const Allocation = enum { made, refused, locked };
-
-/// ADCMD_ALLOCATE's work: the combination chosen (alloc.zig), its channels
-/// taken from whoever had them - their writes and waits answered
-/// IOERR_ABORTED, the channels reset - and given this request's key and
-/// precedence. A combination with a locked channel is not taken: the
-/// locks on it are told ADIOERR_CHANNELSTOLEN, and the allocation waits
-/// until those channels are freed.
-fn allocate(ab: *AudioBase, io: *IOAudio) Allocation {
-    const count = @min(io.length, 16);
-    if (count == 0 or io.data == null) {
-        // No combinations: nothing to allocate, and nothing refused - only
-        // a key.
-        if (io.alloc_key == 0) io.alloc_key = newKey(ab);
-        io.channels = 0;
-        io.req.unit = null;
-        return .made;
-    }
-    const combinations: [*]const u8 = @ptrCast(io.data.?);
-    var precedences: [mixer.channels]i16 = undefined;
-    for (&ab.states, 0..) |*state, i| {
-        precedences[i] = if (state.taken != 0) state.precedence else alloc.free_precedence;
-    }
-    const precedence: i8 = io.req.message.node.pri;
-    const mask = alloc.choose(combinations[0..count], precedences, precedence) orelse return .refused;
-    if (mask & ab.lock_map != 0) {
-        stealLocks(ab, mask);
-        return .locked;
-    }
-    if (io.alloc_key == 0) io.alloc_key = newKey(ab);
-    for (0..mixer.channels) |i| {
-        if (mask & bit(i) == 0) continue;
-        resetChannel(ab, i);
-        const state = &ab.states[i];
-        state.taken = 1;
-        state.key = io.alloc_key;
-        state.precedence = precedence;
-    }
-    io.channels = mask;
-    io.req.unit = &ab.units[mask];
-    return .made;
+/// Whether the request's form, rate, volume and pan are ones the device
+/// takes.
+fn paramsValid(io: *const IOAudio) bool {
+    if (audio.frameBytes(io.format, io.channels) == 0) return false;
+    if (io.rate == 0 or io.rate > audio.AUDIO_MAX_RATE) return false;
+    if (io.volume > audio.AUDIO_VOLUME_MAX) return false;
+    return io.pan >= -audio.AUDIO_PAN_FULL and io.pan <= audio.AUDIO_PAN_FULL;
 }
 
-/// The locks on any of `mask`'s channels told that something of higher
-/// precedence wants them. The channels stay locked until they are freed.
-fn stealLocks(ab: *AudioBase, mask: u32) void {
-    const sys = ab.sys_base;
-    var it = ab.locks.iterator();
-    while (it.next()) |node| {
-        const lock = ioOf(node);
-        if (lock.channels & mask == 0) continue;
-        sys.Remove(node);
-        lock.req.err = audio.ADIOERR_CHANNELSTOLEN;
-        sys.ReplyIO(&lock.req);
-    }
+/// The request's form, rate, volume and pan made the stream's: the rate
+/// and the gains at once, the form for the writes that follow.
+fn takeParams(ab: *AudioBase, n: usize, io: *const IOAudio) void {
+    const stream = &ab.streams[n];
+    stream.format = io.format;
+    stream.channels = io.channels;
+    stream.rate = io.rate;
+    stream.volume = io.volume;
+    stream.pan = io.pan;
+    const voice = &ab.voices[n];
+    voice.step = mixer.stepFor(io.rate, i2s.sample_rate);
+    const g = mixer.gains(io.volume, io.pan);
+    voice.gain_left = g.left;
+    voice.gain_right = g.right;
 }
 
-/// An allocation that waits: replied when it gets its channels, in the
-/// order of its precedence among those waiting.
-fn waitForChannels(ab: *AudioBase, io: *IOAudio) void {
-    io.req.flags &= ~exec.IOF_QUICK;
-    io.req.message.node.type = .message;
-    ab.sys_base.Enqueue(&ab.waiting, &io.req.message.node);
+/// How many streams are open.
+fn openStreams(ab: *AudioBase) u32 {
+    var count: u32 = 0;
+    for (&ab.streams) |*stream| count += stream.in_use;
+    return count;
 }
 
-/// The allocations waiting, tried again now that channels have come free
-/// or their precedence has dropped. One that may not wait (ADIOF_NOWAIT -
-/// it waited only for a lock) and still cannot be made is refused.
-fn retryWaiting(ab: *AudioBase) void {
-    const sys = ab.sys_base;
-    var it = ab.waiting.iterator();
-    while (it.next()) |node| {
-        const io = ioOf(node);
-        switch (allocate(ab, io)) {
-            .made => io.req.err = 0,
-            .refused => {
-                if (io.req.flags & audio.ADIOF_NOWAIT == 0) continue;
-                io.req.err = audio.ADIOERR_ALLOCFAILED;
-                io.channels = 0;
-                io.req.unit = null;
-            },
-            .locked => continue,
-        }
-        sys.Remove(node);
-        sys.ReplyIO(&io.req);
-    }
-}
-
-/// ADCMD_FREE's work on the channels in `mask`: each reset and nobody's,
-/// and the locks on them given up - a lock request with no channel left
-/// is replied.
-fn freeChannels(ab: *AudioBase, mask: u32) void {
-    const sys = ab.sys_base;
-    for (0..mixer.channels) |i| {
-        if (mask & bit(i) == 0) continue;
-        resetChannel(ab, i);
-        const state = &ab.states[i];
-        state.taken = 0;
-        state.key = 0;
-        state.precedence = 0;
-    }
-    const unlocked: u8 = @intCast(mask & ab.lock_map);
-    if (unlocked == 0) return;
-    ab.lock_map &= ~unlocked;
-    var it = ab.locks.iterator();
-    while (it.next()) |node| {
-        const lock = ioOf(node);
-        lock.channels &= ~@as(u32, unlocked);
-        if (lock.channels != 0) continue;
-        sys.Remove(node);
-        sys.ReplyIO(&lock.req);
-    }
+/// What the device and the board are, for AUDIOCMD_QUERY.
+fn infoOf(ab: *AudioBase) audio.AudioInfo {
+    return .{
+        .rate = i2s.sample_rate,
+        .channels = if (ab.sides == .mono) 1 else 2,
+        .bits = 16,
+        .latency = buffer_frames * buffers,
+        .streams = openStreams(ab),
+        .master = ab.master,
+        .has_input = 0,
+        .output = ab.output_name,
+    };
 }
 
 // --- the commands ---------------------------------------------------------
 
 /// BeginIO: every command under the device's lock, which the mixer holds
-/// for each buffer, so a command lands between two buffers and acts on
-/// all the channels it names at once. A command for several channels
-/// serves those that are the caller's and leaves the rest out of
-/// `channels`; a command for one channel takes the lowest it names.
+/// for each buffer, so a command lands between two buffers. A command acts
+/// on the stream the request was opened on.
 fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
@@ -886,254 +725,152 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     sys.ObtainSemaphore(&ab.lock);
     defer sys.ReleaseSemaphore(&ab.lock);
 
+    const n = streamOf(ab, ioa) orelse {
+        io.err = exec.IOERR_OPENFAIL;
+        sys.ReplyIO(io);
+        return;
+    };
+    const stream = &ab.streams[n];
     switch (io.command) {
-        audio.ADCMD_ALLOCATE => switch (allocate(ab, ioa)) {
-            .made => {},
-            .refused => {
-                if (io.flags & audio.ADIOF_NOWAIT == 0) return waitForChannels(ab, ioa);
-                io.err = audio.ADIOERR_ALLOCFAILED;
-                ioa.channels = 0;
-                io.unit = null;
-            },
-            // Even a request that may not wait waits for a lock to go.
-            .locked => return waitForChannels(ab, ioa),
-        },
-        audio.ADCMD_FREE => {
-            freeChannels(ab, ownedChannels(ab, ioa));
-            retryWaiting(ab);
-        },
-        audio.ADCMD_SETPREC => {
-            const mask = ownedChannels(ab, ioa);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) != 0) ab.states[i].precedence = io.message.node.pri;
-            }
-            retryWaiting(ab);
-        },
-        audio.ADCMD_LOCK => {
-            // Every channel named must be the caller's, or none is locked.
-            for (0..mixer.channels) |i| {
-                if (ioa.channels & bit(i) != 0 and !ownsChannel(ab, ioa, i)) {
-                    ioa.channels = 0;
-                    io.err = audio.ADIOERR_NOALLOCATION;
-                    break;
-                }
+        exec.CMD_WRITE => {
+            const frame = audio.frameBytes(stream.format, stream.channels);
+            if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0 or ioa.std.length / frame > std.math.maxInt(u32)) {
+                io.err = exec.IOERR_BADLENGTH;
             } else {
-                ab.lock_map |= @intCast(ioa.channels & 0xF);
+                // The write keeps the form the stream has now; replied when
+                // its frames have been played, not now.
+                ioa.format = stream.format;
+                ioa.channels = stream.channels;
+                ioa.std.actual = 0;
                 io.flags &= ~exec.IOF_QUICK;
-                sys.AddTail(&ab.locks, &io.message.node);
-                return; // replied when its channels are freed or stolen
-            }
-        },
-        exec.CMD_WRITE => if (ownedChannel(ab, ioa)) |channel| {
-            if (ioa.data == null or ioa.length == 0) {
-                io.err = exec.IOERR_BADADDRESS;
-            } else {
-                // Replied when its samples have been played, not now.
-                io.flags &= ~exec.IOF_QUICK;
-                const state = &ab.states[channel];
-                sys.AddTail(&state.writes, &io.message.node);
-                if (state.handed == 0) {
-                    startFront(ab, channel);
-                } else if (state.handed == 1) {
-                    ab.voices[channel].queued = queuedOf(ioa);
-                    state.handed = 2;
+                sys.AddTail(&stream.writes, &io.message.node);
+                if (stream.handed == 0) {
+                    startFront(ab, n);
+                } else if (stream.handed == 1) {
+                    ab.voices[n].queued = queuedOf(ioa);
+                    stream.handed = 2;
                 }
                 return;
             }
         },
-        exec.CMD_READ => if (ownedChannel(ab, ioa)) |channel| {
-            const state = &ab.states[channel];
-            const playing: ?*IOAudio = if (state.announced != 0) firstWrite(state) else null;
-            ioa.data = @ptrCast(playing);
-        },
-        audio.ADCMD_WAITCYCLE => if (ownedChannel(ab, ioa)) |channel| {
-            // Nothing playing is a cycle already over.
-            const state = &ab.states[channel];
-            if (state.announced != 0) {
-                io.flags &= ~exec.IOF_QUICK;
-                sys.AddTail(&state.waiters, &io.message.node);
-                return;
-            }
-        },
-        audio.ADCMD_PERVOL => {
-            const mask = ownedChannels(ab, ioa);
-            const new_step = mixer.stepFor(audio.AUDIO_CLOCK, ioa.period, i2s.sample_rate);
-            const new_volume = @min(ioa.volume, audio.ADVOLUME_MAX);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) == 0) continue;
-                const voice = &ab.voices[i];
-                if (io.flags & audio.ADIOF_SYNCCYCLE != 0 and ab.states[i].announced != 0) {
-                    // At the end of the cycle playing now.
-                    voice.sync_step = new_step;
-                    voice.sync_volume = new_volume;
-                    voice.has_sync = 1;
-                } else {
-                    voice.step = new_step;
-                    voice.volume = new_volume;
-                    voice.has_sync = 0;
-                }
-            }
-        },
-        audio.ADCMD_FINISH => {
-            const mask = ownedChannels(ab, ioa);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) == 0) continue;
-                const state = &ab.states[i];
-                if (firstWrite(state) == null) continue;
-                if (state.announced == 0) {
-                    // Never begun: it is aborted rather than finished.
-                    endFront(ab, i, exec.IOERR_ABORTED);
-                } else if (io.flags & audio.ADIOF_SYNCCYCLE != 0) {
-                    // The cycle playing now is its last.
-                    const voice = &ab.voices[i];
-                    voice.cycles = 1;
-                    voice.endless = 0;
-                } else {
-                    endFront(ab, i, 0);
-                }
-            }
-        },
-        exec.CMD_STOP, exec.CMD_START => {
-            // A stopped channel holds its write, and those sent to it,
-            // until it is started. The channels named change together,
-            // between two buffers, so channels started together start in
-            // the same frame - a sound on a left and a right channel
-            // stays in step.
-            const mask = ownedChannels(ab, ioa);
-            const stopped: u16 = @intFromBool(io.command == exec.CMD_STOP);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) == 0) continue;
-                ab.voices[i].stopped = stopped;
-                if (stopped == 0) announceFront(ab, i);
-            }
-        },
-        exec.CMD_FLUSH => {
-            const mask = ownedChannels(ab, ioa);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) != 0) flushChannel(ab, i, exec.IOERR_ABORTED);
-            }
-        },
+        // A stopped stream holds its write, and those sent to it, until it
+        // is started.
+        exec.CMD_STOP => ab.voices[n].stopped = 1,
+        exec.CMD_START => ab.voices[n].stopped = 0,
+        exec.CMD_FLUSH => flushStream(ab, n, exec.IOERR_ABORTED),
         exec.CMD_RESET => {
-            const mask = ownedChannels(ab, ioa);
-            for (0..mixer.channels) |i| {
-                if (mask & bit(i) != 0) resetChannel(ab, i);
+            flushStream(ab, n, exec.IOERR_ABORTED);
+            ab.voices[n].stopped = 0;
+        },
+        audio.AUDIOCMD_SETPARAMS => {
+            if (paramsValid(ioa)) takeParams(ab, n, ioa) else io.err = audio.AUDIOERR_BADFORMAT;
+        },
+        audio.AUDIOCMD_QUERY => {
+            ioa.position = ab.voices[n].played;
+            if (ioa.std.data) |into| {
+                if (ioa.std.length >= @sizeOf(audio.AudioInfo)) {
+                    const info: *audio.AudioInfo = @ptrCast(@alignCast(into));
+                    info.* = infoOf(ab);
+                    ioa.std.actual = @sizeOf(audio.AudioInfo);
+                } else {
+                    io.err = exec.IOERR_BADLENGTH;
+                }
             }
+        },
+        audio.AUDIOCMD_MASTER => {
+            if (ioa.volume <= audio.AUDIO_VOLUME_MAX) ab.master = ioa.volume else io.err = audio.AUDIOERR_BADFORMAT;
         },
         // Nothing is cached and nothing is buffered anywhere else.
-        exec.CMD_CLEAR, exec.CMD_UPDATE => _ = ownedChannels(ab, ioa),
+        exec.CMD_CLEAR, exec.CMD_UPDATE => {},
         else => io.err = exec.IOERR_NOCMD,
     }
     sys.ReplyIO(io);
 }
 
-/// AbortIO: a write, a wait for a cycle, a lock or an allocation that
-/// waits, answered IOERR_ABORTED. A write that plays stops, and the one
-/// after it starts; a lock's channels stay locked until they are freed.
-/// -1 for a request the device does not hold.
+/// AbortIO: a write answered IOERR_ABORTED - one waiting taken out, the
+/// one playing stopped and the one after it begun. -1 for a request the
+/// device does not hold.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.lock);
     defer sys.ReleaseSemaphore(&ab.lock);
-    switch (io.command) {
-        exec.CMD_WRITE => for (&ab.states, 0..) |*state, channel| {
-            if (!onList(&state.writes, ioa)) continue;
-            if (firstWrite(state) == ioa) {
-                endFront(ab, channel, exec.IOERR_ABORTED);
-                return 0;
-            }
-            const was_held = state.handed >= 2 and writeAt(state, 1) == ioa;
-            sys.Remove(&io.message.node);
-            if (was_held) {
-                // The mixer held it behind the playing one: the next
-                // write takes its place there.
-                const voice = &ab.voices[channel];
-                if (writeAt(state, 1)) |next| {
-                    voice.queued = queuedOf(next);
-                } else {
-                    voice.queued = .{};
-                    state.handed = 1;
-                }
-            }
-            break;
-        } else return -1,
-        audio.ADCMD_WAITCYCLE => for (&ab.states) |*state| {
-            if (!onList(&state.waiters, ioa)) continue;
-            sys.Remove(&io.message.node);
-            break;
-        } else return -1,
-        audio.ADCMD_LOCK => {
-            if (!onList(&ab.locks, ioa)) return -1;
-            sys.Remove(&io.message.node);
-        },
-        audio.ADCMD_ALLOCATE => {
-            if (!onList(&ab.waiting, ioa)) return -1;
-            sys.Remove(&io.message.node);
-        },
-        else => return -1,
+    if (io.command != exec.CMD_WRITE) return -1;
+    const n = streamOf(ab, ioa) orelse return -1;
+    const stream = &ab.streams[n];
+    if (!onList(&stream.writes, ioa)) return -1;
+    if (firstWrite(stream) == ioa) {
+        endFront(ab, n, exec.IOERR_ABORTED);
+        return 0;
+    }
+    const was_held = stream.handed >= 2 and writeAt(stream, 1) == ioa;
+    sys.Remove(&io.message.node);
+    if (was_held) {
+        // The mixer held it behind the playing one: the next write takes
+        // its place there.
+        const voice = &ab.voices[n];
+        if (writeAt(stream, 1)) |next| {
+            voice.queued = queuedOf(next);
+        } else {
+            voice.queued = .{};
+            stream.handed = 1;
+        }
     }
     io.err = exec.IOERR_ABORTED;
+    ioa.std.actual = 0;
     sys.ReplyIO(io);
     return 0;
 }
 
-/// OpenDevice: the device's task and hardware the first time, and an
-/// allocation as ADCMD_ALLOCATE makes it - from `data` and `length`, at
-/// the request's precedence, without waiting. With a length of 0 the open
-/// only gets a key. An allocation that fails fails the open
-/// (ADIOERR_ALLOCFAILED).
+/// OpenDevice: the device's task and hardware the first time, then a
+/// stream of the request's form, rate, volume and pan. Unit 1, the way
+/// in, is not driven yet (AUDIOERR_NOINPUT).
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
     _ = flags;
-    _ = unit_number;
     const ab = audioBase(dev);
+    if (unit_number == audio.AUDIO_UNIT_RECORD) return audio.AUDIOERR_NOINPUT;
+    if (unit_number != audio.AUDIO_UNIT_PLAY) return exec.IOERR_OPENFAIL;
     if (io.message.length < @sizeOf(IOAudio)) return exec.IOERR_OPENFAIL;
     if (!start(ab)) return exec.IOERR_OPENFAIL;
-    return openAllocating(ab, ioAudio(io));
+    return openStream(ab, ioAudio(io));
 }
 
-/// The open's allocation, through the device's own BeginIO, as the
-/// request would go. It waits only for a locked channel, which needs the
-/// request's reply port.
-fn openAllocating(ab: *AudioBase, io: *IOAudio) i32 {
+/// A stream for the request, if its parameters are good and one is free.
+fn openStream(ab: *AudioBase, io: *IOAudio) i32 {
     const sys = ab.sys_base;
+    if (!paramsValid(io)) return audio.AUDIOERR_BADFORMAT;
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
+    const n = for (&ab.streams, 0..) |*stream, n| {
+        if (stream.in_use == 0) break n;
+    } else return audio.AUDIOERR_NOSTREAM;
+    const stream = &ab.streams[n];
+    stream.in_use = 1;
+    stream.handed = 0;
+    ab.voices[n] = .{};
+    takeParams(ab, n, io);
+    io.std.req.unit = &stream.unit;
     ab.dev.open_cnt += 1;
     ab.dev.flags &= ~exec.LIBF_DELEXP;
-    io.req.command = audio.ADCMD_ALLOCATE;
-    io.req.flags = audio.ADIOF_NOWAIT;
-    const err = sys.DoIO(&io.req);
-    io.req.flags = 0;
-    if (err != 0) {
-        freeKey(ab, io);
-        ab.dev.open_cnt -= 1;
-    }
-    return err;
+    return 0;
 }
 
-/// CloseDevice: every channel the request's key still holds freed, as
-/// ADCMD_FREE does - a program that forgot its channels gives them back -
-/// and the request left as it was.
+/// CloseDevice: the stream's writes that are left answered IOERR_ABORTED -
+/// a program that forgot them gets them back - and the stream free again.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
-    freeKey(ab, ioAudio(io));
+    const sys = ab.sys_base;
+    sys.ObtainSemaphore(&ab.lock);
+    if (streamOf(ab, ioAudio(io))) |n| {
+        flushStream(ab, n, exec.IOERR_ABORTED);
+        ab.voices[n] = .{};
+        ab.streams[n].in_use = 0;
+    }
+    sys.ReleaseSemaphore(&ab.lock);
+    io.unit = null;
     dev.open_cnt -= 1;
     return null;
-}
-
-/// ADCMD_FREE on all four channels with the request's key, through the
-/// device's BeginIO; the request's command, flags and error kept.
-fn freeKey(ab: *AudioBase, io: *IOAudio) void {
-    const command_was = io.req.command;
-    const flags_was = io.req.flags;
-    const err_was = io.req.err;
-    io.req.command = audio.ADCMD_FREE;
-    io.req.flags = 0;
-    io.channels = (1 << mixer.channels) - 1;
-    _ = ab.sys_base.DoIO(&io.req);
-    io.req.command = command_was;
-    io.req.flags = flags_was;
-    io.req.err = err_was;
-    io.channels = 0;
 }
 
 /// Expunge: while it is open only marked, to go at the last close. Then
@@ -1170,15 +907,15 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     _ = seg_list;
     dev.revision = DEVICE_REVISION;
     const ab = audioBase(dev);
-    ab.sys_base = sys_base;
+    // The base comes zeroed; what it starts as is its fields' defaults -
+    // the master at as recorded, no MCLK pad - the node exec made kept.
+    const made = ab.dev;
+    ab.* = .{ .dev = made, .sys_base = sys_base };
     sys_base.InitSemaphore(&ab.lock);
-    ab.waiting.init(.message);
-    ab.locks.init(.message);
-    for (&ab.states) |*state| {
-        state.writes.init(.message);
-        state.waiters.init(.message);
+    for (&ab.streams) |*stream| {
+        stream.writes.init(.message);
+        stream.unit.msg_port.msg_list.init(.message);
     }
-    for (&ab.units) |*unit| unit.msg_port.msg_list.init(.message);
     ab.int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
         .data = ab,
@@ -1292,15 +1029,13 @@ export const audio_device_tag: exec.ResidentDevice linksection(".resident") = .{
 // --- tests (host: ./zig build test) -----------------------------------------
 //
 // The device made from its ROM tag without the hardware: no board to read,
-// no task. Opens go straight to the allocation an open makes, and the mix
-// is driven by hand (`mixInto` stands in for the stream). A period of 75
-// is a little under a sample a frame.
+// no task. Opens go straight to the stream an open makes, and the mix is
+// driven by hand (`mixInto` stands in for the output). The output runs at
+// 48 kHz with the sides in order, so a stream at 48 kHz moves a frame an
+// output frame and a one-channel stream is heard on both sides.
 
 const testing = std.testing;
 const kexec = @import("../../libs/exec/exec.zig");
-
-const test_period: u16 = 75;
-const wave = [_]i8{ 10, 20, 30, 40, 50, 60, 70, 80 };
 
 fn testDevice() !*AudioBase {
     try kexec.setUp();
@@ -1316,52 +1051,32 @@ fn testDeviceGone(ab: *AudioBase, ports: []const *exec.MsgPort) !void {
     try kexec.expectNoLeaks();
 }
 
-fn requestFor(ab: *AudioBase, port: *exec.MsgPort, precedence: i8) IOAudio {
-    var io: IOAudio = .{};
-    io.req.message.reply_port = port;
-    io.req.message.length = @sizeOf(IOAudio);
-    io.req.message.node.pri = precedence;
-    io.req.device = &ab.dev;
+/// A request for a 16-bit stream of one channel at the output's rate.
+fn requestFor(ab: *AudioBase, port: *exec.MsgPort) IOAudio {
+    var io: IOAudio = .{ .channels = 1, .rate = 48_000 };
+    io.std.req.message.reply_port = port;
+    io.std.req.message.length = @sizeOf(IOAudio);
+    io.std.req.device = &ab.dev;
     return io;
 }
 
-/// An open asking for one of `combinations`.
-fn openWith(ab: *AudioBase, io: *IOAudio, combinations: []const u8) i32 {
-    io.data = @ptrCast(combinations.ptr);
-    io.length = @intCast(combinations.len);
-    return openAllocating(ab, io);
+/// A write of `data` on the stream `from` was opened on, `loops` times.
+fn sendWrite(io: *IOAudio, from: *const IOAudio, data: []const u8, loops: u32) void {
+    io.std.req.unit = from.std.req.unit;
+    io.std.req.command = exec.CMD_WRITE;
+    io.std.req.flags = 0;
+    io.std.data = @ptrCast(@constCast(data.ptr));
+    io.std.length = data.len;
+    io.loops = loops;
+    kexec.SysBase.iface().SendIO(&io.std.req);
 }
 
-/// A write of `wave` sent on `channels`, asked to play `cycles` times.
-fn sendWrite(io: *IOAudio, from: *const IOAudio, channels: u32, cycles: u16, flags: u8) void {
-    io.alloc_key = from.alloc_key;
-    io.channels = channels;
-    io.req.command = exec.CMD_WRITE;
-    io.req.flags = audio.ADIOF_PERVOL | flags;
-    io.data = &wave;
-    io.length = wave.len;
-    io.period = test_period;
-    io.volume = 64;
-    io.cycles = cycles;
-    kexec.SysBase.iface().SendIO(&io.req);
-}
-
-/// A command on the channels `from` holds, with its flags, waited for.
-fn command(io: *IOAudio, from: *const IOAudio, which: u16, channels: u32, flags: u8) i32 {
-    io.alloc_key = from.alloc_key;
-    io.channels = channels;
-    io.req.command = which;
-    io.req.flags = flags;
-    return kexec.SysBase.iface().DoIO(&io.req);
-}
-
-/// An allocation of one of `combinations` sent, with its flags.
-fn sendAllocate(io: *IOAudio, combinations: []const u8, flags: u8) void {
-    io.data = @ptrCast(combinations.ptr);
-    io.length = @intCast(combinations.len);
-    io.req.command = audio.ADCMD_ALLOCATE;
-    io.req.flags = flags;
-    kexec.SysBase.iface().SendIO(&io.req);
+/// A command on the stream `from` was opened on, waited for.
+fn command(io: *IOAudio, from: *const IOAudio, which: u16) i32 {
+    io.std.req.unit = from.std.req.unit;
+    io.std.req.command = which;
+    io.std.req.flags = 0;
+    return kexec.SysBase.iface().DoIO(&io.std.req);
 }
 
 fn mix(ab: *AudioBase, comptime frames: usize) [frames * 2]i16 {
@@ -1374,322 +1089,237 @@ fn replied(port: *exec.MsgPort) ?*exec.Message {
     return kexec.SysBase.iface().GetMsg(port);
 }
 
-test "an open allocates or fails, and a close frees what its key holds" {
+/// Bytes of 16-bit samples, in the machine's order.
+fn pcm16(comptime samples: []const i16) [samples.len * 2]u8 {
+    var bytes: [samples.len * 2]u8 = undefined;
+    for (samples, 0..) |sample, i| {
+        const word: u16 = @bitCast(sample);
+        bytes[i * 2] = @truncate(word);
+        bytes[i * 2 + 1] = @truncate(word >> 8);
+    }
+    return bytes;
+}
+
+test "an open is a stream of its own, sixteen at most; what it cannot take is refused; a close frees it" {
     const ab = try testDevice();
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     const port = sys.CreateMsgPort().?;
 
-    const pairs = [_]u8{ 0x03, 0x0C };
-    var first = requestFor(ab, port, 10);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &first, &pairs));
-    try testing.expectEqual(@as(u32, 0x03), first.channels);
-    try testing.expect(first.alloc_key > 0);
-    var second = requestFor(ab, port, 10);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &second, &pairs));
-    try testing.expectEqual(@as(u32, 0x0C), second.channels);
-    try testing.expect(second.alloc_key != first.alloc_key);
-    // Nothing left that the same precedence may take.
-    var third = requestFor(ab, port, 10);
-    try testing.expectEqual(@as(i32, audio.ADIOERR_ALLOCFAILED), openWith(ab, &third, &pairs));
-    // Without combinations an open only gets a key.
-    var bare = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &bare, &.{}));
-    try testing.expectEqual(@as(u32, 0), bare.channels);
-    try testing.expect(bare.alloc_key > 0);
-    try testing.expectEqual(@as(u16, 3), ab.dev.open_cnt);
+    var requests: [max_streams + 1]IOAudio = undefined;
+    for (requests[0..max_streams]) |*io| {
+        io.* = requestFor(ab, port);
+        try testing.expectEqual(@as(i32, 0), openStream(ab, io));
+    }
+    try testing.expect(requests[0].std.req.unit != requests[1].std.req.unit);
+    try testing.expectEqual(@as(u32, max_streams), openStreams(ab));
+    requests[max_streams] = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_NOSTREAM), openStream(ab, &requests[max_streams]));
 
-    _ = close(&ab.dev, &first.req);
-    try testing.expectEqual(@as(u8, 0), ab.states[0].taken);
-    try testing.expectEqual(@as(u8, 1), ab.states[2].taken);
-    _ = close(&ab.dev, &second.req);
-    _ = close(&ab.dev, &bare.req);
+    // A form, a channel count, a rate or a pan the device does not take.
+    var bad = requestFor(ab, port);
+    bad.format = 9;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), openStream(ab, &bad));
+    bad.format = audio.AUDIO_S16;
+    bad.channels = 3;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), openStream(ab, &bad));
+    bad.channels = 2;
+    bad.rate = 0;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), openStream(ab, &bad));
+    bad.rate = 48_000;
+    bad.pan = 2 * audio.AUDIO_PAN_FULL;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), openStream(ab, &bad));
+    // Unit 1 is the way in, which is not driven yet.
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_NOINPUT), open(&ab.dev, &bad.std.req, audio.AUDIO_UNIT_RECORD, 0));
+
+    for (requests[0..max_streams]) |*io| _ = close(&ab.dev, &io.std.req);
     try testing.expectEqual(@as(u16, 0), ab.dev.open_cnt);
+    try testing.expectEqual(@as(u32, 0), openStreams(ab));
     try testDeviceGone(ab, &.{port});
 }
 
-test "a higher precedence steals: the writes there are aborted, and the old key refused" {
+test "writes play one after the other without a gap, and come back with the bytes played" {
     const ab = try testDevice();
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
 
-    var low = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &low, &.{0x01}));
-    var playing = requestFor(ab, port, 0);
-    sendWrite(&playing, &low, 0x01, 0, 0);
+    const a = pcm16(&.{ 100, 200 });
+    const b = pcm16(&.{300});
+    var first = requestFor(ab, port);
+    var second = requestFor(ab, port);
+    sendWrite(&first, &io, &a, 1);
+    sendWrite(&second, &io, &b, 2);
     try testing.expect(replied(port) == null);
+    const out = mix(ab, 6);
+    // The one channel on both sides: 100, 200, then 300 twice, then quiet.
+    try testing.expectEqualSlices(i16, &.{ 100, 100, 200, 200, 300, 300, 300, 300, 0, 0, 0, 0 }, &out);
+    try testing.expect(replied(port) == &first.std.req.message);
+    try testing.expect(replied(port) == &second.std.req.message);
+    try testing.expectEqual(@as(u64, 4), first.std.actual);
+    try testing.expectEqual(@as(u64, 4), second.std.actual);
+    try testing.expectEqual(@as(i8, 0), second.std.req.err);
 
-    var high = requestFor(ab, port, 20);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &high, &.{0x01}));
-    try testing.expectEqual(@as(u32, 0x01), high.channels);
-    try testing.expectEqual(&playing.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, exec.IOERR_ABORTED), playing.req.err);
-
-    var late = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, audio.ADIOERR_NOALLOCATION), command(&late, &low, exec.CMD_FLUSH, 0x01, 0));
-    try testing.expectEqual(@as(u32, 0), late.channels);
-    _ = close(&ab.dev, &low.req);
-    _ = close(&ab.dev, &high.req);
+    _ = close(&ab.dev, &io.std.req);
     try testDeviceGone(ab, &.{port});
 }
 
-test "an allocation that may wait gets its channels when they are freed" {
+test "each write keeps the form it was sent in; new parameters change the rate and gains at once" {
     const ab = try testDevice();
     defer kexec.deinit();
     const sys = kexec.SysBase.iface();
     const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
 
-    var holder = requestFor(ab, port, 10);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &holder, &.{0x0F}));
-    var waiter = requestFor(ab, port, 10);
-    sendAllocate(&waiter, &.{0x01}, 0);
-    try testing.expect(replied(port) == null);
-
-    var free_one = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&free_one, &holder, audio.ADCMD_FREE, 0x01, 0));
-    try testing.expectEqual(@as(u32, 0x01), free_one.channels);
-    try testing.expectEqual(&waiter.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, 0), waiter.req.err);
-    try testing.expectEqual(@as(u32, 0x01), waiter.channels);
-
-    _ = close(&ab.dev, &holder.req);
-    waiter.channels = 0x01;
-    _ = command(&waiter, &waiter, audio.ADCMD_FREE, 0x01, 0);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "a lock is told of a steal, the allocation waits for the free, even without waiting" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    var lock = requestFor(ab, port, 0);
-    lock.alloc_key = owner.alloc_key;
-    lock.channels = 0x01;
-    lock.req.command = audio.ADCMD_LOCK;
-    sys.SendIO(&lock.req);
-    try testing.expect(replied(port) == null);
-
-    var thief = requestFor(ab, port, 20);
-    sendAllocate(&thief, &.{0x01}, audio.ADIOF_NOWAIT);
-    try testing.expectEqual(&lock.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, audio.ADIOERR_CHANNELSTOLEN), lock.req.err);
-    try testing.expect(replied(port) == null);
-
-    _ = close(&ab.dev, &owner.req);
-    try testing.expectEqual(&thief.req.message, replied(port).?);
-    try testing.expectEqual(@as(u32, 0x01), thief.channels);
-    _ = command(&thief, &thief, audio.ADCMD_FREE, 0x01, 0);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "writes queue without a limit, play in order, and each says when it starts" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-    const starts = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    var writes: [3]IOAudio = undefined;
-    for (&writes) |*io| {
-        io.* = requestFor(ab, port, 0);
-        io.write_msg.reply_port = starts;
-        sendWrite(io, &owner, 0x03, 1, audio.ADIOF_WRITEMESSAGE);
-        // A write is one channel's: the lowest it names.
-        try testing.expectEqual(@as(u32, 0x01), io.channels);
-    }
-    // The first starts at once, the others when their turn comes.
-    try testing.expectEqual(&writes[0].write_msg, replied(starts).?);
-    try testing.expect(replied(starts) == null);
-
-    _ = mix(ab, 12);
-    try testing.expectEqual(&writes[0].req.message, replied(port).?);
-    try testing.expectEqual(&writes[1].write_msg, replied(starts).?);
-    _ = mix(ab, 20);
-    try testing.expectEqual(&writes[1].req.message, replied(port).?);
-    try testing.expectEqual(&writes[2].write_msg, replied(starts).?);
-    try testing.expectEqual(&writes[2].req.message, replied(port).?);
-    try testing.expect(replied(port) == null);
-    _ = close(&ab.dev, &owner.req);
-    try testDeviceGone(ab, &.{ port, starts });
-}
-
-test "a wait for the cycle is told when the cycle playing ends" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    // Nothing playing: a cycle already over.
-    var early = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&early, &owner, audio.ADCMD_WAITCYCLE, 0x01, 0));
-
-    var looping = requestFor(ab, port, 0);
-    sendWrite(&looping, &owner, 0x01, 0, 0);
-    var waits: [2]IOAudio = undefined;
-    for (&waits) |*io| {
-        io.* = requestFor(ab, port, 0);
-        io.alloc_key = owner.alloc_key;
-        io.channels = 0x01;
-        io.req.command = audio.ADCMD_WAITCYCLE;
-        sys.SendIO(&io.req);
-    }
-    _ = mix(ab, 4);
-    try testing.expect(replied(port) == null);
-    _ = mix(ab, 6);
-    try testing.expectEqual(&waits[0].req.message, replied(port).?);
-    try testing.expectEqual(&waits[1].req.message, replied(port).?);
-
-    var flush = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&flush, &owner, exec.CMD_FLUSH, 0x01, 0));
-    try testing.expectEqual(&looping.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, exec.IOERR_ABORTED), looping.req.err);
-    _ = close(&ab.dev, &owner.req);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "a finish ends the write now or at the end of its cycle, and the next goes on" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    var first = requestFor(ab, port, 0);
-    sendWrite(&first, &owner, 0x01, 0, 0);
-    var second = requestFor(ab, port, 0);
-    sendWrite(&second, &owner, 0x01, 0, 0);
-
-    var finish = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&finish, &owner, audio.ADCMD_FINISH, 0x01, 0));
-    try testing.expectEqual(&first.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, 0), first.req.err);
-    try testing.expectEqual(@as(?*IOAudio, &second), firstWrite(&ab.states[0]));
-
-    // At the end of the cycle: not yet, then once it has gone round.
-    try testing.expectEqual(@as(i32, 0), command(&finish, &owner, audio.ADCMD_FINISH, 0x01, audio.ADIOF_SYNCCYCLE));
-    try testing.expect(replied(port) == null);
-    _ = mix(ab, 12);
-    try testing.expectEqual(&second.req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, 0), second.req.err);
-    _ = close(&ab.dev, &owner.req);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "stopped channels hold their writes and start together" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-    const starts = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x03}));
-    var stop = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&stop, &owner, exec.CMD_STOP, 0x03, 0));
-    var left = requestFor(ab, port, 0);
-    left.write_msg.reply_port = starts;
-    sendWrite(&left, &owner, 0x01, 0, audio.ADIOF_WRITEMESSAGE);
-    // Between the two writes the mixer runs, and plays nothing.
-    const quiet = mix(ab, 4);
-    for (quiet) |sample| try testing.expectEqual(@as(i16, 0), sample);
-    var right = requestFor(ab, port, 0);
-    right.write_msg.reply_port = starts;
-    sendWrite(&right, &owner, 0x02, 0, audio.ADIOF_WRITEMESSAGE);
-    try testing.expect(replied(starts) == null);
-
-    try testing.expectEqual(@as(i32, 0), command(&stop, &owner, exec.CMD_START, 0x03, 0));
-    try testing.expectEqual(&left.write_msg, replied(starts).?);
-    try testing.expectEqual(&right.write_msg, replied(starts).?);
-    // In step: every frame the same on both sides.
-    const heard = mix(ab, 8);
-    for (0..8) |frame| try testing.expectEqual(heard[frame * 2], heard[frame * 2 + 1]);
-    try testing.expect(heard[0] != 0);
-    _ = close(&ab.dev, &owner.req);
-    try testDeviceGone(ab, &.{ port, starts });
-}
-
-test "read answers the write playing; an abort takes a queued write out or ends the playing one" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    var writes: [3]IOAudio = undefined;
-    for (&writes) |*io| {
-        io.* = requestFor(ab, port, 0);
-        sendWrite(io, &owner, 0x01, 0, 0);
-    }
-    var read = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), command(&read, &owner, exec.CMD_READ, 0x01, 0));
-    try testing.expectEqual(@as(usize, @intFromPtr(&writes[0])), @intFromPtr(read.data));
-
-    // The one held behind the playing write: the third takes its place.
-    try testing.expectEqual(@as(i32, 0), sys.AbortIO(&writes[1].req));
-    try testing.expectEqual(&writes[1].req.message, replied(port).?);
-    try testing.expectEqual(@as(i8, exec.IOERR_ABORTED), writes[1].req.err);
-    try testing.expectEqual(@as(?[*]const i8, &wave), ab.voices[0].queued.data);
-    // The playing one: the third plays.
-    try testing.expectEqual(@as(i32, 0), sys.AbortIO(&writes[0].req));
-    try testing.expectEqual(&writes[0].req.message, replied(port).?);
-    try testing.expectEqual(@as(?*IOAudio, &writes[2]), firstWrite(&ab.states[0]));
-    _ = close(&ab.dev, &owner.req);
-    try testing.expectEqual(&writes[2].req.message, replied(port).?);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "a command for several channels serves the caller's and names the rest" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var mine = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &mine, &.{0x01}));
-    var theirs = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &theirs, &.{0x02}));
-
-    var pervol = requestFor(ab, port, 0);
-    pervol.period = 150;
-    pervol.volume = 32;
-    try testing.expectEqual(@as(i32, audio.ADIOERR_NOALLOCATION), command(&pervol, &mine, audio.ADCMD_PERVOL, 0x03, 0));
-    try testing.expectEqual(@as(u32, 0x01), pervol.channels);
-    try testing.expectEqual(@as(u16, 32), ab.voices[0].volume);
-    try testing.expectEqual(@as(u16, 0), ab.voices[1].volume);
-    _ = close(&ab.dev, &mine.req);
-    _ = close(&ab.dev, &theirs.req);
-    try testDeviceGone(ab, &.{port});
-}
-
-test "a period and volume for the end of the cycle wait for it" {
-    const ab = try testDevice();
-    defer kexec.deinit();
-    const sys = kexec.SysBase.iface();
-    const port = sys.CreateMsgPort().?;
-
-    var owner = requestFor(ab, port, 0);
-    try testing.expectEqual(@as(i32, 0), openWith(ab, &owner, &.{0x01}));
-    var looping = requestFor(ab, port, 0);
-    sendWrite(&looping, &owner, 0x01, 0, 0);
-    var pervol = requestFor(ab, port, 0);
-    pervol.period = test_period;
-    pervol.volume = 16;
-    try testing.expectEqual(@as(i32, 0), command(&pervol, &owner, audio.ADCMD_PERVOL, 0x01, audio.ADIOF_SYNCCYCLE));
-    try testing.expectEqual(@as(u16, 64), ab.voices[0].volume);
-    _ = mix(ab, 10);
-    try testing.expectEqual(@as(u16, 16), ab.voices[0].volume);
-    _ = close(&ab.dev, &owner.req);
+    const words = pcm16(&.{1000});
+    const bytes = [_]u8{100};
+    var first = requestFor(ab, port);
+    sendWrite(&first, &io, &words, 1);
+    // From here on 8-bit samples, at half the volume.
+    var params = requestFor(ab, port);
+    params.format = audio.AUDIO_S8;
+    params.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&params, &io, audio.AUDIOCMD_SETPARAMS));
+    var second = requestFor(ab, port);
+    sendWrite(&second, &io, &bytes, 1);
+    try testing.expectEqual(audio.AUDIO_S16, first.format);
+    try testing.expectEqual(audio.AUDIO_S8, second.format);
+    const out = mix(ab, 2);
+    try testing.expectEqual(@as(i16, 500), out[0]);
+    try testing.expectEqual(@as(i16, 100 * 256 / 2), out[2]);
     _ = replied(port);
+    _ = replied(port);
+
+    // Parameters it does not take change nothing.
+    params.rate = audio.AUDIO_MAX_RATE + 1;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), command(&params, &io, audio.AUDIOCMD_SETPARAMS));
+    try testing.expectEqual(audio.AUDIO_S8, ab.streams[0].format);
+
+    _ = close(&ab.dev, &io.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "stop holds a stream, start goes on, flush answers its writes aborted" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    const note = pcm16(&.{1000});
+    var forever = requestFor(ab, port);
+    sendWrite(&forever, &io, &note, 0);
+    try testing.expectEqual(@as(i16, 1000), mix(ab, 1)[0]);
+    var control = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), command(&control, &io, exec.CMD_STOP));
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+    try testing.expectEqual(@as(i32, 0), command(&control, &io, exec.CMD_START));
+    try testing.expectEqual(@as(i16, 1000), mix(ab, 1)[0]);
+    try testing.expect(replied(port) == null);
+    try testing.expectEqual(@as(i32, 0), command(&control, &io, exec.CMD_FLUSH));
+    try testing.expect(replied(port) == &forever.std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, forever.std.req.err);
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+
+    _ = close(&ab.dev, &io.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "an abort takes a waiting write out, or ends the one playing and the next goes on" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    const a = pcm16(&.{111});
+    const b = pcm16(&.{222});
+    const c = pcm16(&.{333});
+    var first = requestFor(ab, port);
+    var held = requestFor(ab, port);
+    var third = requestFor(ab, port);
+    sendWrite(&first, &io, &a, 0);
+    sendWrite(&held, &io, &b, 1);
+    sendWrite(&third, &io, &c, 1);
+    try testing.expectEqual(@as(i16, 111), mix(ab, 1)[0]);
+    // The one the mixer holds behind the playing one, then the playing one.
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &held.std.req));
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &first.std.req));
+    try testing.expect(replied(port) == &held.std.req.message);
+    try testing.expect(replied(port) == &first.std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, first.std.req.err);
+    try testing.expectEqual(@as(i16, 333), mix(ab, 1)[0]);
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+    try testing.expect(replied(port) == &third.std.req.message);
+    // A write that is not there any more.
+    try testing.expectEqual(@as(i32, -1), abortIO(&ab.dev, &third.std.req));
+
+    _ = close(&ab.dev, &io.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "the query says what the output is and how far the stream has got; the master turns everything down" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    var info: audio.AudioInfo = .{};
+    var ask = requestFor(ab, port);
+    ask.std.data = &info;
+    ask.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&ask, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 48_000), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 16), info.bits);
+    try testing.expectEqual(buffer_frames * buffers, info.latency);
+    try testing.expectEqual(@as(u32, 1), info.streams);
+    try testing.expectEqual(@as(u32, max_streams), info.max_streams);
+    try testing.expectEqual(@as(u32, 0), ask.position);
+
+    const note = pcm16(&.{ 1000, 1000, 1000 });
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, &note, 0);
+    _ = mix(ab, 3);
+    ask.std.data = null;
+    try testing.expectEqual(@as(i32, 0), command(&ask, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 3), ask.position);
+
+    var master = requestFor(ab, port);
+    master.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(@as(i16, 500), mix(ab, 1)[0]);
+    master.volume = audio.AUDIO_VOLUME_MAX + 1;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), command(&master, &io, audio.AUDIOCMD_MASTER));
+
+    _ = close(&ab.dev, &io.std.req);
+    try testing.expect(replied(port) == &write.std.req.message);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "a write is whole frames, or it is refused" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    io.channels = 2;
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    const three = [_]u8{ 1, 2, 3 };
+    var write = requestFor(ab, port);
+    write.std.data = @ptrCast(@constCast(&three));
+    write.std.length = three.len;
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), command(&write, &io, exec.CMD_WRITE));
+    write.std.data = null;
+    write.std.length = 4;
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), command(&write, &io, exec.CMD_WRITE));
+    _ = close(&ab.dev, &io.std.req);
     try testDeviceGone(ab, &.{port});
 }

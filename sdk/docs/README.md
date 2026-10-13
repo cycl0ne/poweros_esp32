@@ -84,6 +84,9 @@ tags and constants, each with its doc comment.
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
   the bus in QEMU.
+- [Sound](guides/audio.md) - audio.device: a stream and its form,
+  writing buffers as they play, what the board has, the master volume,
+  recording, and `C:test/Audio`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and

@@ -26,7 +26,6 @@ test {
     _ = @import("devs/audio/mixer.zig");
     _ = @import("devs/audio/es8311.zig");
     _ = @import("devs/audio/divider.zig");
-    _ = @import("devs/audio/alloc.zig");
     _ = @import("devs/audio/audio.zig");
     _ = @import("libs/utility/date/datesplit.zig");
     _ = @import("libs/utility/date/datejoin.zig");

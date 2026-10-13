@@ -1,136 +1,155 @@
-// SPDX-License-Identifier: MIT
-//! audio.device: four channels of sound, allocated and written to.
+//! audio.device: sound out of the board, as streams mixed together.
 //!
-//! A channel is asked for rather than taken: `ADCMD_ALLOCATE` - or an
-//! OpenDevice with `data` and `length` - is given the combinations that
-//! would do and a precedence (`ln_Pri`), and answers with the one it got
-//! in `channels`: free channels if it can, else those of the lowest
-//! precedence below its own, which it steals - their writes come back
-//! IOERR_ABORTED. Without `ADIOF_NOWAIT` it waits until it can be had;
-//! a locked channel (`ADCMD_LOCK`) makes even that one wait, and tells
-//! the lock `ADIOERR_CHANNELSTOLEN`. `alloc_key` says which allocation
-//! the channels belong to: a command on a channel whose key has moved on
-//! is refused (`ADIOERR_NOALLOCATION`), which is how a program finds out
-//! that its channels were stolen. `ADCMD_SETPREC` changes the
-//! precedence, `ADCMD_FREE` - and CloseDevice, for every channel of the
-//! key - gives the channels back.
+//! **A stream per open.** Each OpenDevice of unit 0 is a stream of its
+//! own, and up to `AUDIO_MAX_STREAMS` play at once, mixed by the device:
+//! a program that wants a tune and a click at the same time opens twice.
+//! Nothing is allocated or taken away from anyone.
 //!
-//! `CMD_WRITE` plays `data` on one channel - the lowest the request
-//! names, and `channels` says afterwards which: `length` bytes of signed
-//! 8-bit samples, a sample every `period` ticks of the machine's audio
-//! clock, at `volume` of 64, `cycles` times over (0 for ever). Writes on
-//! a channel queue without a limit and follow each other without a gap,
-//! so a program can stream sound as a pair of buffers, one playing while
-//! it fills the other. A write is replied when its last sample has gone;
-//! with `ADIOF_WRITEMESSAGE`, `write_msg` is replied when it starts. A
-//! sound for both sides is a write to a channel of each, kept in step by
-//! `CMD_STOP` on both, the writes, and `CMD_START` on both.
+//! **A stream has a format**, given in the request at OpenDevice and
+//! changed with `AUDIOCMD_SETPARAMS`: signed 8-, 16- or 32-bit samples
+//! (`AUDIO_S8`, `AUDIO_S16`, `AUDIO_S32`, in the machine's own byte
+//! order), one channel or two interleaved (left first), at any rate from
+//! 1 Hz to `AUDIO_MAX_RATE` frames a second - the device converts it to
+//! the rate the output runs at - with a volume (`AUDIO_VOLUME_UNITY` is
+//! as recorded, up to four times that) and a pan from
+//! `-AUDIO_PAN_FULL` (left only) to `AUDIO_PAN_FULL` (right only).
 //!
-//! The other commands: `CMD_READ` answers the write playing (in `data`),
-//! `ADCMD_PERVOL` changes period and volume, `ADCMD_FINISH` ends the
-//! write playing, `ADCMD_WAITCYCLE` is replied when the cycle playing
-//! ends - each now or, with `ADIOF_SYNCCYCLE`, at the end of the cycle -
-//! and `CMD_FLUSH` and `CMD_RESET` throw everything away. A command for
-//! several channels serves those that are the caller's and leaves the
-//! rest out of `channels`.
+//! **CMD_WRITE plays a buffer**: `std.data` and `std.length` in bytes,
+//! whole frames, played `loops` times over (0 until it is flushed or
+//! aborted). Writes queue without a limit and follow each other without a
+//! gap; each is replied when its last frame has been played, with
+//! `std.actual` the bytes it played. A program streams sound - music
+//! decoded as it goes - with two or three buffers, writing each again as
+//! it comes back. The memory is the program's until the write is replied.
 //!
-//! The flags - `ADIOF_PERVOL`, `ADIOF_SYNCCYCLE`, `ADIOF_NOWAIT`,
-//! `ADIOF_WRITEMESSAGE` - are the command's and reach the device through
-//! DoIO and SendIO; a request used again keeps the ones it was last
-//! given, so they are set for each command.
+//! The other commands, on the stream the request was opened on:
 //!
-//! This machine has one output and no four-channel hardware, so the
-//! device mixes the channels itself: 0 and 3 to the left, 1 and 2 to the
-//! right, as the hardware they are named for did. Where the board's
-//! output is mono - one speaker or one jack - both sides are played on
-//! it together, so a program that writes a left and a right channel is
-//! heard whole on every board.
+//!   CMD_STOP, CMD_START   hold the stream where it is, and go on
+//!   CMD_FLUSH             every write answered IOERR_ABORTED, silence
+//!   CMD_RESET             as CMD_FLUSH, and the stream started again
+//!   AUDIOCMD_SETPARAMS    the format, rate, volume and pan of the request
+//!                         from now on: the rate, volume and pan at once,
+//!                         the format for the writes sent after it - each
+//!                         write keeps the format it was sent in
+//!   AUDIOCMD_QUERY        an `AudioInfo` written to `std.data` (when it
+//!                         is not null), and `position`: the frames this
+//!                         stream has played since it was opened
+//!   AUDIOCMD_MASTER       how loud everything is, from `volume`: the
+//!                         device's, every stream's
+//!
+//! AbortIO takes a write back: one that waits, or the one that plays,
+//! which stops, the next going on.
+//!
+//! **What the board has** is the query's answer: the rate the output runs
+//! at, whether it is one speaker or a codec that plays one side
+//! (`channels` 1) or two speakers (2) - a stereo stream on one speaker is
+//! heard as its two sides together - and how many frames lie between a
+//! write and its being heard. Unit 1, the way in, is the number a
+//! recording stream will open; until a board's input is driven it is
+//! refused (`AUDIOERR_NOINPUT`).
 
 const exec = @import("../libs/exec/exec.zig");
-const nodes = @import("../libs/exec/nodes.zig");
-const IORequest = exec.IORequest;
-const Message = exec.Message;
+const IOStdReq = exec.IOStdReq;
 
 /// The device's name, for OpenDevice.
 pub const AUDIONAME = "audio.device";
 
-/// How many channels there are.
-pub const ADHARD_CHANNELS: u32 = 4;
+/// The units: what is played, and - once a board's input is driven -
+/// what is recorded.
+pub const AUDIO_UNIT_PLAY: u32 = 0;
+pub const AUDIO_UNIT_RECORD: u32 = 1;
 
-/// The range a precedence may take.
-pub const ADALLOC_MINPREC: i8 = -128;
-pub const ADALLOC_MAXPREC: i8 = 127;
+/// How many streams play at once.
+pub const AUDIO_MAX_STREAMS: u32 = 16;
 
-/// The clock a period is counted in: a period of `n` plays a sample every
-/// `n` ticks of it, so the rate is this over the period.
-pub const AUDIO_CLOCK: u32 = 3_579_545;
-/// The shortest period this machine makes sense of, which is one sample
-/// per output frame at the rate the hardware runs.
-pub const AUDIO_MINPERIOD: u16 = 64;
+/// The highest rate a stream may have, in frames a second.
+pub const AUDIO_MAX_RATE: u32 = 192_000;
 
-/// The loudest a channel is written at.
-pub const ADVOLUME_MAX: u16 = 64;
+/// A sample's form in memory: signed, in the machine's own byte order. A
+/// 24-bit sample is a 32-bit one with its low byte zero.
+pub const AUDIO_S8: u8 = 1;
+pub const AUDIO_S16: u8 = 2;
+pub const AUDIO_S32: u8 = 3;
+
+/// A stream's volume as recorded; it goes up to four times that.
+pub const AUDIO_VOLUME_UNITY: u32 = 0x10000;
+pub const AUDIO_VOLUME_MAX: u32 = 4 * AUDIO_VOLUME_UNITY;
+
+/// The pan's ends: all to the left, all to the right; 0 is the middle.
+pub const AUDIO_PAN_FULL: i32 = 0x10000;
 
 // --- commands ---------------------------------------------------------------------
 
-pub const ADCMD_FREE: u16 = exec.CMD_NONSTD + 0;
-pub const ADCMD_SETPREC: u16 = exec.CMD_NONSTD + 1;
-pub const ADCMD_FINISH: u16 = exec.CMD_NONSTD + 2;
-pub const ADCMD_PERVOL: u16 = exec.CMD_NONSTD + 3;
-pub const ADCMD_LOCK: u16 = exec.CMD_NONSTD + 4;
-pub const ADCMD_WAITCYCLE: u16 = exec.CMD_NONSTD + 5;
-pub const ADCMD_ALLOCATE: u16 = 32;
-
-// --- io_Flags ---------------------------------------------------------------------
-
-/// The period and the volume in this request are used; without it the
-/// channel keeps what it had.
-pub const ADIOB_PERVOL: u32 = 4;
-pub const ADIOF_PERVOL: u8 = 1 << 4;
-/// ADCMD_PERVOL and ADCMD_FINISH at the end of the cycle the channel is
-/// in, rather than at once.
-pub const ADIOB_SYNCCYCLE: u32 = 5;
-pub const ADIOF_SYNCCYCLE: u8 = 1 << 5;
-/// An allocation that cannot be made comes back refused rather than
-/// waiting for the channels - unless a lock is what stands in the way.
-pub const ADIOB_NOWAIT: u32 = 6;
-pub const ADIOF_NOWAIT: u8 = 1 << 6;
-/// `write_msg` is replied when the write starts to play.
-pub const ADIOB_WRITEMESSAGE: u32 = 7;
-pub const ADIOF_WRITEMESSAGE: u8 = 1 << 7;
+pub const AUDIOCMD_SETPARAMS: u16 = exec.CMD_NONSTD + 0;
+pub const AUDIOCMD_QUERY: u16 = exec.CMD_NONSTD + 1;
+pub const AUDIOCMD_MASTER: u16 = exec.CMD_NONSTD + 2;
 
 // --- errors -----------------------------------------------------------------------
 
-/// The channels this request names are not the caller's: they were never
-/// allocated, or they were stolen and the key has moved on.
-pub const ADIOERR_NOALLOCATION: i8 = -10;
-/// No combination of channels could be had.
-pub const ADIOERR_ALLOCFAILED: i8 = -11;
-/// The channels were taken by something of higher precedence.
-pub const ADIOERR_CHANNELSTOLEN: i8 = -12;
+/// A format, a channel count or a rate the device does not take.
+pub const AUDIOERR_BADFORMAT: i8 = -10;
+/// Every stream is playing already.
+pub const AUDIOERR_NOSTREAM: i8 = -11;
+/// There is no way in on this board, or the device does not drive it yet.
+pub const AUDIOERR_NOINPUT: i8 = -12;
 
 /// What a command to audio.device is written in. The first fields are an
-/// IORequest, so it is one.
+/// IOStdReq, so it is one.
 pub const IOAudio = extern struct {
-    req: IORequest = .{},
-    /// Which allocation the channels belong to. ADCMD_ALLOCATE fills it
-    /// in; every later command on those channels carries it back.
-    alloc_key: i16 = 0,
-    pad: i16 = 0,
-    /// Channels, one bit each: those an allocation got, those a command
-    /// names - and, when it is done, those it acted on. A set of bits is
-    /// not a unit, so it has a field of its own.
-    channels: u32 = 0,
-    /// The samples: signed 8-bit, one a period.
-    data: ?[*]const i8 = null,
-    length: u32 = 0,
-    /// Ticks of AUDIO_CLOCK between samples, and how loud, of 64.
-    period: u16 = 0,
-    volume: u16 = 0,
-    /// How many times over; 0 plays until something stops it.
-    cycles: u16 = 0,
-    pad2: u16 = 0,
-    /// Replied when the write starts to play, for a write that asked
-    /// (ADIOF_WRITEMESSAGE).
-    write_msg: Message = .{},
+    /// io_Data, io_Length (bytes, whole frames) and io_Actual (bytes
+    /// played).
+    std: IOStdReq = .{},
+    /// The stream's samples: AUDIO_S8, AUDIO_S16 or AUDIO_S32, and one
+    /// channel or two. Read at OpenDevice and by AUDIOCMD_SETPARAMS.
+    format: u8 = AUDIO_S16,
+    channels: u8 = 2,
+    pad: u16 = 0,
+    /// Frames a second, 1 to AUDIO_MAX_RATE.
+    rate: u32 = 48_000,
+    /// How loud: AUDIO_VOLUME_UNITY as recorded, up to AUDIO_VOLUME_MAX.
+    /// AUDIOCMD_MASTER reads the device's from here.
+    volume: u32 = AUDIO_VOLUME_UNITY,
+    /// Where between the speakers: -AUDIO_PAN_FULL left only, 0 both
+    /// alike, AUDIO_PAN_FULL right only. On a stereo stream it weighs the
+    /// two sides against each other.
+    pan: i32 = 0,
+    /// CMD_WRITE: how many times the buffer plays; 0 until stopped.
+    loops: u32 = 1,
+    /// AUDIOCMD_QUERY: the frames this stream has played since it was
+    /// opened, counted round at 2^32.
+    position: u32 = 0,
 };
+
+/// What AUDIOCMD_QUERY writes about the device and the board.
+pub const AudioInfo = extern struct {
+    /// The output: the rate it runs at, how many sides it plays (1 for one
+    /// speaker or a codec with one output, 2 for two speakers), and bits a
+    /// sample.
+    rate: u32 = 0,
+    channels: u32 = 0,
+    bits: u32 = 0,
+    /// Frames between a write's first frame being mixed and its being
+    /// heard: the buffers the output runs through.
+    latency: u32 = 0,
+    /// Streams open now, and how many may be.
+    streams: u32 = 0,
+    max_streams: u32 = AUDIO_MAX_STREAMS,
+    /// The device's volume (AUDIOCMD_MASTER).
+    master: u32 = AUDIO_VOLUME_UNITY,
+    /// Whether unit 1 records on this board.
+    has_input: u32 = 0,
+    /// The part the sound comes out of, as the board names it.
+    output: ?[*:0]const u8 = null,
+};
+
+/// Bytes a frame takes in `format` with `channels` channels; 0 for a
+/// format the device does not know.
+pub fn frameBytes(format: u8, channels: u8) u32 {
+    const sample: u32 = switch (format) {
+        AUDIO_S8 => 1,
+        AUDIO_S16 => 2,
+        AUDIO_S32 => 4,
+        else => return 0,
+    };
+    return if (channels == 1 or channels == 2) sample * channels else 0;
+}
