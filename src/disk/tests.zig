@@ -8,6 +8,7 @@ test {
     _ = @import("classes/gadgets/textedit/text.zig");
     _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
+    _ = @import("programs/terminal/tests/terminal.zig");
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("devs/sdcard/sdspi.zig");

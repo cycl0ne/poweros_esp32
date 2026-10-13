@@ -119,7 +119,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   `SYS:System/Shell` opens a shell from its icon, `C:IconX` runs a
   script from its. Programs add windows files are dropped on, icons and
   Tools items (MultiView, Notepad, Sheet, FontView and the file requester
-  take a file let go on them). Each program in `SYS:Programs` has its
+  take a file let go on them, Terminal sends it). Each program in `SYS:Programs` has its
   readme in `SYS:Programs/Docs` (`Notepad.md`, opened in MultiView), and
   puts its name and version in the screen's title while one of its
   windows is active.
@@ -161,6 +161,11 @@ ESP32-P4 boards and in Espressif's QEMU.
   and columns put in and taken out; a hundred steps of undo; the sum of
   the cells picked in its status line; CSV files, as every spreadsheet
   reads them, decimal commas included.
+- **Terminal:** `SYS:Programs/Terminal` joins a window to a serial line -
+  a UART connector, the USB serial port, a USB serial adapter, picked
+  from the ones the board has - as a VT100 with colours, the line-drawing
+  set and copy and paste; its speed, frame, handshake and line ends set
+  in a window of its own; files sent and what comes in captured.
 - **Settings:** `SYS:Programs/Prefs` edits the look, the pens, the fonts,
   the input, whether windows may be moved partly past the screen's
   edges, and the desktop's ground, picture and drawers

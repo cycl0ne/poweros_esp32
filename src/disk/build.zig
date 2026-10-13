@@ -61,6 +61,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
+    .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
 };
 
@@ -284,6 +285,7 @@ pub const files = [_]File{
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },
     .{ .disk = "programs/Docs/Prefs.md", .source = "programs/prefs/README.md" },
     .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
+    .{ .disk = "programs/Docs/Terminal.md", .source = "programs/terminal/README.md" },
 };
 
 pub fn build(b: *std.Build) void {

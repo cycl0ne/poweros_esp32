@@ -6,7 +6,11 @@
 //! draws them), `CMD_READ` the keys typed into that window, through
 //! keymap.library. `CONU_CHARMAP` keeps the text, so it puts it back itself
 //! when the window is uncovered or sized; `CONU_STANDARD` keeps none and
-//! leaves that to the program.
+//! leaves that to the program. A key typed with right-Amiga held is a
+//! command, never text: right-Amiga-C and -V copy and paste, and any other
+//! is left to intuition, which takes it for a menu shortcut of the
+//! window's - it reaches the console all the same, since intuition
+//! decides on its own task after the event has gone on down the chain.
 //!
 //! **A handler and a task**, as the older console has. The handler is on
 //! input.device's chain: it may not draw and it does not - it turns keys
@@ -42,8 +46,8 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "20.9.2026";
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "12.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -697,7 +701,10 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                 var buf: [16]u8 = undefined;
                 const n = keyBytes(cb, u, e, &buf);
                 // Shift+Insert, and right-Amiga with C or V: the selection
-                // copied, or the snip typed in.
+                // copied, or the snip typed in. Any other key with
+                // right-Amiga is a command and types nothing: intuition
+                // has taken it as its window's menu shortcut, or nothing
+                // has, and a letter must not land in the text either way.
                 if (isShiftInsert(buf[0..n])) {
                     paste(cb, u);
                     continue;
@@ -713,7 +720,7 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                             sys.Signal(&cb.task, cb.mask);
                             continue;
                         },
-                        else => {},
+                        else => continue,
                     }
                 }
                 if (n == 0) continue;

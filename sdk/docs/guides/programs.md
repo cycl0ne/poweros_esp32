@@ -551,9 +551,10 @@ For a person to pick from, asl.library's device requester shows the
 same list, a line per unit with what the board calls it
 (`ASL_DeviceRequest`, `ASLDR_Speaks`; the answer is a
 `DeviceRequester`: the device's name, the unit and its label), and a
-`getdevice` gadget is a field that opens it - what a terminal's settings
-window is made of. `C:RequestDevice serial` asks from a script and
-writes `"serial.device" 1`.
+`getdevice` gadget is a field that opens it - what
+`SYS:Programs/Terminal`'s settings window is made of.
+`C:RequestDevice serial` asks from a script and writes
+`"serial.device" 1`.
 
 ```zig
 const gd = sdk.gadgets.getdevice;
