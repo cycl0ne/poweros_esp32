@@ -95,7 +95,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   [disks guide](sdk/docs/guides/rdb.md)); notification, so a program is
   told when a file or a drawer changes (`RAM:`, `DH0:`, `SD0:`); consoles with line editing,
   Tab completion of file names, and copy and paste; volumes renamed
-  (`C:Relabel`); a shell with scripts and resident commands, 46
+  (`C:Relabel`); a shell with scripts and resident commands, 47
   commands in `C:` (`dir all | more` pages through anything), test
   programs in `C:test` and network tools in `C:net`.
 - **Datatypes:** `LIBS:datatypes.library` opens a file by what is in it
@@ -218,7 +218,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   the mouse with its wheel), input, console, a USB host controller,
   audio - up to sixteen streams mixed, each 8-, 16- or 32-bit, mono or
   stereo, at its own rate, volume and pan
-  (through an ES8311 codec or straight to I2S amplifiers),
+  (through an ES8311 codec or straight to I2S amplifiers), and
+  `LIBS:audiocodec.library` decoding WAV and MP3 as it plays (`C:Play`),
   Telnet, SSH; watchdog, DMA (the general channels and the ESP32-P4's
   2D-DMA), GPIO, IO expander, USB port (who holds the chip's USB
   ports), JPEG (the ESP32-P4's codec) and platform resources; the battery (`battery.resource`: whether a cell is there,

@@ -43,6 +43,9 @@ pub const rdb = @import("libs/rdb/rdb.zig");
 pub const tls = @import("libs/tls/tls.zig");
 /// Modbus over RTU and TCP, client and server, through modbus.library.
 pub const modbus = @import("libs/modbus/modbus.zig");
+/// Sound decoded from WAV and MP3 into 16-bit samples, through
+/// audiocodec.library.
+pub const audiocodec = @import("libs/audiocodec/audiocodec.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.
 pub const filter = @import("libs/filter/filter.zig");
 /// Icons: the picture a file is shown with and its fields, through

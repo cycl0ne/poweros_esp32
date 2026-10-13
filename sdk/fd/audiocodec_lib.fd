@@ -1,0 +1,27 @@
+//! audiocodec.library's functions: sound decoded from what it is coded
+//! in - WAV, MP3 - into 16-bit samples, a piece at a time. Open it with
+//! OpenLibrary("audiocodec.library", 1); the structures are in
+//! sdk.audiocodec.
+##include libs/audiocodec/audiocodec as audiocodec
+##include libs/utility/utility as utility
+##basetype AudioCodecBase
+##name audiocodec.library
+##bias 4
+##public
+/// A stream on a file, a file handle or a read function, its kind found
+/// by its first bytes. Null, and why in `err` (ACERR_*), when it failed.
+?*audiocodec.AudioStream OpenAudioStream(?[*]const utility.TagItem tags, ?*i32 err)
+/// The stream closed and freed, with the file it opened.
+void CloseAudioStream(?*audiocodec.AudioStream stream)
+/// What the stream is: its kind, rate, channels, length and tags.
+void GetAudioStreamInfo(*audiocodec.AudioStream stream, *audiocodec.AudioStreamInfo info)
+/// Up to `frames` frames of 16-bit samples into `buffer`: how many, 0 at
+/// the end, an ACERR_* below 0.
+i32 DecodeAudio(*audiocodec.AudioStream stream, [*]i16 buffer, u32 frames)
+/// The stream moved to `frame`: 0, or an ACERR_*.
+i32 SeekAudio(*audiocodec.AudioStream stream, u32 frame)
+/// The kind (ACODEC_*) the first bytes of some sound are.
+u32 IdentifyAudio([*]const u8 bytes, u32 length)
+/// What an error code means, in words.
+[*:0]const u8 AudioErrorText(i32 code)
+##end

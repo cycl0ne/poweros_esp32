@@ -7,7 +7,8 @@ these. A program opens a **stream**, says what its samples are, and
 writes buffers to it; the device mixes every stream into the output.
 
 This guide is a stream first, then writing to it as it plays, what the
-board has, and the master volume.
+board has, the master volume, and sound decoded from a file
+(audiocodec.library).
 
 ## A stream
 
@@ -117,6 +118,45 @@ stream: `AUDIO_VOLUME_UNITY` leaves them as they are. The streams are
 summed and the master goes over the sum; a sum past what the output
 holds is clipped, so many loud streams are better turned down here than
 left to clip.
+
+## Decoding: audiocodec.library
+
+`LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
+stream plays: WAV (PCM of 8 to 32 bits, or float) and MP3 (MPEG-1, 2 and
+2.5, Layer III). `OpenAudioStream` opens a file by name (`ACA_Name`), a
+file the program has open (`ACA_FileHandle`), or bytes a function of the
+program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) - a download, a
+network stream - and finds the kind by its first bytes. `DecodeAudio`
+then fills a buffer with as many frames as asked for, until the end; the
+file is decoded as it plays, never whole.
+
+```zig
+const acb: *sdk.interface.audiocodec.AudioCodecBase = @ptrCast(sys.OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return);
+defer sys.CloseLibrary(@ptrCast(acb));
+var err: i32 = 0;
+const stream = acb.OpenAudioStream(&[_]utility.TagItem{
+    .{ .tag = ac.ACA_Name, .data = @intFromPtr("SD0:Music/song.mp3") },
+    .{},
+}, &err) orelse return;
+defer acb.CloseAudioStream(stream);
+var info: ac.AudioStreamInfo = .{};
+acb.GetAudioStreamInfo(stream, &info);
+// open audio.device with format AUDIO_S16, info.channels, info.rate,
+// then as above: decode into a buffer, write it, decode the next
+const got = acb.DecodeAudio(stream, &buffer, 4096); // frames, 0 at the end
+```
+
+`GetAudioStreamInfo` says the kind, rate, channels and length - exact
+for an MP3 whose encoder wrote an Info or Xing frame, worked out from the
+bit rate otherwise - and the title, artist and album from ID3 tags or a
+WAV's INFO list. An MP3 is cut where its encoder says the music begins
+and ends, so one song follows another without a gap. `SeekAudio` moves a
+file's stream to a frame: a WAV exactly, an MP3 by its encoder's table or
+its bit rate. Decoding an MP3 takes about a tenth of a core at 44.1 kHz in
+stereo.
+
+`C:Play FILE` plays a file this way, with `VOLUME` and `START` (seconds
+in); Ctrl-C stops it.
 
 ## Recording
 

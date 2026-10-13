@@ -86,7 +86,8 @@ tags and constants, each with its doc comment.
   the bus in QEMU.
 - [Sound](guides/audio.md) - audio.device: a stream and its form,
   writing buffers as they play, what the board has, the master volume,
-  recording, and `C:test/Audio`.
+  WAV and MP3 decoded by audiocodec.library, recording, `C:Play` and
+  `C:test/Audio`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and

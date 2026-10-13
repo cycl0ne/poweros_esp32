@@ -35,7 +35,7 @@ const commands = [_][]const u8{
     "adddatatypes",  "listfonts",  "log",      "requestfile",   "requestchoice",
     "requestdevice", "diskchange", "modbus",   "more",          "relabel",
     "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
-    "setclock",      "top",
+    "setclock",      "top",        "play",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -78,6 +78,7 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
+    .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },

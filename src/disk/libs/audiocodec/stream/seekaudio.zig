@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT
+//! SeekAudio: a stream moved to another frame.
+
+const sdk = @import("sdk");
+const ac = sdk.audiocodec;
+const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
+const _stream = @import("_stream.zig");
+const wav = @import("../wav/_wav.zig");
+const mp3 = @import("../mp3/_mp3.zig");
+
+/// Moves a stream to a frame.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn SeekAudio(base: *AudioCodecBase, stream: *ac.AudioStream, frame: u32) i32
+/// ```
+///
+/// SINCE: 1.0. LVO -36.
+///
+/// INPUTS:
+/// - `stream`: an open stream on a file.
+/// - `frame`: the frame to go on from, counted from 0.
+///
+/// RESULT:
+/// 0, or an ACERR_*: ACERR_NOSEEK for a stream read through a function.
+///
+/// BEHAVIOR:
+/// A WAV goes to the frame exactly. An MP3 goes to the frame its encoder's
+/// table of contents points to, or the bit rate when it has none - exact
+/// for a constant rate, near for a variable one - and the frame or two
+/// after it may be left out, until the reservoir of bits they reach back
+/// into is filled again.
+///
+/// CONTEXT:
+/// - Waits: yes, on the file.
+/// - Interrupts: no.
+/// - Locks: no spinlock may be held.
+/// - Process: the task that opened the stream.
+///
+/// OWNERSHIP:
+/// None.
+///
+/// NOTES:
+/// None.
+///
+/// BUGS:
+/// None known.
+///
+/// SEE ALSO:
+/// `DecodeAudio`, `GetAudioStreamInfo`
+///
+/// EXAMPLES:
+/// ```zig
+/// _ = acb.SeekAudio(stream, info.rate * 30); // half a minute in
+/// ```
+pub fn SeekAudio(_: *AudioCodecBase, public: *ac.AudioStream, frame: u32) i32 {
+    const stream = _stream.streamOf(public);
+    if (stream.info.seekable == 0) return ac.ACERR_NOSEEK;
+    stream.pcm_start = 0;
+    stream.pcm_stop = 0;
+    return switch (stream.codec) {
+        .wav => |*state| wav.seek(stream, state, frame),
+        .mp3 => |*state| mp3.seek(stream, state, frame),
+        .none => ac.ACERR_NOSEEK,
+    };
+}
