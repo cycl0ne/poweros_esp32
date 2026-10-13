@@ -109,7 +109,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   ([motion guide](sdk/docs/guides/motion.md)).
 - **Datatypes and fonts:** `LIBS:datatypes.library` opens pictures (ILBM,
   BMP, PNG, GIF, JPEG - on the ESP32-P4 by its codec), text (plain, FTXT,
-  Markdown) and animations (GIF, Lottie) by what is in them
+  Markdown), animations (GIF, Lottie) and sounds (WAV, MP3, 8SVX, played
+  as they are read) by what is in them
   ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
   TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
 - **Sound:** `audio.device` mixes up to sixteen streams, each in its own

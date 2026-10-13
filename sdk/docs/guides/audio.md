@@ -193,6 +193,11 @@ _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
 
 Everything handed out is the stream's, good until it is closed.
 
+A program that only wants a file heard - an alarm, a notification -
+leaves all of this to datatypes.library: a sound file is a
+`sound.datatype` object that plays itself on a process of its own
+(the [datatypes guide](datatypes.md#sounds)).
+
 `C:Play FILE` plays a file this way, with `VOLUME` and `START` (seconds
 in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
 what the desktop opens a `.mp3` or `.wav` file with (the `MP3` and `WAV`
@@ -235,4 +240,12 @@ It is not driven yet: opening it fails with `AUDIOERR_NOINPUT`.
 Audio                         440 Hz for two seconds
 Audio HZ 220 SECONDS 5 PAN -100
 Audio CHORD                   a major chord, three streams at once
+```
+
+`C:test/Sound FILE` plays a file through datatypes.library with no
+window, waiting for the object's signal that it has played out:
+
+```
+Sound SD0:Music/song.mp3 VOLUME 50
+Sound SYS:tone.8svx CYCLES 3
 ```

@@ -4,7 +4,8 @@ A program that shows pictures should not have to know what an ILBM is.
 `LIBS:datatypes.library` is how it does not: it recognises a file, loads
 the class that reads that format, and hands back an object the program
 puts in a window. The object draws itself, scrolls itself and plays
-itself; the program never sees a byte of the format.
+itself - a picture, a text, an animation, a sound; the program never
+sees a byte of the format.
 
 ```zig
 const dt: *DataTypesBase = @ptrCast(sys.OpenLibrary(datatypes.DATATYPESNAME, 0) orelse return);
@@ -237,6 +238,56 @@ gradients, masks, mattes, text, images, expressions, trims and 3D,
 drawing the rest of the file without them. A frame is drawn in software
 at the file's size, made smaller to fit in 360 pixels each way, and at
 the file's rate up to 30 frames a second.
+
+## Sounds
+
+Every sound is a `sound.datatype` object (`sdk.datatypes.soundclass`),
+whatever file it came out of. The class plays it on a process of the
+object's own, made when the object is first laid out or played, through
+a stream of audio.device in the sound's own rate and channels: three
+buffers go round, and as each comes back the object is asked for the
+next piece (`SDTM_DECODE`), so a song is decoded as it is heard and
+never held whole. A sound already in memory is handed over whole
+instead (`SDTA_Sample`, `SDTA_SampleLength`, `SDTA_SampleType`) and
+played from there.
+
+`DTA_Immediate` plays it as soon as it is laid out - what MultiView
+asks for - and `DTM_TRIGGER` drives it as it drives an animation:
+`STM_PLAY`, `STM_PAUSE` (which turns over), `STM_STOP`, `STM_LOCATE`
+with a frame, `STM_FASTFORWARD` and `STM_REWIND` ten seconds. A program
+that only wants a sound heard does not show it at all:
+
+```zig
+const sound = dt.NewDTObjectA("SD0:Music/alarm.wav", &.{
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_SOUND },
+    .{ .tag = sdt.SDTA_SignalTask, .data = @intFromPtr(sys.FindTask(null)) },
+    .{ .tag = sdt.SDTA_SignalBit, .data = @as(u32, @intCast(bit)) },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(sound);
+var play = dtc.DtTrigger{ .function = dtc.STM_PLAY };
+_ = dt.DoDTMethodA(sound, null, null, @ptrCast(&play));
+_ = sys.Wait(@as(u32, 1) << @intCast(bit)); // played out
+```
+
+On a machine with no sound the object shows so, and a sound asked to
+play has played out at once - the signal comes all the same.
+
+`SDTA_SampleRate`, `SDTA_Channels` and `SDTA_Frames` say what it is,
+`SDTA_Position` which frame is being heard - what audio.device's stream
+has played less what is still on its way out - and `SDTA_Playing`
+whether it plays. `SDTA_Volume` (`AUDIO_VOLUME_UNITY` as recorded) and
+`SDTA_Pan` change it while it plays; `SDTA_Cycles` plays it that many
+times, 0 or `DTA_Repeat` round and round. In a window the object is a
+button that plays and pauses beside the sound's names, its rate and
+channels, and a bar of how far it has played.
+
+`audiocodec.datatype` is every kind `LIBS:audiocodec.library` decodes -
+WAV and MP3 - with the names their tags give (`DTA_ObjName`,
+`DTA_ObjAuthor`, `DTA_ObjAnnotation`); a kind the library learns needs
+only a descriptor naming `BASE=audiocodec`. `8svx.datatype` reads an
+IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two
+- with its NAME, AUTH and ANNO.
 
 ## Showing one
 

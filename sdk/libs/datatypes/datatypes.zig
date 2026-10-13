@@ -236,6 +236,8 @@ pub const datatypesclass = @import("datatypesclass.zig");
 /// picture.datatype's, which every still picture is one of.
 pub const pictureclass = @import("pictureclass.zig");
 pub const animationclass = @import("animationclass.zig");
+/// sound.datatype's attributes, methods and messages.
+pub const soundclass = @import("soundclass.zig");
 /// jpeg.datatype's: which decoder reads a file.
 pub const jpegclass = @import("jpegclass.zig");
 /// text.datatype's, which every piece of text is one of.

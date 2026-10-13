@@ -331,10 +331,14 @@ flowchart TB
 <!-- modchart classes -->
 ```mermaid
 flowchart TB
+    m_8svx_datatype["8svx.datatype"]
     m_animation_datatype["animation.datatype"]
     m_anvil_library["anvil.library"]
     m_ascii_datatype["ascii.datatype"]
     m_asl_library["asl.library"]
+    m_audio_device["audio.device"]
+    m_audiocodec_datatype["audiocodec.datatype"]
+    m_audiocodec_library["audiocodec.library"]
     m_bmp_datatype["bmp.datatype"]
     m_calendar_gadget["calendar.gadget"]
     m_checkbox_gadget["checkbox.gadget"]
@@ -366,6 +370,7 @@ flowchart TB
     m_png_datatype["png.datatype"]
     m_scroller_gadget["scroller.gadget"]
     m_scrollgroup_gadget["scrollgroup.gadget"]
+    m_sound_datatype["sound.datatype"]
     m_spinner_gadget["spinner.gadget"]
     m_string_gadget["string.gadget"]
     m_text_datatype["text.datatype"]
@@ -373,6 +378,9 @@ flowchart TB
     m_textedit_gadget["textedit.gadget"]
     m_timer_device["timer.device"]
 
+    m_8svx_datatype --> m_dos_library
+    m_8svx_datatype --> m_iffparse_library
+    m_8svx_datatype --> m_sound_datatype
     m_animation_datatype --> m_datatypes_library
     m_animation_datatype --> m_dos_library
     m_animation_datatype --> m_motion_library
@@ -394,6 +402,9 @@ flowchart TB
     m_asl_library --> m_scroller_gadget
     m_asl_library --> m_string_gadget
     m_asl_library --> m_text_gadget
+    m_audiocodec_datatype --> m_audiocodec_library
+    m_audiocodec_datatype --> m_dos_library
+    m_audiocodec_datatype --> m_sound_datatype
     m_bmp_datatype --> m_dos_library
     m_bmp_datatype --> m_picture_datatype
     m_calendar_gadget --> m_dos_library
@@ -427,6 +438,10 @@ flowchart TB
     m_png_datatype --> m_picture_datatype
     m_scroller_gadget --> m_motion_library
     m_scrollgroup_gadget --> m_scroller_gadget
+    m_sound_datatype --> m_audio_device
+    m_sound_datatype --> m_datatypes_library
+    m_sound_datatype --> m_dos_library
+    m_sound_datatype --> m_timer_device
     m_spinner_gadget --> m_motion_library
     m_text_datatype --> m_datatypes_library
     m_text_datatype --> m_iffparse_library
@@ -435,11 +450,11 @@ flowchart TB
     m_textedit_gadget --> m_scroller_gadget
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_datatypes_library,m_diskfont_library,m_iffparse_library lib
+    class m_anvil_library,m_asl_library,m_audiocodec_library,m_datatypes_library,m_diskfont_library,m_iffparse_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
-    class m_animation_datatype,m_ascii_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
+    class m_8svx_datatype,m_animation_datatype,m_ascii_datatype,m_audiocodec_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_sound_datatype,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_dos_library,m_input_device,m_intuition_library,m_jpeg_resource,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
+    class m_audio_device,m_dos_library,m_input_device,m_intuition_library,m_jpeg_resource,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
 ```
 <!-- modchart end -->
 

@@ -47,7 +47,7 @@ const tests = [_][]const u8{
     "shapes",      "styles",     "motion",      "widgets", "modbusserver",
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
-    "jpeg",        "keysource",  "usbdevice",   "scsi",
+    "jpeg",        "keysource",  "usbdevice",   "scsi",    "sound",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -125,6 +125,9 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/listbrowser.gadget", .source = "classes/gadgets/listbrowser/listbrowser.zig", .name = "listbrowser.gadget" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype" },
+    .{ .disk = "classes/datatypes/sound.datatype", .source = "classes/datatypes/sound/sound.zig", .name = "sound.datatype" },
+    .{ .disk = "classes/datatypes/audiocodec.datatype", .source = "classes/datatypes/audiocodec/audiocodec.zig", .name = "audiocodec.datatype" },
+    .{ .disk = "classes/datatypes/8svx.datatype", .source = "classes/datatypes/8svx/8svx.zig", .name = "8svx.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
     .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype" },
     .{ .disk = "classes/datatypes/png.datatype", .source = "classes/datatypes/png/png.zig", .name = "png.datatype" },
