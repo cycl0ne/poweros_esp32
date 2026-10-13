@@ -31,7 +31,10 @@
 //! NAK timeout, which the task's tick checks. An interrupt endpoint that
 //! has nothing halts the channel: the request is parked and asked again
 //! once its interval has passed, so a keyboard nobody types on holds no
-//! channel, and costs a wake-up per interval. One that answers is not
+//! channel, and costs a wake-up per interval. After 100 ms with nothing
+//! it is asked every 8 ms until it answers: a mouse and a keyboard left
+//! alone cost an eighth of the wake-ups, and the first report after a
+//! pause comes at most 8 ms later. One that answers is not
 //! asked again before its interval either: the next transfer on the same
 //! request waits parked until then, so an endpoint that always has
 //! something to say - a network adapter's notifications - is read once
@@ -596,13 +599,22 @@ fn nothingYet(host: *Host, n: u32) void {
 }
 
 /// An interrupt transfer with nothing yet: off its channel, and asked
-/// again once its interval has passed.
+/// again once its interval has passed - or, once it has had nothing for
+/// `quiet_after_ms`, after `quiet_interval_ms`. Every turn with nothing
+/// is counted in the request; an answer ends the transfer, and the next
+/// one starts its count afresh.
 fn park(host: *Host, n: u32) void {
     const channel = &host.channels[n];
     const req = channel.request.?;
     channel.request = null;
     channel.stage = .idle;
-    req.hc_private[_usbotg.PRIV_DUE] = _usbotg.now(host) +% @max(req.interval, 1);
+    const interval: u32 = @max(req.interval, 1);
+    const flags = req.hc_private[_usbotg.PRIV_FLAGS];
+    const quiet_turns: u32 = @truncate(flags >> _usbotg.PRIVF_QUIET_SHIFT);
+    const turns_to_quiet = (_usbotg.quiet_after_ms + interval - 1) / interval;
+    const wait = if (quiet_turns >= turns_to_quiet) @max(interval, _usbotg.quiet_interval_ms) else interval;
+    if (quiet_turns < turns_to_quiet) req.hc_private[_usbotg.PRIV_FLAGS] = flags + (@as(usize, 1) << _usbotg.PRIVF_QUIET_SHIFT);
+    req.hc_private[_usbotg.PRIV_DUE] = _usbotg.now(host) +% wait;
     host.sys.AddTail(&host.parked, _usbotg.nodeOf(req));
 }
 

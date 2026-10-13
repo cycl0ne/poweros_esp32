@@ -25,7 +25,8 @@
 //!
 //! An interrupt transfer is asked again every `interval` milliseconds
 //! until the device answers, and is replied only then: a read of a
-//! keyboard waits like any read.
+//! keyboard waits like any read. A controller may ask one that has had
+//! nothing for a while less often, a few milliseconds apart.
 
 const exec = @import("../libs/exec/exec.zig");
 const descriptors = @import("../libs/usb/descriptors.zig");

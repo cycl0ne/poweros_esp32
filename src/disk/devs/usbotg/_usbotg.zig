@@ -198,6 +198,15 @@ pub const PRIV_NEXT = 2;
 pub const PRIV_ABORT = 3;
 /// The flags: it has a deadline.
 pub const PRIVF_DEADLINE: usize = 1 << 1;
+/// The flags, from this bit up: how many times in a row an interrupt
+/// transfer was asked and had nothing. A new transfer starts at 0.
+pub const PRIVF_QUIET_SHIFT = 8;
+
+/// An interrupt endpoint that has had nothing for this long, in
+/// milliseconds, is asked only every `quiet_interval_ms` - or at its own
+/// interval, if that is longer - until it answers.
+pub const quiet_after_ms: u32 = 100;
+pub const quiet_interval_ms: u32 = 8;
 
 pub fn baseOf(dev: *exec.Device) *UsbOtgBase {
     return @alignCast(@fieldParentPtr("dev", dev));

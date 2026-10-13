@@ -192,8 +192,10 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
   `nak_timeout` (milliseconds) gives up on a device that never does.
 - An **interrupt** read is asked for every `interval` milliseconds until
   the device has something; it holds none of the controller's channels
-  while it waits. Read one packet at a time: a device sends a report a
-  packet.
+  while it waits. After 100 ms with nothing, usbotg.device asks only
+  every 8 ms until the device answers, so an idle keyboard or mouse
+  costs little, and the first report after a pause is at most 8 ms
+  late. Read one packet at a time: a device sends a report a packet.
 - A **stall** ends a transfer with `UHIOERR_STALL`; `ClearUSBStall`
   clears the endpoint's halt and its toggle.
 - A device that goes ends its transfers with `UHIOERR_DETACHED`.
@@ -413,7 +415,9 @@ keeps no table of devices.
 - An interrupt endpoint is asked once per interval: one with nothing
   to say is asked again when its interval has passed, and a request's
   next transfer after an answer waits out the interval too, so a device
-  that always answers is not asked as fast as its driver sends.
+  that always answers is not asked as fast as its driver sends. One
+  that has had nothing for a while may be asked less often: usbotg.device
+  asks every 8 ms after 100 ms of nothing.
 - Its root port is a hub: control transfers to the root hub's address -
   0 until SET_ADDRESS gives it one - are answered with a hub's
   descriptors and the port's status, and an interrupt transfer on its
