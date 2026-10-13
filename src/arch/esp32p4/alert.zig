@@ -5,9 +5,12 @@
 //!
 //! The Guru Meditation goes out on exec's raw port (kprintf), which is
 //! where a machine that has stopped is read from - it needs nothing that
-//! may have broken. It prints the alert's numbers and text, where the
-//! address is, the task that raised it, and for a CPU exception its cause,
-//! the trap frame and the call chain by frame pointers. A dead end holds
+//! may have broken. It prints the alert's numbers and text, the code the
+//! address is in - the ROM, or a file loaded from disk and the offset into
+//! it, which is the address in that program's ELF - the task that raised
+//! it, and for a CPU exception its cause, the trap frame and the call
+//! chain by frame pointers, each return address named the same way. The
+//! ROM debugger names addresses with it too. A dead end holds
 //! the other core still, keeps the end of the system log in LP RAM
 //! (lastwords.zig), offers the ROM debugger for a few seconds and, if
 //! nobody answers, restarts the machine, whose next boot shows those last
@@ -18,6 +21,8 @@
 
 const cpu = @import("cpu.zig");
 const exec = @import("../../rom/libs/exec/exec.zig");
+const DosBase = @import("../../rom/libs/dos/dos_base.zig").DosBase;
+const segment = @import("../../rom/libs/dos/program/_program.zig");
 const sdk = @import("sdk");
 const trap = @import("trap.zig");
 const rawio = @import("../../rom/libs/exec/rawio/_rawio.zig");
@@ -92,8 +97,10 @@ fn framePointerAtHere(frame: *const anyopaque) usize {
 }
 
 fn whereIsHere(address: usize, offset: *usize) ?[*:0]const u8 {
-    offset.* = 0;
-    return if (layout.inKernel(address)) "the ROM" else null;
+    const found = whereIs(address);
+    if (!found.known) return null;
+    offset.* = found.offset;
+    return found.name;
 }
 
 /// Whether an address can be read at all, by the chip's windows rather
@@ -121,7 +128,7 @@ pub fn show(alert_num: u32, where: usize, info: ?*const exec.TrapInfo, text: ?[*
     const title: [*:0]const u8 = if (dead_end) "Software Failure." else "Recoverable Alert.";
     exec.kprintf("\n*** %s\n*** Guru Meditation #%08x.%08x\n", .{ title, alert_num, @as(u32, @truncate(where)) });
     if (text) |line| exec.kprintf("*** %.96s\n", .{line});
-    if (layout.inKernel(where)) exec.kprintf("*** in the ROM\n", .{});
+    place(where);
     if (exec.initialized) {
         const task = exec.SysBase.cpu().this_task;
         exec.kprintf("*** Task \"%s\" at 0x%08x on core %d\n", .{ task.name(), @intFromPtr(task), cpu.coreId() });
@@ -150,20 +157,80 @@ pub fn show(alert_num: u32, where: usize, info: ?*const exec.TrapInfo, text: ?[*
     sdk.hardware.system.resetChip();
 }
 
-/// The return addresses up the frame-pointer chain from `fp`: each frame
-/// keeps its return address at fp - 4 and the frame before at fp - 8.
+/// The return addresses up the frame-pointer chain from `fp`, a line
+/// each with the code it is in: each frame keeps its return address at
+/// fp - 4 and the frame before at fp - 8. The chain ends at an address
+/// in no code.
 fn callChain(start: usize) void {
     var fp = start;
     var depth: u32 = 0;
-    exec.kprintf("*** called from:", .{});
+    exec.kprintf("*** called from:\n", .{});
     while (depth < 12) : (depth += 1) {
         if (fp & 3 != 0 or !readableHere(fp -% 8) or !readableHere(fp -% 4)) break;
         const ret = @as(*const volatile u32, @ptrFromInt(fp - 4)).*;
         const next = @as(*const volatile u32, @ptrFromInt(fp - 8)).*;
-        if (ret == 0 or !layout.inKernel(ret)) break;
-        exec.kprintf(" 0x%08x", .{ret});
+        if (ret == 0) break;
+        const found = whereIs(ret);
+        if (!found.known) break;
+        if (found.offset == 0) {
+            exec.kprintf("***   0x%08x in %s\n", .{ ret, found.name.? });
+        } else {
+            exec.kprintf("***   0x%08x in %.40s at +0x%x\n", .{ ret, found.name.?, @as(u32, @truncate(found.offset)) });
+        }
         if (next <= fp) break;
         fp = next;
     }
-    exec.kprintf("\n", .{});
+}
+
+pub const Where = struct {
+    /// The ROM, or the file's name.
+    name: ?[*:0]const u8 = null,
+    /// How far into that file, 0 for the ROM.
+    offset: usize = 0,
+    /// Whether the address is in code at all.
+    known: bool = false,
+};
+
+/// What code an address is in. dos's list of loaded files is read as it
+/// stands, without a lock: the machine may have stopped anywhere.
+pub fn whereIs(where: usize) Where {
+    if (layout.inKernel(where)) return .{ .name = "the ROM", .known = true };
+    if (!exec.initialized) return .{};
+    const dos_base = findDos() orelse return .{};
+    if (segment.codeAt(dos_base, where)) |found| {
+        return .{ .name = found.name, .offset = found.offset, .known = true };
+    }
+    return .{};
+}
+
+/// The line a Guru prints for where it stopped.
+fn place(where: usize) void {
+    const found = whereIs(where);
+    if (!found.known) return;
+    if (found.offset == 0) {
+        exec.kprintf("*** in %s\n", .{found.name.?});
+    } else {
+        exec.kprintf("*** in %.40s at +0x%x\n", .{ found.name.?, @as(u32, @truncate(found.offset)) });
+    }
+}
+
+/// dos.library's base, from exec's library list, walked by hand: the path
+/// that reports a broken machine calls nothing replaceable.
+fn findDos() ?*DosBase {
+    var node = exec.SysBase.lib_list.first();
+    while (node) |library| : (node = library.next()) {
+        const name = library.name orelse continue;
+        if (sameName(name, "dos.library")) {
+            const lib: *exec.Library = @fieldParentPtr("node", library);
+            return @fieldParentPtr("lib", lib);
+        }
+    }
+    return null;
+}
+
+fn sameName(name: [*:0]const u8, wanted: [:0]const u8) bool {
+    for (wanted, 0..) |char, index| {
+        if (name[index] != char) return false;
+    }
+    return name[wanted.len] == 0;
 }

@@ -460,7 +460,8 @@ stopped (`*** system halted`).
 `81000101` is `AN_ProgramPanic`. The fourth line names the loaded file and
 the offset into its code, which is the address in the program's linked ELF
 (its code is linked at 0). The offset is the return address of the call
-into the handler, so the check itself is 3 bytes before it:
+into the handler, so the call itself is just before it - 3 bytes on the
+ESP32-S3, 4 on the ESP32-P4:
 
 ```sh
 llvm-symbolizer --obj=<the program's ELF> 0x517
