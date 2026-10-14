@@ -256,6 +256,46 @@ test "at T1 the lease is renewed with the server, and a NAK starts again" {
     try rig.deinit();
 }
 
+test "the link back: the lease asked after on it, kept by an ACK, given up for a NAK" {
+    var rig = try Rig.init();
+    try rig.bind(100);
+    _dhcp.linkUp(rig.stack, rig.interface);
+    // To everyone, from no address, naming the lease and no server.
+    const asked = lastDhcp().?;
+    try testing.expectEqual(@as(u8, 3), asked.kind);
+    try testing.expectEqual(bsd.INADDR_BROADCAST, asked.destination);
+    try testing.expectEqual(@as(u32, 0), asked.ciaddr);
+    try testing.expectEqual(offered, asked.requested);
+    try testing.expectEqual(@as(u32, 0), asked.server_id);
+    rig.answer(5, asked.xid, offered, 100);
+    try testing.expectEqual(_dhcp.State.bound, rig.stack.dhcp.clients[1].state);
+    try testing.expectEqual(offered, rig.interface.address);
+
+    // Another network's server says no: the address goes, and the name
+    // servers the lease brought, and DISCOVER again.
+    try testing.expectEqual(@as(u32, 2), rig.stack.nameserver_count);
+    _dhcp.linkUp(rig.stack, rig.interface);
+    rig.answer(6, lastDhcp().?.xid, 0, 0);
+    try testing.expectEqual(@as(u32, 0), rig.interface.address);
+    try testing.expectEqual(@as(u32, 0), rig.stack.nameserver_count);
+    try testing.expectEqual(@as(u8, 1), lastDhcp().?.kind);
+    try rig.deinit();
+}
+
+test "the link back where nobody answers: DISCOVER after two tries" {
+    var rig = try Rig.init();
+    try rig.bind(100);
+    _dhcp.linkUp(rig.stack, rig.interface);
+    try testing.expectEqual(@as(u8, 3), lastDhcp().?.kind);
+    rig.advance(rig.stack.fixed_time + 6_000_000);
+    try testing.expectEqual(@as(u8, 3), lastDhcp().?.kind);
+    try testing.expectEqual(offered, rig.interface.address);
+    rig.advance(rig.stack.fixed_time + 20_000_000);
+    try testing.expectEqual(@as(u8, 1), lastDhcp().?.kind);
+    try testing.expectEqual(@as(u32, 0), rig.interface.address);
+    try rig.deinit();
+}
+
 test "an address someone already has is declined" {
     var rig = try Rig.init();
     _dhcp.start(rig.stack, rig.interface);

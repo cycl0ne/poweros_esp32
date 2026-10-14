@@ -10,13 +10,20 @@
 //! address is checked with two ARP probes before it is used (RFC 5227);
 //! an answer means someone has it already, and the client DECLINEs it and
 //! starts again. Otherwise the interface takes the address, its netmask,
-//! the router as its default route, and the name servers and domain.
+//! the router as its default route, and the name servers and domain - the
+//! name servers only as long as the lease: they go when it does.
 //!
 //! **Keeping it.** At T1 (half the lease) the client asks its server
 //! again, straight; at T2 (seven eighths) it asks everyone; when the
 //! lease runs out the address goes and it starts from the beginning. A
 //! NAK, at any point, starts it again too. Removing the interface gives
 //! the lease back (RELEASE).
+//!
+//! **The link back** - a cable plugged in again, a station that joined a
+//! network, perhaps another one - finds out whether the lease still holds
+//! there: a REQUEST to everyone, naming the address and no server
+//! (INIT-REBOOT). An ACK keeps it; a NAK - another network's server - and
+//! no answer to two of them start again from DISCOVER.
 //!
 //! **No server.** Messages are sent again after 4, 8, 16, 32 and then 64
 //! seconds, give or take one. After the third DISCOVER with no OFFER, a
@@ -42,6 +49,7 @@ const _ip = @import("../ip/_ip.zig");
 const _arp = @import("../arp/_arp.zig");
 const _timer = @import("../timer/_timer.zig");
 const Timer = _timer.Timer;
+const Address = @import("../ip6/address.zig").Address;
 const _names = @import("../names/_names.zig");
 const configure = @import("../netif/configureinterfacetaglist.zig");
 
@@ -86,6 +94,8 @@ const option_end: u8 = 255;
 
 const retry_first_us: u64 = 4_000_000;
 const retry_most_us: u64 = 64_000_000;
+/// REQUESTs after the link came back before the lease is given up.
+const reboot_tries = 2;
 /// DISCOVERs without an OFFER before a link-local address is taken.
 const discovers_before_link_local = 3;
 const probe_us: u64 = 1_000_000;
@@ -94,7 +104,7 @@ const link_local_probes = 3;
 /// The shortest a renewal is retried after.
 const renew_retry_min_us: u64 = 60_000_000;
 
-pub const State = enum(u8) { idle, selecting, requesting, checking, bound, renewing, rebinding };
+pub const State = enum(u8) { idle, selecting, requesting, checking, bound, renewing, rebinding, rebooting };
 
 pub const Client = extern struct {
     timer: Timer = .{},
@@ -121,6 +131,10 @@ pub const Client = extern struct {
     link_local: u32 = 0,
     /// The time servers the last ACK named (option 42).
     time_servers: [2]u32 = .{ 0, 0 },
+    /// The name servers the leases put on the stack's list, which go
+    /// with the lease.
+    name_servers: [bsd.NAMESERVERS_MAX]u32 = @splat(0),
+    name_server_count: u32 = 0,
 };
 
 pub const Clients = extern struct {
@@ -193,18 +207,20 @@ fn later(stack: *StackBase, client: *Client, now: u64) void {
     _ = _timer.set(stack, &client.timer, now + wait - 1_000_000 + jitter);
 }
 
-/// The interface's link back after it was off: a lease there is renewed
-/// with its server at once, and without one DHCP starts again.
+/// The interface's link back after it was off: a lease is asked after
+/// on the link as it is now (INIT-REBOOT), and without one DHCP starts
+/// again.
 pub fn linkUp(stack: *StackBase, interface: *Interface) void {
     if (interface.dhcp == 0) return;
     const client = clientOf(stack, interface);
     const now = _timer.clock(stack);
     switch (client.state) {
-        .bound, .renewing, .rebinding => {
-            client.state = .renewing;
+        .bound, .renewing, .rebinding, .rebooting => {
+            client.state = .rebooting;
             client.tries = 0;
+            client.xid = random(stack);
             send(stack, client, request);
-            renewLater(stack, client, now, client.lease_start + client.lease_us * 7 / 8);
+            later(stack, client, now);
         },
         .idle => {},
         else => begin(stack, client, now),
@@ -218,6 +234,7 @@ pub fn stop(stack: *StackBase, interface: *Interface) void {
     const client = clientOf(stack, interface);
     _timer.cancel(stack, &client.timer);
     if (client.state == .bound or client.state == .renewing or client.state == .rebinding) send(stack, client, release);
+    dropNameServers(stack, client);
     client.state = .idle;
 }
 
@@ -253,7 +270,7 @@ fn send(stack: *StackBase, client: *Client, kind: u8) void {
     id[1..7].* = interface.hardware;
     put(message, &at, option_client_id, &id);
     var address: [4]u8 = undefined;
-    if (kind == request and client.state == .requesting or kind == decline) {
+    if (kind == request and (client.state == .requesting or client.state == .rebooting) or kind == decline) {
         _ip.put32(&address, 0, client.offered);
         put(message, &at, option_requested, &address);
     }
@@ -342,14 +359,14 @@ pub fn input(stack: *StackBase, interface: *Interface, data: []const u8) bool {
                 _arp.probe(stack, interface, client.offered);
                 _ = _timer.set(stack, &client.timer, now + probe_us);
             },
-            .renewing, .rebinding => {
+            .renewing, .rebinding, .rebooting => {
                 take(client, &reply, now);
                 bind(stack, client, now);
             },
             else => {},
         },
         nak => switch (client.state) {
-            .requesting, .renewing, .rebinding, .bound => {
+            .requesting, .renewing, .rebinding, .rebooting, .bound => {
                 unbind(stack, client);
                 begin(stack, client, now);
             },
@@ -359,7 +376,7 @@ pub fn input(stack: *StackBase, interface: *Interface, data: []const u8) bool {
     }
     // The name servers and the domain, from the ACK.
     if (reply.kind == ack) {
-        for (reply.dns[0..reply.dns_count]) |server| _ = _names.addServer(stack, @import("../ip6/address.zig").Address.fromV4(server));
+        for (reply.dns[0..reply.dns_count]) |server| addNameServer(stack, client, server);
         if (reply.domain.len > 0) {
             const length = @min(reply.domain.len, stack.domain.len - 1);
             @memcpy(stack.domain[0..length], reply.domain[0..length]);
@@ -457,9 +474,30 @@ fn bind(stack: *StackBase, client: *Client, now: u64) void {
     _ = now;
 }
 
-/// The address given up: no lease any more.
+/// A name server an ACK named, onto the stack's list - and noted, so it
+/// leaves with the lease - unless it is there already.
+fn addNameServer(stack: *StackBase, client: *Client, server: u32) void {
+    const address = Address.fromV4(server);
+    for (stack.nameservers[0..stack.nameserver_count]) |known| {
+        if (known.eql(address)) return;
+    }
+    if (client.name_server_count == client.name_servers.len) return;
+    if (!_names.addServer(stack, address)) return;
+    client.name_servers[client.name_server_count] = server;
+    client.name_server_count += 1;
+}
+
+/// The name servers the leases brought, off the stack's list.
+fn dropNameServers(stack: *StackBase, client: *Client) void {
+    for (client.name_servers[0..client.name_server_count]) |server| _ = _names.removeServer(stack, Address.fromV4(server));
+    client.name_server_count = 0;
+}
+
+/// The address given up: no lease any more, and the name servers it
+/// brought gone with it - another network's would only be waited for.
 fn unbind(stack: *StackBase, client: *Client) void {
     const interface = interfaceOf(stack, client);
+    dropNameServers(stack, client);
     if (interface.bound == 0) return;
     interface.bound = 0;
     if (client.router != 0 and _route.defaultThrough(stack, interface) == client.router) _ = _route.remove(stack, 0, 0);
@@ -522,6 +560,16 @@ fn expired(stack: *StackBase, fired: *Timer, now: u64) void {
             }
             send(stack, client, request);
             renewLater(stack, client, now, client.lease_start + client.lease_us);
+        },
+        // Nobody on this link knows the lease: a server that does not
+        // answer for another network's address is as good as a NAK.
+        .rebooting => {
+            if (client.tries >= reboot_tries) {
+                unbind(stack, client);
+                return begin(stack, client, now);
+            }
+            send(stack, client, request);
+            later(stack, client, now);
         },
     }
 }
