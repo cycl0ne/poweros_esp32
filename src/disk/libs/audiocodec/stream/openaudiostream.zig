@@ -12,6 +12,8 @@ const Stream = _stream.Stream;
 const _identify = @import("../identify/_identify.zig");
 const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
+const flac = @import("../flac/_flac.zig");
+const vorbis = @import("../vorbis/_vorbis.zig");
 
 /// Opens a stream on sound.
 ///
@@ -38,8 +40,10 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// finds the kind by the first bytes (as `IdentifyAudio`) unless
 /// `ACA_Codec` says. Then the kind's header is read: a WAV's chunks up to
 /// its data, an MP3's tags in front of the sound and its first frame -
-/// with what its encoder wrote about the rest, when it did - and the
-/// stream's info is filled in. A file's end is looked at first: tags there
+/// with what its encoder wrote about the rest, when it did - a FLAC's
+/// metadata blocks, an Ogg Vorbis stream's three header packets; and the
+/// stream's info is filled in. An Ogg Vorbis file's last page is looked
+/// for at its end, for its length. A file's end is looked at first: tags there
 /// (ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
 /// where the front says nothing. An ID3v2 tag is read whole, frame by
 /// frame, however large; its picture is read into memory of its own only
@@ -61,7 +65,14 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// NOTES:
 /// A stream takes about 44 KiB: the read-ahead, the samples of a frame,
 /// an MP3 decoder's state and the tags; a kept picture is as large as it
-/// is.
+/// is. A FLAC adds a block of samples for each channel - 32 KiB for the
+/// usual 4096 in stereo - and an Ogg Vorbis its setup, tables and
+/// buffers: about 250 KiB at 44.1 kHz.
+///
+/// FLAC (SINCE 1.2) is decoded at 4 to 24 bits a sample; an Ogg Vorbis
+/// stream (SINCE 1.2) of floor type 1, as every encoder writes. One or
+/// two channels; more are refused, as is FLAC carried in Ogg. A chained
+/// Ogg file - streams one after another - ends with the first.
 ///
 /// BUGS:
 /// None known.
@@ -122,6 +133,8 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     const result = switch (codec) {
         ac.ACODEC_WAV => wav.open(stream),
         ac.ACODEC_MP3 => mp3.open(stream),
+        ac.ACODEC_FLAC => flac.open(stream),
+        ac.ACODEC_VORBIS => vorbis.open(stream),
         else => if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN,
     };
     if (result != ac.ACERR_OK) {

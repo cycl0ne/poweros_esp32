@@ -114,9 +114,12 @@ audiocodec.library/SeekAudio
    BEHAVIOR
 	The samples are signed 16-bit, at the rate and channels
 	GetAudioStreamInfo gives, whatever the file holds: a WAV's samples
-	brought to 16 bits, an MP3's frames decoded one at a time and handed
-	out across calls. An MP3 is cut where its encoder said the music begins
-	and ends, so a song played after another follows it without a gap.
+	brought to 16 bits, an MP3's frames, a FLAC's blocks, an Ogg Vorbis
+	stream's packets decoded one at a time and handed out across calls. An
+	MP3 is cut where its encoder said the music begins and ends, an Ogg
+	Vorbis stream where its pages' positions say, so a song played after
+	another follows it without a gap. A FLAC frame that is damaged - its
+	CRC wrong - is handed out as silence.
 
    CONTEXT
 	- Waits: yes, on the source when the read-ahead runs low.
@@ -130,7 +133,8 @@ audiocodec.library/SeekAudio
    NOTES
 	An MP3 frame is 1152 frames of samples at 32 kHz and up, 576 below; a
 	buffer of a few thousand frames costs the fewest calls. Decoding an
-	MP3 takes about a tenth of a core at 44.1 kHz in stereo.
+	MP3 takes about a tenth of a core at 44.1 kHz in stereo. A FLAC block
+	is mostly 4096 frames, a Vorbis packet up to 1024.
 
    BUGS
 	None known.
@@ -168,14 +172,18 @@ audiocodec.library/SeekAudio
 
    BEHAVIOR
 	The answers are what the stream's tags said when it was opened: an
-	MP3's ID3v2 tag, over an ID3v1 tag at its end, or a WAV's INFO list.
+	MP3's ID3v2 tag, over an ID3v1 tag at its end, a WAV's INFO list, or
+	the Vorbis comments of a FLAC or an Ogg Vorbis stream (SINCE 1.2).
 	A text the tags do not hold is empty, a number 0. The names are whole,
 	up to 127 characters - the info's are cut at 63 - and a comment up to
 	255. A genre an MP3 gives by ID3v1's number is named. `ACA_Picture` is
 	null unless the stream was opened with `ACA_KeepPicture` and its tags
 	hold a picture: then it is that picture, the front cover where there
-	are several. The chapters are an ID3v2 tag's CHAP frames, each with
-	the title of its own TIT2 - up to 256 of them.
+	are several - an ID3v2 tag's, a FLAC's PICTURE block, an Ogg stream's
+	METADATA_BLOCK_PICTURE comment. The chapters are an ID3v2 tag's CHAP
+	frames, each with the title of its own TIT2, or the CHAPTERnnn and
+	CHAPTERnnnNAME comments, each ending where the next begins - up to 256
+	of them.
 
    CONTEXT
 	- Waits: no.
@@ -231,7 +239,10 @@ audiocodec.library/SeekAudio
 	name. An MP3's length is exact when its encoder wrote it down (a Xing
 	or Info frame), worked out from its bit rate and the file's size
 	otherwise, and 0 for a stream read through a function without that
-	frame.
+	frame. A FLAC's is its STREAMINFO's. An Ogg Vorbis file's is its last
+	page's position, exact; read through a function it is 0. The bit rate
+	of a FLAC is the average its size and length give, of a Vorbis the
+	one its header names.
 
    CONTEXT
 	- Waits: no.
@@ -271,10 +282,14 @@ audiocodec.library/SeekAudio
 	  enough.
 
    RESULT
-	ACODEC_WAV, ACODEC_MP3, or ACODEC_UNKNOWN.
+	ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, or ACODEC_UNKNOWN.
 
    BEHAVIOR
-	A RIFF header naming WAVE is a WAV. An ID3v2 tag is an MP3, and so are
+	A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
+	an ID3v2 tag that ends among the bytes given. An Ogg page whose first
+	packet is Vorbis's header is ACODEC_VORBIS, FLAC's is ACODEC_FLAC (and
+	refused when it is opened); another, such as Opus, is unknown. Any
+	other ID3v2 tag is an MP3, and so are
 	MPEG audio frames: a header that can be, followed by others at the
 	distances it gives - one header-like run of bytes alone is not enough.
 	An MP3 of layer I or II is identified as one, and refused when it is
@@ -327,8 +342,10 @@ audiocodec.library/SeekAudio
 	finds the kind by the first bytes (as `IdentifyAudio`) unless
 	`ACA_Codec` says. Then the kind's header is read: a WAV's chunks up to
 	its data, an MP3's tags in front of the sound and its first frame -
-	with what its encoder wrote about the rest, when it did - and the
-	stream's info is filled in. A file's end is looked at first: tags there
+	with what its encoder wrote about the rest, when it did - a FLAC's
+	metadata blocks, an Ogg Vorbis stream's three header packets; and the
+	stream's info is filled in. An Ogg Vorbis file's last page is looked
+	for at its end, for its length. A file's end is looked at first: tags there
 	(ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
 	where the front says nothing. An ID3v2 tag is read whole, frame by
 	frame, however large; its picture is read into memory of its own only
@@ -350,7 +367,14 @@ audiocodec.library/SeekAudio
    NOTES
 	A stream takes about 44 KiB: the read-ahead, the samples of a frame,
 	an MP3 decoder's state and the tags; a kept picture is as large as it
-	is.
+	is. A FLAC adds a block of samples for each channel - 32 KiB for the
+	usual 4096 in stereo - and an Ogg Vorbis its setup, tables and
+	buffers: about 250 KiB at 44.1 kHz.
+
+	FLAC (SINCE 1.2) is decoded at 4 to 24 bits a sample; an Ogg Vorbis
+	stream (SINCE 1.2) of floor type 1, as every encoder writes. One or
+	two channels; more are refused, as is FLAC carried in Ogg. A chained
+	Ogg file - streams one after another - ends with the first.
 
    BUGS
 	None known.
@@ -385,7 +409,10 @@ audiocodec.library/SeekAudio
 	0, or an ACERR_*: ACERR_NOSEEK for a stream read through a function.
 
    BEHAVIOR
-	A WAV goes to the frame exactly. An MP3 goes to the frame its encoder's
+	A WAV, a FLAC and an Ogg Vorbis file go to the frame exactly: a FLAC
+	from its seek table's point before it, or a frame a search halving the
+	file finds, an Ogg Vorbis from the page a like search finds, decoding
+	on to the frame. An MP3 goes to the frame its encoder's
 	table of contents points to, or the bit rate when it has none - exact
 	for a constant rate, near for a variable one - and the frame or two
 	after it may be left out, until the reservoir of bits they reach back

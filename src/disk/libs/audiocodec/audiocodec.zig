@@ -7,8 +7,11 @@
 //! finds out what the sound is by its first bytes, reads ahead of the
 //! decoder in its own buffer, and hands the samples out as the program
 //! asks for them (DecodeAudio) - a piece at a time, so a song is never
-//! decoded whole. The kinds are WAV (`wav/`) and MP3 (`mp3/`: the Layer III
-//! decoder, `layer3.zig`, and the stream around it, `_mp3.zig`).
+//! decoded whole. The kinds are WAV (`wav/`), MP3 (`mp3/`: the Layer III
+//! decoder, `layer3.zig`, and the stream around it, `_mp3.zig`), FLAC
+//! (`flac/`: a frame, `frame.zig`, and the stream, `_flac.zig`) and
+//! Vorbis in Ogg (`ogg/`: pages and packets; `vorbis/`: the setup, a
+//! packet, the inverse MDCT, the stream, and the comments FLAC shares).
 //!
 //! A stream is its opener's: everything about it is in the stream, and the
 //! base, shared by every opener, holds only the libraries it works through.

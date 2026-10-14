@@ -20,10 +20,14 @@ const _identify = @import("_identify.zig");
 ///   enough.
 ///
 /// RESULT:
-/// ACODEC_WAV, ACODEC_MP3, or ACODEC_UNKNOWN.
+/// ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, or ACODEC_UNKNOWN.
 ///
 /// BEHAVIOR:
-/// A RIFF header naming WAVE is a WAV. An ID3v2 tag is an MP3, and so are
+/// A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
+/// an ID3v2 tag that ends among the bytes given. An Ogg page whose first
+/// packet is Vorbis's header is ACODEC_VORBIS, FLAC's is ACODEC_FLAC (and
+/// refused when it is opened); another, such as Opus, is unknown. Any
+/// other ID3v2 tag is an MP3, and so are
 /// MPEG audio frames: a header that can be, followed by others at the
 /// distances it gives - one header-like run of bytes alone is not enough.
 /// An MP3 of layer I or II is identified as one, and refused when it is

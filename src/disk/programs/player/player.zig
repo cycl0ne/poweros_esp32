@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! Player: sound files played in a window - WAV and MP3 - with a picture
-//! of the sound under the controls. Built against the SDK only.
+//! Player: sound files played in a window - WAV, MP3, FLAC and Ogg Vorbis
+//! - with a picture of the sound under the controls. Built against the
+//! SDK only.
 //!
 //!   Player FILES/M,VOLUME/K/N,LOOK/K
 //!
@@ -84,8 +85,8 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (13.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (14.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -362,6 +363,8 @@ const App = struct {
         const kind: [*:0]const u8 = switch (info.codec) {
             ac.ACODEC_WAV => "WAV",
             ac.ACODEC_MP3 => "MP3",
+            ac.ACODEC_FLAC => "FLAC",
+            ac.ACODEC_VORBIS => "Vorbis",
             else => "Sound",
         };
         const sides: [*:0]const u8 = if (info.channels == 1) "mono" else "stereo";
@@ -952,7 +955,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(gc.GA_ID, ID_FILE),
         pair(gf.GETFILE_TitleText, @intFromPtr("Which song?")),
         pair(gf.GETFILE_Drawer, @intFromPtr("SYS:")),
-        pair(gf.GETFILE_Pattern, @intFromPtr("#?.(mp3|wav)")),
+        pair(gf.GETFILE_Pattern, @intFromPtr("#?.(mp3|wav|flac|ogg|oga)")),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
     })) orelse return noWindow(dl);

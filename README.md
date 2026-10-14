@@ -94,9 +94,9 @@ ESP32-P4 boards and in Espressif's QEMU.
   ([icons guide](sdk/docs/guides/icons.md)). In `SYS:Programs`, each with
   its readme in `SYS:Programs/Docs`: MultiView, Notepad, Sheet (a
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
-  on a serial line), Player (WAV and MP3 with their cover, tags and
-  chapters, and a plasma, the wave or the spectrum of what is heard),
-  FontView, CPULoad, Battery and Prefs.
+  on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
+  cover, tags and chapters, and a plasma, the wave or the spectrum of
+  what is heard), FontView, CPULoad, Battery and Prefs.
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales;
   graphics.library with smooth curves, gradients, shadows and scaled
@@ -110,14 +110,14 @@ ESP32-P4 boards and in Espressif's QEMU.
   ([motion guide](sdk/docs/guides/motion.md)).
 - **Datatypes and fonts:** `LIBS:datatypes.library` opens pictures (ILBM,
   BMP, PNG, GIF, JPEG - on the ESP32-P4 by its codec), text (plain, FTXT,
-  Markdown), animations (GIF, Lottie) and sounds (WAV, MP3, 8SVX, played
-  as they are read) by what is in them
+  Markdown), animations (GIF, Lottie) and sounds (WAV, MP3, FLAC, Ogg
+  Vorbis, 8SVX, played as they are read) by what is in them
   ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
   TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
 - **Sound:** `audio.device` mixes up to sixteen streams, each in its own
   form, rate, volume and pan, out of an ES8311 codec or I2S amplifiers;
-  `LIBS:audiocodec.library` decodes WAV and MP3 as they play and reads
-  their tags, covers and chapters (`C:Play`,
+  `LIBS:audiocodec.library` decodes WAV, MP3, FLAC and Ogg Vorbis as they
+  play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet, USB Ethernet

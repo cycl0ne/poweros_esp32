@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Play: a sound file out of the speaker - WAV or MP3 - through
+//! Play: a sound file out of the speaker - WAV, MP3, FLAC or Ogg Vorbis -
+//! through
 //! audiocodec.library and audio.device. Built against the SDK only.
 //!
 //!   Play FILE/A,VOLUME/K/N,START/K/N,QUIET/S
@@ -26,7 +27,7 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Play";
-const VERSION_STRING = "\x00$VER: Play 1.0 (13.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Play 1.1 (14.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,VOLUME/K/N,START/K/N,QUIET/S";
@@ -54,6 +55,8 @@ fn kindName(codec: u32) [*:0]const u8 {
     return switch (codec) {
         ac.ACODEC_WAV => "WAV",
         ac.ACODEC_MP3 => "MP3",
+        ac.ACODEC_FLAC => "FLAC",
+        ac.ACODEC_VORBIS => "Ogg Vorbis",
         else => "sound",
     };
 }

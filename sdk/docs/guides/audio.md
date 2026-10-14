@@ -122,8 +122,9 @@ left to clip.
 ## Decoding: audiocodec.library
 
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
-stream plays: WAV (PCM of 8 to 32 bits, or float) and MP3 (MPEG-1, 2 and
-2.5, Layer III). `OpenAudioStream` opens a file by name (`ACA_Name`), a
+stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
+2.5, Layer III), FLAC (4 to 24 bits) and Ogg Vorbis, in one channel or
+two. `OpenAudioStream` opens a file by name (`ACA_Name`), a
 file the program has open (`ACA_FileHandle`), or bytes a function of the
 program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) - a download, a
 network stream - and finds the kind by its first bytes. `DecodeAudio`
@@ -148,12 +149,19 @@ const got = acb.DecodeAudio(stream, &buffer, 4096); // frames, 0 at the end
 
 `GetAudioStreamInfo` says the kind, rate, channels and length - exact
 for an MP3 whose encoder wrote an Info or Xing frame, worked out from the
-bit rate otherwise - and the title, artist and album from ID3 tags or a
-WAV's INFO list. An MP3 is cut where its encoder says the music begins
-and ends, so one song follows another without a gap. `SeekAudio` moves a
-file's stream to a frame: a WAV exactly, an MP3 by its encoder's table or
-its bit rate. Decoding an MP3 takes about a tenth of a core at 44.1 kHz in
-stereo.
+bit rate otherwise; a FLAC's from its STREAMINFO, an Ogg Vorbis file's
+from its last page - and the title, artist and album from ID3 tags, a
+WAV's INFO list or Vorbis comments. An MP3 is cut where its encoder says
+the music begins and ends, an Ogg Vorbis stream where its pages' granule
+positions say, so one song follows another without a gap. `SeekAudio`
+moves a file's stream to a frame: a WAV, a FLAC (by its seek table, or a
+search halving the file) and an Ogg Vorbis file (by such a search over
+its pages) exactly, an MP3 by its encoder's table or its bit rate.
+Decoding an MP3 takes about a tenth of a core at 44.1 kHz in stereo. A
+FLAC stream holds a block of samples for each channel, 32 KiB for the
+usual 4096 in stereo; an Ogg Vorbis one its codebooks and tables, about
+250 KiB. A FLAC frame whose CRC is wrong plays as silence; an Ogg page
+whose CRC is wrong is passed over.
 
 ### Tags, covers and chapters
 
@@ -163,16 +171,21 @@ album's own artist, the composer, the genre (an ID3v1 number is named),
 a comment, the year, the track and the album's count of them. An MP3's
 ID3v2 tag is read whole, frame by frame, however large; an ID3v1 tag at
 the end counts where it says nothing, and a WAV's INFO list says the
-same. Texts are Latin-1: quotes and dashes become their plain kin, an
+same. A FLAC's and an Ogg Vorbis stream's Vorbis comments say it too
+(TITLE, ARTIST, ALBUM, ALBUMARTIST, COMPOSER, GENRE, DATE, TRACKNUMBER,
+TRACKTOTAL, COMMENT). Texts are Latin-1: quotes and dashes become their plain kin, an
 emoji is left out, anything else past Latin-1 is a `?`.
 
 The picture the tags hold - a cover, the front one where there are
 several - is kept only for a stream opened with `ACA_KeepPicture`, so a
 program that does not show it does not read it. `ACA_Picture` then
 answers the bytes of an image file - a JPEG or PNG - for
-datatypes.library to read. The chapters a mix or an audiobook is marked
-in (ID3v2 `CHAP` frames) come with `ACA_Chapters` and `ACA_ChapterList`:
-where each starts and ends, in milliseconds, and its title.
+datatypes.library to read - an ID3v2 picture, a FLAC's PICTURE block,
+or an Ogg stream's METADATA_BLOCK_PICTURE comment. The chapters a mix or
+an audiobook is marked in (ID3v2 `CHAP` frames, or the `CHAPTER001` and
+`CHAPTER001NAME` comments) come with `ACA_Chapters` and
+`ACA_ChapterList`: where each starts and ends, in milliseconds, and its
+title.
 
 ```zig
 const stream = acb.OpenAudioStream(&[_]utility.TagItem{
@@ -200,9 +213,10 @@ leaves all of this to datatypes.library: a sound file is a
 
 `C:Play FILE` plays a file this way, with `VOLUME` and `START` (seconds
 in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
-what the desktop opens a `.mp3` or `.wav` file with (the `MP3` and `WAV`
-descriptors in `DEVS:DataTypes`), with the song's cover and tags and the
-chapter of a mix that is playing.
+what the desktop opens a `.mp3`, `.wav`, `.flac` or `.ogg` file with
+(the `MP3`, `WAV`, `FLAC` and `Ogg` descriptors in `DEVS:DataTypes`),
+with the song's cover and tags and the chapter of a mix that is
+playing.
 
 ## Keeping a picture in step
 

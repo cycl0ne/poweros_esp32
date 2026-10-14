@@ -7,6 +7,8 @@ const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
 const _stream = @import("_stream.zig");
 const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
+const flac = @import("../flac/_flac.zig");
+const vorbis = @import("../vorbis/_vorbis.zig");
 
 /// Decodes the next frames of a stream.
 ///
@@ -30,9 +32,12 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// BEHAVIOR:
 /// The samples are signed 16-bit, at the rate and channels
 /// GetAudioStreamInfo gives, whatever the file holds: a WAV's samples
-/// brought to 16 bits, an MP3's frames decoded one at a time and handed
-/// out across calls. An MP3 is cut where its encoder said the music begins
-/// and ends, so a song played after another follows it without a gap.
+/// brought to 16 bits, an MP3's frames, a FLAC's blocks, an Ogg Vorbis
+/// stream's packets decoded one at a time and handed out across calls. An
+/// MP3 is cut where its encoder said the music begins and ends, an Ogg
+/// Vorbis stream where its pages' positions say, so a song played after
+/// another follows it without a gap. A FLAC frame that is damaged - its
+/// CRC wrong - is handed out as silence.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the source when the read-ahead runs low.
@@ -46,7 +51,8 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// NOTES:
 /// An MP3 frame is 1152 frames of samples at 32 kHz and up, 576 below; a
 /// buffer of a few thousand frames costs the fewest calls. Decoding an
-/// MP3 takes about a tenth of a core at 44.1 kHz in stereo.
+/// MP3 takes about a tenth of a core at 44.1 kHz in stereo. A FLAC block
+/// is mostly 4096 frames, a Vorbis packet up to 1024.
 ///
 /// BUGS:
 /// None known.
@@ -65,6 +71,8 @@ pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, 
     return switch (stream.codec) {
         .wav => |*state| wav.decode(stream, state, buffer, frames),
         .mp3 => |*state| mp3.decode(stream, state, buffer, frames),
+        .flac => |*state| flac.decode(stream, state, buffer, frames),
+        .vorbis => |*state| vorbis.decode(stream, state, buffer, frames),
         .none => 0,
     };
 }

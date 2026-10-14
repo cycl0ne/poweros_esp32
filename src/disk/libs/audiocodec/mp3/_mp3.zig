@@ -318,7 +318,7 @@ const TagReader = struct {
 /// - so a tag of any size is read whole, the frames after a large picture
 /// too: its texts into the stream's tags, its picture kept when the
 /// stream keeps one, the rest passed over.
-fn skipId3v2(stream: *Stream) void {
+pub fn skipId3v2(stream: *Stream) void {
     while (true) {
         if (stream.stop - stream.start < 10) _stream.fill(stream);
         const bytes = _stream.available(stream);
@@ -540,7 +540,7 @@ fn endOfString(encoding: u8, bytes: []const u8) struct { text_end: usize, next: 
 }
 
 /// The most chapters kept: a block for them made at the first.
-const chapter_max = 256;
+pub const chapter_max = 256;
 
 /// A chapter (CHAP): its element's name, where it starts and ends in
 /// milliseconds, two places in the file that are not used, then frames of
@@ -573,7 +573,7 @@ fn chapter(stream: *Stream, version: u8, body: []const u8) void {
 }
 
 /// The largest picture kept.
-const picture_max: u64 = 16 * 1024 * 1024;
+pub const picture_max: u64 = 16 * 1024 * 1024;
 
 /// A picture frame of `size` bytes: its header read - its kind, its MIME
 /// type or version 2's three letters - and its image kept when there is
@@ -635,7 +635,7 @@ fn picture(reader: *TagReader, version: u8, size: u64, unsync: bool) void {
 /// whether they are Latin-1 (0), UTF-16 with a byte-order mark (1),
 /// UTF-16 big-endian (2) or UTF-8 (3). What Latin-1 lacks is narrowed by
 /// `narrow`; spaces that come together are one.
-fn text(into: []u8, body: []const u8) void {
+pub fn text(into: []u8, body: []const u8) void {
     if (body.len < 1) return;
     var out: usize = 0;
     const words = body[1..];

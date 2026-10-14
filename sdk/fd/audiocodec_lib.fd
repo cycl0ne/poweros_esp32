@@ -1,7 +1,7 @@
 //! audiocodec.library's functions: sound decoded from what it is coded
-//! in - WAV, MP3 - into 16-bit samples, a piece at a time. Open it with
-//! OpenLibrary("audiocodec.library", 1); the structures are in
-//! sdk.audiocodec.
+//! in - WAV, MP3, FLAC, Ogg Vorbis - into 16-bit samples, a piece at a
+//! time. Open it with OpenLibrary("audiocodec.library", 1); the
+//! structures are in sdk.audiocodec.
 ##include libs/audiocodec/audiocodec as audiocodec
 ##include libs/utility/utility as utility
 ##basetype AudioCodecBase

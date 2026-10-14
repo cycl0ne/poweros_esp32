@@ -8,6 +8,16 @@
 //! 1024 frames as mpg123 decodes them, the encoder's delay left out.
 //! `mono.mp3` is 0.3 s of MPEG-2 mono at 22.05 kHz with no Info frame:
 //! 14 frames of 576.
+//!
+//! The FLAC files hold `signal` (made again here, exactly): `lossless.flac`
+//! 4500 frames of 16-bit stereo at 44.1 kHz (flac -8), with Vorbis
+//! comments, two chapters, a PICTURE block and a seek table;
+//! `mono8.flac` 3000 frames of 8-bit mono at 8 kHz in fixed predictions
+//! and no seek table; `wide24.flac` 2000 frames of 24-bit stereo at 48 kHz
+//! in blocks of 576. `lossy.ogg` is lossless.flac's sound in Ogg Vorbis
+//! (libvorbis, quality 3) titled "Lossy", `lossy_head.raw` its first 1024
+//! frames as libvorbisfile decodes them; `mono.ogg` the same at 22.05 kHz
+//! in mono, 2250 frames.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -32,6 +42,12 @@ const tone_head = @embedFile("tone_head.raw");
 const mono_mp3 = @embedFile("mono.mp3");
 const tone_frames = 13230;
 const mono_frames = 14 * 576;
+const lossless_flac = @embedFile("lossless.flac");
+const mono8_flac = @embedFile("mono8.flac");
+const wide24_flac = @embedFile("wide24.flac");
+const lossy_ogg = @embedFile("lossy.ogg");
+const lossy_head = @embedFile("lossy_head.raw");
+const mono_ogg = @embedFile("mono.ogg");
 
 // --- the rig ----------------------------------------------------------------------
 
@@ -50,7 +66,7 @@ const Disk = struct {
 };
 
 /// Memory lent to exec: a stream is about 42 KiB.
-var lent: [512 * 1024]u8 align(16) = undefined;
+var lent: [3 * 1024 * 1024]u8 align(16) = undefined;
 
 /// exec, utility and dos with memory lent; a process with WORK: behind
 /// it; audiocodec.library made and opened.
@@ -723,4 +739,282 @@ test "ID3v1 at a file's end: its year, its comment and track (v1.1), its genre" 
     try testing.expectEqualStrings("A remark", std.mem.span(got.comment));
     try testing.expectEqualStrings("Jazz", std.mem.span(got.genre));
     try testing.expect(got.picture == null and got.chapter_list == null);
+}
+
+// --- FLAC and Ogg Vorbis ----------------------------------------------------------
+
+/// The FLAC files' sound: a triangle on each side (periods of 200 and 237
+/// frames) at a quarter of full scale, and the same noise on both from a
+/// 32-bit LCG, `bits` wide - brought to 16 bits as the library hands it
+/// out.
+fn signal(frames: usize, channels: usize, bits: u6, out: []i16) void {
+    var state: u32 = 12345;
+    const amp: i64 = @as(i64, 1) << (bits - 2);
+    for (0..frames) |i| {
+        state = state *% 1103515245 +% 12345;
+        var noise: i64 = @as(i64, (state >> 16) & 0x7FFF) - 0x4000;
+        noise = if (bits < 18) noise >> @intCast(18 - bits) else noise << @intCast(bits - 18);
+        for (0..channels) |c| {
+            const period: i64 = 200 + 37 * @as(i64, @intCast(c));
+            var tri = @divTrunc(@mod(@as(i64, @intCast(i)), period) * 4 * amp, period);
+            if (tri > 2 * amp) tri = 4 * amp - tri;
+            tri -= amp;
+            const sample = tri + noise;
+            out[i * channels + c] = @intCast(if (bits >= 16) sample >> @intCast(bits - 16) else sample << @intCast(16 - bits));
+        }
+    }
+}
+
+test "what FLAC and Ogg are, by their first bytes" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+
+    try testing.expectEqual(ac.ACODEC_FLAC, acb.IdentifyAudio(lossless_flac, lossless_flac.len));
+    try testing.expectEqual(ac.ACODEC_VORBIS, acb.IdentifyAudio(lossy_ogg, lossy_ogg.len));
+    // FLAC behind an ID3v2 tag of ten bytes' body.
+    const tagged = "ID3\x03\x00\x00\x00\x00\x00\x0A" ++ "\x00" ** 10 ++ "fLaC";
+    try testing.expectEqual(ac.ACODEC_FLAC, acb.IdentifyAudio(tagged, tagged.len));
+    // An Ogg page whose first packet is Opus's: not a kind it knows.
+    var opus = lossy_ogg[0..64].*;
+    @memcpy(opus[28..36], "OpusHead");
+    try testing.expectEqual(ac.ACODEC_UNKNOWN, acb.IdentifyAudio(&opus, opus.len));
+}
+
+test "a FLAC through a read function: every sample as coded, its comments, chapters and cover" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+
+    var memory: Memory = .{ .bytes = lossless_flac, .piece = 777 };
+    var err: i32 = 0;
+    const stream = acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_ReadFunc, .data = @intFromPtr(&Memory.read) },
+        .{ .tag = ac.ACA_ReadData, .data = @intFromPtr(&memory) },
+        .{ .tag = ac.ACA_KeepPicture, .data = 1 },
+        .{},
+    }, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_FLAC, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 16), info.bits);
+    // STREAMINFO says how long it is, read through a function or not.
+    try testing.expectEqual(@as(u32, 4500), info.frames);
+    try testing.expectEqualStrings("Lossless", textOf(&info.title));
+    try testing.expectEqualStrings("PowerOS", textOf(&info.artist));
+    try testing.expectEqualStrings("Tests", textOf(&info.album));
+
+    var year: u32 = 0;
+    var track: u32 = 0;
+    var tracks: u32 = 0;
+    var cover: ?*const ac.AudioPicture = null;
+    var chapter_count: u32 = 0;
+    var chapters: ?[*]const ac.AudioChapter = null;
+    _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Year, .data = @intFromPtr(&year) },
+        .{ .tag = ac.ACA_Track, .data = @intFromPtr(&track) },
+        .{ .tag = ac.ACA_Tracks, .data = @intFromPtr(&tracks) },
+        .{ .tag = ac.ACA_Picture, .data = @intFromPtr(&cover) },
+        .{ .tag = ac.ACA_Chapters, .data = @intFromPtr(&chapter_count) },
+        .{ .tag = ac.ACA_ChapterList, .data = @intFromPtr(&chapters) },
+        .{},
+    });
+    try testing.expectEqual(@as(u32, 2026), year);
+    try testing.expectEqual(@as(u32, 4), track);
+    try testing.expectEqual(@as(u32, 9), tracks);
+    const picture = cover orelse return error.NoCover;
+    try testing.expectEqual(ac.ACPIC_FRONTCOVER, picture.kind);
+    try testing.expectEqualStrings("image/png", std.mem.sliceTo(&picture.mime, 0));
+    try testing.expectEqualStrings("tiny-png-bytes", picture.data[0..picture.size]);
+    // Given second first: put in the order they start, each ending where
+    // the next begins and the last at the end, 102 ms in.
+    try testing.expectEqual(@as(u32, 2), chapter_count);
+    const list = chapters orelse return error.NoChapters;
+    try testing.expectEqualStrings("First", std.mem.sliceTo(&list[0].title, 0));
+    try testing.expectEqual(@as(u32, 0), list[0].start);
+    try testing.expectEqual(@as(u32, 50), list[0].end);
+    try testing.expectEqualStrings("Second", std.mem.sliceTo(&list[1].title, 0));
+    try testing.expectEqual(@as(u32, 50), list[1].start);
+    try testing.expectEqual(@as(u32, 102), list[1].end);
+
+    var all: [4500 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, stream, 2, 1999, &all));
+    var expected: [4500 * 2]i16 = undefined;
+    signal(4500, 2, 16, &expected);
+    try testing.expectEqualSlices(i16, &expected, &all);
+}
+
+test "FLAC of 8 and of 24 bits: brought to 16" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    var memory: Memory = .{ .bytes = mono8_flac, .piece = 333 };
+    const mono = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    var mono_samples: [3000]i16 = undefined;
+    try testing.expectEqual(@as(u32, 3000), try decodeAll(acb, mono, 1, 1000, &mono_samples));
+    var expected_mono: [3000]i16 = undefined;
+    signal(3000, 1, 8, &expected_mono);
+    try testing.expectEqualSlices(i16, &expected_mono, &mono_samples);
+    acb.CloseAudioStream(mono);
+
+    memory = .{ .bytes = wide24_flac };
+    const wide = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(wide, &info);
+    try testing.expectEqual(@as(u32, 24), info.bits);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    var wide_samples: [2000 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 2000), try decodeAll(acb, wide, 2, 500, &wide_samples));
+    var expected_wide: [2000 * 2]i16 = undefined;
+    signal(2000, 2, 24, &expected_wide);
+    try testing.expectEqualSlices(i16, &expected_wide, &wide_samples);
+    acb.CloseAudioStream(wide);
+}
+
+test "FLAC on a file: an exact seek, with a seek table and without; a damaged frame is silence" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var expected: [4500 * 2]i16 = undefined;
+    signal(4500, 2, 16, &expected);
+    var some: [600 * 2]i16 = undefined;
+
+    try rig.write("WORK:lossless.flac", &.{lossless_flac});
+    const stream = openFile(acb, "WORK:lossless.flac", &err) orelse return error.NoStream;
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expect(info.bitrate > 0);
+    // Into the second block, then back into the first.
+    for ([_]u32{ 4100, 1234 }) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        try testing.expectEqual(@as(i32, 300), acb.DecodeAudio(stream, &some, 300));
+        try testing.expectEqualSlices(i16, expected[frame * 2 ..][0 .. 300 * 2], some[0 .. 300 * 2]);
+    }
+    // Past the end: nothing more.
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 9999));
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 300));
+    acb.CloseAudioStream(stream);
+
+    try rig.write("WORK:mono8.flac", &.{mono8_flac});
+    const mono = openFile(acb, "WORK:mono8.flac", &err) orelse return error.NoStream;
+    var expected_mono: [3000]i16 = undefined;
+    signal(3000, 1, 8, &expected_mono);
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(mono, 2500));
+    try testing.expectEqual(@as(i32, 500), acb.DecodeAudio(mono, &some, 600));
+    try testing.expectEqualSlices(i16, expected_mono[2500..3000], some[0..500]);
+    acb.CloseAudioStream(mono);
+
+    // The last frame's CRC changed - the file's last byte: that frame is
+    // silent, and the frame before it is as it was.
+    var damaged = lossless_flac.*;
+    damaged[damaged.len - 1] ^= 0x5A;
+    var memory: Memory = .{ .bytes = &damaged };
+    const broken = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    var all: [4500 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, broken, 2, 1999, &all));
+    try testing.expectEqualSlices(i16, expected[0 .. 4096 * 2], all[0 .. 4096 * 2]);
+    for (all[4096 * 2 ..]) |sample| try testing.expectEqual(@as(i16, 0), sample);
+    acb.CloseAudioStream(broken);
+}
+
+test "FLAC the library does not decode is refused with why" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    // Three channels.
+    var three = lossless_flac[0..64].*;
+    three[8 + 12] = (three[8 + 12] & 0xF1) | (2 << 1);
+    var memory: Memory = .{ .bytes = &three };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+
+    // FLAC carried in Ogg.
+    var page = lossy_ogg[0..64].*;
+    @memcpy(page[28..33], "\x7FFLAC");
+    memory = .{ .bytes = &page };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+}
+
+test "Ogg Vorbis through a read function: within a step of libvorbis, to the exact length" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    var memory: Memory = .{ .bytes = lossy_ogg, .piece = 501 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_VORBIS, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    // Its last page is not looked for through a function.
+    try testing.expectEqual(@as(u32, 0), info.frames);
+    try testing.expectEqual(@as(u32, 0), info.seekable);
+    try testing.expect(info.bitrate > 0);
+    try testing.expectEqualStrings("Lossy", textOf(&info.title));
+
+    var head: [1024 * 2]i16 = undefined;
+    // The last page cuts the end where the sound stopped.
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, stream, 2, 999, &head));
+    const reference: []align(1) const i16 = std.mem.bytesAsSlice(i16, lossy_head);
+    for (head, reference) |ours, theirs| {
+        try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
+    }
+    try testing.expectEqual(ac.ACERR_NOSEEK, acb.SeekAudio(stream, 0));
+    acb.CloseAudioStream(stream);
+
+    memory = .{ .bytes = mono_ogg, .piece = 4000 };
+    const mono = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(mono, &info);
+    try testing.expectEqual(@as(u32, 22050), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 2250), try decodeAll(acb, mono, 1, 2000, &.{}));
+    acb.CloseAudioStream(mono);
+}
+
+test "Ogg Vorbis on a file: its length from its last page, and exact seeks" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    try rig.write("WORK:lossy.ogg", &.{lossy_ogg});
+    const stream = openFile(acb, "WORK:lossy.ogg", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expectEqual(@as(u32, 4500), info.frames);
+
+    var straight: [4500 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, stream, 2, 1999, &straight));
+    // A seek lands on the very sample decoding straight through gives;
+    // back to the start, the start again.
+    var some: [400 * 2]i16 = undefined;
+    for ([_]u32{ 3000, 77, 0, 4400 }) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        const want: i32 = @intCast(@min(400, 4500 - frame));
+        try testing.expectEqual(want, acb.DecodeAudio(stream, &some, 400));
+        const count: usize = @intCast(want * 2);
+        try testing.expectEqualSlices(i16, straight[frame * 2 ..][0..count], some[0..count]);
+    }
 }

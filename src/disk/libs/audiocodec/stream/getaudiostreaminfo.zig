@@ -29,7 +29,10 @@ const _stream = @import("_stream.zig");
 /// name. An MP3's length is exact when its encoder wrote it down (a Xing
 /// or Info frame), worked out from its bit rate and the file's size
 /// otherwise, and 0 for a stream read through a function without that
-/// frame.
+/// frame. A FLAC's is its STREAMINFO's. An Ogg Vorbis file's is its last
+/// page's position, exact; read through a function it is 0. The bit rate
+/// of a FLAC is the average its size and length give, of a Vorbis the
+/// one its header names.
 ///
 /// CONTEXT:
 /// - Waits: no.

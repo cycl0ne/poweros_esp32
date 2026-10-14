@@ -242,6 +242,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/8SVX", .source = "devs/datatypes/8SVX" },
     .{ .disk = "devs/datatypes/MP3", .source = "devs/datatypes/MP3" },
     .{ .disk = "devs/datatypes/WAV", .source = "devs/datatypes/WAV" },
+    .{ .disk = "devs/datatypes/FLAC", .source = "devs/datatypes/FLAC" },
+    .{ .disk = "devs/datatypes/Ogg", .source = "devs/datatypes/Ogg" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
     .{ .disk = "devs/datatypes/ASCII", .source = "devs/datatypes/ASCII" },
     .{ .disk = "devs/datatypes/Binary", .source = "devs/datatypes/Binary" },

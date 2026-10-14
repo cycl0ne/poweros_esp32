@@ -31,14 +31,18 @@ const _stream = @import("_stream.zig");
 ///
 /// BEHAVIOR:
 /// The answers are what the stream's tags said when it was opened: an
-/// MP3's ID3v2 tag, over an ID3v1 tag at its end, or a WAV's INFO list.
+/// MP3's ID3v2 tag, over an ID3v1 tag at its end, a WAV's INFO list, or
+/// the Vorbis comments of a FLAC or an Ogg Vorbis stream (SINCE 1.2).
 /// A text the tags do not hold is empty, a number 0. The names are whole,
 /// up to 127 characters - the info's are cut at 63 - and a comment up to
 /// 255. A genre an MP3 gives by ID3v1's number is named. `ACA_Picture` is
 /// null unless the stream was opened with `ACA_KeepPicture` and its tags
 /// hold a picture: then it is that picture, the front cover where there
-/// are several. The chapters are an ID3v2 tag's CHAP frames, each with
-/// the title of its own TIT2 - up to 256 of them.
+/// are several - an ID3v2 tag's, a FLAC's PICTURE block, an Ogg stream's
+/// METADATA_BLOCK_PICTURE comment. The chapters are an ID3v2 tag's CHAP
+/// frames, each with the title of its own TIT2, or the CHAPTERnnn and
+/// CHAPTERnnnNAME comments, each ending where the next begins - up to 256
+/// of them.
 ///
 /// CONTEXT:
 /// - Waits: no.

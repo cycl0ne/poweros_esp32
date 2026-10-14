@@ -5,17 +5,17 @@
 //! A program opens a stream on sound - a file by its name, a file it has
 //! open, or bytes a function of its own hands over (a download, a network
 //! stream) - and the library finds out what it is by its first bytes:
-//! WAV, MP3. Then `DecodeAudio` hands out the sound as 16-bit samples, one
-//! frame after the other (a sample a channel, the channels interleaved,
-//! left first), until the end - as much at a time as the program asks
-//! for, so a song is never decoded whole. `GetAudioStreamInfo` says what
-//! the sound is: its rate and channels, its length where it is known, and
-//! the title, artist and album its tags name. `GetAudioStreamAttrs` gives
-//! the rest of the tags - the names at full length, the year, the track,
-//! the genre, a comment, the chapters a mix or a book is marked in - and
-//! the picture they hold, a cover, when the stream was opened with
-//! `ACA_KeepPicture`. `SeekAudio` moves to a frame
-//! where the stream can be read from anywhere.
+//! WAV, MP3, FLAC, Vorbis in Ogg. Then `DecodeAudio` hands out the sound
+//! as 16-bit samples, one frame after the other (a sample a channel, the
+//! channels interleaved, left first), until the end - as much at a time
+//! as the program asks for, so a song is never decoded whole.
+//! `GetAudioStreamInfo` says what the sound is: its rate and channels, its
+//! length where it is known, and the title, artist and album its tags
+//! name. `GetAudioStreamAttrs` gives the rest of the tags - the names at
+//! full length, the year, the track, the genre, a comment, the chapters a
+//! mix or a book is marked in - and the picture they hold, a cover, when
+//! the stream was opened with `ACA_KeepPicture`. `SeekAudio` moves to a
+//! frame where the stream can be read from anywhere.
 //!
 //! The samples go to audio.device as they are: a stream of `AUDIO_S16`
 //! at the rate and channels the info gives.
@@ -36,6 +36,10 @@ pub const ACODEC_UNKNOWN: u32 = 0;
 pub const ACODEC_WAV: u32 = 1;
 /// MPEG audio Layer III - MP3: MPEG-1, 2 and 2.5.
 pub const ACODEC_MP3: u32 = 2;
+/// FLAC: lossless, 4 to 24 bits a sample (SINCE 1.2).
+pub const ACODEC_FLAC: u32 = 3;
+/// Vorbis in Ogg pages - an .ogg or .oga file (SINCE 1.2).
+pub const ACODEC_VORBIS: u32 = 4;
 
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.
@@ -136,7 +140,8 @@ pub const ACERR_OPEN: i32 = -2;
 /// Not a kind of sound the library knows.
 pub const ACERR_UNKNOWN: i32 = -3;
 /// A kind it knows, in a form it does not decode: an MP3 of layer I or II,
-/// a WAV that is not PCM or float, more than two channels.
+/// a WAV that is not PCM or float, a FLAC of more than 24 bits or carried
+/// in Ogg, a Vorbis floor of type 0, more than two channels.
 pub const ACERR_UNSUPPORTED: i32 = -4;
 /// The source would not give its bytes.
 pub const ACERR_READ: i32 = -5;
@@ -164,7 +169,8 @@ pub const AudioStreamInfo = extern struct {
     bits: u32 = 0,
     /// Whether SeekAudio can move it: a file, read where it lies.
     seekable: u32 = 0,
-    /// What its tags name it - ID3 for an MP3, the INFO list for a WAV -
+    /// What its tags name it - ID3 for an MP3, the INFO list for a WAV,
+    /// Vorbis comments for a FLAC or an Ogg Vorbis stream -
     /// NUL-terminated, empty when it has none.
     title: [64]u8 = @splat(0),
     artist: [64]u8 = @splat(0),

@@ -7,6 +7,8 @@ const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
 const _stream = @import("_stream.zig");
 const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
+const flac = @import("../flac/_flac.zig");
+const vorbis = @import("../vorbis/_vorbis.zig");
 
 /// Moves a stream to a frame.
 ///
@@ -25,7 +27,10 @@ const mp3 = @import("../mp3/_mp3.zig");
 /// 0, or an ACERR_*: ACERR_NOSEEK for a stream read through a function.
 ///
 /// BEHAVIOR:
-/// A WAV goes to the frame exactly. An MP3 goes to the frame its encoder's
+/// A WAV, a FLAC and an Ogg Vorbis file go to the frame exactly: a FLAC
+/// from its seek table's point before it, or a frame a search halving the
+/// file finds, an Ogg Vorbis from the page a like search finds, decoding
+/// on to the frame. An MP3 goes to the frame its encoder's
 /// table of contents points to, or the bit rate when it has none - exact
 /// for a constant rate, near for a variable one - and the frame or two
 /// after it may be left out, until the reservoir of bits they reach back
@@ -61,6 +66,8 @@ pub fn SeekAudio(_: *AudioCodecBase, public: *ac.AudioStream, frame: u32) i32 {
     return switch (stream.codec) {
         .wav => |*state| wav.seek(stream, state, frame),
         .mp3 => |*state| mp3.seek(stream, state, frame),
+        .flac => |*state| flac.seek(stream, state, frame),
+        .vorbis => |*state| vorbis.seek(stream, state, frame),
         .none => ac.ACERR_NOSEEK,
     };
 }

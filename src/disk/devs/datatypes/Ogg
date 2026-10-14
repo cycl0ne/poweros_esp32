@@ -1,0 +1,1 @@
+NAME=Ogg BASE=audiocodec GROUP=soun ID=OGG MASK=OggS PATTERN=#?.(ogg|oga) TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

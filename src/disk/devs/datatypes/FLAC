@@ -1,0 +1,1 @@
+NAME=FLAC BASE=audiocodec GROUP=soun ID=FLAC MASK=fLaC PATTERN=#?.flac TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

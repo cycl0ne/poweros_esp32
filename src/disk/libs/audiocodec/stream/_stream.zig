@@ -20,12 +20,14 @@
 //! a file whose own tags at the front say nothing.
 //!
 //! **The tags** are kept at full length in `tags`: ID3v1's first, then
-//! what ID3v2 or a WAV's INFO list says over them. The info's names are
-//! cut from them once the kind's header is read (`nameInfo`). A picture is
-//! kept only when the program asked for it, in a block of its own.
+//! what ID3v2, a WAV's INFO list or Vorbis comments say over them. The
+//! info's names are cut from them once the kind's header is read
+//! (`nameInfo`). A picture is kept only when the program asked for it, in
+//! a block of its own.
 //!
 //! The stream is one allocation, cleared: every field's starting value is
-//! zero, so nothing large is ever built on a stack.
+//! zero, so nothing large is ever built on a stack. A FLAC's blocks and an
+//! Ogg Vorbis stream's setup are memory of their own, given back with it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -35,6 +37,8 @@ const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
 const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const layer3 = @import("../mp3/layer3.zig");
+const flac = @import("../flac/_flac.zig");
+const vorbis = @import("../vorbis/_vorbis.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
 /// it has to agree with the frames after it - and a WAV's header.
@@ -78,6 +82,8 @@ pub const Codec = union(enum) {
     none,
     wav: wav.Wav,
     mp3: mp3.Mp3,
+    flac: flac.Flac,
+    vorbis: vorbis.Vorbis,
 };
 
 pub const Stream = struct {
@@ -113,6 +119,11 @@ pub const Stream = struct {
 /// The stream given back: the file it opened closed, its memory freed.
 pub fn destroy(stream: *Stream) void {
     const base = stream.base;
+    switch (stream.codec) {
+        .flac => |*state| flac.free(stream, state),
+        .vorbis => |*state| vorbis.free(stream, state),
+        else => {},
+    }
     if (stream.owns_file) {
         if (stream.file) |file| _ = base.dos_base.Close(file);
     }

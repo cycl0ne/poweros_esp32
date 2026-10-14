@@ -283,7 +283,7 @@ button that plays and pauses beside the sound's names, its rate and
 channels, and a bar of how far it has played.
 
 `audiocodec.datatype` is every kind `LIBS:audiocodec.library` decodes -
-WAV and MP3 - with the names their tags give (`DTA_ObjName`,
+WAV, MP3, FLAC and Ogg Vorbis - with the names their tags give (`DTA_ObjName`,
 `DTA_ObjAuthor`, `DTA_ObjAnnotation`); a kind the library learns needs
 only a descriptor naming `BASE=audiocodec`. `8svx.datatype` reads an
 IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two

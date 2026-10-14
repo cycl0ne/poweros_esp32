@@ -1,12 +1,13 @@
 # Player
 
-Player plays sound files - WAV and MP3 - in a window, with a picture of
-the sound under its controls: a plasma, the wave, or the spectrum's bars.
+Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - in a window,
+with a picture of the sound under its controls: a plasma, the wave, or
+the spectrum's bars.
 
 ## Starting it
 
-Double-click its icon, double-click a `.mp3` or `.wav` file, or type in a
-shell:
+Double-click its icon, double-click a `.mp3`, `.wav`, `.flac` or `.ogg`
+file, or type in a shell:
 
 ```
 Player FILES/M,VOLUME/K/N,LOOK/K
