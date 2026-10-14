@@ -18,7 +18,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const timer = sdk.devices.timer;
-const _wifi = @import("_wifi.zig");
+const _wifi = @import("_esp32s3wifi.zig");
 const WifiBase = _wifi.WifiBase;
 const vendor = @import("vendor.zig");
 

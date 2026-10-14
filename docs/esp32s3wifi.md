@@ -1,13 +1,15 @@
-# wifi.device
+# esp32s3wifi.device
 
-`DEVS:networks/wifi.device` is the chip's radio as a station. It answers the
-network device API with Ethernet framing, and adds the wireless requests to
-scan, join and leave.
+`DEVS:networks/esp32s3wifi.device` is the ESP32-S3's radio as a station. It
+answers the network device API with Ethernet framing, and adds the wireless
+requests to scan, join and leave.
 
 The radio runs only on Espressif's closed libraries (libcore, libnet80211,
 libpp for the MAC, libphy for the radio front end), so the device is two
 halves: those libraries, linked in, and our side - the OS adapter they call,
-the PHY bring-up, the supplicant, and the unit the requests come through.
+the PHY bring-up, the supplicant's table, and the unit the requests come
+through. WPA2-Personal - the network's key, the station's element, the key
+handshake - is `LIBS:wpa.library`'s.
 The libraries are fetched once by `scripts/fetch-wifi.sh` at pinned commits
 and checked against their sha256; nothing of them is committed. A tree
 without them builds everything but this device.
@@ -16,8 +18,8 @@ without them builds everything but this device.
 
 | file | what it holds |
 | --- | --- |
-| `wifi.zig` | the device: its ROM tag, its task, the requests, the radio started, the libraries' events acted on |
-| `_wifi.zig` | the base, and the one block of internal memory the radio's side lives in |
+| `esp32s3wifi.zig` | the device: its ROM tag, its task, the requests, the radio started, the libraries' events acted on |
+| `_esp32s3wifi.zig` | the base, and the one block of internal memory the radio's side lives in |
 | `vendor.zig` | every declaration of the libraries' own API, with the layout of each struct checked at compile time |
 | `osi/` | the adapter table (`wifi_osi_funcs_t`, 120 words): interrupts, critical sections, semaphores, queues, tasks, timers, memory, time, randomness, the log |
 | `phy/` | the radio front end: its power domain, its clocks, the calibration |
@@ -25,7 +27,7 @@ without them builds everything but this device.
 | `join.zig` | S2_SETOPTIONS and S2_GETNETWORKINFO: joining, leaving, and what the station is joined to; and why it came off a network |
 | `link.zig` | frames in and out, and the unit's carrier |
 | `rejoin.zig` | joining again, after a pause, when the station comes off a network it was asked to be on |
-| `wpa/` | the supplicant: security elements, the keys, the key handshake |
+| `wpa/` | the supplicant's table for the libraries: the security elements answered from wpa.library, a protected join prepared, the key handshake's hook, the crypto table |
 
 ## The adapter
 
@@ -68,14 +70,16 @@ passphrase for a protected one. Two tasks share the work, because the
 libraries ask for the security while they associate and their task cannot
 be held up:
 
-- **the device's task** makes the pairwise master key when the request comes
-  in - PBKDF2 with HMAC-SHA1 over 4096 rounds, which is 8192 hashes - and
-  keeps it with the network and passphrase it was made for, so joining the
-  same network again costs nothing;
-- **the libraries' task** runs `wpa_sta_connect`, which reads that key, takes
-  the beacon's RSN element to hold against what message 3 will repeat,
-  builds the station's own element, hands it over for the association
-  request, and lets the association go ahead.
+- **the device's task** has wpa.library make the network's key when the
+  request comes in (`PassphraseKey` - PBKDF2 with HMAC-SHA1 over 4096
+  rounds, which is 8192 hashes) and keeps it with the network and
+  passphrase it was made for, so joining the same network again costs
+  nothing;
+- **the libraries' task** runs `wpa_sta_connect`, which takes the beacon's
+  RSN element, has wpa.library make the station's own from it
+  (`StationElement`), hands that over for the association request, makes
+  the key handshake (`CreateHandshake`) with both elements, both addresses
+  and the key, and lets the association go ahead.
 
 The request is answered at once. The join's outcome is the link: the unit's
 carrier comes when the station has joined and goes when it leaves or is
@@ -115,48 +119,37 @@ device's task becoming a process that reads and writes the flash disk.
 
 ## The key handshake
 
-`wpa/` is the station's side of WPA2-Personal, written here on
-crypto.library:
+The handshake is wpa.library's (`sdk/docs/guides/network.md`); `wpa/` is
+what the radio's libraries need around it:
 
-- `keys.zig` - the pairwise master key (PBKDF2-SHA1), the PRF that stretches
-  it, the pairwise transient key, the MIC (HMAC-SHA1 cut to 16 bytes), and
-  AES key unwrap for the group key;
-- `ie.zig` - the RSN and WPA elements: parsed for the libraries on every
-  beacon and probe response, and built for the association;
-- `eapol.zig` - the 4-way and group key handshakes as a machine with no
-  outside, so the host tests drive it without a radio;
-- `supplicant.zig` - the libraries' table (`wpa_funcs`), and `Station`, which
-  is what the machine reaches outside itself.
+- `supplicant.zig` - the libraries' table (`wpa_funcs`); `Station`, what a
+  join leaves ready - the key, both elements, both addresses, the
+  handshake; and the handshake's hook, which sends its frames with
+  `esp_wifi_internal_tx`, puts the keys into the MAC and opens the port;
+- `ie.zig` - the RSN and WPA elements the libraries ask after on every
+  beacon and probe response, read by wpa.library (`ParseSecurity`) and
+  answered in the libraries' own struct and cipher types;
+- `crypto.zig` - the crypto table the libraries start with, every entry
+  refusing: they do no key handling of their own.
 
 Message 4 goes out before the keys are installed, and only its
 transmit-done callback lets them in: installed any earlier, the frame would
 leave encrypted under a key the access point does not use yet. The
-callback's flag says whether sending **failed**, and which frame went out
-is read off the frame itself (`eapol.isFinal`: no key data, or the secure
-bit), so message 2 going out is never taken for message 4.
+libraries confirm the EAPOL frames they were given in the order they were
+given them, so the station keeps the handshake's numbers of those not yet
+confirmed in that order, and hands the oldest to `HandshakeSent` with each
+confirmation - which lets the keys in for message 4's number alone, so
+message 2 going out is never taken for message 4. The callback's flag says
+whether sending **failed**.
 
 The pairwise key goes in at index 0 for both directions
 (`PAIRWISE | TX | RX`) with a zero eight-byte counter; the group key for
 receiving only (`GROUP | RX`), with the six bytes of counter message 3
-carries. A key set without its directions is taken and never used.
-
-Three things the standard leaves to the implementation, each with its
-reason:
-
-- **the group key's send bit is dropped.** A station that has a pairwise key
-  never sends under the group key, and installing it as one to send has the
-  hardware use its index for what the station sends, which stops its
-  traffic.
-- **a replay counter is taken only once the frame carrying it has been
-  believed** - its MIC checked. Taken earlier, one forged frame with a high
-  counter leaves every real retransmission looking stale and the handshake
-  stuck.
-- **the MIC covers what the 802.1X header declares**, not what the radio
-  handed over, and it is taken over the frame where it lies rather than a
-  copy, so no buffer bounds a frame the station reads.
-
-A message 3 whose RSN element differs from the beacon's is a downgrade, and
-the station leaves with reason 17.
+carries. A key set without its directions is taken and never used. The
+group key's send bit is dropped: a station that has a pairwise key never
+sends under the group key, and installing it as one to send has the
+hardware use its index for what the station sends, which stops its
+traffic.
 
 ### The memory functions
 
@@ -202,17 +195,10 @@ and the pings to milliseconds.
 ## Tests
 
 `tests/` holds the host tests: the adapter's ring and timer ordering, the
-key vectors (IEEE 802.11's PBKDF2 and PRF, RFC 3394's key wrap), the
-security elements including every prefix of a good one, and the handshake
-driven by a mock access point - the whole 4-way exchange, a downgraded
-message 3, key data longer than any frame the station sends, bytes past the
-declared length, a forged replay counter, a handshake started over, and a
-group rekey. `format.zig` has its own, including a list built by hand the
-way the libraries' compiler builds one.
-
-The access point in those tests builds its frames from the frame layout
-written out in the test, not from `eapol.zig`'s own constants, so a wrong
-offset there fails a test instead of agreeing with itself.
+layouts the libraries read, and what the libraries are answered for a
+security element. `format.zig` has its own, including a list built by hand
+the way the libraries' compiler builds one. The keys and the handshake are
+wpa.library's, and tested there.
 
 ## Proved on the board
 
@@ -235,6 +221,10 @@ a page fetched with `HTTPGet` and the clock set with `TimeSync`.
 
 `DEVS:NetInterfaces/WLAN0` is on the disk: the boot brings the interface
 up, and it takes its address once the radio has been joined to a network.
+
+The key handshake on wpa.library (esp32s3wifi.device 1.1) is not yet tried
+on the board; the handshake proved there was the device's own, which
+wpa.library's is made from.
 
 ## Not done yet
 

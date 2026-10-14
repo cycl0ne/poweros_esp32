@@ -3,7 +3,7 @@
 //!
 //! usage: romld <program.ld> <out.ld> <rom.ld>...
 //!
-//! A vendor archive linked into a program (wifi.device's radio libraries)
+//! A vendor archive linked into a program (esp32s3wifi.device's radio libraries)
 //! calls functions and reads data that live in the chip's mask ROM, at
 //! fixed addresses its vendor's linker scripts name. Those scripts hold
 //! more than names - memory regions, sections of their own system - so

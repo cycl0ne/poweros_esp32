@@ -89,6 +89,7 @@ test "an element read, and the station's made from it" {
     try testing.expectEqual(wpa.WPA_CIPHER_CCMP, security.pairwise);
     try testing.expectEqual(wpa.WPA_AKM_PSK, security.managements);
     try testing.expectEqual(@as(u32, 0x000C), security.capabilities);
+    try testing.expectEqual(wpa.WPA_CIPHER_AES_128_CMAC, security.group_management);
 
     var own: [wpa.WPA_ELEMENT_MAX]u8 = undefined;
     const length = rig.wb.StationElement(&network_rsn, &own, own.len);
@@ -111,6 +112,7 @@ test "an element read, and the station's made from it" {
 /// What the hook was asked, the last time.
 const Heard = struct {
     kind: u32 = 0,
+    number: u32 = 0,
     frame: [256]u8 = @splat(0),
     length: usize = 0,
     calls: u32 = 0,
@@ -121,6 +123,7 @@ fn hookEntry(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
     const heard: *Heard = @ptrCast(@alignCast(hook.data.?));
     const asked: *const wpa.HandshakeMessage = @ptrCast(@alignCast(message.?));
     heard.kind = asked.kind;
+    heard.number = asked.number;
     heard.length = asked.length;
     @memcpy(heard.frame[0..asked.length], asked.data.?[0..asked.length]);
     heard.calls += 1;
@@ -169,6 +172,7 @@ test "a handshake made, message 1 answered through the hook, freed" {
     // Message 2 to send: to the access point, from the station, EAPOL,
     // with the station's element as its key data.
     try testing.expectEqual(wpa.WPAHM_SEND, heard.kind);
+    try testing.expectEqual(@as(u32, 1), heard.number);
     try testing.expectEqual(@as(usize, 14 + 99 + wpa.WPA_ELEMENT_MAX), heard.length);
     try testing.expectEqualSlices(u8, &authenticator, heard.frame[0..6]);
     try testing.expectEqualSlices(u8, &supplicant, heard.frame[6..12]);
@@ -176,9 +180,10 @@ test "a handshake made, message 1 answered through the hook, freed" {
     try testing.expectEqualSlices(u8, own[0..wpa.WPA_ELEMENT_MAX], heard.frame[14 + 99 ..][0..wpa.WPA_ELEMENT_MAX]);
     try testing.expectEqual(wpa.WPAHS_RUNNING, rig.wb.HandshakeStatus(handshake));
 
-    // Message 2 gone: no keys yet, nothing asked.
+    // Message 2 gone, and a number never sent: no keys, nothing asked.
     const calls = heard.calls;
-    rig.wb.HandshakeSent(handshake);
+    rig.wb.HandshakeSent(handshake, 1);
+    rig.wb.HandshakeSent(handshake, 7);
     try testing.expectEqual(calls, heard.calls);
 
     rig.wb.DeleteHandshake(handshake);

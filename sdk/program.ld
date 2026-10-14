@@ -22,7 +22,7 @@ SECTIONS
   {
     /* Literal pools must precede the code that loads them (l32r). */
     *(.literal .text .literal.* .text.*)
-    /* Vendor archives (wifi.device's radio libraries) name their code by
+    /* Vendor archives (esp32s3wifi.device's radio libraries) name their code by
        where their own system puts it - internal RAM, code that runs
        asleep - and a loaded program has one code segment for all of it. */
     *(.iram1 .iram1.* .wifi0iram .wifi0iram.* .wifirxiram .wifirxiram.*)

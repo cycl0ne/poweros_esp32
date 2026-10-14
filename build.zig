@@ -200,7 +200,7 @@ pub fn build(b: *std.Build) void {
     if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
-    const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
+    const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
     const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
     const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
@@ -252,7 +252,7 @@ pub fn build(b: *std.Build) void {
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
-        b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "wifi.device.seg").step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "esp32s3wifi.device.seg").step);
     }
 
     // The disk image: the same file system code the handler runs
@@ -522,7 +522,7 @@ pub fn build(b: *std.Build) void {
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
-    // wifi.device's own code compiles for the chip even where the vendor
+    // esp32s3wifi.device's own code compiles for the chip even where the vendor
     // libraries it links are missing: as an object, which needs no link.
     const wifi_check = b.addObject(.{
         .name = "wifi_check",
@@ -793,7 +793,7 @@ fn need(b: *std.Build, made: *std.ArrayList([]const u8), dirs: *std.ArrayList([]
 /// Where the radio's vendor libraries are, as an absolute path: the
 /// directory -Dwifi names, or toolchain/espressif-wifi if
 /// scripts/fetch-wifi.sh has filled it. Null without them: the build then
-/// has everything but wifi.device, and says so once.
+/// has everything but esp32s3wifi.device, and says so once.
 /// A font family on the disk: what fontconv makes it from, how, and the
 /// heights that come out.
 const DiskFont = struct {
@@ -884,7 +884,7 @@ fn wifiDir(b: *std.Build, given: ?[]const u8) ?[]const u8 {
     const path = given orelse b.pathFromRoot("toolchain/espressif-wifi");
     var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch {
         if (given != null) std.debug.panic("-Dwifi={s}: no such directory", .{path});
-        std.log.info("no radio libraries (scripts/fetch-wifi.sh): the disk has no wifi.device", .{});
+        std.log.info("no radio libraries (scripts/fetch-wifi.sh): the disk has no esp32s3wifi.device", .{});
         return null;
     };
     dir.close(io);

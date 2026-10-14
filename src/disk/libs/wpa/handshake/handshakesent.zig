@@ -11,13 +11,15 @@ const _handshake = @import("_handshake.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn HandshakeSent(base: *WPABase, handshake: *wpa.Handshake) void
+/// fn HandshakeSent(base: *WPABase, handshake: *wpa.Handshake, frame: u32) void
 /// ```
 ///
 /// SINCE: 1.0. LVO -44.
 ///
 /// INPUTS:
 /// - `handshake`: from CreateHandshake.
+/// - `frame`: the `number` of the WPAHM_SEND message that asked for the
+///   frame.
 ///
 /// RESULT:
 /// None.
@@ -25,12 +27,16 @@ const _handshake = @import("_handshake.zig");
 /// BEHAVIOR:
 /// After message 4 the keys message 3 brought go to the hook - the
 /// pairwise key (WPAHM_PAIRWISEKEY), then the group key (WPAHM_GROUPKEY) -
-/// and the port is opened (WPAHM_AUTHORIZED). After any other frame it
-/// does nothing, so a driver calls it after every frame the hook sent.
+/// and the port is opened (WPAHM_AUTHORIZED). Any other frame's number,
+/// an older message 4's among them, does nothing, so a driver calls this
+/// after every frame the hook sent, in whatever order the radio confirms
+/// them.
 ///
 /// The keys wait for this rather than going in as message 4 is built:
 /// message 4 has to leave unencrypted, and a radio that had the pairwise
-/// key would encrypt it, which the access point can't read.
+/// key would encrypt it, which the access point can't read. That is also
+/// why the frame is named: message 2's confirmation, late, must not let
+/// them in.
 ///
 /// CONTEXT:
 /// - Waits: no, but the hook runs inside, and may.
@@ -45,7 +51,8 @@ const _handshake = @import("_handshake.zig");
 /// NOTES:
 /// "Gone over the air" is the radio's transmit status for the frame. A
 /// driver whose radio says nothing calls this when the frame has left
-/// the host, and hopes.
+/// the host, and hopes. 1.0 took no `frame`: nothing was built against
+/// it before 1.1.
 ///
 /// BUGS:
 /// None known.
@@ -55,9 +62,11 @@ const _handshake = @import("_handshake.zig");
 ///
 /// EXAMPLES:
 /// ```zig
-/// // The radio's status for the EAPOL frame it was handed:
-/// if (handshake) |each| wb.HandshakeSent(each);
+/// // The radio's status for the EAPOL frame the hook sent as `number`:
+/// if (handshake) |each| wb.HandshakeSent(each, number);
 /// ```
-pub fn HandshakeSent(_: *WPABase, handshake: *wpa.Handshake) void {
-    _handshake.sessionOf(handshake).machine.confirmSent();
+pub fn HandshakeSent(_: *WPABase, handshake: *wpa.Handshake, frame: u32) void {
+    const session = _handshake.sessionOf(handshake);
+    if (frame == 0 or frame != session.final_number) return;
+    session.machine.confirmSent();
 }

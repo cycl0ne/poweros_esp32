@@ -15,6 +15,6 @@
  * file does not know is an error, with its line and column; see
  * C:net/AddNetInterface for the list.
  */
-Device     = networks/wifi.device
+Device     = networks/esp32s3wifi.device
 Unit       = 0
 Configure  = DHCP

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! wifi.device: the chip's radio as a station, on the network device API
-//! (sdk/devices/network.zig). It is in DEVS:networks/, and the board's
+//! esp32s3wifi.device: the ESP32-S3's radio as a station, on the network
+//! device API (sdk/devices/network.zig). It is in DEVS:networks/, and the board's
 //! system tag list says whether the board's module gives the radio an
 //! antenna; a board without it gets no device.
 //!
@@ -19,8 +19,9 @@
 //! unit (sdk/devices/network/unit.zig), whose link (`link.zig`) has a
 //! carrier while the station is joined; it scans (S2_GETNETWORKS,
 //! `scan.zig`) and joins and leaves (S2_SETOPTIONS, S2_GETNETWORKINFO,
-//! `join.zig`), WPA2-Personal included: the key handshake is the
-//! supplicant's (`wpa/`), and runs on the libraries' task.
+//! `join.zig`), WPA2-Personal included: the key handshake is
+//! wpa.library's, which the supplicant's table (`wpa/`) runs on the
+//! libraries' task.
 //!
 //! **Every request runs on the device's own task**, the one that started
 //! the radio: BeginIO queues them to it.
@@ -34,7 +35,7 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const _wifi = @import("_wifi.zig");
+const _wifi = @import("_esp32s3wifi.zig");
 const WifiBase = _wifi.WifiBase;
 const Work = _wifi.Work;
 const _osi = @import("osi/_osi.zig");
@@ -56,8 +57,8 @@ comptime {
 
 pub const DEVICE_NAME = _wifi.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "26.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "14.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -340,13 +341,17 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.station = efuse.stationAddress();
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     base.utility = @ptrCast(utility_lib);
-    // crypto.library is the key handshake's engines. Without it the radio
-    // still scans and joins a network with no security, so a board that has
-    // not got it keeps a device that says so once.
+    // wpa.library is the key handshake, and crypto.library its engines,
+    // opened here - on the opener's process - so that both are in memory
+    // when the device's task and the libraries' use them. Without them the
+    // radio still scans and joins a network with no security, so a board
+    // that has not got them keeps a device that says so once.
     if (sys_base.OpenLibrary(sdk.crypto.CRYPTONAME, 1)) |crypto_lib| {
         base.crypto = @ptrCast(crypto_lib);
-    } else {
-        sdk.exec.kprintf(sys_base, "%s: no crypto.library, so no protected network\n", .{DEVICE_NAME});
+        if (sys_base.OpenLibrary(sdk.wpa.WPANAME, 1)) |wpa_lib| base.wpa_base = @ptrCast(wpa_lib);
+    }
+    if (base.wpa_base == null) {
+        sdk.exec.kprintf(sys_base, "%s: no wpa.library or crypto.library, so no protected network\n", .{DEVICE_NAME});
     }
     base.scans.init(.message);
 

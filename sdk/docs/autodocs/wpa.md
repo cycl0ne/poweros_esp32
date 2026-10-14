@@ -258,7 +258,7 @@ Tells the handshake that a frame it asked to send has gone over the air.
 **SYNOPSIS**
 
 ```zig
-fn HandshakeSent(base: *WPABase, handshake: *wpa.Handshake) void
+fn HandshakeSent(base: *WPABase, handshake: *wpa.Handshake, frame: u32) void
 ```
 
 **SINCE**
@@ -268,6 +268,8 @@ fn HandshakeSent(base: *WPABase, handshake: *wpa.Handshake) void
 **INPUTS**
 
 - `handshake`: from CreateHandshake.
+- `frame`: the `number` of the WPAHM_SEND message that asked for the
+  frame.
 
 **RESULT**
 
@@ -277,12 +279,16 @@ None.
 
 After message 4 the keys message 3 brought go to the hook - the
 pairwise key (WPAHM_PAIRWISEKEY), then the group key (WPAHM_GROUPKEY) -
-and the port is opened (WPAHM_AUTHORIZED). After any other frame it
-does nothing, so a driver calls it after every frame the hook sent.
+and the port is opened (WPAHM_AUTHORIZED). Any other frame's number,
+an older message 4's among them, does nothing, so a driver calls this
+after every frame the hook sent, in whatever order the radio confirms
+them.
 
 The keys wait for this rather than going in as message 4 is built:
 message 4 has to leave unencrypted, and a radio that had the pairwise
-key would encrypt it, which the access point can't read.
+key would encrypt it, which the access point can't read. That is also
+why the frame is named: message 2's confirmation, late, must not let
+them in.
 
 **CONTEXT**
 
@@ -300,7 +306,8 @@ Nothing changes hands.
 
 "Gone over the air" is the radio's transmit status for the frame. A
 driver whose radio says nothing calls this when the frame has left
-the host, and hopes.
+the host, and hopes. 1.0 took no `frame`: nothing was built against
+it before 1.1.
 
 **BUGS**
 
@@ -313,8 +320,8 @@ None known.
 **EXAMPLES**
 
 ```zig
-// The radio's status for the EAPOL frame it was handed:
-if (handshake) |each| wb.HandshakeSent(each);
+// The radio's status for the EAPOL frame the hook sent as `number`:
+if (handshake) |each| wb.HandshakeSent(each, number);
 ```
 
 ## HandshakeStatus
@@ -405,7 +412,8 @@ or one whose fields run past its length or make no sense.
 **BEHAVIOR**
 
 A field the element leaves out has the default IEEE 802.11 gives it:
-for RSN, CCMP for both ciphers and 802.1X; for WPA, TKIP and 802.1X.
+for RSN, CCMP for both ciphers, 802.1X, and AES-128-CMAC for protected
+management frames; for WPA, TKIP and 802.1X.
 The pairwise ciphers and key managements are all those offered, as
 bits; the group cipher is one bit.
 
@@ -422,7 +430,7 @@ Nothing is allocated.
 
 **NOTES**
 
-None.
+`group_management` since 1.1.
 
 **BUGS**
 

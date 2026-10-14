@@ -216,9 +216,9 @@ pub const p4_files = [_]File{
 
 /// The radio's device: built only when the vendor libraries it links are
 /// at hand (scripts/fetch-wifi.sh), given to this package as `-Dwifi=`.
-pub const wifi_device: Program = .{ .disk = "devs/networks/wifi.device", .source = "devs/networks/wifi/wifi.zig", .name = "wifi.device" };
+pub const wifi_device: Program = .{ .disk = "devs/networks/esp32s3wifi.device", .source = "devs/networks/esp32s3wifi/esp32s3wifi.zig", .name = "esp32s3wifi.device" };
 
-/// The vendor archives wifi.device links, and the chip ROM's scripts.
+/// The vendor archives esp32s3wifi.device links, and the chip ROM's scripts.
 pub const wifi_archives = [_][]const u8{ "libcore.a", "libnet80211.a", "libpp.a", "libphy.a" };
 pub const wifi_rom_scripts = [_][]const u8{ "esp32s3.rom.ld", "esp32s3.rom.libc.ld", "esp32s3.rom.libgcc.ld", "esp32s3.rom.api.ld" };
 
@@ -302,7 +302,7 @@ pub const files = [_]File{
 
 pub fn build(b: *std.Build) void {
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseSafe)") orelse .ReleaseSafe;
-    const wifi = b.option([]const u8, "wifi", "The directory with the radio's vendor libraries (scripts/fetch-wifi.sh); without it there is no wifi.device");
+    const wifi = b.option([]const u8, "wifi", "The directory with the radio's vendor libraries (scripts/fetch-wifi.sh); without it there is no esp32s3wifi.device");
     const chip = b.option(poweros_sdk.Chip, "chip", "The chip the programs are built for (default: esp32s3)") orelse .esp32s3;
     const sdk = b.dependency("poweros_sdk", .{});
     // The radio's vendor libraries are the S3's.
@@ -320,7 +320,7 @@ pub fn build(b: *std.Build) void {
             .rom_scripts = b.allocator.dupe(std.Build.LazyPath, &scripts) catch @panic("OOM"),
         });
         b.addNamedLazyPath(wifi_device.disk, seg);
-        b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "wifi.device.seg").step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "esp32s3wifi.device.seg").step);
     }
     for (programs) |program| {
         if (!builtFor(program, chip)) continue;

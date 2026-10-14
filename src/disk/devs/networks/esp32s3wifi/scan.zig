@@ -14,7 +14,7 @@ const exec = sdk.exec;
 const net = sdk.devices.network;
 const wireless = sdk.devices.wireless;
 const TagItem = sdk.utility.TagItem;
-const _wifi = @import("_wifi.zig");
+const _wifi = @import("_esp32s3wifi.zig");
 const WifiBase = _wifi.WifiBase;
 const vendor = @import("vendor.zig");
 

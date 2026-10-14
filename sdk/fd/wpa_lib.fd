@@ -28,8 +28,9 @@ void DeleteHandshake(?*wpa.Handshake handshake)
 /// An EAPOL frame from the access point, from its 802.1X header on
 /// (`length` bytes).
 void HandshakeFrame(*wpa.Handshake handshake, [*]const u8 frame, u32 length)
-/// A frame the handshake asked to send has gone over the air.
-void HandshakeSent(*wpa.Handshake handshake)
+/// The frame the handshake asked to send as number `frame` has gone over
+/// the air.
+void HandshakeSent(*wpa.Handshake handshake, u32 frame)
 /// Where the handshake stands: WPAHS_*.
 u32 HandshakeStatus(*wpa.Handshake handshake)
 ##end

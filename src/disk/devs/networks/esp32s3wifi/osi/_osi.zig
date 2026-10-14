@@ -7,7 +7,7 @@
 //! `_malloc(size)`, `_rand()`, `_task_delay(ticks)` - so the adapter
 //! reaches its state through `adapter`, set when the device starts the
 //! radio and cleared when it stops. It is the only module global the
-//! device has, and the codex's exception for wifi.device names it.
+//! device has, and the codex's exception for esp32s3wifi.device names it.
 //!
 //! **A thread.** Every task that calls into the libraries - the ones they
 //! create and the device's own - has a `Thread`, found through its
@@ -129,7 +129,7 @@ pub fn current() *Thread {
     const sys = get().sys;
     const task = sys.FindTask(null).?;
     if (task.user_data) |data| return @ptrCast(@alignCast(data));
-    return adopt(task) orelse @panic("wifi.device: no signal or memory for a thread");
+    return adopt(task) orelse @panic("esp32s3wifi.device: no signal or memory for a thread");
 }
 
 /// A thread for the running task: its wake signal, and a timer of its

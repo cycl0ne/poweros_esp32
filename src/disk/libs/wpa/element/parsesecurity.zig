@@ -27,7 +27,8 @@ const _element = @import("_element.zig");
 ///
 /// BEHAVIOR:
 /// A field the element leaves out has the default IEEE 802.11 gives it:
-/// for RSN, CCMP for both ciphers and 802.1X; for WPA, TKIP and 802.1X.
+/// for RSN, CCMP for both ciphers, 802.1X, and AES-128-CMAC for protected
+/// management frames; for WPA, TKIP and 802.1X.
 /// The pairwise ciphers and key managements are all those offered, as
 /// bits; the group cipher is one bit.
 ///
@@ -41,7 +42,7 @@ const _element = @import("_element.zig");
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// None.
+/// `group_management` since 1.1.
 ///
 /// BUGS:
 /// None known.
@@ -63,6 +64,7 @@ pub fn ParseSecurity(_: *WPABase, element: [*]const u8, security: *wpa.Security)
         .group = found.group,
         .managements = found.key_mgmt,
         .capabilities = found.capabilities,
+        .group_management = if (found.proto == wpa.WPA_PROTO_RSN) found.mgmt_group else 0,
     };
     return true;
 }

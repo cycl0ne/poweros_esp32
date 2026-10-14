@@ -563,7 +563,7 @@ labelled by the part's `PART_Label`, or a count with labels of its own.
 A device whose units come and go - telnet.device's and ssh.device's,
 a connection each - counts none and is not listed; a network device's
 units are the board's network parts of its chip, so openeth.device is
-listed in QEMU and wifi.device on a board with the S3's radio. The call
+listed in QEMU and esp32s3wifi.device on a board with the S3's radio. The call
 reads DEVS: each time, so a program asks once and keeps the answer.
 `ShowConfig DEVICES [SPEAKS=serial]` prints the list:
 

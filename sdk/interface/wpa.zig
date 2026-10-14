@@ -36,7 +36,7 @@ pub const Fn = struct {
     pub const CreateHandshake = *const fn (*WPABase, ?[*]const utility.TagItem) callconv(.c) ?*wpa.Handshake;
     pub const DeleteHandshake = *const fn (*WPABase, ?*wpa.Handshake) callconv(.c) void;
     pub const HandshakeFrame = *const fn (*WPABase, *wpa.Handshake, [*]const u8, u32) callconv(.c) void;
-    pub const HandshakeSent = *const fn (*WPABase, *wpa.Handshake) callconv(.c) void;
+    pub const HandshakeSent = *const fn (*WPABase, *wpa.Handshake, u32) callconv(.c) void;
     pub const HandshakeStatus = *const fn (*WPABase, *wpa.Handshake) callconv(.c) u32;
 };
 
@@ -85,9 +85,10 @@ pub const WPABase = opaque {
         return libraries.call(self, LVO.HandshakeFrame, Fn.HandshakeFrame, .{ handshake, frame, length });
     }
 
-    /// A frame the handshake asked to send has gone over the air.
-    pub fn HandshakeSent(self: *WPABase, handshake: *wpa.Handshake) void {
-        return libraries.call(self, LVO.HandshakeSent, Fn.HandshakeSent, .{handshake});
+    /// The frame the handshake asked to send as number `frame` has gone over
+    /// the air.
+    pub fn HandshakeSent(self: *WPABase, handshake: *wpa.Handshake, frame: u32) void {
+        return libraries.call(self, LVO.HandshakeSent, Fn.HandshakeSent, .{ handshake, frame });
     }
 
     /// Where the handshake stands: WPAHS_*.

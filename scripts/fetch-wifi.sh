@@ -1,12 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
-# Fetch the radio's vendor libraries that wifi.device links: Espressif's
+# Fetch the radio's vendor libraries that esp32s3wifi.device links: Espressif's
 # closed Wi-Fi and PHY archives for the ESP32-S3, and the chip ROM's linker
 # scripts (the addresses of the functions and data the archives use from
 # mask ROM). Each comes at a pinned commit and is checked against its
 # sha256, so every build links the same bytes. Nothing of it is committed:
 # it lands in toolchain/espressif-wifi, which the build looks for; without
-# it the disk has everything but wifi.device.
+# it the disk has everything but esp32s3wifi.device.
 set -eu
 
 wifi_lib=7cd4d7b2b4acc38aead43b029ac9409c3eba9c54 # espressif/esp32-wifi-lib

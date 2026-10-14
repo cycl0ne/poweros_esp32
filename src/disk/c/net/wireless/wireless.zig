@@ -4,7 +4,7 @@
 //!
 //!   Wireless DEVICE/K,UNIT/K/N,SCAN/S,JOIN/K,PASSPHRASE/K,LEAVE/S
 //!
-//! It opens the device (networks/wifi.device, unit 0, unless told
+//! It opens the device (networks/esp32s3wifi.device, unit 0, unless told
 //! otherwise). LEAVE leaves the network the station is on. JOIN joins the
 //! network of that name - with PASSPHRASE for a protected one, or else the
 //! passphrase kept for it in ENVARC:Sys/net/networks/<name> - and waits
@@ -41,7 +41,7 @@ const arg_leave = 5;
 const join_wait_ticks = 15 * 50;
 const join_poll_ticks = 25;
 
-const default_device = "networks/wifi.device";
+const default_device = "networks/esp32s3wifi.device";
 
 const MSG_NODEVICE = "Can't open %s unit %u: error %d\n";
 const MSG_FAILED = "%s failed: error %d, wire error %u\n";

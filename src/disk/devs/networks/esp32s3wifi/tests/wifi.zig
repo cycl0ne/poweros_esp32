@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of wifi.device's own code that needs neither the radio nor
+//! Host tests of esp32s3wifi.device's own code that needs neither the radio nor
 //! its libraries: the C formats, the queues' ring, which timer runs next,
 //! and the layouts the libraries read. The adapter's waiting is exec's
 //! Signal and Wait and is proved on the board.

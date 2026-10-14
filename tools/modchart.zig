@@ -58,7 +58,7 @@ const run_time = [_][2][]const u8{
     .{ "rdb.library", "sdcard.device" },
     // The device an interface's file in DEVS:NetInterfaces/ names.
     .{ "bsdsocket.library", "openeth.device" },
-    .{ "bsdsocket.library", "wifi.device" },
+    .{ "bsdsocket.library", "esp32s3wifi.device" },
     .{ "bsdsocket.library", "aic8800.device" },
     .{ "bsdsocket.library", "slip.device" },
     // The serial line a SLIP interface's file names.

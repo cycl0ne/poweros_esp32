@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! wifi.device's own state: the base, and the block of internal memory
+//! esp32s3wifi.device's own state: the base, and the block of internal memory
 //! the radio's side lives in - the adapter's state, which the libraries'
 //! interrupt handler reaches through the adapter's one global.
 
@@ -10,6 +10,7 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const WPABase = sdk.interface.wpa.WPABase;
 const _osi = @import("osi/_osi.zig");
 const supplicant = @import("wpa/supplicant.zig");
 const vendor = @import("vendor.zig");
@@ -19,7 +20,7 @@ const rejoin_file = @import("rejoin.zig");
 const ethernet = net.ethernet;
 const unit_file = net.unit;
 
-pub const DEVICE_NAME = "wifi.device";
+pub const DEVICE_NAME = "esp32s3wifi.device";
 
 /// The block the adapter lives in: internal memory, allocated once and
 /// never moved.
@@ -29,10 +30,9 @@ pub const Work = struct {
     networks: [scan.max_networks]vendor.ApRecord,
     /// Frames in, and the one being sent.
     frames: link.Frames,
-    /// The station's keys and elements, and the key handshake that runs on
-    /// the libraries' task (`wpa/supplicant.zig`).
+    /// The station's key, its elements and the key handshake, which runs
+    /// on the libraries' task (`wpa/supplicant.zig`).
     station: supplicant.Station,
-    handshake: supplicant.Handshake,
 };
 
 pub const Unit = unit_file.Unit(WifiBase);
@@ -51,7 +51,11 @@ pub const WifiBase = extern struct {
     timer_io: timer.TimeRequest = .{},
     /// utility.library, for the tag lists requests carry.
     utility: ?*UtilityBase = null,
-    /// crypto.library, for the key handshake's hashes and ciphers.
+    /// wpa.library, for a protected network's key and its key handshake;
+    /// and crypto.library, which wpa.library opens from the libraries'
+    /// task, held here so that it is in memory then - a task cannot load
+    /// it from the disk.
+    wpa_base: ?*WPABase = null,
     crypto: ?*CryptoBase = null,
     /// The S2_GETNETWORKS waiting for the scan that runs.
     scans: exec.List = .{},

@@ -143,6 +143,11 @@ pub const Work = struct {
     authorized_due: bool = false,
     awaiting_status: bool = false,
     status_index: u8 = 0,
+    /// The handshake's numbers of the frame waiting to go, of the one
+    /// whose status is waited for, and of the one whose status came.
+    control_number: u32 = 0,
+    awaiting_number: u32 = 0,
+    sent_number: u32 = 0,
     /// The network being joined or joined, its access point's station
     /// number, and when the join gives up.
     state: State = .idle,
@@ -342,6 +347,7 @@ fn handOn(context: *anyopaque, record: msg.Record) void {
         .message => |m| indication(work, m.id, m.params),
         .tx_status => if (work.awaiting_status) {
             work.awaiting_status = false;
+            work.sent_number = work.awaiting_number;
             work.sent_due = true;
         },
         .log => |text| Radio.line(work, text),
@@ -380,6 +386,7 @@ fn handshakeHook(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
             const length = frames.outgoing(&work.control, frame, work.station.vif, work.ap, frames.statusWord(work.status_index));
             if (length == 0) return 0;
             work.control_len = length;
+            work.control_number = asked.number;
             startWrites(work.base);
         },
         wpa.WPAHM_PAIRWISEKEY, wpa.WPAHM_GROUPKEY => {
@@ -458,6 +465,7 @@ pub fn startWrites(base: *AicBase) void {
         const length = work.control_len;
         work.control_len = 0;
         work.awaiting_status = true;
+        work.awaiting_number = work.control_number;
         return sendOut(work, work.control[0..length], null);
     }
     if (!work.running or work.state != .joined) return;
@@ -600,7 +608,7 @@ pub fn due(work: *Work) bool {
     }
     if (work.sent_due) {
         work.sent_due = false;
-        if (work.handshake) |handshake| work.base.wpa_base.?.HandshakeSent(handshake);
+        if (work.handshake) |handshake| work.base.wpa_base.?.HandshakeSent(handshake, work.sent_number);
         return true;
     }
     if (work.pairwise_key.due) {

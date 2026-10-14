@@ -21,9 +21,9 @@
 //! 4. `CreateHandshake`, with both elements, both addresses, the key and
 //!    the driver's hook; every EAPOL frame from the access point to
 //!    `HandshakeFrame`. The hook is asked to send the replies.
-//! 5. `HandshakeSent` once each reply has gone over the air. After
-//!    message 4 the hook is handed the pairwise key, the group key, and
-//!    told the port may open (`WPAHM_AUTHORIZED`).
+//! 5. `HandshakeSent` with each reply's number once it has gone over the
+//!    air. After message 4's the hook is handed the pairwise key, the
+//!    group key, and told the port may open (`WPAHM_AUTHORIZED`).
 //! 6. A group rekey later comes the same way: a frame in, the group key
 //!    out through the hook, a reply sent.
 //! 7. `DeleteHandshake` when the station leaves.
@@ -94,6 +94,10 @@ pub const Security = extern struct {
     managements: u32 = 0,
     /// The element's RSN capabilities word.
     capabilities: u32 = 0,
+    /// The cipher for protected management frames' group traffic, one
+    /// WPA_CIPHER_* bit (an RSN element's default, AES-128-CMAC, when it
+    /// names none; 0 for a WPA element).
+    group_management: u32 = 0,
 };
 
 // --- the handshake's hook -----------------------------------------------------
@@ -102,7 +106,7 @@ pub const Security = extern struct {
 ///
 /// - WPAHM_SEND: send the Ethernet frame in `data` (`length` bytes) to the
 ///   access point, unencrypted unless a pairwise key is in, and call
-///   HandshakeSent once it has gone over the air.
+///   HandshakeSent with its `number` once it has gone over the air.
 /// - WPAHM_PAIRWISEKEY: install `data` (`length` bytes, `cipher`) as the
 ///   key for the station's own traffic with the access point.
 /// - WPAHM_GROUPKEY: install `data` (`length` bytes, `cipher`) as the
@@ -139,6 +143,9 @@ pub const HandshakeMessage = extern struct {
     /// WPAHM_LEAVE's reason code: 1 unspecified, 17 the access point's
     /// element in message 3 differs from its beacon's.
     reason: u32 = 0,
+    /// WPAHM_SEND: the frame's number, counted from 1 for the handshake's
+    /// life, which HandshakeSent is given once the frame has gone.
+    number: u32 = 0,
 };
 
 /// What HandshakeStatus answers.

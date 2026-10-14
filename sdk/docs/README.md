@@ -134,6 +134,7 @@ first time something opens it.
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
 | truetype.library | `LIBS:` | TrueType outlines into glyphs | [md](autodocs/truetype.md) · [doc](autodocs/truetype.doc) |
 | usb.library | `LIBS:` | USB buses: their devices, descriptors, pipes to endpoints, class drivers | [md](autodocs/usb.md) · [doc](autodocs/usb.doc), [`usb.zig`](../libs/usb/usb.zig), [`descriptors.zig`](../libs/usb/descriptors.zig) |
+| wpa.library | `LIBS:` | WPA2-Personal for a Wi-Fi driver: a network's key from its passphrase, the station's RSN element, the key handshakes | [md](autodocs/wpa.md) · [doc](autodocs/wpa.doc), [`wpa.zig`](../libs/wpa/wpa.zig) |
 
 ## Devices
 
@@ -162,7 +163,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | telnet.device | `DEVS:` | a TCP connection as a stream, for a console | [`telnet.zig`](../devices/telnet.zig) |
 | ssh.device | `DEVS:` | an SSH connection as a stream, either end: the server's for a console, the client's for a shell elsewhere | [`ssh.zig`](../devices/ssh.zig), [`ssh/keys.zig`](../devices/ssh/keys.zig) |
 | openeth.device | `DEVS:networks/` | QEMU's Ethernet | [`network.zig`](../devices/network.zig) |
-| wifi.device | `DEVS:networks/` | the chip's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
+| esp32s3wifi.device | `DEVS:networks/` | the ESP32-S3's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | slip.device | `DEVS:networks/` | IP over a serial line (SLIP), on any device with serial.device's API | [`network.zig`](../devices/network.zig), [`slip.zig`](../devices/slip.zig) |
 | usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket | [`usbhc.zig`](../devices/usbhc.zig) |
 | usb/hid.device | `DEVS:usb/` | USB keyboards, mice and tablets, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
@@ -170,6 +171,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usb/ftdi.device | `DEVS:usb/` | FTDI's USB serial chips, a unit a line, with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
 | usb/acm.device | `DEVS:usb/` | the communications class's USB serial lines (CDC-ACM), with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
 | usb/ecm.device | `DEVS:usb/` | USB Ethernet adapters (CDC-ECM) as a network device, a unit a link; a class driver | [`network.zig`](../devices/network.zig) |
+| usb/aic8800.device | `DEVS:usb/` | AIC8800 USB Wi-Fi sticks, WPA2, their firmware loaded; a class driver | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 
 ## Resources
 

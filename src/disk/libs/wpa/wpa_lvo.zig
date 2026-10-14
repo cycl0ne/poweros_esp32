@@ -81,8 +81,8 @@ fn lvoDeleteHandshake(base: *WPABase, handshake: ?*wpa.Handshake) callconv(.c) v
 fn lvoHandshakeFrame(base: *WPABase, handshake: *wpa.Handshake, frame: [*]const u8, length: u32) callconv(.c) void {
     return HandshakeFrame(base, handshake, frame, length);
 }
-fn lvoHandshakeSent(base: *WPABase, handshake: *wpa.Handshake) callconv(.c) void {
-    return HandshakeSent(base, handshake);
+fn lvoHandshakeSent(base: *WPABase, handshake: *wpa.Handshake, frame: u32) callconv(.c) void {
+    return HandshakeSent(base, handshake, frame);
 }
 fn lvoHandshakeStatus(base: *WPABase, handshake: *wpa.Handshake) callconv(.c) u32 {
     return HandshakeStatus(base, handshake);

@@ -55,7 +55,7 @@ pub fn intsOn(mask: u32) callconv(.c) void {
         const bit = @as(u32, 1) << @intCast(source);
         if (state.sources & bit == 0 or state.hooked & bit != 0) continue;
         state.servers[i] = .{
-            .node = .{ .type = .interrupt, .pri = 0, .name = "wifi.device" },
+            .node = .{ .type = .interrupt, .pri = 0, .name = "esp32s3wifi.device" },
             .data = state,
             .code = &server,
         };

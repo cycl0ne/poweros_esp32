@@ -42,6 +42,10 @@ pub const Session = struct {
     own_len: usize = 0,
     network: [network_max]u8 = @splat(0),
     network_len: usize = 0,
+    /// The frames asked to be sent so far, and the number of message 4's
+    /// - the one whose going lets the keys in.
+    sent: u32 = 0,
+    final_number: u32 = 0,
     machine: Machine = undefined,
 
     // --- the machine's Env ------------------------------------------------
@@ -74,8 +78,13 @@ pub const Session = struct {
         return session.network[0..session.network_len];
     }
 
+    /// A frame to send, numbered. Message 4 is the one sent while keys
+    /// wait to go in (`pending`): the machine holds message 3's from just
+    /// before it builds message 4 until it has gone.
     pub fn send(session: *Session, frame: []const u8) void {
-        session.tell(.{ .kind = wpa.WPAHM_SEND, .data = frame.ptr, .length = @intCast(frame.len) });
+        session.sent += 1;
+        if (session.machine.pending != null) session.final_number = session.sent;
+        session.tell(.{ .kind = wpa.WPAHM_SEND, .data = frame.ptr, .length = @intCast(frame.len), .number = session.sent });
     }
 
     pub fn installPairwise(session: *Session, cipher: u32, tk: []const u8) void {

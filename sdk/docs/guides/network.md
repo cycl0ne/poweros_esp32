@@ -39,7 +39,7 @@ device requests are described in `sdk/devices/network.zig`,
     |              eth0, wlan0, lo0
     |  IOSana2Req (CMD_READ, CMD_WRITE, S2_ONEVENT ...)
  network device    DEVS:networks/emac.device, DEVS:networks/openeth.device,
-    |              DEVS:networks/wifi.device, DEVS:networks/slip.device
+    |              DEVS:networks/esp32s3wifi.device, DEVS:networks/slip.device
     |
  hardware          a MAC's rings and interrupts, a radio's libraries
 ```
@@ -467,8 +467,8 @@ for the request. `C:net/Wireless` scans, joins and leaves by hand; a
 network in an interface file's `Network` keyword is joined at every boot,
 its passphrase read from `ENVARC:Sys/net/networks/<network>`.
 
-`DEVS:networks/wifi.device` is the chip's radio as such a unit; its build
-and inside are described in `docs/wifi.md`. `DEVS:usb/aic8800.device` is
+`DEVS:networks/esp32s3wifi.device` is the ESP32-S3's radio as such a
+unit; its build and inside are described in `docs/esp32s3wifi.md`. `DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought
 up by the device when the stick first comes (`Start = DEVICE`), and a
@@ -479,7 +479,7 @@ again. It does not answer `S2_GETCRYPTTYPES`.
 ### WPA2-Personal for a radio that leaves it to the host: wpa.library
 
 A radio that associates by itself but leaves the keys to the host - the
-AIC8800 does - takes WPA2-Personal from `LIBS:wpa.library`
+ESP32-S3's and the AIC8800 do - takes WPA2-Personal from `LIBS:wpa.library`
 ([autodocs](../autodocs/wpa.md), structures in `sdk.wpa`). A join, in
 order:
 
@@ -496,9 +496,10 @@ order:
    `WPAHM_SEND` a frame to send at once, `WPAHM_PAIRWISEKEY` and
    `WPAHM_GROUPKEY` a key to install, `WPAHM_AUTHORIZED` the port may
    open, `WPAHM_LEAVE` the handshake gives up.
-5. `HandshakeSent` after each frame the hook sent has gone over the air:
-   after message 4 the keys come, then the port - message 4 itself has
-   to leave unencrypted.
+5. `HandshakeSent` with each frame's number (the `WPAHM_SEND` message's)
+   once it has gone over the air: after message 4's the keys come, then
+   the port - message 4 itself has to leave unencrypted, and a late
+   confirmation of message 2 lets nothing in.
 6. `DeleteHandshake` when the station leaves; it wipes the keys.
 
 The hook runs inside `HandshakeFrame` and `HandshakeSent`, on the
