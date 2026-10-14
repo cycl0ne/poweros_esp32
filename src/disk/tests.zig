@@ -44,6 +44,11 @@ test {
     _ = @import("libs/tls/tests/x509.zig");
     _ = @import("libs/tls/tests/tls13.zig");
     _ = @import("libs/tls/tls_lvo.zig");
+    _ = @import("libs/wpa/tests/keys.zig");
+    _ = @import("libs/wpa/tests/element.zig");
+    _ = @import("libs/wpa/tests/eapol.zig");
+    _ = @import("libs/wpa/tests/library.zig");
+    _ = @import("libs/wpa/wpa_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/usb/tests/usb.zig");
     _ = @import("devs/usb/hid/report.zig");
@@ -51,6 +56,11 @@ test {
     _ = @import("devs/usb/disk/bot.zig");
     _ = @import("devs/usb/serial/ftdi_rates.zig");
     _ = @import("devs/usb/ecm/cdc.zig");
+    _ = @import("devs/usb/aic8800/msg.zig");
+    _ = @import("devs/usb/aic8800/boot.zig");
+    _ = @import("devs/usb/aic8800/scan.zig");
+    _ = @import("devs/usb/aic8800/frames.zig");
+    _ = @import("devs/usb/aic8800/lmac.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");

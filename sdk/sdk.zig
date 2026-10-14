@@ -48,6 +48,9 @@ pub const modbus = @import("libs/modbus/modbus.zig");
 pub const audiocodec = @import("libs/audiocodec/audiocodec.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.
 pub const filter = @import("libs/filter/filter.zig");
+/// A Wi-Fi station's WPA2-Personal keys and handshakes, through
+/// wpa.library.
+pub const wpa = @import("libs/wpa/wpa.zig");
 /// Icons: the picture a file is shown with and its fields, through
 /// icon.library.
 pub const icon = @import("libs/icon/icon.zig");

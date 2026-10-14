@@ -3,8 +3,8 @@
 How the machine talks to a network: the TCP/IP stack a program uses, the
 interfaces it runs on, the devices that carry its frames, and what it takes
 to write one. The calls are in the reference:
-[bsdsocket](../autodocs/bsdsocket.md), [tls](../autodocs/tls.md) and
-[filter](../autodocs/filter.md); the
+[bsdsocket](../autodocs/bsdsocket.md), [tls](../autodocs/tls.md),
+[filter](../autodocs/filter.md) and [wpa](../autodocs/wpa.md); the
 device requests are described in `sdk/devices/network.zig`,
 `sdk/devices/wireless.zig`, `sdk/devices/slip.zig`,
 `sdk/devices/telnet.zig` and `sdk/devices/ssh.zig`.
@@ -468,7 +468,44 @@ network in an interface file's `Network` keyword is joined at every boot,
 its passphrase read from `ENVARC:Sys/net/networks/<network>`.
 
 `DEVS:networks/wifi.device` is the chip's radio as such a unit; its build
-and inside are described in `docs/wifi.md`.
+and inside are described in `docs/wifi.md`. `DEVS:usb/aic8800.device` is
+an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
+(`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought
+up by the device when the stick first comes (`Start = DEVICE`), and a
+network named there or joined by hand stays wanted - joined again after a
+pause when the station comes off it, and when the stick is plugged in
+again. It does not answer `S2_GETCRYPTTYPES`.
+
+### WPA2-Personal for a radio that leaves it to the host: wpa.library
+
+A radio that associates by itself but leaves the keys to the host - the
+AIC8800 does - takes WPA2-Personal from `LIBS:wpa.library`
+([autodocs](../autodocs/wpa.md), structures in `sdk.wpa`). A join, in
+order:
+
+1. `PassphraseKey`: the network's key from its passphrase and name -
+   PBKDF2's 8192 hashes, so a driver keeps it for the next join.
+2. `StationElement`: the RSN element to associate with, made from the
+   access point's; 0 for a network that asks for more than WPA2-Personal
+   with CCMP (SAE, 802.1X, TKIP alone, protected management frames
+   required), so a driver knows before it tries.
+3. The radio associates, with that element in its request.
+4. `CreateHandshake` with both elements, both addresses, the key and a
+   utility Hook; every EAPOL frame from the access point to
+   `HandshakeFrame`. The hook is called with a `HandshakeMessage`:
+   `WPAHM_SEND` a frame to send at once, `WPAHM_PAIRWISEKEY` and
+   `WPAHM_GROUPKEY` a key to install, `WPAHM_AUTHORIZED` the port may
+   open, `WPAHM_LEAVE` the handshake gives up.
+5. `HandshakeSent` after each frame the hook sent has gone over the air:
+   after message 4 the keys come, then the port - message 4 itself has
+   to leave unencrypted.
+6. `DeleteHandshake` when the station leaves; it wipes the keys.
+
+The hook runs inside `HandshakeFrame` and `HandshakeSent`, on the
+caller's task: a driver that must not send a request to its radio from
+there notes the keys and installs them once the call has returned.
+`ParseSecurity` reads what any RSN or WPA element offers, for a scan's
+list.
 
 ## A serial line: slip.device
 

@@ -391,6 +391,16 @@ pub fn build(b: *std.Build) void {
         disks.addArg("certificates");
         disks.addPrefixedFileArg("certificates/roots=", store);
     }
+    // DEVS:usb/firmware/aic8800/ - what an AIC8800 Wi-Fi stick's boot ROM
+    // is given, as scripts/fetch-aic8800.sh fetched it. On the ESP32-P4's
+    // disk alone: the stick needs a high-speed port. Not in DEVS:usb/
+    // itself, where every file is looked at as a driver.
+    if (aic8800Dir(b)) |dir| {
+        make_p4_disk.addArgs(&.{ "devs/usb/firmware", "devs/usb/firmware/aic8800" });
+        for (aic8800_files) |name| {
+            make_p4_disk.addPrefixedFileArg(b.fmt("devs/usb/firmware/aic8800/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        }
+    }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
     // board's size, when they are there.
     if (iconsDir(b, iconSize(board))) |dir| {
@@ -837,6 +847,24 @@ fn iconsDir(b: *std.Build, size: u32) ?[]const u8 {
         return null;
     };
     dir.close(io);
+    return path;
+}
+
+/// The files scripts/fetch-aic8800.sh fetches.
+const aic8800_files = [_][]const u8{
+    "fmacfw.bin",         "fw_adid.bin",            "fw_adid_u03.bin", "fw_patch.bin", "fw_patch_u03.bin",
+    "fw_patch_table.bin", "fw_patch_table_u03.bin",
+};
+
+/// Where scripts/fetch-aic8800.sh put the AIC8800's firmware, or null
+/// without it.
+fn aic8800Dir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/aic8800");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "fmacfw.bin" }), .{}) catch {
+        std.log.info("no AIC8800 firmware (scripts/fetch-aic8800.sh): the disk has no DEVS:usb/firmware/aic8800/", .{});
+        return null;
+    };
     return path;
 }
 

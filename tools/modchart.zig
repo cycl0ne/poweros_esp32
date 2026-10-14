@@ -59,6 +59,7 @@ const run_time = [_][2][]const u8{
     // The device an interface's file in DEVS:NetInterfaces/ names.
     .{ "bsdsocket.library", "openeth.device" },
     .{ "bsdsocket.library", "wifi.device" },
+    .{ "bsdsocket.library", "aic8800.device" },
     .{ "bsdsocket.library", "slip.device" },
     // The serial line a SLIP interface's file names.
     .{ "slip.device", "serial.device" },
@@ -68,6 +69,7 @@ const run_time = [_][2][]const u8{
     // The class drivers in DEVS:usb/ whose tags match what is plugged in.
     .{ "usb.library", "hid.device" },
     .{ "usb.library", "disk.device" },
+    .{ "usb.library", "aic8800.device" },
     // The class a file's type names.
     .{ "datatypes.library", datatype_classes },
     // Opened by an SDK helper the module calls (sdk.anvil.DropTarget),

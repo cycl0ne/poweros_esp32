@@ -41,3 +41,4 @@ pub const battery = @import("battery.zig");
 pub const usbport = @import("usbport.zig");
 pub const battclock = @import("battclock.zig");
 pub const audiocodec = @import("audiocodec.zig");
+pub const wpa = @import("wpa.zig");

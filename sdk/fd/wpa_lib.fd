@@ -1,0 +1,35 @@
+//! wpa.library's functions: a Wi-Fi station's WPA2-Personal side for a
+//! driver whose radio leaves it to the host - the network's key from its
+//! passphrase, the station's RSN element, and the 4-way and group key
+//! handshakes. Open it with OpenLibrary("wpa.library", 1); the structures
+//! are in sdk.wpa.
+##include libs/wpa/wpa as wpa
+##include libs/utility/utility as utility
+##basetype WPABase
+##name wpa.library
+##bias 4
+##public
+/// The network's key from `passphrase` (8 to 63 characters, or 64 hex
+/// digits) and its name (`ssid`, `ssid_length` bytes), into `key`: false
+/// for a passphrase or name out of bounds, or without crypto.library.
+bool PassphraseKey([*:0]const u8 passphrase, [*]const u8 ssid, u32 ssid_length, *[32]u8 key)
+/// What the RSN or WPA element at `element` (from its id on) offers, into
+/// `security`: false for one that makes no sense.
+bool ParseSecurity([*]const u8 element, *wpa.Security security)
+/// The RSN element a station joins the access point's (`element`) with,
+/// into `into` (`size` bytes): its length, 0 when the network asks for
+/// what the library does not do.
+u32 StationElement([*]const u8 element, [*]u8 into, u32 size)
+/// A key handshake, as the tags say (WPAH_*): null when one is missing
+/// or there is no memory.
+?*wpa.Handshake CreateHandshake(?[*]const utility.TagItem tags)
+/// The handshake freed.
+void DeleteHandshake(?*wpa.Handshake handshake)
+/// An EAPOL frame from the access point, from its 802.1X header on
+/// (`length` bytes).
+void HandshakeFrame(*wpa.Handshake handshake, [*]const u8 frame, u32 length)
+/// A frame the handshake asked to send has gone over the air.
+void HandshakeSent(*wpa.Handshake handshake)
+/// Where the handshake stands: WPAHS_*.
+u32 HandshakeStatus(*wpa.Handshake handshake)
+##end

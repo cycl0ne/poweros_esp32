@@ -1,0 +1,24 @@
+/* DEVS:NetInterfaces/WLAN1 - the interface C:net/AddNetInterface WLAN1
+ * brings up as wlan1: a USB Wi-Fi stick (AICSemi AIC8800,
+ * DEVS:usb/aic8800.device) as a station.
+ *
+ * Start = DEVICE leaves it out of the startup-sequence's AddNetInterface
+ * ALL: usb/aic8800.device brings it up itself the first time a stick
+ * comes up, so nothing of it is loaded before. The interface then stays,
+ * down while no stick is plugged in.
+ *
+ * A line
+ *   Network = "<network>"
+ * has the network joined as the interface comes up, and again whenever
+ * the stick is plugged back in. A protected network's passphrase is kept
+ * apart from this file: the first line of
+ *   ENVARC:Sys/net/networks/<network>
+ * Without a Network the interface waits for
+ *   C:net/Wireless DEVICE usb/aic8800.device JOIN "<network>"
+ * A keyword this file does not know is an error, with its line and
+ * column; see C:net/AddNetInterface for the list.
+ */
+Device     = usb/aic8800.device
+Unit       = 0
+Configure  = DHCP
+Start      = DEVICE

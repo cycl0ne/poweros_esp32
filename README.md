@@ -37,6 +37,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
 | [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md) |
 | [Wi-Fi](docs/wifi.md) | the radio's device, and how it is built |
+| [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
 | [License](#license) | MPL-2.0 for the system, MIT for the SDK and programs |
@@ -120,13 +121,14 @@ ESP32-P4 boards and in Espressif's QEMU.
   [sound guide](sdk/docs/guides/audio.md)).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
   UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet, USB Ethernet
-  adapters, the ESP32-S3's Wi-Fi and SLIP; a shell over Telnet or SSH
-  with sftp and scp, an SSH client, a packet filter, and TLS 1.3 and 1.2
-  for `C:net/HTTPGet` ([network guide](sdk/docs/guides/network.md)).
+  adapters, the ESP32-S3's Wi-Fi, USB Wi-Fi sticks (AIC8800) and SLIP;
+  WPA2-Personal in `LIBS:wpa.library`; a shell over Telnet or SSH with
+  sftp and scp, an SSH client, a packet filter, and TLS 1.3 and 1.2 for
+  `C:net/HTTPGet` ([network guide](sdk/docs/guides/network.md)).
 - **USB:** a host stack on the chip's OTG controller - at high speed on
   the ESP32-P4, through hubs - with class drivers loaded as their devices
   are plugged in: keyboards, mice and tablets, sticks and card readers,
-  FTDI and CDC-ACM serial adapters, CDC Ethernet
+  FTDI and CDC-ACM serial adapters, CDC Ethernet, AIC8800 Wi-Fi sticks
   ([USB guide](sdk/docs/guides/usb.md)).
 - **Modbus:** `LIBS:modbus.library` over RS-485 and TCP, asking and
   answering; `C:Modbus` in the shell, and `SYS:Programs/Battery` for a
@@ -151,7 +153,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, the battery's voltage, a USB host |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); no sound |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or at 800×600 over HDMI ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; the battery once its solder jumpers are closed |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or at 800×600 over HDMI ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, the UART1 and UART3-IN connectors |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
@@ -178,6 +180,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 |---|---|
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, and the USB controller, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel and USB) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/wifi.device` |
+| `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
@@ -256,7 +259,7 @@ src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
 tools/         build helpers: mkfs, ressize, ramimage, mkicon, the autodocs, the module charts, checks
-scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries, fonts, certificates, icons, esp-emulator), a serial terminal
+scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator), a serial terminal
 ```
 
 ## License

@@ -84,6 +84,7 @@ const modules = [_]Program{
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
+    .{ .disk = "libs/wpa.library", .source = "libs/wpa/wpa.zig", .name = "wpa.library" },
     .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
     .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
@@ -152,6 +153,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device" },
     .{ .disk = "devs/usb/acm.device", .source = "devs/usb/serial/acm.zig", .name = "acm.device" },
     .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device" },
+    .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
 };
 
@@ -205,6 +207,8 @@ pub const programs: []const Program = blk: {
 /// name: its Ethernet interface names its own device.
 pub const p4_files = [_]File{
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/esp32p4/ETH0" },
+    // A USB Wi-Fi stick: only the P4's port is fast enough for one.
+    .{ .disk = "devs/NetInterfaces/WLAN1", .source = "devs/NetInterfaces/esp32p4/WLAN1" },
     // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
     // time the codec on.
     .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },

@@ -11,8 +11,8 @@ above it knows where the keys came from.
 
 This guide is the bus first, then looking at what is on it, driving a
 device from a program, writing a class driver, the drivers there are -
-keyboards and mice, sticks, serial and Ethernet adapters - and writing a
-controller.
+keyboards and mice, sticks, serial and Ethernet adapters, Wi-Fi sticks -
+and writing a controller.
 
 ## The pieces
 
@@ -21,7 +21,7 @@ controller.
                         mouse.device       on DU<n>:        on AUX2:, AUX3:   on usb0
                              ^                  ^                ^                 ^
  class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device
- DEVS:usb/                                                  usb/acm.device
+ DEVS:usb/                                                  usb/acm.device    usb/aic8800.device
                              |  USBClassBind, USBClassUnbind (DEVIF_USBCLASS)
  the bus                usb.library: a process per bus, hubs, pipes
                              |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
@@ -42,6 +42,7 @@ controller.
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
+| `usb/aic8800.device` | `DEVS:usb/` | AIC8800 Wi-Fi sticks as a wireless network device, their firmware loaded from `DEVS:usb/firmware/aic8800/` |
 | `C:USB` | | starts and stops a bus |
 | `C:USBInfo` | | lists what is on the buses, and who holds the ports |
 
@@ -399,6 +400,35 @@ beside or instead of ECM. One that has an ECM configuration as well is
 set to it, as usb.library sets a device to the first configuration a
 driver takes; QEMU's `usb-net` has RNDIS first and ECM second. At full
 speed an adapter moves at most about a megabyte a second.
+
+## Wi-Fi sticks
+
+`usb/aic8800.device` drives the AICSemi AIC8800 sticks (A69C:8800): a
+stick plugged in is its boot ROM, which the device gives its firmware -
+read from `DEVS:usb/firmware/aic8800/`, which `scripts/fetch-aic8800.sh`
+fetches and the build puts on the ESP32-P4's disk - and starts. The stick
+then leaves the bus and comes back as the Wi-Fi itself (A69C:8801), which
+the device brings up to a station and runs as unit 0, a wireless network
+device with the requests of `sdk/devices/wireless.zig`. The boot ROM wants
+a high-speed port: the ESP32-P4's; on a slower one the stick is left as it
+is, and said so in the log.
+
+The interface is the device's to bring up, as `usb/ecm.device`'s:
+`DEVS:NetInterfaces/WLAN1` (`Start = DEVICE`) the first time a stick
+comes up, as `wlan1`. A `Network` line there has that network joined,
+with its passphrase from `ENVARC:Sys/net/networks/<network>`;
+`C:net/Wireless DEVICE usb/aic8800.device` scans and joins by hand. The
+network stays wanted: a stick pulled out and plugged in again joins it
+again.
+
+```
+1.System:> C:net/Wireless DEVICE usb/aic8800.device SCAN
+Network                          Access point       Chan Signal Security
+HomeNet                          02:11:22:33:44:55   36  -62   WPA2
+```
+
+How it is built - the firmware's load, its messages, the frames, the
+join - is `docs/aic8800.md`.
 
 ## Writing a controller
 
