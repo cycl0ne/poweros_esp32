@@ -609,11 +609,17 @@ pub fn cmdResident(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     defer dl.FreeArgs(rda);
     const name = rdargs.string(argv[0]) orelse rdargs.string(argv[1]);
     if (name) |n| {
-        if (argv[2] == 0) return addResident(dl, dl.FilePart(n), rdargs.string(argv[1]) orelse n, .{
-            .force = argv[5] != 0,
-            .system = argv[6] != 0,
-            .replace = argv[4] != 0,
-        });
+        if (argv[2] == 0) {
+            // What goes on the resident list - the file's segments with
+            // the entry - outlives this shell: the system's.
+            sys.BeginSystemMemory();
+            defer sys.EndSystemMemory();
+            return addResident(dl, dl.FilePart(n), rdargs.string(argv[1]) orelse n, .{
+                .force = argv[5] != 0,
+                .system = argv[6] != 0,
+                .replace = argv[4] != 0,
+            });
+        }
         const part = dl.FilePart(n);
         _ = dl.LockSegmentList(false);
         const seg = dl.FindSegment(part, null, false) orelse dl.FindSegment(part, null, true);

@@ -73,7 +73,8 @@ pub fn table(base: *UsbBase) ?*Drivers {
     if (base.drivers) |found| return @ptrCast(@alignCast(found));
     const sys = base.sys_base;
     const dl = base.dos orelse return null;
-    const memory = sys.AllocMem(@sizeOf(Drivers), exec.MEMF_CLEAR) orelse return null;
+    // Kept in the library's base: the system's.
+    const memory = sys.AllocMem(@sizeOf(Drivers), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     const drivers: *Drivers = @ptrCast(@alignCast(memory));
     drivers.* = .{};
     base.drivers = drivers;

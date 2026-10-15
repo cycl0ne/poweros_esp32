@@ -48,6 +48,7 @@ const tests = [_][]const u8{
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",    "sound",
+    "memowner",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -59,6 +60,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
     .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
+    .{ .disk = "programs/MemMap", .source = "programs/memmap/memmap.zig", .name = "memmap" },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
@@ -293,6 +295,7 @@ pub const files = [_]File{
     // SYS:Programs/Docs - what each program is and how it is used.
     .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
     .{ .disk = "programs/Docs/CPULoad.md", .source = "programs/cpuload/README.md" },
+    .{ .disk = "programs/Docs/MemMap.md", .source = "programs/memmap/README.md" },
     .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
     .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },

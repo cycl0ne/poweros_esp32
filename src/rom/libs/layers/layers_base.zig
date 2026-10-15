@@ -7,6 +7,7 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const graphics = sdk.graphics;
 
 /// The base: everything about the library that can change.
 ///
@@ -30,6 +31,16 @@ pub const LayersBase = extern struct {
     /// the jump table.
     pub fn iface(lb: *LayersBase) *sdk.interface.layers.LayersBase {
         return @ptrCast(lb);
+    }
+
+    /// A new region for the tiling, the system's: what layers keeps for a
+    /// layer - what of it is seen, what it is owed - outlives the call
+    /// that made it, and whichever task moved a window made it. Its
+    /// rectangles are graphics' own, from its pool.
+    pub fn newRegion(lb: *LayersBase) ?*graphics.Region {
+        const region = lb.graphics_base.NewRegion() orelse return null;
+        _ = lb.sys_base.SetMemOwner(region, null);
+        return region;
     }
 };
 

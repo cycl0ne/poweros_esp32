@@ -48,7 +48,7 @@ const idText = descriptor.idText;
 const textLen = descriptor.textLen;
 
 pub const COMMAND_NAME = "AddDataTypes";
-const VERSION_STRING = "\x00$VER: AddDataTypes 1.1 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddDataTypes 1.2 (15.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILES/M,REFRESH/S,REMOVE/S,LIST/S,QUIET/S";
@@ -84,7 +84,12 @@ fn listOf(sys: *ExecBase, ub: *UtilityBase) ?*datatypes.DataTypesList {
         .{ .tag = utility.ANO_UserSpace, .data = @sizeOf(datatypes.DataTypesList) },
         .{},
     };
-    const made = ub.AllocNamedObjectA(datatypes.DATATYPESLIST_NAME, &tags) orelse return null;
+    // Published for datatypes.library and every later AddDataTypes: the
+    // system's, not this command's.
+    sys.BeginSystemMemory();
+    const allocated = ub.AllocNamedObjectA(datatypes.DATATYPESLIST_NAME, &tags);
+    sys.EndSystemMemory();
+    const made = allocated orelse return null;
     const list: *datatypes.DataTypesList = @ptrCast(@alignCast(made.object.?));
     list.* = .{};
     sys.InitSemaphore(&list.lock);

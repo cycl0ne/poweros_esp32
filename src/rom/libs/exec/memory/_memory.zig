@@ -6,6 +6,18 @@
 //! chunk again. SysBase's memory list holds the regions by priority, and
 //! AllocMem takes the first that suits.
 //!
+//! **Every block AllocMem hands out carries a MemBlock in front**, one
+//! MEM_BLOCKSIZE: the task that owns it (its number, `Task.id`, or the
+//! system's), its size, and whether it is private. AllocMem writes it under
+//! the memory lock, with the block cut from the region, so a region read
+//! under that lock is always whole: free chunks and blocks, one after the
+//! other (`sdk.exec.RegionWalk`). FreeMem reads it back and refuses a block
+//! not in use or a size not the block's. The owner is the calling task -
+//! inside library code too, which runs on its caller - unless the call
+//! asks for MEMF_SYSTEM or the task is inside `BeginSystemMemory`; exec's
+//! own tasks have the system's number. `AllocVec` is AllocMem: the size it
+//! remembers is the MemBlock's.
+//!
 //! `Allocate` and `Deallocate` take no lock: the region is the caller's and
 //! so is keeping others away from it, which is what lets a pool cut up a
 //! puddle with the same code. `AllocMem` and `FreeMem` are those two over
@@ -64,6 +76,7 @@ const ExecBase = exec.ExecBase;
 const Node = sdk.exec.Node;
 const List = sdk.exec.List;
 const MemHeader = sdk.exec.MemHeader;
+const MemBlock = sdk.exec.MemBlock;
 const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 const MEMF_INTERNAL = sdk.exec.MEMF_INTERNAL;
 const MEMF_EXTERNAL = sdk.exec.MEMF_EXTERNAL;
@@ -75,11 +88,89 @@ const MEMF_DMA = sdk.exec.MEMF_DMA;
 /// matched against.
 pub const attribute_mask = MEMF_INTERNAL | MEMF_EXTERNAL | MEMF_DMA;
 
-/// AllocVec's header in front of the memory. The whole block's size is in
-/// its last word, right below the address AllocVec answers. It is a full
-/// `MEM_BLOCKSIZE` rather than just the word, so that what AllocVec hands
-/// back is aligned exactly as AllocMem's is.
-pub const vec_header = MEM_BLOCKSIZE;
+/// What a block of `byte_size` takes from its region: the size rounded up
+/// to MEM_BLOCKSIZE, its MemBlock, and its wall when it has one. Null when
+/// that does not fit a word.
+///
+/// INPUTS:
+/// - `byte_size` - what was asked for.
+/// - `walled` - whether the block gets a wall (memory debugging is on).
+pub fn wholeSize(byte_size: usize, walled: bool) ?usize {
+    const rounded = @addWithOverflow(byte_size, MEM_BLOCKSIZE - 1);
+    if (rounded[1] != 0) return null;
+    const extra: usize = MEM_BLOCKSIZE + if (walled) @as(usize, sdk.exec.MEM_WALLSIZE) else 0;
+    const whole = @addWithOverflow(alignDown(rounded[0], MEM_BLOCKSIZE), extra);
+    if (whole[1] != 0) return null;
+    _ = fitsWord(whole[0]) orelse return null;
+    return whole[0];
+}
+
+/// The owner a block allocated now is marked with: the system's for
+/// MEMF_SYSTEM, before there is a task at all, and while the task is
+/// inside `BeginSystemMemory`; otherwise the running task's number.
+///
+/// INPUTS:
+/// - `base` - exec: the boot task, and FindTask through the table.
+/// - `requirements` - the MEMF_* word of the call.
+pub fn ownerFor(base: *ExecBase, requirements: u32) u32 {
+    if (requirements & sdk.exec.MEMF_SYSTEM != 0) return sdk.exec.MEMOWNER_SYSTEM;
+    // The boot task is the first thing allocated: before it, nothing runs
+    // that could own a block.
+    if (base.boot_task == null) return sdk.exec.MEMOWNER_SYSTEM;
+    const task = base.iface().FindTask(null) orelse return sdk.exec.MEMOWNER_SYSTEM;
+    if (task.system_memory_nest != 0) return sdk.exec.MEMOWNER_SYSTEM;
+    return task.id;
+}
+
+/// A chunk just cut from a region made a block: its MemBlock written, the
+/// address past it answered. Under the memory lock, as the cut was. The
+/// wall, for a walled block, is the caller's to write once the lock is
+/// let go (`debugNew`): until then the region reads as whole all the same.
+///
+/// INPUTS:
+/// - `chunk` - what `Allocate` answered for `wholeSize`.
+/// - `whole` - that size.
+/// - `owner` - from `ownerFor`.
+/// - `requirements` - the call's MEMF_* word: MEMF_PRIVATE is kept.
+/// - `walled` - whether `whole` has room for a wall.
+pub fn markBlock(chunk: *anyopaque, whole: usize, owner: u32, requirements: u32, walled: bool) *anyopaque {
+    const header: *MemBlock = @ptrCast(@alignCast(chunk));
+    const wall: usize = if (walled) sdk.exec.MEM_WALLSIZE else 0;
+    const size: u32 = @intCast(whole - MEM_BLOCKSIZE - wall);
+    header.* = .{
+        .owner = owner,
+        .size = size | sdk.exec.MEMBF_INUSE | (requirements & sdk.exec.MEMBF_PRIVATE) |
+            if (walled) sdk.exec.MEMBF_WALLED else 0,
+    };
+    return @ptrFromInt(@intFromPtr(chunk) + MEM_BLOCKSIZE);
+}
+
+/// Gives a block another owner. One aligned word written, so a walk under
+/// the memory lock reads the old owner or the new one and never half of
+/// either; the caller holds the block, so nothing frees it meanwhile.
+///
+/// INPUTS:
+/// - `block` - what AllocMem answered.
+/// - `owner` - a task's number or MEMOWNER_SYSTEM.
+pub fn setOwner(block: *anyopaque, owner: u32) void {
+    const word: *volatile u32 = &MemBlock.of(block).owner;
+    word.* = owner;
+}
+
+/// The region on exec's memory list that holds `address`, or null. Under
+/// the memory lock.
+///
+/// INPUTS:
+/// - `base` - exec: its memory list.
+/// - `address` - any address in a block.
+pub fn regionOf(base: *ExecBase, address: usize) ?*MemHeader {
+    var it = base.mem_list.iterator();
+    while (it.next()) |node| {
+        const mh: *MemHeader = @fieldParentPtr("node", node);
+        if (address >= @intFromPtr(mh.lower) and address < @intFromPtr(mh.upper)) return mh;
+    }
+    return null;
+}
 
 /// `value` rounded up to a multiple of `alignment`, a power of two.
 ///
@@ -115,8 +206,9 @@ pub fn fitsWord(value: usize) ?u32 {
 ///
 /// It answers the question a memory figure before and after a program
 /// cannot: not *how much* is gone but *what* took it. Sizes are what the
-/// region gives up - the request rounded up to `MEM_BLOCKSIZE` - so
-/// `outstanding` and the fall in what `Avail` reports are the same number.
+/// region gives up - the request rounded up to `MEM_BLOCKSIZE`, and the
+/// block's MemBlock - so `outstanding` and the fall in what `Avail` reports
+/// are the same number.
 ///
 /// A printed line is `A <size> <block> from <caller>` and `F` for the way
 /// back, on the kernel's own serial line, where it cannot disturb the
@@ -158,13 +250,11 @@ pub const Trace = extern struct {
 /// INPUTS:
 /// - `base` - exec: the trace, in its base.
 /// - `letter` - 'A' for an allocation, 'F' for a free.
-/// - `byte_size` - the size asked for; the region's rounded size is what is
-///   counted.
+/// - `size` - what the region gives up or takes back (`wholeSize`).
 /// - `block` - the block.
 /// - `caller` - the return address of `AllocMem` or `FreeMem`.
-pub fn traceEvent(base: *ExecBase, letter: u8, byte_size: usize, block: ?*anyopaque, caller: usize) void {
+pub fn traceEvent(base: *ExecBase, letter: u8, size: usize, block: ?*anyopaque, caller: usize) void {
     const trace = &base.mem_trace;
-    const size = alignUp(byte_size, MEM_BLOCKSIZE);
     if (letter == 'A') {
         trace.allocs += 1;
         trace.alloc_bytes += size;
@@ -181,6 +271,174 @@ pub fn traceEvent(base: *ExecBase, letter: u8, byte_size: usize, block: ?*anyopa
         @as(u32, @truncate(@intFromPtr(block))),
         @as(u32, @truncate(caller)),
     });
+}
+
+// --- memory debugging (s3> memdebug) -----------------------------------------
+//
+// While it is on, every block allocated gets a wall behind it, holding the
+// size asked for and a pattern from there on; what was not cleared holds
+// MEM_PATTERN_NEW; and every free chunk holds MEM_PATTERN_FREED behind its
+// MemChunk. FreeMem checks the wall, and AllocMem checks that the free
+// memory it hands out still holds the pattern - what wrote it, wrote memory
+// after it was freed. Blocks keep their wall whether the mode stays on or
+// not; the free memory's pattern is made whole each time it is switched on.
+
+/// What memory debugging has found since it was last switched on.
+pub const Debug = extern struct {
+    /// Whether it is on: new blocks walled, freed memory filled.
+    on: bool = false,
+    /// Walls FreeMem found written over.
+    walls: u32 = 0,
+    /// Free memory AllocMem found written after it was freed.
+    freed_writes: u32 = 0,
+};
+
+/// `bytes` bytes from `at`, a multiple of 4, set to `pattern` a word at a
+/// time.
+fn fill(at: usize, bytes: usize, pattern: u32) void {
+    const words: [*]u32 = @ptrFromInt(at);
+    for (0..bytes / 4) |index| words[index] = pattern;
+}
+
+/// The offset of the first word of the `bytes` from `at` that is not
+/// `pattern`, or null.
+fn firstNot(at: usize, bytes: usize, pattern: u32) ?usize {
+    const words: [*]const u32 = @ptrFromInt(at);
+    for (0..bytes / 4) |index| {
+        if (words[index] != pattern) return index * 4;
+    }
+    return null;
+}
+
+/// Memory debugging switched on: every free chunk's memory behind its
+/// MemChunk filled with MEM_PATTERN_FREED, under the memory lock, and new
+/// blocks walled from here.
+///
+/// INPUTS:
+/// - `base` - exec: its regions, its lock and the debugging state.
+pub fn debugOn(base: *ExecBase) void {
+    const sys = base.iface();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
+    var it = base.mem_list.iterator();
+    while (it.next()) |node| {
+        const mh: *MemHeader = @fieldParentPtr("node", node);
+        var chunk = mh.first;
+        while (chunk) |free_chunk| : (chunk = free_chunk.next) {
+            fill(@intFromPtr(free_chunk) + MEM_BLOCKSIZE, free_chunk.bytes - MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED);
+        }
+    }
+    base.mem_debug = .{ .on = true };
+}
+
+/// A walled block made ready: the free memory it came from checked for
+/// writes after its free, the block filled - zeros for MEMF_CLEAR,
+/// MEM_PATTERN_NEW otherwise - and its wall written. Outside the memory
+/// lock: the block is the caller's already.
+///
+/// INPUTS:
+/// - `base` - exec: the debugging counts.
+/// - `block` - what AllocMem is about to answer.
+/// - `byte_size` - what was asked for.
+/// - `requirements` - the call's MEMF_* word.
+pub fn debugNew(base: *ExecBase, block: *anyopaque, byte_size: usize, requirements: u32) void {
+    const header = MemBlock.of(block);
+    const at = @intFromPtr(block);
+    const rounded = header.bytes();
+    if (firstNot(at, rounded + sdk.exec.MEM_WALLSIZE, sdk.exec.MEM_PATTERN_FREED)) |offset| {
+        base.mem_debug.freed_writes +%= 1;
+        exec.kprintf("memdebug: free memory at %08x was written after it was freed\n", .{@as(u32, @truncate(at + offset))});
+    }
+    const bytes: [*]u8 = @ptrCast(block);
+    if (requirements & sdk.exec.MEMF_CLEAR != 0) {
+        @memset(bytes[0..byte_size], 0);
+    } else {
+        fill(at, alignDown(byte_size, 4), sdk.exec.MEM_PATTERN_NEW);
+        for (alignDown(byte_size, 4)..byte_size) |index| bytes[index] = 0xAB;
+    }
+    @memset(bytes[byte_size..rounded], @as(u8, @truncate(sdk.exec.MEM_PATTERN_WALL)));
+    fill(at + rounded, sdk.exec.MEM_WALLSIZE, sdk.exec.MEM_PATTERN_WALL);
+    const first: *u32 = @ptrFromInt(at + rounded);
+    first.* = @as(u32, @intCast(byte_size)) ^ sdk.exec.MEM_PATTERN_WALL;
+}
+
+/// What a free left in its region, filled while memory debugging is on, so
+/// that every free chunk holds MEM_PATTERN_FREED behind its MemChunk: the
+/// block, the MemChunk Deallocate wrote at its start when the chunk below
+/// took it in, and the next chunk's MemChunk when it took that in. Under
+/// the memory lock, right after Deallocate.
+///
+/// INPUTS:
+/// - `region` - the region the block went back to.
+/// - `start` - where it started: its MemBlock.
+/// - `whole` - what it took, MemBlock and wall included.
+pub fn debugFreed(region: *MemHeader, start: usize, whole: usize) void {
+    const end = start + whole;
+    fill(start + MEM_BLOCKSIZE, whole - MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED);
+    var chunk = region.first;
+    while (chunk) |free_chunk| : (chunk = free_chunk.next) {
+        const from = @intFromPtr(free_chunk);
+        if (from > start) return;
+        if (from + free_chunk.bytes < end) continue;
+        if (from < start) fill(start, MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED);
+        if (from + free_chunk.bytes > end) fill(end, MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED);
+        return;
+    }
+}
+
+/// One thing `debugCheck` found: a walled block written past its end, or
+/// free memory written after its free.
+pub const Damage = struct {
+    /// The first byte found wrong.
+    at: usize,
+    /// The block's owner; MEMOWNER_SYSTEM for free memory.
+    owner: u32,
+    /// Free memory rather than a wall.
+    freed: bool,
+};
+
+/// Every wall and, while debugging is on, all free memory checked, under
+/// the memory lock: the first `found.len` things wrong kept, all counted.
+///
+/// INPUTS:
+/// - `base` - exec: its regions.
+/// - `found` - where what is wrong is kept.
+///
+/// RESULT:
+/// How many things were wrong.
+pub fn debugCheck(base: *ExecBase, found: []Damage) u32 {
+    const sys = base.iface();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
+    var count: u32 = 0;
+    var it = base.mem_list.iterator();
+    while (it.next()) |node| {
+        const mh: *MemHeader = @fieldParentPtr("node", node);
+        var walk = sdk.exec.RegionWalk.init(mh);
+        while (walk.next()) |stretch| {
+            var wrong: ?Damage = null;
+            if (stretch.free) {
+                if (base.mem_debug.on) {
+                    if (firstNot(stretch.start + MEM_BLOCKSIZE, stretch.bytes - MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED)) |offset| {
+                        wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .owner = sdk.exec.MEMOWNER_SYSTEM, .freed = true };
+                    }
+                }
+            } else if (stretch.walled) {
+                const header: *const MemBlock = @ptrFromInt(stretch.start);
+                if (header.wallDamage()) |offset| {
+                    wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .owner = stretch.owner, .freed = false };
+                }
+            }
+            const damage = wrong orelse continue;
+            if (count < found.len) found[count] = damage;
+            count += 1;
+        }
+        if (walk.damaged) |at| {
+            if (count < found.len) found[count] = .{ .at = at, .owner = sdk.exec.MEMOWNER_SYSTEM, .freed = false };
+            count += 1;
+        }
+    }
+    return count;
 }
 
 // --- pools ------------------------------------------------------------------
@@ -218,6 +476,9 @@ pub const Pool = struct {
     puddle_size: usize = 0,
     /// A request this big or bigger gets a puddle to itself.
     thresh_size: usize = 0,
+    /// Who the puddles belong to: the pool's own owner, whichever task's
+    /// AllocPooled takes them.
+    owner: u32 = sdk.exec.MEMOWNER_SYSTEM,
 };
 
 /// What a puddle spends before any of it can be handed out: this header,

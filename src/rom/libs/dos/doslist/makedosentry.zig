@@ -57,7 +57,8 @@ pub fn MakeDosEntry(db: *DosBase, name: [*:0]const u8, dlt: i32) ?*DosList {
         return null;
     };
     const len = db.utility_base.Strlen(name);
-    const block = db.sys_base.AllocVec(@sizeOf(DosList) + len + 1, exec.MEMF_CLEAR) orelse {
+    // A device, volume or assign is the system's, whoever makes it.
+    const block = db.sys_base.AllocVec(@sizeOf(DosList) + len + 1, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
         _ = dos_lib.SetIoErr(dos.ERROR_NO_FREE_STORE);
         return null;
     };

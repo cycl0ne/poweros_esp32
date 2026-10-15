@@ -186,11 +186,11 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
             // display to preserve, and what it can see at the new place
             // comes back out of the keeping in the retile - so what it has
             // to begin with is nothing.
-            member.have = gb.NewRegion();
+            member.have = lb.newRegion();
             if (member.have) |have| {
                 if (keeping and !smart.keepCovered(lb, moving, have)) keeping = false;
             }
-        } else if (_layerinfo.copyRegion(gb, moving.visible)) |have| {
+        } else if (_layerinfo.copyRegion(lb, moving.visible)) |have| {
             // What it can see now, moved, and still visible there.
             member.have = have;
             gb.OffsetRegion(have, dx, dy);
@@ -205,7 +205,7 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
     // Every simple one's pixels go the same way, so they travel in one
     // carry: moved one layer at a time, one would be written over where
     // another's still had to be read.
-    const carried = gb.NewRegion() orelse return abandon(lb, group);
+    const carried = lb.newRegion() orelse return abandon(lb, group);
     defer gb.DisposeRegion(carried);
     for (group) |member| {
         if (member.layer.flags & layers.LAYERSMART != 0) continue;
@@ -332,7 +332,7 @@ fn abandon(lb: *LayersBase, group: []const Member) bool {
 fn seenAt(lb: *LayersBase, group: []const Member, member: *const Member) ?*graphics.Region {
     const gb = lb.graphics_base;
     const info = member.layer.info;
-    const seen = gb.NewRegion() orelse return null;
+    const seen = lb.newRegion() orelse return null;
     // Only what is on the display: a layer may hang off the edge.
     const on_screen = Rect.intersect(member.new, info.bounds);
     if (!gb.OrRectRegion(seen, &on_screen)) {
@@ -374,7 +374,7 @@ fn reserveBehind(lb: *LayersBase, group: []const Member) bool {
     const gb = lb.graphics_base;
     const info = group[0].layer.info;
     // What the moving layers passed so far will cover where they are going.
-    const covering = gb.NewRegion() orelse return false;
+    const covering = lb.newRegion() orelse return false;
     defer gb.DisposeRegion(covering);
     var behind = false;
     var it = info.layers.iterator();
@@ -387,7 +387,7 @@ fn reserveBehind(lb: *LayersBase, group: []const Member) bool {
             continue;
         }
         if (!behind or other.flags & (layers.LAYERSMART | layers.LAYERSUPER) == 0) continue;
-        const seen = _layerinfo.copyRegion(gb, other.visible) orelse return false;
+        const seen = _layerinfo.copyRegion(lb, other.visible) orelse return false;
         if (!gb.SubRegionRegion(covering, seen)) {
             gb.DisposeRegion(seen);
             return false;

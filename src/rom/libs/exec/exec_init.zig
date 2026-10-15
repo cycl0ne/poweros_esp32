@@ -47,8 +47,8 @@ pub const LIBRARY_VERSION = 1;
 /// RISC-V chip, every core fences its instruction fetch after the
 /// instruction caches are invalidated (CacheClearU, CacheClearE). 10:
 /// each task's own time (Task.timeRun), counted as the cores' are.
-pub const LIBRARY_REVISION = 10;
-const BUILD_DATE = "13.10.2026";
+pub const LIBRARY_REVISION = 11;
+const BUILD_DATE = "15.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -156,8 +156,10 @@ pub fn startSystem(base: *ExecBase, boot: *const exec.BootInfo) error{OutOfMemor
     const sys_base = base.iface();
     base.multitasking = 0;
     try _resident.initResidents(base, boot.rom_start, boot.rom_end);
-    _ = sys_base.CreateTask("exec", exec_task_pri, &execTask, exec_task_stack) orelse
+    const exec_task = sys_base.CreateTask("exec", exec_task_pri, &execTask, exec_task_stack) orelse
         return error.OutOfMemory;
+    // It makes the COLDSTART residents: what they allocate is the system's.
+    _task.makeSystemTask(exec_task);
     _ = sys_base.InitCode(sdk.exec.RTF_SINGLETASK, 0);
 }
 

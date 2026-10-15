@@ -118,6 +118,7 @@ fn newPuddle(base: *ExecBase, pool: *Pool, need: usize, alone: bool) ?*Puddle {
 
     const sys = base.iface();
     const block = sys.AllocMem(bytes, pool.requirements) orelse return null;
+    _memory.setOwner(block, pool.owner);
     const header_at: *anyopaque = @ptrFromInt(@intFromPtr(block) + @sizeOf(Puddle));
     const mh = sys.CreateMemHeader(bytes - @sizeOf(Puddle), pool.requirements, 0, header_at, "pool puddle") orelse {
         sys.FreeMem(block, bytes);

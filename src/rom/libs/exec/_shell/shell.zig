@@ -158,6 +158,8 @@ const commands = .{
     @import("cmds/cores.zig"),
     @import("cmds/memlist.zig"),
     @import("cmds/memtrace.zig"),
+    @import("cmds/memowners.zig"),
+    @import("cmds/memdebug.zig"),
     @import("cmds/peek.zig"),
     @import("cmds/poke.zig"),
     @import("cmds/sleep.zig"),

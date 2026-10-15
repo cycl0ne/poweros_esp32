@@ -145,6 +145,9 @@ pub const LVO = struct {
     pub const SetTaskEndMsg = libraries.lvo(133);
     pub const RemoveMsg = libraries.lvo(134);
     pub const SafePutToPort = libraries.lvo(135);
+    pub const BeginSystemMemory = libraries.lvo(136);
+    pub const EndSystemMemory = libraries.lvo(137);
+    pub const SetMemOwner = libraries.lvo(138);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -280,6 +283,9 @@ pub const Fn = struct {
     pub const SetTaskEndMsg = *const fn (*ExecBase, ?*exec.Task, ?*exec.Message) callconv(.c) void;
     pub const RemoveMsg = *const fn (*ExecBase, *exec.MsgPort, *exec.Message) callconv(.c) bool;
     pub const SafePutToPort = *const fn (*ExecBase, *exec.Message, [*:0]const u8) callconv(.c) bool;
+    pub const BeginSystemMemory = *const fn (*ExecBase) callconv(.c) void;
+    pub const EndSystemMemory = *const fn (*ExecBase) callconv(.c) void;
+    pub const SetMemOwner = *const fn (*ExecBase, ?*anyopaque, ?*exec.Task) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -891,5 +897,25 @@ pub const ExecBase = opaque {
     /// false when there is no such port, and the message is still the caller's.
     pub fn SafePutToPort(self: *ExecBase, message: *exec.Message, name: [*:0]const u8) bool {
         return libraries.call(self, LVO.SafePutToPort, Fn.SafePutToPort, .{ message, name });
+    }
+
+    /// From here until the matching EndSystemMemory, what the calling task
+    /// allocates is the system's (MEMOWNER_SYSTEM), as if each call had asked
+    /// for MEMF_SYSTEM: for a loader that makes a module. Pairs nest.
+    pub fn BeginSystemMemory(self: *ExecBase) void {
+        return libraries.call(self, LVO.BeginSystemMemory, Fn.BeginSystemMemory, .{});
+    }
+
+    /// The end of a BeginSystemMemory: what the task allocates is its own
+    /// again once every pair has ended.
+    pub fn EndSystemMemory(self: *ExecBase) void {
+        return libraries.call(self, LVO.EndSystemMemory, Fn.EndSystemMemory, .{});
+    }
+
+    /// Give `memory_block` to `task` (null: the system): what its MemBlock
+    /// says from then on. A task not started yet gets its number here, which
+    /// AddTask keeps. False for a block not in use.
+    pub fn SetMemOwner(self: *ExecBase, memory_block: ?*anyopaque, task: ?*exec.Task) bool {
+        return libraries.call(self, LVO.SetMemOwner, Fn.SetMemOwner, .{ memory_block, task });
     }
 };

@@ -1666,8 +1666,10 @@ test "CreateNewProc with NP_Cli: a CLI from the parent's, in the process's block
     };
     const proc = dl.CreateNewProc(&tags).?;
     const c = proc.cli.?;
-    const block = @intFromPtr(proc.task.mem_block);
-    try testing.expect(@intFromPtr(c) > block and @intFromPtr(c) < proc.task.sp_lower);
+    // In the process's block, above its stack, as the Process is.
+    const block_end = @intFromPtr(proc.task.mem_block) + proc.task.mem_size;
+    try testing.expect(@intFromPtr(c) > @intFromPtr(proc) and @intFromPtr(c) < block_end);
+    try testing.expectEqual(proc.task.sp_upper, @intFromPtr(proc));
     try testing.expectEqualStrings("1> ", std.mem.span(c.prompt.?));
     try testing.expectEqualStrings("shell", std.mem.span(c.command_name.?));
     try testing.expectEqualStrings("Ram Disk:d", std.mem.span(c.set_name.?));
@@ -3129,6 +3131,13 @@ test "CreateNewProc: streams, dirs, arguments, variables, exit hook, CLI number,
     const copied = proc.cli.?.command_dir.?;
     try testing.expect(copied != &path and copied.next == null);
     try testing.expectEqual(dos.LOCK_SAME, dl.SameLock(copied.lock, root));
+    // What dos made for it is the child's, though made here: given to it
+    // before it started, under the number AddTask then kept.
+    try testing.expect(proc.task.id != sdk.exec.MEMOWNER_SYSTEM);
+    try testing.expectEqual(proc.task.id, sdk.exec.MemBlock.of(copied_var).owner);
+    try testing.expectEqual(proc.task.id, sdk.exec.MemBlock.of(copied).owner);
+    try testing.expectEqual(proc.task.id, sdk.exec.MemBlock.of(@ptrCast(@constCast(proc.own_arguments.?))).owner);
+    try testing.expectEqual(proc.task.id, sdk.exec.MemBlock.of(proc.task.mem_block.?).owner);
 
     // The line replaced by SetArgStr, as the process itself would: the copy
     // CreateNewProc made is still freed at the end (the leak check below),
@@ -3492,8 +3501,9 @@ test "LoadSeg, UnLoadSeg: segments relocated, the entry, a file that isn't one" 
     try RamFs.mount(db, &tp);
 
     // Memory loaded code may use: PSRAM on the board, here a buffer that is
-    // its own instruction view (exec's CodeAddress).
-    var code_ram: [8192]u8 align(16) = undefined;
+    // its own instruction view (exec's CodeAddress). The RAM disk's files
+    // come out of it too, being the region MEMF_ANY tries first.
+    var code_ram: [16384]u8 align(16) = undefined;
     _ = kexec.AddMemList(kexec.SysBase, code_ram.len, kexec.MEMF_EXTERNAL, 0, &code_ram, "loadable").?;
     kexec.code_map.* = .{
         .data_start = @intFromPtr(&code_ram),

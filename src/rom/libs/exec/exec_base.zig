@@ -148,6 +148,9 @@ pub const ExecBase = extern struct {
     task_wait: List,
     /// The task the boot code became on core 0, "kernel".
     boot_task: ?*Task,
+    /// The last number `AddTask` gave a task (`Task.id`); 0 before the
+    /// first, which is MEMOWNER_SYSTEM and never given. Under Disable.
+    task_ids: u32,
     /// Quantum: time slice in ticks.
     quantum: u16,
     /// ResModules: the resident modules by priority, null-terminated; set
@@ -160,6 +163,9 @@ pub const ExecBase = extern struct {
     /// counted since it was started. All off until then, as the base is
     /// made cleared.
     mem_trace: _memory.Trace,
+    /// Memory debugging (`s3> memdebug`): off until switched on, as the
+    /// base is made cleared.
+    mem_debug: _memory.Debug,
     /// The loader's base, kept for whatever loads libraries and devices
     /// from a disk. exec never looks at what it points to: it is one word
     /// a module has nowhere else to put, since this structure is opaque to

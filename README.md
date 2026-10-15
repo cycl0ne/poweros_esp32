@@ -74,11 +74,15 @@ ESP32-P4 boards and in Espressif's QEMU.
   signals, message ports, semaphores and checked spinlocks, every system
   list under a lock of its own; libraries and devices opened by name,
   loaded from disk when wanted and expunged when memory runs short;
-  internal SRAM and PSRAM as memory with attributes. A system log from
-  the first byte of the boot (`C:Log` sends it to a syslog server), a
-  Guru with a ROM debugger on the serial ports, and a program that fails
-  held and asked about while the system runs on. `C:Top` and
-  `SYS:Programs/CPULoad` show what each task and core takes.
+  internal SRAM and PSRAM as memory with attributes, every block marked
+  with the task that owns it, so a wrong or second free is refused and
+  `C:Avail OWNERS` and `SYS:Programs/MemMap` show who holds what. A
+  system log from the first byte of the boot (`C:Log` sends it to a
+  syslog server), a Guru with a ROM debugger on the serial ports, memory
+  debugging (a wall behind every block, patterns in new and freed
+  memory, wide stack guards) switched on from it, and a program that fails
+  held and asked about while the system runs on.
+  `C:Top` and `SYS:Programs/CPULoad` show what each task and core takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
   (`SD0:`) and USB sticks (`DU0:`), `RAM:`, `PIPE:`, `NIL:`; partitions
@@ -96,7 +100,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard), FontView, CPULoad, Battery and Prefs.
+  what is heard), FontView, CPULoad, MemMap (who holds the memory, as a
+  map), Battery and Prefs.
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales;
   graphics.library with smooth curves, gradients, shadows and scaled

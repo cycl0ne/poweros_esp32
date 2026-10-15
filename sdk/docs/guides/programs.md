@@ -503,7 +503,34 @@ from, nothing can be held, and the machine stops:
 `8100000E` is `AN_StackProbe`. A command that needs more is run after
 `Stack 32000`; a task a program makes is given more with `CreateTask`'s or
 `NP_StackSize`'s size. The bottom 16 bytes of a stack are the guard's, not
-the task's.
+the task's. A task's own block holds its stack below and its Task above,
+so a stack that runs past its end does not take the Task with it.
+
+### Memory written where it should not be
+
+`s3> memdebug on` on the serial console switches memory debugging on, and
+`memdebug off` off again; it is meant for hunting one bug, not for
+running with.
+
+- **A wall behind every new block:** 16 bytes, holding the size asked for
+  and a pattern from there. `FreeMem` checks it: a program that wrote past
+  the end of its block - even one byte into the rounding - is told with a
+  recoverable alert, `AN_MemWall` (`01000105`), and a line on the log
+  naming the block, how far it was written and the owner's number. The
+  block is freed all the same.
+- **New memory holds `0xABADCAFE`** unless `MEMF_CLEAR` asked for zeros,
+  and **freed memory holds `0xDEADBEEF`**: a pointer read from either is
+  plainly wrong, and a write to freed memory is found when `AllocMem`
+  hands that memory out again (a line on the log).
+- **A wide stack guard**, 256 bytes, for a task started meanwhile with a
+  stack of 4 KiB or more, and for a command's stack: a frame bigger than
+  the narrow guard still lands in it.
+
+`memdebug check` looks at every wall and all free memory at once and
+names what is wrong; `memdebug` alone tells the counts. With
+`C:test/MemOwner OVERRUN` and `AFTERFREE` both kinds of mistake can be
+watched being found. The memory each block takes grows by its wall while
+the mode is on.
 
 ### A 64-bit field in a structure
 

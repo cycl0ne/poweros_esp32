@@ -92,7 +92,9 @@ pub fn StartAnvil(base: *AnvilBase, tags: ?[*]const utility.TagItem) bool {
         return true;
     }
 
-    const memory = sys.AllocVec(@sizeOf(Desktop), exec.MEMF_CLEAR) orelse return failed(dl, dos.ERROR_NO_FREE_STORE);
+    // The library's record of its desktop, kept in its base: the system's,
+    // not the caller's, which goes on without it.
+    const memory = sys.AllocVec(@sizeOf(Desktop), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return failed(dl, dos.ERROR_NO_FREE_STORE);
     const desktop: *Desktop = @ptrCast(@alignCast(memory));
     const ub_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 0) orelse {
         sys.FreeVec(memory);

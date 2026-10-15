@@ -673,7 +673,9 @@ pub fn post(ib: *IntuitionBase, w: *Window, class: u32, code: u32, address: ?*an
     if (w.idcmp & class == 0) return null;
     reclaim(ib, w);
     if (!allow(w, queueOf(class, qualifier))) return null;
-    const memory = ib.sys_base.AllocMem(@sizeOf(wn.IntuiMessage), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    // intuition's own, taken back after the reply (reclaim): the system's,
+    // whichever task's action sent it.
+    const memory = ib.sys_base.AllocMem(@sizeOf(wn.IntuiMessage), exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     const m: *wn.IntuiMessage = @ptrCast(@alignCast(memory));
     const in = &ib.input;
     m.* = .{

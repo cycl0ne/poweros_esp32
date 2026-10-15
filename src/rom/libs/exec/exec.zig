@@ -148,6 +148,9 @@ pub const DetachLibrary = @import("library/detachlibrary.zig").DetachLibrary;
 pub const SetTaskEndMsg = @import("task/settaskendmsg.zig").SetTaskEndMsg;
 pub const RemoveMsg = @import("ports/removemsg.zig").RemoveMsg;
 pub const SafePutToPort = @import("ports/safeputtoport.zig").SafePutToPort;
+pub const BeginSystemMemory = @import("memory/beginsystemmemory.zig").BeginSystemMemory;
+pub const EndSystemMemory = @import("memory/endsystemmemory.zig").EndSystemMemory;
+pub const SetMemOwner = @import("memory/setmemowner.zig").SetMemOwner;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -345,6 +348,7 @@ pub const MEM_TRY_AGAIN = sdk.exec.MEM_TRY_AGAIN;
 pub const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 pub const MEM_BLOCKMASK = sdk.exec.MEM_BLOCKMASK;
 pub const MEMF_ANY = sdk.exec.MEMF_ANY;
+pub const MEMF_PRIVATE = sdk.exec.MEMF_PRIVATE;
 pub const MEMF_INTERNAL = sdk.exec.MEMF_INTERNAL;
 pub const MEMF_EXTERNAL = sdk.exec.MEMF_EXTERNAL;
 pub const MEMF_DMA = sdk.exec.MEMF_DMA;
@@ -352,6 +356,7 @@ pub const MEMF_CLEAR = sdk.exec.MEMF_CLEAR;
 pub const MEMF_LARGEST = sdk.exec.MEMF_LARGEST;
 pub const MEMF_REVERSE = sdk.exec.MEMF_REVERSE;
 pub const MEMF_TOTAL = sdk.exec.MEMF_TOTAL;
+pub const MEMF_SYSTEM = sdk.exec.MEMF_SYSTEM;
 pub const MEMF_NO_EXPUNGE = sdk.exec.MEMF_NO_EXPUNGE;
 
 pub const Library = sdk.exec.Library;
@@ -423,6 +428,21 @@ pub const BootInfo = extern struct {
     abs_exec_base: usize = 0,
 };
 
+/// exec.library's own block, cut by the bootstrap from the first region
+/// with room, before there is an exec to allocate with: a block like any
+/// other, with the system's MemBlock in front, so that the region can be
+/// walked from its start (`sdk.exec.RegionWalk`).
+///
+/// INPUTS:
+/// - `mh` - the region.
+/// - `bytes` - the library's jump table and base together.
+pub fn allocateExecBlock(mh: *MemHeader, bytes: usize) ?*anyopaque {
+    const whole = _memory.wholeSize(bytes, false) orelse return null;
+    const no_base: *ExecBase = undefined; // Allocate never reads it
+    const chunk = Allocate(no_base, mh, whole) orelse return null;
+    return _memory.markBlock(chunk, whole, sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MEMF_SYSTEM, false);
+}
+
 /// Take exec.library down again, giving its memory back to its region.
 /// Host tests only; every other library must be gone already.
 pub fn deinit() void {
@@ -440,7 +460,11 @@ pub fn deinit() void {
             // Through the table like everything else: the vector is read
             // before the call, and what it frees is the memory holding
             // both the table and SysBase, so nothing may use either after.
-            return SysBase.iface().Deallocate(mh, @ptrFromInt(start), size);
+            // The block goes with its MemBlock, as allocateExecBlock made it.
+            const header = sdk.exec.MemBlock.of(@ptrFromInt(start));
+            const whole = _memory.alignUp(size, MEM_BLOCKSIZE) + MEM_BLOCKSIZE;
+            header.size = 0;
+            return SysBase.iface().Deallocate(mh, header, whole);
         }
     }
 }
@@ -524,6 +548,9 @@ test {
     _ = @import("task/settaskendmsg.zig");
     _ = @import("ports/removemsg.zig");
     _ = @import("ports/safeputtoport.zig");
+    _ = @import("memory/beginsystemmemory.zig");
+    _ = @import("memory/endsystemmemory.zig");
+    _ = @import("memory/setmemowner.zig");
     _ = @import("interrupt/intvector.zig");
     _ = @import("resident/resmodules.zig");
     _ = @import("library/setramlib.zig");
@@ -669,7 +696,7 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     var block: ?*anyopaque = null;
     for (regions) |r| {
         const mh = CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
-        if (block == null) block = Allocate(no_base, mh, sizes.neg + sizes.pos);
+        if (block == null) block = allocateExecBlock(mh, sizes.neg + sizes.pos);
         Enqueue(no_base, &pending, &mh.node);
     }
     const lib = _library.buildLibrary(@ptrCast(block orelse return error.OutOfMemory), vectors, sizes);
@@ -1114,10 +1141,11 @@ test "AllocMem picks regions by attributes and priority, FreeMem returns blocks"
 
     const any = AllocMem(SysBase, 100, MEMF_ANY).?; // highest priority: the external region
     try testing.expect(inRegion(external, any));
-    // Not cleared: past the stale MemChunk header that CreateMemHeader put
-    // at the start of the free space, the old contents are still there.
+    // Not cleared: the MemChunk CreateMemHeader put at the start of the
+    // free space is the block's MemBlock now, and past it the old contents
+    // are still there.
     const dirty: [*]u8 = @ptrCast(any);
-    try testing.expect(std.mem.allEqual(u8, dirty[MEM_BLOCKSIZE..100], 0xAA));
+    try testing.expect(std.mem.allEqual(u8, dirty[0..100], 0xAA));
 
     const cleared = AllocMem(SysBase, 100, MEMF_INTERNAL | MEMF_CLEAR).?;
     try testing.expect(inRegion(internal, cleared));
@@ -1127,13 +1155,16 @@ test "AllocMem picks regions by attributes and priority, FreeMem returns blocks"
     const top = AllocMem(SysBase, 64, MEMF_EXTERNAL | MEMF_REVERSE).?;
     try testing.expectEqual(@intFromPtr(external.upper), @intFromPtr(top) + 64);
 
-    // When external is full, MEMF_ANY falls through to internal (before test ram).
-    const rest = AllocMem(SysBase, external.free, MEMF_EXTERNAL).?;
+    // When external is full, MEMF_ANY falls through to internal (before
+    // test ram). The largest block there is is what is left, less its
+    // MemBlock.
+    const rest_size = AvailMem(SysBase, MEMF_EXTERNAL | MEMF_LARGEST);
+    const rest = AllocMem(SysBase, rest_size, MEMF_EXTERNAL).?;
     try testing.expectEqual(@as(u32, 0), external.free);
     const spill = AllocMem(SysBase, 32, MEMF_ANY).?;
     try testing.expect(inRegion(internal, spill));
 
-    FreeMem(SysBase, rest, external_free - 64 - std.mem.alignForward(usize, 100, MEM_BLOCKSIZE));
+    FreeMem(SysBase, rest, rest_size);
     FreeMem(SysBase, top, 64);
     FreeMem(SysBase, any, 100);
     FreeMem(SysBase, cleared, 100);
@@ -1147,6 +1178,418 @@ test "AllocMem picks regions by attributes and priority, FreeMem returns blocks"
     try testing.expect(inRegion(internal, block));
     FreeMem(SysBase, block, 48);
     try testing.expectEqual(internal_free, internal.free);
+    try expectNoLeaks();
+}
+
+test "a block's MemBlock: its owner, its size, MEMF_PRIVATE" {
+    try setUp();
+    defer deinit();
+    const boot = SysBase.cpu().this_task;
+    const rounded = struct {
+        fn of(bytes: usize) usize {
+            return _memory.alignUp(bytes, MEM_BLOCKSIZE);
+        }
+    }.of;
+
+    // The boot task is exec's own: what it allocates is the system's.
+    const by_boot = AllocMem(SysBase, 40, MEMF_ANY).?;
+    const header = sdk.exec.MemBlock.of(by_boot);
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, header.owner);
+    try testing.expectEqual(rounded(40), header.bytes());
+    try testing.expect(header.inUse() and !header.private());
+
+    // Any other task's allocations are its own, library code or not.
+    var task: Task = .{ .id = 42 };
+    SysBase.cpu().this_task = &task;
+    defer SysBase.cpu().this_task = boot;
+    const mine = AllocMem(SysBase, 24, MEMF_PRIVATE | MEMF_CLEAR).?;
+    try testing.expectEqual(@as(u32, 42), sdk.exec.MemBlock.of(mine).owner);
+    try testing.expect(sdk.exec.MemBlock.of(mine).private());
+    const kept = AllocMem(SysBase, 24, MEMF_SYSTEM).?;
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(kept).owner);
+    try testing.expect(!sdk.exec.MemBlock.of(kept).private());
+
+    // Inside BeginSystemMemory everything is the system's; pairs nest.
+    BeginSystemMemory(SysBase);
+    BeginSystemMemory(SysBase);
+    const inner = AllocVec(SysBase, 8, MEMF_ANY).?;
+    EndSystemMemory(SysBase);
+    const outer = AllocVec(SysBase, 8, MEMF_ANY).?;
+    EndSystemMemory(SysBase);
+    EndSystemMemory(SysBase); // one too many: nothing
+    try testing.expectEqual(@as(u32, 0), task.system_memory_nest);
+    const after = AllocVec(SysBase, 8, MEMF_ANY).?;
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(inner).owner);
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(outer).owner);
+    try testing.expectEqual(@as(u32, 42), sdk.exec.MemBlock.of(after).owner);
+
+    // A region gives up the block and its MemBlock, and the trace counts
+    // both, so its outstanding figure is the fall in AvailMem.
+    const free_before = AvailMem(SysBase, MEMF_ANY);
+    SysBase.mem_trace.start(false);
+    const traced = AllocMem(SysBase, 100, MEMF_ANY).?;
+    try testing.expectEqual(free_before - AvailMem(SysBase, MEMF_ANY), @as(usize, @intCast(SysBase.mem_trace.outstanding())));
+    try testing.expectEqual(rounded(100) + MEM_BLOCKSIZE, free_before - AvailMem(SysBase, MEMF_ANY));
+    FreeMem(SysBase, traced, 100);
+    try testing.expectEqual(@as(i64, 0), SysBase.mem_trace.outstanding());
+    SysBase.mem_trace.on = false;
+
+    FreeVec(SysBase, after);
+    FreeVec(SysBase, outer);
+    FreeVec(SysBase, inner);
+    FreeMem(SysBase, kept, 24);
+    FreeMem(SysBase, mine, 24);
+    FreeMem(SysBase, by_boot, 40);
+    try expectNoLeaks();
+}
+
+test "memory debugging: a wall behind each block, patterns in new and freed memory" {
+    try setUp();
+    defer deinit();
+    FakeAlert.install();
+    defer FakeAlert.uninstall();
+    const rounded = struct {
+        fn of(bytes: usize) usize {
+            return _memory.alignUp(bytes, MEM_BLOCKSIZE);
+        }
+    }.of;
+    _memory.debugOn(SysBase);
+    defer SysBase.mem_debug.on = false;
+    var found: [4]_memory.Damage = undefined;
+    try testing.expectEqual(@as(u32, 0), _memory.debugCheck(SysBase, &found));
+
+    // A block: the pattern for what is not written yet, the wall behind the
+    // size asked for, and the region giving up block, MemBlock and wall.
+    const free_before = AvailMem(SysBase, MEMF_ANY);
+    const block = AllocMem(SysBase, 100, MEMF_ANY).?;
+    const header = sdk.exec.MemBlock.of(block);
+    try testing.expect(header.walled());
+    try testing.expectEqual(@as(usize, 100), header.askedSize());
+    try testing.expectEqual(rounded(100) + sdk.exec.MEM_WALLSIZE, header.extent());
+    try testing.expectEqual(rounded(100) + sdk.exec.MEM_WALLSIZE + MEM_BLOCKSIZE, free_before - AvailMem(SysBase, MEMF_ANY));
+    const words: [*]const u32 = @ptrCast(@alignCast(block));
+    try testing.expectEqual(sdk.exec.MEM_PATTERN_NEW, words[0]);
+    try testing.expectEqual(sdk.exec.MEM_PATTERN_NEW, words[24]);
+    try testing.expect(header.wallDamage() == null);
+    // One byte past its end - inside the rounding - is found, and told by
+    // FreeMem, which frees the block all the same.
+    const bytes: [*]u8 = @ptrCast(block);
+    bytes[100] = 0;
+    try testing.expectEqual(@as(?usize, 100), header.wallDamage());
+    try testing.expectEqual(@as(u32, 1), _memory.debugCheck(SysBase, &found));
+    try testing.expect(!found[0].freed);
+    FreeMem(SysBase, block, 100);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expectEqual(sdk.exec.AN_MemWall, FakeAlert.last_num);
+    try testing.expectEqual(free_before, AvailMem(SysBase, MEMF_ANY));
+
+    // MEMF_CLEAR clears what was asked for; the wall follows it.
+    const cleared = AllocMem(SysBase, 30, MEMF_CLEAR).?;
+    const cleared_bytes: [*]const u8 = @ptrCast(cleared);
+    for (cleared_bytes[0..30]) |byte| try testing.expectEqual(@as(u8, 0), byte);
+    try testing.expect(sdk.exec.MemBlock.of(cleared).wallDamage() == null);
+    FreeVec(SysBase, cleared); // the size from the MemBlock fits a walled block too
+
+    // Freed blocks next to each other merge, and all of the free memory
+    // still holds the pattern behind each chunk's MemChunk.
+    const a = AllocMem(SysBase, 40, MEMF_ANY).?;
+    const b = AllocMem(SysBase, 40, MEMF_ANY).?;
+    const c = AllocMem(SysBase, 40, MEMF_ANY).?;
+    FreeMem(SysBase, b, 40);
+    FreeMem(SysBase, a, 40);
+    FreeMem(SysBase, c, 40);
+    try testing.expectEqual(@as(u32, 0), _memory.debugCheck(SysBase, &found));
+
+    // Memory written after its free: found by a check, and by AllocMem
+    // when it hands the memory out again.
+    const freed = AllocMem(SysBase, 64, MEMF_ANY).?;
+    FreeMem(SysBase, freed, 64);
+    const stale: [*]u8 = @ptrCast(freed);
+    stale[20] = 0x55;
+    try testing.expectEqual(@as(u32, 1), _memory.debugCheck(SysBase, &found));
+    try testing.expect(found[0].freed);
+    try testing.expectEqual(@intFromPtr(freed) + 20, found[0].at);
+    const again = AllocMem(SysBase, 64, MEMF_ANY).?;
+    try testing.expectEqual(freed, again);
+    try testing.expectEqual(@as(u32, 1), SysBase.mem_debug.freed_writes);
+    FreeMem(SysBase, again, 64);
+
+    // The largest block there is takes its wall into account.
+    const largest = AvailMem(SysBase, MEMF_ANY | MEMF_LARGEST);
+    const all = AllocMem(SysBase, largest, MEMF_ANY).?;
+    FreeMem(SysBase, all, largest);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try expectNoLeaks();
+}
+
+test "a task's block: its stack below, the Task above; a wide guard while memory debugging is on" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+
+    const narrow = CreateTask(SysBase, "narrow", -1, &idleCode, 4096).?;
+    try testing.expectEqual(@intFromPtr(narrow.mem_block.?), narrow.sp_lower);
+    try testing.expectEqual(@intFromPtr(narrow), narrow.sp_upper); // the Task above its stack
+    try testing.expect(narrow.flags & sdk.exec.TF_WIDEGUARD == 0);
+    try testing.expectEqual(@as(usize, _task.guard_words), _task.guardWords(narrow));
+
+    _memory.debugOn(SysBase);
+    const wide = CreateTask(SysBase, "wide", -1, &idleCode, 4096).?;
+    const small = CreateTask(SysBase, "small", -1, &idleCode, 1024).?;
+    SysBase.mem_debug.on = false;
+    try testing.expect(wide.flags & sdk.exec.TF_WIDEGUARD != 0);
+    try testing.expect(_task.guardIntact(wide.sp_lower, _task.wide_guard_words));
+    try testing.expect(small.flags & sdk.exec.TF_WIDEGUARD == 0); // no room for it
+    // A wide guard is a wide one to the end: written over past the narrow
+    // part, it is not intact.
+    const guard: [*]u32 = @ptrFromInt(wide.sp_lower);
+    guard[40] = 0;
+    try testing.expect(!_task.guardIntact(wide.sp_lower, _task.wide_guard_words));
+    try testing.expect(_task.guardIntact(wide.sp_lower, _task.guard_words));
+    guard[40] = guard[0];
+
+    RemTask(SysBase, small);
+    RemTask(SysBase, wide);
+    RemTask(SysBase, narrow);
+    try expectNoLeaks();
+}
+
+test "FreeMem refuses a block that is not in use, and a size that is not the block's" {
+    try setUp();
+    defer deinit();
+    FakeAlert.install();
+    defer FakeAlert.uninstall();
+
+    const block = AllocMem(SysBase, 100, MEMF_ANY).?;
+    const held = testRam().free;
+    // The wrong size: refused, the block left as it is.
+    FreeMem(SysBase, block, 200);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try testing.expectEqual(sdk.exec.AN_BadFreeSize, FakeAlert.last_num);
+    try testing.expectEqual(held, testRam().free);
+    try testing.expect(sdk.exec.MemBlock.of(block).inUse());
+    // Any size that rounds up to the block's is its size.
+    FreeMem(SysBase, block, 97);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try expectNoLeaks();
+    // Freed twice, by either call: refused, nothing changes.
+    FreeMem(SysBase, block, 100);
+    try testing.expectEqual(@as(u32, 2), FakeAlert.count);
+    try testing.expectEqual(sdk.exec.AN_FreeTwice, FakeAlert.last_num);
+    FreeVec(SysBase, block);
+    try testing.expectEqual(@as(u32, 3), FakeAlert.count);
+    try testing.expectEqual(sdk.exec.AN_FreeTwice, FakeAlert.last_num);
+    try expectNoLeaks();
+}
+
+test "tasks get numbers, own their own block, and exec's own tasks are the system's" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+
+    const idle = FindTask(SysBase, "idle").?;
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, idle.id);
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(idle.mem_block.?).owner);
+
+    // Made by the boot task, which is the system's: each block is its
+    // task's own once AddTask has given it a number.
+    const first = CreateTask(SysBase, "first", -1, &idleCode, 1024).?;
+    const second = CreateTask(SysBase, "second", -1, &idleCode, 1024).?;
+    try testing.expect(first.id != sdk.exec.MEMOWNER_SYSTEM);
+    try testing.expect(second.id > first.id);
+    try testing.expectEqual(first.id, sdk.exec.MemBlock.of(first.mem_block.?).owner);
+    try testing.expectEqual(second.id, sdk.exec.MemBlock.of(second.mem_block.?).owner);
+    RemTask(SysBase, first);
+    RemTask(SysBase, second);
+    try expectNoLeaks();
+}
+
+test "SetMemOwner: a block given to a task, to the system, and to a task not started yet" {
+    try setUp();
+    defer deinit();
+    const block = AllocMem(SysBase, 64, MEMF_PRIVATE).?;
+    const header = sdk.exec.MemBlock.of(block);
+
+    var running: Task = .{ .node = .{ .name = "running", .pri = -1 } };
+    _ = AddTask(SysBase, &running, &idleCode, null);
+    try testing.expect(SetMemOwner(SysBase, block, &running));
+    try testing.expectEqual(running.id, header.owner);
+    try testing.expect(header.private() and header.inUse()); // the rest stays
+    try testing.expect(SetMemOwner(SysBase, block, null));
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, header.owner);
+
+    // A task not started yet gets its number here, and AddTask keeps it.
+    var later: Task = .{ .node = .{ .name = "later", .pri = -1 } };
+    try testing.expect(SetMemOwner(SysBase, block, &later));
+    const early = later.id;
+    try testing.expect(early != sdk.exec.MEMOWNER_SYSTEM and early != running.id);
+    _ = AddTask(SysBase, &later, &idleCode, null);
+    try testing.expectEqual(early, later.id);
+    try testing.expectEqual(early, header.owner);
+    // Started again after it ended, it is another task: a new number.
+    RemTask(SysBase, &later);
+    _ = AddTask(SysBase, &later, &idleCode, null);
+    try testing.expect(later.id != early);
+    RemTask(SysBase, &later);
+    RemTask(SysBase, &running);
+
+    // Nothing to mark: null, and a block that is not in use.
+    try testing.expect(!SetMemOwner(SysBase, null, null));
+    FreeMem(SysBase, block, 64);
+    try testing.expect(!SetMemOwner(SysBase, block, null));
+    try expectNoLeaks();
+}
+
+test "a pool's puddles are the pool's owner's, whichever task takes them" {
+    try setUp();
+    defer deinit();
+    const boot = SysBase.cpu().this_task;
+    var task: Task = .{ .id = 7 };
+    SysBase.cpu().this_task = &task;
+    const pool_handle = CreatePool(SysBase, MEMF_ANY, 1024, 0).?;
+    try testing.expectEqual(@as(u32, 7), sdk.exec.MemBlock.of(pool_handle).owner);
+    // Another task - here the system's - takes the first puddle.
+    SysBase.cpu().this_task = boot;
+    _ = AllocPooled(SysBase, pool_handle, 16).?;
+    const pool: *_memory.Pool = @ptrCast(@alignCast(pool_handle));
+    const puddle: *_memory.Puddle = @fieldParentPtr("node", pool.puddles.first().?);
+    try testing.expectEqual(@as(u32, 7), sdk.exec.MemBlock.of(puddle).owner);
+    DeletePool(SysBase, pool_handle);
+    try expectNoLeaks();
+}
+
+test "RegionWalk: a region's blocks and free space in order, and where it is damaged" {
+    try setUp();
+    defer deinit();
+    const boot = SysBase.cpu().this_task;
+    var region_buf: [2048]u8 align(16) = undefined;
+    const region = AddMemList(SysBase, region_buf.len, MEMF_INTERNAL, 0, &region_buf, "walked").?;
+    const first = AllocMem(SysBase, 40, MEMF_INTERNAL).?;
+    var task: Task = .{ .id = 9 };
+    SysBase.cpu().this_task = &task;
+    const hole = AllocMem(SysBase, 100, MEMF_INTERNAL | MEMF_PRIVATE).?;
+    const last = AllocMem(SysBase, 64, MEMF_INTERNAL | MEMF_PRIVATE).?;
+    SysBase.cpu().this_task = boot;
+
+    // Before the hole: three blocks and the rest free, end to end.
+    var walk = sdk.exec.RegionWalk.init(region);
+    const expected = [_]struct { at: *anyopaque, owner: u32, private: bool }{
+        .{ .at = first, .owner = 0, .private = false },
+        .{ .at = hole, .owner = 9, .private = true },
+        .{ .at = last, .owner = 9, .private = true },
+    };
+    var covered: usize = 0;
+    for (expected) |want| {
+        const stretch = walk.next().?;
+        try testing.expect(!stretch.free);
+        try testing.expectEqual(@intFromPtr(want.at) - MEM_BLOCKSIZE, stretch.start);
+        try testing.expectEqual(want.owner, stretch.owner);
+        try testing.expectEqual(want.private, stretch.private);
+        covered += stretch.bytes;
+    }
+    const tail = walk.next().?;
+    try testing.expect(tail.free);
+    covered += tail.bytes;
+    try testing.expect(walk.next() == null and walk.damaged == null);
+    try testing.expectEqual(@intFromPtr(region.upper) - @intFromPtr(region.lower), covered);
+
+    // The hole freed is free space between two blocks.
+    FreeMem(SysBase, hole, 100);
+    walk = sdk.exec.RegionWalk.init(region);
+    try testing.expect(!walk.next().?.free);
+    const gap = walk.next().?;
+    try testing.expect(gap.free);
+    try testing.expectEqual(@intFromPtr(hole) - MEM_BLOCKSIZE, gap.start);
+    try testing.expect(!walk.next().?.free);
+    try testing.expect(walk.next().?.free);
+    try testing.expect(walk.next() == null and walk.damaged == null);
+
+    // A block below running past its end into the next one's MemBlock:
+    // the walk ends there and says where.
+    const last_header = sdk.exec.MemBlock.of(last);
+    const saved = last_header.*;
+    last_header.size = 0x5555_5550;
+    walk = sdk.exec.RegionWalk.init(region);
+    while (walk.next()) |_| {}
+    try testing.expectEqual(@as(?usize, @intFromPtr(last_header)), walk.damaged);
+    last_header.* = saved;
+
+    FreeMem(SysBase, last, 64);
+    FreeMem(SysBase, first, 40);
+    try _memory.expectOneChunk(region);
+    try expectNoLeaks();
+}
+
+test "memowners.Tally: what each owner holds, named after the tasks there are" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const boot = SysBase.cpu().this_task;
+
+    // A task that is there (its own block is its) and one that is not.
+    const living = CreateTask(SysBase, "living", -1, &idleCode, 1024).?;
+    var gone: Task = .{ .id = 999 };
+    SysBase.cpu().this_task = &gone;
+    const left = AllocMem(SysBase, 300, MEMF_PRIVATE).?;
+    SysBase.cpu().this_task = boot;
+
+    var tally: sdk.exec.memowners.Tally(8) = .{};
+    tally.take(SysBase.iface());
+    tally.name(SysBase.iface());
+    tally.sort();
+    try testing.expect(tally.damaged == null);
+    try testing.expectEqual(@as(u32, 1), tally.regions);
+    const by_living = tally.of(living.id).?;
+    try testing.expect(by_living.living);
+    try testing.expectEqualStrings("living", std.mem.sliceTo(&by_living.name, 0));
+    try testing.expectEqual(living.mem_size + MEM_BLOCKSIZE, by_living.bytes);
+    const by_gone = tally.of(999).?;
+    try testing.expect(!by_gone.living);
+    try testing.expectEqual(@as(u32, 1), by_gone.blocks);
+    try testing.expectEqual(by_gone.bytes, by_gone.private_bytes);
+    try testing.expect(tally.of(sdk.exec.MEMOWNER_SYSTEM).?.system());
+    // The most first, and everything counted: blocks and free space make
+    // the region.
+    for (tally.owners[1..tally.used], 1..) |*owner, index| try testing.expect(owner.bytes <= tally.owners[index - 1].bytes);
+    var held: usize = tally.free_bytes;
+    for (tally.owners[0..tally.used]) |*owner| held += owner.bytes;
+    const ram = testRam();
+    try testing.expectEqual(@intFromPtr(ram.upper) - @intFromPtr(ram.lower), held);
+
+    // Owners past the tally's room are counted together.
+    var small: sdk.exec.memowners.Tally(1) = .{};
+    small.take(SysBase.iface());
+    try testing.expectEqual(@as(usize, 1), small.used);
+    try testing.expect(small.rest_owners >= 2 and small.rest.bytes > 0);
+
+    FreeMem(SysBase, left, 300);
+    RemTask(SysBase, living);
+    try expectNoLeaks();
+}
+
+test "InitResident makes a module's memory the system's" {
+    try setUp();
+    defer deinit();
+    const Module = struct {
+        var block: ?*anyopaque = null;
+        fn init(_: ?*anyopaque, sys: *interface.ExecBase) callconv(.c) ?*anyopaque {
+            block = sys.AllocMem(32, MEMF_ANY);
+            return sys;
+        }
+    };
+    var tag: Resident = .{ .match_tag = undefined, .version = 1, .name = "owned", .init = @ptrCast(&Module.init) };
+    tag.match_tag = &tag;
+    const boot = SysBase.cpu().this_task;
+    var task: Task = .{ .id = 5 };
+    SysBase.cpu().this_task = &task;
+    defer SysBase.cpu().this_task = boot;
+    _ = InitResident(SysBase, &tag, null).?;
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(Module.block.?).owner);
+    try testing.expectEqual(@as(u32, 0), task.system_memory_nest);
+    FreeMem(SysBase, Module.block, 32);
     try expectNoLeaks();
 }
 
@@ -1172,10 +1615,11 @@ test "MEMF_DMA picks the regions a DMA engine addresses" {
     try testing.expect(inRegion(internal, both));
 
     // With the internal region full, nothing else can answer for it.
-    const rest = AllocMem(SysBase, internal.free, MEMF_DMA).?;
+    const rest_size = AvailMem(SysBase, MEMF_DMA | MEMF_LARGEST);
+    const rest = AllocMem(SysBase, rest_size, MEMF_DMA).?;
     try testing.expect(AllocMem(SysBase, 16, MEMF_DMA) == null);
 
-    FreeMem(SysBase, rest, internal_free - 2 * 64);
+    FreeMem(SysBase, rest, rest_size);
     FreeMem(SysBase, both, 64);
     FreeMem(SysBase, chain, 64);
     try testing.expectEqual(internal_free, internal.free);
@@ -1204,13 +1648,14 @@ test "AvailMem: free, largest and total memory per attribute" {
     try testing.expectEqual(external_size + internal_size + ram_size, AvailMem(SysBase, MEMF_TOTAL));
     try testing.expectEqual(internal_size, AvailMem(SysBase, MEMF_INTERNAL | MEMF_TOTAL | MEMF_LARGEST));
 
-    // Cut the external region into two free chunks; LARGEST sees the bigger one.
+    // Cut the external region into two free chunks; LARGEST sees the bigger
+    // one, less the MemBlock a block taken from it would carry.
     const a = AllocMem(SysBase, 256, MEMF_EXTERNAL).?;
     const hole = AllocMem(SysBase, 512, MEMF_EXTERNAL).?;
     const b = AllocMem(SysBase, 64, MEMF_EXTERNAL).?;
     FreeMem(SysBase, hole, 512);
-    const tail = external_size - 256 - 512 - 64;
-    try testing.expectEqual(@max(@as(usize, 512), tail), AvailMem(SysBase, MEMF_EXTERNAL | MEMF_LARGEST));
+    const tail = external_size - 256 - 512 - 64 - 3 * MEM_BLOCKSIZE;
+    try testing.expectEqual(@max(@as(usize, 512 + MEM_BLOCKSIZE), tail) - MEM_BLOCKSIZE, AvailMem(SysBase, MEMF_EXTERNAL | MEMF_LARGEST));
     try testing.expectEqual(@as(usize, external.free) + internal.free + ram.free, AvailMem(SysBase, MEMF_ANY));
     try testing.expectEqual(external_size + internal_size + ram_size, AvailMem(SysBase, MEMF_TOTAL)); // allocations don't change it
 
@@ -1218,7 +1663,7 @@ test "AvailMem: free, largest and total memory per attribute" {
 
     FreeMem(SysBase, a, 256);
     FreeMem(SysBase, b, 64);
-    try testing.expectEqual(external_size, AvailMem(SysBase, MEMF_EXTERNAL | MEMF_LARGEST));
+    try testing.expectEqual(external_size - MEM_BLOCKSIZE, AvailMem(SysBase, MEMF_EXTERNAL | MEMF_LARGEST));
 }
 
 test "AllocMem flushes unused libraries when memory runs out" {
@@ -1990,7 +2435,7 @@ test "tasks: a stack's guard is written by AddTask and NewStackRun, and a guard 
     defer FakeTaskHardware.uninstall();
     const task = CreateTask(SysBase, "guarded", -1, &idleCode, 2048).?;
     try testing.expect(task.flags & sdk.exec.TF_GUARDED != 0);
-    try testing.expect(_task.guardIntact(task.sp_lower));
+    try testing.expect(_task.guardIntact(task.sp_lower, _task.guard_words));
 
     // Its guard written over, as a stack that ran past its end does: the
     // dispatcher, switching away from it, stops the machine.
@@ -3005,10 +3450,11 @@ test "AllocVec remembers the size, FreeVec gives it all back" {
     try testing.expectEqual(@as(usize, 0), @intFromPtr(v) % sdk.exec.MEM_BLOCKSIZE);
     const bytes: [*]const u8 = @ptrCast(v);
     for (bytes[0..100]) |b| try testing.expectEqual(@as(u8, 0), b);
-    // The whole block's size is in the word just below what AllocVec
-    // answered, which is what lets FreeVec take only the address.
-    const size_word: *const u32 = @ptrFromInt(@intFromPtr(v) - 4);
-    try testing.expectEqual(@as(u32, 100 + _memory.vec_header), size_word.*);
+    // The size is in the block's MemBlock, below what AllocVec answered,
+    // which is what lets FreeVec take only the address.
+    const header = sdk.exec.MemBlock.of(v);
+    try testing.expectEqual(_memory.alignUp(100, MEM_BLOCKSIZE), header.bytes());
+    try testing.expect(header.inUse());
     try testing.expect(AvailMem(SysBase, MEMF_ANY) < before);
     FreeVec(SysBase, v);
     FreeVec(SysBase, null); // ignored

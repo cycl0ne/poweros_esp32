@@ -46,8 +46,8 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "15.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -895,6 +895,10 @@ fn start(cb: *ConsoleBase) bool {
     const sys = cb.sys_base;
     if (cb.started != 0) return cb.started == 1;
     cb.started = 2;
+    // What the device starts once - its task's stack, its port, the input
+    // device opened for it - is the system's, not the first opener's.
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
     cb.stack = stack;
     const signal = sys.AllocSignal(-1);

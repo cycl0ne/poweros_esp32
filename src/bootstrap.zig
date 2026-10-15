@@ -37,7 +37,7 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
     var block: ?*anyopaque = null;
     for (regions) |r| {
         const mh = exec.CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
-        if (block == null) block = exec.Allocate(no_base, mh, sizes.neg + sizes.pos);
+        if (block == null) block = exec.allocateExecBlock(mh, sizes.neg + sizes.pos);
         exec.Enqueue(no_base, &pending, &mh.node);
     }
     const lib = exec.buildLibrary(@ptrCast(block orelse return error.NoMemory), vectors, sizes);

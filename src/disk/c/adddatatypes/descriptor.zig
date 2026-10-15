@@ -152,7 +152,9 @@ pub fn readDescriptor(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, text: []u8
     const size = @sizeOf(datatypes.DataType) + @sizeOf(datatypes.DataTypeHeader) +
         tool_count * @sizeOf(datatypes.ToolNode) + tool_text +
         name_len + base_len + pattern_room + 2 * mask_room;
-    const memory = sys.AllocVec(size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    // Handed to datatypes.library, which keeps it on its list after this
+    // command has ended: the system's.
+    const memory = sys.AllocVec(size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     const dt: *datatypes.DataType = @ptrCast(@alignCast(memory));
     dt.* = .{ .header = undefined, .length = @intCast(size) };
     dt.tools.init(.unknown);

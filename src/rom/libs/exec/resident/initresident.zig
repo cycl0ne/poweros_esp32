@@ -50,6 +50,10 @@ const ResidentInitFn = sdk.exec.ResidentInitFn;
 /// exec's own tag is refused: exec is built once, by the bootstrap, before
 /// there is anything to build it with.
 ///
+/// The init routine runs inside `BeginSystemMemory`: what a module
+/// allocates while it is made - its base, its tables, the state it keeps -
+/// is the system's, not the task's that happened to ask for it.
+///
 /// CONTEXT:
 /// - Waits: whatever the module does.
 /// - Interrupts: no. It allocates.
@@ -78,6 +82,8 @@ pub fn InitResident(base: *ExecBase, tag: *const Resident, seg_list: ?*anyopaque
     if (tag.match_word != sdk.exec.RTC_MATCHWORD) return null;
     if (tag == &exec_init.exec_tag) return null; // exec is made once, by the bootstrap
     const sys = base.iface();
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     if (tag.flags & sdk.exec.RTF_AUTOINIT == 0) {
         const init: ResidentInitFn = @ptrCast(@alignCast(tag.init orelse return base));
         return init(seg_list, sys);

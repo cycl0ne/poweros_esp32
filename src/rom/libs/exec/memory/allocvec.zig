@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! AllocVec: `AllocMem` that remembers the size. The block carries a
-//! `vec_header` in front, whose last word holds the whole size, so
-//! `FreeVec` needs only the address.
-
-const _memory = @import("_memory.zig");
+//! AllocVec: `AllocMem` that remembers the size - which every block does
+//! now, in its MemBlock, so it is AllocMem itself, and `FreeVec` reads the
+//! size from there.
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
@@ -19,16 +17,15 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// INPUTS:
 /// - `byte_size` - bytes wanted.
-/// - `requirements` - exactly as `AllocMem` takes them. `MEMF_CLEAR` clears
-///   what the caller gets, not the header.
+/// - `requirements` - exactly as `AllocMem` takes them.
 ///
 /// RESULT:
-/// The block, or null: 0 bytes, the size plus the header overflows, or
-/// there was no memory.
+/// The block, or null: 0 bytes, or there was no memory.
 ///
 /// BEHAVIOR:
-/// It allocates the header and the block as one and answers the address
-/// past the header, with the whole size in the word immediately below it.
+/// It is `AllocMem`: the block's MemBlock holds its size, rounded up to
+/// `MEM_BLOCKSIZE`, in the word right below the address answered, and its
+/// owner, as every block's does.
 ///
 /// CONTEXT:
 /// - Waits: only when memory runs short, as `AllocMem` does.
@@ -37,14 +34,13 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The caller's until `FreeVec`. It must not be freed with `FreeMem`: the
-/// address is past the header, so the region would be handed the wrong
-/// block.
+/// The caller's until `FreeVec` - or `FreeMem` with the size asked for,
+/// which is the same thing.
 ///
 /// NOTES:
-/// It costs `MEM_BLOCKSIZE` more than `AllocMem`, which is why the
-/// alternative for many small blocks that die together is a pool, whose
-/// blocks carry no header at all.
+/// It costs `MEM_BLOCKSIZE` more than the bytes asked for, as `AllocMem`
+/// does, which is why the alternative for many small blocks that die
+/// together is a pool, whose blocks carry no MemBlock of their own.
 ///
 /// BUGS:
 /// None known.
@@ -59,14 +55,5 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// defer sys.FreeVec(buf);
 /// ```
 pub fn AllocVec(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
-    if (byte_size == 0) return null;
-    const sum = @addWithOverflow(byte_size, _memory.vec_header);
-    if (sum[1] != 0) return null;
-    const total = sum[0];
-    const size_word = _memory.fitsWord(total) orelse return null;
-    const sys = base.iface();
-    const block = sys.AllocMem(total, requirements) orelse return null;
-    const bytes: [*]u8 = @as([*]u8, @ptrCast(block)) + _memory.vec_header;
-    @as(*u32, @ptrCast(@alignCast(bytes - 4))).* = size_word;
-    return bytes;
+    return base.iface().AllocMem(byte_size, requirements);
 }

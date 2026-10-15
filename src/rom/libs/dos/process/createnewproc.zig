@@ -11,6 +11,7 @@ const objects = @import("../packet/_packet.zig");
 const processEnd = _process.processEnd;
 const endProcess = _process.endProcess;
 const setUpContext = _process.setUpContext;
+const giveToChild = _process.giveToChild;
 const makeCli = _process.makeCli;
 const initMsgPort = _process.initMsgPort;
 /// The least stack CreateNewProc gives, whatever NP_StackSize says.
@@ -94,7 +95,10 @@ const TagItem = sdk.utility.TagItem;
 /// OWNERSHIP:
 /// The process owns what the tags hand it - the streams it will close, the
 /// directories, the exit hook - from the moment the call succeeds. On
-/// failure the caller keeps them.
+/// failure the caller keeps them. What dos copies for it - the variables,
+/// the command path, the arguments, the file list - is marked as the new
+/// process's before it starts (`SetMemOwner`), though made on the caller's
+/// task: it frees them when it ends.
 ///
 /// BUGS:
 /// If duplicating the caller's home directory fails after NP_CurrentDir was
@@ -152,17 +156,21 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
         _ = dos_lib.SetIoErr(dos.ERROR_NO_FREE_STORE);
         return null;
     };
+    // The stack at the bottom and the process above it, with its name and
+    // CLI: a stack that runs past its end writes below the block, not over
+    // the Process the system keeps the process by.
     const bytes: [*]u8 = @ptrCast(block);
-    const name_dst = bytes + @sizeOf(Process);
+    const above = bytes + stack;
+    const name_dst = above + @sizeOf(Process);
     @memcpy(name_dst[0..name_len], name[0..name_len]);
     name_dst[name_len] = 0;
 
-    const proc: *Process = @ptrCast(@alignCast(block));
+    const proc: *Process = @ptrCast(@alignCast(above));
     proc.* = .{
         .task = .{
             .node = .{ .type = .process, .pri = pri, .name = @ptrCast(name_dst) },
-            .sp_lower = @intFromPtr(bytes + header),
-            .sp_upper = @intFromPtr(bytes + total),
+            .sp_lower = @intFromPtr(bytes),
+            .sp_upper = @intFromPtr(above),
             .mem_block = block,
             .mem_size = total,
             .user_data = @ptrFromInt(ub.GetTagData(dos.NP_UserData, 0, tags)),
@@ -170,7 +178,7 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
             .end_msg = @ptrFromInt(ub.GetTagData(dos.NP_EndMsg, 0, tags)),
         },
         .stack_size = @intCast(stack),
-        .stack_base = @intFromPtr(bytes + total),
+        .stack_base = @intFromPtr(above),
     };
     initMsgPort(proc);
     proc.local_vars.init();
@@ -184,7 +192,7 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
     }
     proc.console_task = @ptrFromInt(ub.GetTagData(dos.NP_ConsoleTask, @intFromPtr(proc.console_task), tags));
     proc.window_ptr = @ptrFromInt(ub.GetTagData(dos.NP_WindowPtr, @intFromPtr(proc.window_ptr), tags));
-    if (with_cli) proc.cli = makeCli(db, bytes + cli_at, if (parent) |p| p.cli else null, command_name, stack);
+    if (with_cli) proc.cli = makeCli(db, above + cli_at, if (parent) |p| p.cli else null, command_name, stack);
 
     if (!setUpContext(db, proc, parent, tags)) {
         const code = dos_lib.IoErr();
@@ -193,6 +201,7 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
         _ = dos_lib.SetIoErr(code);
         return null;
     }
+    giveToChild(db, proc);
     _ = sys.AddTask(&proc.task, entry, &processEnd);
     return proc;
 }

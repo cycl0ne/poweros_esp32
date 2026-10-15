@@ -76,7 +76,9 @@ pub fn StartUSB(base: *UsbBase, bus: u32) i32 {
     if (!openHelpers(base)) return usb.USBERR_NOMEM;
     const controller = findController(base, bus) orelse return usb.USBERR_NOBUS;
 
-    const memory = sys.AllocMem(@sizeOf(Bus), exec.MEMF_CLEAR) orelse return usb.USBERR_NOMEM;
+    // The bus's record is the library's, kept in its base until StopUSB:
+    // the system's, not the task's that started it.
+    const memory = sys.AllocMem(@sizeOf(Bus), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return usb.USBERR_NOMEM;
     const record: *Bus = @ptrCast(@alignCast(memory));
     record.* = .{ .usb_base = base, .number = bus, .hc_name = controller.name, .hc_unit = controller.unit };
     const signal = sys.AllocSignal(-1);

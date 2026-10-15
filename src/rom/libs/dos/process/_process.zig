@@ -206,6 +206,33 @@ pub fn setUpContext(db: *DosBase, proc: *Process, parent: ?*Process, tags: ?[*]c
     return true;
 }
 
+/// What `setUpContext` allocated for the new process - on the caller's
+/// task, so marked as the caller's - given to the new process: its copied
+/// variables, path, arguments and file list. It frees them when it ends,
+/// and the system's tools show them under it, even once the caller has
+/// ended. Before the process is started: SetMemOwner gives it its number.
+///
+/// INPUTS:
+/// - `db` - dos.library's base.
+/// - `proc` - the new process, not yet running.
+pub fn giveToChild(db: *DosBase, proc: *Process) void {
+    const sys = db.sys_base;
+    const child = &proc.task;
+    var it = list(proc).head;
+    while (it) |n| : (it = n.succ) {
+        if (n.succ == null) break;
+        _ = sys.SetMemOwner(@ptrCast(n), child);
+    }
+    if (proc.cli) |c| {
+        var node = c.command_dir;
+        while (node) |path| : (node = path.next) _ = sys.SetMemOwner(path, child);
+    }
+    if (proc.flags & x.PRF_FREEARGS != 0) {
+        if (proc.own_arguments) |args| _ = sys.SetMemOwner(@ptrCast(@constCast(args)), child);
+    }
+    if (proc.arg_list) |pairs| _ = sys.SetMemOwner(@ptrCast(pairs), child);
+}
+
 /// A copy of a string in a block of its own, or null with
 /// ERROR_NO_FREE_STORE.
 ///

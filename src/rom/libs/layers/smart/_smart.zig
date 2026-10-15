@@ -142,7 +142,7 @@ fn dropRects(lb: *LayersBase, info: *LayerInfo, r: Rects) void {
 /// - `within` - the region to narrow it to.
 fn meeting(lb: *LayersBase, area: Rect, within: *graphics.Region) ?*graphics.Region {
     const gb = lb.graphics_base;
-    const region = gb.NewRegion() orelse return null;
+    const region = lb.newRegion() orelse return null;
     if (!gb.OrRectRegion(region, &area) or !gb.AndRegionRegion(within, region)) {
         gb.DisposeRegion(region);
         return null;
@@ -192,12 +192,12 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
 
     // Everything below works in the layer's own coordinates, because that
     // is what a kept piece is in and what the layer draws in.
-    const now_visible = info_mod.copyRegion(gb, seen) orelse return false;
+    const now_visible = info_mod.copyRegion(lb, seen) orelse return false;
     defer gb.DisposeRegion(now_visible);
     gb.OffsetRegion(now_visible, -bx, -by);
 
     // What is covered now: the whole layer less what it can see.
-    const now_hidden = gb.NewRegion() orelse return false;
+    const now_hidden = lb.newRegion() orelse return false;
     defer gb.DisposeRegion(now_hidden);
     if (!gb.OrRectRegion(now_hidden, &own) or !gb.SubRegionRegion(now_visible, now_hidden)) return false;
 
@@ -226,7 +226,7 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
     // pixels anywhere, and keeping a surface for it would keep whatever
     // was in that memory. It is not kept: `putBack` then reports it as
     // owed and the layer is asked to draw it.
-    const newly = info_mod.copyRegion(gb, layer.visible) orelse return failed(lb, layer, fresh);
+    const newly = info_mod.copyRegion(lb, layer.visible) orelse return failed(lb, layer, fresh);
     defer gb.DisposeRegion(newly);
     gb.OffsetRegion(newly, -bx, -by);
     if (!gb.AndRegionRegion(now_hidden, newly)) return failed(lb, layer, fresh);
@@ -250,7 +250,7 @@ pub fn keepCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
     // had. The area they cover is what is covered now and has pixels
     // somewhere: what was visible or kept until now.
     if (count > pieces_before_gathering or wasteful(info, fresh)) {
-        const sources = info_mod.copyRegion(gb, layer.visible) orelse return keepAsItIs(layer, fresh);
+        const sources = info_mod.copyRegion(lb, layer.visible) orelse return keepAsItIs(layer, fresh);
         defer gb.DisposeRegion(sources);
         gb.OffsetRegion(sources, -bx, -by);
         var old = layer.kept;
@@ -373,7 +373,7 @@ pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphic
     if (!layer.pending_made) return dropIfEmpty(gb, owed);
     layer.pending_made = false;
 
-    const now_visible = info_mod.copyRegion(gb, seen) orelse {
+    const now_visible = info_mod.copyRegion(lb, seen) orelse {
         dropKept(lb, layer);
         layer.kept = layer.pending;
         layer.pending = null;
@@ -421,7 +421,7 @@ pub fn putBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphic
 /// - `seen` - what it can see now, in the display's coordinates.
 fn newlyVisible(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) ?*graphics.Region {
     const gb = lb.graphics_base;
-    const fresh = info_mod.copyRegion(gb, seen) orelse return null;
+    const fresh = info_mod.copyRegion(lb, seen) orelse return null;
     if (!gb.SubRegionRegion(layer.visible, fresh)) {
         gb.DisposeRegion(fresh);
         return null;

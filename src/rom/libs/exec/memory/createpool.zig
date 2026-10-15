@@ -47,7 +47,10 @@ const MEMF_CLEAR = sdk.exec.MEMF_CLEAR;
 ///
 /// OWNERSHIP:
 /// The caller's until `DeletePool`, which frees the pool and everything
-/// still in it.
+/// still in it. The pool and every puddle it takes are marked as the
+/// caller's task's - or the system's, with MEMF_SYSTEM - whichever task's
+/// AllocPooled takes a puddle; the blocks inside a puddle carry no
+/// MemBlock of their own.
 ///
 /// NOTES:
 /// A pool is worth having where the blocks are small and die together. A
@@ -82,6 +85,9 @@ pub fn CreatePool(base: *ExecBase, requirements: u32, puddle_size: usize, thresh
         // rather than "every block is too big", which is what taking it
         // literally would mean.
         .thresh_size = if (thresh_size == 0) largest else @min(thresh_size, largest),
+        // Whoever owns the pool owns its puddles, whichever task takes
+        // them: the caller's number, or the system's.
+        .owner = sdk.exec.MemBlock.of(block).owner,
     };
     sys.InitSemaphore(&pool.lock);
     sys.NewList(&pool.puddles);

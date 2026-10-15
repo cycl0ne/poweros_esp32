@@ -125,7 +125,7 @@ pub fn resquare(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
 /// - `seen` - what it can see now.
 pub fn saveCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
     const gb = lb.graphics_base;
-    const going = info_mod.copyRegion(gb, layer.visible) orelse return false;
+    const going = info_mod.copyRegion(lb, layer.visible) orelse return false;
     defer gb.DisposeRegion(going);
     if (!gb.SubRegionRegion(seen, going)) return false;
     move(lb, layer, going, true);
@@ -141,7 +141,7 @@ pub fn saveCovered(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool 
 /// - `seen` - what it can see now.
 pub fn bringBack(lb: *LayersBase, layer: *Layer, seen: *graphics.Region) bool {
     const gb = lb.graphics_base;
-    const coming = info_mod.copyRegion(gb, seen) orelse return false;
+    const coming = info_mod.copyRegion(lb, seen) orelse return false;
     defer gb.DisposeRegion(coming);
     if (!gb.SubRegionRegion(layer.visible, coming)) return false;
     move(lb, layer, coming, false);

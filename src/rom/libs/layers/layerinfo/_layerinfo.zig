@@ -18,6 +18,7 @@ const layers = sdk.layers;
 const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const LayersBase = @import("../layers.zig").LayersBase;
 const Rect = graphics.Rect;
 
 /// Every layer of one display.
@@ -193,10 +194,12 @@ pub fn freeTargets(sys: *ExecBase, info: *LayerInfo, from: ?*graphics.ClipTarget
 /// first.
 ///
 /// INPUTS:
-/// - `gb` - graphics.library, for the region calls.
+/// - `lb` - the library: graphics for the region calls, and the region
+///   made the system's (`newRegion`).
 /// - `from` - the region to copy.
-pub fn copyRegion(gb: *GraphicsBase, from: *graphics.Region) ?*graphics.Region {
-    const to = gb.NewRegion() orelse return null;
+pub fn copyRegion(lb: *LayersBase, from: *graphics.Region) ?*graphics.Region {
+    const gb = lb.graphics_base;
+    const to = lb.newRegion() orelse return null;
     if (!gb.OrRegionRegion(from, to)) {
         gb.DisposeRegion(to);
         return null;

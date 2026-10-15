@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! FreeVec: gives back a block from `AllocVec`, reading its size from the
-//! word in front of it.
+//! FreeVec: gives back a block from `AllocVec` - or AllocMem - reading its
+//! size from the block's MemBlock.
 
-const _memory = @import("_memory.zig");
+const sdk = @import("sdk");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 
-/// Gives back memory from `AllocVec`.
+/// Gives back memory from `AllocVec` or `AllocMem`, whose size it knows.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -16,18 +16,19 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// SINCE: 1.0. LVO -296.
 ///
 /// INPUTS:
-/// - `memory_block` - what `AllocVec` answered, or null, which does
-///   nothing.
+/// - `memory_block` - what `AllocVec` or `AllocMem` answered, or null,
+///   which does nothing.
 ///
 /// RESULT:
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The size is read from the word below the block and the whole thing,
-/// header included, goes back.
+/// The size is read from the block's MemBlock and `FreeMem` is called with
+/// it, which gives the block back, MemBlock included - or refuses a block
+/// that is not in use, as it refuses any.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: no, unless `FreeMem` refuses the block and alerts.
 /// - Interrupts: no. `FreeMem` takes exec's memory lock.
 /// - Locks: none needed.
 /// - Process: a Task will do.
@@ -36,8 +37,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// The memory is the system's again.
 ///
 /// NOTES:
-/// Only on a block from `AllocVec`. On anything else it reads whatever is
-/// in front of the address as a size and frees that much.
+/// Only on a block from `AllocVec` or `AllocMem`: anything else has no
+/// MemBlock in front, and `FreeMem` refuses it unless what is there
+/// happens to look like one.
 ///
 /// BUGS:
 /// None known.
@@ -50,8 +52,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// defer sys.FreeVec(buf);
 /// ```
 pub fn FreeVec(base: *ExecBase, memory_block: ?*anyopaque) void {
-    const bytes: [*]u8 = @ptrCast(memory_block orelse return);
-    const size = @as(*const u32, @ptrCast(@alignCast(bytes - 4))).*;
-    const sys = base.iface();
-    sys.FreeMem(bytes - _memory.vec_header, size);
+    const block = memory_block orelse return;
+    // A block freed already says 0 bytes, which FreeMem would take for
+    // nothing to do: it is asked all the same, and refuses it.
+    const size = sdk.exec.MemBlock.of(block).bytes();
+    base.iface().FreeMem(block, @max(size, 1));
 }

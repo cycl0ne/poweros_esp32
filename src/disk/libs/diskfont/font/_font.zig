@@ -49,7 +49,9 @@ comptime {
 /// - `name` - the family's name; cut to fit.
 /// - `size` - the image's size.
 pub fn newRecord(dfb: *DiskfontBase, name: [*:0]const u8, size: u32) ?*DiskFont {
-    const memory = dfb.sys_base.AllocVec(@sizeOf(DiskFont) + size, exec.MEMF_ANY) orelse return null;
+    // The font is on the system's list until it is flushed: the system's, not
+    // the task's that opened it first.
+    const memory = dfb.sys_base.AllocVec(@sizeOf(DiskFont) + size, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return null;
     const record: *DiskFont = @ptrCast(@alignCast(memory));
     record.* = .{ .font = .{ .image = @ptrCast(imageArea(record)) } };
     var i: usize = 0;

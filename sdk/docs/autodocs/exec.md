@@ -34,6 +34,7 @@ Generated from the source by `./zig build autodoc`.
 - [AttemptSemaphore](#attemptsemaphore) - Takes a semaphore exclusively if that can be done without waiting.
 - [AttemptSemaphoreShared](#attemptsemaphoreshared) - Takes a semaphore shared if that can be done without waiting.
 - [AvailMem](#availmem) - How much memory of a kind there is.
+- [BeginSystemMemory](#beginsystemmemory) - Makes what the calling task allocates the system's, until the matching `EndSystemMemory`.
 - [CacheClearE](#cachecleare) - Clears the caches over one range of addresses.
 - [CacheClearU](#cacheclearu) - Makes code written through the data bus runnable.
 - [CachePostDMA](#cachepostdma) - Finishes with memory a DMA engine has used, so the CPU reads what was written.
@@ -62,6 +63,7 @@ Generated from the source by `./zig build autodoc`.
 - [Disable](#disable) - Masks every interrupt until the matching `Enable`.
 - [DoIO](#doio) - Does one I/O request and waits for it to finish.
 - [Enable](#enable) - Unmasks interrupts again, and takes any task switch that came due.
+- [EndSystemMemory](#endsystemmemory) - Ends a `BeginSystemMemory`.
 - [Enqueue](#enqueue) - Puts a node on a list in priority order.
 - [FindName](#findname) - Finds the first node of a list with a given name.
 - [FindPort](#findport) - Finds a public port by name.
@@ -71,7 +73,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeMem](#freemem) - Gives memory back to the system.
 - [FreePooled](#freepooled) - Gives a block from `AllocPooled` back to its pool.
 - [FreeSignal](#freesignal) - Gives a signal bit back.
-- [FreeVec](#freevec) - Gives back memory from `AllocVec`.
+- [FreeVec](#freevec) - Gives back memory from `AllocVec` or `AllocMem`, whose size it knows.
 - [GetMsg](#getmsg) - Takes the oldest message off a port, without waiting.
 - [HoldOtherCores](#holdothercores) - Holds the other cores still until `ReleaseOtherCores`.
 - [InitCode](#initcode) - Starts every resident module of a start class, highest priority first.
@@ -127,6 +129,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetIntVector](#setintvector) - Installs the one handler of an interrupt number.
 - [SetLogSignal](#setlogsignal) - Asks for signals when something is added to the system log, or stops them.
 - [SetMem](#setmem) - Fills memory with one byte value.
+- [SetMemOwner](#setmemowner) - Gives a block to another task, or to the system.
 - [SetRamLib](#setramlib) - Tells exec where the module loader's base is.
 - [SetSignal](#setsignal) - Reads or changes the calling task's signals without waiting.
 - [SetTaskAffinity](#settaskaffinity) - Sets the cores a task may run on.
@@ -919,8 +922,9 @@ fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn,
 
 **INPUTS**
 
-- `task` - a `Task` the caller has filled in: its name and priority, and
-  its stack in `sp_lower`/`sp_upper`. The memory must outlive the task.
+- `task` - a `Task` the caller has filled in from the struct's defaults
+  (`.{}`): its name and priority, and its stack in `sp_lower`/
+  `sp_upper`. The memory must outlive the task.
 - `init_pc` - where it starts. It is handed the SDK's `ExecBase`, which
   is how a task reaches the system without a global.
 - `final_pc` - run when `init_pc` returns, or null. The task is removed
@@ -940,12 +944,21 @@ the running task's it runs at once** - before this call returns, since
 the `Enable` at the end of it is a point at which a switch is taken.
 Its time (`timeRun`) counts from 0.
 
+**It gets its number** (`Task.id`), the next since the system started:
+what the memory it allocates is marked with - unless `SetMemOwner`
+gave it one already, before it started, which it keeps. A task its
+creator allocated with one block - `CreateTask`'s, dos's processes - has
+that block (`mem_block`) marked as its own from here, not the
+creator's.
+
 **The bottom four words of its stack become its guard** (from
 `sp_lower`): a pattern the dispatcher looks at each time it switches
 away from the task. Written over - the stack ran past its end - is a
 dead-end alert, `AN_StackProbe`, in that task, before what the overflow
 wrote over is used by anyone else. Those words are not the task's to
-use.
+use. While memory debugging is on (`s3> memdebug`), a task whose stack
+is 4 KiB or more gets a wide guard instead, 64 words (TF_WIDEGUARD), so
+that a frame larger than four words still lands in it.
 
 **CONTEXT**
 
@@ -1228,8 +1241,10 @@ fn AllocMem(base: *ExecBase, byte_size: usize,
   - `MEMF_EXTERNAL` - PSRAM. Where the big buffers go.
   - `MEMF_DMA` - reachable by a DMA descriptor's twenty address bits,
     and needing no cache maintenance.
+  - `MEMF_PRIVATE` - the block is the owner's alone; without it, shared.
   - `MEMF_CLEAR` - zero the block before answering.
   - `MEMF_REVERSE` - take it from the top of the region.
+  - `MEMF_SYSTEM` - the block is the system's, not the calling task's.
   - `MEMF_NO_EXPUNGE` - fail rather than ask the low-memory handlers.
 
 **RESULT**
@@ -1241,6 +1256,13 @@ even after the handlers have run.
 
 Regions are tried in priority order and the first that has every
 attribute bit asked for and room for the block wins.
+
+**The block carries a MemBlock in front** (`sdk.exec.MemBlock`), one
+`MEM_BLOCKSIZE` taken from the region with it: the owner, the size and
+MEMF_PRIVATE. The owner is the system for `MEMF_SYSTEM`, for exec's own
+tasks and for a task inside `BeginSystemMemory`; otherwise the calling
+task's number (`Task.id`) - also when the call is made from library
+code, which runs on its caller. FreeMem checks the size against it.
 
 **When nothing fits**, and `MEMF_NO_EXPUNGE` was not asked for, the
 low-memory handlers are called highest priority first, and the
@@ -1265,15 +1287,24 @@ semaphore, so that what they free goes straight back.
 
 **OWNERSHIP**
 
-The caller's until `FreeMem` with the same size. Nothing tracks it, so a
-block whose size is lost is a leak - which is what `AllocVec` exists to
-prevent.
+The caller's until `FreeMem` with the same size, and marked as its
+task's, or the system's, until then. Nothing frees it when the task
+ends: a block left over shows under the task's number in
+`Avail OWNERS` and `s3> memowners`.
+
+**While memory debugging is on** (`s3> memdebug`), the block also gets a
+wall of `MEM_WALLSIZE` behind it, which records the size asked for and
+which `FreeMem` checks; it holds `MEM_PATTERN_NEW` unless `MEMF_CLEAR`
+asked for zeros; and the free memory it is cut from is checked for
+`MEM_PATTERN_FREED`, a write to it after its free going to the system
+log.
 
 **NOTES**
 
-The size a region actually gives up is the request rounded up, which is
-why `memtrace`'s outstanding figure and the fall in what `AvailMem`
-reports are the same number.
+The size a region actually gives up is the request rounded up, the
+MemBlock and any wall, which is why `memtrace`'s outstanding figure and
+the fall in what `AvailMem` reports are the same number. MEMF_PRIVATE is
+recorded, not enforced: nothing checks who reads or writes the block.
 
 **BUGS**
 
@@ -1281,7 +1312,7 @@ None known.
 
 **SEE ALSO**
 
-`FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`
+`FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`, `BeginSystemMemory`
 
 **EXAMPLES**
 
@@ -1433,18 +1464,17 @@ fn AllocVec(base: *ExecBase, byte_size: usize,
 **INPUTS**
 
 - `byte_size` - bytes wanted.
-- `requirements` - exactly as `AllocMem` takes them. `MEMF_CLEAR` clears
-  what the caller gets, not the header.
+- `requirements` - exactly as `AllocMem` takes them.
 
 **RESULT**
 
-The block, or null: 0 bytes, the size plus the header overflows, or
-there was no memory.
+The block, or null: 0 bytes, or there was no memory.
 
 **BEHAVIOR**
 
-It allocates the header and the block as one and answers the address
-past the header, with the whole size in the word immediately below it.
+It is `AllocMem`: the block's MemBlock holds its size, rounded up to
+`MEM_BLOCKSIZE`, in the word right below the address answered, and its
+owner, as every block's does.
 
 **CONTEXT**
 
@@ -1455,15 +1485,14 @@ past the header, with the whole size in the word immediately below it.
 
 **OWNERSHIP**
 
-The caller's until `FreeVec`. It must not be freed with `FreeMem`: the
-address is past the header, so the region would be handed the wrong
-block.
+The caller's until `FreeVec` - or `FreeMem` with the size asked for,
+which is the same thing.
 
 **NOTES**
 
-It costs `MEM_BLOCKSIZE` more than `AllocMem`, which is why the
-alternative for many small blocks that die together is a pool, whose
-blocks carry no header at all.
+It costs `MEM_BLOCKSIZE` more than the bytes asked for, as `AllocMem`
+does, which is why the alternative for many small blocks that die
+together is a pool, whose blocks carry no MemBlock of their own.
 
 **BUGS**
 
@@ -1755,8 +1784,9 @@ fn AvailMem(base: *ExecBase, requirements: u32) usize
 - `requirements` - which regions to count, by the same attribute bits
   `AllocMem` takes, and which question to ask:
   - nothing further - the free bytes.
-  - `MEMF_LARGEST` - the largest single free chunk, which is the biggest
-    allocation that could succeed.
+  - `MEMF_LARGEST` - the biggest allocation that could succeed: the
+    largest single free chunk, less the MemBlock a block carries - and
+    its wall while memory debugging is on.
   - `MEMF_TOTAL` - the regions' whole size, free or not. It wins over
     `MEMF_LARGEST`.
 
@@ -1767,7 +1797,9 @@ The number of bytes. 0 if no region has the attributes asked for.
 **BEHAVIOR**
 
 Free and largest differ by fragmentation, and the gap between them is
-the only measure of it the system offers.
+the only measure of it the system offers. The free bytes are the
+regions' own count, MemBlocks of blocks to come included, so a block of
+N bytes takes N rounded up and `MEM_BLOCKSIZE` from it.
 
 **CONTEXT**
 
@@ -1800,6 +1832,74 @@ None known.
 ```zig
 const free = sys.AvailMem(exec.MEMF_INTERNAL);
 const biggest = sys.AvailMem(exec.MEMF_INTERNAL | exec.MEMF_LARGEST);
+```
+
+## BeginSystemMemory
+
+Makes what the calling task allocates the system's, until the matching `EndSystemMemory`.
+
+**SYNOPSIS**
+
+```zig
+fn BeginSystemMemory(base: *ExecBase) void
+```
+
+**SINCE**
+
+1.11. LVO -548.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Every block the task allocates from here is marked as the system's
+(`MEMOWNER_SYSTEM`), as if each call had asked for `MEMF_SYSTEM`: the
+blocks of `AllocMem` and `AllocVec`, a pool made, and whatever library
+code the task calls allocates on its behalf. Pairs nest: the task's
+count (`Task.system_memory_nest`) goes up by one here and down by one in
+`EndSystemMemory`, and allocations are the system's while it is above 0.
+
+It is for code that makes something the system keeps without knowing
+what the code it calls allocates: a loader reading a module's segments
+and running its init, which `InitResident` does inside such a pair
+itself.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no: it is the calling task's.
+- Locks: none taken, none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; blocks allocated meanwhile are the system's.
+
+**NOTES**
+
+Only the calling task's allocations change. A task started meanwhile
+owns its own block and counts from 0.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EndSystemMemory`, `AllocMem`, `InitResident`
+
+**EXAMPLES**
+
+```zig
+sys.BeginSystemMemory();
+defer sys.EndSystemMemory();
+const seg_list = dos_lib.LoadSeg("LIBS:mine.library") orelse return null;
 ```
 
 ## CacheClearE
@@ -2961,7 +3061,10 @@ first puddle.
 **OWNERSHIP**
 
 The caller's until `DeletePool`, which frees the pool and everything
-still in it.
+still in it. The pool and every puddle it takes are marked as the
+caller's task's - or the system's, with MEMF_SYSTEM - whichever task's
+AllocPooled takes a puddle; the blocks inside a puddle carry no
+MemBlock of their own.
 
 **NOTES**
 
@@ -3650,6 +3753,65 @@ sys.Disable();
 defer sys.Enable();
 ```
 
+## EndSystemMemory
+
+Ends a `BeginSystemMemory`.
+
+**SYNOPSIS**
+
+```zig
+fn EndSystemMemory(base: *ExecBase) void
+```
+
+**SINCE**
+
+1.11. LVO -552.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The calling task's count (`Task.system_memory_nest`) goes down by one;
+at 0 what it allocates is its own again. Without a `BeginSystemMemory`
+to end it does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no: it is the calling task's.
+- Locks: none taken, none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands: blocks allocated inside the pair stay the
+system's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BeginSystemMemory`
+
+**EXAMPLES**
+
+```zig
+sys.BeginSystemMemory();
+defer sys.EndSystemMemory();
+```
+
 ## Enqueue
 
 Puts a node on a list in priority order.
@@ -4062,17 +4224,32 @@ Nothing.
 
 **BEHAVIOR**
 
-The region holding that address is found on the memory list and the
-block goes back to it. A block in no region at all is fatal: it is
-either an address that was never allocated or one already freed and
-handed to someone else, and both are worth stopping for.
+The region holding that address is found on the memory list, the
+block's MemBlock is checked, and the block goes back to the region with
+its MemBlock. A block in no region at all is fatal: it is either an
+address that was never allocated or one already freed and handed to
+someone else, and both are worth stopping for.
+
+**A block with a wall** - allocated while memory debugging was on - has
+it checked first: one written past its end is freed all the same, and
+told with a line on the system log and a recoverable alert,
+`AN_MemWall`. While memory debugging is on, the freed memory is filled
+with `MEM_PATTERN_FREED`.
+
+**A block that is not in use, or a size that is not the block's, is
+refused**: the block is left as it is, a line naming it goes to the
+system log - for a size, with both sizes and the owner - and a
+recoverable alert is raised: `AN_FreeTwice` for a block freed already
+(or whose MemBlock was written over), `AN_BadFreeSize` for the size. Freeing either size could
+give away memory still in use; leaving the block costs only its bytes.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: no, unless the block is refused: the alert is shown on the
+  display, and waits there for an answer or a few seconds.
 - Interrupts: no. It takes exec's memory lock, around the search and
   the free.
-- Locks: takes exec's memory lock.
+- Locks: takes exec's memory lock, and lets go of it before an alert.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4081,9 +4258,9 @@ The memory is the system's again and must not be touched.
 
 **NOTES**
 
-The size has to be right. Too small leaves the difference unreachable;
-too large frees memory that was never the caller's, which `Deallocate`
-catches as a double free only if it happens to overlap something free.
+The size is the one asked of AllocMem, or anything that rounds up to
+the same multiple of `MEM_BLOCKSIZE`. Part of a block cannot be given
+back.
 
 A block in no region stops the machine: it is a caller freeing memory
 the system never gave out.
@@ -4225,7 +4402,7 @@ defer sys.FreeSignal(bit);
 
 ## FreeVec
 
-Gives back memory from `AllocVec`.
+Gives back memory from `AllocVec` or `AllocMem`, whose size it knows.
 
 **SYNOPSIS**
 
@@ -4239,8 +4416,8 @@ fn FreeVec(base: *ExecBase, memory_block: ?*anyopaque) void
 
 **INPUTS**
 
-- `memory_block` - what `AllocVec` answered, or null, which does
-  nothing.
+- `memory_block` - what `AllocVec` or `AllocMem` answered, or null,
+  which does nothing.
 
 **RESULT**
 
@@ -4248,12 +4425,13 @@ Nothing.
 
 **BEHAVIOR**
 
-The size is read from the word below the block and the whole thing,
-header included, goes back.
+The size is read from the block's MemBlock and `FreeMem` is called with
+it, which gives the block back, MemBlock included - or refuses a block
+that is not in use, as it refuses any.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: no, unless `FreeMem` refuses the block and alerts.
 - Interrupts: no. `FreeMem` takes exec's memory lock.
 - Locks: none needed.
 - Process: a Task will do.
@@ -4264,8 +4442,9 @@ The memory is the system's again.
 
 **NOTES**
 
-Only on a block from `AllocVec`. On anything else it reads whatever is
-in front of the address as a size and frees that much.
+Only on a block from `AllocVec` or `AllocMem`: anything else has no
+MemBlock in front, and `FreeMem` refuses it unless what is there
+happens to look like one.
 
 **BUGS**
 
@@ -4587,6 +4766,10 @@ which is what a dos handler's tag does.
 
 exec's own tag is refused: exec is built once, by the bootstrap, before
 there is anything to build it with.
+
+The init routine runs inside `BeginSystemMemory`: what a module
+allocates while it is made - its base, its tables, the state it keeps -
+is the system's, not the task's that happened to ask for it.
 
 **CONTEXT**
 
@@ -5014,6 +5197,9 @@ The library is not on any list when this returns, so nothing can open
 it yet. `AddLibrary` is the second step, and `CreateLibrary` is both in
 one.
 
+The block is the system's (`MEMF_SYSTEM`), whichever task makes the
+library: a library outlives the program that first opened it.
+
 **CONTEXT**
 
 - Waits: no.
@@ -5146,9 +5332,10 @@ much stack is left sees the right one.
 It is a call, not a task: the same task runs `code`, on different
 memory, and control comes back when it returns.
 
-**The new stack is guarded** as a task's is (`AddTask`): the dispatcher
-checks its bottom words while `code` runs, and this call checks them
-once more before it gives the stack back. A stack `code` ran past the
+**The new stack is guarded** as a task's is (`AddTask`) - a wide guard
+while memory debugging is on and the stack is 4 KiB or more: the
+dispatcher checks its bottom words while `code` runs, and this call
+checks them once more before it gives the stack back. A stack `code` ran past the
 end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
 written over below it. The dispatcher's check is on only while `code`
 itself runs: in the instructions that move the stack pointer to the new
@@ -7952,6 +8139,81 @@ None known.
 
 ```zig
 sys.SetMem(buf, 0, len);
+```
+
+## SetMemOwner
+
+Gives a block to another task, or to the system.
+
+**SYNOPSIS**
+
+```zig
+fn SetMemOwner(base: *ExecBase, memory_block: ?*anyopaque,
+    task: ?*Task) bool
+```
+
+**SINCE**
+
+1.11. LVO -556.
+
+**INPUTS**
+
+- `memory_block` - what `AllocMem` or `AllocVec` answered.
+- `task` - the new owner, or null for the system. A task not started
+  yet will do: it is given its number here (`Task.id`), and `AddTask`
+  keeps it.
+
+**RESULT**
+
+True when the block is marked; false for null and for a block that is
+not one in use - in no region, freed already, or its MemBlock written
+over.
+
+**BEHAVIOR**
+
+The block's MemBlock is changed to name the new owner; its size and
+MEMF_PRIVATE stay. Nothing else changes: the block stays where it is,
+and whoever frees it frees it as before.
+
+It is for memory one task makes for another: a parent laying out what
+its child starts with - dos copies a new process's variables and path
+so - or a block whose holder moves to another task. The tools that show
+who holds what (`Avail OWNERS`, `MemMap`) then show it under the task
+that holds it, and not under the one that allocated it, which may have
+ended long before.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It takes exec's memory lock.
+- Locks: takes Disable when it numbers a task, then exec's memory lock;
+  no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands but the mark: the caller must hold the block, so
+that nothing frees it meanwhile.
+
+**NOTES**
+
+MEMOWNER_SYSTEM is what exec's own tasks have as their number, so a
+block given to one of them is the system's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocMem`, `AddTask`, `BeginSystemMemory`
+
+**EXAMPLES**
+
+```zig
+// What the child starts with is the child's, though made here.
+_ = sys.SetMemOwner(startup, &child.task);
+_ = sys.AddTask(&child.task, &childCode, null);
 ```
 
 ## SetRamLib

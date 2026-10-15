@@ -8,6 +8,7 @@ const _memory = @import("_memory.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const MemHeader = sdk.exec.MemHeader;
+const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 
 /// How much memory of a kind there is.
 ///
@@ -22,8 +23,9 @@ const MemHeader = sdk.exec.MemHeader;
 /// - `requirements` - which regions to count, by the same attribute bits
 ///   `AllocMem` takes, and which question to ask:
 ///   - nothing further - the free bytes.
-///   - `MEMF_LARGEST` - the largest single free chunk, which is the biggest
-///     allocation that could succeed.
+///   - `MEMF_LARGEST` - the biggest allocation that could succeed: the
+///     largest single free chunk, less the MemBlock a block carries - and
+///     its wall while memory debugging is on.
 ///   - `MEMF_TOTAL` - the regions' whole size, free or not. It wins over
 ///     `MEMF_LARGEST`.
 ///
@@ -32,7 +34,9 @@ const MemHeader = sdk.exec.MemHeader;
 ///
 /// BEHAVIOR:
 /// Free and largest differ by fragmentation, and the gap between them is
-/// the only measure of it the system offers.
+/// the only measure of it the system offers. The free bytes are the
+/// regions' own count, MemBlocks of blocks to come included, so a block of
+/// N bytes takes N rounded up and `MEM_BLOCKSIZE` from it.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -75,7 +79,12 @@ pub fn AvailMem(base: *ExecBase, requirements: u32) usize {
             result += @intFromPtr(mh.upper) - @intFromPtr(mh.lower);
         } else if (requirements & sdk.exec.MEMF_LARGEST != 0) {
             var chunk = mh.first;
-            while (chunk) |free_chunk| : (chunk = free_chunk.next) result = @max(result, free_chunk.bytes);
+            // A block carries its MemBlock, and while memory debugging is on
+            // its wall as well.
+            const extra: usize = MEM_BLOCKSIZE + if (base.mem_debug.on) @as(usize, sdk.exec.MEM_WALLSIZE) else 0;
+            while (chunk) |free_chunk| : (chunk = free_chunk.next) {
+                if (free_chunk.bytes > extra) result = @max(result, free_chunk.bytes - extra);
+            }
         } else {
             result += mh.free;
         }

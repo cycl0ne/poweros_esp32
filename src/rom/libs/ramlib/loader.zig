@@ -139,9 +139,13 @@ fn drop(rlb: *RamLibBase, record: *Loading) void {
 
 /// The module made: from a ROM tag no boot phase started, or from its
 /// file, whose segments are kept. With the name's own lock held, and not
-/// the lists'.
+/// the lists'. Everything allocated meanwhile - the segments, what the
+/// module's init allocates, the record kept of it - is the system's, not
+/// the task's that asked: the module outlives it.
 fn make(rlb: *RamLibBase, name: [*:0]const u8, tail: [*:0]const u8, kind: u32, version: u32, own_process: bool) bool {
     const sys = rlb.sys_base;
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     // A ROM tag of that name that no boot phase started: made from the
     // ROM, with no file behind it.
     if (sys.FindResident(tail)) |tag| {

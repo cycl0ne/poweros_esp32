@@ -83,6 +83,7 @@ const Remove = @import("../list/remove.zig").Remove;
 const AddTail = @import("../list/addtail.zig").AddTail;
 const Deallocate = @import("../memory/deallocate.zig").Deallocate;
 const _locks = @import("../locks/_locks.zig");
+const _memory = @import("../memory/_memory.zig");
 
 /// SysFlags: scheduling attention required (a switch may be due).
 pub const SFF_SAR: u16 = 1 << 15;
@@ -109,29 +110,40 @@ pub const min_stack_size = 1024;
 
 /// How many words at the bottom of a stack are its guard.
 pub const guard_words = 4;
+/// A wide guard's words: a task started while memory debugging is on, with
+/// a stack of `wide_guard_stack` or more, has one.
+pub const wide_guard_words = 64;
+pub const wide_guard_stack = 4096;
 const guard_pattern: u32 = 0x5354_4B21; // "STK!"
 
 /// The guard written at the bottom of `task`'s stack, and the task marked
 /// as having one; a task without a stack of its own (`sp_lower` 0) has
-/// none.
+/// none. TF_WIDEGUARD makes it a wide one.
 pub fn guardStack(task: *Task) void {
     if (task.sp_lower == 0) return;
-    writeGuard(task.sp_lower);
+    writeGuard(task.sp_lower, guardWords(task));
     task.flags |= sdk.exec.TF_GUARDED;
 }
 
-/// The guard written at the bottom of the stack starting at `lower`.
-pub fn writeGuard(lower: usize) void {
-    const words: [*]volatile u32 = @ptrFromInt(lower);
-    for (0..guard_words) |i| words[i] = guard_pattern;
+/// How many words `task`'s guard is.
+pub fn guardWords(task: *const Task) usize {
+    return if (task.flags & sdk.exec.TF_WIDEGUARD != 0) wide_guard_words else guard_words;
 }
 
-/// Whether the stack starting at `lower` still has its guard.
-pub fn guardIntact(lower: usize) bool {
+/// The guard of `words` words written at the bottom of the stack starting
+/// at `lower`.
+pub fn writeGuard(lower: usize, words: usize) void {
+    const at: [*]volatile u32 = @ptrFromInt(lower);
+    for (0..words) |i| at[i] = guard_pattern;
+}
+
+/// Whether the stack starting at `lower` still has its guard of `words`
+/// words.
+pub fn guardIntact(lower: usize, words: usize) bool {
     if (lower == 0) return true;
-    const words: [*]const volatile u32 = @ptrFromInt(lower);
-    for (0..guard_words) |i| {
-        if (words[i] != guard_pattern) return false;
+    const at: [*]const volatile u32 = @ptrFromInt(lower);
+    for (0..words) |i| {
+        if (at[i] != guard_pattern) return false;
     }
     return true;
 }
@@ -142,7 +154,7 @@ pub fn guardIntact(lower: usize) bool {
 /// what its owners think it is.
 fn checkStack(task: *const Task, context: *anyopaque) void {
     if (task.flags & sdk.exec.TF_GUARDED == 0) return;
-    var over = !guardIntact(task.sp_lower);
+    var over = !guardIntact(task.sp_lower, guardWords(task));
     // The host tests hand the dispatcher contexts that are not addresses.
     if (@import("builtin").cpu.arch == .xtensa or @import("builtin").cpu.arch == .riscv32) {
         const at = @intFromPtr(context);
@@ -262,6 +274,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     base.boot_task = boot;
     const idle = base.iface().CreateTask(idle_names[0], -128, &idleLoop, idle_stack_size) orelse
         return error.OutOfMemory;
+    makeSystemTask(idle);
     // Pinned once it is on the ready list: no other core runs yet.
     idle.flags |= sdk.exec.TF_CORE0;
     base.cpu().idle_task = idle;
@@ -358,7 +371,9 @@ fn idleRound(base: *ExecBase) void {
 
 /// One allocation holding the Task, a copy of its name and - unless
 /// `stack_size` is 0 - its stack, so that `RemTask` frees all of it in one
-/// call.
+/// call. The stack is at the bottom and the Task above it: a stack that
+/// runs past its end writes below the block, not over the Task the system
+/// keeps the task by.
 ///
 /// INPUTS:
 /// - `base` - exec: the jump table `AllocMem` goes through.
@@ -377,18 +392,42 @@ pub fn newTask(base: *ExecBase, name: [*:0]const u8, pri: i8, stack_size: usize)
     const total = header + stack;
     const block = base.iface().AllocMem(total, sdk.exec.MEMF_CLEAR) orelse return null;
     const bytes: [*]u8 = @ptrCast(block);
-    const name_copy = bytes + @sizeOf(Task);
+    const above = bytes + stack;
+    const name_copy = above + @sizeOf(Task);
     @memcpy(name_copy[0..name_len], name[0..name_len]);
     name_copy[name_len] = 0;
-    const task: *Task = @ptrCast(@alignCast(block));
+    const task: *Task = @ptrCast(@alignCast(above));
     task.* = .{
         .node = .{ .type = .task, .pri = pri, .name = @ptrCast(name_copy) },
-        .sp_lower = @intFromPtr(bytes + header),
-        .sp_upper = @intFromPtr(bytes + total),
+        // No stack at all (the boot task's): both bounds at the block's end.
+        .sp_lower = if (stack == 0) @intFromPtr(bytes + total) else @intFromPtr(bytes),
+        .sp_upper = if (stack == 0) @intFromPtr(bytes + total) else @intFromPtr(above),
         .mem_block = block,
         .mem_size = total,
     };
     return task;
+}
+
+/// The next task number (`Task.id`): never 0, which is the system's. Under
+/// Disable, which is what keeps two cores from handing out the same one.
+///
+/// INPUTS:
+/// - `base` - exec: the last number given.
+pub fn nextTaskId(base: *ExecBase) u32 {
+    base.task_ids +%= 1;
+    if (base.task_ids == sdk.exec.MEMOWNER_SYSTEM) base.task_ids +%= 1;
+    return base.task_ids;
+}
+
+/// One of exec's own tasks - the boot task's fellows, the idle tasks, the
+/// exec task - made the system's: its number is MEMOWNER_SYSTEM, so what it
+/// allocates is the system's, and so is its own block. Before it runs.
+///
+/// INPUTS:
+/// - `task` - the task, added and not yet run.
+pub fn makeSystemTask(task: *Task) void {
+    task.id = sdk.exec.MEMOWNER_SYSTEM;
+    if (task.mem_block) |block| _memory.setOwner(block, sdk.exec.MEMOWNER_SYSTEM);
 }
 
 /// A task's end hooks made an empty list, the first time one is put on: a
@@ -480,15 +519,14 @@ fn giveBackTaskMemory(base: *ExecBase, task: *Task) bool {
     if (!_locks.compareAndSet(base, &base.lock_memory.state, 0, here)) return false;
     defer @atomicStore(u32, &base.lock_memory.state, 0, .release);
     task.mem_block = null;
-    const address = @intFromPtr(block);
-    var it = base.mem_list.iterator();
-    while (it.next()) |node| {
-        const region: *sdk.exec.MemHeader = @fieldParentPtr("node", node);
-        if (address >= @intFromPtr(region.lower) and address < @intFromPtr(region.upper)) {
-            Deallocate(base, region, block, task.mem_size);
-            return true;
-        }
-    }
+    // The block with its MemBlock and its wall, as FreeMem gives one back
+    // - the wall unchecked: there is no one to tell from here.
+    const header = sdk.exec.MemBlock.of(block);
+    const region = _memory.regionOf(base, @intFromPtr(header)) orelse return true;
+    const whole = header.extent() + sdk.exec.MEM_BLOCKSIZE;
+    header.size = 0;
+    Deallocate(base, region, header, whole);
+    if (base.mem_debug.on) _memory.debugFreed(region, @intFromPtr(header), whole);
     return true;
 }
 

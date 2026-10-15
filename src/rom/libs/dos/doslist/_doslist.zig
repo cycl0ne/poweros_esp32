@@ -369,10 +369,14 @@ fn fileName(path: [*:0]const u8) [*:0]const u8 {
 }
 
 /// A handler from the disk: the file loaded, its tag found, and the
-/// seglist and entry put in the node.
+/// seglist and entry put in the node. The code is the system's: every
+/// volume the handler serves runs it, long after the task that mounted
+/// the first.
 fn loadHandler(db: *DosBase, h: *dos.DosListHandler, name: [*:0]const u8) ?exec.TaskFn {
     const dos_lib = db.iface();
     const sys = db.sys_base;
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     const seg_list = dos_lib.LoadSeg(name) orelse blk: {
         // A bare name is looked for where the handlers are.
         if (fileName(name) != name) return null;

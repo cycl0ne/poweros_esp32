@@ -37,9 +37,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// It is a call, not a task: the same task runs `code`, on different
 /// memory, and control comes back when it returns.
 ///
-/// **The new stack is guarded** as a task's is (`AddTask`): the dispatcher
-/// checks its bottom words while `code` runs, and this call checks them
-/// once more before it gives the stack back. A stack `code` ran past the
+/// **The new stack is guarded** as a task's is (`AddTask`) - a wide guard
+/// while memory debugging is on and the stack is 4 KiB or more: the
+/// dispatcher checks its bottom words while `code` runs, and this call
+/// checks them once more before it gives the stack back. A stack `code` ran past the
 /// end of is a dead-end alert, `AN_StackProbe`, rather than memory quietly
 /// written over below it. The dispatcher's check is on only while `code`
 /// itself runs: in the instructions that move the stack pointer to the new
@@ -90,17 +91,24 @@ pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, st
     const sp_upper: *volatile usize = &task.sp_upper;
     const lower = sp_lower.*;
     const upper = sp_upper.*;
-    const guarded = flags.* & sdk.exec.TF_GUARDED;
-    flags.* &= ~sdk.exec.TF_GUARDED;
-    _task.writeGuard(@intFromPtr(stack));
+    // The task's own stack's guard, put back afterwards; the new stack's is
+    // its own - wide while memory debugging is on and there is room, as a
+    // task started then gets - and checked while the code runs on it.
+    const guard_flags = sdk.exec.TF_GUARDED | sdk.exec.TF_WIDEGUARD;
+    const saved = flags.* & guard_flags;
+    flags.* &= ~guard_flags;
+    const wide = base.mem_debug.on and size >= _task.wide_guard_stack;
+    const words: usize = if (wide) _task.wide_guard_words else _task.guard_words;
+    _task.writeGuard(@intFromPtr(stack), words);
+    if (wide) flags.* |= sdk.exec.TF_WIDEGUARD;
     sp_lower.* = @intFromPtr(stack);
     sp_upper.* = @intFromPtr(stack) + size;
     var run: OnNewStack = .{ .code = code, .arg = arg, .flags = flags };
     const result = _task.task_hardware.call_on_stack(@intFromPtr(stack) + size, @ptrCast(&onNewStack), &run);
     sp_lower.* = lower;
     sp_upper.* = upper;
-    flags.* = (flags.* & ~sdk.exec.TF_GUARDED) | guarded;
-    if (!_task.guardIntact(@intFromPtr(stack))) {
+    flags.* = (flags.* & ~guard_flags) | saved;
+    if (!_task.guardIntact(@intFromPtr(stack), words)) {
         _task.stackOverrun(@intFromPtr(stack));
     }
     return result;

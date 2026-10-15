@@ -53,6 +53,9 @@ const InitFn = sdk.exec.InitFn;
 /// it yet. `AddLibrary` is the second step, and `CreateLibrary` is both in
 /// one.
 ///
+/// The block is the system's (`MEMF_SYSTEM`), whichever task makes the
+/// library: a library outlives the program that first opened it.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no. It allocates, and `init_fn` may do anything.
@@ -94,7 +97,7 @@ pub fn MakeLibrary(
 ) ?*Library {
     const sizes = _library.librarySizes(vectors.len, data_size) orelse return null;
     const sys = base.iface();
-    const block = sys.AllocMem(sizes.neg + sizes.pos, sdk.exec.MEMF_ANY) orelse return null;
+    const block = sys.AllocMem(sizes.neg + sizes.pos, sdk.exec.MEMF_SYSTEM) orelse return null;
     const lib = _library.buildLibrary(@ptrCast(block), vectors, sizes);
     if (init) |init_routine| {
         return init_routine(lib, seg_list, sys) orelse {

@@ -9,10 +9,13 @@
 //! on a console until q.
 //!
 //! Each look has a line per core - how much of the interval it spent in
-//! tasks, in interrupts and idle (`ReadCoreTimes`) - the free memory,
-//! and then every task, the busiest first: its share of one core over
-//! the interval, the core it runs on if it is running, its priority, its
-//! state and its name. A task's time is exec's own count of it
+//! tasks, in interrupts and idle (`ReadCoreTimes`) - the free memory and
+//! what the system and the tasks that have ended hold, and then every
+//! task, the busiest first: its share of one core over the interval, the
+//! core it runs on if it is running, its priority, its state, the memory
+//! it holds - "system" for exec's own tasks, whose memory is the system's -
+//! and its name. What a task holds is what its blocks' MemBlocks
+//! say, summed over every region (`sdk.exec.memowners`). A task's time is exec's own count of it
 //! (`Task.timeRun`), taken at every exception, so a task that runs a
 //! moment after each tick shows as much as it takes; time in interrupts
 //! is no task's. The cores' idle tasks - at the lowest priority, each
@@ -29,6 +32,7 @@
 //! The tasks are copied out under Disable, as `ShowInfo TASKS` does -
 //! all at once, so none is seen twice or missed as it moves between
 //! exec's queues - and printed after, since printing waits on a handler.
+//! The memory is walked after, under exec's memory lock.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -40,7 +44,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Top";
-const VERSION_STRING = "\x00$VER: Top 1.1 (13.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Top 1.2 (15.10.2026)\r\n";
 
 const template = "INTERVAL/K/N,COUNT/K/N";
 const arg_interval = 0;
@@ -73,6 +77,9 @@ const csi_ask_size = "\x1b[18t";
 
 var sys: *ExecBase = undefined;
 var dl: *DosBase = undefined;
+/// Who holds the memory, at the last look: walked under exec's memory lock,
+/// which allows no allocating, into this program's own memory.
+var holders: exec.memowners.Tally(max_tasks + 8) = .{};
 
 /// A task as it was at a look, copied into this program's own memory: it
 /// may be gone by the time its line is printed.
@@ -86,6 +93,9 @@ const Seen = struct {
     /// The core it runs on, for a running one.
     core: ?u32 = null,
     idle: bool = false,
+    /// Its number (`Task.id`), and the memory it holds.
+    id: u32 = 0,
+    memory: usize = 0,
     name: [32]u8 = @splat(0),
 };
 
@@ -338,6 +348,10 @@ fn look(into: *Look) void {
         sys.UnlockExecList(queue.which);
     }
     sys.Enable();
+    holders.take(sys);
+    for (into.seen[0..into.count]) |*task| {
+        task.memory = if (holders.of(task.id)) |owner| owner.bytes else 0;
+    }
 }
 
 fn take(into: *Look, task: *const exec.Task, state: [*:0]const u8, core: ?u32) void {
@@ -355,6 +369,7 @@ fn take(into: *Look, task: *const exec.Task, state: [*:0]const u8, core: ?u32) v
         .state = state,
         .core = core,
         .idle = task.node.pri == -128 and (pins == exec.TF_CORE0 or pins == exec.TF_CORE1),
+        .id = task.id,
     };
     copyName(&seen.name, task.node.name);
 }
@@ -408,6 +423,28 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
+    // What no task of this look holds: the system's, and what tasks that
+    // have ended left.
+    var system_bytes: usize = 0;
+    var ended_bytes: usize = 0;
+    var ended: u32 = 0;
+    for (holders.owners[0..holders.used]) |*owner| {
+        if (owner.system()) {
+            system_bytes += owner.bytes;
+            continue;
+        }
+        const living = for (now.seen[0..now.count]) |*task| {
+            if (task.id == owner.id) break true;
+        } else false;
+        if (living) continue;
+        ended_bytes += owner.bytes;
+        ended += 1;
+    }
+    screen.line("held     %u KiB by the system, %u KiB by %u tasks that have ended", .{
+        system_bytes / 1024,
+        ended_bytes / 1024,
+        ended,
+    });
     screen.line("", .{});
 
     // The tasks, busiest first; an insertion sort keeps the ones that
@@ -422,7 +459,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         count += 1;
     }
 
-    screen.line("   cpu  core   pri  state  name", .{});
+    screen.line("   cpu  core   pri  state  memory  name", .{});
     // What fits under the heading; with more tasks than that, the last row
     // counts the rest.
     const not_copied = now.missed;
@@ -432,12 +469,26 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         const task = &now.seen[index];
         var core_text: [2:0]u8 = .{ '-', 0 };
         if (task.core) |number| core_text[0] = '0' + @as(u8, @intCast(number % 10));
-        screen.line("%3u.%u%%  %-4s %5d  %-5s  %s", .{
+        // exec's own tasks allocate as the system: theirs is the line
+        // above, not a task's.
+        if (task.id == exec.MEMOWNER_SYSTEM) {
+            screen.line("%3u.%u%%  %-4s %5d  %-5s  system  %s", .{
+                whole(task.spent, span),
+                tenth(task.spent, span),
+                @as([*:0]const u8, &core_text),
+                @as(i32, task.pri),
+                task.state,
+                @as([*:0]const u8, @ptrCast(&task.name)),
+            });
+            continue;
+        }
+        screen.line("%3u.%u%%  %-4s %5d  %-5s %6uK  %s", .{
             whole(task.spent, span),
             tenth(task.spent, span),
             @as([*:0]const u8, &core_text),
             @as(i32, task.pri),
             task.state,
+            @as(u32, @intCast(task.memory / 1024)),
             @as([*:0]const u8, @ptrCast(&task.name)),
         });
     }

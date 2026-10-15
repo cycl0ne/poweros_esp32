@@ -97,8 +97,10 @@ where there is PSRAM, and internal memory is kept for what only it can do.
 | `MEMF_INTERNAL` | internal SRAM: what an interrupt reads often, and what is used while the caches are off |
 | `MEMF_EXTERNAL` | PSRAM: big buffers |
 | `MEMF_DMA` | what a DMA engine addresses directly, with no cache maintenance: descriptor chains and their buffers |
+| `MEMF_PRIVATE` | the owner's alone: nothing in it is passed to another task or a library |
 | `MEMF_CLEAR` | zeroed before it is handed out |
 | `MEMF_REVERSE` | taken from the top of the region |
+| `MEMF_SYSTEM` | the system's, not the calling task's |
 | `MEMF_NO_EXPUNGE` | fail rather than ask the low-memory handlers |
 
 A buffer in PSRAM that a DMA engine reads or writes goes through
@@ -106,8 +108,8 @@ A buffer in PSRAM that a DMA engine reads or writes goes through
 
 **Two ways to allocate.** `AllocMem(size, flags)` answers a block that
 `FreeMem` takes back with the same size, which the caller remembers.
-`AllocVec(size, flags)` keeps the size in front of the block, and
-`FreeVec` needs only the pointer. Both answer null when there is no
+`AllocVec(size, flags)` is the same block, and `FreeVec` needs only the
+pointer: the block knows its size. Both answer null when there is no
 memory; both free calls do nothing for null, so they fit a `defer`.
 
 ```zig
@@ -118,10 +120,67 @@ const name = sys.AllocVec(len + 1, exec.MEMF_ANY) orelse return;
 defer sys.FreeVec(name);
 ```
 
-A block is rounded up to `MEM_BLOCKSIZE` (8 bytes) and aligned to it, and
-`AllocVec` costs one block more. A block freed with the other call, or
-with another size, corrupts its region; one that is in no region at all
-stops the machine.
+A block is rounded up to `MEM_BLOCKSIZE` (8 bytes) and aligned to it.
+
+**Every block says who holds it.** In front of each one is a `MemBlock`,
+one `MEM_BLOCKSIZE` more taken from the region: the owner, the size and
+whether the block is private. The owner is the task that allocated it -
+its number, `Task.id`, which `AddTask` gives every task - and that is the
+caller even inside library code, which runs on its caller's task. A block
+is the system's instead when the call asks for `MEMF_SYSTEM`, when one of
+exec's own tasks allocates, and while a task is between
+`BeginSystemMemory()` and `EndSystemMemory()`:
+
+```zig
+// A library's cache outlives the call that made it: the system's.
+const cache = sys.AllocMem(4096, exec.MEMF_SYSTEM) orelse return null;
+
+// A loader making a module: everything it allocates meanwhile.
+sys.BeginSystemMemory();
+defer sys.EndSystemMemory();
+```
+
+`InitResident` runs a module's init inside such a pair, ramlib loads
+modules and dos loads handlers inside one, and a library's base is the
+system's whoever opened it first. A task's own block - its TCB and stack -
+is its own once it runs. A pool and its puddles belong to whoever made
+the pool.
+
+Memory one task makes for another is given to it with
+`SetMemOwner(block, task)` - null gives it to the system. A task not
+started yet will do: it gets its number there, and `AddTask` keeps it.
+dos gives a new process the variables and path it copies for it so:
+
+```zig
+_ = sys.SetMemOwner(startup, &child.task); // the child's, though made here
+_ = sys.AddTask(&child.task, &childCode, null);
+```
+
+`MEMF_PRIVATE` says a block is its owner's alone; without it a block is
+shared, which suits anything. Both are recorded, not enforced: no access
+is checked against them.
+
+**`FreeMem` checks the block.** One that is not in use - freed already,
+or its `MemBlock` written over by a block below running past its end - or
+a size that is not the block's is refused: the block stays as it is, the
+system log names it, and a recoverable alert says which (`AN_FreeTwice`,
+`AN_BadFreeSize`). A size that rounds up to the same multiple of
+`MEM_BLOCKSIZE` is the block's. One in no region at all stops the machine.
+
+**Memory debugging.** `s3> memdebug on` puts a wall behind every new
+block, which `FreeMem` checks, fills new memory with `0xABADCAFE` and freed
+memory with `0xDEADBEEF`, which `AllocMem` checks when it hands it out
+again, and gives new tasks a wide stack guard; `memdebug check` looks at
+all of it at once. The [programs guide](programs.md) has the details.
+
+**Who holds what.** `C:Avail OWNERS` lists every owner with its blocks
+and bytes: the system, each task by number and name, and the numbers of
+tasks that have ended with what they left. `C:Top` adds a column of what
+each task holds, `SYS:Programs/MemMap` draws the regions with each block
+in its owner's colour, and the ROM debugger's `memowners` lists them on
+the serial console, or one owner's blocks. A program walks the blocks
+itself with `exec.RegionWalk` under `LockExecList(EXECLIST_MEMORY)`, or
+sums them with `exec.memowners.Tally`.
 
 **Pools.** Many small blocks that go together - the nodes of a list, the
 entries of a table - come from a pool. It takes memory from the system a
@@ -153,8 +212,8 @@ for (keys.slice()) |key| use(key);
 ```
 
 **How much there is.** `AvailMem(flags)` answers the free bytes of the
-regions with those attributes; with `MEMF_LARGEST` the largest single
-block, with `MEMF_TOTAL` the regions' whole size. Another task, on either
+regions with those attributes; with `MEMF_LARGEST` the largest block
+`AllocMem` could answer, with `MEMF_TOTAL` the regions' whole size. Another task, on either
 core, may allocate the moment it has answered, so a program allocates and
 tests the answer rather than asking first. `C:Avail` prints the numbers.
 

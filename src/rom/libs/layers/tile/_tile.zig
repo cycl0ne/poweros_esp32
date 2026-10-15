@@ -48,7 +48,7 @@ const super = @import("../super/_super.zig");
 ///   null.
 pub fn inLayerSpace(lb: *LayersBase, layer: *Layer, also: ?*graphics.Region) ?*graphics.Region {
     const gb = lb.graphics_base;
-    const work = info_mod.copyRegion(gb, layer.visible) orelse return null;
+    const work = info_mod.copyRegion(lb, layer.visible) orelse return null;
     const ox, const oy = super.origin(layer);
     gb.OffsetRegion(work, -ox, -oy);
     // The program's own clip, which is why InstallClipRegion is a call
@@ -131,7 +131,7 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
     // not showing.
     if (with_kept) {
         if (layer.super) |bm| {
-            const rest = gb.NewRegion() orelse return false;
+            const rest = lb.newRegion() orelse return false;
             defer gb.DisposeRegion(rest);
             const whole = super.extent(layer);
             if (!gb.OrRectRegion(rest, &whole) or !gb.SubRegionRegion(region, rest)) return false;
@@ -278,14 +278,14 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
     const gb = lb.graphics_base;
 
     // What the layers in front have claimed, in the display's coordinates.
-    const covered = gb.NewRegion() orelse return false;
+    const covered = lb.newRegion() orelse return false;
     defer gb.DisposeRegion(covered);
 
     var ok = true;
     var it = info.layers.iterator();
     while (it.next()) |node| {
         const layer: *Layer = @fieldParentPtr("node", node);
-        const seen = gb.NewRegion() orelse {
+        const seen = lb.newRegion() orelse {
             ok = false;
             continue;
         };
@@ -330,7 +330,7 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
                     ok = false;
                 }
             }
-        } else if (info_mod.copyRegion(gb, seen)) |fresh| {
+        } else if (info_mod.copyRegion(lb, seen)) |fresh| {
             // Anything it can see now that it could not see before has to
             // be drawn again: nothing kept those pixels.
             if (gb.SubRegionRegion(layer.visible, fresh) and !info_mod.isEmpty(gb, fresh)) {
@@ -367,7 +367,7 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
 pub fn trimDamage(lb: *LayersBase, layer: *Layer) void {
     const gb = lb.graphics_base;
     if (info_mod.isEmpty(gb, layer.damage)) return;
-    const seen = info_mod.copyRegion(gb, layer.visible) orelse return;
+    const seen = info_mod.copyRegion(lb, layer.visible) orelse return;
     defer gb.DisposeRegion(seen);
     gb.OffsetRegion(seen, -layer.bounds.min_x, -layer.bounds.min_y);
     if (!gb.AndRegionRegion(seen, layer.damage)) return;

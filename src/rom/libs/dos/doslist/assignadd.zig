@@ -62,7 +62,8 @@ pub fn AssignAdd(db: *DosBase, name: [*:0]const u8, lock: *FileLock) bool {
     defer dos_lib.UnLockDosList(write);
     const node = dos_lib.FindDosEntry(start, name, dos.LDF_ASSIGNS) orelse return fail(db, dos.ERROR_OBJECT_NOT_FOUND);
     if (node.type != .directory) return fail(db, dos.ERROR_OBJECT_WRONG_TYPE);
-    const block = db.sys_base.AllocVec(@sizeOf(AssignList), exec.MEMF_CLEAR) orelse
+    // Part of an assign, which is the system's.
+    const block = db.sys_base.AllocVec(@sizeOf(AssignList), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse
         return fail(db, dos.ERROR_NO_FREE_STORE);
     const added: *AssignList = @ptrCast(@alignCast(block));
     added.* = .{ .lock = lock };

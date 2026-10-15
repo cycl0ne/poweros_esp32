@@ -56,8 +56,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+const SHELL_REVISION = 1;
+const BUILD_DATE = "15.10.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++

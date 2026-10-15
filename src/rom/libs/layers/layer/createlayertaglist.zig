@@ -167,13 +167,13 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         report(lb, tag_list, layers.LERR_NO_RASTPORT);
         return null;
     };
-    const seen = gb.NewRegion() orelse {
+    const seen = lb.newRegion() orelse {
         gb.FreeRastPort(rp);
         sys.FreeVec(mem);
         report(lb, tag_list, layers.LERR_NO_MEMORY);
         return null;
     };
-    const owed = gb.NewRegion() orelse {
+    const owed = lb.newRegion() orelse {
         gb.DisposeRegion(seen);
         gb.FreeRastPort(rp);
         sys.FreeVec(mem);

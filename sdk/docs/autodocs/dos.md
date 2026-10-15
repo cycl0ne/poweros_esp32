@@ -1168,7 +1168,10 @@ the block freed.
 
 The process owns what the tags hand it - the streams it will close, the
 directories, the exit hook - from the moment the call succeeds. On
-failure the caller keeps them.
+failure the caller keeps them. What dos copies for it - the variables,
+the command path, the arguments, the file list - is marked as the new
+process's before it starts (`SetMemOwner`), though made on the caller's
+task: it frees them when it ends.
 
 **BUGS**
 

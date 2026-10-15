@@ -82,7 +82,7 @@ pub fn initResidents(base: *ExecBase, start: usize, end: usize) error{OutOfMemor
     while (nextTag(&address, end)) |_| found += 1;
 
     const size = (found + 1) * @sizeOf(?*const Resident);
-    const block = base.iface().AllocMem(size, sdk.exec.MEMF_CLEAR) orelse return error.OutOfMemory;
+    const block = base.iface().AllocMem(size, sdk.exec.MEMF_CLEAR | sdk.exec.MEMF_SYSTEM) orelse return error.OutOfMemory;
     const table: [*]?*const Resident = @ptrCast(@alignCast(block));
     var count: usize = 0;
     address = start;

@@ -71,6 +71,9 @@ const contract_files = [_][]const u8{
     @embedFile("task/settaskendmsg.zig"),
     @embedFile("ports/removemsg.zig"),
     @embedFile("ports/safeputtoport.zig"),
+    @embedFile("memory/beginsystemmemory.zig"),
+    @embedFile("memory/endsystemmemory.zig"),
+    @embedFile("memory/setmemowner.zig"),
     @embedFile("interrupt/intvector.zig"),
     @embedFile("resident/resmodules.zig"),
     @embedFile("library/setramlib.zig"),
@@ -338,6 +341,9 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoSetTaskEndMsg),
     vec(lvoRemoveMsg),
     vec(lvoSafePutToPort),
+    vec(lvoBeginSystemMemory),
+    vec(lvoEndSystemMemory),
+    vec(lvoSetMemOwner),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -877,6 +883,18 @@ fn lvoRemoveMsg(base: *ExecBase, port: *MsgPort, msg: *Message) callconv(.c) boo
 
 fn lvoSafePutToPort(base: *ExecBase, message: *Message, name: [*:0]const u8) callconv(.c) bool {
     return exec.SafePutToPort(base, message, name);
+}
+
+fn lvoBeginSystemMemory(base: *ExecBase) callconv(.c) void {
+    exec.BeginSystemMemory(base);
+}
+
+fn lvoEndSystemMemory(base: *ExecBase) callconv(.c) void {
+    exec.EndSystemMemory(base);
+}
+
+fn lvoSetMemOwner(base: *ExecBase, memory_block: ?*anyopaque, task: ?*Task) callconv(.c) bool {
+    return exec.SetMemOwner(base, memory_block, task);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

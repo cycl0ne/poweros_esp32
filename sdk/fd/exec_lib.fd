@@ -242,4 +242,15 @@ bool RemoveMsg(*exec.MsgPort port, *exec.Message msg)
 /// under one hold of the port lock, so the port cannot be removed between:
 /// false when there is no such port, and the message is still the caller's.
 bool SafePutToPort(*exec.Message message, [*:0]const u8 name)
+/// From here until the matching EndSystemMemory, what the calling task
+/// allocates is the system's (MEMOWNER_SYSTEM), as if each call had asked
+/// for MEMF_SYSTEM: for a loader that makes a module. Pairs nest.
+void BeginSystemMemory()
+/// The end of a BeginSystemMemory: what the task allocates is its own
+/// again once every pair has ended.
+void EndSystemMemory()
+/// Give `memory_block` to `task` (null: the system): what its MemBlock
+/// says from then on. A task not started yet gets its number here, which
+/// AddTask keeps. False for a block not in use.
+bool SetMemOwner(?*anyopaque memory_block, ?*exec.Task task)
 ##end

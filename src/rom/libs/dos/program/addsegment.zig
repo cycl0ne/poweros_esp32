@@ -57,7 +57,9 @@ const Segment = dos.Segment;
 pub fn AddSegment(db: *DosBase, name: [*:0]const u8, code: ?*const dos.SegCode, seg_type: i32) bool {
     const dos_lib = db.iface();
     const len = db.utility_base.Strlen(name);
-    const block = db.sys_base.AllocVec(@sizeOf(Segment) + len + 1, exec.MEMF_CLEAR) orelse {
+    // On dos's list, for any shell to run: the system's, not the task's
+    // that added it.
+    const block = db.sys_base.AllocVec(@sizeOf(Segment) + len + 1, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
         _ = dos_lib.SetIoErr(dos.ERROR_NO_FREE_STORE);
         return false;
     };

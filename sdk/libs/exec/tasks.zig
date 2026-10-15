@@ -85,6 +85,11 @@ pub const TF_LAUNCH: u8 = 1 << TB_LAUNCH;
 /// (`AddTask`, `NewStackRun`), which the dispatcher checks.
 pub const TB_GUARDED = 0;
 pub const TF_GUARDED: u8 = 1 << TB_GUARDED;
+/// exec's own: the guard is a wide one, 256 bytes rather than 16 - the
+/// task was started while memory debugging was on, so that a frame larger
+/// than the narrow guard still lands in it rather than past it.
+pub const TB_WIDEGUARD = 3;
+pub const TF_WIDEGUARD: u8 = 1 << TB_WIDEGUARD;
 /// The cores a task runs on: TF_CORE0 alone keeps it on core 0, TF_CORE1
 /// alone on core 1; neither (or both) lets it run on whichever core is
 /// free.
@@ -196,6 +201,14 @@ pub const Task = extern struct {
     /// off.
     time_run_low: u32 = 0,
     time_run_high: u32 = 0,
+    /// Its number, unique since the system started: what the memory it
+    /// allocates is marked with (`MemBlock.owner`). `AddTask` gives it, or
+    /// `SetMemOwner` when it names the task before it is started.
+    /// MEMOWNER_SYSTEM for exec's own tasks, whose memory is the system's.
+    id: u32 = 0,
+    /// How deep it is in `BeginSystemMemory`: while above 0, what it
+    /// allocates is the system's.
+    system_memory_nest: u32 = 0,
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");
