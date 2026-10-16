@@ -50,6 +50,14 @@ pub const SemaphoreMessage = extern struct {
     }
 };
 
+/// One semaphore a task holds, in its `Task.holds`: which, how often, and
+/// whether shared. An entry whose semaphore is null is free.
+pub const SemaphoreHold = extern struct {
+    semaphore: ?*SignalSemaphore = null,
+    count: u16 = 0,
+    shared: bool = false,
+};
+
 /// struct SignalSemaphore. Set it up with InitSemaphore (or AddSemaphore).
 pub const SignalSemaphore = extern struct {
     /// ss_Link: NT_SIGNALSEM; name and priority for public semaphores, or

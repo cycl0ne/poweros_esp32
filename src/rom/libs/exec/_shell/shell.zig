@@ -182,6 +182,8 @@ const commands = .{
     @import("cmds/tasks.zig"),
     @import("cmds/ports.zig"),
     @import("cmds/sems.zig"),
+    @import("cmds/locks.zig"),
+    @import("cmds/kill.zig"),
     @import("cmds/doslist.zig"),
     @import("cmds/segments.zig"),
     @import("cmds/clis.zig"),

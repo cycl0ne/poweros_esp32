@@ -39,6 +39,8 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 ///   - `MEMF_DMA` - reachable by a DMA descriptor's twenty address bits,
 ///     and needing no cache maintenance.
 ///   - `MEMF_PRIVATE` - the block is the owner's alone; without it, shared.
+///     A private block its owner has not freed is freed when the owner
+///     ends.
 ///   - `MEMF_CLEAR` - zero the block before answering.
 ///   - `MEMF_REVERSE` - take it from the top of the region.
 ///   - `MEMF_SYSTEM` - the block is the system's, not the calling task's.
@@ -85,7 +87,7 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// ends: a block left over shows under the task's number in
 /// `Avail OWNERS` and `s3> memowners`.
 ///
-/// **While memory debugging is on** (`s3> memdebug`), the block also gets a
+/// **While memory debugging is on** (`MemDebug`), the block also gets a
 /// wall of `MEM_WALLSIZE` behind it, which records the size asked for and
 /// which `FreeMem` checks; it holds `MEM_PATTERN_NEW` unless `MEMF_CLEAR`
 /// asked for zeros; and the free memory it is cut from is checked for
@@ -121,6 +123,10 @@ pub fn AllocMem(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaqu
     const block = allocFromList(base, whole, requirements, owner, walled, caller) orelse
         lowMemory(base, byte_size, whole, requirements, owner, walled, caller) orelse
         return null;
+    // A task with private memory has it looked for when it ends.
+    if (requirements & sdk.exec.MEMF_PRIVATE != 0 and owner != sdk.exec.MEMOWNER_SYSTEM) {
+        base.iface().FindTask(null).?.private_memory = true;
+    }
     // The block is the caller's already: walled or cleared without the
     // lock.
     if (walled) {

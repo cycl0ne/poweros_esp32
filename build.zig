@@ -197,6 +197,7 @@ pub fn build(b: *std.Build) void {
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
+    const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
     if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
@@ -234,7 +235,7 @@ pub fn build(b: *std.Build) void {
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest);
+    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest, memdebug);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -457,7 +458,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
@@ -489,7 +490,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest), p4_disk_bin, disk_offset);
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug), p4_disk_bin, disk_offset);
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -642,7 +643,7 @@ pub fn build(b: *std.Build) void {
             .esp32s3 => target,
             .esp32p4 => p4_target,
         };
-        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false).step);
+        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -1074,8 +1075,9 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
 /// The kernel for `board`: src/main.zig with the board's description
 /// chosen (src/boards/boards.zig reads `build_options.board`). `cores` 0
 /// leaves the number of cores to the board; `selftest` makes an ESP32-P4's
-/// boot task the chip's checks rather than the shell.
-fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool) *std.Build.Step.Compile {
+/// boot task the chip's checks rather than the shell; `memdebug` has exec
+/// switch memory debugging on as it starts.
+fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool, memdebug: bool) *std.Build.Step.Compile {
     const chip = chipOf(board);
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path(switch (chip) {
@@ -1095,6 +1097,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     options.addOption(u32, "disk_offset", disk_offset);
     options.addOption(u32, "cores", cores);
     options.addOption(bool, "selftest", selftest);
+    options.addOption(bool, "memdebug", memdebug);
     kernel_mod.addOptions("build_options", options);
     switch (chip) {
         .esp32s3 => {

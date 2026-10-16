@@ -157,6 +157,75 @@ pub fn setOwner(block: *anyopaque, owner: u32) void {
     word.* = owner;
 }
 
+/// The front of a block made free space and the rest kept as a block of
+/// its own, with the same owner and flags: what a killed task's end does
+/// with its block - the stack below the Task goes, the Task stays. The
+/// MemBlock for the rest is written right below `keep`, and a wall's
+/// first word is made to say the size the rest was asked for; the old
+/// MemBlock is marked not in use. The caller gives the front back
+/// (`Deallocate`) and holds the memory lock.
+///
+/// INPUTS:
+/// - `header` - the block's MemBlock.
+/// - `keep` - where the kept part starts: inside the block, at least one
+///   MEM_BLOCKSIZE past its start and a multiple of it.
+///
+/// RESULT:
+/// The bytes from `header` on that are free now, the old MemBlock
+/// included.
+pub fn splitFront(header: *MemBlock, keep: usize) usize {
+    const start = @intFromPtr(header);
+    const block = start + MEM_BLOCKSIZE;
+    const cut = keep - block;
+    const bytes = header.bytes();
+    if (header.walled()) {
+        const first: *u32 = @ptrFromInt(block + bytes);
+        first.* = ((first.* ^ sdk.exec.MEM_PATTERN_WALL) - @as(u32, @intCast(cut))) ^ sdk.exec.MEM_PATTERN_WALL;
+    }
+    const rest: *MemBlock = @ptrFromInt(keep - MEM_BLOCKSIZE);
+    rest.* = .{
+        .owner = header.owner,
+        .size = @as(u32, @intCast(bytes - cut)) | (header.size & sdk.exec.MEM_BLOCKMASK),
+    };
+    header.size = 0;
+    return cut;
+}
+
+/// Up to `into.len` blocks of owner `owner` that are private, found by
+/// walking every region under the memory lock: the addresses AllocMem
+/// answered for them. A caller that frees each batch and asks again goes
+/// through all of them. A block that overlaps `keep_lower`..`keep_upper`
+/// is passed over.
+///
+/// INPUTS:
+/// - `base` - exec: its regions, its memory lock.
+/// - `owner` - a task's number.
+/// - `keep_lower`, `keep_upper` - a stretch not to answer a block from,
+///   the running stack; both 0 for none.
+/// - `into` - filled from the start.
+///
+/// RESULT:
+/// How many it holds; fewer than `into.len` when there are no more.
+pub fn privateBlocks(base: *ExecBase, owner: u32, keep_lower: usize, keep_upper: usize, into: []usize) usize {
+    const sys = base.iface();
+    sys.AcquireLock(&base.lock_memory);
+    defer sys.ReleaseLock(&base.lock_memory);
+    var count: usize = 0;
+    var it = base.mem_list.iterator();
+    while (it.next()) |node| {
+        const mh: *const MemHeader = @fieldParentPtr("node", node);
+        var walk = sdk.exec.RegionWalk.init(mh);
+        while (walk.next()) |stretch| {
+            if (stretch.free or !stretch.private or stretch.owner != owner) continue;
+            if (stretch.start < keep_upper and stretch.start + stretch.bytes > keep_lower) continue;
+            into[count] = stretch.start + MEM_BLOCKSIZE;
+            count += 1;
+            if (count == into.len) return count;
+        }
+    }
+    return count;
+}
+
 /// The region on exec's memory list that holds `address`, or null. Under
 /// the memory lock.
 ///
@@ -273,9 +342,10 @@ pub fn traceEvent(base: *ExecBase, letter: u8, size: usize, block: ?*anyopaque, 
     });
 }
 
-// --- memory debugging (s3> memdebug) -----------------------------------------
+// --- memory debugging (MemDebug) --------------------------------------------
 //
-// While it is on, every block allocated gets a wall behind it, holding the
+// Switched by MemDebug: from `s3> memdebug`, `C:MemDebug`, or exec's init
+// when the kernel was built with -Dmemdebug=true. While it is on, every block allocated gets a wall behind it, holding the
 // size asked for and a pattern from there on; what was not cleared holds
 // MEM_PATTERN_NEW; and every free chunk holds MEM_PATTERN_FREED behind its
 // MemChunk. FreeMem checks the wall, and AllocMem checks that the free
@@ -283,15 +353,9 @@ pub fn traceEvent(base: *ExecBase, letter: u8, size: usize, block: ?*anyopaque, 
 // after it was freed. Blocks keep their wall whether the mode stays on or
 // not; the free memory's pattern is made whole each time it is switched on.
 
-/// What memory debugging has found since it was last switched on.
-pub const Debug = extern struct {
-    /// Whether it is on: new blocks walled, freed memory filled.
-    on: bool = false,
-    /// Walls FreeMem found written over.
-    walls: u32 = 0,
-    /// Free memory AllocMem found written after it was freed.
-    freed_writes: u32 = 0,
-};
+/// What memory debugging has found since it was last switched on: what
+/// MemDebug hands out as it is.
+pub const Debug = sdk.exec.MemDebugInfo;
 
 /// `bytes` bytes from `at`, a multiple of 4, set to `pattern` a word at a
 /// time.
@@ -386,16 +450,10 @@ pub fn debugFreed(region: *MemHeader, start: usize, whole: usize) void {
     }
 }
 
-/// One thing `debugCheck` found: a walled block written past its end, or
-/// free memory written after its free.
-pub const Damage = struct {
-    /// The first byte found wrong.
-    at: usize,
-    /// The block's owner; MEMOWNER_SYSTEM for free memory.
-    owner: u32,
-    /// Free memory rather than a wall.
-    freed: bool,
-};
+/// One thing `debugCheck` found: a walled block written past its end, free
+/// memory written after its free, or a region whose blocks no longer
+/// chain. MemDebug hands these out as they are.
+pub const Damage = sdk.exec.MemDamage;
 
 /// Every wall and, while debugging is on, all free memory checked, under
 /// the memory lock: the first `found.len` things wrong kept, all counted.
@@ -420,13 +478,13 @@ pub fn debugCheck(base: *ExecBase, found: []Damage) u32 {
             if (stretch.free) {
                 if (base.mem_debug.on) {
                     if (firstNot(stretch.start + MEM_BLOCKSIZE, stretch.bytes - MEM_BLOCKSIZE, sdk.exec.MEM_PATTERN_FREED)) |offset| {
-                        wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .owner = sdk.exec.MEMOWNER_SYSTEM, .freed = true };
+                        wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .kind = sdk.exec.MEMDAMAGE_FREED };
                     }
                 }
             } else if (stretch.walled) {
                 const header: *const MemBlock = @ptrFromInt(stretch.start);
                 if (header.wallDamage()) |offset| {
-                    wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .owner = stretch.owner, .freed = false };
+                    wrong = .{ .at = stretch.start + MEM_BLOCKSIZE + offset, .owner = stretch.owner, .kind = sdk.exec.MEMDAMAGE_WALL };
                 }
             }
             const damage = wrong orelse continue;
@@ -434,7 +492,7 @@ pub fn debugCheck(base: *ExecBase, found: []Damage) u32 {
             count += 1;
         }
         if (walk.damaged) |at| {
-            if (count < found.len) found[count] = .{ .at = at, .owner = sdk.exec.MEMOWNER_SYSTEM, .freed = false };
+            if (count < found.len) found[count] = .{ .at = at, .kind = sdk.exec.MEMDAMAGE_CHAIN };
             count += 1;
         }
     }

@@ -148,7 +148,8 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     if (ipv6 and identifier == bsd.IFID_STABLE) openCrypto(stack);
     if (!_task.start(stack)) return _socket.fail(sb, bsd.ENOMEM, "AddInterfaceTagList");
 
-    const memory = sys.AllocMem(@sizeOf(device.Device), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
+    // The library's, for the interface's life: not the caller's.
+    const memory = sys.AllocMem(@sizeOf(device.Device), exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse
         return _socket.fail(sb, bsd.ENOMEM, "AddInterfaceTagList");
     const link: *device.Device = @ptrCast(@alignCast(memory));
     const port = sys.CreateMsgPort() orelse {

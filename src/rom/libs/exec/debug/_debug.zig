@@ -47,6 +47,9 @@ pub const DebugHardware = struct {
     go: *const fn (saved: u32) void,
     halt: *const fn () noreturn,
     reboot: *const fn () void,
+    /// The end of the system log kept where the next boot finds it, before
+    /// a restart that was asked for (Software Failure's Reboot).
+    keepLastWords: ?*const fn () void = null,
     /// The registers of a trap frame, written a character at a time
     /// through `put`, so the debugger decides where they go.
     showFrame: *const fn (frame: *const anyopaque, put: sdk.exec.PutChProc, data: ?*anyopaque) void,

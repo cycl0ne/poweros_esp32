@@ -52,7 +52,8 @@ const unlock = _window.unlock;
 /// program took off the port must have been replied first.
 ///
 /// NOTES:
-/// None.
+/// A task that ends with windows open has them closed through this call,
+/// on the task's end (`RemTask`'s end hooks).
 ///
 /// BUGS:
 /// None known.
@@ -85,6 +86,7 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     @import("../input/drag.zig").forget(ib, w);
     _gadget.detach(ib, w);
     ib.sys_base.Remove(@ptrCast(&w.node));
+    _window.dropOpener(ib, w);
     dropPort(ib, w);
     reclaim(ib, w);
     // The gadgets' RastPort goes before the layer whose pixels it names.

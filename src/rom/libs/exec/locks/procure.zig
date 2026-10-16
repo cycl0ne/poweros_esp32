@@ -87,6 +87,7 @@ pub fn Procure(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) v
         if (sem.queue_count == 0) sem.owner = holder;
         sem.nest_count += 1;
         bid.request.granted = true;
+        _locks.noteHold(task, sem, shared);
         _locks.reply(base, sem, bid);
         return;
     }

@@ -447,11 +447,28 @@ check is a Guru on the serial console that says what failed and where:
 
 **The machine runs on.** The task that failed is held where it is - it
 never runs another instruction - and a Software Failure requester on the
-display names it: Suspend leaves it held for good, with whatever it holds,
-while everything else goes on; Reboot starts the machine again. That is
-so whenever the task can be held: not in an interrupt, nothing masked, no
-spinlock held, not intuition's own input task, none of the display's locks
-in its hands. Anything else is a dead end the machine cannot run on from:
+display names it, on either chip:
+
+- **Suspend** leaves it held for good, with whatever it holds, while
+  everything else goes on.
+- **Kill** ends it. It is started again on its own stack and ends as if
+  its code had returned: the semaphores it held go to whoever waits for
+  them, its final code runs - a process closes its streams, so a shell's
+  window goes - intuition closes the windows it left open, and its
+  private memory (`MEMF_PRIVATE`) is freed, each a line on the log. Its
+  shared memory, the libraries it opened and the files it had open stay,
+  since something else may still use them; `C:Avail OWNERS` shows what it
+  left under its number. A program run from a shell runs on the shell's
+  process, so Kill ends that shell. `s3> kill <number>` does the same to
+  any task, failed or not. `C:test/MemOwner CRASH` (or `ALERT`) fails on
+  purpose holding a semaphore, a window and private memory, and
+  `MemOwner WAIT` in another shell waits for that semaphore.
+- **Reboot** starts the machine again.
+
+That is so whenever the task can be held: not in an interrupt, nothing
+masked, no spinlock held, not intuition's own input task, none of the
+display's locks in its hands, and a screen open to ask on. Anything else
+is a dead end the machine cannot run on from:
 it keeps the end of the system log over the restart (the last words,
 below), offers the ROM debugger for a few seconds, and restarts -
 `*** restarting` - unless the debugger is taken, after which it stays
@@ -508,9 +525,12 @@ so a stack that runs past its end does not take the Task with it.
 
 ### Memory written where it should not be
 
-`s3> memdebug on` on the serial console switches memory debugging on, and
-`memdebug off` off again; it is meant for hunting one bug, not for
-running with.
+`MemDebug ON` in a shell switches memory debugging on, and `MemDebug OFF`
+off again; `memdebug on` and `off` at the serial console's `s3>` do the
+same. A kernel built with `-Dmemdebug=true` has it on from the start, so
+the blocks the system makes as it comes up are walled too: a block
+allocated before the mode was on has no wall. It is meant for hunting one
+bug, not for running with.
 
 - **A wall behind every new block:** 16 bytes, holding the size asked for
   and a pattern from there. `FreeMem` checks it: a program that wrote past
@@ -526,8 +546,11 @@ running with.
   stack of 4 KiB or more, and for a command's stack: a frame bigger than
   the narrow guard still lands in it.
 
-`memdebug check` looks at every wall and all free memory at once and
-names what is wrong; `memdebug` alone tells the counts. With
+`MemDebug CHECK` looks at every wall and all free memory at once and
+names what is wrong - for a wall, the block's owner by number and, while
+it runs, by name - and ends with `WARN` when it found anything;
+`MemDebug` alone tells the counts (`s3> memdebug check` and `memdebug`).
+A program switches and checks with exec's `MemDebug` call. With
 `C:test/MemOwner OVERRUN` and `AFTERFREE` both kinds of mistake can be
 watched being found. The memory each block takes grows by its wall while
 the mode is on.

@@ -1242,7 +1242,8 @@ program took off the port must have been replied first.
 
 **NOTES**
 
-None.
+A task that ends with windows open has them closed through this call,
+on the task's end (`RemTask`'s end hooks).
 
 **BUGS**
 
@@ -5293,8 +5294,11 @@ becomes the active window.
 **OWNERSHIP**
 
 The caller's until `CloseWindow`, which the same task must call: the
-message port's signal is that task's. A port given with `WA_UserPort`
-stays the program's, and must outlive every window on it.
+message port's signal is that task's. A task that ends with the window
+still open - its code returned, removed, or killed - has it closed
+then, with a line on the log; a window opened inside
+`BeginSystemMemory` is the system's and is left. A port given with
+`WA_UserPort` stays the program's, and must outlive every window on it.
 
 **NOTES**
 

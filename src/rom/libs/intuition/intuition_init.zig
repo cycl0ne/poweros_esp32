@@ -111,9 +111,11 @@ pub const LIBRARY_VERSION = 0;
 /// the front screen, its buttons pressed where the pointer is; the
 /// keyboard on the screen stays away while a keyboard is plugged in.
 /// 42: a tablet's place (IESUBCLASS_TABLET) puts the pointer as far across
-/// the front screen.
-pub const LIBRARY_REVISION = 43;
-const BUILD_DATE = "15.10.2026";
+/// the front screen. 43: IntuiMessages are the system's memory, not the
+/// task's that set them off. 44: the windows a task leaves open are closed
+/// when it ends (an end hook per task with windows open).
+pub const LIBRARY_REVISION = 44;
+const BUILD_DATE = "16.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -185,6 +187,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&ib.screen_lock);
 
     ib.class_list.init();
+    ib.openers.init();
     sys_base.InitSemaphore(&ib.class_lock);
     // Each from the one before it or from rootclass, so the first failure
     // leaves the rest unmade and they are given back newest first.

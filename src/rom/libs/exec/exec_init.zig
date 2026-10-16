@@ -46,9 +46,14 @@ pub const LIBRARY_VERSION = 1;
 /// 7: SafePutToPort. 8: DoIO and SendIO keep the command's flags. 9: on a
 /// RISC-V chip, every core fences its instruction fetch after the
 /// instruction caches are invalidated (CacheClearU, CacheClearE). 10:
-/// each task's own time (Task.timeRun), counted as the cores' are.
-pub const LIBRARY_REVISION = 11;
-const BUILD_DATE = "15.10.2026";
+/// each task's own time (Task.timeRun), counted as the cores' are. 11:
+/// every block has an owner (MemBlock), BeginSystemMemory,
+/// EndSystemMemory, SetMemOwner, and memory debugging. 12: a task's end
+/// gives back its semaphores (Task.holds) and its private memory; Kill
+/// (the Software Failure requester, now exec's on every chip); MemDebug,
+/// and memory debugging from the start (BOOTF_MEMDEBUG).
+pub const LIBRARY_REVISION = 12;
+const BUILD_DATE = "16.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -82,7 +87,8 @@ pub export const exec_tag: Resident linksection(".resident") = .{
 /// base from exec_tag (name, version and ID string are in) and put the
 /// memory regions on MemList. This sets up the rest: the lists, exec on
 /// LibList, the memory handler, the boot and idle tasks. With a BootInfo it
-/// goes on with the system start.
+/// switches memory debugging on where BOOTF_MEMDEBUG asks, right after
+/// those two tasks, and goes on with the system start.
 fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) callconv(.c) ?*Library {
     // First the raw serial port, for kprintf: nothing is printed before.
     // Direct, not through the table: SysBase is set further down, so there
@@ -122,6 +128,12 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // The tasks first: adding takes the library list's semaphore, and a
     // semaphore is held by a task.
     _task.initTasks(sys) catch return null;
+    const boot_info: ?*const exec.BootInfo = @ptrCast(@alignCast(seg_list));
+    // Memory debugging from here, where the kernel was built for it: the
+    // first blocks walled are the library list's and the residents'.
+    if (boot_info) |boot| {
+        if (boot.flags & exec.BOOTF_MEMDEBUG != 0) _ = sys_base.MemDebug(sdk.exec.MEMDEBUG_ON, null, null, 0);
+    }
     sys_base.AddLibrary(lib);
     // When memory runs out, the libraries and devices nobody has open are
     // expunged. Priority 0, so a handler that frees something cheaper - a
@@ -134,7 +146,7 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     };
     sys_base.AddMemHandler(&sys.library_flusher);
     exec.initialized = true;
-    const boot: *const exec.BootInfo = @ptrCast(@alignCast(seg_list orelse return lib));
+    const boot = boot_info orelse return lib;
     // Before any resident runs: from here code without a base finds exec.
     if (boot.abs_exec_base != 0) {
         const cell: *volatile *ExecBase = @ptrFromInt(boot.abs_exec_base);

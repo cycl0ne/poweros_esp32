@@ -33,7 +33,7 @@ pub const AN_LockDeadlock: u32 = AT_DeadEnd | 0x0100_0103;
 /// allocated: freeing either size could give away memory still in use.
 pub const AN_BadFreeSize: u32 = 0x0100_0104;
 /// FreeMem found a block's wall written over: the block's owner wrote
-/// past its end (memory debugging, `s3> memdebug`). The block is freed all
+/// past its end (memory debugging, `MemDebug`). The block is freed all
 /// the same: its MemBlock is whole.
 pub const AN_MemWall: u32 = 0x0100_0105;
 /// General alert: a library could not be made.

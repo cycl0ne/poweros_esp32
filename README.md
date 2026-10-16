@@ -80,15 +80,18 @@ ESP32-P4 boards and in Espressif's QEMU.
   system log from the first byte of the boot (`C:Log` sends it to a
   syslog server), a Guru with a ROM debugger on the serial ports, memory
   debugging (a wall behind every block, patterns in new and freed
-  memory, wide stack guards) switched on from it, and a program that fails
-  held and asked about while the system runs on.
+  memory, wide stack guards) switched on from it, from `C:MemDebug`, or
+  for a whole run with `-Dmemdebug`, and a program that fails
+  held and asked about while the system runs on - Suspend, Kill or
+  Reboot. A task that ends, by itself or killed, gives back the
+  semaphores it held, the windows it left open and its private memory.
   `C:Top` and `SYS:Programs/CPULoad` show what each task and core takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
   (`SD0:`) and USB sticks (`DU0:`), `RAM:`, `PIPE:`, `NIL:`; partitions
   from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; consoles with line editing, file
-  name completion, and copy and paste; a shell with scripts and 48
+  name completion, and copy and paste; a shell with scripts and 49
   commands in `C:` - `ScreenDump` saves a screen as a PNG - test programs
   in `C:test` and network tools in `C:net`.
 - **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
@@ -253,6 +256,7 @@ More build steps and options:
 | `-Dusb-disk=stick.img` | a USB stick in the `qemu*` steps, its contents that image |
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
+| `-Dmemdebug=true` | memory debugging on from exec's start, so the blocks the system makes as it comes up are walled too (`C:MemDebug` and `s3> memdebug` switch it while running) |
 
 ## Repository layout
 

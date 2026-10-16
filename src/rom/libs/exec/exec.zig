@@ -73,6 +73,10 @@ pub const ColdReboot = @import("interrupt/coldreboot.zig").ColdReboot;
 
 /// How alerts are shown; the kernel sets it before the bootstrap.
 pub const alert_hook = &_interrupt.alert_hook;
+/// Software Failure (failure/): a failed task held and asked about on the
+/// display - Suspend, Kill or Reboot - which the chip's alert display
+/// hands it to, and a recoverable alert shown there too.
+pub const failure = @import("failure/_failure.zig");
 
 /// RawDoFmt, the system's one formatter, and exec's own console (rawio/).
 const _rawio = @import("rawio/_rawio.zig");
@@ -151,6 +155,7 @@ pub const SafePutToPort = @import("ports/safeputtoport.zig").SafePutToPort;
 pub const BeginSystemMemory = @import("memory/beginsystemmemory.zig").BeginSystemMemory;
 pub const EndSystemMemory = @import("memory/endsystemmemory.zig").EndSystemMemory;
 pub const SetMemOwner = @import("memory/setmemowner.zig").SetMemOwner;
+pub const MemDebug = @import("memory/memdebug.zig").MemDebug;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -426,7 +431,14 @@ pub const BootInfo = extern struct {
     rom_end: usize,
     /// The address of the AbsExecBase word, or 0 for none.
     abs_exec_base: usize = 0,
+    /// BOOTF_* bits: how the kernel was built to start.
+    flags: u32 = 0,
 };
+
+/// In BootInfo.flags: memory debugging on from exec's start (MemDebug), as
+/// soon as exec's own first tasks exist - the kernel built with
+/// -Dmemdebug=true.
+pub const BOOTF_MEMDEBUG: u32 = 1 << 0;
 
 /// exec.library's own block, cut by the bootstrap from the first region
 /// with room, before there is an exec to allocate with: a block like any
@@ -1277,7 +1289,7 @@ test "memory debugging: a wall behind each block, patterns in new and freed memo
     bytes[100] = 0;
     try testing.expectEqual(@as(?usize, 100), header.wallDamage());
     try testing.expectEqual(@as(u32, 1), _memory.debugCheck(SysBase, &found));
-    try testing.expect(!found[0].freed);
+    try testing.expectEqual(sdk.exec.MEMDAMAGE_WALL, found[0].kind);
     FreeMem(SysBase, block, 100);
     try testing.expectEqual(@as(u32, 1), FakeAlert.count);
     try testing.expectEqual(sdk.exec.AN_MemWall, FakeAlert.last_num);
@@ -1307,7 +1319,7 @@ test "memory debugging: a wall behind each block, patterns in new and freed memo
     const stale: [*]u8 = @ptrCast(freed);
     stale[20] = 0x55;
     try testing.expectEqual(@as(u32, 1), _memory.debugCheck(SysBase, &found));
-    try testing.expect(found[0].freed);
+    try testing.expectEqual(sdk.exec.MEMDAMAGE_FREED, found[0].kind);
     try testing.expectEqual(@intFromPtr(freed) + 20, found[0].at);
     const again = AllocMem(SysBase, 64, MEMF_ANY).?;
     try testing.expectEqual(freed, again);
@@ -1319,6 +1331,68 @@ test "memory debugging: a wall behind each block, patterns in new and freed memo
     const all = AllocMem(SysBase, largest, MEMF_ANY).?;
     FreeMem(SysBase, all, largest);
     try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    try expectNoLeaks();
+}
+
+test "MemDebug: switched on and off, asked, and a check that tells each kind" {
+    try setUp();
+    defer deinit();
+    FakeAlert.install();
+    defer FakeAlert.uninstall();
+    var state: sdk.exec.MemDebugInfo = .{ .on = true };
+    try testing.expectEqual(@as(u32, 0), MemDebug(SysBase, sdk.exec.MEMDEBUG_ASK, &state, null, 0));
+    try testing.expect(!state.on);
+
+    _ = MemDebug(SysBase, sdk.exec.MEMDEBUG_ON, &state, null, 0);
+    defer SysBase.mem_debug.on = false;
+    try testing.expect(state.on);
+    var found: [2]sdk.exec.MemDamage = undefined;
+    try testing.expectEqual(@as(u32, 0), MemDebug(SysBase, sdk.exec.MEMDEBUG_CHECK, null, &found, found.len));
+
+    // A wall written over and free memory written after its free: both
+    // found, each with its kind, and no more kept than there is room for.
+    const block = AllocMem(SysBase, 40, MEMF_ANY).?;
+    const freed = AllocMem(SysBase, 64, MEMF_ANY).?;
+    FreeMem(SysBase, freed, 64);
+    const bytes: [*]u8 = @ptrCast(block);
+    bytes[40] = 0;
+    const stale: [*]u8 = @ptrCast(freed);
+    const kept = stale[20];
+    stale[20] = 0x55;
+    try testing.expectEqual(@as(u32, 2), MemDebug(SysBase, sdk.exec.MEMDEBUG_CHECK, null, &found, found.len));
+    var walls: u32 = 0;
+    var frees: u32 = 0;
+    for (found) |damage| switch (damage.kind) {
+        sdk.exec.MEMDAMAGE_WALL => {
+            walls += 1;
+            try testing.expectEqual(@intFromPtr(block) + 40, damage.at);
+            try testing.expectEqual(sdk.exec.MemBlock.of(block).owner, damage.owner);
+        },
+        sdk.exec.MEMDAMAGE_FREED => {
+            frees += 1;
+            try testing.expectEqual(@intFromPtr(freed) + 20, damage.at);
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(@as(u32, 1), walls);
+    try testing.expectEqual(@as(u32, 1), frees);
+    var one: [2]sdk.exec.MemDamage = .{ .{}, .{ .at = 1 } };
+    try testing.expectEqual(@as(u32, 2), MemDebug(SysBase, sdk.exec.MEMDEBUG_CHECK, null, &one, 1));
+    try testing.expectEqual(@as(usize, 1), one[1].at); // past found_max: not written
+    try testing.expectEqual(@as(u32, 2), MemDebug(SysBase, sdk.exec.MEMDEBUG_CHECK, null, null, 0));
+    stale[20] = kept;
+
+    // FreeMem tells the wall and counts it; off keeps the counts, on
+    // starts them over.
+    FreeMem(SysBase, block, 40);
+    try testing.expectEqual(@as(u32, 1), FakeAlert.count);
+    _ = MemDebug(SysBase, sdk.exec.MEMDEBUG_OFF, &state, null, 0);
+    try testing.expect(!state.on);
+    try testing.expectEqual(@as(u32, 1), state.walls);
+    _ = MemDebug(SysBase, sdk.exec.MEMDEBUG_ON, &state, null, 0);
+    try testing.expect(state.on);
+    try testing.expectEqual(@as(u32, 0), state.walls);
+    try testing.expectEqual(@as(u32, 0), MemDebug(SysBase, sdk.exec.MEMDEBUG_CHECK, null, null, 0));
     try expectNoLeaks();
 }
 
@@ -1409,14 +1483,15 @@ test "tasks get numbers, own their own block, and exec's own tasks are the syste
 test "SetMemOwner: a block given to a task, to the system, and to a task not started yet" {
     try setUp();
     defer deinit();
-    const block = AllocMem(SysBase, 64, MEMF_PRIVATE).?;
+    const block = AllocMem(SysBase, 64, MEMF_CLEAR).?;
     const header = sdk.exec.MemBlock.of(block);
 
     var running: Task = .{ .node = .{ .name = "running", .pri = -1 } };
     _ = AddTask(SysBase, &running, &idleCode, null);
     try testing.expect(SetMemOwner(SysBase, block, &running));
     try testing.expectEqual(running.id, header.owner);
-    try testing.expect(header.private() and header.inUse()); // the rest stays
+    try testing.expect(!header.private() and header.inUse()); // the rest stays
+    try testing.expect(!running.private_memory);
     try testing.expect(SetMemOwner(SysBase, block, null));
     try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, header.owner);
 
@@ -1439,6 +1514,97 @@ test "SetMemOwner: a block given to a task, to the system, and to a task not sta
     try testing.expect(!SetMemOwner(SysBase, null, null));
     FreeMem(SysBase, block, 64);
     try testing.expect(!SetMemOwner(SysBase, block, null));
+    try expectNoLeaks();
+}
+
+test "a task's end frees its private memory, a batch at a time, and leaves its shared memory" {
+    try setUp();
+    defer deinit();
+    const free_before = AvailMem(SysBase, MEMF_ANY);
+    var task: Task = .{ .node = .{ .name = "ending", .pri = -1 } };
+    _ = AddTask(SysBase, &task, &idleCode, null);
+    try testing.expect(!task.private_memory);
+    // Its blocks, made here and handed over, as a parent makes them.
+    const shared = AllocMem(SysBase, 200, MEMF_ANY).?;
+    const private = AllocMem(SysBase, 300, MEMF_PRIVATE).?;
+    try testing.expect(SetMemOwner(SysBase, shared, &task));
+    try testing.expect(!task.private_memory);
+    try testing.expect(SetMemOwner(SysBase, private, &task));
+    try testing.expect(task.private_memory);
+    // More than one look takes.
+    var many: [_task.private_batch + 8]*anyopaque = undefined;
+    for (&many) |*block| {
+        block.* = AllocMem(SysBase, 24, MEMF_PRIVATE).?;
+        try testing.expect(SetMemOwner(SysBase, block.*, &task));
+    }
+    // The caller's own private block is not the task's: the system's, as
+    // what the boot task allocates is, which no task's end looks for.
+    const mine = AllocMem(SysBase, 40, MEMF_PRIVATE).?;
+    try testing.expectEqual(sdk.exec.MEMOWNER_SYSTEM, sdk.exec.MemBlock.of(mine).owner);
+    try testing.expect(!SysBase.cpu().this_task.private_memory);
+
+    RemTask(SysBase, &task);
+    try testing.expect(sdk.exec.MemBlock.of(shared).inUse());
+    try testing.expect(!sdk.exec.MemBlock.of(private).inUse());
+    for (many) |block| try testing.expect(!sdk.exec.MemBlock.of(block).inUse());
+    try testing.expect(sdk.exec.MemBlock.of(mine).inUse());
+    FreeMem(SysBase, mine, 40);
+    FreeMem(SysBase, shared, 200);
+    try testing.expectEqual(free_before, AvailMem(SysBase, MEMF_ANY));
+    try expectNoLeaks();
+}
+
+test "Kill: started again at its end on its own stack, out of a semaphore's queue; its Task kept, its stack freed" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const boot = SysBase.cpu().this_task;
+    const task = CreateTask(SysBase, "victim", -1, &idleCode, 4096).?;
+    const block = task.mem_block.?;
+    // As NewStackRun leaves it, on another stack with its own named, and
+    // queued for a semaphore as ObtainSemaphore queues it.
+    const lower = task.sp_lower;
+    const upper = task.sp_upper;
+    task.home_lower = lower;
+    task.home_upper = upper;
+    task.sp_lower = upper - 64;
+    task.sp_upper = upper;
+    var sem: SignalSemaphore = .{};
+    InitSemaphore(SysBase, &sem);
+    ObtainSemaphore(SysBase, &sem);
+    var request: SemaphoreRequest = .{ .waiter = task };
+    try testing.expect(!_locks.enter(SysBase, &sem, &request));
+    task.waiting = &request;
+    task.waiting_for = &sem;
+
+    // The caller and exec's own are refused.
+    try testing.expect(!_task.killTask(SysBase, boot));
+    try testing.expect(_task.killTask(SysBase, task));
+    try testing.expect(task.killed);
+    try testing.expectEqual(lower, task.sp_lower);
+    try testing.expectEqual(upper, task.sp_upper);
+    try testing.expectEqual(@as(usize, 0), task.home_upper);
+    try testing.expect(task.waiting == null and sem.wait_queue.isEmpty());
+    try testing.expectEqual(@as(i16, 0), sem.queue_count);
+    try testing.expectEqual(sdk.exec.TaskState.ready, task.state);
+    try testing.expectEqual(@as(i8, -1), task.id_nest_cnt);
+    // Its context made anew; the host's makes the task its own context.
+    try testing.expectEqual(@as(?*anyopaque, task), task.sp_reg);
+
+    // Its end, as killEntry's RemTask has it - from outside here: the
+    // stack goes, the Task and its name stay, a block of the task's own.
+    const free_before = AvailMem(SysBase, MEMF_ANY);
+    RemTask(SysBase, task);
+    try testing.expectEqual(free_before + 4096, AvailMem(SysBase, MEMF_ANY));
+    try testing.expect(!sdk.exec.MemBlock.of(block).inUse());
+    const kept = sdk.exec.MemBlock.of(task);
+    try testing.expect(kept.inUse());
+    try testing.expectEqual(task.id, kept.owner);
+    try testing.expectEqualStrings("victim", task.name());
+    try testing.expect(!_task.killTask(SysBase, task)); // ended
+    FreeMem(SysBase, task, kept.bytes());
+    ReleaseSemaphore(SysBase, &sem);
     try expectNoLeaks();
 }
 
@@ -3072,6 +3238,136 @@ test "ports: AddPort, FindPort, RemPort" {
     RemPort(SysBase, port);
     try testing.expect(FindPort(SysBase, "test.port") == null);
     DeleteMsgPort(SysBase, port);
+    try expectNoLeaks();
+}
+
+/// `task`'s entry for `sem` in its table of holds: how often, which kind.
+fn expectHold(task: *Task, sem: *SignalSemaphore, count: u16, shared: bool) !void {
+    for (&task.holds) |*hold| {
+        if (hold.semaphore != sem) continue;
+        try testing.expectEqual(count, hold.count);
+        try testing.expectEqual(shared, hold.shared);
+        return;
+    }
+    return error.TestExpectedHold;
+}
+
+/// How many semaphores `task`'s table names.
+fn holdCount(task: *const Task) usize {
+    var count: usize = 0;
+    for (&task.holds) |*hold| count += @intFromBool(hold.semaphore != null);
+    return count;
+}
+
+test "semaphores: each task's table of what it holds, and its end giving them back" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const boot = SysBase.cpu().this_task;
+    const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
+    const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
+    var sem: SignalSemaphore = .{};
+    var other: SignalSemaphore = .{};
+    InitSemaphore(SysBase, &sem);
+    InitSemaphore(SysBase, &other);
+
+    // Nested holds in one entry, shared ones marked, gone with the last
+    // release.
+    ObtainSemaphore(SysBase, &sem);
+    try testing.expect(AttemptSemaphore(SysBase, &sem));
+    ObtainSemaphoreShared(SysBase, &other);
+    try expectHold(boot, &sem, 2, false);
+    try expectHold(boot, &other, 1, true);
+    ReleaseSemaphore(SysBase, &sem);
+    try expectHold(boot, &sem, 1, false);
+    ReleaseSemaphore(SysBase, &sem);
+    ReleaseSemaphore(SysBase, &other);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+
+    // a holds `sem` twice and `other` shared beside this task; b waits
+    // for `sem`. a's end hands `sem` to b - a hold in b's table now - and
+    // gives back its share of `other`, leaving this task's.
+    var ra: SemaphoreRequest = .{ .waiter = a };
+    var ra2: SemaphoreRequest = .{ .waiter = a };
+    try testing.expect(_locks.enter(SysBase, &sem, &ra));
+    try testing.expect(_locks.enter(SysBase, &sem, &ra2));
+    ObtainSemaphoreShared(SysBase, &other);
+    var ras: SemaphoreRequest = .{ .waiter = a, .shared = true };
+    try testing.expect(_locks.enter(SysBase, &other, &ras));
+    var rb: SemaphoreRequest = .{ .waiter = b };
+    try testing.expect(!_locks.enter(SysBase, &sem, &rb));
+    try expectHold(a, &sem, 2, false);
+    try expectHold(a, &other, 1, true);
+    RemTask(SysBase, a);
+    try testing.expectEqual(b, sem.owner.?);
+    try testing.expect(rb.granted);
+    try expectHold(b, &sem, 1, false);
+    try testing.expectEqual(@as(i16, 1), other.nest_count);
+    try expectHold(boot, &other, 1, true);
+    ReleaseSemaphore(SysBase, &other);
+    RemTask(SysBase, b);
+    try testing.expectEqual(@as(i16, -1), sem.queue_count);
+    try testing.expect(sem.owner == null);
+    try testing.expectEqual(@as(i16, -1), other.queue_count);
+
+    // A grant by Procure is a hold too, and Vacate gives it back.
+    const port = CreateMsgPort(SysBase).?;
+    var bid = SemaphoreMessage.init(port, false);
+    Procure(SysBase, &sem, &bid);
+    try expectHold(boot, &sem, 1, false);
+    _ = GetMsg(SysBase, port);
+    Vacate(SysBase, &sem, &bid);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+    DeleteMsgPort(SysBase, port);
+
+    // Past the table's end a hold is counted as lost; let go, the count
+    // goes down again.
+    var many: [sdk.exec.max_semaphore_holds + 2]SignalSemaphore = @splat(.{});
+    for (&many) |*each| {
+        InitSemaphore(SysBase, each);
+        ObtainSemaphore(SysBase, each);
+    }
+    try testing.expectEqual(@as(usize, sdk.exec.max_semaphore_holds), holdCount(boot));
+    try testing.expectEqual(@as(u16, 2), boot.holds_lost);
+    for (&many) |*each| ReleaseSemaphore(SysBase, each);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+    try testing.expectEqual(@as(u16, 0), boot.holds_lost);
+    try expectNoLeaks();
+}
+
+test "semaphores: a task removed while it waits is taken out of the queue" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
+    const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
+    var sem: SignalSemaphore = .{};
+    InitSemaphore(SysBase, &sem);
+    ObtainSemaphore(SysBase, &sem);
+
+    // Queued as ObtainSemaphore queues it, its request named in the task.
+    var ra: SemaphoreRequest = .{ .waiter = a };
+    try testing.expect(!_locks.enter(SysBase, &sem, &ra));
+    a.waiting = &ra;
+    a.waiting_for = &sem;
+    RemTask(SysBase, a);
+    try testing.expect(sem.wait_queue.isEmpty());
+    try testing.expectEqual(@as(i16, 0), sem.queue_count);
+
+    // Granted before it is removed: the grant takes the name off, and the
+    // end gives the hold back.
+    var rb: SemaphoreRequest = .{ .waiter = b };
+    try testing.expect(!_locks.enter(SysBase, &sem, &rb));
+    b.waiting = &rb;
+    b.waiting_for = &sem;
+    ReleaseSemaphore(SysBase, &sem);
+    try testing.expect(rb.granted);
+    try testing.expect(b.waiting == null and b.waiting_for == null);
+    RemTask(SysBase, b);
+    try testing.expect(sem.owner == null);
+    try testing.expectEqual(@as(i16, -1), sem.queue_count);
     try expectNoLeaks();
 }
 

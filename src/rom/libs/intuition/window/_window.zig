@@ -24,6 +24,13 @@
 //!
 //! Every window and the active one are guarded by the screen list's
 //! semaphore, which nests.
+//!
+//! **A window is its opener's**: the task that opened it, which its port
+//! signals. Each task with windows open has an `Opener` on intuition's
+//! list, with an end hook on the task: a task that ends with windows still
+//! open - its code returned, it was removed, or killed - has them closed,
+//! and a line on the log says so. A window opened inside
+//! `BeginSystemMemory` is the system's and has no opener.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -170,7 +177,119 @@ pub const Window = extern struct {
     /// background pen, whatever pens the program has set on its RastPort.
     backfill: utility.Hook = .{},
     base: *IntuitionBase,
+    /// The task that opened it, closing it when it ends; null for one
+    /// opened inside `BeginSystemMemory`, or with no memory to note it.
+    opener: ?*Opener = null,
 };
+
+/// A task with windows open: how many, and the end hook that closes them
+/// should it end first. Made with its first window, freed with its last.
+pub const Opener = extern struct {
+    node: exec.MinNode = .{},
+    hook: exec.TaskEndHook,
+    ib: *IntuitionBase,
+    task: *exec.Task,
+    windows: u32 = 0,
+};
+
+/// A window just opened noted as its opener's: the running task's Opener
+/// found, or made and its end hook put on. Nothing for a task inside
+/// `BeginSystemMemory`, whose windows are the system's, nor when there is
+/// no memory for an Opener - the window is then left when its task ends,
+/// as any window was. The caller holds intuition's lock.
+///
+/// INPUTS:
+/// - `ib` - intuition: its openers.
+/// - `w` - the window, opened.
+pub fn noteOpener(ib: *IntuitionBase, w: *Window) void {
+    const sys = ib.sys_base;
+    const task = sys.FindTask(null).?;
+    if (task.system_memory_nest != 0) return;
+    const opener = findOpener(ib, task) orelse made: {
+        const memory = sys.AllocMem(@sizeOf(Opener), exec.MEMF_SYSTEM | exec.MEMF_CLEAR) orelse return;
+        const made: *Opener = @ptrCast(@alignCast(memory));
+        made.* = .{ .hook = .{ .code = &openerEnded }, .ib = ib, .task = task };
+        sys.AddTaskEndHook(task, &made.hook);
+        sys.AddTail(@ptrCast(&ib.openers), @ptrCast(&made.node));
+        break :made made;
+    };
+    opener.windows += 1;
+    w.opener = opener;
+}
+
+/// A window that closes taken off its opener's count, and the Opener freed
+/// with its last window - its end hook taken off the task. The caller
+/// holds intuition's lock.
+///
+/// INPUTS:
+/// - `ib` - intuition: its openers.
+/// - `w` - the window, closing.
+pub fn dropOpener(ib: *IntuitionBase, w: *Window) void {
+    const opener = w.opener orelse return;
+    w.opener = null;
+    opener.windows -= 1;
+    if (opener.windows != 0) return;
+    const sys = ib.sys_base;
+    sys.RemTaskEndHook(&opener.hook);
+    sys.Remove(@ptrCast(&opener.node));
+    sys.FreeMem(opener, @sizeOf(Opener));
+}
+
+fn findOpener(ib: *IntuitionBase, task: *exec.Task) ?*Opener {
+    var node = ib.openers.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const opener: *Opener = @ptrCast(@alignCast(n));
+        if (opener.task == task) return opener;
+    }
+    return null;
+}
+
+/// A window of `opener`'s still open, on any screen, or null.
+fn windowOf(ib: *IntuitionBase, opener: *Opener) ?*Window {
+    var screens = ib.screen_list.head;
+    while (screens) |sn| : (screens = sn.succ) {
+        if (sn.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(sn));
+        var node = s.windows.head;
+        while (node) |n| : (node = n.succ) {
+            if (n.succ == null) break;
+            const w: *Window = @ptrCast(@alignCast(n));
+            if (w.opener == opener) return w;
+        }
+    }
+    return null;
+}
+
+/// The end hook of a task with windows open: each one closed, through
+/// `CloseWindow` as the task would have, then the Opener freed, and a line
+/// on the log. A window is taken from its opener before it is closed, so
+/// the close does not count it down again.
+fn openerEnded(sys_base: *sdk.interface.exec.ExecBase, task: *exec.Task, hook: *exec.TaskEndHook) callconv(.c) void {
+    const opener: *Opener = @fieldParentPtr("hook", hook);
+    const ib = opener.ib;
+    var closed: u32 = 0;
+    while (true) {
+        lock(ib);
+        const w = windowOf(ib, opener) orelse {
+            sys_base.Remove(@ptrCast(&opener.node));
+            unlock(ib);
+            break;
+        };
+        w.opener = null;
+        unlock(ib);
+        ib.iface().CloseWindow(@ptrCast(w));
+        closed += 1;
+    }
+    sys_base.FreeMem(opener, @sizeOf(Opener));
+    if (closed == 0) return;
+    exec.kprintf(sys_base, "intuition: task \"%.32s\" #%u ended with %u window%s open - closed\n", .{
+        task.name().ptr,
+        task.id,
+        closed,
+        @as([*:0]const u8, if (closed == 1) "" else "s"),
+    });
+}
 
 // A window's flags are the SDK's `WFLG_`, so that the word `WA_Flags`
 // carries means here what it says on the tag. These are the short names the

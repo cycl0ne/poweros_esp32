@@ -102,8 +102,11 @@ const zoomWidth = _window.zoomWidth;
 ///
 /// OWNERSHIP:
 /// The caller's until `CloseWindow`, which the same task must call: the
-/// message port's signal is that task's. A port given with `WA_UserPort`
-/// stays the program's, and must outlive every window on it.
+/// message port's signal is that task's. A task that ends with the window
+/// still open - its code returned, removed, or killed - has it closed
+/// then, with a line on the log; a window opened inside
+/// `BeginSystemMemory` is the system's and is left. A port given with
+/// `WA_UserPort` stays the program's, and must outlive every window on it.
 ///
 /// NOTES:
 /// - A window on a public screen keeps it from closing, so no lock needs
@@ -503,6 +506,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         w.more_flags |= _window.WMF_VISITOR;
         if (ib.pub_modes & sc.POPPUBSCREEN != 0) it.ScreenToFront(@ptrCast(s));
     }
+    _window.noteOpener(ib, w);
     return @ptrCast(w);
 }
 

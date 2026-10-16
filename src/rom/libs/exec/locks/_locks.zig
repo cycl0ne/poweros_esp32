@@ -25,6 +25,18 @@
 //! queue consistent between tasks; a caller that has to sleep gives the
 //! lock back first.
 //!
+//! **Every task keeps a table of what it holds** (`Task.holds`): a grant
+//! counts the hold there, a release takes it out, both under the same
+//! lock. It is what a task's end gives back (`releaseHolds`) - a holder
+//! gone for good would keep everyone queued behind it waiting forever -
+//! and what `s3> locks` shows. A table rather than a link through the
+//! semaphore, because a semaphore freed while it is held leaves a link
+//! pointing into freed memory in a list that is written again; a stale
+//! entry is only read, and checked before anything is let go.
+//! A task queued for one (`ObtainSemaphore`) names its request
+//! (`Task.waiting`), which is on its stack: a task removed while it waits
+//! is taken out of the queue (`withdraw`).
+//!
 //! **Spinlocks** (InitLock, AcquireLock, AttemptLock, ReleaseLock) share
 //! the second half: the word taken atomically - S32C1I in internal memory,
 //! under the base's guard word in PSRAM - task switching (or with
@@ -56,6 +68,7 @@ const Task = sdk.exec.Task;
 const SignalSemaphore = sdk.exec.SignalSemaphore;
 const SemaphoreRequest = sdk.exec.SemaphoreRequest;
 const SemaphoreMessage = sdk.exec.SemaphoreMessage;
+const SemaphoreHold = sdk.exec.SemaphoreHold;
 
 /// The body both obtains share: builds a request on the caller's own
 /// stack, tries to take the semaphore, and sleeps until it is granted if
@@ -70,9 +83,16 @@ const SemaphoreMessage = sdk.exec.SemaphoreMessage;
 ///   one.
 pub fn obtain(base: *ExecBase, sem: *SignalSemaphore, shared: bool) void {
     const sys = base.iface();
-    var request: SemaphoreRequest = .{ .waiter = sys.FindTask(null).?, .shared = shared };
+    const task = sys.FindTask(null).?;
+    var request: SemaphoreRequest = .{ .waiter = task, .shared = shared };
     sys.AcquireLock(&base.lock_semaphores);
     const granted = enter(base, sem, &request);
+    // Queued: the request named, as the task may be removed while it
+    // waits and the request is on its stack.
+    if (!granted) {
+        task.waiting = &request;
+        task.waiting_for = sem;
+    }
     sys.ReleaseLock(&base.lock_semaphores);
     // Asleep without the lock: a grant made in between is in the request
     // and in the signal, so nothing is missed.
@@ -114,12 +134,14 @@ pub fn enter(base: *ExecBase, sem: *SignalSemaphore, request: *SemaphoreRequest)
         sem.owner = if (request.shared) null else task;
         sem.nest_count = 1;
         request.granted = true;
+        noteHold(task, sem, request.shared);
         return true;
     }
     // Held: by this task, or shared and this request is shared too.
     if (sem.owner == task or (request.shared and sem.owner == null)) {
         sem.nest_count += 1;
         request.granted = true;
+        noteHold(task, sem, request.shared);
         return true;
     }
     base.iface().AddTail(&sem.wait_queue, &request.link);
@@ -148,6 +170,7 @@ pub fn leave(base: *ExecBase, sem: *SignalSemaphore, task: *Task) void {
     }
     sem.nest_count -= 1;
     sem.queue_count -= 1;
+    dropHold(task, sem, sem.nest_count == 0);
     if (sem.nest_count > 0) return;
     sem.owner = null;
     grant(base, sem);
@@ -168,6 +191,7 @@ fn grant(base: *ExecBase, sem: *SignalSemaphore) void {
         sys.Remove(head);
         sem.owner = first.waiter;
         sem.nest_count = 1;
+        noteHold(first.waiter.?, sem, false);
         wake(base, sem, first);
         return;
     }
@@ -177,6 +201,7 @@ fn grant(base: *ExecBase, sem: *SignalSemaphore) void {
         if (!request.shared) continue;
         sys.Remove(node);
         sem.nest_count += 1;
+        noteHold(request.waiter.?, sem, true);
         wake(base, sem, request);
     }
 }
@@ -190,6 +215,11 @@ fn grant(base: *ExecBase, sem: *SignalSemaphore) void {
 /// - `request` - the request that won it.
 fn wake(base: *ExecBase, sem: *SignalSemaphore, request: *SemaphoreRequest) void {
     request.granted = true;
+    const waiter = request.waiter.?;
+    if (waiter.waiting == request) {
+        waiter.waiting = null;
+        waiter.waiting_for = null;
+    }
     if (request.bid) |bid| return reply(base, sem, bid);
     base.iface().Signal(request.waiter.?, sdk.exec.tasks.SIGF_SINGLE);
 }
@@ -219,6 +249,119 @@ pub fn reply(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) voi
 pub fn waitGranted(base: *ExecBase, request: *SemaphoreRequest) void {
     const granted: *volatile bool = &request.granted;
     while (!granted.*) _ = base.iface().Wait(sdk.exec.tasks.SIGF_SINGLE);
+}
+
+// --- what a task holds ----------------------------------------------------------
+
+/// `task` granted `sem` once more, counted in its table: in the entry the
+/// semaphore has there, or a free one, or in `holds_lost` when the table
+/// is full. The caller holds the semaphore lock.
+///
+/// INPUTS:
+/// - `task` - the task granted it.
+/// - `sem` - the semaphore.
+/// - `shared` - whether the hold is shared; an entry keeps the kind of its
+///   first hold, which a nested one of the other kind does not change.
+pub fn noteHold(task: *Task, sem: *SignalSemaphore, shared: bool) void {
+    var free: ?*SemaphoreHold = null;
+    for (&task.holds) |*hold| {
+        if (hold.semaphore == sem) {
+            hold.count +|= 1;
+            return;
+        }
+        if (hold.semaphore == null and free == null) free = hold;
+    }
+    const entry = free orelse {
+        task.holds_lost +|= 1;
+        return;
+    };
+    entry.* = .{ .semaphore = sem, .count = 1, .shared = shared };
+}
+
+/// One hold of `sem` by `task` let go: its entry counted down, and freed
+/// at 0 - or at once when the semaphore is now free, which no count the
+/// entry still has can stand for. A hold the table has no entry for was a
+/// lost one. The caller holds the semaphore lock.
+///
+/// INPUTS:
+/// - `task` - the holder.
+/// - `sem` - the semaphore.
+/// - `free` - the semaphore's nest count reached 0 with this release.
+pub fn dropHold(task: *Task, sem: *SignalSemaphore, free: bool) void {
+    for (&task.holds) |*hold| {
+        if (hold.semaphore != sem) continue;
+        hold.count -|= 1;
+        if (hold.count == 0 or free) hold.* = .{};
+        return;
+    }
+    if (task.holds_lost > 0) task.holds_lost -= 1;
+}
+
+/// What `releaseHolds` gave back: how many semaphores, and the first few,
+/// for the line the task's end prints.
+pub const Released = struct {
+    count: u32 = 0,
+    first: [4]?*SignalSemaphore = @splat(null),
+    /// Holds the table had no room for, which stay held.
+    lost: u16 = 0,
+};
+
+/// Every semaphore `task` still holds let go, each as often as it holds
+/// it, so whoever is queued behind it gets it. An entry is checked before
+/// anything is released - the semaphore still one, held by this task (or
+/// held shared, at least as often) - since the memory it names may have
+/// been freed with the lock in it, and a stale entry is passed over. The
+/// task is ending: it does not run on, holding them, after this.
+///
+/// INPUTS:
+/// - `base` - exec: its semaphore lock, and what `leave` hands the
+///   semaphores on with.
+/// - `task` - the ending task.
+/// - `released` - filled in.
+pub fn releaseHolds(base: *ExecBase, task: *Task, released: *Released) void {
+    const sys = base.iface();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
+    released.lost = task.holds_lost;
+    task.holds_lost = 0;
+    for (&task.holds) |*hold| {
+        const sem = hold.semaphore orelse continue;
+        const count = hold.count;
+        const shared = hold.shared;
+        hold.* = .{};
+        if (sem.link.type != .signalsem or sem.nest_count < count or count == 0) continue;
+        if (shared) {
+            if (sem.owner != null) continue;
+            for (0..count) |_| leave(base, sem, task);
+        } else {
+            if (sem.owner != task) continue;
+            while (sem.owner == task and sem.nest_count > 0) leave(base, sem, task);
+        }
+        if (released.count < released.first.len) released.first[released.count] = sem;
+        released.count += 1;
+    }
+}
+
+/// A task removed while it waits for a semaphore taken out of the queue:
+/// its request is on its stack, which goes with it. One granted meanwhile
+/// is a hold, which `releaseHolds` gives back. Taking a waiter out hands
+/// nothing on - a semaphore with waiters is held, and the waiter behind
+/// waits for the holder, not for it.
+///
+/// INPUTS:
+/// - `base` - exec: its semaphore lock.
+/// - `task` - the task, which does not run.
+pub fn withdraw(base: *ExecBase, task: *Task) void {
+    const sys = base.iface();
+    sys.AcquireLock(&base.lock_semaphores);
+    defer sys.ReleaseLock(&base.lock_semaphores);
+    const request = task.waiting orelse return;
+    const sem = task.waiting_for.?;
+    task.waiting = null;
+    task.waiting_for = null;
+    if (request.granted) return;
+    sys.Remove(&request.link);
+    sem.queue_count -= 1;
 }
 
 // --- spinlocks ----------------------------------------------------------------

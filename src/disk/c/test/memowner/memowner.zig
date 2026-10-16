@@ -2,7 +2,7 @@
 //! MemOwner: what a block of memory says about itself, and what exec does
 //! with it.
 //!
-//!   MemOwner LEAK/S,WRONGSIZE/S,TWICE/S,OVERRUN/S,AFTERFREE/S
+//!   MemOwner LEAK/S,WRONGSIZE/S,TWICE/S,OVERRUN/S,AFTERFREE/S,CRASH/S,ALERT/S,WAIT/S
 //!
 //! With no switch it allocates a shared block, a private one
 //! (MEMF_PRIVATE), the system's (MEMF_SYSTEM), one inside a
@@ -12,34 +12,53 @@
 //!
 //! LEAK starts a task that allocates three blocks, one of them private,
 //! and ends without freeing them; it says the task's number, under which
-//! `Avail OWNERS`, `Top` and `MemMap` show what it left - for good, until
-//! the next start: that is what a leak is.
+//! `Avail OWNERS`, `Top` and `MemMap` show what it left - the two shared
+//! ones for good, until the next start: that is what a leak is. The
+//! private one was freed as the task ended.
 //!
 //! WRONGSIZE frees a block with a size that is not its own, and TWICE frees
 //! one twice: exec refuses both with an alert, and the block stays as it
 //! was (the first is then freed right).
 //!
-//! With memory debugging on (`s3> memdebug on`): OVERRUN writes one byte
-//! past the end of a block of 100 and frees it, which FreeMem tells with an
-//! alert; AFTERFREE writes into a block after freeing it, which
-//! `s3> memdebug check` finds, or AllocMem when it hands that memory out
-//! again. Without it both say so and do nothing.
+//! With memory debugging on (`MemDebug ON`): OVERRUN writes one byte past
+//! the end of a block of 100 and frees it, which FreeMem tells with an
+//! alert; AFTERFREE writes near the end of a block of 64 KiB after freeing
+//! it, which `MemDebug CHECK` finds, or AllocMem when it hands that memory
+//! out again - near the end, so that what the shell allocates next takes
+//! the block's front and leaves the write for a check to find. Without it
+//! both say so and do nothing.
+//!
+//! CRASH takes a public semaphore ("MemOwner"), opens a window where
+//! there is a screen and allocates 4096 private bytes, then reads an address nothing answers;
+//! ALERT does the same and raises a dead-end alert instead. Either is a
+//! Software Failure, and Kill on its requester (or `s3> kill`) ends the
+//! task: the semaphore goes to whoever waits for it, the window closes,
+//! the private memory is freed - each a line on the log. WAIT, in another
+//! shell, waits for that semaphore, says when it has it, and takes it
+//! away again.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
+const intuition = sdk.intuition;
+const wn = intuition.windows;
+const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const Printf = dos.stdio.Printf;
 
 const NAME = "MemOwner";
-const VERSION_STRING = "\x00$VER: MemOwner 1.1 (15.10.2026)\r\n";
-const TEMPLATE = "LEAK/S,WRONGSIZE/S,TWICE/S,OVERRUN/S,AFTERFREE/S";
+const VERSION_STRING = "\x00$VER: MemOwner 1.2 (16.10.2026)\r\n";
+const TEMPLATE = "LEAK/S,WRONGSIZE/S,TWICE/S,OVERRUN/S,AFTERFREE/S,CRASH/S,ALERT/S,WAIT/S";
 const arg_leak = 0;
 const arg_wrong_size = 1;
 const arg_twice = 2;
 const arg_overrun = 3;
 const arg_after_free = 4;
+const arg_crash = 5;
+const arg_alert = 6;
+const arg_wait = 7;
 
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
@@ -53,7 +72,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [5]usize = @splat(0);
+    var argv: [8]usize = @splat(0);
     const rda = dl.ReadArgs(TEMPLATE, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), NAME);
         return dos.RETURN_FAIL;
@@ -61,6 +80,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
 
     if (argv[arg_leak] != 0) return leak(sys, dl);
+    if (argv[arg_crash] != 0 or argv[arg_alert] != 0) return crash(sys, dl, argv[arg_crash] != 0);
+    if (argv[arg_wait] != 0) return wait(sys, dl);
     if (argv[arg_overrun] != 0 or argv[arg_after_free] != 0) return misuse(sys, dl, argv[arg_overrun] != 0);
     if (argv[arg_wrong_size] != 0 or argv[arg_twice] != 0) return refused(sys, dl, argv[arg_wrong_size] != 0);
     return blocks(sys, dl);
@@ -127,14 +148,17 @@ fn leak(sys: *ExecBase, dl: *DosBase) i32 {
     // runs, may be unloaded.
     _ = sys.WaitPort(ended);
     _ = sys.GetMsg(ended);
-    _ = Printf(dl, "task \"MemOwner leak\", number %u, has ended and left three blocks:\n", .{leaker_id});
-    for (leaked) |block| {
+    _ = Printf(dl, "task \"MemOwner leak\", number %u, has ended without freeing three blocks:\n", .{leaker_id});
+    for (leaked, [_][*:0]const u8{ "2000 bytes", "3000 bytes, private", "5000 bytes" }) |block, what| {
         const kept = block orelse continue;
         const header = exec.MemBlock.of(kept);
-        _ = Printf(dl, "  0x%08x  %u bytes%s\n", .{
+        // The private one went as the task ended: its MemBlock is free
+        // space's now, or another block's.
+        const left = header.inUse() and header.owner == leaker_id;
+        _ = Printf(dl, "  0x%08x  %-20s %s\n", .{
             @as(u32, @truncate(@intFromPtr(kept))),
-            @as(u32, @intCast(header.bytes())),
-            @as([*:0]const u8, if (header.private()) ", private" else ""),
+            what,
+            @as([*:0]const u8, if (left) "left" else "freed as it ended"),
         });
     }
     _ = Printf(dl, "Avail OWNERS, Top and MemMap show them as an ended task's, number %u\n", .{leaker_id});
@@ -151,11 +175,12 @@ fn leakingTask(sys: *ExecBase) callconv(.c) void {
 /// debugging to find. Without a wall the block was not allocated with it
 /// on, and nothing is done.
 fn misuse(sys: *ExecBase, dl: *DosBase, overrun: bool) i32 {
-    const block = sys.AllocMem(100, exec.MEMF_ANY) orelse return dos.RETURN_FAIL;
+    const size: usize = if (overrun) 100 else after_free_size;
+    const block = sys.AllocMem(size, exec.MEMF_ANY) orelse return dos.RETURN_FAIL;
     const header = exec.MemBlock.of(block);
     if (!header.walled()) {
-        sys.FreeMem(block, 100);
-        _ = dl.PutStr("memory debugging is off: s3> memdebug on first\n");
+        sys.FreeMem(block, size);
+        _ = dl.PutStr("memory debugging is off: MemDebug ON first\n");
         return dos.RETURN_WARN;
     }
     const bytes: [*]volatile u8 = @ptrCast(block);
@@ -166,11 +191,16 @@ fn misuse(sys: *ExecBase, dl: *DosBase, overrun: bool) i32 {
         sys.FreeMem(block, 100);
         return dos.RETURN_OK;
     }
-    sys.FreeMem(block, 100);
-    bytes[40] = 0x55;
-    _ = Printf(dl, "0x%08x written after its free: s3> memdebug check finds it\n", .{@as(u32, @truncate(@intFromPtr(block) + 40))});
+    sys.FreeMem(block, size);
+    const at = after_free_size - 40;
+    bytes[at] = 0x55;
+    _ = Printf(dl, "0x%08x written after its free: MemDebug CHECK finds it\n", .{@as(u32, @truncate(@intFromPtr(block) + at))});
     return dos.RETURN_OK;
 }
+
+/// AFTERFREE's block: large enough that the next few allocations take its
+/// front and leave the write near its end alone.
+const after_free_size = 64 * 1024;
 
 /// A block freed wrongly - with another size, or twice - and exec's
 /// refusal checked: the free memory does not change.
@@ -194,4 +224,80 @@ fn refused(sys: *ExecBase, dl: *DosBase, wrong_size: bool) i32 {
     const kept = sys.AvailMem(exec.MEMF_ANY) == free_before;
     _ = Printf(dl, "%s\n", .{@as([*:0]const u8, if (kept) "refused: the free memory did not change" else "NOT refused")});
     return if (kept) dos.RETURN_OK else dos.RETURN_ERROR;
+}
+
+/// What CRASH holds, in one shared block that outlives it: the public
+/// semaphore WAIT waits for, and its name.
+const Held = extern struct {
+    semaphore: exec.SignalSemaphore = .{},
+    name: [16]u8 = @splat(0),
+};
+
+const semaphore_name = "MemOwner";
+
+/// A task that holds a semaphore, a window and private memory, and fails:
+/// by a read from an address nothing answers, or a dead-end alert.
+fn crash(sys: *ExecBase, dl: *DosBase, exception: bool) i32 {
+    if (sys.FindSemaphore(semaphore_name) != null) {
+        _ = dl.PutStr("the semaphore \"MemOwner\" is there already: MemOwner WAIT takes it away\n");
+        return dos.RETURN_WARN;
+    }
+    const memory = sys.AllocMem(@sizeOf(Held), exec.MEMF_CLEAR) orelse return dos.RETURN_FAIL;
+    const held: *Held = @ptrCast(@alignCast(memory));
+    held.* = .{};
+    @memcpy(held.name[0..semaphore_name.len], semaphore_name);
+    held.semaphore.link.name = @ptrCast(&held.name);
+    sys.AddSemaphore(&held.semaphore);
+    sys.ObtainSemaphore(&held.semaphore);
+    const private = sys.AllocMem(4096, exec.MEMF_PRIVATE) orelse return dos.RETURN_FAIL;
+    // A window where there is a screen for one; the failure comes anyway.
+    const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0);
+    const window = if (intuition_lib) |lib| @as(*IntuitionBase, @ptrCast(lib)).OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 80 },
+        .{ .tag = wn.WA_Top, .data = 80 },
+        .{ .tag = wn.WA_InnerWidth, .data = 320 },
+        .{ .tag = wn.WA_InnerHeight, .data = 60 },
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("MemOwner: about to fail") },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{},
+    }) else null;
+    const me = sys.FindTask(null).?;
+    _ = Printf(dl, "task %u holds the semaphore \"MemOwner\" at 0x%08x, %s, and 4096 private bytes at 0x%08x\n", .{
+        me.id,
+        @as(u32, @truncate(@intFromPtr(&held.semaphore))),
+        @as([*:0]const u8, if (window != null) "a window" else "no window (no screen)"),
+        @as(u32, @truncate(@intFromPtr(private))),
+    });
+    _ = Printf(dl, "%s in two seconds: Software Failure - Kill ends the task (or s3> kill %u)\n", .{
+        @as([*:0]const u8, if (exception) "a read from an address nothing answers" else "a dead-end alert"),
+        me.id,
+    });
+    _ = dl.Flush(dl.Output());
+    dl.Delay(100); // two seconds: 50 ticks a second
+    if (exception) {
+        const nowhere: *const volatile u32 = @ptrFromInt(0x10);
+        _ = nowhere.*;
+    } else {
+        sys.Alert(exec.AT_DeadEnd | exec.AN_ProgramPanic);
+    }
+    return dos.RETURN_FAIL;
+}
+
+/// The semaphore CRASH holds, waited for, and taken away once had.
+fn wait(sys: *ExecBase, dl: *DosBase) i32 {
+    const semaphore = sys.FindSemaphore(semaphore_name) orelse {
+        _ = dl.PutStr("no semaphore \"MemOwner\": MemOwner CRASH makes it\n");
+        return dos.RETURN_WARN;
+    };
+    _ = Printf(dl, "waiting for the semaphore \"MemOwner\" at 0x%08x\n", .{@as(u32, @truncate(@intFromPtr(semaphore)))});
+    _ = dl.Flush(dl.Output());
+    sys.ObtainSemaphore(semaphore);
+    _ = dl.PutStr("got it: its holder let it go, or ended\n");
+    sys.ReleaseSemaphore(semaphore);
+    sys.RemSemaphore(semaphore);
+    const held: *Held = @fieldParentPtr("semaphore", semaphore);
+    sys.FreeMem(held, @sizeOf(Held));
+    return dos.RETURN_OK;
 }

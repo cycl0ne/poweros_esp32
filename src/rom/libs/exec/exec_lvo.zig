@@ -28,6 +28,8 @@ const IntVector = sdk.exec.IntVector;
 const Library = sdk.exec.Library;
 const LibraryInit = sdk.exec.LibraryInit;
 const List = sdk.exec.List;
+const MemDamage = sdk.exec.MemDamage;
+const MemDebugInfo = sdk.exec.MemDebugInfo;
 const MemHeader = sdk.exec.MemHeader;
 const Message = sdk.exec.Message;
 const MsgPort = sdk.exec.MsgPort;
@@ -74,6 +76,7 @@ const contract_files = [_][]const u8{
     @embedFile("memory/beginsystemmemory.zig"),
     @embedFile("memory/endsystemmemory.zig"),
     @embedFile("memory/setmemowner.zig"),
+    @embedFile("memory/memdebug.zig"),
     @embedFile("interrupt/intvector.zig"),
     @embedFile("resident/resmodules.zig"),
     @embedFile("library/setramlib.zig"),
@@ -344,6 +347,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoBeginSystemMemory),
     vec(lvoEndSystemMemory),
     vec(lvoSetMemOwner),
+    vec(lvoMemDebug),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -895,6 +899,10 @@ fn lvoEndSystemMemory(base: *ExecBase) callconv(.c) void {
 
 fn lvoSetMemOwner(base: *ExecBase, memory_block: ?*anyopaque, task: ?*Task) callconv(.c) bool {
     return exec.SetMemOwner(base, memory_block, task);
+}
+
+fn lvoMemDebug(base: *ExecBase, action: u32, info: ?*MemDebugInfo, found: ?[*]MemDamage, found_max: u32) callconv(.c) u32 {
+    return exec.MemDebug(base, action, info, found, found_max);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

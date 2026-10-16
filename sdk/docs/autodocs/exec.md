@@ -85,6 +85,7 @@ Generated from the source by `./zig build autodoc`.
 - [LockExecList](#lockexeclist) - Hands back one of exec's own lists, its lock taken.
 - [LogControl](#logcontrol) - Changes one of the system log's settings, or asks what it is.
 - [MakeLibrary](#makelibrary) - Builds a library in memory and runs its init routine, without putting it on the library list.
+- [MemDebug](#memdebug) - Switches memory debugging, or checks what it guards.
 - [NewList](#newlist) - Makes a list empty and ready to use.
 - [NewStackRun](#newstackrun) - Runs a function on a stack of its own, and comes back.
 - [ObtainSemaphore](#obtainsemaphore) - Takes a semaphore exclusively, waiting until it is free.
@@ -956,7 +957,7 @@ creator's.
 away from the task. Written over - the stack ran past its end - is a
 dead-end alert, `AN_StackProbe`, in that task, before what the overflow
 wrote over is used by anyone else. Those words are not the task's to
-use. While memory debugging is on (`s3> memdebug`), a task whose stack
+use. While memory debugging is on (`MemDebug`), a task whose stack
 is 4 KiB or more gets a wide guard instead, 64 words (TF_WIDEGUARD), so
 that a frame larger than four words still lands in it.
 
@@ -1242,6 +1243,8 @@ fn AllocMem(base: *ExecBase, byte_size: usize,
   - `MEMF_DMA` - reachable by a DMA descriptor's twenty address bits,
     and needing no cache maintenance.
   - `MEMF_PRIVATE` - the block is the owner's alone; without it, shared.
+    A private block its owner has not freed is freed when the owner
+    ends.
   - `MEMF_CLEAR` - zero the block before answering.
   - `MEMF_REVERSE` - take it from the top of the region.
   - `MEMF_SYSTEM` - the block is the system's, not the calling task's.
@@ -1292,7 +1295,7 @@ task's, or the system's, until then. Nothing frees it when the task
 ends: a block left over shows under the task's number in
 `Avail OWNERS` and `s3> memowners`.
 
-**While memory debugging is on** (`s3> memdebug`), the block also gets a
+**While memory debugging is on** (`MemDebug`), the block also gets a
 wall of `MEM_WALLSIZE` behind it, which records the size asked for and
 which `FreeMem` checks; it holds `MEM_PATTERN_NEW` unless `MEMF_CLEAR`
 asked for zeros; and the free memory it is cut from is checked for
@@ -5239,6 +5242,115 @@ const lib = sys.MakeLibrary(&vectors, vectors.len,
 sys.AddLibrary(lib);
 ```
 
+## MemDebug
+
+Switches memory debugging, or checks what it guards.
+
+**SYNOPSIS**
+
+```zig
+fn MemDebug(base: *ExecBase, action: u32, info: ?*MemDebugInfo,
+    found: ?[*]MemDamage, found_max: u32) u32
+```
+
+**SINCE**
+
+1.12. LVO -560.
+
+**INPUTS**
+
+- `action` - what to do:
+  - `MEMDEBUG_ASK` - nothing; only `info` is filled.
+  - `MEMDEBUG_ON` - on: every block allocated from here gets a wall,
+    and all free memory is filled with `MEM_PATTERN_FREED`.
+  - `MEMDEBUG_OFF` - off: new blocks get no wall. The counts stay.
+  - `MEMDEBUG_CHECK` - every wall and, while the mode is on, all free
+    memory looked at now.
+- `info` - filled after the action with whether the mode is on and its
+  counts, or null.
+- `found` - where MEMDEBUG_CHECK puts what it finds wrong, or null.
+- `found_max` - how many fit in `found`.
+
+**RESULT**
+
+For MEMDEBUG_CHECK, how many things are wrong, also those that did not
+fit in `found`; 0 for the other actions.
+
+**BEHAVIOR**
+
+While the mode is on, AllocMem puts a wall of `MEM_WALLSIZE` bytes
+behind each block (`MEMBF_WALLED`), holding the size asked for and
+`MEM_PATTERN_WALL` from there on, and fills the block with
+`MEM_PATTERN_NEW` unless MEMF_CLEAR asked for zeros. FreeMem checks the
+wall: one written over is told on the log, with the block, how far it
+was written and its owner, by the recoverable alert `AN_MemWall`, and
+counted (`MemDebugInfo.walls`); the block is freed all the same. Freed
+memory is filled with `MEM_PATTERN_FREED`, and AllocMem checks that
+the memory it hands out still holds it: what is not, was written after
+its free, and is told on the log and counted
+(`MemDebugInfo.freed_writes`).
+
+A task started while the mode is on with a stack of 4 KiB or more gets
+a wide stack guard (`TF_WIDEGUARD`), as does a stack `NewStackRun`
+allocates.
+
+MEMDEBUG_ON clears the counts, also when the mode is on already, and
+makes the pattern in the free memory whole again. A block keeps its
+wall when the mode is switched off, and FreeMem checks it then too;
+blocks allocated before the mode was on have none.
+
+MEMDEBUG_CHECK fills `found` with the first `found_max` things wrong,
+in the order of exec's memory list, each with its kind
+(`MemDamage.kind`): a walled block written past its end
+(`MEMDAMAGE_WALL`, with the block's owner), free memory written after
+its free (`MEMDAMAGE_FREED`), and a region whose blocks no longer
+chain, where the walk of it stopped (`MEMDAMAGE_CHAIN`). The counts are
+not changed by it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It takes exec's memory lock.
+- Locks: takes exec's memory lock for MEMDEBUG_ON and MEMDEBUG_CHECK;
+  no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`info` and `found` stay the caller's; they are written while exec's
+memory lock is held, so they must not be memory the call itself could
+be allocating or freeing.
+
+**NOTES**
+
+MEMDEBUG_ON and MEMDEBUG_CHECK go through all memory with exec's
+memory lock held - some megabytes - so every other core's AllocMem and
+FreeMem waits meanwhile. The mode is for hunting a bug: walls and
+patterns cost memory and time on every allocation.
+
+The kernel built with `-Dmemdebug=true` switches the mode on as exec
+starts, before anything but exec's own first tasks has allocated; the
+serial console's `s3> memdebug` and `C:MemDebug` call this.
+
+**BUGS**
+
+A write that jumps over the wall is not seen by it. One that lands in
+the next block's MemBlock breaks the region's chain, which
+MEMDEBUG_CHECK tells; one inside the next block is not found.
+
+**SEE ALSO**
+
+`AllocMem`, `FreeMem`, `AddTask`, `NewStackRun`
+
+**EXAMPLES**
+
+```zig
+_ = sys.MemDebug(exec.MEMDEBUG_ON, null, null, 0);
+runTheSuspect();
+var found: [8]exec.MemDamage = undefined;
+const wrong = sys.MemDebug(exec.MEMDEBUG_CHECK, null, &found, found.len);
+```
+
 ## NewList
 
 Makes a list empty and ready to use.
@@ -5352,8 +5464,10 @@ the other, and a switch there is no overrun.
 
 **OWNERSHIP**
 
-The stack is allocated and freed here. `code` must leave nothing
-pointing into it: the memory is gone when this returns.
+The stack is allocated and freed here, private (MEMF_PRIVATE): a task
+that ends while `code` runs - removed, or killed - has it freed with
+the rest of its private memory. `code` must leave nothing pointing into
+it: the memory is gone when this returns.
 
 **NOTES**
 
@@ -7212,9 +7326,23 @@ Nothing, and for null it does not return at all.
 
 **BEHAVIOR**
 
-**First, its end hooks** (`AddTaskEndHook`) run, in the order they were
+**First, the semaphores it still holds are let go**, each as often as it
+holds it, so whoever is queued behind it gets it - whatever state the
+data under the lock was left in. A task removed while it waits for one
+is taken out of the queue.
+
+**Then its end hooks** (`AddTaskEndHook`) run, in the order they were
 put on, on the task calling this and with nothing held - what libraries
-held for the task is let go while the task is still there.
+held for the task is let go while the task is still there. intuition
+closes the windows the task left open this way.
+
+**Then its private memory** - every block with its number and
+MEMF_PRIVATE - is freed. A task removing itself keeps a private block
+its stack is in until it has gone.
+
+Each of the three is a line on the log when there was anything to give
+back: a task that ends holding a lock, a window or a private block has
+a bug, and the line names the task.
 
 **Removing yourself** cannot free your own stack, because you are still
 running on it. The task is marked and the processor given up, and the
@@ -7228,13 +7356,15 @@ the end hooks run.
 
 Either way, only what `CreateTask` allocated is freed. A task the caller
 laid out by hand has its own memory back and nothing has been done to
-it.
+it. A killed task (Kill on the Software Failure requester, `s3> kill`)
+keeps its Task and name where they were, its stack given back: a port
+or a request may still name it.
 
 **CONTEXT**
 
 - Waits: for a task running on the other core, until that core has
-  switched it out (its `SIGF_SINGLE`). For null it never returns, which
-  is not the same thing.
+  switched it out (its `SIGF_SINGLE`); in end hooks that wait. For null
+  it never returns, which is not the same thing.
 - Interrupts: no. It takes Disable, may free memory, and runs the
   task's end hooks.
 - Locks: none needed.
@@ -7242,11 +7372,13 @@ it.
 
 **OWNERSHIP**
 
-Memory from `CreateTask` goes back to the system, and what a library
-held for the task through an end hook goes back to that library.
-Anything else the task itself allocated is not freed - signals, ports, memory - so a task that
-is removed from outside leaks whatever it was holding. That is why a
-task is normally asked to end itself.
+Memory from `CreateTask` goes back to the system, its semaphores to
+whoever waits for them, its private memory to the system, and what a
+library held for the task through an end hook goes back to that
+library. Shared memory the task allocated, its ports and its signals
+are not freed - something else may still use them - so a task that is
+removed from outside leaks those. That is why a task is normally asked
+to end itself.
 
 **NOTES**
 
@@ -8173,7 +8305,8 @@ over.
 
 The block's MemBlock is changed to name the new owner; its size and
 MEMF_PRIVATE stay. Nothing else changes: the block stays where it is,
-and whoever frees it frees it as before.
+and whoever frees it frees it as before. A private block is freed when
+its new owner ends, if nothing has freed it by then (`RemTask`).
 
 It is for memory one task makes for another: a parent laying out what
 its child starts with - dos copies a new process's variables and path

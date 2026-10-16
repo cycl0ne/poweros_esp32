@@ -21,6 +21,7 @@ const _interrupt = @import("interrupt/_interrupt.zig");
 const _library = @import("library/_library.zig");
 const _log = @import("log/_log.zig");
 const _memory = @import("memory/_memory.zig");
+const _failure = @import("failure/_failure.zig");
 
 const interface = sdk.interface.exec;
 const IntVector = sdk.exec.IntVector;
@@ -163,9 +164,13 @@ pub const ExecBase = extern struct {
     /// counted since it was started. All off until then, as the base is
     /// made cleared.
     mem_trace: _memory.Trace,
-    /// Memory debugging (`s3> memdebug`): off until switched on, as the
+    /// Memory debugging (`MemDebug`): off until switched on, as the
     /// base is made cleared.
     mem_debug: _memory.Debug,
+    /// The Software Failure requester (failure/_failure.zig): its helper
+    /// task and the failure it asks about. Cleared with the base: no
+    /// helper until the kernel starts it.
+    failure: _failure.State,
     /// The loader's base, kept for whatever loads libraries and devices
     /// from a disk. exec never looks at what it points to: it is one word
     /// a module has nowhere else to put, since this structure is opaque to

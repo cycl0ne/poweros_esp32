@@ -168,6 +168,13 @@ window on its screen that was active before it is active again - a
 program's window when its requester goes, the desktop when a program it
 started ends.
 
+A window is the task's that opened it, and closed with `CloseWindow` by
+that task. One still open when the task ends - its code returned, it
+was removed, or it was killed - is closed then, through an end hook
+intuition puts on the task, with a line on the system log naming the
+task. A window opened between `BeginSystemMemory` and `EndSystemMemory`
+is the system's and stays.
+
 The depth gadget brings a window that another one overlaps from in front
 to the front, and sends a window nothing covers to the back, so that
 pressing it again and again goes through every window piled on one spot.

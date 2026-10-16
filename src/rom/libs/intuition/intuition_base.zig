@@ -71,6 +71,10 @@ pub const IntuitionBase = extern struct {
     /// The public classes, newest first. Each node is a class's
     /// dispatcher hook, which is the class's first field.
     class_list: exec.MinList,
+    /// The tasks that have windows open, an `Opener` each with the end
+    /// hook that closes what the task leaves open; under the screen list's
+    /// semaphore.
+    openers: exec.MinList,
     /// Guards `class_list` and every class's counts while they are
     /// checked against it.
     class_lock: exec.SignalSemaphore,

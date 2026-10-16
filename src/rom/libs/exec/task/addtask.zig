@@ -55,7 +55,7 @@ const TaskFn = sdk.exec.TaskFn;
 /// away from the task. Written over - the stack ran past its end - is a
 /// dead-end alert, `AN_StackProbe`, in that task, before what the overflow
 /// wrote over is used by anyone else. Those words are not the task's to
-/// use. While memory debugging is on (`s3> memdebug`), a task whose stack
+/// use. While memory debugging is on (`MemDebug`), a task whose stack
 /// is 4 KiB or more gets a wide guard instead, 64 words (TF_WIDEGUARD), so
 /// that a frame larger than four words still lands in it.
 ///

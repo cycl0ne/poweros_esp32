@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
-//! RemTask: ends a task. Another task is taken off its list and its memory
+//! RemTask: ends a task. What it still holds of exec's goes back first -
+//! its semaphores, then its end hooks run, then its private memory - and
+//! then the task itself: another task is taken off its list and its memory
 //! freed - one running on the other core stopped there first; the running
 //! task cannot free the stack it is running on, so it is marked removed and
 //! the dispatcher frees it once nothing runs there.
 
 const sdk = @import("sdk");
 const _task = @import("_task.zig");
+const _locks = @import("../locks/_locks.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Task = sdk.exec.Task;
@@ -26,9 +29,23 @@ const Task = sdk.exec.Task;
 /// Nothing, and for null it does not return at all.
 ///
 /// BEHAVIOR:
-/// **First, its end hooks** (`AddTaskEndHook`) run, in the order they were
+/// **First, the semaphores it still holds are let go**, each as often as it
+/// holds it, so whoever is queued behind it gets it - whatever state the
+/// data under the lock was left in. A task removed while it waits for one
+/// is taken out of the queue.
+///
+/// **Then its end hooks** (`AddTaskEndHook`) run, in the order they were
 /// put on, on the task calling this and with nothing held - what libraries
-/// held for the task is let go while the task is still there.
+/// held for the task is let go while the task is still there. intuition
+/// closes the windows the task left open this way.
+///
+/// **Then its private memory** - every block with its number and
+/// MEMF_PRIVATE - is freed. A task removing itself keeps a private block
+/// its stack is in until it has gone.
+///
+/// Each of the three is a line on the log when there was anything to give
+/// back: a task that ends holding a lock, a window or a private block has
+/// a bug, and the line names the task.
 ///
 /// **Removing yourself** cannot free your own stack, because you are still
 /// running on it. The task is marked and the processor given up, and the
@@ -42,23 +59,27 @@ const Task = sdk.exec.Task;
 ///
 /// Either way, only what `CreateTask` allocated is freed. A task the caller
 /// laid out by hand has its own memory back and nothing has been done to
-/// it.
+/// it. A killed task (Kill on the Software Failure requester, `s3> kill`)
+/// keeps its Task and name where they were, its stack given back: a port
+/// or a request may still name it.
 ///
 /// CONTEXT:
 /// - Waits: for a task running on the other core, until that core has
-///   switched it out (its `SIGF_SINGLE`). For null it never returns, which
-///   is not the same thing.
+///   switched it out (its `SIGF_SINGLE`); in end hooks that wait. For null
+///   it never returns, which is not the same thing.
 /// - Interrupts: no. It takes Disable, may free memory, and runs the
 ///   task's end hooks.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Memory from `CreateTask` goes back to the system, and what a library
-/// held for the task through an end hook goes back to that library.
-/// Anything else the task itself allocated is not freed - signals, ports, memory - so a task that
-/// is removed from outside leaks whatever it was holding. That is why a
-/// task is normally asked to end itself.
+/// Memory from `CreateTask` goes back to the system, its semaphores to
+/// whoever waits for them, its private memory to the system, and what a
+/// library held for the task through an end hook goes back to that
+/// library. Shared memory the task allocated, its ports and its signals
+/// are not freed - something else may still use them - so a task that is
+/// removed from outside leaks those. That is why a task is normally asked
+/// to end itself.
 ///
 /// NOTES:
 /// It does not warn the task or give it a chance to clean up. `Signal` with
@@ -78,8 +99,13 @@ pub fn RemTask(base: *ExecBase, task: ?*Task) void {
     const sys = base.iface();
     const current = sys.FindTask(null).?;
     const ending = task orelse current;
-    if (ending != current) _task.stopElsewhere(base, ending);
+    if (ending != current) {
+        _task.stopElsewhere(base, ending);
+        _locks.withdraw(base, ending);
+    }
+    _task.releaseSemaphores(base, ending);
     _task.runEndHooks(base, ending);
+    _task.freePrivateMemory(base, ending, ending == current);
     sys.Disable();
     if (ending == current) {
         // Freed by reschedule once it no longer runs on it.

@@ -4,7 +4,8 @@
 //! call and put back after it, so a stack check sees the right ones - and
 //! the check is off while the bounds and the stack pointer disagree: from
 //! the moment the bounds move until the code runs on the new stack, and
-//! from its return until they are back.
+//! from its return until they are back. The task's own bounds are named
+//! meanwhile (`Task.home_lower`, `home_upper`), where Kill starts its end.
 
 const sdk = @import("sdk");
 const _task = @import("_task.zig");
@@ -55,8 +56,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///   is still a Process inside it.
 ///
 /// OWNERSHIP:
-/// The stack is allocated and freed here. `code` must leave nothing
-/// pointing into it: the memory is gone when this returns.
+/// The stack is allocated and freed here, private (MEMF_PRIVATE): a task
+/// that ends while `code` runs - removed, or killed - has it freed with
+/// the rest of its private memory. `code` must leave nothing pointing into
+/// it: the memory is gone when this returns.
 ///
 /// NOTES:
 /// This is how a command gets a big stack without being a task of its own -
@@ -81,7 +84,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, stack_size: u32) i32 {
     const size = _task.alignUp(@max(stack_size, _task.min_stack_size), 16);
     const sys = base.iface();
-    const stack = sys.AllocMem(size, sdk.exec.MEMF_ANY) orelse return -1;
+    const stack = sys.AllocMem(size, sdk.exec.MEMF_ANY | sdk.exec.MEMF_PRIVATE) orelse return -1;
     defer sys.FreeMem(stack, size);
     const task = sys.FindTask(null).?;
     // Volatile, in this order: an interrupt on this core may switch the
@@ -91,6 +94,16 @@ pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, st
     const sp_upper: *volatile usize = &task.sp_upper;
     const lower = sp_lower.*;
     const upper = sp_upper.*;
+    // The task's own stack, named while it is on another - before the
+    // bounds move and until they are back. A call inside another leaves
+    // the outer one's.
+    const home_lower: *volatile usize = &task.home_lower;
+    const home_upper: *volatile usize = &task.home_upper;
+    const outermost = home_upper.* == 0;
+    if (outermost) {
+        home_lower.* = lower;
+        home_upper.* = upper;
+    }
     // The task's own stack's guard, put back afterwards; the new stack's is
     // its own - wide while memory debugging is on and there is room, as a
     // task started then gets - and checked while the code runs on it.
@@ -107,6 +120,10 @@ pub fn NewStackRun(base: *ExecBase, code: sdk.exec.StackFn, arg: ?*anyopaque, st
     const result = _task.task_hardware.call_on_stack(@intFromPtr(stack) + size, @ptrCast(&onNewStack), &run);
     sp_lower.* = lower;
     sp_upper.* = upper;
+    if (outermost) {
+        home_upper.* = 0;
+        home_lower.* = 0;
+    }
     flags.* = (flags.* & ~guard_flags) | saved;
     if (!_task.guardIntact(@intFromPtr(stack), words)) {
         _task.stackOverrun(@intFromPtr(stack));

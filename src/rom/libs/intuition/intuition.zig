@@ -2094,6 +2094,59 @@ test "windows: a screen title is not mistaken for a list of gadgets" {
     try tearDown(ib);
 }
 
+test "windows: a task's end closes what it left open; a window of the system's is left" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const display = try Display.up(ib);
+    const sys = kexec.SysBase;
+    const boot = sys.cpu().this_task;
+    const tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{},
+    };
+    const first = ib.iface().OpenWindowTagList(&tags).?;
+    const second = ib.iface().OpenWindowTagList(&tags).?;
+    // One Opener for the task, counting both, its end hook on the task.
+    const opener: *_window.Opener = @ptrCast(@alignCast(ib.openers.head.?));
+    try testing.expectEqual(boot, opener.task);
+    try testing.expectEqual(@as(u32, 2), opener.windows);
+    try testing.expectEqual(@as(?*kexec.Task, boot), opener.hook.task);
+    ib.iface().CloseWindow(second);
+    try testing.expectEqual(@as(u32, 1), opener.windows);
+
+    // Opened inside BeginSystemMemory: the system's, no opener.
+    sys.iface().BeginSystemMemory();
+    const system = ib.iface().OpenWindowTagList(&tags).?;
+    sys.iface().EndSystemMemory();
+    try testing.expect(@as(*_window.Window, @ptrCast(@alignCast(system))).opener == null);
+
+    // The task's end, as RemTask runs an end hook: off the task, then run.
+    // The window it left goes, and the Opener with it.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, first, wn.WA_Screen));
+    kexec.RemTaskEndHook(sys, &opener.hook);
+    opener.hook.code(sys.iface(), boot, &opener.hook);
+    try testing.expect(ib.openers.isEmpty());
+    const s: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    try testing.expectEqual(@intFromPtr(system), @intFromPtr(s.windows.head.?));
+    try testing.expect(s.windows.head.?.succ.?.succ == null);
+
+    // The last window of a task closed by it: the Opener goes too.
+    const again = ib.iface().OpenWindowTagList(&tags).?;
+    try testing.expect(!ib.openers.isEmpty());
+    ib.iface().CloseWindow(again);
+    try testing.expect(ib.openers.isEmpty());
+    try testing.expect(boot.end_hooks.head == null or boot.end_hooks.isEmpty());
+
+    ib.iface().CloseWindow(system);
+    try testing.expect(ib.iface().CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a border of frame and gadget images, and the screen held open" {
     const ib = try setUp();
     defer kexec.deinit();

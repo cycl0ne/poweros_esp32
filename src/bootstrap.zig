@@ -7,9 +7,11 @@
 //! the first region that has room (a stripped-down MakeLibrary), and the
 //! regions go on MemList. Then exec's init routine (initExec) sets up the
 //! rest and starts the system: the ROM scan, the exec task and the
-//! RTF_SINGLETASK residents.
+//! RTF_SINGLETASK residents. A kernel built with -Dmemdebug=true tells it
+//! to switch memory debugging on as it starts (BOOTF_MEMDEBUG).
 
 const sdk = @import("sdk");
+const build_options = @import("build_options");
 const exec = @import("rom/libs/exec/exec.zig");
 const layout = switch (sdk.hardware.chip) {
     .esp32s3 => @import("arch/esp32s3/layout.zig"),
@@ -55,6 +57,7 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
         .rom_start = rom_start,
         .rom_end = rom_end,
         .abs_exec_base = @intFromPtr(sdk.exec.AbsExecBase),
+        .flags = if (build_options.memdebug) exec.BOOTF_MEMDEBUG else 0,
     };
     _ = init(lib, @constCast(&info), @ptrCast(sys)) orelse return error.ExecInitFailed;
     return sys;

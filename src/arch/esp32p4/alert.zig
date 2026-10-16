@@ -10,12 +10,15 @@
 //! it, which is the address in that program's ELF - the task that raised
 //! it, and for a CPU exception its cause, the trap frame and the call
 //! chain by frame pointers, each return address named the same way. The
-//! ROM debugger names addresses with it too. A dead end holds
-//! the other core still, keeps the end of the system log in LP RAM
+//! ROM debugger names addresses with it too. A dead-end alert of a task
+//! that may be held is handed to exec's Software Failure
+//! (`exec.failure`): the task is held and asked about on the display -
+//! Suspend, Kill or Reboot - and the machine runs on. Any other dead end
+//! holds the other core still, keeps the end of the system log in LP RAM
 //! (lastwords.zig), offers the ROM debugger for a few seconds and, if
 //! nobody answers, restarts the machine, whose next boot shows those last
-//! words at the head of its log; a recoverable alert is printed and the
-//! machine runs on.
+//! words at the head of its log. A recoverable alert is printed and shown
+//! on the display as well, and the machine runs on.
 //!
 //! Every line of an alert goes out, whatever level the log keeps.
 
@@ -44,6 +47,7 @@ pub const debug_hardware: debug.DebugHardware = .{
     .go = goOn,
     .halt = cpu.halt,
     .reboot = rebootHere,
+    .keepLastWords = lastwords.save,
     .showFrame = showFrameHere,
     .frameAt = frameAtHere,
     .framePointerAt = framePointerAtHere,
@@ -116,17 +120,26 @@ fn readableHere(address: usize) bool {
 
 pub fn show(alert_num: u32, where: usize, info: ?*const exec.TrapInfo, text: ?[*:0]const u8) void {
     const dead_end = alert_num & exec.AT_DeadEnd != 0;
+    // A task that failed where it may wait is asked about on the display,
+    // and the machine runs on; anything else stops it. A trap with no
+    // frame - one on a stack with no room - has nothing to hold the task
+    // at.
+    const resumable = if (info) |trap_info| trap_info.frame != null else true;
+    const asking = dead_end and resumable and exec.failure.canAsk(exec.SysBase, info != null);
     // A dead end stops the machine: the other core is held still too, so
     // what is printed is what was.
-    if (dead_end) {
+    if (dead_end and !asking) {
         _ = cpu.disableInterrupts();
         _ = rendezvous.holdOtherWithin(hold_spins);
     }
     rawio.unfiltered = true;
-    defer rawio.unfiltered = false;
 
     const title: [*:0]const u8 = if (dead_end) "Software Failure." else "Recoverable Alert.";
-    exec.kprintf("\n*** %s\n*** Guru Meditation #%08x.%08x\n", .{ title, alert_num, @as(u32, @truncate(where)) });
+    var buf: [40]u8 = @splat(0);
+    const stream = sdk.exec.fmtStream(.{ alert_num, @as(u32, @truncate(where)) });
+    _ = exec.format("Guru Meditation #%08x.%08x", &stream, null, &buf);
+    const guru = untilNul(&buf);
+    exec.kprintf("\n*** %s\n*** %s\n", .{ title, @as([*:0]const u8, @ptrCast(&buf)) });
     if (text) |line| exec.kprintf("*** %.96s\n", .{line});
     place(where);
     if (exec.initialized) {
@@ -146,7 +159,20 @@ pub fn show(alert_num: u32, where: usize, info: ?*const exec.TrapInfo, text: ?[*
             callChain(f.x[8]);
         }
     }
-    if (!dead_end) return;
+    if (!dead_end) {
+        rawio.unfiltered = false;
+        if (info == null) exec.failure.displayRecoverable(exec.SysBase, alert_num, guru, text);
+        return;
+    }
+    if (asking) {
+        // Held: a CPU exception's task comes back here and the exception's
+        // exit switches to the next task; a task that called Alert does
+        // not come back.
+        rawio.unfiltered = false;
+        var detail: [100]u8 = @splat(0);
+        exec.failure.hold(exec.SysBase, alert_num, guru, describe(text, info, &detail), info != null);
+        return;
+    }
     lastwords.save();
     if (debug.offer()) {
         debug.enter(.dead_end, if (info) |trap_info| trap_info.frame else null, 0);
@@ -155,6 +181,27 @@ pub fn show(alert_num: u32, where: usize, info: ?*const exec.TrapInfo, text: ?[*
     }
     exec.kprintf("*** restarting\n", .{});
     sdk.hardware.system.resetChip();
+}
+
+/// What went wrong in words, for the Software Failure requester: the
+/// alert's text, or a CPU exception's cause and the address it named.
+fn describe(text: ?[*:0]const u8, info: ?*const exec.TrapInfo, into: *[100]u8) []const u8 {
+    if (text) |line| {
+        var length: usize = 0;
+        while (line[length] != 0) length += 1;
+        return line[0..length];
+    }
+    const trap_info = info orelse return "";
+    const stream = sdk.exec.fmtStream(.{ trap.causeName(trap_info.number).ptr, @as(u32, @truncate(trap_info.address)) });
+    _ = exec.format("%s at 0x%08x", &stream, null, into);
+    return untilNul(into);
+}
+
+/// A buffer `exec.format` wrote, up to its NUL.
+fn untilNul(buffer: []const u8) []const u8 {
+    var length: usize = 0;
+    while (length < buffer.len and buffer[length] != 0) length += 1;
+    return buffer[0..length];
 }
 
 /// The return addresses up the frame-pointer chain from `fp`, a line

@@ -161,8 +161,9 @@ export fn kmain() callconv(.c) noreturn {
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
+    if (exec.SysBase.mem_debug.on) note("memory debugging on since exec started (-Dmemdebug)", .{});
     // Who asks about a task that failed, so the machine need not stop.
-    alert.startHelper();
+    exec.failure.startHelper(exec.SysBase);
     timer.init(100);
     // The second core, where the build has one: let go once exec and the
     // tick's rate exist, on a stack of internal memory.

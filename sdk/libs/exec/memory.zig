@@ -36,7 +36,9 @@ pub const MEMF_ANY: u32 = 0;
 /// The block is its owner's alone: nothing in it is put in a message or an
 /// IORequest, or handed to a library or another task. Without it a block is
 /// shared, which suits anything. AllocMem keeps it in the block's MemBlock,
-/// where the system's tools show it; no access is checked against it.
+/// where the system's tools show it; no access is checked against it. A
+/// private block its owner has not freed is freed when the owner ends
+/// (`RemTask`) - which is why nothing else may hold on to it.
 pub const MEMF_PRIVATE: u32 = 1 << 0;
 /// Internal SRAM: no cache in the path, so it can be read and written while
 /// the caches are suspended.
@@ -103,6 +105,42 @@ pub const MEM_PATTERN_NEW: u32 = 0xABAD_CAFE;
 /// chunk's MemChunk: what reads it after the free gets this, and what
 /// writes it is found when the memory is handed out again.
 pub const MEM_PATTERN_FREED: u32 = 0xDEAD_BEEF;
+
+/// MemDebug's actions: only tell the state, switch memory debugging on or
+/// off, or check every wall and all free memory now.
+pub const MEMDEBUG_ASK: u32 = 0;
+pub const MEMDEBUG_ON: u32 = 1;
+pub const MEMDEBUG_OFF: u32 = 2;
+pub const MEMDEBUG_CHECK: u32 = 3;
+
+/// Where memory debugging stands, as MemDebug tells it - and as exec keeps
+/// it. The counts start over each time the mode is switched on.
+pub const MemDebugInfo = extern struct {
+    /// Whether it is on: new blocks walled, freed memory filled.
+    on: bool = false,
+    /// Walls FreeMem found written over.
+    walls: u32 = 0,
+    /// Free memory AllocMem found written after it was freed.
+    freed_writes: u32 = 0,
+};
+
+/// MemDamage.kind: a walled block written past its end.
+pub const MEMDAMAGE_WALL: u8 = 0;
+/// MemDamage.kind: free memory written after its free.
+pub const MEMDAMAGE_FREED: u8 = 1;
+/// MemDamage.kind: a region whose blocks no longer chain - a MemBlock or a
+/// MemChunk written over; the walk of that region stopped here.
+pub const MEMDAMAGE_CHAIN: u8 = 2;
+
+/// One thing MemDebug's MEMDEBUG_CHECK found wrong.
+pub const MemDamage = extern struct {
+    /// The first byte found wrong.
+    at: usize = 0,
+    /// The block's owner for MEMDAMAGE_WALL; MEMOWNER_SYSTEM otherwise.
+    owner: u32 = MEMOWNER_SYSTEM,
+    /// MEMDAMAGE_*: what is wrong there.
+    kind: u8 = MEMDAMAGE_WALL,
+};
 
 /// What is in front of every block AllocMem answers, one MEM_BLOCKSIZE
 /// long: the block's owner, its size and its MEMBF_* flags. The size is

@@ -148,6 +148,7 @@ pub const LVO = struct {
     pub const BeginSystemMemory = libraries.lvo(136);
     pub const EndSystemMemory = libraries.lvo(137);
     pub const SetMemOwner = libraries.lvo(138);
+    pub const MemDebug = libraries.lvo(139);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -286,6 +287,7 @@ pub const Fn = struct {
     pub const BeginSystemMemory = *const fn (*ExecBase) callconv(.c) void;
     pub const EndSystemMemory = *const fn (*ExecBase) callconv(.c) void;
     pub const SetMemOwner = *const fn (*ExecBase, ?*anyopaque, ?*exec.Task) callconv(.c) bool;
+    pub const MemDebug = *const fn (*ExecBase, u32, ?*exec.MemDebugInfo, ?[*]exec.MemDamage, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -917,5 +919,13 @@ pub const ExecBase = opaque {
     /// AddTask keeps. False for a block not in use.
     pub fn SetMemOwner(self: *ExecBase, memory_block: ?*anyopaque, task: ?*exec.Task) bool {
         return libraries.call(self, LVO.SetMemOwner, Fn.SetMemOwner, .{ memory_block, task });
+    }
+
+    /// Memory debugging: MEMDEBUG_ON or MEMDEBUG_OFF switches it, MEMDEBUG_ASK
+    /// only tells, MEMDEBUG_CHECK looks at every wall and all free memory now
+    /// and puts the first `found_max` things wrong in `found`. `info` gets the
+    /// state and its counts. The number of things wrong for a check, else 0.
+    pub fn MemDebug(self: *ExecBase, action: u32, info: ?*exec.MemDebugInfo, found: ?[*]exec.MemDamage, found_max: u32) u32 {
+        return libraries.call(self, LVO.MemDebug, Fn.MemDebug, .{ action, info, found, found_max });
     }
 };

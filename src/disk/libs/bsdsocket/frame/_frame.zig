@@ -13,6 +13,8 @@
 //! first, where there is plenty - up to `frames_max`, and gives nothing
 //! back until the library goes, so a busy moment costs no allocation the
 //! next time. Every frame is taken and given back under the stack's lock.
+//! A frame is the system's memory (MEMF_SYSTEM), whichever task first
+//! needed it: the pool keeps it after that task has gone.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -123,7 +125,7 @@ pub const Pool = extern struct {
     pub fn take(pool: *Pool, sys: *ExecBase) ?*Frame {
         const frame = if (sys.RemHead(&pool.free)) |node| Frame.fromNode(node) else blk: {
             if (pool.made >= frames_max) return null;
-            const memory = sys.AllocMem(@sizeOf(Frame), exec.MEMF_ANY) orelse return null;
+            const memory = sys.AllocMem(@sizeOf(Frame), exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return null;
             pool.made += 1;
             break :blk @as(*Frame, @ptrCast(@alignCast(memory)));
         };
@@ -143,7 +145,7 @@ pub const Pool = extern struct {
     /// An empty large frame that holds `capacity` bytes, the headroom
     /// included; null when there is no memory for it.
     pub fn takeLarge(pool: *Pool, sys: *ExecBase, capacity: u32) ?*Frame {
-        const memory = sys.AllocMem(largeBytes(capacity), exec.MEMF_ANY) orelse return null;
+        const memory = sys.AllocMem(largeBytes(capacity), exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return null;
         const frame: *Frame = @ptrCast(@alignCast(memory));
         frame.node = .{};
         frame.start = headroom;

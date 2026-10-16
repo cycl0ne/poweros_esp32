@@ -35,7 +35,7 @@ const commands = [_][]const u8{
     "adddatatypes",  "listfonts",  "log",      "requestfile",   "requestchoice",
     "requestdevice", "diskchange", "modbus",   "more",          "relabel",
     "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
-    "setclock",      "top",        "play",     "screendump",
+    "setclock",      "top",        "play",     "screendump",    "memdebug",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",

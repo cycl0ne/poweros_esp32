@@ -459,9 +459,199 @@ pub fn runEndHooks(base: *ExecBase, task: *Task) void {
     }
 }
 
+// --- what a task's end gives back ---------------------------------------------
+//
+// A task that ends - its code returned, RemTask, or Kill - gives back what
+// it still holds of exec's: the semaphores, before its end hooks run, so
+// that neither they nor anyone queued behind it waits for a holder that is
+// gone; and its private memory after them, since a hook may still use it.
+// Each is a line on the log when there was anything: a task that ends
+// holding a lock or a private block has a bug, and the line names it.
+
+/// The semaphores `task` still holds let go, and a line on the log naming
+/// how many and the first of them.
+///
+/// INPUTS:
+/// - `base` - exec.
+/// - `task` - the ending task, which does not run on holding them.
+pub fn releaseSemaphores(base: *ExecBase, task: *Task) void {
+    var released: _locks.Released = .{};
+    _locks.releaseHolds(base, task, &released);
+    if (released.count != 0) {
+        const first = released.first[0].?;
+        const named = first.link.name;
+        exec.kprintf("exec: task \"%.32s\" #%u ended holding %u semaphore%s - released: %08x%s%.24s%s%s\n", .{
+            task.name().ptr,
+            task.id,
+            released.count,
+            plural(released.count),
+            @as(u32, @truncate(@intFromPtr(first))),
+            if (named != null) " \"" else "",
+            named orelse "",
+            if (named != null) "\"" else "",
+            if (released.count > 1) " ..." else "",
+        });
+    }
+    if (released.lost != 0) {
+        exec.kprintf("exec: task \"%.32s\" #%u ended holding %u more holds its table had no room for - still held\n", .{
+            task.name().ptr,
+            task.id,
+            @as(u32, released.lost),
+        });
+    }
+}
+
+/// How many private blocks one look of `freePrivateMemory` takes.
+pub const private_batch = 32;
+
+/// The private memory `task` left freed, and a line on the log saying how
+/// much: every block with its number and MEMF_PRIVATE
+/// (`_memory.privateBlocks`), through FreeMem, a batch at a time until a
+/// look finds no more - or finds the same block first again, which only a
+/// FreeMem that refused it leaves. Only for a task that ever allocated
+/// any (`Task.private_memory`), and never for the system's number, whose
+/// blocks are no task's.
+///
+/// INPUTS:
+/// - `base` - exec: the jump table FreeMem goes through.
+/// - `task` - the ending task: its end hooks have run.
+/// - `running` - it is the caller, still on its stack: a private block
+///   that holds the stack it runs on is left.
+pub fn freePrivateMemory(base: *ExecBase, task: *Task, running: bool) void {
+    if (!task.private_memory or task.id == sdk.exec.MEMOWNER_SYSTEM) return;
+    const sys = base.iface();
+    const keep_lower = if (running) task.sp_lower else 0;
+    const keep_upper = if (running) task.sp_upper else 0;
+    var found: [private_batch]usize = undefined;
+    var first_before: usize = 0;
+    var blocks: u32 = 0;
+    var bytes: usize = 0;
+    while (true) {
+        const count = _memory.privateBlocks(base, task.id, keep_lower, keep_upper, &found);
+        if (count == 0 or found[0] == first_before) break;
+        first_before = found[0];
+        for (found[0..count]) |block| {
+            const size = sdk.exec.MemBlock.of(@ptrFromInt(block)).bytes();
+            bytes += size;
+            sys.FreeMem(@ptrFromInt(block), size);
+        }
+        blocks += @intCast(count);
+        if (count < found.len) break;
+    }
+    if (blocks == 0) return;
+    exec.kprintf("exec: task \"%.32s\" #%u ended with %u private block%s, %ld bytes - freed\n", .{
+        task.name().ptr,
+        task.id,
+        blocks,
+        plural(blocks),
+        @as(u64, bytes),
+    });
+}
+
+/// "s" for a count that is not 1.
+fn plural(count: u32) [*:0]const u8 {
+    return if (count == 1) "" else "s";
+}
+
+// --- Kill ----------------------------------------------------------------------
+
+/// Kill: `task` made to end - the Software Failure requester's choice, and
+/// `s3> kill`'s. It is taken from wherever it is - held by the requester,
+/// waiting, ready, or running on the other core, which stops it first -
+/// and started again in `killEntry`, on its own stack from the top: what
+/// it was doing is dropped, frames and all. On the task itself, its end
+/// then goes as if its code had returned (`killEntry`), and its Task stays
+/// (`Task.killed`). A task killed already whose end has not finished - it
+/// failed again on the way - is removed as it is, with no code of its own
+/// run.
+///
+/// INPUTS:
+/// - `base` - exec: the task lists, the jump table the calls go through.
+/// - `task` - not the caller, and not exec's own: a task with the
+///   system's number is refused.
+///
+/// RESULT:
+/// False when the task cannot be killed: the caller itself, one of exec's
+/// own, or one that has ended.
+pub fn killTask(base: *ExecBase, task: *Task) bool {
+    const sys = base.iface();
+    if (task == sys.FindTask(null).? or task.id == sdk.exec.MEMOWNER_SYSTEM) return false;
+    if (task.state == .removed or task.state == .invalid) return false;
+    if (task.killed) {
+        sys.RemTask(task);
+        return true;
+    }
+    stopElsewhere(base, task);
+    _locks.withdraw(base, task);
+    sys.Disable();
+    defer sys.Enable();
+    if (task.state == .ready or task.state == .wait) sys.Remove(&task.node);
+    // Its own stack, if NewStackRun had it on another.
+    if (task.home_upper != 0) {
+        task.sp_lower = task.home_lower;
+        task.sp_upper = task.home_upper;
+        task.home_lower = 0;
+        task.home_upper = 0;
+    }
+    task.flags &= ~(sdk.exec.TF_GUARDED | sdk.exec.TF_WIDEGUARD);
+    if (base.mem_debug.on and task.sp_upper - task.sp_lower >= wide_guard_stack) task.flags |= sdk.exec.TF_WIDEGUARD;
+    guardStack(task);
+    task.killed = true;
+    // A fresh start: waiting for nothing, no exception code run in its
+    // end, outside Disable.
+    task.sig_wait = 0;
+    task.sig_except = 0;
+    task.id_nest_cnt = -1;
+    task.id_saved = 0;
+    task.sp_reg = task_hardware.init_context(task.sp_upper, vec(killEntry), task);
+    task.state = .ready;
+    sys.Enqueue(&base.task_ready, &task.node);
+    wakeFor(base, task);
+    return true;
+}
+
+/// Where a killed task starts again, on its own stack: the semaphores it
+/// held let go first - its final code may need what others wait for - then
+/// its final code (a process's is dos's, which closes its streams and
+/// lets go of its directories), and RemTask, which runs its end hooks and
+/// frees its private memory.
+///
+/// INPUTS:
+/// - `task` - the killed task. The CPU hands over nothing else, so exec
+///   is the kernel's `SysBase`.
+fn killEntry(task: *Task) callconv(.c) noreturn {
+    const base = exec.SysBase;
+    releaseSemaphores(base, task);
+    if (task.final_pc) |final_pc| final_pc(base.iface());
+    base.iface().RemTask(null);
+    unreachable;
+}
+
+/// The task with number `id`, running, ready or waiting; null when there is
+/// none. Under Disable, which keeps the lists still: the task may end as
+/// soon as it is let go.
+///
+/// INPUTS:
+/// - `base` - exec: the running tasks and the lists.
+/// - `id` - a task's number (`Task.id`).
+pub fn findById(base: *ExecBase, id: u32) ?*Task {
+    for (base.cpus[0..base.cores_running]) |*cpu| {
+        if (cpu.this_task.id == id) return cpu.this_task;
+    }
+    for ([_]*sdk.exec.List{ &base.task_ready, &base.task_wait }) |list| {
+        var it = list.iterator();
+        while (it.next()) |node| {
+            const task: *Task = @fieldParentPtr("node", node);
+            if (task.id == id) return task;
+        }
+    }
+    return null;
+}
+
 /// Gives back what `newTask` allocated, and clears the pointer so that a
 /// second call does nothing. A task the caller laid out has no such block
-/// and is left alone.
+/// and is left alone. A killed task's block keeps the Task and what is
+/// above it (`keptFrom`): only its stack is given back.
 ///
 /// INPUTS:
 /// - `base` - exec: the jump table `FreeMem` goes through.
@@ -469,7 +659,38 @@ pub fn runEndHooks(base: *ExecBase, task: *Task) void {
 pub fn freeTaskMemory(base: *ExecBase, task: *Task) void {
     const block = task.mem_block orelse return;
     task.mem_block = null;
-    base.iface().FreeMem(block, task.mem_size);
+    const sys = base.iface();
+    if (keptFrom(task, block)) |keep| {
+        sys.AcquireLock(&base.lock_memory);
+        defer sys.ReleaseLock(&base.lock_memory);
+        const header = sdk.exec.MemBlock.of(block);
+        const region = _memory.regionOf(base, @intFromPtr(header)) orelse return;
+        const cut = _memory.splitFront(header, keep);
+        sys.Deallocate(region, header, cut);
+        if (base.mem_debug.on) _memory.debugFreed(region, @intFromPtr(header), cut);
+        return;
+    }
+    sys.FreeMem(block, task.mem_size);
+}
+
+/// Where a killed task's block is kept from: its Task, when the Task is in
+/// the block above the stack, as `newTask` and dos's `CreateNewProc` lay
+/// it out - a port in it, its name, a Process's fields may still be named
+/// by someone, and a message or a signal sent to them must find them. Null
+/// for a task that ended by itself, and for a block laid out otherwise,
+/// which goes whole.
+///
+/// INPUTS:
+/// - `task` - the task.
+/// - `block` - its `mem_block`.
+fn keptFrom(task: *const Task, block: *anyopaque) ?usize {
+    if (!task.killed) return null;
+    const start = @intFromPtr(block);
+    const at = @intFromPtr(task);
+    const bytes = sdk.exec.MemBlock.of(block).bytes();
+    if (at < start + sdk.exec.MEM_BLOCKSIZE or at >= start + bytes) return null;
+    if ((at - start) % sdk.exec.MEM_BLOCKSIZE != 0) return null;
+    return at;
 }
 
 /// `freeTaskMemory` for an exception exit, which frees a removed task's
@@ -523,6 +744,13 @@ fn giveBackTaskMemory(base: *ExecBase, task: *Task) bool {
     // - the wall unchecked: there is no one to tell from here.
     const header = sdk.exec.MemBlock.of(block);
     const region = _memory.regionOf(base, @intFromPtr(header)) orelse return true;
+    // A killed task's: its stack only (`keptFrom`).
+    if (keptFrom(task, block)) |keep| {
+        const cut = _memory.splitFront(header, keep);
+        Deallocate(base, region, header, cut);
+        if (base.mem_debug.on) _memory.debugFreed(region, @intFromPtr(header), cut);
+        return true;
+    }
     const whole = header.extent() + sdk.exec.MEM_BLOCKSIZE;
     header.size = 0;
     Deallocate(base, region, header, whole);
@@ -797,8 +1025,10 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
 
     if (stopping) {
         // Taken away by another core: off the wait list if it went there,
-        // and nothing saved - it never runs again.
+        // and nothing saved - it never runs again as it was. On no list
+        // from here, which is what `.added` says to the taker.
         if (current.state == .wait) Remove(base, &current.node);
+        current.state = .added;
         cpu.stopping = null;
         cpu.stopped = current;
     } else if (current.state == .removed) {

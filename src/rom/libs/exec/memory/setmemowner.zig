@@ -34,7 +34,8 @@ const Task = sdk.exec.Task;
 /// BEHAVIOR:
 /// The block's MemBlock is changed to name the new owner; its size and
 /// MEMF_PRIVATE stay. Nothing else changes: the block stays where it is,
-/// and whoever frees it frees it as before.
+/// and whoever frees it frees it as before. A private block is freed when
+/// its new owner ends, if nothing has freed it by then (`RemTask`).
 ///
 /// It is for memory one task makes for another: a parent laying out what
 /// its child starts with - dos copies a new process's variables and path
@@ -90,5 +91,10 @@ pub fn SetMemOwner(base: *ExecBase, memory_block: ?*anyopaque, task: ?*Task) boo
     _ = _memory.regionOf(base, @intFromPtr(header)) orelse return false;
     if (!header.inUse()) return false;
     _memory.setOwner(block, owner);
+    // A private block handed over is the new owner's to have freed at its
+    // end.
+    if (header.private()) if (task) |new_owner| {
+        new_owner.private_memory = true;
+    };
     return true;
 }

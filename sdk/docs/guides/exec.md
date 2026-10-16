@@ -157,8 +157,12 @@ _ = sys.AddTask(&child.task, &childCode, null);
 ```
 
 `MEMF_PRIVATE` says a block is its owner's alone; without it a block is
-shared, which suits anything. Both are recorded, not enforced: no access
-is checked against them.
+shared, which suits anything. Neither is enforced: no access is checked
+against them. **A private block goes with its owner**: one the owner has
+not freed when it ends is freed then (see [Ending](#tasks)), which is
+why nothing in it may be put in a message, an I/O request or another
+task's hands. `NewStackRun`'s stacks are private, so a command's stack
+goes with a task that ends while the command runs.
 
 **`FreeMem` checks the block.** One that is not in use - freed already,
 or its `MemBlock` written over by a block below running past its end - or
@@ -167,11 +171,15 @@ system log names it, and a recoverable alert says which (`AN_FreeTwice`,
 `AN_BadFreeSize`). A size that rounds up to the same multiple of
 `MEM_BLOCKSIZE` is the block's. One in no region at all stops the machine.
 
-**Memory debugging.** `s3> memdebug on` puts a wall behind every new
-block, which `FreeMem` checks, fills new memory with `0xABADCAFE` and freed
-memory with `0xDEADBEEF`, which `AllocMem` checks when it hands it out
-again, and gives new tasks a wide stack guard; `memdebug check` looks at
-all of it at once. The [programs guide](programs.md) has the details.
+**Memory debugging.** `MemDebug(MEMDEBUG_ON, ...)` puts a wall behind
+every new block, which `FreeMem` checks, fills new memory with
+`0xABADCAFE` and freed memory with `0xDEADBEEF`, which `AllocMem` checks
+when it hands it out again, and gives new tasks a wide stack guard;
+`MEMDEBUG_CHECK` looks at all of it at once and hands back what is wrong
+as `MemDamage` records, `MEMDEBUG_ASK` the counts. `C:MemDebug` and the
+serial console's `s3> memdebug` are the same call, and a kernel built
+with `-Dmemdebug=true` has the mode on from exec's start. The
+[programs guide](programs.md) has the details.
 
 **Who holds what.** `C:Avail OWNERS` lists every owner with its blocks
 and bytes: the system, each task by number and name, and the numbers of
@@ -337,11 +345,34 @@ _ = sys.GetMsg(ended_port); // nothing runs on the stack any more
 ```
 
 **Ending.** A task ends when its code returns or when it calls
-`RemTask(null)`. `RemTask(task)` ends another at once, without warning,
-and leaks whatever it held - signals, ports, memory - so a task is asked
+`RemTask(null)`. `RemTask(task)` ends another at once, without warning.
+Either way its end gives back what the system can tell is the task's:
+
+1. the **semaphores** it still holds, each as often as it holds it, so
+   whoever is queued behind it goes on - whatever the data under the
+   lock was left like. Every task keeps a table of what it holds
+   (`Task.holds`), which the ROM debugger's `locks` shows;
+2. then its **end hooks** run (`AddTaskEndHook`): what libraries hold for
+   it - intuition closes the **windows** it left open;
+3. then its **private memory** is freed.
+
+Each is a line on the system log when there was anything to give back:
+a task that ends holding a lock, a window or a private block has a bug,
+and the line names it. Its shared memory, its ports and its signals are
+not given back - something else may still use them - so a task is asked
 to end instead, usually with `SIGBREAKF_CTRL_C`, and ends itself. A task
 running code that goes when the program returns must be gone first,
 which its end message says ([When the code goes](programs.md#when-the-code-goes)).
+
+**Kill.** A task that failed is held and asked about on the display
+(Software Failure: Suspend, Kill or Reboot); the ROM debugger's `kill
+<number>` does the same to any task. Kill drops what the task was doing,
+starts it again on its own stack, and has it end as though its code had
+returned: its semaphores are let go first, then its final code runs - a
+process's closes its streams, so a shell's window goes - and then the
+rest of its end, as above. Its Task stays where it was, its stack given
+back: a port or a request may still name it
+([When a program fails](programs.md#when-a-check-fails)).
 
 The bottom 16 bytes of every stack are a guard exec checks at each
 switch; a task that ran past its end stops the machine there
@@ -624,7 +655,7 @@ the rules exec checks and the lock order are in
 | `Alert`, `AlertAt`, `Debug` | a Guru, and the ROM debugger: [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
 | `LockExecList`, `UnlockExecList` | exec's own lists, read under their lock |
 | `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Two cores](programs.md#two-cores) |
-| `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task |
+| `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task - run before the task's private memory is freed, after its semaphores are let go |
 | `NewStackRun` | a function run on a bigger stack of its own, and back |
 | `RawDoFmt`, `RawPutChar` | formatting, and the raw serial port; `sdk.exec.kprintf` is the two together |
 | `CachePreDMA`, `CachePostDMA`, `CacheClearE`, `CacheClearU`, `CodeAddress` | caches around DMA, and code written as data made runnable |

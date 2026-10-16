@@ -253,4 +253,9 @@ void EndSystemMemory()
 /// says from then on. A task not started yet gets its number here, which
 /// AddTask keeps. False for a block not in use.
 bool SetMemOwner(?*anyopaque memory_block, ?*exec.Task task)
+/// Memory debugging: MEMDEBUG_ON or MEMDEBUG_OFF switches it, MEMDEBUG_ASK
+/// only tells, MEMDEBUG_CHECK looks at every wall and all free memory now
+/// and puts the first `found_max` things wrong in `found`. `info` gets the
+/// state and its counts. The number of things wrong for a check, else 0.
+u32 MemDebug(u32 action, ?*exec.MemDebugInfo info, ?[*]exec.MemDamage found, u32 found_max)
 ##end

@@ -8,6 +8,7 @@ const MinNode = @import("nodes.zig").MinNode;
 const MinList = @import("lists.zig").MinList;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const Message = @import("ports.zig").Message;
+const semaphores = @import("semaphores.zig");
 
 /// tc_State
 pub const TaskState = enum(u8) {
@@ -114,10 +115,15 @@ pub const CoreTimes = extern struct {
 /// call exec functions that might.
 pub const TaskSwitchFn = *const fn (task: *Task, sys_base: *ExecBase) callconv(.c) void;
 
+/// How many semaphores a task's `holds` table names: one per lock it holds
+/// at once, nested holds of one lock in one entry.
+pub const max_semaphore_holds = 16;
+
 /// struct Task.
 /// What `RemTask` runs for a hook when the task it is on ends: on the task
 /// that called `RemTask` - the ending one itself, when it ends itself -
-/// before the task is taken away, with nothing held. `hook` is already off
+/// before the task is taken away, with nothing held: the semaphores the
+/// task still held are let go before the hooks run. `hook` is already off
 /// the task's list.
 pub const TaskEndFn = *const fn (sys_base: *ExecBase, task: *Task, hook: *TaskEndHook) callconv(.c) void;
 
@@ -209,6 +215,29 @@ pub const Task = extern struct {
     /// How deep it is in `BeginSystemMemory`: while above 0, what it
     /// allocates is the system's.
     system_memory_nest: u32 = 0,
+    /// The semaphores it holds, one entry each with how often, written by
+    /// exec under its semaphore lock as the task is granted one and lets
+    /// it go: what its end gives back (`RemTask`). A hold past the table's
+    /// end is counted in `holds_lost` instead, and stays held after an
+    /// end.
+    holds: [max_semaphore_holds]semaphores.SemaphoreHold = @splat(.{}),
+    holds_lost: u16 = 0,
+    /// It has allocated MEMF_PRIVATE memory: its end looks for what is
+    /// left of it and frees it. Set by AllocMem, never cleared.
+    private_memory: bool = false,
+    /// Ended by Kill (`s3> kill`, the Software Failure requester): the Task
+    /// and its name stay where they are once it has gone, only its stack
+    /// is freed - a port or a request may still name it.
+    killed: bool = false,
+    /// The request it is queued with for a semaphore while it waits for
+    /// one (`ObtainSemaphore`), on its stack, and that semaphore: taken out
+    /// of the queue if the task is removed meanwhile. Null otherwise.
+    waiting: ?*semaphores.SemaphoreRequest = null,
+    waiting_for: ?*semaphores.SignalSemaphore = null,
+    /// Its own stack's bounds while `NewStackRun` has it on another; 0
+    /// otherwise. Kill starts the task's end on its own stack.
+    home_lower: usize = 0,
+    home_upper: usize = 0,
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");
