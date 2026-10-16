@@ -278,7 +278,9 @@ is copied to both for the same reason.
 
 An address is named with the code it is in, which for a program loaded
 from disk is its file and the offset into it - the same offset its ELF
-has, so `llvm-addr2line` turns it into a line.
+has, so `llvm-addr2line` turns it into a line. The
+[debugging guide](debugging.md) has every command, and what to reach for
+by symptom.
 
 ### More than buttons
 

@@ -652,7 +652,7 @@ the rules exec checks and the lock order are in
 | Calls | |
 |---|---|
 | `ReadLog`, `SetLogSignal`, `LogControl` | the system log: [The system log](programs.md#the-system-log) |
-| `Alert`, `AlertAt`, `Debug` | a Guru, and the ROM debugger: [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
+| `Alert`, `AlertAt`, `Debug`, `MemDebug` | a Guru, the ROM debugger and memory debugging: [Debugging](debugging.md), [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
 | `LockExecList`, `UnlockExecList` | exec's own lists, read under their lock |
 | `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Two cores](programs.md#two-cores) |
 | `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task - run before the task's private memory is freed, after its semaphores are let go |

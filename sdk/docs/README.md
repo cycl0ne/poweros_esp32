@@ -33,6 +33,10 @@ tags and constants, each with its doc comment.
   window of gadgets laid out by a layout and a window object; when a
   check fails, the system log, semaphores, spinlocks and exec's list
   locks, and what two cores change.
+- [Debugging](guides/debugging.md) - what a failure prints and asks, from
+  an address to a line, the ROM debugger with its breakpoints and
+  watchpoints, the serial console's commands, the log, memory debugging,
+  what to reach for by symptom, emulators, JTAG and the host tests.
 - [exec.library](guides/exec.md) - the base, opening libraries, devices
   and resources, memory and pools and who owns each block, lists, tasks
   and what a task's end gives back, Kill, signals, messages and ports,
