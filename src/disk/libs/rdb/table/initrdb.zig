@@ -36,6 +36,13 @@ const kept_blocks = hardblocks.RDB_LOCATION_LIMIT;
 /// to the end may be a partition's. It says nothing of its vendor or
 /// product; those fields are the program's to fill in.
 ///
+/// A medium whose first block is a PC's partition table, as OpenRDB found
+/// it - a card as it is sold, or as a PC formatted it - keeps that block:
+/// the RigidDiskBlock goes in the second, which is still among the blocks
+/// it is looked for in, and the PC goes on seeing its partitions. A
+/// partition of the table may then name the same blocks as one of the
+/// PC's, so the one volume is the PC's and this system's.
+///
 /// Every partition is taken off the list and freed, and the chains of
 /// file system headers the disk had are forgotten: the new table has
 /// none. Only the handle changes, and RDBF_CHANGED is set; WriteRDB puts
@@ -75,18 +82,19 @@ pub fn InitRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
 
     _handle.freePartitions(private);
     private.kept = .{};
+    const first: u32 = if (private.pc_table) 1 else 0;
     handle.rdb = .{
         .block_bytes = geometry.sector_size,
         .cylinders = blocks,
         .sectors = 1,
         .heads = 1,
         .cyl_blocks = 1,
-        .rdb_blocks_lo = 0,
+        .rdb_blocks_lo = first,
         .rdb_blocks_hi = kept_blocks - 1,
         .lo_cylinder = kept_blocks,
         .hi_cylinder = blocks - 1,
     };
-    handle.block = 0;
+    handle.block = first;
     handle.flags |= rdb.RDBF_CHANGED;
     private.has_table = true;
     return rdb.RDBERR_OK;

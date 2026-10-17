@@ -244,6 +244,13 @@ the first, the PartitionBlocks after it - so every cylinder from there
 to the end may be a partition's. It says nothing of its vendor or
 product; those fields are the program's to fill in.
 
+A medium whose first block is a PC's partition table, as OpenRDB found
+it - a card as it is sold, or as a PC formatted it - keeps that block:
+the RigidDiskBlock goes in the second, which is still among the blocks
+it is looked for in, and the PC goes on seeing its partitions. A
+partition of the table may then name the same blocks as one of the
+PC's, so the one volume is the PC's and this system's.
+
 Every partition is taken off the list and freed, and the chains of
 file system headers the disk had are forgotten: the new table has
 none. Only the handle changes, and RDBF_CHANGED is set; WriteRDB puts

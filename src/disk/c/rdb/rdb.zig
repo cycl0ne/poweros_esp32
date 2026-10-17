@@ -4,7 +4,7 @@
 //! LIBS:rdb.library. Built against the SDK only.
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
-//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K
+//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,BOOTPRI/K/N
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
@@ -13,6 +13,9 @@
 //!   RDB INIT FORCE              ... or in place of the one it has
 //!   RDB ADD DH1                 a partition over the largest free run
 //!   RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
+//!   RDB sdcard.device ADD SD0 LOW 8192 HIGH 62333951 DOSTYPE MSD
+//!       BOOTABLE BOOTPRI 5      the card's FAT partition, started from
+//!                               before the flash disk (whose BootPri is 0)
 //!   RDB REMOVE DH1              a partition taken out of the table
 //!
 //! The device is an exec device with trackdisk's commands, so anything
@@ -32,6 +35,10 @@
 //! takes it the same way (`FLS\0`, or `FLS` with the zero left off) or as
 //! a number (`0x464C5300`); without it a partition is for the flash file
 //! system.
+//!
+//! BOOTPRI is the new partition's de_BootPri, 0 without it: of the
+//! bootable partitions of every disk, dos starts from the one with the
+//! highest.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -48,7 +55,7 @@ const Printf = dos.stdio.Printf;
 pub const COMMAND_NAME = "RDB";
 const VERSION_STRING = "\x00$VER: RDB 1.1 (03.10.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,BOOTPRI/K/N";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -60,7 +67,8 @@ const arg_high = 7;
 const arg_dostype = 8;
 const arg_bootable = 9;
 const arg_remove = 10;
-const arg_count = 11;
+const arg_boot_pri = 11;
+const arg_count = 12;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
@@ -71,7 +79,7 @@ const MSG_NO_PARTS = "  (no partitions)\n";
 
 /// One row of the partition table. The same format prints the heading and
 /// the rule, so the columns cannot drift apart.
-const row = "  %-8s %5s %-13s %9s %7s %-16s %s\n";
+const row = "  %-8s %5s %-16s %9s %7s %-16s %s\n";
 
 const Run = struct {
     sys: *ExecBase,
@@ -169,8 +177,9 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
         const low_cyl: u32 = @intCast(low orelse 0);
         const high_cyl: u32 = @intCast(high orelse 0);
         if (failed(run, "ADD", rb.AddPartition(handle, name, low_cyl, high_cyl, dos_type))) return dos.RETURN_ERROR;
-        if (argv[arg_bootable] != 0) {
-            if (rb.FindPartition(handle, name)) |part| part.block.flags |= hardblocks.PBFF_BOOTABLE;
+        if (rb.FindPartition(handle, name)) |part| {
+            if (argv[arg_bootable] != 0) part.block.flags |= hardblocks.PBFF_BOOTABLE;
+            if (rdargs.number(argv[arg_boot_pri])) |pri| part.block.environment.boot_pri = @max(-128, @min(pri, 127));
         }
     }
 
@@ -339,7 +348,7 @@ fn showPartitions(run: *Run) i32 {
     const rb = run.rb;
     _ = dl.PutStr("\nPartitions\n");
     _ = Printf(dl, row, .{ "Name", "Block", "Cylinders", "Blocks", "Size", "File system", "Flags" });
-    _ = Printf(dl, row, .{ "--------", "-----", "-------------", "---------", "-------", "----------------", "-----" });
+    _ = Printf(dl, row, .{ "--------", "-----", "----------------", "---------", "-------", "----------------", "-----" });
 
     var part = rb.NextPartition(run.handle, null);
     if (part == null) _ = dl.PutStr(MSG_NO_PARTS);
@@ -363,7 +372,8 @@ fn partitionRow(run: *Run, block: u32, part: *const hardblocks.PartitionBlock) v
     var block_text: [12:0]u8 = @splat(0);
     _ = decimal(&block_text, block);
 
-    var cylinders: [16:0]u8 = @splat(0);
+    // Two cylinder numbers of ten digits and the word between them.
+    var cylinders: [24:0]u8 = @splat(0);
     var at = decimal(&cylinders, env.low_cyl);
     at += copy(cylinders[at..], " to ");
     at += decimal(cylinders[at..], env.high_cyl);

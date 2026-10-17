@@ -19,6 +19,7 @@ const exec = sdk.exec;
 const rdb = sdk.rdb;
 const trackdisk = sdk.devices.trackdisk;
 const hardblocks = sdk.dos.hardblocks;
+const fat = sdk.dos.fat;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
 
@@ -55,6 +56,9 @@ pub const Handle = extern struct {
     /// Whether `public.rdb` is a table WriteRDB may write: one read from
     /// the disk, or one InitRDB made.
     has_table: bool = false,
+    /// Whether the medium's first block is a PC's partition table - the
+    /// one a card is sold with - which a fresh table leaves where it is.
+    pc_table: bool = false,
     /// One block of the medium.
     buffer: ?[*]u8 = null,
     /// Blocks no PartitionBlock may go in: the chains of file system
@@ -165,6 +169,7 @@ pub fn readTable(handle: *Handle) i32 {
     while (block < hardblocks.RDB_LOCATION_LIMIT and block < geometry.total_sectors) : (block += 1) {
         var found: hardblocks.RigidDiskBlock = undefined;
         if (!readBlock(handle, block, &found)) continue;
+        if (block == 0) handle.pc_table = pcTable(handle);
         if (!hardblocks.sound(&found, hardblocks.IDNAME_RIGIDDISK)) continue;
         // The block numbers in it count another size of block.
         if (found.block_bytes != geometry.sector_size) {
@@ -197,6 +202,15 @@ pub fn readTable(handle: *Handle) i32 {
     keepChain(handle, public.rdb.bad_block_list, hardblocks.IDNAME_BADBLOCK);
     keepChain(handle, public.rdb.drive_init, hardblocks.IDNAME_LOADSEG);
     return rdb.RDBERR_OK;
+}
+
+/// Whether the block in the buffer is a PC's partition table: signed with
+/// 55 AA, as a boot sector is too, but not the boot sector of a FAT or
+/// exFAT volume that is the whole medium - whose second block is its own.
+fn pcTable(handle: *const Handle) bool {
+    const buffer = handle.buffer orelse return false;
+    const block = buffer[0..blockBytes(handle)];
+    return fat.signed(block) and fat.formatOf(block) == .unknown;
 }
 
 /// The file system headers' blocks and their code's, kept.
