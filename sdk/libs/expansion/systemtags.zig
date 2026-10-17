@@ -92,6 +92,11 @@ pub const SYSTAG_PlicStride = SYSTAG_Dummy + 25;
 /// Absent, the devices see the caches - QEMU's virt - and DMA wants
 /// nothing written back.
 pub const SYSTAG_CacheFlush = SYSTAG_Dummy + 26;
+/// 1: the machine's RAM is one kind - every region is internal and
+/// external memory at once, as on a machine under SBI firmware - so there
+/// is one figure of free memory to show, not two. Absent, 0: internal
+/// memory and PSRAM apart, as on the ESP32s.
+pub const SYSTAG_UnifiedMemory = SYSTAG_Dummy + 27;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

@@ -54,6 +54,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Name, name),
     .value(st.SYSTAG_RamBase, 0x8000_0000),
     .value(st.SYSTAG_RamSize, 512 * 1024 * 1024),
+    .value(st.SYSTAG_UnifiedMemory, 1),
     .value(st.SYSTAG_Timebase, 10_000_000),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_ConsoleBase, 0x1000_0000),
