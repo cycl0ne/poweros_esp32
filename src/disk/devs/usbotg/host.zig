@@ -42,6 +42,9 @@
 //!
 //! **The data toggle** is counted from the packets a round moved, and
 //! left in the request: the controller's own PID field is not read back.
+//! A control transfer's data stage starts each round at the toggle its
+//! packets so far leave - one a round through a hub, so a low-speed
+//! device's eight-byte packets go DATA1, DATA0, DATA1 across rounds.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -505,6 +508,10 @@ fn program(host: *Host, n: u32) void {
             if (command != usbhc.UHCMD_CONTROLXFER) {
                 pid = if (req.toggle != 0) dwc.HCTSIZ_PID_DATA1 else dwc.HCTSIZ_PID_DATA0;
                 ep_type = if (command == usbhc.UHCMD_INTXFER) dwc.HCCHAR_EPTYPE_INTERRUPT else dwc.HCCHAR_EPTYPE_BULK;
+            } else if ((channel.done / mps) & 1 != 0) {
+                // A data stage starts at DATA1 and turns with every
+                // packet; all it moved so far were whole ones.
+                pid = dwc.HCTSIZ_PID_DATA0;
             }
         },
         .idle => return,
