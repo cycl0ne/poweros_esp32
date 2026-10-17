@@ -3,7 +3,7 @@
 //! BlendRect and ScalePixels - checked against what the CPU does, and
 //! timed beside it. Built against the SDK only.
 //!
-//!   Engine ROUNDS/K/N,LOAD/K/N
+//!   Engine ROUNDS/K/N,LOAD/K/N,DRAG/K/N
 //!
 //! Two buffers the size of a screen are taken from the display board and
 //! filled with a pattern of their coordinates. Each case is then done by
@@ -32,6 +32,13 @@
 //! the CPU, and prints the display's starved frames before and after
 //! each: whether the panel's stream holds up while the memory it streams
 //! out of is that busy.
+//!
+//! DRAG n instead lays an overlay of 128 x 128 - a round icon - over the
+//! picture, following the pointer as a dragged icon does, and moves the
+//! pointer n steps across the display and back, as fast as it goes. It
+//! prints the time a step takes and the starved frames before and after:
+//! whether the stream holds up while the board puts the picture back
+//! and lays the images at every step. The pointer goes back where it was.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -49,10 +56,10 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Engine";
-const VERSION_STRING = "\x00$VER: Engine 1.1 (10.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Engine 1.2 (17.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "ROUNDS/K/N,LOAD/K/N";
+const template = "ROUNDS/K/N,LOAD/K/N,DRAG/K/N";
 
 /// The colour the fills use.
 const fill_color: u16 = 0xF81F;
@@ -251,6 +258,59 @@ fn loadTest(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, tb: *TimerBase, bm
     return dos.RETURN_OK;
 }
 
+/// The overlay DRAG moves: a disc in a square, opaque inside, colours
+/// from its coordinates.
+const drag_size: u32 = 128;
+
+/// DRAG: an overlay following the pointer, the pointer moved `steps`
+/// times along the diagonal and back.
+fn dragTest(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, board: *rtg.RtgBoard, tb: *TimerBase, info: *const rtg.RtgBoardInfo, steps: u32) i32 {
+    const pitch = drag_size * 2;
+    const memory = sys.AllocVec(pitch * drag_size, exec.MEMF_ANY) orelse {
+        _ = Printf(dl, "No memory for the overlay\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(memory);
+    const pixels: [*]u16 = @ptrCast(@alignCast(memory));
+    const middle: i32 = @intCast(drag_size / 2);
+    var y: u32 = 0;
+    while (y < drag_size) : (y += 1) {
+        var x: u32 = 0;
+        while (x < drag_size) : (x += 1) {
+            const across = @as(i32, @intCast(x)) - middle;
+            const down = @as(i32, @intCast(y)) - middle;
+            const opaque_bit: u16 = if (across * across + down * down < middle * middle) 0x8000 else 0;
+            pixels[y * drag_size + x] = opaque_bit | @as(u16, @truncate(x >> 2 << 10 | y >> 2 << 5 | (x + y) >> 3));
+        }
+    }
+    const image = rtg.Surface{ .pixels = @ptrCast(memory), .width = drag_size, .height = drag_size, .pitch = pitch, .size_bytes = pitch * drag_size, .format = .argb1555 };
+    const home_x = board.pointer_x;
+    const home_y = board.pointer_y;
+    const answer = rb.SetBoardOverlay(board, &image, drag_size / 2, drag_size / 2);
+    if (answer != err.RTGERR_OK) {
+        _ = Printf(dl, "The board takes no overlay (%d)\n", .{answer});
+        return dos.RETURN_ERROR;
+    }
+    const span: i32 = @intCast(@min(info.width, info.height));
+    const before = starved(rb, board);
+    const start = now(tb);
+    var step: u32 = 0;
+    while (step < steps) : (step += 1) {
+        // Four pixels a step, along the diagonal and back again.
+        const lap: i32 = @intCast(step * 4 % @as(u32, @intCast(span * 2)));
+        const along = if (lap < span) lap else span * 2 - lap;
+        rb.MoveBoardPointer(board, along, along);
+    }
+    const took = now(tb) - start;
+    const after = starved(rb, board);
+    _ = rb.SetBoardOverlay(board, null, 0, 0);
+    rb.MoveBoardPointer(board, home_x, home_y);
+    _ = Printf(dl, "drag: %u steps of a %ux%u overlay in %lu us, %lu us a step, starved frames %u -> %u\n", .{
+        steps, drag_size, drag_size, took, took / steps, before, after,
+    });
+    return dos.RETURN_OK;
+}
+
 fn now(tb: *TimerBase) u64 {
     var ev: timer.EClockVal = .{};
     const rate = tb.ReadEClock(&ev);
@@ -263,7 +323,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -292,6 +352,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &timer_req.node, 0) != 0) return dos.RETURN_FAIL;
     defer sys.CloseDevice(&timer_req.node);
     const tb: *TimerBase = @ptrCast(timer_req.node.device.?);
+
+    if (argv[2] != 0) {
+        const steps: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[2])).*));
+        return dragTest(dl, rb, sys, board, tb, &info, steps);
+    }
 
     const width: u32 = @max(info.width, 480);
     const height: u32 = @max(info.height, 400);

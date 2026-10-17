@@ -26,12 +26,14 @@
 //! it when RefreshBitMap writes them back out of the cache.
 //!
 //! **HDMI.** A part that is an HDMI bridge (CHIP_LT8912B) is the same
-//! board with three differences: create refuses it unless a monitor's
+//! board with four differences: create refuses it unless a monitor's
 //! EDID answers on the bridge's bus, so the next part the board lists -
-//! its panel - is tried instead; the bridge is brought up over I2C where a
-//! panel takes DCS commands; and the link carries RGB888, which the stream
-//! reads from a copy of what is shown (`link.zig`) while the screens stay
-//! RGB565.
+//! its panel - is tried instead; the board's mode is the largest the
+//! monitor's EDID names of those this host can send (`monitor.zig`), the
+//! part's own when it names none of them; the bridge is brought up over
+//! I2C where a panel takes DCS commands; and the link carries RGB888,
+//! which the stream reads from a copy of what is shown (`link.zig`) while
+//! the screens stay RGB565.
 //!
 //! **The pointer** and the overlay are laid into that copy, never into the
 //! screens, and rows going into the copy go around them (`pointer.zig`). A panel streams its screens straight until a
@@ -72,13 +74,14 @@ const Chain = chain_file.Chain;
 const link_file = @import("link.zig");
 const pointer_file = @import("pointer.zig");
 const lt8912b = @import("lt8912b.zig");
+const monitor = @import("monitor.zig");
 const st = sdk.expansion.systemtags;
 
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 2;
-const BUILD_DATE = "12.10.2026";
+const REVISION = 3;
+const BUILD_DATE = "17.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -400,7 +403,7 @@ fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
         sys.ObtainSemaphore(&panel.pointer.lock);
         const kept = pointer_file.keepOut(&panel.pointer, &panel.link);
         const count = link_file.show(&panel.link, &panel.engine, sys, bands, panel.streaming, kept, &panel.stream_bands);
-        pointer_file.mend(&panel.pointer, &panel.link, kept);
+        pointer_file.mend(&panel.pointer, &panel.link, sys, kept);
         sys.ReleaseSemaphore(&panel.pointer.lock);
         sent = panel.stream_bands[0..count];
     }
@@ -467,12 +470,13 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const rb: *RtgBase = board.rtg_base.?;
     if (state.board != null) return err.RTGERR_IN_USE;
 
-    const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
+    var wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
 
-    // An HDMI bridge only with a monitor behind it.
+    // An HDMI bridge only with a monitor behind it, in the largest mode it
+    // takes.
     var bridge_bus: ?lt8912b.I2c = null;
     defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
-    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(state.sys, wanted) orelse return err.RTGERR_NO_DISPLAY;
+    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(state.sys, &wanted) orelse return err.RTGERR_NO_DISPLAY;
 
     const panel = panelOf(board);
     panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
@@ -501,7 +505,8 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         return code;
     }
 
-    // One mode: the panel is what it is.
+    // One mode: the panel is what it is, and a monitor gets the one
+    // picked for it.
     panel.mode = .{
         .node = .{ .name = "panel", .pri = 0 },
         .id = 1,
@@ -533,22 +538,47 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     return err.RTGERR_OK;
 }
 
-/// The bridge's I2C bus, when a monitor's EDID answers on it; its name
-/// said on the raw port. Null, and nothing kept, when there is no monitor
-/// - or no bus.
-fn monitorFor(sys: *ExecBase, wanted: config.Config) ?lt8912b.I2c {
+/// The bridge's I2C bus, when a monitor's EDID answers on it, and
+/// `wanted` set to the largest mode the EDID names (`monitor.zig`) - left
+/// the part's own when it names none of them; the monitor's name and the
+/// mode said on the raw port. Null, and nothing kept, when there is no
+/// monitor - or no bus.
+fn monitorFor(sys: *ExecBase, wanted: *config.Config) ?lt8912b.I2c {
     const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return null;
     if (!lt8912b.monitorThere(bus_to_bridge)) {
         bus_to_bridge.close();
         return null;
     }
-    var edid: lt8912b.Edid = undefined;
+    var first: lt8912b.Edid = undefined;
+    var extension: lt8912b.Edid = undefined;
     var name: [14]u8 = undefined;
     name[0] = 0;
-    if (lt8912b.readEdid(bus_to_bridge, &edid)) lt8912b.monitorName(&edid, &name);
+    if (lt8912b.readEdid(bus_to_bridge, &first)) {
+        lt8912b.monitorName(&first, &name);
+        const cea: ?*const lt8912b.Edid = if (lt8912b.readExtension(bus_to_bridge, &first, &extension)) &extension else null;
+        if (monitor.best(&first, cea)) |mode| take(wanted, mode);
+    }
     const shown: [*:0]const u8 = if (name[0] != 0) @ptrCast(&name) else "a monitor";
     sdk.exec.kprintf(sys, "%s: HDMI to %s, %dx%d\n", .{ MODULE_NAME, shown, wanted.width, wanted.height });
     return bus_to_bridge;
+}
+
+/// `mode` in place of the part's own: the picture, its timings, the
+/// pixel clock and the link's rate on two lanes.
+fn take(wanted: *config.Config, mode: *const monitor.Mode) void {
+    wanted.width = mode.width;
+    wanted.height = mode.height;
+    wanted.pixel_hz = mode.pixel_hz;
+    wanted.hsync = mode.hsync;
+    wanted.hbp = mode.hbp;
+    wanted.hfp = mode.hfp;
+    wanted.vsync = mode.vsync;
+    wanted.vbp = mode.vbp;
+    wanted.vfp = mode.vfp;
+    wanted.hsync_high = mode.hsync_high;
+    wanted.vsync_high = mode.vsync_high;
+    wanted.lane_mbps = mode.lane_mbps;
+    wanted.lanes = 2;
 }
 
 /// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
@@ -588,7 +618,8 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     if (board.driver) |driver| stateOf(driver).board = null;
 }
 
-/// One mode, the panel's own, which create already set up.
+/// One mode, the panel's own or the monitor's, which create already set
+/// up.
 fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return if (mode.id == panelOf(board).mode.id) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
@@ -643,7 +674,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
         sys.ObtainSemaphore(&panel.pointer.lock);
         const kept = pointer_file.keepOut(&panel.pointer, &panel.link);
         link_file.refresh(&panel.link, &panel.engine, sys, bitmap, y, count, panel.streaming, kept);
-        pointer_file.mend(&panel.pointer, &panel.link, kept);
+        pointer_file.mend(&panel.pointer, &panel.link, sys, kept);
         sys.ReleaseSemaphore(&panel.pointer.lock);
     }
     return err.RTGERR_OK;

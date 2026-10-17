@@ -113,6 +113,14 @@ pub fn readEdid(bus: I2c, into: *Edid) bool {
     return true;
 }
 
+/// The block after the first - CEA-861's extension on an HDMI set - when
+/// the first says there is one: false when there is none, or it does not
+/// read.
+pub fn readExtension(bus: I2c, first: *const Edid, into: *Edid) bool {
+    if (first[126] == 0) return false;
+    return bus.read(edid_address, 128, into);
+}
+
 /// The monitor's name from its EDID (descriptor 0xFC), up to 13
 /// characters and NUL-terminated in `into`; empty if it gives none.
 pub fn monitorName(edid: *const Edid, into: *[14]u8) void {

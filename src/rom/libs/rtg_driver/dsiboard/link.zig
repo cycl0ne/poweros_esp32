@@ -30,11 +30,17 @@
 //! **The conversion** is the engine's: a 2D-DMA copy, rows of the buffer
 //! into rows of the copy - its send channel widening RGB565 to RGB888 as
 //! it reads, for an RGB888 copy - under the engine's semaphore and on its
-//! channels. Without the engine the CPU converts, writing the copy
-//! through its uncached view. The CPU never reads the copy, and writes it
-//! only uncached (`put`, which the pointer's pixels go through too), so
-//! no line of it is ever dirty in the data cache to be written over the
-//! engine's work.
+//! channels. Without the engine the CPU converts (`put`, which the
+//! pointer's pixels go through too).
+//!
+//! **The CPU writes the copy through the data cache**, and every write
+//! into the copy, the engine's and the CPU's, is made holding the
+//! pointer's lock. Before the CPU lets go of it, the lines it wrote are
+//! written back and dropped from the cache (`writeOut`), so none is left
+//! there to be written back later over what the engine converted into it
+//! since. Through the cache, a rectangle reaches memory a line at a time;
+//! a pixel at a time past it, every byte was a transaction of its own
+//! with the stream, and dragging an icon starved it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -253,6 +259,7 @@ fn convert(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgB
         return;
     }
     byCpu(link, source, row, line, count, x, width);
+    writeOut(link, sys, .{ .x0 = x, .y0 = line, .x1 = x + width, .y1 = line + count });
     link.cpu_rows +%= count;
 }
 
@@ -272,7 +279,8 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
     return engine_file.wait(engine, sys, signal);
 }
 
-/// The CPU's conversion, through the copy's uncached view.
+/// The CPU's conversion, through the data cache; `convert` writes it
+/// out.
 fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32) void {
     var r: u32 = 0;
     while (r < rows) : (r += 1) {
@@ -282,18 +290,18 @@ fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u
 }
 
 /// `count` RGB565 pixels from `from` into the copy at column `x` of line
-/// `line`, through its uncached view: as they are into an RGB565 copy,
+/// `line`, through the data cache: as they are into an RGB565 copy,
 /// widened blue first - as the engine writes them - into an RGB888 one.
-/// The caller keeps them inside the copy.
+/// The caller keeps them inside the copy, holds the pointer's lock, and
+/// calls `writeOut` for them before it lets go of it.
 pub fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32) void {
-    const row = link.pixels + uncached_offset + @as(usize, line) * link.pitch;
+    const row = link.pixels + @as(usize, line) * link.pitch;
     if (link.format == .rgb565) {
-        const to: [*]volatile u16 = @ptrFromInt(row + @as(usize, x) * 2);
-        var at: u32 = 0;
-        while (at < count) : (at += 1) to[at] = from[at];
+        const to: [*]u16 = @ptrFromInt(row + @as(usize, x) * 2);
+        @memcpy(to[0..count], from[0..count]);
         return;
     }
-    const to: [*]volatile u8 = @ptrFromInt(row + @as(usize, x) * 3);
+    const to: [*]u8 = @ptrFromInt(row + @as(usize, x) * 3);
     var at: u32 = 0;
     while (at < count) : (at += 1) {
         const pixel = from[at];
@@ -303,6 +311,24 @@ pub fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32)
         to[at * 3] = blue << 3 | blue >> 2;
         to[at * 3 + 1] = green << 2 | green >> 4;
         to[at * 3 + 2] = red << 3 | red >> 2;
+    }
+}
+
+/// The lines of the copy under `area`, which `put` wrote, written back to
+/// memory and dropped from the data cache: row by row, each row's
+/// stretch rounded out to whole lines - only the copy's own bytes are in
+/// them, and nothing else writes the copy while the lock is held - but
+/// never past the copy's end.
+pub fn writeOut(link: *const Link, sys: *ExecBase, area: Rect) void {
+    const line_size = sdk.hardware.DCACHE_LINE_SIZE;
+    const bytes_per_pixel: usize = if (link.format == .rgb565) 2 else 3;
+    const copy_end = link.pixels + @as(usize, link.pitch) * link.height;
+    var y = area.y0;
+    while (y < area.y1) : (y += 1) {
+        const row = link.pixels + @as(usize, y) * link.pitch;
+        const start = (row + area.x0 * bytes_per_pixel) & ~@as(usize, line_size - 1);
+        const end = @min((row + area.x1 * bytes_per_pixel + line_size - 1) & ~@as(usize, line_size - 1), copy_end);
+        sys.CacheClearE(@ptrFromInt(start), @intCast(end - start), exec.CACRF_ClearD);
     }
 }
 

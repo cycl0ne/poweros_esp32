@@ -352,7 +352,9 @@ instead, from the first time a pointer is shown, and lays the pointer
 into the copy: a frame's memory more (the HDMI link has its copy
 anyway), and every refreshed row copied once more by the 2D-DMA. A
 board touched only with a finger never shows one, and never makes the
-copy.
+copy. The pointer and a dragged icon go into the copy through the data
+cache and reach memory a whole line at a time, so moving them leaves
+the stream its bandwidth.
 
 - `SetBoardPointer(board, image, hot_x, hot_y)` takes a surface with an
   alpha channel, at most `RTG_POINTER_MAX` (64) each way, and converts it
@@ -533,7 +535,7 @@ older SDK keeps its layout.
 | LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
 | Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
-| Olimex ESP32-P4-PC on HDMI, 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
+| Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
 
 The 7B's panel is never fed straight from PSRAM: the memory's own refresh
@@ -558,17 +560,22 @@ bring-up, and the sync polarity the mode's standard gives
 (`RTGA_DSI_HSyncHigh`, `RTGA_DSI_VSyncHigh`). The driver takes that part
 only when a monitor's EDID answers on the bridge's bus, and refuses it
 otherwise, so graphics.library goes on to the board's next panel part -
-a board lists the bridge first. The bridge takes RGB888 only, and this
+a board lists the bridge first. The part's own mode is the one every
+monitor takes, 800 x 600; the driver shows the largest of 1360 x 768,
+1280 x 720 and 1024 x 768 the EDID names instead - among its
+established, standard or detailed timings, or the CEA extension's video
+codes - and offers that one mode. The bridge takes RGB888 only, and this
 revision of the chip sends what memory holds, so the screens stay RGB565
 and the stream reads a copy of what is shown, three bytes a pixel: showing
 bands converts their rows into it, and RefreshBitMap converts the rows
 drawn wherever a band shows them - the 2D-DMA widens RGB565 as it copies.
 The link stays in high speed through the blanking, as the bridge needs,
-and its lanes are best set to carry about a third more than the picture's
-RGB888: the bridge remakes the pixel clock by how full its FIFO keeps, so
-a link much faster sends each line in a burst too short for that to hold
-still, and one barely faster leaves the host no room, and frames lose
-their syncs.
+and its lanes run faster than the picture's RGB888 by a margin found for
+each mode: the bridge remakes the pixel clock by how full its FIFO keeps,
+and a margin that holds it still for one mode lets it hunt in another.
+800 x 600, 1024 x 768 and 1280 x 720 hold at about a third more,
+1360 x 768 only at half again. One barely faster leaves the host no room,
+and frames lose their syncs.
 
 ## Tools
 
@@ -583,7 +590,10 @@ their syncs.
   cache line, copies between buffers, within one and out of plain
   memory - and its blends and scales against graphics.library's own
   software, times both, and counts the frames the display starved of
-  meanwhile.
+  meanwhile. `LOAD n` fills a whole buffer n times, by the board and by
+  the CPU, and `DRAG n` moves an overlay of 128 x 128 with the pointer n
+  steps, as an icon is dragged; each prints the starved frames before
+  and after.
 - `C:test/Screens` double-buffers a screen and prints the frame rate;
   `SWITCH` puts two screens on the display to drag and switch; `MOVE`
   pulls a second screen half way down and back, which shows the bands.
