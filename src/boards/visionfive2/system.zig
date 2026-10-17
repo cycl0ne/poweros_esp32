@@ -54,6 +54,45 @@ const card_slot = [_]Tag{
     .done,
 };
 
+/// PCI Express port 0, and the VL805 USB controller on it that the four
+/// USB-A sockets are: the bridge's registers at 0x2B000000, its
+/// configuration space at 0x9_4000_0000, memory at 0x30000000 (128 MiB)
+/// and at 0x9_0000_0000 (1 GiB), its INTA to INTD gathered on PLIC source
+/// 56, PERST# on GPIO26. Port 1, the M.2 slot, is not listed: nothing is
+/// in it, and a port without a link costs a second to find out.
+const pcie0 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PCI),
+    .value(st.PART_Chip, st.CHIP_JH7110_PCIE),
+    .pointer(st.PART_ChipName, "jh7110 pcie0"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0x2B00_0000),
+    .value(st.PART_PciConfig, 0x9_4000_0000),
+    .value(st.PART_PciMem, 0x3000_0000),
+    .value(st.PART_PciMemSize, 0x0800_0000),
+    .value(st.PART_PciPref, 0x9_0000_0000),
+    .value(st.PART_PciPrefSize, 0x4000_0000),
+    .value(st.PART_Irq, 56),
+    .value(st.PART_PinReset, pins.gpioLow(26)),
+    .pointer(st.PART_Label, "PCIe 0: the USB sockets' VL805"),
+    .done,
+};
+
+/// The four USB-A sockets: the VL805 on PCIe 0, the first xHCI function
+/// on PCI. Their USB 2 lines go through the VL805's own hub.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_XHCI),
+    .pointer(st.PART_ChipName, "vl805"),
+    .value(st.PART_Bus, st.BUS_PCI),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST),
+    .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
+    .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
+    .pointer(st.PART_Label, "USB-A sockets"),
+    .done,
+};
+
 /// The HDMI port's picture: the one mode the display path is set up for.
 const screen = struct {
     pub const width: u32 = 1920;
@@ -100,6 +139,8 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &card_slot),
+    .pointer(st.SYSTAG_Part, &pcie0),
+    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 

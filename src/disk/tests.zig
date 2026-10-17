@@ -48,7 +48,9 @@ test {
     _ = @import("libs/wpa/tests/library.zig");
     _ = @import("libs/wpa/wpa_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
+    _ = @import("libs/pci/tests/pci.zig");
     _ = @import("libs/usb/tests/usb.zig");
+    _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/usb/hid/report.zig");
     _ = @import("devs/usb/disk/scsi.zig");
     _ = @import("devs/usb/disk/bot.zig");

@@ -58,6 +58,8 @@ pub const icon = @import("libs/icon/icon.zig");
 pub const anvil = @import("libs/anvil/anvil.zig");
 /// usb.library: the USB buses, their devices, pipes to their endpoints.
 pub const usb = @import("libs/usb/usb.zig");
+/// The machine's PCI functions, through pci.library.
+pub const pci = @import("libs/pci/pci.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

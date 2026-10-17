@@ -262,6 +262,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_UART => "uart",
         st.PARTKIND_RTC => "rtc",
         st.PARTKIND_RNG => "rng",
+        st.PARTKIND_PCI => "pci",
         else => "?",
     };
 }
@@ -280,6 +281,7 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_TWAI => "twai",
         st.BUS_RMII => "rmii",
         st.BUS_MIPI_DSI => "mipi-dsi",
+        st.BUS_PCI => "pci",
         else => "?",
     };
 }

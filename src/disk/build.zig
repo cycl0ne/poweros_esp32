@@ -36,6 +36,7 @@ const commands = [_][]const u8{
     "requestdevice", "diskchange", "modbus",   "more",          "relabel",
     "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
     "setclock",      "top",        "play",     "screendump",    "memdebug",
+    "pciinfo",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -80,6 +81,7 @@ const modules = [_]Program{
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
+    .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
@@ -150,6 +152,7 @@ const modules = [_]Program{
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
     .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
+    .{ .disk = "devs/xhci.device", .source = "devs/xhci/xhci.zig", .name = "xhci.device" },
     .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
     .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device" },
     .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device" },
@@ -168,12 +171,15 @@ const p4_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
 /// does not: the DWC2 USB controller, the SD host.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
+/// What a RISC-V 64 machine under SBI has and the ESP32s do not: PCI,
+/// the command that lists it, and the USB controllers on it.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device" };
 
 /// Whether `program` is built for `chip`.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &p4_only,
-        .esp32p4 => &s3_only,
+        .esp32s3 => &(p4_only ++ rv64_only),
+        .esp32p4 => &(s3_only ++ rv64_only),
         .rv64sbi => &(s3_only ++ p4_only ++ esp_only),
     };
     for (others) |name| {

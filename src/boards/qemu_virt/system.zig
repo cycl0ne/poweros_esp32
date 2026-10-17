@@ -48,6 +48,43 @@ const display = [_]Tag{
     .done,
 };
 
+// --- PCI ---------------------------------------------------------------------------
+
+/// The machine's PCI Express host bridge, which QEMU sets up itself: its
+/// configuration space at 0x30000000 (256 buses), memory below 4 GiB at
+/// 0x40000000 and above it at 16 GiB, its slots' INTA to INTD on PLIC
+/// sources 32 to 35. What `-device` adds is behind it.
+const pci_host = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PCI),
+    .value(st.PART_Chip, st.CHIP_PCI_ECAM),
+    .pointer(st.PART_ChipName, "pci-host-ecam-generic"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_PciConfig, 0x3000_0000),
+    .value(st.PART_PciMem, 0x4000_0000),
+    .value(st.PART_PciMemSize, 0x4000_0000),
+    .value(st.PART_PciPref, 0x4_0000_0000),
+    .value(st.PART_PciPrefSize, 0x4_0000_0000),
+    .value(st.PART_Irq, 32),
+    .pointer(st.PART_Label, "PCI Express"),
+    .done,
+};
+
+/// The USB bus of an xHCI controller added with `-device qemu-xhci`: the
+/// first xHCI function on PCI. Without one, xhci.device finds none and
+/// the bus does not start.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_XHCI),
+    .pointer(st.PART_ChipName, "qemu-xhci"),
+    .value(st.PART_Bus, st.BUS_PCI),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST),
+    .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
+    .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
+    .pointer(st.PART_Label, "USB (qemu-xhci)"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -68,6 +105,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),
+    .pointer(st.SYSTAG_Part, &pci_host),
+    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 

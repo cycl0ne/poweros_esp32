@@ -144,6 +144,16 @@ pub const PART_Label = PART_Dummy + 12;
 /// on a machine whose interrupt controller the board wires: a PLIC source.
 /// A chip that numbers a part's interrupt once for every board needs none.
 pub const PART_Irq = PART_Dummy + 13;
+/// A PCI host bridge's configuration space (ECAM: a function's 4 KiB at
+/// bus << 20 | device << 15 | function << 12), and the windows the
+/// processor reaches its buses' memory through, each at the same address
+/// on the bus as for the processor: one below 4 GiB, and one for
+/// prefetchable memory, which may be above. A window's size 0: none.
+pub const PART_PciConfig = PART_Dummy + 14;
+pub const PART_PciMem = PART_Dummy + 15;
+pub const PART_PciMemSize = PART_Dummy + 16;
+pub const PART_PciPref = PART_Dummy + 17;
+pub const PART_PciPrefSize = PART_Dummy + 18;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -283,6 +293,13 @@ pub const PARTKIND_RTC: u32 = 19;
 /// A random number generator in the chip, which sdk.hardware.rng reads:
 /// PART_Address where its registers are (BUS_MEMORY).
 pub const PARTKIND_RNG: u32 = 20;
+/// A PCI or PCI Express host bridge, which pci.library brings up and
+/// walks: PART_Chip which bridge, PART_PciConfig its configuration space,
+/// PART_PciMem and PART_PciPref its windows, PART_Irq its interrupt -
+/// the first of its INTA to INTD where they are sources of their own -
+/// and PART_PinReset the line that holds what is plugged in in reset
+/// (PERST#).
+pub const PARTKIND_PCI: u32 = 21;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -344,6 +361,19 @@ pub const CHIP_QEMU_RAMFB: u32 = 24;
 /// (PARTKIND_PANEL on BUS_MEMORY, PART_Address the controller): 1920x1080
 /// at 60 Hz, as the board's firmware sets it up.
 pub const CHIP_JH7110_DC8200: u32 = 25;
+/// A PCI host bridge that is nothing but its configuration space and its
+/// windows, as the firmware or the emulator set them up (PARTKIND_PCI on
+/// BUS_MEMORY): QEMU's "pci-host-ecam-generic". A slot's INTA to INTD are
+/// PART_Irq on, rotated by the slot's number.
+pub const CHIP_PCI_ECAM: u32 = 26;
+/// One of the JH7110's two PCI Express root ports, PLDA's XpressRICH
+/// (PARTKIND_PCI on BUS_MEMORY): PART_BusUnit which one, PART_Address its
+/// bridge's registers; its INTA to INTD are gathered on PART_Irq.
+pub const CHIP_JH7110_PCIE: u32 = 27;
+/// An xHCI USB host controller, found on PCI (PARTKIND_USB on BUS_PCI):
+/// PART_BusUnit says which, counting the machine's xHCI functions in the
+/// order pci.library has them (xhci.device's unit).
+pub const CHIP_XHCI: u32 = 28;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -365,6 +395,8 @@ pub const BUS_TWAI: u32 = 10;
 pub const BUS_RMII: u32 = 11;
 /// The chip's MIPI-DSI host, to a panel or a bridge.
 pub const BUS_MIPI_DSI: u32 = 12;
+/// A function on PCI, reached through pci.library.
+pub const BUS_PCI: u32 = 13;
 
 // A USB socket's roles (PART_UsbRoles).
 /// The controller may be the host: it gives the bus its frames, and

@@ -91,6 +91,23 @@ const DC: usize = 0x2940_0000;
 const FRAMEBUFFER_ADDRESS = 0x1400;
 const FRAMEBUFFER_STRIDE = 0x1408;
 const PANEL_START = 0x1CCC;
+/// The primary plane's extra configuration, with its shadow bit, and the
+/// panel's, whose bit 0 holds the shadow registers while it is set: what
+/// is written meanwhile is taken together once both are let go.
+const FRAMEBUFFER_CONFIG_EX = 0x1CC0;
+const FRAMEBUFFER_SHADOW: u32 = 1 << 12;
+const PANEL_CONFIG_EX = 0x2518;
+const PANEL_HOLD: u32 = 1 << 0;
+/// The cursor plane: an ARGB8888 image 32 or 64 pixels square, laid over
+/// the picture by the controller with its hot spot at LOCATION. Format 0
+/// is no cursor; VALID stays set either way, as U-Boot and Linux leave it.
+const CURSOR_CONFIG = 0x1468;
+const CURSOR_ADDRESS = 0x146C;
+const CURSOR_LOCATION = 0x1470;
+const CURSOR_ARGB8888: u32 = 2;
+const CURSOR_VALID: u32 = 1 << 2;
+const CURSOR_UPDATE: u32 = 1 << 3;
+const CURSOR_SIZE_64: u32 = 1 << 5;
 
 /// One mode.
 pub const width = 1920;
@@ -260,7 +277,38 @@ pub fn start(address: usize, pitch: u32, waiter: anytype) Failure {
     return .none;
 }
 
+/// The shadow registers held, for writes that are to be taken together
+/// (`let go`), as Linux's driver writes a plane.
+fn hold() void {
+    dc(PANEL_CONFIG_EX).* |= PANEL_HOLD;
+    dc(FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_SHADOW;
+}
+
+fn letGo() void {
+    dc(FRAMEBUFFER_CONFIG_EX).* |= FRAMEBUFFER_SHADOW;
+    dc(PANEL_CONFIG_EX).* &= ~PANEL_HOLD;
+}
+
 /// The picture at `address` shown from now on.
 pub fn show(address: usize) void {
+    hold();
     dc(FRAMEBUFFER_ADDRESS).* = @truncate(address);
+    letGo();
+}
+
+/// The largest cursor image, each way.
+pub const cursor_side = 64;
+
+/// The cursor plane, all of it at once as Linux's driver writes it: the
+/// image at `address` (`cursor_side` square, or half that when `small`),
+/// its hot spot at (x, y) on the picture, shown or not. A new place alone
+/// is not taken: the controller fetches it with the configuration, whose
+/// UPDATE is written after it.
+pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
+    hold();
+    dc(CURSOR_ADDRESS).* = @truncate(address);
+    dc(CURSOR_LOCATION).* = (x & 0x3FFF) | (y & 0x3FFF) << 16;
+    const config = (hot_x & 0xFF) << 16 | (hot_y & 0xFF) << 8 | (if (small) 0 else CURSOR_SIZE_64) | CURSOR_UPDATE | CURSOR_VALID;
+    dc(CURSOR_CONFIG).* = if (shown) config | CURSOR_ARGB8888 else config;
+    letGo();
 }

@@ -55,7 +55,7 @@ const process_pri = 5;
 /// NOTES:
 /// The buses are the board's `PARTKIND_USB` parts that may be hosts,
 /// each on the device that drives its chip (`CHIP_DWC2`:
-/// usbotg.device).
+/// usbotg.device; `CHIP_XHCI`: xhci.device).
 ///
 /// BUGS:
 /// None known.
@@ -150,6 +150,7 @@ fn findController(base: *UsbBase, bus: u32) ?Controller {
         if (count == bus) {
             const name: [*:0]const u8 = switch (ub.GetTagData(st.PART_Chip, st.CHIP_NONE, it.tags)) {
                 st.CHIP_DWC2 => "usbotg.device",
+                st.CHIP_XHCI => "xhci.device",
                 else => return null,
             };
             return .{ .name = name, .unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags)) };

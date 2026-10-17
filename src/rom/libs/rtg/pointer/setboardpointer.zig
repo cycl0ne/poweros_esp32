@@ -167,9 +167,15 @@ pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, h
             if (!shown) continue;
             mask[y * mask_pitch + x / 8] |= @as(u8, 0x80) >> @intCast(x % 8);
             const packed_color = rtg_lib.PackRtgColor(@intFromEnum(format), rgb.red, rgb.green, rgb.blue);
+            // Written back the way it was read: a wider format's first
+            // channel, the value's highest, at the first byte; a 16-bit
+            // one a word in the CPU's order.
             const at = pixels + y * pitch + x * bytes;
             var i: u32 = 0;
-            while (i < bytes) : (i += 1) at[i] = @truncate(packed_color >> @intCast(8 * i));
+            while (i < bytes) : (i += 1) {
+                const shift = if (bytes > 2) 8 * (bytes - 1 - i) else 8 * i;
+                at[i] = @truncate(packed_color >> @intCast(shift));
+            }
         }
     }
 

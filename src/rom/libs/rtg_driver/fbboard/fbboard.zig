@@ -28,6 +28,13 @@
 //! and not the picture's. With nothing over the picture the display reads
 //! the shown buffer itself, and nothing is copied.
 //!
+//! The JH7110's controller has a pointer of its own, its cursor plane,
+//! which it lays over the picture itself: there the pointer is that
+//! (`cursor`), the image copied into a buffer of the block's as ARGB, its
+//! mask the alpha, and a move is the plane written again at its new place.
+//! Two buffers take turns, so the one the controller reads is never the
+//! one written. The overlay is still laid in the composed frame.
+//!
 //! The module keeps nothing of its own: a ROM image is read only, so the
 //! driver node and everything that changes are allocated at init and found
 //! again through the node.
@@ -113,8 +120,16 @@ const Screen = struct {
     /// request each wait copies.
     timer_io: timer.TimeRequest = .{},
     timer_open: bool = false,
-    /// The frame the pointer is composed in, the block's last.
+    /// The frame the pointer is composed in, past the buffers.
     composed: ?[*]u8 = null,
+    /// The cursor plane's two image buffers, past the composed frame, on
+    /// a display that has one; which of them is the plane's, whether it is
+    /// the small size, and its image's hot spot.
+    cursor: ?[*]u8 = null,
+    cursor_turn: u1 = 0,
+    cursor_small: bool = false,
+    cursor_hot_x: u32 = 0,
+    cursor_hot_y: u32 = 0,
     /// The pointer: its image (the library's), where the image's top left
     /// is, and whether it is shown.
     pointer: ?*const rtg.RtgPointerImage = null,
@@ -215,7 +230,8 @@ fn present(screen: *Screen) void {
 /// in bands.
 fn composing(screen: *Screen) bool {
     if (screen.composed == null or screen.showing == null) return false;
-    return screen.band_count > 1 or (screen.pointer_shown and screen.pointer != null) or screen.overlay != null;
+    const pointer = screen.cursor == null and screen.pointer_shown and screen.pointer != null;
+    return screen.band_count > 1 or pointer or screen.overlay != null;
 }
 
 /// Where display row `y` comes from: its band's buffer, that buffer's row
@@ -261,7 +277,7 @@ fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i3
 /// the shown buffer.
 fn restore(screen: *Screen) void {
     restoreImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    restoreImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+    if (screen.cursor == null) restoreImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
 }
 
 fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
@@ -283,7 +299,7 @@ fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, 
 /// over it when it is shown.
 fn lay(screen: *Screen) void {
     layImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    if (screen.pointer_shown) layImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+    if (screen.pointer_shown and screen.cursor == null) layImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
 }
 
 /// One image laid over the composed frame: a masked copy, cut to the
@@ -340,6 +356,10 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
     if (image) |one| {
         if (one.format != screen.format) return err.RTGERR_BAD_FORMAT;
     }
+    if (screen.cursor != null) {
+        cursorImage(screen, image);
+        return err.RTGERR_OK;
+    }
     change(screen, struct {
         fn apply(on: *Screen, given: anytype) void {
             on.pointer = given;
@@ -350,6 +370,11 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
 
 fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
+    if (screen.cursor != null) {
+        screen.pointer_left = left;
+        screen.pointer_top = top;
+        return cursorPlane(screen);
+    }
     if (!composing(screen)) {
         screen.pointer_left = left;
         screen.pointer_top = top;
@@ -366,9 +391,71 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     const screen = screenOf(board);
     screen.pointer_shown = show;
+    if (screen.cursor != null) {
+        cursorPlane(screen);
+        return err.RTGERR_OK;
+    }
     rebuild(screen);
     present(screen);
     return err.RTGERR_OK;
+}
+
+// --- the pointer, on the controller's cursor plane ---------------------------
+
+/// The bytes of one of the cursor plane's buffers.
+const cursor_bytes = jh7110.cursor_side * jh7110.cursor_side * 4;
+
+fn cursorBuffer(screen: *Screen, turn: u1) [*]u8 {
+    return screen.cursor.? + @as(usize, turn) * cursor_bytes;
+}
+
+/// The plane told its buffer, size and hot spot, the hot spot's place -
+/// where the image's top left puts it, kept on the picture - and whether
+/// it is seen: only with an image.
+fn cursorPlane(screen: *Screen) void {
+    const buffer = cursorBuffer(screen, screen.cursor_turn);
+    const x = screen.pointer_left + @as(i32, @intCast(screen.cursor_hot_x));
+    const y = screen.pointer_top + @as(i32, @intCast(screen.cursor_hot_y));
+    const max_x: i32 = @intCast(screen.width - 1);
+    const max_y: i32 = @intCast(screen.height - 1);
+    jh7110.cursor(
+        @intFromPtr(buffer),
+        screen.cursor_small,
+        screen.cursor_hot_x,
+        screen.cursor_hot_y,
+        @intCast(std.math.clamp(x, 0, max_x)),
+        @intCast(std.math.clamp(y, 0, max_y)),
+        screen.pointer_shown and screen.pointer != null,
+    );
+}
+
+/// A new image into the buffer the plane is not reading - ARGB, opaque
+/// where the mask says, clear elsewhere - and the plane turned to it.
+fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
+    screen.pointer = image;
+    const one = image orelse return cursorPlane(screen);
+    const small = one.width <= jh7110.cursor_side / 2 and one.height <= jh7110.cursor_side / 2;
+    const side: u32 = if (small) jh7110.cursor_side / 2 else jh7110.cursor_side;
+    const turn = screen.cursor_turn +% 1;
+    const buffer = cursorBuffer(screen, turn);
+    const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
+    @memset(pixels[0 .. side * side], 0);
+    const rows = @min(one.height, side);
+    const columns = @min(one.width, side);
+    var y: u32 = 0;
+    while (y < rows) : (y += 1) {
+        const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
+        var x: u32 = 0;
+        while (x < columns) : (x += 1) {
+            if (one.opaqueAt(x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
+        }
+    }
+    handOn(screen, buffer, side * side * 4);
+    screen.cursor_turn = turn;
+    screen.cursor_small = small;
+    screen.cursor_hot_x = @min(one.hot_x, side - 1);
+    screen.cursor_hot_y = @min(one.hot_y, side - 1);
+    cursorPlane(screen);
 }
 
 fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
@@ -466,13 +553,16 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     // it is first shown.
     const frame: usize = @as(usize, screen.pitch) * screen.height;
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
-    screen.memory_size = (frames + 1) * frame + page;
+    // The cursor plane's two buffers after the composed frame.
+    const cursors: usize = if (scanout == .jh7110) 2 * cursor_bytes else 0;
+    screen.memory_size = (frames + 1) * frame + cursors + page;
     screen.memory = sys.AllocMem(screen.memory_size, exec.MEMF_DMA) orelse {
         screen.memory_size = 0;
         return err.RTGERR_NO_MEMORY;
     };
     const base = std.mem.alignForward(usize, @intFromPtr(screen.memory.?), page);
     screen.composed = @ptrFromInt(base + frames * frame);
+    if (cursors != 0) screen.cursor = @ptrFromInt(base + (frames + 1) * frame);
     board.region = .{
         .base = @ptrFromInt(base),
         .size = frames * frame,

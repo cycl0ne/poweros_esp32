@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT
+//! pci.library's functions: the machine's PCI functions found, claimed,
+//! their configuration space read and written, their interrupts hooked.
+//! Open it with OpenLibrary("pci.library", 1); the structures are in
+//! sdk.pci.
+##include libs/exec/exec as exec
+##include libs/pci/pci as pci
+##basetype PCIBase
+##name pci.library
+##bias 4
+##public
+/// The function after `previous` (null: from the first) whose vendor and
+/// device are these (PCI_ANY: any), or null.
+?*pci.PCIDevice FindPCIDevice(?*pci.PCIDevice previous, u32 vendor, u32 device)
+/// The function after `previous` (null: from the first) whose class code,
+/// masked with `mask`, is `class_code`, or null.
+?*pci.PCIDevice FindPCIClass(?*pci.PCIDevice previous, u32 class_code, u32 mask)
+/// `size` bytes (1, 2 or 4) of the function's configuration space at
+/// `offset`, which they are aligned to.
+u32 ReadPCIConfig(*pci.PCIDevice device, u32 offset, u32 size)
+/// `size` bytes (1, 2 or 4) of `value` into the function's configuration
+/// space at `offset`, which they are aligned to.
+void WritePCIConfig(*pci.PCIDevice device, u32 offset, u32 size, u32 value)
+/// The function taken by the driver called `owner`: null, or the name of
+/// the one that has it.
+?[*:0]const u8 ClaimPCIDevice(*pci.PCIDevice device, [*:0]const u8 owner)
+/// A claimed function given back, its bus mastering off.
+void ReleasePCIDevice(*pci.PCIDevice device)
+/// `server` run whenever the function raises its INTx line; false if it
+/// has none.
+bool AddPCIIntServer(*pci.PCIDevice device, *exec.Interrupt server)
+/// The server taken off the function's line.
+void RemPCIIntServer(*pci.PCIDevice device, *exec.Interrupt server)
+##end
