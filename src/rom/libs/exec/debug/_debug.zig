@@ -30,6 +30,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
+const exec_base = @import("../exec_base.zig");
 const _rawio = @import("../rawio/_rawio.zig");
 
 /// What the chip's part of the debugger is, as `RawIOHardware` is what
@@ -64,20 +65,22 @@ pub const DebugHardware = struct {
     whereIs: *const fn (address: usize, offset: *usize) ?[*:0]const u8,
     /// Whether an address can be read without faulting again.
     readable: *const fn (address: usize) bool,
-    /// A breakpoint in one of the core's slots, off when null.
+    /// A breakpoint in one of the slots, off when null: on both cores,
+    /// the other one loading it as the debugger lets it go.
     setBreakpoint: *const fn (slot: u32, address: ?usize) void,
     /// Where that slot's breakpoint is, for listing them.
     breakpointAt: *const fn (slot: u32) ?usize,
-    /// A watchpoint on `size` bytes, on reading, writing or both.
+    /// A watchpoint on `size` bytes, on reading, writing or both; on both
+    /// cores, as a breakpoint is.
     setWatchpoint: *const fn (slot: u32, address: ?usize, size: u32, on_read: bool, on_write: bool) void,
     /// The next instruction only, then back to the debugger.
     step: *const fn () void,
     /// Going on from where it stopped, carrying a breakpoint at that
     /// very address over itself.
     resumeFrom: *const fn (pc: usize) void,
-    /// Every breakpoint and watchpoint off.
+    /// Every breakpoint and watchpoint off, on both cores.
     clearAll: *const fn () void,
-    /// How many of each the core has.
+    /// How many of each a core has.
     breakpoints: u32,
     watchpoints: u32,
     /// What `DEBUGCAUSE` said, in words.
@@ -543,15 +546,17 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
         printf("\n*** no debugger on this machine\n", .{});
         return;
     };
+    // Nothing else runs while the debugger has the machine, and the
+    // level the caller was at is put back when it goes on. Two cores that
+    // stop at once both come here: the one that holds the other first has
+    // it, and the other waits in `stop` for its turn - so the state of the
+    // visit is written only once this core has the machine.
+    const saved = chip.stop();
+    defer chip.go(saved);
     reason = why;
     frame = trap_frame;
     cause = why_stopped;
     going = false;
-
-    // Nothing else runs while the debugger has the machine, and the
-    // level the caller was at is put back when it goes on.
-    const saved = chip.stop();
-    defer chip.go(saved);
 
     if (!stackLooksSound()) {
         printf("\n*** the stack is not sound (sp 0x%08x): halted\n", .{@as(u32, @truncate(@frameAddress()))});
@@ -570,7 +575,7 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
     }
     if (exec.initialized) {
         const task = exec.SysBase.cpu().this_task;
-        printf("stopped in task \"%s\"\n", .{task.name()});
+        printf("stopped in task \"%s\" on core %u\n", .{ task.name(), exec_base.coreId() });
     }
 
     while (!going) {
@@ -623,7 +628,8 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
         } else if (same(word, "reset")) {
             chip.reboot();
         } else {
-            printf("%.16s? ? for the commands.\n", .{word.ptr});
+            puts(word);
+            puts("? ? for the commands.\n");
         }
     }
 }

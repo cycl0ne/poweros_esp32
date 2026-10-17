@@ -14,9 +14,15 @@
 //! has, say - never takes that interrupt, so every such spin asks
 //! `parkIfAsked` as it goes round. And two cores asking at once: the one
 //! that loses the request parks for the one that won, then asks again.
+//!
+//! The ROM debugger holds the other core the same way while it runs, and
+//! its breakpoints and watchpoints are each core's own registers: a core
+//! that leaves the park loads them if they changed meanwhile
+//! (debugexc.zig).
 
 const cpu = @import("cpu.zig");
 const cpu1 = @import("cpu1.zig");
+const debugexc = @import("debugexc.zig");
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
 
@@ -87,6 +93,7 @@ pub fn parkIfAsked() void {
     const before = cpu.ccount();
     parkHere();
     parked_max[core] = @max(parked_max[core], cpu.ccount() -% before);
+    debugexc.catchUp();
 }
 
 /// The loop a held core waits in: internal RAM, no calls, nothing but the

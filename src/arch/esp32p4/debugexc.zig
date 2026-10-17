@@ -29,9 +29,18 @@
 //! keeps every interrupt off, so the step lands in the code being looked
 //! at and not in whichever interrupt was next; the stopped code's own
 //! interrupt state is not touched.
+//!
+//! **Both cores stop at them.** Each core's triggers are its own and only
+//! that core can write them, so what the debugger asks for is kept here,
+//! in one table for the machine with a count of its changes. The core the
+//! debugger runs on loads it at once; the other one, which the debugger
+//! holds parked meanwhile, loads it as it leaves the park
+//! (rendezvous.zig). A visit and a step are each core's own, so two cores
+//! that stop at once take the debugger in turn.
 
 const exec = @import("../../rom/libs/exec/exec.zig");
 const debug = @import("../../rom/libs/exec/debug/_debug.zig");
+const cpu = @import("cpu.zig");
 const trap = @import("trap.zig");
 const reg = @import("sdk").hardware.mmio.reg;
 
@@ -131,15 +140,78 @@ fn takeHit() ?u32 {
 
 // --- what the debugger asks for --------------------------------------------------
 
-/// The breakpoints' addresses, kept here: the trigger's tdata2 is all the
-/// core keeps, and a held one has none.
+/// What the debugger asked for, for both cores: the breakpoints'
+/// addresses, the watchpoint, and how many times any of it has changed.
 var breakpoint_at: [breakpoints]?usize = .{ null, null };
+var watch: ?Watch = null;
+var changes: u32 = 0;
+
+/// The watchpoint as its trigger takes it.
+const Watch = struct { control: u32, pattern: u32 };
+
+/// One core's part: its visit, its step, and which change of the table its
+/// triggers hold.
+const Core = struct {
+    /// A step the person asked for, which does stop; and a breakpoint held
+    /// off for the one instruction at its own address.
+    stepping: bool = false,
+    held_slot: ?u32 = null,
+    /// The frame of the visit going on now, and what stopped it.
+    current: ?*trap.Frame = null,
+    last_cause: Cause = .stopped,
+    /// The interrupt threshold before a step, put back after it.
+    saved_threshold: u32 = 0,
+    held_off_interrupts: bool = false,
+    /// Whether the debugger already has this core: a trigger cannot fire
+    /// inside a trap, but an `ebreak` in code it calls could.
+    inside: bool = false,
+    loaded: u32 = 0,
+};
+
+var cores: [2]Core = .{ .{}, .{} };
+
+/// The core this runs on. Everything here runs in a trap or with
+/// interrupts masked, so it stays on it.
+fn here() *Core {
+    return &cores[cpu.coreId()];
+}
+
+/// This core's triggers made what the table says, but for a breakpoint it
+/// holds off for one instruction, and the third trigger while a step has
+/// it.
+fn load(core: *Core) void {
+    core.loaded = @atomicLoad(u32, &changes, .acquire);
+    var slot: u32 = 0;
+    while (slot < breakpoints) : (slot += 1) {
+        const at = breakpoint_at[slot] orelse {
+            write(slot, 0, 0);
+            continue;
+        };
+        if (core.held_slot == slot) write(slot, 0, 0) else executeAt(slot, at);
+    }
+    if (core.held_off_interrupts) return;
+    if (watch) |set| write(watch_trigger, set.control, set.pattern) else write(watch_trigger, 0, 0);
+}
+
+/// The table changed: counted for the other core, loaded on this one.
+fn changed() void {
+    @atomicStore(u32, &changes, changes +% 1, .release);
+    load(here());
+}
+
+/// The table loaded if it changed since this core last did: the other
+/// core's turn, as it leaves the park the debugger held it in.
+pub fn catchUp() void {
+    const core = here();
+    if (core.loaded == @atomicLoad(u32, &changes, .acquire)) return;
+    load(core);
+}
 
 /// A breakpoint at `address`, or off when `address` is null.
 pub fn setBreakpoint(slot: u32, address: ?usize) void {
     if (slot >= breakpoints) return;
     breakpoint_at[slot] = address;
-    if (address) |at| executeAt(slot, at) else write(slot, 0, 0);
+    changed();
 }
 
 /// Where a breakpoint is, for the debugger to list.
@@ -156,7 +228,7 @@ pub fn setWatchpoint(slot: u32, address: ?usize, size: u32, on_read: bool, on_wr
     if (slot >= watchpoints) return;
     const at = address orelse {
         watch = null;
-        return write(watch_trigger, 0, 0);
+        return changed();
     };
     var span: u32 = 1;
     while (span < size and span < largest_watch) span <<= 1;
@@ -169,86 +241,74 @@ pub fn setWatchpoint(slot: u32, address: ?usize, size: u32, on_read: bool, on_wr
         pattern = (pattern & ~(span - 1)) | ((span - 1) >> 1);
     }
     watch = .{ .control = control, .pattern = pattern };
-    write(watch_trigger, control, pattern);
+    changed();
 }
-
-/// The watchpoint as set, put back after a step has had its trigger.
-const Watch = struct { control: u32, pattern: u32 };
-var watch: ?Watch = null;
-
-/// A step the person asked for, which does stop; and a breakpoint held off
-/// for the one instruction at its own address.
-var stepping = false;
-var held_slot: ?u32 = null;
-/// The frame of the visit going on now, and what stopped it.
-var current: ?*trap.Frame = null;
-var last_cause: Cause = .stopped;
-/// The interrupt threshold before a step, put back after it.
-var saved_threshold: u32 = 0;
-var held_off_interrupts = false;
 
 /// The next instruction only, then back to the debugger.
 pub fn step() void {
-    const frame = current orelse return;
-    holdBreakpointAt(frame.mepc);
-    stepping = true;
-    stepFrom(frame);
+    const core = here();
+    const frame = core.current orelse return;
+    holdBreakpointAt(core, frame.mepc);
+    core.stepping = true;
+    stepFrom(core, frame);
 }
 
 /// Going on from where the debugger stopped. A breakpoint at the address
 /// about to run is carried over its own instruction: held off, stepped
 /// past, put back - a step that stops for nobody.
 pub fn resumeFrom(pc: usize) void {
-    stepping = false;
-    holdBreakpointAt(pc);
-    if (held_slot == null and last_cause != .watchpoint) return;
-    const frame = current orelse return;
-    stepFrom(frame);
+    const core = here();
+    core.stepping = false;
+    holdBreakpointAt(core, pc);
+    if (core.held_slot == null and core.last_cause != .watchpoint) return;
+    const frame = core.current orelse return;
+    stepFrom(core, frame);
 }
 
-fn stepFrom(frame: *trap.Frame) void {
+fn stepFrom(core: *Core, frame: *trap.Frame) void {
     executeAt(step_trigger, nextPc(frame));
-    if (!held_off_interrupts) {
-        saved_threshold = reg(clic_threshold).*;
+    if (!core.held_off_interrupts) {
+        core.saved_threshold = reg(clic_threshold).*;
         reg(clic_threshold).* = threshold_all;
         // Read back: the new threshold holds once the write has landed.
         _ = reg(clic_threshold).*;
-        held_off_interrupts = true;
+        core.held_off_interrupts = true;
     }
 }
 
-fn endStep() void {
-    if (watch) |set| write(watch_trigger, set.control, set.pattern) else write(step_trigger, 0, 0);
-    if (held_off_interrupts) {
-        reg(clic_threshold).* = saved_threshold;
-        held_off_interrupts = false;
+/// The step over: the threshold put back, the held breakpoint and the
+/// watchpoint back on their triggers.
+fn endStep(core: *Core) void {
+    if (core.held_off_interrupts) {
+        reg(clic_threshold).* = core.saved_threshold;
+        core.held_off_interrupts = false;
     }
-    if (held_slot) |slot| {
-        held_slot = null;
-        if (breakpoint_at[slot]) |at| executeAt(slot, at);
-    }
+    core.held_slot = null;
+    load(core);
 }
 
-/// The breakpoint at `pc`, if there is one, held off for the one
-/// instruction about to run.
-fn holdBreakpointAt(pc: usize) void {
-    held_slot = null;
-    for (breakpoint_at, 0..) |maybe, slot| {
-        if (maybe != pc) continue;
-        held_slot = @intCast(slot);
-        write(@intCast(slot), 0, 0);
-        return;
+/// The breakpoint at `pc`, if there is one, held off on this core for the
+/// one instruction about to run.
+fn holdBreakpointAt(core: *Core, pc: usize) void {
+    core.held_slot = null;
+    var slot: u32 = 0;
+    while (slot < breakpoints) : (slot += 1) {
+        if (breakpoint_at[slot] != pc) continue;
+        core.held_slot = slot;
+        break;
     }
+    load(core);
 }
 
-/// Everything turned off, for going on without stopping again.
+/// Everything turned off, on both cores, for going on without stopping
+/// again.
 pub fn clearAll() void {
-    stepping = false;
-    endStep();
-    var trigger: u32 = 0;
-    while (trigger < 3) : (trigger += 1) write(trigger, 0, 0);
+    const core = here();
+    core.stepping = false;
     breakpoint_at = .{ null, null };
     watch = null;
+    @atomicStore(u32, &changes, changes +% 1, .release);
+    endStep(core);
 }
 
 /// What stopped the core, in words.
@@ -332,28 +392,25 @@ fn compressedNext(frame: *const trap.Frame, pc: u32, half: u16) usize {
 
 // --- the breakpoint exception ------------------------------------------------------------
 
-/// Whether the debugger already has the machine: a trigger cannot fire
-/// inside a trap, but an `ebreak` in code it calls could.
-var inside = false;
-
 /// The breakpoint exception, from trap.zig. Returns without stopping when
 /// it is the step that carries a breakpoint over its own address;
 /// otherwise the debugger is given the machine, and an `ebreak` is gone
 /// past when it goes on.
 pub fn onBreakpoint(frame: *trap.Frame) void {
     const trigger = takeHit();
-    if (inside) {
+    const core = here();
+    if (core.inside) {
         clearAll();
         if (trigger == null) frame.mepc += instructionLength(frame.mepc);
         return;
     }
-    current = frame;
+    core.current = frame;
     var cause: Cause = .stopped;
     if (trigger) |which| {
-        const was_step = held_off_interrupts and which == step_trigger;
+        const was_step = core.held_off_interrupts and which == step_trigger;
         if (was_step) {
-            endStep();
-            if (!stepping) return; // only carried a breakpoint over itself
+            endStep(core);
+            if (!core.stepping) return; // only carried a breakpoint over itself
             cause = .stepped;
         } else {
             cause = if (which == watch_trigger) .watchpoint else .breakpoint;
@@ -362,10 +419,10 @@ pub fn onBreakpoint(frame: *trap.Frame) void {
         cause = .ebreak;
         frame.mepc += instructionLength(frame.mepc);
     }
-    stepping = false;
-    last_cause = cause;
-    inside = true;
-    defer inside = false;
+    core.stepping = false;
+    core.last_cause = cause;
+    core.inside = true;
+    defer core.inside = false;
     debug.enter(.stopped, frame, @intFromEnum(cause));
 }
 

@@ -257,7 +257,9 @@ dbg> reset                   the machine started again
 The breakpoints and watchpoints are the core's own - two of each on the
 ESP32-S3, two breakpoints and one watchpoint from the ESP32-P4's three
 triggers - so nothing is written into the code, which could not be done
-anyway: it is in flash, mapped for reading. On the ESP32-P4 `bt` follows
+anyway: it is in flash, mapped for reading. Both cores are given the
+same ones, so code stops at them on either core, and the debugger says
+which core it stopped on. On the ESP32-P4 `bt` follows
 the frame pointers the kernel is built with. `s` steps one instruction with every
 interrupt held off, so what is stepped is the code that was stopped and
 not whichever interrupt happened to be next; the stopped code's own

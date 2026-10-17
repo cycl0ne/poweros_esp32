@@ -151,11 +151,12 @@ anyway. A watchpoint beyond the last slot replaces the oldest. `b` lists
 each address with the code it is in, so typing an address to `b` and
 taking it off again names it.
 
-**They are set on one core:** the one the debugger runs on, which is
-core 0 when it was entered from `s3>`. Code that runs on the other core
-passes them. A kernel built with `-Dcores=1` runs everything on core 0,
-so every task meets them; a task can also be pinned to core 0
-(`SetTaskAffinity`).
+**Both cores stop at them.** Each core's registers are its own, so the
+debugger keeps one list: the core it runs on loads it at once, and the
+other core, which it holds still meanwhile, loads it as it is let go.
+The stop names the core - `stopped in task "input.device" on core 1`.
+Two cores that stop at once take the debugger in turn: the second stop
+comes as soon as the first goes on.
 
 **Going on.** From a breakpoint, `g` steps over the breakpoint's own
 instruction and puts it back. From a dead end there is nothing to go
@@ -170,35 +171,37 @@ guess the rest.
 
 **A session.** A breakpoint on `AllocMem`'s vector, found with
 `llvm-nm zig-out/bin/kernel | grep lvoAllocMem`, and the shell made to
-allocate:
+allocate. It is set once the boot is done: while the system is still
+coming up, the first stop is whichever task allocates first, on either
+core.
 
 ```
 s3> debug
 ROM debugger. ? for the commands.
-stopped in task "shell"
-dbg> b 42816c34
-  0  0x42816C34 (the ROM)
+stopped in task "shell" on core 0
+dbg> b 42816fc8
+  0  0x42816FC8 (the ROM)
 dbg> g
 s3> newshell
 ROM debugger. ? for the commands.
-breakpoint at 0x42816C34 (the ROM)
-stopped in task "shell"
+breakpoint at 0x42816FC8 (the ROM)
+stopped in task "shell" on core 0
 dbg> bt
-   0  0x42816C34 (the ROM)
-   1  0x4289E062 (the ROM)
-   2  0x4289DE97 (the ROM)
+   0  0x42816FC8 (the ROM)
+   1  0x4289E3F6 (the ROM)
+   2  0x4289E22B (the ROM)
    ...
 dbg> b off
 all off
 dbg> g
 ```
 
-`llvm-symbolizer --obj=zig-out/bin/kernel 0x4289E062 0x4289DE97` then
+`llvm-symbolizer --obj=zig-out/bin/kernel 0x4289E3F6 0x4289E22B` then
 names the calls: `AllocVec` from dos's `AllocDosObject`.
 
 **Who writes a word.** A watchpoint on it - `w <addr> 4 w`, then `g` -
 stops the machine at the code that writes it, in whichever task runs it
-on that core, and `bt` shows how that code got there. The same boot in
+on either core, and `bt` shows how that code got there. The same boot in
 QEMU often puts the same blocks at the same addresses, so an address
 found once can be watched early in the next run.
 
@@ -368,7 +371,9 @@ what is written to the disk. A test runs at boot without typing when its
 commands are put on the disk as `s/User-Startup` with
 `-Dextra=s/User-Startup=<file>`.
 `./zig build emu` runs the ESP32-P4 kernel in esp-emulator, without a
-screen. QEMU's time is not the chip's: compare speeds on a board.
+screen. The emulator has no debug triggers: the ROM debugger runs there,
+but its breakpoints and watchpoints never fire - QEMU's do, on both
+cores. QEMU's time is not the chip's: compare speeds on a board.
 
 ## Over JTAG
 

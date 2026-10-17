@@ -17,6 +17,14 @@
 //! only then run on. `stepping_over` is which breakpoint that is, and
 //! the step it causes is the one visit to this handler that does not
 //! stop for the person at the console.
+//!
+//! **Both cores stop at them.** Each core's registers are its own and only
+//! that core can write them, so what the debugger asks for is kept here,
+//! in one table for the machine with a count of its changes. The core the
+//! debugger runs on loads it at once; the other one, which the debugger
+//! holds parked meanwhile, loads it as it leaves the park
+//! (rendezvous.zig). A visit and a step are each core's own, so two cores
+//! that stop at once take the debugger in turn.
 
 const std = @import("std");
 const exec = @import("../../rom/libs/exec/exec.zig");
@@ -42,18 +50,43 @@ pub const watchpoints = 2;
 /// was asked for.
 const one_step: u32 = @bitCast(@as(i32, -2));
 
-/// A breakpoint held off for one instruction because it is at the very
-/// address about to run: returning to it would stop again before
-/// anything had moved. It goes back on at the step that follows.
-var held_slot: ?u32 = null;
-var held_at: usize = 0;
-/// A step the person asked for, which does stop.
-var stepping = false;
-/// The frame of the visit going on now.
-var current: ?*trap.Frame = null;
-/// What was enabled before a step, put back after it.
-var saved_intenable: u32 = 0;
-var masked_for_step = false;
+/// What the debugger asked for, for both cores: the breakpoints'
+/// addresses, the watchpoints as `DBREAKA`/`DBREAKC` take them, and how
+/// many times any of it has changed.
+var breakpoint_at: [breakpoints]?usize = .{ null, null };
+var watch: [watchpoints]Watch = .{ .{}, .{} };
+var changes: u32 = 0;
+
+const Watch = struct { address: u32 = 0, control: u32 = 0 };
+
+/// One core's part: its visit, its step, and which change of the table
+/// its registers hold.
+const Core = struct {
+    /// A breakpoint held off for one instruction because it is at the
+    /// very address about to run: returning to it would stop again before
+    /// anything had moved. It goes back on at the step that follows.
+    held_slot: ?u32 = null,
+    /// A step the person asked for, which does stop.
+    stepping: bool = false,
+    /// The frame of the visit going on now.
+    current: ?*trap.Frame = null,
+    /// What was enabled before a step, put back after it.
+    saved_intenable: u32 = 0,
+    masked_for_step: bool = false,
+    /// Whether the debugger already has this core. A breakpoint or a
+    /// watchpoint that goes off inside the debugger itself would call it
+    /// again on top of itself, and it would never come back.
+    inside: bool = false,
+    loaded: u32 = 0,
+};
+
+var cores: [2]Core = .{ .{}, .{} };
+
+/// The core this runs on. Everything here runs with interrupts masked,
+/// so it stays on it.
+fn here() *Core {
+    return &cores[cpu.coreId()];
+}
 
 /// Counting happens at every level the code being stepped might be at.
 /// `Disable` and a spinlock raise the level themselves, so a step through
@@ -62,12 +95,6 @@ var masked_for_step = false;
 const count_level: u32 = 5;
 
 // --- the core's registers ---------------------------------------------------
-
-inline fn ibreakenable() u32 {
-    return asm volatile ("rsr %[r], ibreakenable"
-        : [r] "=r" (-> u32),
-    );
-}
 
 inline fn setIbreakenable(value: u32) void {
     asm volatile (
@@ -129,33 +156,51 @@ inline fn setIcount(value: u32, level: u32) void {
 
 // --- what the debugger asks for ---------------------------------------------
 
-/// A breakpoint at `address`, or off when `address` is null. Which one,
-/// or null when both are taken.
-pub fn setBreakpoint(slot: u32, address: ?usize) void {
-    var enabled = ibreakenable();
-    if (address) |at| {
+/// This core's registers made what the table says, but for a breakpoint
+/// it holds off for one instruction.
+fn load(core: *Core) void {
+    core.loaded = @atomicLoad(u32, &changes, .acquire);
+    var enabled: u32 = 0;
+    var slot: u32 = 0;
+    while (slot < breakpoints) : (slot += 1) {
+        const at = breakpoint_at[slot] orelse continue;
+        if (core.held_slot == slot) continue;
         switch (slot) {
             0 => setIbreaka(0, @truncate(at)),
             else => setIbreaka(1, @truncate(at)),
         }
         enabled |= @as(u32, 1) << @truncate(slot);
-    } else {
-        enabled &= ~(@as(u32, 1) << @truncate(slot));
     }
     setIbreakenable(enabled);
+    setDbreak(0, watch[0].address, watch[0].control);
+    setDbreak(1, watch[1].address, watch[1].control);
+}
+
+/// The table changed: counted for the other core, loaded on this one.
+fn changed() void {
+    @atomicStore(u32, &changes, changes +% 1, .release);
+    load(here());
+}
+
+/// The table loaded if it changed since this core last did: the other
+/// core's turn, as it leaves the park the debugger held it in.
+pub fn catchUp() void {
+    const core = here();
+    if (core.loaded == @atomicLoad(u32, &changes, .acquire)) return;
+    load(core);
+}
+
+/// A breakpoint at `address`, or off when `address` is null.
+pub fn setBreakpoint(slot: u32, address: ?usize) void {
+    if (slot >= breakpoints) return;
+    breakpoint_at[slot] = address;
+    changed();
 }
 
 /// Where a breakpoint is, for the debugger to list.
 pub fn breakpointAt(slot: u32) ?usize {
-    if (ibreakenable() & (@as(u32, 1) << @truncate(slot)) == 0) return null;
-    return switch (slot) {
-        0 => asm volatile ("rsr %[r], ibreaka0"
-            : [r] "=r" (-> u32),
-        ),
-        else => asm volatile ("rsr %[r], ibreaka1"
-            : [r] "=r" (-> u32),
-        ),
-    };
+    if (slot >= breakpoints) return null;
+    return breakpoint_at[slot];
 }
 
 /// A watchpoint on `size` bytes at `address`, on reading, on writing or
@@ -165,12 +210,10 @@ pub fn breakpointAt(slot: u32) ?usize {
 /// address is a multiple of it, which is what the mask in `DBREAKC`
 /// says: the bits of the address that must match.
 pub fn setWatchpoint(slot: u32, address: ?usize, size: u32, on_read: bool, on_write: bool) void {
+    if (slot >= watchpoints) return;
     const at = address orelse {
-        switch (slot) {
-            0 => setDbreak(0, 0, 0),
-            else => setDbreak(1, 0, 0),
-        }
-        return;
+        watch[slot] = .{};
+        return changed();
     };
     var mask: u32 = 0x3F;
     var span: u32 = 1;
@@ -180,20 +223,19 @@ pub fn setWatchpoint(slot: u32, address: ?usize, size: u32, on_read: bool, on_wr
     if (on_read) control |= 1 << 30;
     if (on_write) control |= 1 << 31;
     const aligned = at & ~@as(usize, span - 1);
-    switch (slot) {
-        0 => setDbreak(0, @truncate(aligned), control),
-        else => setDbreak(1, @truncate(aligned), control),
-    }
+    watch[slot] = .{ .address = @truncate(aligned), .control = control };
+    changed();
 }
 
 /// The next instruction only, then back here.
 pub fn step() void {
-    const frame = current orelse return;
+    const core = here();
+    const frame = core.current orelse return;
     // The breakpoint that stopped us is at the instruction about to
     // run, so it is held off for it, exactly as going on does.
-    _ = holdBreakpointAt(frame.pc);
-    stepping = true;
-    maskForStep();
+    _ = holdBreakpointAt(core, frame.pc);
+    core.stepping = true;
+    maskForStep(core);
     setIcount(one_step, count_level);
 }
 
@@ -202,51 +244,51 @@ pub fn step() void {
 /// code they were reading. The stopped code's own interrupt level is
 /// not touched: it may be inside a `Disable`, and putting a level back
 /// that the code itself had changed would undo its work.
-fn maskForStep() void {
-    if (masked_for_step) return;
-    saved_intenable = cpu.intenable();
+fn maskForStep(core: *Core) void {
+    if (core.masked_for_step) return;
+    core.saved_intenable = cpu.intenable();
     cpu.setIntenable(0);
-    masked_for_step = true;
+    core.masked_for_step = true;
 }
 
-fn unmaskAfterStep() void {
-    if (!masked_for_step) return;
-    masked_for_step = false;
-    cpu.setIntenable(saved_intenable);
+fn unmaskAfterStep(core: *Core) void {
+    if (!core.masked_for_step) return;
+    core.masked_for_step = false;
+    cpu.setIntenable(core.saved_intenable);
 }
 
-/// Everything turned off, for going on without stopping again.
+/// Everything turned off, on both cores, for going on without stopping
+/// again.
 pub fn clearAll() void {
-    unmaskAfterStep();
-    setIbreakenable(0);
-    setDbreak(0, 0, 0);
-    setDbreak(1, 0, 0);
+    const core = here();
+    unmaskAfterStep(core);
     setIcount(0, 0);
-    stepping = false;
-    held_slot = null;
+    core.stepping = false;
+    core.held_slot = null;
+    breakpoint_at = .{ null, null };
+    watch = .{ .{}, .{} };
+    changed();
 }
 
-/// The breakpoint at `pc`, if there is one, held off for the one
-/// instruction about to run.
-fn holdBreakpointAt(pc: usize) bool {
+/// The breakpoint at `pc`, if there is one, held off on this core for the
+/// one instruction about to run.
+fn holdBreakpointAt(core: *Core, pc: usize) bool {
+    core.held_slot = null;
     var slot: u32 = 0;
     while (slot < breakpoints) : (slot += 1) {
-        const at = breakpointAt(slot) orelse continue;
-        if (at != pc) continue;
-        held_slot = slot;
-        held_at = at;
-        setBreakpoint(slot, null);
-        return true;
+        if (breakpoint_at[slot] != pc) continue;
+        core.held_slot = slot;
+        break;
     }
-    held_slot = null;
-    return false;
+    load(core);
+    return core.held_slot != null;
 }
 
-/// The held breakpoint put back where it was.
-fn releaseHeld() void {
-    const slot = held_slot orelse return;
-    held_slot = null;
-    setBreakpoint(slot, held_at);
+/// The held breakpoint put back where the table has it.
+fn releaseHeld(core: *Core) void {
+    if (core.held_slot == null) return;
+    core.held_slot = null;
+    load(core);
 }
 
 /// Going on from where the debugger stopped. A breakpoint at the address
@@ -254,12 +296,13 @@ fn releaseHeld() void {
 /// past, put back - and that step is the one visit here that says
 /// nothing to anybody.
 pub fn resumeFrom(pc: usize) void {
-    stepping = false;
-    if (!holdBreakpointAt(pc)) {
+    const core = here();
+    core.stepping = false;
+    if (!holdBreakpointAt(core, pc)) {
         setIcount(0, 0);
         return;
     }
-    maskForStep();
+    maskForStep(core);
     setIcount(one_step, count_level);
 }
 
@@ -276,34 +319,30 @@ pub fn causeName(what: u32) [:0]const u8 {
 /// The debug exception. Returns without stopping when it is the step
 /// that carries a breakpoint over its own address; otherwise the
 /// debugger is given the machine.
-/// Whether the debugger already has the machine. A breakpoint or a
-/// watchpoint that goes off inside the debugger itself would call it
-/// again on top of itself, and it would never come back.
-var inside = false;
-
 export fn xtensa_debug(frame: *trap.Frame) callconv(.c) void {
     const cause = frame.exccause;
-    if (inside) {
+    const core = here();
+    if (core.inside) {
         // Everything off and straight back: a debugger that stops
         // itself stops for good, and a watchpoint on memory the
         // debugger touches would do exactly that.
         clearAll();
         return;
     }
-    current = frame;
+    core.current = frame;
     if (cause & ICOUNT_BIT != 0) {
         setIcount(0, 0);
-        releaseHeld();
-        unmaskAfterStep();
-        if (!stepping) {
+        releaseHeld(core);
+        unmaskAfterStep(core);
+        if (!core.stepping) {
             // The step was only there to carry a breakpoint over its
             // own address. Nobody is told it happened.
             return;
         }
     }
-    stepping = false;
+    core.stepping = false;
     setIcount(0, 0);
-    inside = true;
-    defer inside = false;
+    core.inside = true;
+    defer core.inside = false;
     debug.enter(.stopped, frame, cause);
 }

@@ -13,9 +13,14 @@
 //! has, say - never takes that interrupt, so every such spin asks
 //! `parkIfAsked` as it goes round. And two cores asking at once: the one
 //! that loses the request parks for the one that won, then asks again.
+//!
+//! The debugger's breakpoints and watchpoints are each core's own
+//! triggers: a core that leaves the park loads them if they changed
+//! meanwhile (debugexc.zig).
 
 const cpu = @import("cpu.zig");
 const cpu1 = @import("cpu1.zig");
+const debugexc = @import("debugexc.zig");
 const intmatrix = @import("intmatrix.zig");
 
 /// The core that asked and one, or 0; whether the other core is parked;
@@ -84,6 +89,7 @@ pub fn parkIfAsked() void {
     const before = cpu.ccount();
     parkHere();
     parked_max[core] = @max(parked_max[core], cpu.ccount() -% before);
+    debugexc.catchUp();
 }
 
 /// The loop a held core waits in: the RAM part, no calls, nothing but the
