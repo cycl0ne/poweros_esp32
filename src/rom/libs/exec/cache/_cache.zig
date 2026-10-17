@@ -502,9 +502,13 @@ const p4 = struct {
 
 /// QEMU's virt keeps its caches coherent with the devices', so a DMA
 /// range needs nothing written back or invalidated. The JH7110 does not:
-/// its devices go past the U74s' caches, and a DMA range there wants the
-/// L2 cache controller's flush - with the first driver there that uses
-/// DMA. Code and data share one address
+/// its devices go past the U74s' caches, and a range there is written
+/// back and dropped by the L2 cache controller's flush, a line at a time
+/// (`sdk.hardware.ccache`, which does nothing on a board that names no
+/// controller). The flush both writes back and drops, so it is what
+/// writing back and invalidating each are. Writing every line back has
+/// no register: CacheClearU leaves the data where it is, and a driver
+/// names its range. Code and data share one address
 /// space, and code written to memory is reached by fencing each core's
 /// instruction fetch: this one's at once, every other one's at its next
 /// exception exit (`syncFetch`).
@@ -512,15 +516,21 @@ const rv64 = struct {
     const hardware: CacheHardware = .{
         .writeback_all = nothing,
         .invalidate_icache_all = fenceFetch,
-        .writeback = nothingRange,
-        .writeback_line = nothingLine,
-        .invalidate = nothingRange,
+        .writeback = flush,
+        .writeback_line = flushLine,
+        .invalidate = flush,
         .invalidate_icache = fenceFetchRange,
     };
 
     fn nothing() void {}
-    fn nothingRange(_: usize, _: usize) void {}
-    fn nothingLine(_: usize) void {}
+
+    fn flush(addr: usize, size: usize) void {
+        sdk.hardware.ccache.flush(addr, size);
+    }
+
+    fn flushLine(addr: usize) void {
+        sdk.hardware.ccache.flush(addr, line_size);
+    }
 
     fn fenceFetchRange(_: usize, _: usize) void {
         fenceFetch();

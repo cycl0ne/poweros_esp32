@@ -92,7 +92,7 @@ fn readMachine(gb: *GraphicsBase, into: *[max_panels]Machine) usize {
 }
 
 /// Which display this machine turned out to have, and its picture's size.
-const Found = struct { which: *rtg.RtgBoard, emulated: bool, width: u32 = 0, height: u32 = 0 };
+const Found = struct { which: *rtg.RtgBoard, emulated: bool, width: u32 = 0, height: u32 = 0, bytes: usize = 0 };
 
 /// The machine's panel, made into a board called BOARD_NAME whichever
 /// driver drives it, so everything past this point is the same and nothing
@@ -126,8 +126,9 @@ fn createBoard(rb: *RtgBase, machine: *const Machine) ?Found {
         st.BUS_MIPI_DSI => if (rb.CreateBoardTagList("dsi", &named)) |which| {
             return .{ .which = which, .emulated = false };
         },
-        // The emulator's display: memory and a doorbell.
-        st.BUS_MEMORY => if (rb.CreateBoardTagList("qemu", &named)) |which| {
+        // The emulator's display: memory and a doorbell. Any other panel
+        // in the memory map reads its picture out of RAM by itself.
+        st.BUS_MEMORY => if (rb.CreateBoardTagList(if (machine.emulated) "qemu" else "fb", &named)) |which| {
             return .{ .which = which, .emulated = machine.emulated };
         },
         else => {},
@@ -167,7 +168,13 @@ fn bringUp(rb: *RtgBase, machine: *const Machine) ?Found {
         return giveBack(rb, which);
     }
     _ = rb.SetBoardBrightness(which, 100);
-    return .{ .which = which, .emulated = found.emulated, .width = mode.width, .height = mode.height };
+    return .{
+        .which = which,
+        .emulated = found.emulated,
+        .width = mode.width,
+        .height = mode.height,
+        .bytes = @as(usize, picture.pitch) * picture.height,
+    };
 }
 
 fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
@@ -210,10 +217,10 @@ pub fn openDisplay(gb: *GraphicsBase) void {
             // framebuffer of this machine's to report.
             exec.kprintf(gb.sys_base, "graphics.library: %dx%d virtual display\n", .{ found.width, found.height });
         } else {
-            exec.kprintf(gb.sys_base, "graphics.library: %dx%d panel, %d KiB in PSRAM\n", .{
+            exec.kprintf(gb.sys_base, "graphics.library: %dx%d panel, %d KiB a picture\n", .{
                 found.width,
                 found.height,
-                found.width * found.height * 2 / 1024,
+                @as(u32, @intCast(found.bytes / 1024)),
             });
         }
         return;

@@ -40,6 +40,11 @@ pub const rom_modules = .{
     @import("rom/devs/timer/timer.zig"),
     @import("rom/devs/flash/flash.zig"),
     @import("rom/devs/serial/serial.zig"),
+    @import("rom/devs/input/input.zig"),
+    @import("rom/devs/keyboard/keyboard.zig"),
+    @import("rom/devs/mouse/mouse.zig"),
+    @import("rom/libs/keymap/keymap.zig"),
+    @import("rom/devs/console/console.zig"),
     @import("rom/libs/utility/utility.zig"),
     @import("rom/libs/expansion/expansion.zig"),
     @import("rom/libs/dos/dos.zig"),
@@ -51,6 +56,11 @@ pub const rom_modules = .{
     @import("rom/handler/flashfs/flashfs.zig"),
     @import("rom/shell/shell.zig"),
     @import("rom/resources/platform/platform.zig"),
+    @import("rom/libs/rtg/rtg.zig"),
+    @import("rom/libs/graphics/graphics.zig"),
+    @import("rom/libs/layers/layers.zig"),
+    @import("rom/libs/intuition/intuition.zig"),
+    @import("rom/libs/motion/motion.zig"),
     @import("rom/release.zig"),
     // The drivers the board's parts want.
     boards.romtags.modules,
@@ -107,6 +117,7 @@ fn takeBoard(tree: device_tree.Facts) void {
     };
     hardware.systimer.timebase_hz = @intCast(boards.fact(st.SYSTAG_Timebase, 10_000_000));
     hardware.system.before_reset = boards.before_reset;
+    hardware.ccache.flush64 = boards.fact(st.SYSTAG_CacheFlush, 0);
     ram.ram_base = tree.ram_base orelse boards.fact(st.SYSTAG_RamBase, 0x8000_0000);
     ram.ram_size = tree.ram_size orelse boards.fact(st.SYSTAG_RamSize, 128 * 1024 * 1024);
     for (tree.reservedRanges(), 0..) |range, index| ram.reserved[index] = range;

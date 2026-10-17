@@ -17,6 +17,8 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const rtg = sdk.rtg;
+const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
 
@@ -30,6 +32,27 @@ const trng = [_]Tag{
     .pointer(st.PART_ChipName, "jh7110 trng"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x1600_C000),
+    .done,
+};
+
+/// The HDMI port's picture: the one mode the display path is set up for.
+const screen = struct {
+    pub const width: u32 = 1920;
+    pub const height: u32 = 1080;
+};
+
+/// The display controller behind the HDMI port, which reads its picture
+/// out of RAM: what the fb rtg driver is told comes with it.
+const display = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_JH7110_DC8200),
+    .pointer(st.PART_ChipName, "jh7110 dc8200 hdmi"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x2940_0000),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+    .value(tags.RTGA_Buffers, 3),
     .done,
 };
 
@@ -48,7 +71,13 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleIrq, 32),
     .value(st.SYSTAG_PlicFirst, 0),
     .value(st.SYSTAG_PlicStride, 2),
+    // The L2 cache controller's Flush64: the JH7110's devices do not see
+    // the U74s' caches.
+    .value(st.SYSTAG_CacheFlush, 0x0201_0200),
     .value(st.SYSTAG_Cores, 1),
+    .value(st.SYSTAG_ScreenWidth, screen.width),
+    .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &trng),
     .done,
 };

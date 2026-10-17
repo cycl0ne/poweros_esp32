@@ -89,6 +89,10 @@ pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// empty.
 pub const ramdisk = if (chip == .rv64sbi) own.ramdisk else struct {};
 pub const trng = if (chip == .rv64sbi) own.trng else struct {};
+/// The L2 cache controller's flush, on a machine under SBI firmware whose
+/// devices do not see the caches (the JH7110). The ESP32s' caches are
+/// `cache`'s, so there it is empty.
+pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

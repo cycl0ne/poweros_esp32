@@ -86,6 +86,12 @@ pub const SYSTAG_ConsoleIrq = SYSTAG_Dummy + 23;
 /// Which PLIC context is supervisor mode of hart n: first + stride * n.
 pub const SYSTAG_PlicFirst = SYSTAG_Dummy + 24;
 pub const SYSTAG_PlicStride = SYSTAG_Dummy + 25;
+/// The L2 cache controller's Flush64 register (SiFive's ccache), on a
+/// machine whose devices do not see the cores' caches: what exec writes
+/// a line's address to, to have it written back to RAM and dropped.
+/// Absent, the devices see the caches - QEMU's virt - and DMA wants
+/// nothing written back.
+pub const SYSTAG_CacheFlush = SYSTAG_Dummy + 26;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;
@@ -321,6 +327,14 @@ pub const CHIP_PCF8563: u32 = 22;
 /// The JH7110's TRNG, in its security block (PARTKIND_RNG on
 /// BUS_MEMORY), which the kernel starts.
 pub const CHIP_JH7110_TRNG: u32 = 23;
+/// QEMU's ramfb (PARTKIND_PANEL on BUS_MEMORY): a picture in RAM the
+/// emulator shows, set up through its firmware configuration device, whose
+/// registers PART_Address names.
+pub const CHIP_QEMU_RAMFB: u32 = 24;
+/// The JH7110's display controller and its HDMI transmitter
+/// (PARTKIND_PANEL on BUS_MEMORY, PART_Address the controller): 1920x1080
+/// at 60 Hz, as the board's firmware sets it up.
+pub const CHIP_JH7110_DC8200: u32 = 25;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
