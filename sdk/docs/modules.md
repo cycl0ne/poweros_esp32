@@ -95,6 +95,7 @@ flowchart TB
     m_expander_resource --> m_i2c_device
     m_flashfs_handler --> m_dos_library
     m_flashfs_handler -.-> m_flash_device
+    m_flashfs_handler -.-> m_timer_device
     m_graphics_library --> m_rtg_library
     m_i2c_device --> m_gpio_resource
     m_input_device --> m_keyboard_device
@@ -118,6 +119,7 @@ flowchart TB
     m_nil_handler --> m_dos_library
     m_pipe_handler --> m_dos_library
     m_ram_handler --> m_dos_library
+    m_ram_handler -.-> m_timer_device
     m_ramlib_library --> m_dos_library
     m_serial_device --> m_gpio_resource
     m_serial_device -.-> m_timer_device
@@ -265,6 +267,7 @@ flowchart TB
     m_fat_handler --> m_dos_library
     m_fat_handler --> m_input_device
     m_fat_handler -.-> m_sdcard_device
+    m_fat_handler -.-> m_timer_device
     m_filter_library --> m_bsdsocket_library
     m_filter_library --> m_timer_device
     m_ftdi_device --> m_timer_device

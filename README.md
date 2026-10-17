@@ -92,10 +92,11 @@ ESP32-P4 boards and in Espressif's QEMU.
   (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
   mid-write leaves a whole volume, `RAM:`, `PIPE:`, `NIL:`; partitions
   from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
-  notification when a file changes; consoles with line editing, file
-  name completion, and copy and paste; a shell with scripts and 49
-  commands in `C:` - `ScreenDump` saves a screen as a PNG - test programs
-  in `C:test` and network tools in `C:net`.
+  notification when a file changes; record locks on ranges of a file;
+  consoles with line editing, file name completion, and copy and paste;
+  a shell with scripts and 49 commands in `C:` - `ScreenDump` saves a
+  screen as a PNG - test programs in `C:test` and network tools in
+  `C:net`.
 - **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
   and icons on the Workbench screen, with drag and drop, a trash and
   Information on any file ([desktop guide](sdk/docs/guides/anvil.md));

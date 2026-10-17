@@ -113,10 +113,23 @@ pub const Result = struct { res1: isize, res2: i32, args: [7]isize };
 /// CONTEXT:
 /// - Waits: yes. Never with a spinlock held.
 pub fn exchange(sys: *ExecBase, port: *MsgPort, action: i32, args: [5]isize) ?Result {
+    return exchangeArgs(sys, port, action, .{ .raw = args ++ [2]isize{ 0, 0 } });
+}
+
+/// `exchange` with all seven arguments, raw or through one of the typed
+/// views - for a packet whose 64-bit fields take more than five slots
+/// where a slot is 32 bits.
+///
+/// INPUTS:
+/// - `sys` - exec.
+/// - `port` - the handler's port.
+/// - `action` - the packet's dp_Type.
+/// - `args` - dp_Arg1 to dp_Arg7.
+pub fn exchangeArgs(sys: *ExecBase, port: *MsgPort, action: i32, args: dos.PacketArgs) ?Result {
     const proc = process.currentProcess(sys);
     const reply_port = if (proc) |p| &p.msg_port else sys.CreateMsgPort() orelse return null;
     defer if (proc == null) sys.DeleteMsgPort(reply_port);
-    return exchangeVia(sys, proc, reply_port, port, action, args);
+    return exchangeViaArgs(sys, proc, reply_port, port, action, args);
 }
 
 /// `exchange` with the reply port already in hand, for a caller that must
@@ -130,11 +143,15 @@ pub fn exchange(sys: *ExecBase, port: *MsgPort, action: i32, args: [5]isize) ?Re
 /// - `action` - the packet's dp_Type.
 /// - `args` - dp_Arg1 to dp_Arg5; dp_Arg6 and dp_Arg7 are 0.
 pub fn exchangeVia(sys: *ExecBase, proc: ?*Process, reply_port: *MsgPort, port: *MsgPort, action: i32, args: [5]isize) Result {
+    return exchangeViaArgs(sys, proc, reply_port, port, action, .{ .raw = args ++ [2]isize{ 0, 0 } });
+}
+
+fn exchangeViaArgs(sys: *ExecBase, proc: ?*Process, reply_port: *MsgPort, port: *MsgPort, action: i32, args: dos.PacketArgs) Result {
     var pkt: DosPacket = .{
         .msg = .{ .length = @sizeOf(DosPacket), .reply_port = reply_port },
         .port = port,
         .action = action,
-        .args = .{ .raw = args ++ [2]isize{ 0, 0 } },
+        .args = args,
     };
     qpkt(sys, &pkt, reply_port);
     var strays: sdk.exec.List = undefined;

@@ -77,6 +77,11 @@ const run_time = [_][2][]const u8{
     .{ "asl.library", "anvil.library" },
     // The serial unit (sdk.devices.serialunit), for a break's time.
     .{ "serial.device", "timer.device" },
+    // The record locks' table (sdk.dos.record.Records), for the time a
+    // lock may wait.
+    .{ "ram-handler", "timer.device" },
+    .{ "flashfs-handler", "timer.device" },
+    .{ "fat-handler", "timer.device" },
 };
 
 /// Where the ROM's modules are under <src dir>, and what their folder adds

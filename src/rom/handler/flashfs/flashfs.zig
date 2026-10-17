@@ -33,7 +33,7 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 5;
+const HANDLER_REVISION = 6;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -136,6 +136,8 @@ const State = struct {
     label: dos.volumename.VolumeName = .{},
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
+    /// The record locks, when there was memory for their port.
+    records: dos.record.Records = undefined,
 };
 
 /// The handler process: ACTION_STARTUP (the device from the startup
@@ -179,6 +181,7 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
 
     st.fs = FileSystem.init(&st.media, &me.msg_port);
     if (st.watchers.init(sb)) st.fs.watchers = &st.watchers;
+    if (st.records.init(sb, dl)) st.fs.records = &st.records;
     if (st.fs.mount()) |_| {
         st.mounted = true;
         addVolume(sb, dl, st);
@@ -190,19 +193,22 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
     if (node) |n| n.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
-    // Packets on the process's port; the watchers' replies on theirs.
+    // Packets on the process's port; the watchers' replies and the record
+    // locks' timers on theirs.
     const packets = &me.msg_port;
     const replies: u32 = if (st.fs.watchers) |watchers| watchers.signals() else 0;
+    const timers: u32 = if (st.fs.records) |records| records.signals() else 0;
     while (true) {
         if (st.fs.watchers) |watchers| watchers.collect();
+        if (st.fs.records) |records| records.collect();
         while (sb.GetMsg(packets)) |message| {
             const pkt = DosPacket.fromMessage(message);
             const reply = serve(st, pkt);
-            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+            if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
             if (st.renew) renewVolume(sb, dl, st);
             st.label.apply(dl, st.volume);
         }
-        _ = sb.Wait(packets.sigMask() | replies);
+        _ = sb.Wait(packets.sigMask() | replies | timers);
     }
 }
 

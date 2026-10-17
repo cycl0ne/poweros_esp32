@@ -207,11 +207,9 @@ pub fn rawSeek(db: *DosBase, fh: *FileHandle, position: i64, mode: i32) i64 {
 /// `ERROR_NO_FREE_STORE` when no packet can be sent.
 pub fn positionAction(db: *DosBase, fh: *FileHandle, action: ActionCode, position: i64, mode: i32) i64 {
     const port = fh.task orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
-    // exchange carries dp_Arg1 to dp_Arg5; the answer is the handler's.
-    comptime if (@offsetOf(dos.SeekArgs, "answer") > 5 * @sizeOf(isize)) @compileError("SeekArgs past five slots");
     var sent: dos.PacketArgs = .{ .raw = @splat(0) };
     sent.seek = .{ .fh = fh, .position = position, .mode = mode };
-    const answer = packets.exchange(db.sys_base, port, @intFromEnum(action), sent.raw[0..5].*) orelse
+    const answer = packets.exchangeArgs(db.sys_base, port, @intFromEnum(action), sent) orelse
         return failWith(db, dos.ERROR_NO_FREE_STORE, -1);
     if (answer.res1 == dos.DOSFALSE) return failWith(db, answer.res2, -1);
     const back: dos.PacketArgs = .{ .raw = answer.args };

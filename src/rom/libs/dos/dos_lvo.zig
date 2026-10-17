@@ -163,6 +163,10 @@ const StartNotify = @import("notify/startnotify.zig").StartNotify;
 const EndNotify = @import("notify/endnotify.zig").EndNotify;
 const GetArgList = @import("process/getarglist.zig").GetArgList;
 const Relabel = @import("lock/relabel.zig").Relabel;
+const LockRecord = @import("record/lockrecord.zig").LockRecord;
+const LockRecords = @import("record/lockrecords.zig").LockRecords;
+const UnLockRecord = @import("record/unlockrecord.zig").UnLockRecord;
+const UnLockRecords = @import("record/unlockrecords.zig").UnLockRecords;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -332,6 +336,10 @@ const contract_files = [_][]const u8{
     @embedFile("notify/endnotify.zig"),
     @embedFile("process/getarglist.zig"),
     @embedFile("lock/relabel.zig"),
+    @embedFile("record/lockrecord.zig"),
+    @embedFile("record/lockrecords.zig"),
+    @embedFile("record/unlockrecord.zig"),
+    @embedFile("record/unlockrecords.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -748,6 +756,18 @@ fn lvoGetArgList(db: *DosBase, num_args: ?*u32) callconv(.c) ?[*]const dos.WBArg
 fn lvoRelabel(db: *DosBase, drive: [*:0]const u8, name: [*:0]const u8) callconv(.c) bool {
     return Relabel(db, drive, name);
 }
+fn lvoLockRecord(db: *DosBase, file: ?*FileHandle, offset: u64, length: u64, mode: u32, timeout: u32) callconv(.c) bool {
+    return LockRecord(db, file, offset, length, mode, timeout);
+}
+fn lvoLockRecords(db: *DosBase, records: ?[*]const dos.record.RecordLock, timeout: u32) callconv(.c) bool {
+    return LockRecords(db, records, timeout);
+}
+fn lvoUnLockRecord(db: *DosBase, file: ?*FileHandle, offset: u64, length: u64) callconv(.c) bool {
+    return UnLockRecord(db, file, offset, length);
+}
+fn lvoUnLockRecords(db: *DosBase, records: ?[*]const dos.record.RecordLock) callconv(.c) bool {
+    return UnLockRecords(db, records);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -894,6 +914,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoEndNotify),
     vec(lvoGetArgList),
     vec(lvoRelabel),
+    vec(lvoLockRecord),
+    vec(lvoLockRecords),
+    vec(lvoUnLockRecord),
+    vec(lvoUnLockRecords),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -901,7 +925,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 142), vectors.len);
+    try testing.expectEqual(@as(usize, 146), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

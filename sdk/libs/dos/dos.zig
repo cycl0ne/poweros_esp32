@@ -25,6 +25,9 @@ pub const workfile = @import("workfile.zig");
 /// Keyword files: the mountlist format, read a token at a time.
 pub const keywords = @import("keywords.zig");
 pub const notify = @import("notify.zig");
+/// Record locks: LockRecord's modes, LockRecords' array, and the
+/// handler's table of held ranges (sdk/libs/dos/record.zig).
+pub const record = @import("record.zig");
 /// A handler's side of ACTION_RENAME_DISK: its volume node renamed in
 /// place (sdk/libs/dos/volumename.zig).
 pub const volumename = @import("volumename.zig");
@@ -332,6 +335,8 @@ pub const FileHandle = dosextens.FileHandle;
 pub const FindArgs = dosextens.FindArgs;
 pub const IOArgs = dosextens.IOArgs;
 pub const SeekArgs = dosextens.SeekArgs;
+pub const LockRecordArgs = dosextens.LockRecordArgs;
+pub const FreeRecordArgs = dosextens.FreeRecordArgs;
 pub const ExamineArgs = dosextens.ExamineArgs;
 pub const FileHandleArgs = dosextens.FileHandleArgs;
 pub const ExamineFHArgs = dosextens.ExamineFHArgs;

@@ -50,6 +50,12 @@
 //! name - finds each watch's name again on it and tells its watcher. A
 //! watch named on the device (`SD0:x`) is on whichever card is in.
 //!
+//! **Record locks** are one table for both bodies too, kept with the
+//! handler: a range is held through a handle, so it belongs to the body
+//! that holds the handle's lock, and goes when the handle is closed. A
+//! lock that waits keeps its packet unanswered, with a timer that comes
+//! back on a port the process waits on beside its packets.
+//!
 //! **The order of the writes.** A card can go - pulled out, the power
 //! cut - between any two blocks, and the handler writes so that what is
 //! left is a volume with something lost at worst, never something wrong.
@@ -104,7 +110,7 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 7;
+const HANDLER_REVISION = 8;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -281,6 +287,8 @@ const Bodies = struct {
         const lock: usize = switch (pkt.getAction()) {
             .free_lock => @bitCast(pkt.args.raw[0]),
             .end => if (pkt.args.file.fh) |fh| @intFromPtr(fh.key) else 0,
+            .lock_record => if (pkt.args.lock_record.fh) |fh| @intFromPtr(fh.key) else 0,
+            .free_record => if (pkt.args.free_record.fh) |fh| @intFromPtr(fh.key) else 0,
             else => 0,
         };
         if (lock != 0) {
@@ -332,6 +340,13 @@ const Bodies = struct {
         bodies.fat32.device_name = device;
         bodies.exfat.device_name = device;
     }
+
+    /// One table of record locks for both: a range is held through a
+    /// handle, and stays with the body that holds the handle's lock.
+    fn keepRecords(bodies: *Bodies, records: *dos.record.Records) void {
+        bodies.fat32.records = records;
+        bodies.exfat.records = records;
+    }
 };
 
 /// Everything the process keeps, in one allocation.
@@ -358,6 +373,9 @@ const State = struct {
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
     watching: bool = false,
+    /// The record locks; without a port for their timers it holds none
+    /// and gives no signal.
+    records: dos.record.Records = undefined,
     /// The change interrupt the device causes when the card comes or
     /// goes, the request it is kept with and that request's port, and the
     /// signal it gives the process; no signal (0) when the device has
@@ -493,6 +511,7 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         const device: []const u8 = if (node) |device_node| std.mem.span(device_node.name) else "";
         st.bodies.watch(&st.watchers, device);
     }
+    if (st.records.init(sys, dl)) st.bodies.keepRecords(&st.records);
     // A card that is not there or not readable is not an error: the
     // handler stays for the one that will be.
     st.bodies.mount();
@@ -504,11 +523,13 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     if (node) |device_node| device_node.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
 
-    // Packets on the process's port; the watchers' replies on theirs.
+    // Packets on the process's port; the watchers' replies and the record
+    // locks' timers on theirs.
     const packets = &me.msg_port;
-    const replies: u32 = if (st.watching) st.watchers.signals() else 0;
+    const replies: u32 = (if (st.watching) st.watchers.signals() else 0) | st.records.signals();
     while (true) {
         if (st.watching) st.watchers.collect();
+        st.records.collect();
         while (sys.GetMsg(packets)) |message| handle(dl, st, DosPacket.fromMessage(message), packets);
         const got = sys.Wait(packets.sigMask() | replies | st.change_mask);
         if (got & st.change_mask != 0) mediumChanged(sys, dl, st, packets);
@@ -540,7 +561,7 @@ fn handle(dl: *DosBase, st: *State, pkt: *DosPacket, port: *MsgPort) void {
     // A rename keeps the node, which locks point at, and gives it the
     // name once the packet is answered.
     const renamed = pkt.getAction() == .rename_disk and reply.res1 != dos.DOSFALSE;
-    dl.ReplyPkt(pkt, reply.res1, reply.res2);
+    if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
     if (renamed) st.label.set(st.bodies.volumeName());
     st.label.apply(dl, st.volume);
 }

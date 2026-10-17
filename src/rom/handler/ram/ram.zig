@@ -17,7 +17,7 @@
 //! SET_DATE, SET_OWNER, FINDINPUT, FINDOUTPUT, FINDUPDATE, READ, WRITE,
 //! SEEK, SET_FILE_SIZE, END, PARENT_FH, COPY_DIR_FH, FH_FROM_LOCK,
 //! CHANGE_MODE, EXAMINE_OBJECT, EXAMINE_NEXT, EXAMINE_FH, INFO, DISK_INFO,
-//! ADD_NOTIFY, REMOVE_NOTIFY, IS_FILESYSTEM and FLUSH (not EXAMINE_ALL: dos does ExAll through
+//! ADD_NOTIFY, REMOVE_NOTIFY, LOCK_RECORD, FREE_RECORD, IS_FILESYSTEM and FLUSH (not EXAMINE_ALL: dos does ExAll through
 //! EXAMINE_OBJECT/NEXT);
 //! DIE is refused (it never ends); the rest are ERROR_ACTION_NOT_KNOWN.
 //! Packets about an open file carry its FileHandle, whose key is the lock.
@@ -32,7 +32,12 @@
 //! to it; SEEK and SET_FILE_SIZE answer DOSTRUE with the old position or
 //! the new size in the packet's SeekArgs; INFO counts free memory as free
 //! space and refuses a bad lock with ERROR_INVALID_LOCK; a name with ':'
-//! is refused. No hard or soft links or record locks yet.
+//! is refused. No hard or soft links yet.
+//!
+//! **Record locks** (LOCK_RECORD, FREE_RECORD) are a `dos.record.Records`,
+//! keyed by node, a handle's lock its owner; END gives back what the
+//! handle still holds. A lock that waits is answered later, so its packet
+//! is not replied when it is served (`Answer.held`).
 //!
 //! **Notification** (ADD_NOTIFY, REMOVE_NOTIFY): the requests are kept by
 //! a `dos.notify.Watchers`, keyed by node. A file is told of when a
@@ -57,10 +62,11 @@ const FileHandle = dos.FileHandle;
 const FileInfoBlock = dos.FileInfoBlock;
 const MsgPort = exec.MsgPort;
 const notify = dos.notify;
+const record = dos.record;
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 3;
+const HANDLER_REVISION = 4;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -175,8 +181,9 @@ fn errorCode(e: Error) i32 {
     };
 }
 
-/// dp_Res1 and dp_Res2 for a packet.
-pub const Answer = struct { res1: isize, res2: i32 };
+/// dp_Res1 and dp_Res2 for a packet; `held` for one that is answered
+/// later (a record lock that waits) and must not be replied now.
+pub const Answer = struct { res1: isize, res2: i32, held: bool = false };
 
 fn yes() Answer {
     return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
@@ -184,6 +191,11 @@ fn yes() Answer {
 
 fn no(e: Error) Answer {
     return .{ .res1 = dos.DOSFALSE, .res2 = errorCode(e) };
+}
+
+/// No, with a dos error code of its own.
+fn noCode(code: i32) Answer {
+    return .{ .res1 = dos.DOSFALSE, .res2 = code };
 }
 
 /// For READ and WRITE, which answer -1 on failure.
@@ -234,6 +246,8 @@ pub const RamDisk = struct {
     blocks: u64 align(4) = 0,
     /// Who watches what (notification); null when there was no memory.
     watchers: ?*notify.Watchers = null,
+    /// The record locks; null when there was no memory.
+    records: ?*record.Records = null,
     /// The volume's name after ACTION_RENAME_DISK, for its node.
     label: dos.volumename.VolumeName = .{},
 
@@ -246,11 +260,18 @@ pub const RamDisk = struct {
         if (disk.alloc(notify.Watchers)) |watchers| {
             if (watchers.init(sys)) disk.watchers = watchers else disk.free(watchers);
         }
+        if (disk.alloc(record.Records)) |records| {
+            if (records.init(sys, dl)) disk.records = records else disk.free(records);
+        }
         return disk;
     }
 
     /// Frees the locks and the tree (the tests; the handler never ends).
     pub fn deinit(disk: *RamDisk) void {
+        if (disk.records) |records| {
+            records.deinit();
+            disk.free(records);
+        }
         while (disk.locks) |l| {
             disk.locks = l.nextLock();
             disk.free(l);
@@ -273,6 +294,39 @@ pub const RamDisk = struct {
     /// The watchers' messages that came back.
     pub fn collectReplies(disk: *RamDisk) void {
         if (disk.watchers) |watchers| watchers.collect();
+    }
+
+    // --- record locks ---
+
+    /// The record locks' timers' signal, for the process's Wait.
+    pub fn recordSignals(disk: *RamDisk) u32 {
+        const records = disk.records orelse return 0;
+        return records.signals();
+    }
+
+    /// The record locks whose time ran out, answered.
+    pub fn collectTimers(disk: *RamDisk) void {
+        if (disk.records) |records| records.collect();
+    }
+
+    /// LOCK_RECORD: the range held by the handle's lock, refused, or left
+    /// waiting with its packet.
+    fn lockRecord(disk: *RamDisk, pkt: *DosPacket) Answer {
+        const l = disk.fileOf(pkt.args.lock_record.fh) catch |e| return no(e);
+        const records = disk.records orelse return no(error.NoMemory);
+        return switch (records.lock(pkt, l.node(), l)) {
+            .granted => yes(),
+            .refused => |code| noCode(code),
+            .waiting => .{ .res1 = 0, .res2 = 0, .held = true },
+        };
+    }
+
+    /// FREE_RECORD: one range the handle's lock holds given back.
+    fn freeRecord(disk: *RamDisk, pkt: *DosPacket) Answer {
+        const l = disk.fileOf(pkt.args.free_record.fh) catch |e| return no(e);
+        const records = disk.records orelse return noCode(dos.ERROR_RECORD_NOT_LOCKED);
+        if (!records.unlock(pkt, l.node(), l)) return noCode(dos.ERROR_RECORD_NOT_LOCKED);
+        return yes();
     }
 
     /// A node changed: its watchers told.
@@ -641,6 +695,7 @@ pub const RamDisk = struct {
         const n = l.node();
         const written = l.modified;
         if (written) n.date = disk.now();
+        if (disk.records) |records| records.release(l);
         disk.freeLock(l);
         args.fh.?.key = null;
         if (written) {
@@ -998,6 +1053,8 @@ pub const RamDisk = struct {
                 pkt.args.seek.answer = @intCast(disk.setFileSize(pkt.args.seek) catch |e| return no(e));
                 return yes();
             },
+            .lock_record => return disk.lockRecord(pkt),
+            .free_record => return disk.freeRecord(pkt),
             .parent_fh, .copy_dir_fh => {
                 const l = disk.fileOf(pkt.args.file.fh) catch |e| return no(e);
                 const n = l.node();
@@ -1068,17 +1125,19 @@ pub fn ramHandler(sb: *ExecBase) callconv(.c) void {
     const device: ?*dos.DosList = @ptrFromInt(ptrArg(startup.args.raw[2]));
     if (device) |d| d.task = &me.msg_port;
     dl.ReplyPkt(startup, dos.DOSTRUE, 0);
-    // Packets on the process's port; the watchers' replies on theirs.
+    // Packets on the process's port; the watchers' replies and the record
+    // locks' timers on theirs.
     const port = &me.msg_port;
     while (true) {
         disk.collectReplies();
+        disk.collectTimers();
         while (sb.GetMsg(port)) |message| {
             const pkt = DosPacket.fromMessage(message);
             const reply = disk.answer(pkt);
-            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+            if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
             disk.label.apply(@ptrCast(dl), disk.volume);
         }
-        _ = sb.Wait(port.sigMask() | disk.notifySignals());
+        _ = sb.Wait(port.sigMask() | disk.notifySignals() | disk.recordSignals());
     }
 }
 
@@ -1393,5 +1452,237 @@ test "RAM: notification: a file and its directory told, a name not there yet, wa
 
     sys.DeleteMsgPort(port);
     disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+/// timer.device for the record locks that wait, which the host has not: a
+/// request is kept until the test lets it run out (`expire`), or until
+/// AbortIO answers it IOERR_ABORTED. Added by the name it is given.
+const FakeTimer = extern struct {
+    device: exec.Device,
+    sys: *ExecBase,
+    pending: exec.List,
+
+    fn add(sys: *ExecBase, name: [*:0]const u8) !*FakeTimer {
+        const vectors = [_]*const anyopaque{ @ptrCast(&open), @ptrCast(&close), @ptrCast(&expunge), @ptrCast(&extFunc), @ptrCast(&beginIO), @ptrCast(&abortIO) };
+        const lib = sys.MakeLibrary(&vectors, vectors.len, @sizeOf(FakeTimer), null, null) orelse return error.OutOfMemory;
+        const clock: *FakeTimer = @ptrCast(@alignCast(lib));
+        clock.sys = sys;
+        clock.pending.init(.unknown);
+        clock.device.node.name = name;
+        sys.AddDevice(&clock.device);
+        return clock;
+    }
+
+    /// Taken off the list and freed; nobody may have it open.
+    fn remove(clock: *FakeTimer) void {
+        _ = clock.sys.RemDevice(&clock.device);
+    }
+
+    /// The requests that run.
+    fn count(clock: *FakeTimer) usize {
+        var it = clock.pending.iterator();
+        var running: usize = 0;
+        while (it.next()) |_| running += 1;
+        return running;
+    }
+
+    /// The oldest request run out: answered, as the device does when its
+    /// time has come.
+    fn expire(clock: *FakeTimer) void {
+        const node = clock.sys.RemHead(&clock.pending) orelse return;
+        const io: *exec.IORequest = @fieldParentPtr("message", @as(*exec.Message, @fieldParentPtr("node", node)));
+        io.err = 0;
+        clock.sys.ReplyMsg(&io.message);
+    }
+
+    fn of(device: *exec.Device) *FakeTimer {
+        return @fieldParentPtr("device", device);
+    }
+
+    fn open(device: *exec.Device, io: *exec.IORequest, unit: u32, flags: u32) callconv(.c) i32 {
+        _ = .{ io, unit, flags };
+        device.open_cnt += 1;
+        return 0;
+    }
+
+    fn close(device: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
+        _ = io;
+        device.open_cnt -= 1;
+        return null;
+    }
+
+    fn expunge(device: *exec.Device) callconv(.c) ?*anyopaque {
+        if (device.open_cnt != 0) return null;
+        const sys = of(device).sys;
+        sys.DetachLibrary(device);
+        sys.FreeMem(@ptrFromInt(@intFromPtr(device) - device.neg_size), @as(usize, device.neg_size) + device.pos_size);
+        return null;
+    }
+
+    fn extFunc(device: *exec.Device) callconv(.c) ?*anyopaque {
+        _ = device;
+        return null;
+    }
+
+    fn beginIO(device: *exec.Device, io: *exec.IORequest) callconv(.c) void {
+        const clock = of(device);
+        io.flags &= ~exec.IOF_QUICK;
+        io.message.node.type = .message;
+        clock.sys.AddTail(&clock.pending, &io.message.node);
+    }
+
+    fn abortIO(device: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
+        const clock = of(device);
+        var it = clock.pending.iterator();
+        while (it.next()) |node| {
+            if (node != &io.message.node) continue;
+            clock.sys.Remove(node);
+            io.err = exec.IOERR_ABORTED;
+            clock.sys.ReplyMsg(&io.message);
+            return 0;
+        }
+        return -1;
+    }
+};
+
+/// A LOCK_RECORD for `fh`.
+fn recordPacket(fh: *FileHandle, offset: u64, length: u64, mode: u32, timeout: u32) DosPacket {
+    return DosPacket.init(.lock_record, .{ .lock_record = .{ .fh = fh, .offset = offset, .length = length, .mode = mode, .timeout = timeout } });
+}
+
+/// A LOCK_RECORD that does not wait.
+fn lockRange(disk: *RamDisk, fh: *FileHandle, offset: u64, length: u64, mode: u32) Answer {
+    var pkt = recordPacket(fh, offset, length, mode, 0);
+    return disk.answer(&pkt);
+}
+
+fn freeRange(disk: *RamDisk, fh: *FileHandle, offset: u64, length: u64) Answer {
+    var pkt = DosPacket.init(.free_record, .{ .free_record = .{ .fh = fh, .offset = offset, .length = length } });
+    return disk.answer(&pkt);
+}
+
+test "RAM: record locks: the modes, a handle's own, exact unlocks, past 4 GiB, given back at the close" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    const collision = noCode(dos.ERROR_LOCK_COLLISION);
+    var one: FileHandle = .{};
+    var two: FileHandle = .{};
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&one), 0, arg("RAM:base"), 0 }));
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&two), 0, arg("RAM:base"), 0 }));
+
+    // Exclusive keeps every other handle off; a handle never stands in its
+    // own way.
+    try testing.expectEqual(yes(), lockRange(&disk, &one, 0, 100, record.REC_EXCLUSIVE));
+    try testing.expectEqual(yes(), lockRange(&disk, &one, 50, 10, record.REC_SHARED));
+    try testing.expectEqual(collision, lockRange(&disk, &two, 99, 1, record.REC_SHARED_IMMED));
+    try testing.expectEqual(noCode(dos.ERROR_LOCK_TIMEOUT), lockRange(&disk, &two, 0, 1, record.REC_EXCLUSIVE)); // no time to wait
+    try testing.expectEqual(yes(), lockRange(&disk, &two, 100, 50, record.REC_EXCLUSIVE_IMMED)); // next to it
+    try testing.expectEqual(noCode(dos.ERROR_BAD_NUMBER), lockRange(&disk, &two, 0, 1, record.REC_SHARED_IMMED + 1));
+
+    // Given back by the same offset and length, by the handle that holds it.
+    try testing.expectEqual(noCode(dos.ERROR_RECORD_NOT_LOCKED), freeRange(&disk, &one, 0, 99));
+    try testing.expectEqual(noCode(dos.ERROR_RECORD_NOT_LOCKED), freeRange(&disk, &two, 0, 100));
+    try testing.expectEqual(yes(), freeRange(&disk, &one, 0, 100));
+    try testing.expectEqual(collision, lockRange(&disk, &two, 55, 1, record.REC_EXCLUSIVE_IMMED)); // one's shared [50, 60)
+    try testing.expectEqual(yes(), lockRange(&disk, &two, 55, 1, record.REC_SHARED_IMMED)); // shared beside shared
+    try testing.expectEqual(yes(), freeRange(&disk, &one, 50, 10));
+    try testing.expectEqual(yes(), lockRange(&disk, &one, 0, 50, record.REC_EXCLUSIVE_IMMED));
+
+    // Past 4 GiB, and up to the last byte.
+    const far: u64 = 0x1_0000_0000;
+    const last = ~@as(u64, 0);
+    try testing.expectEqual(yes(), lockRange(&disk, &one, far, 10, record.REC_EXCLUSIVE));
+    try testing.expectEqual(yes(), lockRange(&disk, &two, far - 10, 10, record.REC_EXCLUSIVE_IMMED));
+    try testing.expectEqual(collision, lockRange(&disk, &two, far + 9, 1, record.REC_SHARED_IMMED));
+    try testing.expectEqual(yes(), lockRange(&disk, &one, last - 1, last, record.REC_EXCLUSIVE)); // held to the end
+    try testing.expectEqual(collision, lockRange(&disk, &two, last - 1, 1, record.REC_SHARED_IMMED));
+
+    // Closing a handle gives back all it holds.
+    _ = send(&disk, .end, .{ arg(&one), 0, 0, 0 });
+    try testing.expectEqual(yes(), lockRange(&disk, &two, far, 10, record.REC_EXCLUSIVE_IMMED));
+    try testing.expectEqual(yes(), lockRange(&disk, &two, last - 1, 1, record.REC_EXCLUSIVE_IMMED));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, lockRange(&disk, &one, 0, 1, record.REC_EXCLUSIVE).res2);
+    _ = send(&disk, .end, .{ arg(&two), 0, 0, 0 });
+    try testing.expectEqual(@as(usize, 0), disk.records.?.heldCount());
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: record locks that wait: the bytes freed, the time run out, the handle closed, the handler ended" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    const sys = db.sys_base;
+    const clock = try FakeTimer.add(sys, sdk.devices.timer.TIMERNAME);
+    var disk = try diskFor(db);
+    const port = sys.CreateMsgPort().?;
+    var one: FileHandle = .{};
+    var two: FileHandle = .{};
+    var three: FileHandle = .{};
+    for ([_]*FileHandle{ &one, &two, &three }) |fh| try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(fh), 0, arg("RAM:wait"), 0 }));
+    try testing.expectEqual(yes(), lockRange(&disk, &one, 0, 100, record.REC_EXCLUSIVE));
+
+    // Two that wait: kept, each with its timer, nothing answered.
+    var first = recordPacket(&two, 10, 10, record.REC_SHARED, 50);
+    first.port = port;
+    try testing.expect(disk.answer(&first).held);
+    var second = recordPacket(&three, 15, 1, record.REC_SHARED, 50);
+    second.port = port;
+    try testing.expect(disk.answer(&second).held);
+    try testing.expectEqual(@as(usize, 2), clock.count());
+    try testing.expect(sys.GetMsg(port) == null);
+
+    // The bytes freed: both answered, in the order they asked, their
+    // timers stopped.
+    try testing.expectEqual(yes(), freeRange(&disk, &one, 0, 100));
+    try testing.expectEqual(&first.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(&second.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(@as(isize, dos.DOSTRUE), first.res1);
+    try testing.expectEqual(@as(isize, dos.DOSTRUE), second.res1);
+    try testing.expectEqual(@as(usize, 0), clock.count());
+
+    // The time run out: ERROR_LOCK_TIMEOUT.
+    var late = recordPacket(&one, 12, 1, record.REC_EXCLUSIVE, 1);
+    late.port = port;
+    try testing.expect(disk.answer(&late).held);
+    clock.expire();
+    disk.collectTimers();
+    try testing.expectEqual(&late.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(@as(isize, dos.DOSFALSE), late.res1);
+    try testing.expectEqual(dos.ERROR_LOCK_TIMEOUT, late.res2);
+
+    // The waiting handle closed: ERROR_INVALID_LOCK.
+    var orphan = recordPacket(&one, 12, 1, record.REC_EXCLUSIVE, 50);
+    orphan.port = port;
+    try testing.expect(disk.answer(&orphan).held);
+    _ = send(&disk, .end, .{ arg(&one), 0, 0, 0 });
+    try testing.expectEqual(&orphan.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, orphan.res2);
+    try testing.expectEqual(@as(usize, 0), clock.count());
+
+    // The holding handle closed: the one waiting has the bytes.
+    var after = recordPacket(&three, 10, 1, record.REC_EXCLUSIVE, 50);
+    after.port = port;
+    try testing.expect(disk.answer(&after).held); // two's shared [10, 20)
+    _ = send(&disk, .end, .{ arg(&two), 0, 0, 0 });
+    try testing.expectEqual(&after.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(@as(isize, dos.DOSTRUE), after.res1);
+
+    // The handler ended with one still waiting: answered, its timer
+    // stopped, timer.device closed.
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&one), 0, arg("RAM:wait"), 0 }));
+    var stranded = recordPacket(&one, 0, 20, record.REC_SHARED, 50);
+    stranded.port = port;
+    try testing.expect(disk.answer(&stranded).held);
+    disk.deinit();
+    try testing.expectEqual(&stranded.msg, sys.GetMsg(port).?);
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, stranded.res2);
+    try testing.expectEqual(@as(usize, 0), clock.count());
+    try testing.expectEqual(@as(u16, 0), clock.device.open_cnt);
+
+    sys.DeleteMsgPort(port);
+    clock.remove();
     try kdos.testTearDown(db);
 }

@@ -40,6 +40,9 @@ pub const Answer = struct {
     /// Pointer-wide: a lock goes back in it.
     res1: isize,
     res2: i32,
+    /// Kept to be answered later - a record lock that waits - and not
+    /// answered now.
+    held: bool = false,
 };
 
 pub fn yes() Answer {

@@ -160,6 +160,29 @@ pub const SeekArgs = extern struct {
     answer: i64 align(4) = 0,
 };
 
+/// LOCK_RECORD's arguments: `length` bytes from `offset` of the handle's
+/// file, in a REC_* mode, waiting up to `timeout` ticks. Offset and length
+/// are 64 bits on every machine; where a slot is 32 bits they fill all
+/// seven. The handler answers DOSTRUE, or DOSFALSE with the error in
+/// dp_Res2 - at once, or once the bytes come free or the time runs out.
+pub const LockRecordArgs = extern struct {
+    fh: ?*FileHandle,
+    offset: u64 align(4),
+    length: u64 align(4),
+    /// REC_EXCLUSIVE, REC_EXCLUSIVE_IMMED, REC_SHARED or REC_SHARED_IMMED.
+    mode: usize,
+    /// Ticks of 1/50 s.
+    timeout: usize,
+};
+
+/// FREE_RECORD's arguments: the range a LOCK_RECORD of the same handle
+/// took. DOSTRUE, or DOSFALSE with ERROR_RECORD_NOT_LOCKED.
+pub const FreeRecordArgs = extern struct {
+    fh: ?*FileHandle,
+    offset: u64 align(4),
+    length: u64 align(4),
+};
+
 /// EXAMINE_OBJECT and EXAMINE_NEXT's arguments.
 pub const ExamineArgs = extern struct {
     lock: ?*FileLock,
@@ -235,6 +258,8 @@ pub const PacketArgs = extern union {
     find: FindArgs,
     io: IOArgs,
     seek: SeekArgs,
+    lock_record: LockRecordArgs,
+    free_record: FreeRecordArgs,
     examine: ExamineArgs,
     examine_fh: ExamineFHArgs,
     examine_all: ExAllArgs,

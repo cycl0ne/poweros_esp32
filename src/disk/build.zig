@@ -48,7 +48,7 @@ const tests = [_][]const u8{
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",    "sound",
-    "memowner",
+    "memowner",    "records",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 

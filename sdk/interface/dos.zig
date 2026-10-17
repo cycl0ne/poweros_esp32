@@ -156,6 +156,10 @@ pub const LVO = struct {
     pub const EndNotify = libraries.lvo(139);
     pub const GetArgList = libraries.lvo(140);
     pub const Relabel = libraries.lvo(141);
+    pub const LockRecord = libraries.lvo(142);
+    pub const LockRecords = libraries.lvo(143);
+    pub const UnLockRecord = libraries.lvo(144);
+    pub const UnLockRecords = libraries.lvo(145);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -299,6 +303,10 @@ pub const Fn = struct {
     pub const EndNotify = *const fn (*DosBase, *dos.notify.NotifyRequest) callconv(.c) void;
     pub const GetArgList = *const fn (*DosBase, ?*u32) callconv(.c) ?[*]const dos.WBArg;
     pub const Relabel = *const fn (*DosBase, [*:0]const u8, [*:0]const u8) callconv(.c) bool;
+    pub const LockRecord = *const fn (*DosBase, ?*dos.FileHandle, u64, u64, u32, u32) callconv(.c) bool;
+    pub const LockRecords = *const fn (*DosBase, ?[*]const dos.record.RecordLock, u32) callconv(.c) bool;
+    pub const UnLockRecord = *const fn (*DosBase, ?*dos.FileHandle, u64, u64) callconv(.c) bool;
+    pub const UnLockRecords = *const fn (*DosBase, ?[*]const dos.record.RecordLock) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1158,5 +1166,30 @@ pub const DosBase = opaque {
     /// when its file system can: true, or false with IoErr.
     pub fn Relabel(self: *DosBase, drive: [*:0]const u8, name: [*:0]const u8) bool {
         return libraries.call(self, LVO.Relabel, Fn.Relabel, .{ drive, name });
+    }
+
+    /// Lock `length` bytes from `offset` of an open file, in a REC_* mode,
+    /// waiting up to `timeout` ticks for them: true, or false with IoErr.
+    pub fn LockRecord(self: *DosBase, file: ?*dos.FileHandle, offset: u64, length: u64, mode: u32, timeout: u32) bool {
+        return libraries.call(self, LVO.LockRecord, Fn.LockRecord, .{ file, offset, length, mode, timeout });
+    }
+
+    /// Lock every record of the array, which ends at a null handle, in its
+    /// order, each waiting up to `timeout` ticks; on a failure the ones
+    /// already locked are given back. True, or false with IoErr.
+    pub fn LockRecords(self: *DosBase, records: ?[*]const dos.record.RecordLock, timeout: u32) bool {
+        return libraries.call(self, LVO.LockRecords, Fn.LockRecords, .{ records, timeout });
+    }
+
+    /// Give back a lock LockRecord took, by the same handle, offset and
+    /// length: true, or false with IoErr.
+    pub fn UnLockRecord(self: *DosBase, file: ?*dos.FileHandle, offset: u64, length: u64) bool {
+        return libraries.call(self, LVO.UnLockRecord, Fn.UnLockRecord, .{ file, offset, length });
+    }
+
+    /// Give back every record of a LockRecords array: true when every one was
+    /// held.
+    pub fn UnLockRecords(self: *DosBase, records: ?[*]const dos.record.RecordLock) bool {
+        return libraries.call(self, LVO.UnLockRecords, Fn.UnLockRecords, .{records});
     }
 };

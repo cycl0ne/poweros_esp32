@@ -33,6 +33,7 @@ fn answered(answer: i64) Moved {
     return .{ .reply = .{ .res1 = dos.DOSTRUE, .res2 = 0 }, .answer = answer };
 }
 const notify_course = @import("_notify.zig");
+const records_course = @import("_records.zig");
 const cut_course = @import("_cut.zig");
 const TestMedia = @import("../testmedia.zig").TestMedia;
 const testvolume = @import("../exfat/testvolume.zig");
@@ -969,4 +970,11 @@ test "notification: names watched before they are there, told of each change, th
     try rig.init(.{});
     defer rig.deinit();
     try notify_course.course(&rig, &rig.media.changes);
+}
+
+test "record locks: kept apart, shared, given back exactly and at the close" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try records_course.course(&rig);
 }

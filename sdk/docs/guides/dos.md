@@ -23,6 +23,7 @@ command, from `build.zig` to the shell.
 - [Running commands and shells](#running-commands-and-shells)
 - [Variables](#variables)
 - [Being told of a change](#being-told-of-a-change)
+- [Record locks](#record-locks)
 - [The device list and assigns](#the-device-list-and-assigns)
 - [Handlers and packets](#handlers-and-packets)
 - [Disks at boot](#disks-at-boot)
@@ -607,6 +608,62 @@ while (true) {
 bsdsocket.library watches `ENVARC:Sys/net/hostname` this way, so a new
 name in the file is in force at once.
 
+## Record locks
+
+Programs that share a file - a database, a log several of them write
+into - keep each other off parts of it with record locks: a range of
+the file's bytes, locked through an open handle, shared or exclusive.
+The locks are cooperative. They keep out other record locks, not `Read`
+or `Write`, so every program that works on the file locks before it
+does.
+
+```zig
+const record = dos.record;
+// Bytes 512 to 1023 to this handle alone, waiting up to two seconds.
+if (!dl.LockRecord(fh, 512, 512, record.REC_EXCLUSIVE, 2 * 50)) return; // IoErr(): ERROR_LOCK_TIMEOUT
+defer _ = dl.UnLockRecord(fh, 512, 512);
+// ... read the record, change it, write it back
+```
+
+- **The modes**: `REC_EXCLUSIVE` keeps every other handle's locks off
+  the bytes, `REC_SHARED` only the exclusive ones, so readers share a
+  range and a writer has it alone. A handle never stands in its own
+  way: it may lock the same bytes again, in either mode.
+- **Waiting**: a lock that cannot be had at once waits up to its
+  timeout, in ticks of 1/50 s, for the bytes to come free, and fails
+  with `ERROR_LOCK_TIMEOUT` when the time runs out; a timeout of 0 fails
+  at once. `REC_EXCLUSIVE_IMMED` and `REC_SHARED_IMMED` never wait, and
+  fail with `ERROR_LOCK_COLLISION`. Locks that wait are tried again, in
+  the order they asked, each time bytes come free.
+- **Giving back**: `UnLockRecord` takes the offset and length the lock
+  was made with (`ERROR_RECORD_NOT_LOCKED` for any other range) and
+  gives back one lock. Closing the handle gives back every lock it still
+  holds, and a lock it still waits for fails with `ERROR_INVALID_LOCK`.
+- **Offsets and lengths** are `u64` on every machine. A range may lie
+  past the end of the file, and one that would end past the last offset
+  a `u64` can say runs to the end.
+- **Several at once**: `LockRecords` takes an array of
+  `dos.record.RecordLock` - handle, offset, length, mode - that ends at
+  an entry without a handle, and locks them in its order, each with the
+  timeout. When one fails, those before it are given back, and `IoErr()`
+  says why. `UnLockRecords` gives back every record of the same array.
+  Programs that lock records in the same order never wait on each other
+  in a circle.
+
+```zig
+const records = [_]record.RecordLock{
+    .{ .fh = index, .offset = 0, .length = 64, .mode = record.REC_SHARED },
+    .{ .fh = data, .offset = at, .length = size },
+    .{},
+};
+if (!dl.LockRecords(&records, 50)) return; // none of them held
+defer _ = dl.UnLockRecords(&records);
+```
+
+RAM:, the flash file system and fat-handler keep record locks; on a
+handler that does not, `LockRecord` fails with `ERROR_ACTION_NOT_KNOWN`.
+`C:test/Records FILE` tries each case on a file and prints every step.
+
 ## The device list and assigns
 
 dos keeps one list of names. Each node is a `DosList`: its `name`
@@ -704,6 +761,19 @@ messages and take them back on a port of their own, which the handler
 waits on beside its packets and empties with `collect`. `src/rom/handler/nil/nil.zig` is the
 smallest whole handler, with the `exec.ResidentHandler` tag dos finds it
 by; `src/disk/devs/handlers/fat/` is one that is loaded from `HANDLERS:`.
+
+A file system that keeps record locks answers `ACTION_LOCK_RECORD`
+(`args.lock_record`: the handle, the 64-bit offset and length, the mode
+and the timeout - all seven slots where a word is 32 bits) and
+`ACTION_FREE_RECORD` (`args.free_record`) with a `dos.record.Records`.
+It hands the table the packet, the object the handle has open, and
+something that is the handle's alone while it is open - the handler's
+own lock behind it - and calls `release` with that when the handle is
+closed. A lock that cannot be had at once keeps its packet: `lock`
+answers `.waiting`, the handler leaves the packet unanswered, and the
+table replies it when the bytes come free or the time runs out. The
+timers of the waits come back on a port of the table's, which the
+handler waits on beside its packets and empties with `collect`.
 
 ## Disks at boot
 

@@ -50,6 +50,7 @@ const FileInfoBlock = dos.FileInfoBlock;
 const DosPacket = dos.DosPacket;
 const MsgPort = exec.MsgPort;
 const notify = dos.notify;
+const record = dos.record;
 
 const max_name = flashfs.max_name;
 const max_comment = flashfs.max_comment;
@@ -116,8 +117,9 @@ fn fromVolume(e: volume.Error) Error {
     };
 }
 
-/// dp_Res1 and dp_Res2 for a packet.
-pub const Answer = struct { res1: isize, res2: i32 };
+/// dp_Res1 and dp_Res2 for a packet; `held` for one that is answered
+/// later (a record lock that waits) and must not be replied now.
+pub const Answer = struct { res1: isize, res2: i32, held: bool = false };
 
 fn yes() Answer {
     return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
@@ -125,6 +127,11 @@ fn yes() Answer {
 
 fn no(e: Error) Answer {
     return .{ .res1 = dos.DOSFALSE, .res2 = errorCode(e) };
+}
+
+/// No, with a dos error code of its own.
+fn noCode(code: i32) Answer {
+    return .{ .res1 = dos.DOSFALSE, .res2 = code };
 }
 
 /// For READ and WRITE, which answer -1 on failure.
@@ -259,6 +266,10 @@ pub fn FileSystem(comptime Media: type) type {
         /// Who watches what (notification), when the handler has given
         /// them; without, ADD_NOTIFY is refused.
         watchers: ?*notify.Watchers = null,
+        /// The record locks, keyed by node, a handle's lock their owner,
+        /// when the handler has given them; without, LOCK_RECORD is
+        /// refused.
+        records: ?*record.Records = null,
 
         pub fn init(media: *Media, port: ?*MsgPort) Fs {
             return .{ .media = media, .vol = Volume.init(media), .port = port };
@@ -1142,6 +1153,7 @@ pub fn FileSystem(comptime Media: type) type {
                 n.date = fs.media.now();
                 try fs.writeMeta(n);
             }
+            if (fs.records) |records| records.release(l);
             fs.freeLock(l);
             args.fh.?.key = null;
             fs.vol.flush() catch |e| return fromVolume(e);
@@ -1453,6 +1465,21 @@ pub fn FileSystem(comptime Media: type) type {
                 },
                 .set_file_size => {
                     pkt.args.seek.answer = @intCast(fs.setFileSize(pkt.args.seek) catch |e| return no(e));
+                    return yes();
+                },
+                .lock_record => {
+                    const l = fs.fileOf(pkt.args.lock_record.fh) catch |e| return no(e);
+                    const records = fs.records orelse return no(error.NoMemory);
+                    return switch (records.lock(pkt, l.node(), l)) {
+                        .granted => yes(),
+                        .refused => |code| noCode(code),
+                        .waiting => .{ .res1 = 0, .res2 = 0, .held = true },
+                    };
+                },
+                .free_record => {
+                    const l = fs.fileOf(pkt.args.free_record.fh) catch |e| return no(e);
+                    const records = fs.records orelse return noCode(dos.ERROR_RECORD_NOT_LOCKED);
+                    if (!records.unlock(pkt, l.node(), l)) return noCode(dos.ERROR_RECORD_NOT_LOCKED);
                     return yes();
                 },
                 .parent_fh, .copy_dir_fh => {

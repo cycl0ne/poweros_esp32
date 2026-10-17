@@ -793,6 +793,14 @@ const FakeFs = struct {
     var args: [7]isize = @splat(0);
     /// The last SEEK or SET_FILE_SIZE's arguments, read through its view.
     var seek: dos.SeekArgs = .{ .fh = null, .position = 0, .mode = 0 };
+    /// The last LOCK_RECORD's arguments, read through its view.
+    var record_args: dos.LockRecordArgs = undefined;
+    /// The LOCK_RECORDs and FREE_RECORDs that came, in order.
+    var ranges: [8]Ranged = undefined;
+    var range_count: usize = 0;
+    /// A LOCK_RECORD from this offset is refused ERROR_LOCK_COLLISION, a
+    /// FREE_RECORD ERROR_RECORD_NOT_LOCKED.
+    var refuse_at: u64 = ~@as(u64, 0);
     /// ACTION_SAME_LOCK's answer; null: not known.
     var same: ?bool = null;
     /// READ, WRITE, SEEK, SET_FILE_SIZE and END fail.
@@ -800,6 +808,8 @@ const FakeFs = struct {
     var root: FileLock = .{ .key = 1, .task = &port };
     var dir: FileLock = .{ .key = 2, .task = &port };
     var copy: FileLock = .{ .key = 2, .task = &port };
+
+    const Ranged = struct { action: dos.ActionCode, offset: u64 };
 
     fn at(l: *FileLock) isize {
         return @bitCast(@intFromPtr(l));
@@ -862,6 +872,17 @@ const FakeFs = struct {
             } else {
                 res1 = dos.DOSTRUE;
             },
+            .lock_record, .free_record => {
+                const offset = if (action == .lock_record) pkt.args.lock_record.offset else pkt.args.free_record.offset;
+                if (action == .lock_record) record_args = pkt.args.lock_record;
+                if (range_count < ranges.len) ranges[range_count] = .{ .action = action, .offset = offset };
+                range_count += 1;
+                if (offset == refuse_at) {
+                    res2 = if (action == .lock_record) dos.ERROR_LOCK_COLLISION else dos.ERROR_RECORD_NOT_LOCKED;
+                } else {
+                    res1 = dos.DOSTRUE;
+                }
+            },
             .examine_all => res2 = dos.ERROR_NO_MORE_ENTRIES, // a handler that knows it: done at once
             .examine_all_end => res1 = dos.DOSTRUE,
             else => res2 = dos.ERROR_ACTION_NOT_KNOWN,
@@ -878,6 +899,8 @@ const FakeFs = struct {
         calls = 0;
         same = null;
         io_fail = false;
+        range_count = 0;
+        refuse_at = ~@as(u64, 0);
         const node = dl.MakeDosEntry("FS", dos.DLT_DEVICE).?;
         node.task = &port;
         try testing.expect(dl.AddDosEntry(node));
@@ -1124,6 +1147,85 @@ test "Read, Write, Seek: the handler's answers; -1 with IoErr; Close" {
     try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
     try testing.expect(!dl.Close(fh)); // END fails; the handle is freed all the same
     try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    try tearDown(db);
+}
+
+test "LockRecord, UnLockRecord, LockRecords, UnLockRecords: the packets, the unwinding, the error kept" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+    const record = dos.record;
+    const fh = dl.Open("FS:file", dos.MODE_READWRITE).?;
+
+    // Every argument reaches the handler whole: the 64-bit offset and
+    // length, the mode and the timeout.
+    try testing.expect(dl.LockRecord(fh, (5 << 30) + 1, (3 << 32) + 7, record.REC_SHARED, 77));
+    try testing.expectEqual(dos.ActionCode.lock_record, FakeFs.action);
+    try testing.expectEqual(@as(?*FileHandle, fh), FakeFs.record_args.fh);
+    try testing.expectEqual(@as(u64, (5 << 30) + 1), FakeFs.record_args.offset);
+    try testing.expectEqual(@as(u64, (3 << 32) + 7), FakeFs.record_args.length);
+    try testing.expectEqual(@as(usize, record.REC_SHARED), FakeFs.record_args.mode);
+    try testing.expectEqual(@as(usize, 77), FakeFs.record_args.timeout);
+    try testing.expect(dl.UnLockRecord(fh, (5 << 30) + 1, (3 << 32) + 7));
+    try testing.expectEqual(FakeFs.Ranged{ .action = .free_record, .offset = (5 << 30) + 1 }, FakeFs.ranges[1]);
+    const calls = FakeFs.calls;
+    try testing.expect(!dl.LockRecord(null, 0, 1, record.REC_EXCLUSIVE, 0));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
+    try testing.expect(!dl.UnLockRecord(null, 0, 1));
+    try testing.expectEqual(calls, FakeFs.calls); // no packet
+
+    // One refused: those before it given back, the last first, and its
+    // error kept.
+    const array = [_]record.RecordLock{
+        .{ .fh = fh, .offset = 100, .length = 1 },
+        .{ .fh = fh, .offset = 200, .length = 1, .mode = record.REC_SHARED },
+        .{ .fh = fh, .offset = 300, .length = 1 },
+        .{ .fh = fh, .offset = 400, .length = 1 },
+        .{},
+    };
+    FakeFs.range_count = 0;
+    FakeFs.refuse_at = 300;
+    try testing.expect(!dl.LockRecords(&array, 50));
+    try testing.expectEqual(dos.ERROR_LOCK_COLLISION, dl.IoErr());
+    try testing.expectEqual(@as(usize, 50), FakeFs.record_args.timeout);
+    const unwound = [_]FakeFs.Ranged{
+        .{ .action = .lock_record, .offset = 100 },
+        .{ .action = .lock_record, .offset = 200 },
+        .{ .action = .lock_record, .offset = 300 },
+        .{ .action = .free_record, .offset = 200 },
+        .{ .action = .free_record, .offset = 100 },
+    };
+    try testing.expectEqualSlices(FakeFs.Ranged, &unwound, FakeFs.ranges[0..FakeFs.range_count]);
+
+    // All held; then all given back, past one that was not held, whose
+    // error is kept.
+    FakeFs.range_count = 0;
+    FakeFs.refuse_at = ~@as(u64, 0);
+    try testing.expect(dl.LockRecords(&array, 0));
+    try testing.expectEqual(@as(usize, 4), FakeFs.range_count);
+    try testing.expectEqual(@as(usize, record.REC_EXCLUSIVE), FakeFs.record_args.mode);
+    FakeFs.range_count = 0;
+    FakeFs.refuse_at = 200;
+    try testing.expect(!dl.UnLockRecords(&array));
+    try testing.expectEqual(dos.ERROR_RECORD_NOT_LOCKED, dl.IoErr());
+    try testing.expectEqual(@as(usize, 4), FakeFs.range_count);
+    for (FakeFs.ranges[0..4], [_]u64{ 100, 200, 300, 400 }) |sent, offset| {
+        try testing.expectEqual(FakeFs.Ranged{ .action = .free_record, .offset = offset }, sent);
+    }
+
+    // No array, or one that ends at once: nothing to do.
+    const before = FakeFs.calls;
+    const empty = [_]record.RecordLock{.{}};
+    try testing.expect(dl.LockRecords(null, 0));
+    try testing.expect(dl.LockRecords(&empty, 0));
+    try testing.expect(dl.UnLockRecords(null));
+    try testing.expect(dl.UnLockRecords(&empty));
+    try testing.expectEqual(before, FakeFs.calls);
+    try testing.expect(dl.Close(fh));
     try tearDown(db);
 }
 

@@ -479,4 +479,18 @@ void EndNotify(*dos.notify.NotifyRequest request)
 /// The volume in `drive` (with its colon) given the name `name` (without),
 /// when its file system can: true, or false with IoErr.
 bool Relabel([*:0]const u8 drive, [*:0]const u8 name)
+// Record locks
+/// Lock `length` bytes from `offset` of an open file, in a REC_* mode,
+/// waiting up to `timeout` ticks for them: true, or false with IoErr.
+bool LockRecord(?*dos.FileHandle file, u64 offset, u64 length, u32 mode, u32 timeout)
+/// Lock every record of the array, which ends at a null handle, in its
+/// order, each waiting up to `timeout` ticks; on a failure the ones
+/// already locked are given back. True, or false with IoErr.
+bool LockRecords(?[*]const dos.record.RecordLock records, u32 timeout)
+/// Give back a lock LockRecord took, by the same handle, offset and
+/// length: true, or false with IoErr.
+bool UnLockRecord(?*dos.FileHandle file, u64 offset, u64 length)
+/// Give back every record of a LockRecords array: true when every one was
+/// held.
+bool UnLockRecords(?[*]const dos.record.RecordLock records)
 ##end

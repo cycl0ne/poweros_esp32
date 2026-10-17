@@ -180,6 +180,9 @@ pub fn FileSystem(comptime Media: type) type {
         /// named on as well as the volume's.
         watchers: ?*notify.Watchers = null,
         device_name: []const u8 = "",
+        /// The record locks, when the handler has given it a table: one
+        /// for both bodies, kept with the handler.
+        records: ?*dos.record.Records = null,
 
         geo: Geometry = undefined,
         cache: Cache = undefined,
@@ -569,6 +572,9 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         fn freeLock(fs: *Fs, lock: *FatLock) void {
+            // A file's lock goes when its handle is closed, and its
+            // record locks with it.
+            if (fs.records) |records| records.release(lock);
             if (fs.locks == lock) {
                 fs.locks = lock.nextLock();
             } else {
@@ -1543,6 +1549,21 @@ pub fn FileSystem(comptime Media: type) type {
                 },
                 .seek => {
                     pkt.args.seek.answer = fs.seek(pkt.args.seek) catch |err| return no(err);
+                    return yes();
+                },
+                .lock_record => {
+                    const lock = fs.fileOf(pkt.args.lock_record.fh) catch |err| return no(err);
+                    const records = fs.records orelse return no(error.NoMemory);
+                    return switch (records.lock(pkt, lock.key(), lock)) {
+                        .granted => yes(),
+                        .refused => |code| _fat.no(code),
+                        .waiting => .{ .res1 = 0, .res2 = 0, .held = true },
+                    };
+                },
+                .free_record => {
+                    const lock = fs.fileOf(pkt.args.free_record.fh) catch |err| return no(err);
+                    const records = fs.records orelse return _fat.no(dos.ERROR_RECORD_NOT_LOCKED);
+                    if (!records.unlock(pkt, lock.key(), lock)) return _fat.no(dos.ERROR_RECORD_NOT_LOCKED);
                     return yes();
                 },
                 .end => {
