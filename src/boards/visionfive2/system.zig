@@ -21,6 +21,7 @@ const rtg = sdk.rtg;
 const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const pins = sdk.expansion.boardpin;
 
 /// The board, as StarFive names it.
 const name = "StarFive VisionFive 2";
@@ -32,6 +33,24 @@ const trng = [_]Tag{
     .pointer(st.PART_ChipName, "jh7110 trng"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x1600_C000),
+    .done,
+};
+
+/// The microSD slot: SDIO1, on GPIO7 to 12 as U-Boot connects them, its
+/// interrupt PLIC source 75. No card-detect or write-protect line.
+const card_slot = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_SDSLOT),
+    .pointer(st.PART_ChipName, "jh7110 sdio1"),
+    .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_Address, 0x1602_0000),
+    .value(st.PART_Irq, 75),
+    .value(st.PART_PinClock, pins.gpio(10)),
+    .value(st.PART_PinCommand, pins.gpio(9)),
+    .value(st.PART_PinData0, pins.gpio(11)),
+    .value(st.PART_PinData1, pins.gpio(12)),
+    .value(st.PART_PinData2, pins.gpio(7)),
+    .value(st.PART_PinData3, pins.gpio(8)),
+    .pointer(st.PART_Label, "microSD slot"),
     .done,
 };
 
@@ -80,6 +99,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &trng),
+    .pointer(st.SYSTAG_Part, &card_slot),
     .done,
 };
 

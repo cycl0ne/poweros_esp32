@@ -11,13 +11,13 @@
 //! dma.resource's channels are taken here and the five of them stay free
 //! for the panel, the sound and the flash.
 //!
-//! The controller is the same on both chips; what each chip puts around
-//! it - the controller's clock and reset, its clock's phases, how the
-//! slot's pads reach it - is in `esp32s3/sdhost.zig` and
-//! `esp32p4/sdhost.zig`.
+//! The controller is the same on every chip; what each chip puts around
+//! it - where it is, the controller's clock and reset, its clock's
+//! phases, how the slot's pads reach it - is in `esp32s3/sdhost.zig`,
+//! `esp32p4/sdhost.zig` and `jh7110/sdhost.zig`.
 //!
-//! Two clocks matter. The controller's own is the 160 MHz clock divided
-//! by `clock_div`; the card's is that divided again by `CLKDIV`, and a
+//! Two clocks matter. The controller's own is the chip's source clock
+//! divided by `clock_div`; the card's is that divided again by `CLKDIV`, and a
 //! card is spoken to slowly until it has been identified and quickly
 //! after. A divider is never changed while the card's clock is running:
 //! the card's side of the controller takes a new divider only when it is
@@ -32,10 +32,10 @@ const reg = hardware.mmio.reg;
 const chip_host = switch (hardware.chip) {
     .esp32s3 => @import("esp32s3/sdhost.zig"),
     .esp32p4 => @import("esp32p4/sdhost.zig"),
-    .rv64sbi => @compileError("sdcard.device: no SD host for this chip yet"),
+    .rv64sbi => @import("jh7110/sdhost.zig"),
 };
 
-const base = hardware.map.SDMMC;
+const base = chip_host.base;
 
 const ctrl = base + 0x00;
 const pwren = base + 0x04;
@@ -132,21 +132,22 @@ pub const dma_int_abnormal: u32 = 1 << 9;
 pub const dma_int_wanted: u32 = dma_int_transmit | dma_int_receive |
     dma_int_bus_error | dma_int_no_descriptor | dma_int_normal | dma_int_abnormal;
 
-/// The clock the controller's divider is fed from.
-const source_hz: u32 = 160_000_000;
-/// What the controller itself runs at: the source halved. The card's
-/// clock is divided out of this again.
-const clock_div: u32 = 2;
+/// The clock the controller's divider is fed from, and what the
+/// controller itself runs at: the chip's. The card's clock is divided out
+/// of this again.
+const source_hz: u32 = chip_host.source_hz;
+const clock_div: u32 = chip_host.clock_div;
 const controller_hz: u32 = source_hz / clock_div;
 
 /// The card's clock while it is being identified. A card that has not yet
 /// been told its bus width must be spoken to at 400 kHz or less.
 pub const identify_hz: u32 = 400_000;
-/// The card's clock once it is identified. 25 MHz is as fast as a card
-/// goes before it is switched into high speed, and 20 is what the divider
-/// reaches from this controller's clock; the switch (CMD6) and the 40 MHz
-/// above it are a later change, measured rather than assumed.
-pub const fast_hz: u32 = 20_000_000;
+/// The card's clock once it is identified: 25 MHz, as fast as a card goes
+/// before it is switched into high speed. The divider reaches 20 of it
+/// from the ESP32s' controller clock and 24.75 from the JH7110's; the
+/// switch (CMD6) and the speeds above it are a later change, measured
+/// rather than assumed.
+pub const fast_hz: u32 = 25_000_000;
 
 /// A block, which is what a card of this age reads and writes.
 pub const block_bytes: u32 = 512;
@@ -157,12 +158,14 @@ pub const dma_buffer_max: u32 = 4096;
 /// One link of the controller's DMA chain: four bytes aligned, in
 /// internal memory, and owned by the controller until it hands it back.
 /// A descriptor may name two buffers; this driver uses the first and
-/// chains through the second.
+/// chains through the second. The DMA's addresses are 32 bits on every
+/// chip, so on one whose pointers are wider the chain and the buffers
+/// are in the first 4 GiB.
 pub const Descriptor = extern struct {
     flags: u32 = 0,
     sizes: u32 = 0,
-    buffer: ?*const anyopaque = null,
-    next: ?*Descriptor = null,
+    buffer: u32 = 0,
+    next: u32 = 0,
 
     pub const no_interrupt: u32 = 1 << 1;
     pub const last: u32 = 1 << 2;
@@ -176,8 +179,8 @@ pub const Descriptor = extern struct {
     /// the controller. `flags` adds `first` and `last` where they belong.
     pub fn set(self: *Descriptor, buffer: ?*const anyopaque, bytes: u32, flags: u32, next: ?*Descriptor) void {
         self.sizes = bytes & 0x1FFF;
-        self.buffer = buffer;
-        self.next = next;
+        self.buffer = @intCast(@intFromPtr(buffer));
+        self.next = @intCast(@intFromPtr(next));
         // Owned last: the controller may be looking, and a descriptor is
         // only its to read once everything else in it is written.
         self.flags = flags | chained | owned;
@@ -238,7 +241,7 @@ pub fn init(pins: Pins) Started {
     reg(intmask).* = 0;
     reg(rintsts).* = 0xFFFF_FFFF;
     reg(clksrc).* = 0;
-    setClock(identify_hz);
+    _ = setClock(identify_hz);
     return .ready;
 }
 
@@ -281,8 +284,8 @@ pub fn resetTransfer() void {
 /// The card's clock, as near `hz` as the divider reaches without going
 /// over. The divider counts whole periods of half the controller's clock,
 /// so the card gets `controller_hz / (2 * divider)`; a divider of 0 hands
-/// the controller's clock straight through.
-pub fn setClock(hz: u32) void {
+/// the controller's clock straight through. Answers what the card gets.
+pub fn setClock(hz: u32) u32 {
     const wanted = @max(hz, 1);
     const divider: u32 = if (wanted >= controller_hz)
         0
@@ -298,6 +301,7 @@ pub fn setClock(hz: u32) void {
     applyClock();
     reg(clkena).* = 1;
     applyClock();
+    return if (divider == 0) controller_hz else controller_hz / (2 * divider);
 }
 
 /// The clock registers handed to the card's side of the controller: a
@@ -383,7 +387,7 @@ pub fn prepareData(chain: ?*Descriptor, block_size: u32, blocks: u32) void {
         reg(idsts).* = 0xFFFF_FFFF;
         reg(bytcnt).* = blocks * block_size;
         reg(blksiz).* = block_size;
-        reg(dbaddr).* = @intFromPtr(first);
+        reg(dbaddr).* = @intCast(@intFromPtr(first));
         reg(ctrl).* |= ctrl_dma_enable | ctrl_use_internal_dma;
         reg(bmod).* = bmod_enable | bmod_fixed_burst;
         pollDma();

@@ -5,13 +5,9 @@
 //! The disk says what is on it: its first blocks hold a RigidDiskBlock
 //! (sdk/libs/dos/hardblocks.zig), and its chain of PartitionBlocks names
 //! each partition, its cylinders and its file system. flash.device reads
-//! them once, at cold start - before dos.library is up - and makes a device
-//! node for each partition not marked PBFF_NOMOUNT with expansion.library's
-//! MakeDosNode: named as the partition says (pb_DriveName), with the
-//! handler its de_DosType asks for, and the partition's DosEnvec as the
-//! environment its handler is started with. AddBootNode keeps the nodes
-//! until dos takes them in. A bootable partition stands at its de_BootPri,
-//! the others at -128, which is never booted from.
+//! them once, at cold start - before dos.library is up - and hands each to
+//! expansion.library as a boot node (sdk/libs/expansion/bootdisk.zig,
+//! which sdcard.device's card shares).
 //!
 //! Nothing about the disk is written down in the kernel: a second
 //! partition, or another file system on the same chip, is a matter of
@@ -28,86 +24,30 @@ const dos = sdk.dos;
 const hardblocks = dos.hardblocks;
 const td = sdk.devices.trackdisk;
 const ExecBase = sdk.interface.exec.ExecBase;
-const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const bootdisk = sdk.expansion.bootdisk;
 
 /// The unit the disk is, for the handlers' OpenDevice.
 const disk_unit = 0;
 
-/// A runaway partition chain stops here.
-const max_partitions = 16;
+pub const handlerFor = bootdisk.handlerFor;
 
-/// The handler a partition's de_DosType asks for. The flash file system is
-/// in the ROM; FAT's handler is loaded from HANDLERS:.
-const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
-    .{ .dos_type = dos.flashfs.ID_FLASHFS_DISK, .handler = "flashfs-handler" },
-    .{ .dos_type = dos.ID_MSDOS_DISK, .handler = "fat-handler" },
-};
-
-/// The handler for a DosType, or null for a file system there is none for.
-///
-/// INPUTS:
-/// - `dos_type` - the partition's de_DosType.
-pub fn handlerFor(dos_type: u32) ?[*:0]const u8 {
-    for (file_systems) |file_system| {
-        if (file_system.dos_type == dos_type) return file_system.handler;
-    }
-    return null;
-}
-
-/// The partitions a disk names, one after the other: every sound
-/// PartitionBlock on the RigidDiskBlock's chain that is not marked
-/// PBFF_NOMOUNT.
-pub const Partitions = struct {
-    disk: []const u8,
+/// The disk as the mapping shows it.
+const Mapped = struct {
+    bytes: []const u8,
     block_bytes: u32,
-    /// The next PartitionBlock's number, or end_of_list.
-    next: u32,
-    seen: u32 = 0,
 
-    /// The disk's chain, or null when the disk has no sound
-    /// RigidDiskBlock, or one written for another block size: the block
-    /// numbers in it count the disk's blocks.
-    ///
-    /// INPUTS:
-    /// - `disk` - the disk's bytes.
-    /// - `block_bytes` - its block size, the erase unit.
-    pub fn of(disk: []const u8, block_bytes: u32) ?Partitions {
-        var rdb: hardblocks.RigidDiskBlock = undefined;
-        var block: u32 = 0;
-        while (block < hardblocks.RDB_LOCATION_LIMIT) : (block += 1) {
-            if (!readBlock(disk, block, block_bytes, &rdb)) return null;
-            if (hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK)) break;
-        } else return null;
-        if (rdb.block_bytes != block_bytes) return null;
-        return .{ .disk = disk, .block_bytes = block_bytes, .next = rdb.partition_list };
-    }
-
-    /// The next partition to mount into `into`; false at the chain's end,
-    /// at a block that is not a sound PartitionBlock, or after
-    /// max_partitions.
-    pub fn nextPartition(partitions: *Partitions, into: *hardblocks.PartitionBlock) bool {
-        while (partitions.next != hardblocks.end_of_list and partitions.seen < max_partitions) {
-            partitions.seen += 1;
-            if (!readBlock(partitions.disk, partitions.next, partitions.block_bytes, into)) return false;
-            if (!hardblocks.sound(into, hardblocks.IDNAME_PARTITION)) return false;
-            partitions.next = into.next;
-            if (into.flags & hardblocks.PBFF_NOMOUNT == 0) return true;
-        }
-        return false;
+    /// The start of a block, out of the mapping. False past the disk's
+    /// end.
+    pub fn readBlock(disk: Mapped, block: u32, into: []u8) bool {
+        const offset = @as(u64, block) * disk.block_bytes;
+        if (into.len > disk.block_bytes or offset + into.len > disk.bytes.len) return false;
+        const start: usize = @intCast(offset);
+        @memcpy(into, disk.bytes[start..][0..into.len]);
+        return true;
     }
 };
 
-/// One of the disk's blocks into `into`, as far as the structure goes:
-/// they all live at the start of a block. False past the disk's end.
-fn readBlock(disk: []const u8, block: u32, block_bytes: u32, into: anytype) bool {
-    const size = @sizeOf(@TypeOf(into.*));
-    const offset = @as(u64, block) * block_bytes;
-    if (offset + size > disk.len) return false;
-    const start: usize = @intCast(offset);
-    const bytes: [*]u8 = @ptrCast(into);
-    @memcpy(bytes[0..size], disk[start..][0..size]);
-    return true;
-}
+const Partitions = bootdisk.Partitions(Mapped);
 
 /// Every partition the disk names, as a device node handed to
 /// expansion.library for dos.
@@ -122,24 +62,7 @@ fn readBlock(disk: []const u8, block: u32, block_bytes: u32, into: anytype) bool
 /// - Locks: none held. - Process: a Task will do: it runs in the device's
 ///   init.
 pub fn mountPartitions(sys: *ExecBase, disk: []const u8, block_bytes: u32) void {
-    var partitions = Partitions.of(disk, block_bytes) orelse return;
-    const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return;
-    defer sys.CloseLibrary(expansion_lib);
-    const eb: *ExpansionBase = @ptrCast(expansion_lib);
-    var pb: hardblocks.PartitionBlock = undefined;
-    while (partitions.nextPartition(&pb)) {
-        const handler = handlerFor(pb.environment.dos_type) orelse continue;
-        const drive = pb.name();
-        if (drive.len == 0) continue;
-        // The partition block holds the name as a C string of at most 31
-        // characters, which may fill its 32 bytes.
-        var name: [pb.drive_name.len + 1:0]u8 = @splat(0);
-        @memcpy(name[0..drive.len], drive);
-        const node = eb.MakeDosNode(&name, td.FLASHNAME, disk_unit, pb.dev_flags, &pb.environment) orelse continue;
-        node.misc.handler.handler = handler;
-        const boot_pri: i32 = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
-        if (!eb.AddBootNode(boot_pri, node)) sys.FreeVec(node);
-    }
+    bootdisk.mountPartitions(sys, td.FLASHNAME, disk_unit, Mapped{ .bytes = disk, .block_bytes = block_bytes }, block_bytes);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -181,22 +104,22 @@ fn testDisk(disk: *[4 * test_block]u8) void {
 test "the partitions to mount: the chain's sound blocks, PBFF_NOMOUNT passed over" {
     var disk: [4 * test_block]u8 = undefined;
     testDisk(&disk);
-    var partitions = Partitions.of(&disk, test_block).?;
+    var partitions = Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block).?;
     var pb: hardblocks.PartitionBlock = undefined;
     try testing.expect(partitions.nextPartition(&pb));
     try testing.expectEqualStrings("DH0", pb.name());
     try testing.expect(pb.flags & hardblocks.PBFF_BOOTABLE != 0);
     try testing.expect(!partitions.nextPartition(&pb));
     // A table written for another block size is not this disk's.
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, 512));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = 512 }, 512));
 }
 
 test "a blank disk has no partitions" {
     var disk: [4 * test_block]u8 = undefined;
     @memset(&disk, 0xFF);
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, test_block));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block));
     @memset(&disk, 0);
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, test_block));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block));
 }
 
 test "a RigidDiskBlock and a PartitionBlock are sound once they carry their checksum" {

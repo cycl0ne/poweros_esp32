@@ -140,6 +140,10 @@ pub const PART_UsbVbus = PART_Dummy + 11;
 /// "header UART2", "USB-C UART1". ObtainDeviceUnits gives it as the
 /// label of the unit the part is.
 pub const PART_Label = PART_Dummy + 12;
+/// The interrupt the part raises, as exec numbers it (sdk.hardware.intbits),
+/// on a machine whose interrupt controller the board wires: a PLIC source.
+/// A chip that numbers a part's interrupt once for every board needs none.
+pub const PART_Irq = PART_Dummy + 13;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;

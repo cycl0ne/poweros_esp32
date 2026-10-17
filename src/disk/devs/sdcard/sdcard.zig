@@ -30,13 +30,16 @@
 //! the queue, the geometry, what a card change means - is the same for
 //! both.
 //!
-//! **The SD/MMC host on either chip.** The controller is the same on
-//! the ESP32-S3 and the ESP32-P4; what each chip puts around it - its
-//! clocks, and pads through the GPIO matrix or the IO_MUX's own - is in
-//! `esp32s3/sdhost.zig` and `esp32p4/sdhost.zig`. On the P4 the data
-//! cache is in front of internal memory too, so the chain and the work
-//! buffer are written out of the cache before the controller's DMA reads
-//! them, and a read's bytes dropped from it before the CPU looks.
+//! **The SD/MMC host on every chip.** The controller is the same on
+//! the ESP32-S3, the ESP32-P4 and the JH7110; what each chip puts around
+//! it - its clocks, and pads through the GPIO matrix or the IO_MUX's own -
+//! is in `esp32s3/sdhost.zig`, `esp32p4/sdhost.zig` and
+//! `jh7110/sdhost.zig`. On the P4 and the JH7110 the data cache is in
+//! front of the memory the DMA reads, so the chain and the work buffer
+//! are written out of the cache before the controller's DMA reads them,
+//! and a read's bytes dropped from it before the CPU looks. A chip with
+//! no general-purpose SPI controller - the JH7110 - has no SPI slot, and
+//! none of that half is built for it.
 //!
 //! **The card's supply.** A slot whose part names `PART_PinPower` has the
 //! card's supply on a switch: it is switched on before the controller
@@ -68,6 +71,17 @@
 //! card come or gone causes the handlers' change interrupts
 //! (TD_ADDCHANGEINT), and the handler looks at the slot on its own task -
 //! and tells input, so a window showing the device list looks again.
+//!
+//! **On the disk or in the ROM.** Most boards load the device from DEVS:
+//! when SD0: is first used. A board that can start from its card has it in
+//! the ROM as well (the VisionFive 2): there it starts at cold start, and
+//! before its init lets go the task looks at the slot and hands the
+//! partitions the card's RigidDiskBlock names to expansion.library as boot
+//! nodes (sdk/libs/expansion/bootdisk.zig), as flash.device does for its
+//! disk - so a bootable partition with a higher de_BootPri than the flash
+//! disk's is where dos starts from. The card can then still hold a PC's
+//! partition table in its first block: the RigidDiskBlock is looked for in
+//! the blocks after it too.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -86,6 +100,14 @@ const sdspi = @import("sdspi.zig");
 const card = @import("card.zig");
 const pads = sdk.hardware.gpio;
 const spi = sdk.hardware.gpspi.spi3;
+/// Whether a slot may be on SPI: the chip has the controller `sdspi.zig`
+/// talks over, as both ESP32s do. On a machine under SBI firmware it has
+/// not, and nothing of the SPI half is built.
+const spi_slots = sdk.hardware.chip != .rv64sbi;
+/// Whether the chip's pads are driven from here, which a card's supply
+/// switch needs: the ESP32s' are, a machine under SBI firmware leaves its
+/// pads where the firmware put them.
+const own_pads = sdk.hardware.chip != .rv64sbi;
 const expander_resource = sdk.resources.expander;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const _sdcard = @import("_sdcard.zig");
@@ -103,8 +125,18 @@ const DEVICE_VERSION_STRING =
 
 const vec = exec.libraries.vec;
 
-/// Enough for the bring-up and a transfer; nothing here recurses.
-const stack_size = 4096;
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+/// Enough for the bring-up and a transfer; nothing here recurses. Twice
+/// that on a 64-bit machine, whose frames are wider and whose task also
+/// hands the card's partitions to expansion.library.
+const stack_size = if (@sizeOf(usize) == 8) 8192 else 4096;
+/// Where the block the controller's DMA and its interrupt reach comes
+/// from: internal memory, and on a machine whose memory runs past the
+/// DMA's 32 address bits, the part below them (MEMF_DMA).
+const work_memory: u32 = exec.MEMF_INTERNAL | if (sdk.hardware.chip == .rv64sbi) exec.MEMF_DMA else 0;
 /// Above dos's processes, below the kernel's tick users, as flash.device
 /// is: a file system waits on this and nothing else does.
 const task_pri = 5;
@@ -328,6 +360,13 @@ fn say(sb: *SdCardBase, what: [*:0]const u8) void {
     sdk.exec.kprintf(sb.sys_base, "%s: %s\n", .{ DEVICE_NAME, what });
 }
 
+/// Whether the slot is on SPI. Inline, so that on a chip with no SPI
+/// slots it is known false where it is asked and the SPI half is never
+/// built.
+inline fn onSpi(sb: *const SdCardBase) bool {
+    return spi_slots and sb.slot.spi != 0;
+}
+
 /// The card in the slot, identified and made ready: block addressing,
 /// four bits wide, and the fast clock. False if there is no card, or if
 /// it is one this driver cannot use.
@@ -339,7 +378,7 @@ fn say(sb: *SdCardBase, what: [*:0]const u8) void {
 fn identify(sb: *SdCardBase) bool {
     sb.card = .{};
     sdmmc.setWide(false);
-    sdmmc.setClock(sdmmc.identify_hz);
+    _ = sdmmc.setClock(sdmmc.identify_hz);
 
     // Reset. The card says nothing back, so nothing is checked but that
     // the controller took the command.
@@ -409,8 +448,7 @@ fn identify(sb: *SdCardBase) bool {
     const length = command(sb, card.SET_BLOCKLEN, @intCast(card.block_bytes), .short, null);
     if (!length.ok()) return false;
 
-    sdmmc.setClock(sdmmc.fast_hz);
-    sb.card.clock_hz = sdmmc.fast_hz;
+    sb.card.clock_hz = sdmmc.setClock(sdmmc.fast_hz);
     return true;
 }
 
@@ -465,7 +503,7 @@ fn layChain(sb: *SdCardBase, bytes: u32) *sdmmc.Descriptor {
 /// caller's buffer; for a write the bytes are copied in first, for a read
 /// they are copied out after.
 fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
-    if (sb.slot.spi != 0) return transferSpi(sb, way, block, count, bytes);
+    if (onSpi(sb)) return transferSpi(sb, way, block, count, bytes);
     const work = sb.work.?;
     var done: u32 = 0;
     while (done < count) {
@@ -525,7 +563,7 @@ fn takeChange(sb: *SdCardBase, io: *exec.IORequest) bool {
 
 /// Whether the card that is in still answers: asked for its status.
 fn stillThere(sb: *SdCardBase) bool {
-    if (sb.slot.spi != 0) {
+    if (onSpi(sb)) {
         var bus = SpiBus{ .sb = sb };
         return Spi.command(&bus, card.SEND_STATUS, 0) != null;
     }
@@ -547,7 +585,7 @@ fn lost(sb: *SdCardBase) void {
 /// the slot is empty or the card cannot be used.
 fn ready(sb: *SdCardBase) bool {
     if (sb.present != 0) return true;
-    if (sb.slot.spi != 0) {
+    if (onSpi(sb)) {
         var bus = SpiBus{ .sb = sb };
         // A card the chip was reset on - part way through a run of
         // blocks, say - has been seen to miss the first wake-up and take
@@ -572,7 +610,7 @@ fn report(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     var name: [6]u8 = @splat(0);
     @memcpy(name[0..5], &sb.card.cid.name);
-    if (sb.slot.spi != 0) {
+    if (onSpi(sb)) {
         sdk.exec.kprintf(sys, "%s: %s, %ld MB, SPI at %d kHz\n", .{
             DEVICE_NAME,
             @as([*:0]const u8, @ptrCast(&name)),
@@ -594,7 +632,7 @@ fn report(sb: *SdCardBase) void {
 /// write-protect switch where it has one.
 fn writeProtected(sb: *SdCardBase) bool {
     if (sb.card.readOnly()) return true;
-    return sb.slot.spi == 0 and sdmmc.writeProtected();
+    return !onSpi(sb) and sdmmc.writeProtected();
 }
 
 // --- the SPI slot ---------------------------------------------------------
@@ -908,12 +946,20 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
             _ = sys.Wait(queue_port.sigMask());
         }
     }
-    started(sb);
-
-    // The first look at the slot, after the init has been let go: a card
-    // may take seconds to power up, and the machine's start does not wait
-    // for it. A request that comes in meanwhile waits on the queue.
-    if (!ready(sb)) say(sb, "no card in the slot");
+    if (in_rom) {
+        // The first look at the slot, before the init is let go: the card
+        // may be what the machine starts from, and dos takes the boot
+        // nodes as soon as the cold start reaches it.
+        if (ready(sb)) bootPartitions(sb) else say(sb, "no card in the slot");
+        started(sb);
+    } else {
+        started(sb);
+        // The first look at the slot, after the init has been let go: a
+        // card may take seconds to power up, and the machine's start does
+        // not wait for it. A request that comes in meanwhile waits on the
+        // queue.
+        if (!ready(sb)) say(sb, "no card in the slot");
+    }
 
     while (true) {
         while (sys.GetMsg(queue_port)) |msg| {
@@ -945,6 +991,31 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
     }
 }
 
+/// The card's blocks, as `bootdisk` reads them: one at a time, through the
+/// work buffer into a block of the task's.
+const CardDisk = struct {
+    sb: *SdCardBase,
+    block: *[card.block_bytes]u8,
+
+    pub fn readBlock(disk: CardDisk, number: u32, into: []u8) bool {
+        if (into.len > disk.block.len or !disk.sb.card.holds(number, 1)) return false;
+        if (transfer(disk.sb, .from_card, number, 1, disk.block) != 0) return false;
+        @memcpy(into, disk.block[0..into.len]);
+        return true;
+    }
+};
+
+/// The partitions the card's RigidDiskBlock names, handed to
+/// expansion.library as boot nodes on unit 0. A card without one - a
+/// PC's, say - has none, and is SD0: when the startup sequence mounts it.
+fn bootPartitions(sb: *SdCardBase) void {
+    const sys = sb.sys_base;
+    const memory = sys.AllocVec(card.block_bytes, exec.MEMF_ANY) orelse return;
+    defer sys.FreeVec(memory);
+    const disk = CardDisk{ .sb = sb, .block = @ptrCast(memory) };
+    expansion.bootdisk.mountPartitions(sys, DEVICE_NAME, 0, disk, @intCast(card.block_bytes));
+}
+
 /// The init is waiting to hear that the task is ready for requests.
 fn started(sb: *SdCardBase) void {
     sb.started = 1;
@@ -971,7 +1042,7 @@ fn setUp(sb: *SdCardBase) bool {
     sb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &sb.timer_io.node, 0) != 0) return false;
 
-    if (sb.slot.spi != 0) {
+    if (onSpi(sb)) {
         if (!setUpSpi(sb)) return false;
         sb.controller_ready = 1;
         return true;
@@ -997,7 +1068,7 @@ fn setUp(sb: *SdCardBase) bool {
         },
     }
 
-    sys.AddIntServer(intbits.INTB_SDIO_HOST, &sb.work.?.int);
+    sys.AddIntServer(slot.irq, &sb.work.?.int);
     sb.controller_ready = 1;
     sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
 
@@ -1007,6 +1078,7 @@ fn setUp(sb: *SdCardBase) bool {
 /// The card's supply switched on, where the slot has a switch on a pad
 /// of the chip, and the card given time to come up.
 fn powerOn(sb: *SdCardBase) void {
+    if (!own_pads) return;
     const line = BoardPin.of(sb.slot.power);
     if (line.kind != expansion.boardpin.BPIN_GPIO) return;
     pads.toMatrix(line.number);
@@ -1253,6 +1325,7 @@ fn findSlot(sb: *SdCardBase) void {
     // On SPI: the clock, MOSI and MISO on pads of the chip, and a chip
     // select wherever the board put it.
     if (ub.GetTagData(st.PART_Bus, st.BUS_SDIO, tags) == st.BUS_SPI) {
+        if (!spi_slots) return;
         var slot: _sdcard.Slot = .{ .spi = 1, .data = @splat(_sdcard.no_pin) };
         slot.clock = pad(ub, st.PART_PinClock, tags) orelse return;
         slot.command = pad(ub, st.PART_PinDataOut, tags) orelse return;
@@ -1276,9 +1349,17 @@ fn findSlot(sb: *SdCardBase) void {
     slot.detect = pad(ub, st.PART_PinDetect, tags) orelse _sdcard.no_pin;
     slot.write_protect = pad(ub, st.PART_PinWriteProtect, tags) orelse _sdcard.no_pin;
     slot.power = @truncate(ub.GetTagData(st.PART_PinPower, 0, tags));
+    // The controller's interrupt: the chip's own number where it has one,
+    // else the one the board wired it to, without which there is no slot.
+    slot.irq = @intCast(ub.GetTagData(st.PART_Irq, fixed_irq orelse 0, tags));
+    if (fixed_irq == null and slot.irq == 0) return;
     sb.slot = slot;
     sb.has_slot = 1;
 }
+
+/// The SD/MMC host's interrupt on a chip that numbers it once for every
+/// board; null on one whose interrupt controller is wired by the board.
+const fixed_irq: ?u32 = if (@hasDecl(intbits, "INTB_SDIO_HOST")) intbits.INTB_SDIO_HOST else null;
 
 /// The pad a part's line is on, or null if it has no such line or the line
 /// is not a pad of the chip.
@@ -1315,7 +1396,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sdk.exec.klog(sys_base, exec.LOG_DEBUG, "%s: no card slot on this board\n", .{DEVICE_NAME});
         return null;
     }
-    if (sb.slot.spi == 0 and !sdmmc.present()) {
+    if (!onSpi(sb) and !sdmmc.present()) {
         sdk.exec.kprintf(sys_base, "%s: no SD host controller on this machine\n", .{DEVICE_NAME});
         return null;
     }
@@ -1337,11 +1418,11 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // The base itself is wherever MakeLibrary put it, which on this board
     // is external memory - out of the DMA's reach, and out of an
     // interrupt's. So everything either of them touches is here instead,
-    // internal and on a cache line of its own. On SPI the task makes its
-    // own, smaller one when it sets the controller up.
+    // internal and on a cache line of its own (`work_memory`). On SPI the
+    // task makes its own, smaller one when it sets the controller up.
     const line = 64;
-    if (sb.slot.spi == 0) {
-        const memory = sys_base.AllocMem(@sizeOf(Work) + line, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
+    if (!onSpi(sb)) {
+        const memory = sys_base.AllocMem(@sizeOf(Work) + line, work_memory | exec.MEMF_CLEAR) orelse {
             sdk.exec.kprintf(sys_base, "%s: no internal memory for the card's buffers\n", .{DEVICE_NAME});
             if (gb) |taken_from| gpio_resource.freePads(taken_from, slot_pads);
             return null;
@@ -1406,18 +1487,21 @@ const init_table = exec.InitTable{
 /// and where its units come from: a unit per card slot the board lists.
 const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_BLOCK, 0 };
 
-/// No flags but AUTOINIT: the device is on the disk, in DEVS:, and is
+/// On the disk no flags but AUTOINIT: the device is in DEVS:, and is
 /// made when something opens it - ramlib loads the file and hands this
-/// tag to InitResident. The priority orders nothing here.
+/// tag to InitResident. The priority orders nothing there. In the ROM it
+/// is a cold-start device too: before dos.library (-128), which takes its
+/// boot nodes, and after timer.device (50), whose timer its task waits
+/// on, and flash.device (40).
 ///
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
 /// refers to the tag, whoever loads the file looks for it.
 export const sdcard_device_tag: exec.ResidentDevice linksection(".resident") = .{
     .resident = .{
         .match_tag = @ptrCast(&sdcard_device_tag),
-        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO | if (in_rom) exec.RTF_COLDSTART else 0,
         .version = DEVICE_VERSION,
-        .pri = 0,
+        .pri = if (in_rom) 30 else 0,
         .type = .device,
         .name = DEVICE_NAME,
         .id_string = DEVICE_VERSION_STRING[1..], // past the NUL: a C string
@@ -1429,7 +1513,7 @@ export const sdcard_device_tag: exec.ResidentDevice linksection(".resident") = .
 
 /// A device is not a command. Whoever runs this file gets nothing done and
 /// a return code that says so.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a device, not a command\n", .{DEVICE_NAME});
@@ -1439,4 +1523,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 /// The "$VER:" string, which `Version <file>` looks for. Nothing refers to
 /// it, so it needs an export and a section of its own that program.ld
 /// KEEPs.
-export const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version") = DEVICE_VERSION_STRING.*;
+const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version") = DEVICE_VERSION_STRING.*;
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}

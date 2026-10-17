@@ -19,6 +19,8 @@ pub const boardpin = @import("boardpin.zig");
 pub const systemtags = @import("systemtags.zig");
 /// The command sets a device says it speaks (`DEVIF_*`).
 pub const devices = @import("devices.zig");
+/// A disk's partitions as boot nodes, for the block devices in the ROM.
+pub const bootdisk = @import("bootdisk.zig");
 
 pub const BoardPart = @import("boardpart.zig").BoardPart;
 pub const BoardPin = boardpin.BoardPin;

@@ -163,6 +163,8 @@ pub const Slot = extern struct {
     /// The switch of the card's supply, as a BoardPin's data; 0 for a
     /// slot whose card is always powered.
     power: u32 = 0,
+    /// The SD/MMC host's interrupt, as exec numbers it.
+    irq: u32 = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {
