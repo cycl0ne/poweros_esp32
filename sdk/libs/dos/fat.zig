@@ -246,6 +246,12 @@ pub fn entryWith(was: u32, cluster: u32) u32 {
     return (was & ~cluster_mask) | (cluster & cluster_mask);
 }
 
+/// The entry that holds the volume's flags, and the one of them that says
+/// the volume is whole: set when it was put away after its last change,
+/// clear while it is in the middle of one.
+pub const flags_entry: u32 = 1;
+pub const clean_flag: u32 = 0x0800_0000;
+
 // --- the free-count sector ---------------------------------------------------
 
 /// The sector that carries the free count and where to look next. Both

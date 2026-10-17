@@ -725,6 +725,38 @@ on the volume names it by that at once. A handler that does this gives
 its node the name with `dos.volumename.VolumeName`, after the packet is
 answered and only when the device list can be had at once.
 
+**A card or stick can go at any moment** - pulled out, the power cut -
+and fat-handler writes so that what is left is a volume with something
+lost at worst, never something wrong. What a change takes goes down
+before what names it: a file's bytes, then its clusters in the table
+(and on exFAT the bitmap), then the entry; clusters put on the end of a
+file are linked on after their own entries, and a directory's new
+cluster is cleared before it is linked on. What a change gives back
+goes the other way: the entry first, then its clusters. A cut leaves at
+worst clusters taken that no entry names, which a check gives back, a
+file at its size before the write, or a renamed object under both
+names. The volume is marked dirty on the medium before the first change
+- a FAT32 card's table entry 1 in every copy, an exFAT card's volume
+flags - and clean again once no file that was written to is open, so a
+checker (`fsck.fat`, `fsck.exfat`, chkdsk) knows to look; a volume that
+was dirty when it was mounted stays dirty. A file closed,
+`ACTION_FLUSH`, and the dirty and clean marks have the handler send the
+device `CMD_UPDATE`, which usb/disk.device passes on to the stick
+([USB guide](usb.md#sticks-and-card-readers)), and only when something
+was written since the last one.
+
+`C:AddBuffers DRIVE/A,BUFFERS/N` sends `ACTION_MORE_CACHE`: BUFFERS is
+added to the blocks a file system keeps in memory - a negative number
+takes some away - and the answer is how many it keeps now; without
+BUFFERS it only asks. fat-handler's cache holds a card's table and
+directory blocks, never a file's bytes. It starts at the mountlist's
+`Buffers` (32 when there is none), never goes below 4, and the count is
+the handler's rather than the card's: the card in the slot has its cache
+changed at once, and the next one starts at the same size. The flash
+file system and `RAM:` keep no buffers - one reads the flash through its
+mapping, the other is memory - and answer `ERROR_ACTION_NOT_KNOWN`,
+which AddBuffers prints as `DH0: keeps no buffers`.
+
 ## Consoles
 
 `CON:` is a console in a window, and **each Open of a `CON:` name is a

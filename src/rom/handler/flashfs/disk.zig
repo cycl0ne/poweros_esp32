@@ -12,7 +12,8 @@
 //! - **The tree is in memory, the bytes are on the medium.** Mounting
 //!   replays the log into nodes; a file's data stays where it was written
 //!   and the node keeps a list of extents pointing at it. Reading a file is
-//!   a copy out of the mapped medium.
+//!   a copy out of the mapped medium, so there are no buffers to keep:
+//!   ACTION_MORE_CACHE is an action it does not know, as for RAM:.
 //! - **Nothing is changed in place.** Every create, write, rename, delete
 //!   and SetProtection appends a record; the newest one about a thing wins.
 //! - **Inodes** number the objects and are never reused, so a lock or a
@@ -255,11 +256,6 @@ pub fn FileSystem(comptime Media: type) type {
         full: bool = false,
         frees: u32 = 0,
         full_frees: u32 = 0,
-        /// de_NumBuffers, as the mountlist gave it. Nothing here keeps
-        /// buffers - the medium is read through its mapping - but
-        /// ACTION_MORE_CACHE has to answer with something, and this is the
-        /// truth about what was asked for.
-        buffers: u32 = 0,
         /// Who watches what (notification), when the handler has given
         /// them; without, ADD_NOTIFY is refused.
         watchers: ?*notify.Watchers = null,
@@ -1493,12 +1489,6 @@ pub fn FileSystem(comptime Media: type) type {
                     const label: ?[*:0]const u8 = @ptrFromInt(ptrArg(a[0]));
                     fs.reformat(if (label) |l| std.mem.span(l) else "Empty") catch |e| return no(e);
                     return yes();
-                },
-                .more_cache => {
-                    // The medium is read through its mapping, so there are
-                    // no buffers to add to: it answers with the number the
-                    // mountlist gave it and keeps it.
-                    return .{ .res1 = @intCast(fs.buffers), .res2 = 0 };
                 },
                 .add_notify => {
                     fs.addNotify(@ptrFromInt(ptrArg(a[0]))) catch |e| return no(e);

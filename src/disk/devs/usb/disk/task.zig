@@ -26,6 +26,12 @@
 //! **Reads and writes** go in pieces of at most `max_transfer` bytes, a
 //! command each, straight into and out of the caller's buffer: the
 //! controller moves bulk data through a buffer of its own.
+//!
+//! **CMD_UPDATE** is SYNCHRONIZE CACHE: a stick may hold what it was given
+//! in memory of its own, and this is how a file system knows it is on the
+//! medium. A stick that answers ILLEGAL REQUEST does not know the command,
+//! having no such cache or not saying; it is answered as done, and not
+//! asked again while the same medium is in.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -247,6 +253,7 @@ fn arrive(base: *DiskBase, function: *Function, unit: *Unit) void {
     }
     unit.block_bytes = capacity.block_bytes;
     unit.blocks = capacity.blocks;
+    unit.sync_refused = false;
     const mode = function.scratch[0..scsi.mode_sense_bytes];
     const result = run(function, unit, scsi.modeSense().slice(), mode, true, answer_ms);
     unit.write_protected = result.outcome == .passed and scsi.writeProtectedOf(mode[0..@min(result.moved, mode.len)]);
@@ -343,6 +350,7 @@ fn serve(base: *DiskBase, io: *exec.IORequest) void {
     }
     switch (io.command) {
         exec.CMD_READ, exec.CMD_WRITE => readWrite(base, function, unit, io),
+        exec.CMD_UPDATE => synchronize(base, function, unit, io),
         td.TD_GETGEOMETRY => {
             const data = req.data orelse {
                 io.err = exec.IOERR_BADADDRESS;
@@ -405,10 +413,38 @@ fn readWrite(base: *DiskBase, function: *Function, unit: *Unit, io: *exec.IORequ
     req.actual = done;
 }
 
+/// CMD_UPDATE: SYNCHRONIZE CACHE, answered once what the unit holds is on
+/// its medium. Waits as long as a transfer may: a stick with much held
+/// takes a while.
+fn synchronize(base: *DiskBase, function: *Function, unit: *Unit, io: *exec.IORequest) void {
+    if (unit.sync_refused) return;
+    switch (run(function, unit, scsi.synchronizeCache().slice(), null, false, data_ms).outcome) {
+        .passed => {},
+        .failed => {
+            const sense = senseOf(function, unit) orelse {
+                io.err = td.TDERR_NotSpecified;
+                return;
+            };
+            if (sense.illegalRequest()) {
+                unit.sync_refused = true;
+                return;
+            }
+            io.err = failureOf(base, function, unit, sense);
+        },
+        .gone => io.err = td.TDERR_NoCard,
+        .broken => io.err = td.TDERR_NotSpecified,
+    }
+}
+
 /// What a failed command's sense makes of it, as io_Error; a medium found
 /// gone or changed is let go of here.
 fn failure(base: *DiskBase, function: *Function, unit: *Unit) i8 {
     const sense = senseOf(function, unit) orelse return td.TDERR_NotSpecified;
+    return failureOf(base, function, unit, sense);
+}
+
+/// The same, from the sense already asked for.
+fn failureOf(base: *DiskBase, function: *Function, unit: *Unit, sense: scsi.Sense) i8 {
     if (sense.noMedium()) {
         depart(base, unit);
         return td.TDERR_NoCard;

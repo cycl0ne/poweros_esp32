@@ -28,6 +28,10 @@
 //!   up to its size it reads as zeroes.** Growing a file with
 //!   SET_FILE_SIZE only moves the size; writing past the valid length
 //!   writes the zeroes in between first.
+//! - **What a packet changed is on the medium before it is answered**, and
+//!   what a change takes goes down before what names it - the file's
+//!   bytes, the bitmap and the table, then the entry set - and what it
+//!   gives back the other way round (`fat.zig` says why).
 //! - **The volume is marked dirty on the medium** before the first change
 //!   and clean again once a packet leaves nothing half done - no file open
 //!   that has been written to. A volume that was dirty when it was mounted
@@ -77,10 +81,6 @@ const FileInfoBlock = dos.FileInfoBlock;
 const DosPacket = dos.DosPacket;
 const MsgPort = exec.MsgPort;
 const UtilityBase = sdk.interface.utility.UtilityBase;
-
-/// Blocks the cache holds: the table, bitmap and directory blocks a
-/// packet goes back to.
-pub const cache_blocks: u32 = 32;
 
 /// How many directories below the lock it starts from a walk keeps
 /// without making keys of them. A path deeper than this is refused.
@@ -232,6 +232,9 @@ pub fn FileSystem(comptime Media: type) type {
 
         geo: Geometry = undefined,
         cache: Cache = undefined,
+        /// Blocks the cache holds: the table, bitmap and directory blocks a
+        /// packet goes back to. The handler sets it (`setBuffers`).
+        buffers: u32 = cache_area.default_blocks,
         table: Table = undefined,
         bitmap: Bitmap = undefined,
         upcase: Upcase = .{ .map = &.{} },
@@ -318,7 +321,12 @@ pub fn FileSystem(comptime Media: type) type {
             fs.zone = fs.media.timeZone();
             fs.dirty = false;
 
-            fs.cache = Cache.init(fs.media, cache_blocks) catch return error.NoMemory;
+            // A size set while no card was in is tried only now; when its
+            // memory is not there, the cache is made the default size.
+            fs.cache = Cache.init(fs.media, fs.buffers) catch fallback: {
+                fs.buffers = cache_area.default_blocks;
+                break :fallback Cache.init(fs.media, fs.buffers) catch return error.NoMemory;
+            };
             errdefer fs.cache.deinit();
             fs.table = Table.init(&fs.cache, &fs.geo);
             fs.dirs = .{ .cache = &fs.cache, .table = &fs.table, .geo = &fs.geo, .upcase = &fs.upcase, .ub = fs.ub };
@@ -346,6 +354,17 @@ pub fn FileSystem(comptime Media: type) type {
             fs.arrive("", true);
         }
 
+        /// The cache made `count` blocks: at once on a mounted volume, and
+        /// at every mount after. When a mounted volume's cache cannot be
+        /// made that size it stays as it was, and so does the count.
+        pub fn setBuffers(fs: *Fs, count: u32) Error!void {
+            if (fs.mounted) fs.cache.resize(count) catch |e| return switch (e) {
+                error.NoMemory => error.NoMemory,
+                error.ReadFailed, error.WriteFailed => error.MediumFailed,
+            };
+            fs.buffers = count;
+        }
+
         /// Everything the volume held in memory written back and given up;
         /// every key left is stale.
         pub fn unmount(fs: *Fs) void {
@@ -360,6 +379,7 @@ pub fn FileSystem(comptime Media: type) type {
             if (fs.mounted) {
                 if (write_back) {
                     _ = fs.cache.flush() catch {};
+                    _ = fs.media.update();
                     fs.clearDirty();
                 } else {
                     fs.cache.invalidate();
@@ -466,23 +486,33 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         /// About to change the volume: it must take writes, and it is
-        /// marked dirty first, so a card pulled half way through is known
-        /// to need checking.
+        /// marked dirty first - the mark on the medium itself before the
+        /// change is - so a card pulled half way through is known to need
+        /// checking.
         fn changing(fs: *Fs) Error!void {
             if (!fs.media.writable()) return error.WriteProtected;
             if (fs.dirty or fs.found_dirty) return;
             try fs.writeFlags(true);
+            if (!fs.media.update()) return error.MediumFailed;
             fs.dirty = true;
         }
 
         /// Clean again, if this handler made it dirty and nothing is left
-        /// half done: no open file has been written to.
+        /// half done: no open file on this card has been written to. What
+        /// went before is on the medium itself first.
         fn clearDirty(fs: *Fs) void {
             if (!fs.dirty) return;
             var it = fs.locks;
-            while (it) |lock| : (it = lock.nextLock()) if (lock.modified) return;
+            while (it) |lock| : (it = lock.nextLock()) if (lock.modified and !lock.key().stale) return;
+            if (!fs.media.update()) return;
             fs.writeFlags(false) catch return;
             fs.dirty = false;
+        }
+
+        /// Every block changed so far on the medium now, before anything
+        /// that counts on it is changed: what puts the writes in order.
+        fn writeBack(fs: *Fs) Error!void {
+            _ = fs.cache.flush() catch return error.MediumFailed;
         }
 
         // --- keys and locks -------------------------------------------------
@@ -982,10 +1012,14 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         /// A directory one cluster longer: taken, cleared, and its length
-        /// written into its entry (the root's is its chain's).
+        /// written into its entry (the root's is its chain's). The cluster
+        /// is cleared straight on the medium while what takes it is still
+        /// in the cache, and is there before the length that reaches it:
+        /// a directory never runs on into whatever the cluster held.
         fn growDir(fs: *Fs, dir_key: *Key) Error!void {
             const cluster = try fs.growOne(dir_key);
             try fs.dirs.clear(cluster, fs.sector);
+            try fs.writeBack();
             dir_key.size = dir_key.clusters * fs.geo.cluster_bytes;
             dir_key.valid = dir_key.size;
             try fs.syncKey(dir_key, null);
@@ -1034,6 +1068,8 @@ pub fn FileSystem(comptime Media: type) type {
                 const cluster = try fs.growOne(&made);
                 errdefer fs.bitmap.release(cluster) catch {};
                 try fs.dirs.clear(cluster, fs.sector);
+                // Taken on the medium before a set names it.
+                try fs.writeBack();
                 made.size = fs.geo.cluster_bytes;
                 made.valid = made.size;
                 set.setStream(made.chain, made.valid, made.size);
@@ -1068,8 +1104,10 @@ pub fn FileSystem(comptime Media: type) type {
             if (key) |gone| fs.tell(gone);
             if (dir_key) |dir| fs.tell(dir);
             if (key) |gone| fs.forsake(gone);
-            // Its clusters back, whichever way they are kept.
+            // Its clusters back, whichever way they are kept, once it is
+            // gone from the medium.
             var gone: Key = .{ .chain = found.chain(), .clusters = if (found.chain().first == 0) 0 else fs.geo.clustersFor(found.size) };
+            if (gone.clusters != 0) try fs.writeBack();
             try fs.cutChain(&gone, 0);
         }
 
@@ -1081,6 +1119,23 @@ pub fn FileSystem(comptime Media: type) type {
             if (!fs.owns(lock)) return error.InvalidLock;
             if (lock.key().stale) return error.InvalidLock;
             return lock;
+        }
+
+        /// A key's file cut to `size`: its entry says so on the medium, and
+        /// then the clusters past it are given back. Handles past the new
+        /// end move back to it.
+        fn shorten(fs: *Fs, key: *Key, size: u64) Error!void {
+            const keep = fs.geo.clustersFor(size);
+            var gone: Key = .{ .chain = key.chain, .clusters = key.clusters };
+            if (keep == 0) key.chain = .{};
+            key.size = size;
+            if (key.valid > size) key.valid = size;
+            key.changed = true;
+            fs.forgetPlaces(key, size);
+            try fs.syncKey(key, null);
+            try fs.writeBack();
+            try fs.cutChain(&gone, keep);
+            key.clusters = gone.clusters;
         }
 
         /// Every lock on a key whose place in the chain may be gone starts
@@ -1115,11 +1170,7 @@ pub fn FileSystem(comptime Media: type) type {
                     const key = try fs.keyOf(&object);
                     const lock = try fs.lockKey(key, dos.EXCLUSIVE_LOCK);
                     errdefer fs.freeLock(lock);
-                    try fs.cutChain(key, 0);
-                    key.size = 0;
-                    key.valid = 0;
-                    fs.forgetPlaces(key, 0);
-                    try fs.syncKey(key, null);
+                    try fs.shorten(key, 0);
                     lock.modified = true;
                     break :blk lock;
                 } else |err| blk: {
@@ -1266,6 +1317,10 @@ pub fn FileSystem(comptime Media: type) type {
             }
             try fs.put(key, &place, lock.pos, buffer, len);
             lock.pos += len;
+            // The bytes went straight to the medium; the bitmap and the
+            // table follow them there, and only then the entry set that
+            // counts on all of it.
+            try fs.writeBack();
             try fs.syncKey(key, null);
             return @intCast(len);
         }
@@ -1322,13 +1377,11 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.changing();
             const size: u64 = @intCast(to);
             if (size < key.size) {
-                try fs.cutChain(key, fs.geo.clustersFor(size));
-                key.size = size;
-                if (key.valid > size) key.valid = size;
-                fs.forgetPlaces(key, size);
+                try fs.shorten(key, size);
             } else if (size > key.size) {
                 const wanted = fs.geo.clustersFor(size);
                 while (key.clusters < wanted) _ = try fs.growOne(key);
+                try fs.writeBack();
                 key.size = size;
             }
             key.changed = true;
@@ -1501,6 +1554,9 @@ pub fn FileSystem(comptime Media: type) type {
             // The new set first, the old one erased after: a directory that
             // cannot grow for the new one leaves the file where it was.
             const index = try fs.placeSet(to_dir, &set);
+            // On the medium before the old one goes: power cut between the
+            // two leaves the object under both names, never under none.
+            try fs.writeBack();
             try fs.dirs.erase(from_dir.dir(), key.index, old.count);
             // Told it went, and both its directories; its watches wait for
             // its old name.
@@ -1572,11 +1628,13 @@ pub fn FileSystem(comptime Media: type) type {
 
         /// The answer to one packet (all but STARTUP, which the process
         /// takes). What a packet changed is on the medium before it is
-        /// answered, and the volume is marked clean again if that leaves
-        /// nothing half done.
+        /// answered - after END and FLUSH on the medium itself, past any
+        /// cache the device keeps - and the volume is marked clean again
+        /// if that leaves nothing half done.
         pub fn answer(fs: *Fs, pkt: *DosPacket) Answer {
             const result = fs.respond(pkt);
-            switch (pkt.getAction()) {
+            const action = pkt.getAction();
+            switch (action) {
                 .create_dir,
                 .delete_object,
                 .rename_object,
@@ -1590,14 +1648,16 @@ pub fn FileSystem(comptime Media: type) type {
                 .end,
                 .flush,
                 => if (fs.mounted) {
-                    _ = fs.cache.flush() catch |err| {
-                        // A packet that did its work is not answered as
-                        // done if the work did not reach the medium.
-                        if (result.res1 != dos.DOSFALSE and result.res1 != -1) return no(switch (err) {
-                            error.NoMemory => error.NoMemory,
-                            else => error.MediumFailed,
-                        });
-                    };
+                    // A packet that did its work is not answered as done
+                    // if the work did not reach the medium.
+                    const done = result.res1 != dos.DOSFALSE and result.res1 != -1;
+                    _ = fs.cache.flush() catch |err| return if (done) no(switch (err) {
+                        error.NoMemory => error.NoMemory,
+                        else => error.MediumFailed,
+                    }) else result;
+                    if ((action == .end or action == .flush) and !fs.media.update()) {
+                        return if (done) no(error.MediumFailed) else result;
+                    }
                     fs.clearDirty();
                 },
                 else => {},
@@ -1729,7 +1789,6 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .flush => return yes(),
-                .more_cache => return .{ .res1 = @intCast(cache_blocks), .res2 = 0 },
                 .add_notify => {
                     const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
                     fs.addNotify(request orelse return no(error.NotFound)) catch |err| return no(err);

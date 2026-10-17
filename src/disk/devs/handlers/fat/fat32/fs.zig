@@ -23,7 +23,15 @@
 //! - **What a packet changed is on the medium before it is answered**: the
 //!   table, the free count and the directory entries. A file's entry gets
 //!   its new size after every write, and its date and archive bit when it
-//!   is closed.
+//!   is closed. What a change takes goes down before what names it - the
+//!   file's bytes, the table, then the entry - and what it gives back the
+//!   other way round (`fat.zig` says why). Clusters a write puts on the
+//!   end of a file are linked on last, after their own entries.
+//! - **The volume is marked dirty on the medium** before the first change:
+//!   entry 1 of the table has its clean flag cleared in every copy. It is
+//!   marked clean again once a packet leaves nothing half done: no file
+//!   open that has been written to. A volume that was dirty when it was
+//!   mounted is left dirty: it was not this handler that left it so.
 //! - **Names** are `names.zig`'s: a long name dos can hold, otherwise the
 //!   short one; a lookup matches either.
 //! - **No comments, no owner.** The format has nowhere to put either, so
@@ -59,10 +67,6 @@ const FileInfoBlock = dos.FileInfoBlock;
 const DosPacket = dos.DosPacket;
 const MsgPort = exec.MsgPort;
 const UtilityBase = sdk.interface.utility.UtilityBase;
-
-/// Blocks the cache holds: the table sectors and directory blocks a
-/// packet goes back to.
-pub const cache_blocks: u32 = 32;
 
 /// The largest a file can be.
 const max_size: u64 = 0xFFFF_FFFF;
@@ -179,6 +183,9 @@ pub fn FileSystem(comptime Media: type) type {
 
         geo: Geometry = undefined,
         cache: Cache = undefined,
+        /// Blocks the cache holds: the table sectors and directory blocks a
+        /// packet goes back to. The handler sets it (`setBuffers`).
+        buffers: u32 = cache_area.default_blocks,
         table: Table = undefined,
         dirs: Dir = undefined,
         /// One sector, for the part of a sector a read or write does not
@@ -188,6 +195,20 @@ pub fn FileSystem(comptime Media: type) type {
         keys: ?*Key = null,
         locks: ?*FatLock = null,
         mounted: bool = false,
+        /// Whether this handler marked the volume dirty, and whether it
+        /// was so already when mounted.
+        dirty: bool = false,
+        found_dirty: bool = false,
+        /// A chain a write is making longer. `link_to` is the first
+        /// cluster it took; while it is set, the clusters after it are
+        /// linked on as they are taken. `link_from` is where the chain
+        /// ended on the medium, linked to `link_to` only by `linkOn`, and
+        /// zero for a chain no entry names yet. `link_apart`: a cluster
+        /// taken has its entry in another sector of the table than
+        /// `link_from`.
+        link_from: u32 = 0,
+        link_to: u32 = 0,
+        link_apart: bool = false,
         /// The medium's change count when the volume was read.
         change_num: u32 = 0,
         /// The volume's name, as the device list shows it.
@@ -251,11 +272,18 @@ pub fn FileSystem(comptime Media: type) type {
             const first = try fs.volumeStart();
             if (!fs.media.read(first, 1, fs.sector)) return error.MediumFailed;
             fs.geo = try Geometry.of(fs.sector, first, fs.media.blocks(), block_bytes);
-            fs.cache = Cache.init(fs.media, cache_blocks) catch return error.NoMemory;
+            // A size set while no card was in is tried only now; when its
+            // memory is not there, the cache is made the default size.
+            fs.cache = Cache.init(fs.media, fs.buffers) catch fallback: {
+                fs.buffers = cache_area.default_blocks;
+                break :fallback Cache.init(fs.media, fs.buffers) catch return error.NoMemory;
+            };
             errdefer fs.cache.deinit();
             fs.table = Table.init(&fs.cache, &fs.geo);
             fs.dirs = .{ .cache = &fs.cache, .table = &fs.table, .geo = &fs.geo, .ub = fs.ub };
             try fs.table.loadHints();
+            fs.found_dirty = !try fs.table.clean();
+            fs.dirty = false;
 
             const root = fs.alloc(Key) orelse return error.NoMemory;
             root.* = .{ .is_root = true, .first = fs.geo.root_cluster, .attr = _fat.ATTR_DIRECTORY };
@@ -289,6 +317,17 @@ pub fn FileSystem(comptime Media: type) type {
             return error.MediumFailed;
         }
 
+        /// The cache made `count` blocks: at once on a mounted volume, and
+        /// at every mount after. When a mounted volume's cache cannot be
+        /// made that size it stays as it was, and so does the count.
+        pub fn setBuffers(fs: *Fs, count: u32) Error!void {
+            if (fs.mounted) fs.cache.resize(count) catch |e| return switch (e) {
+                error.NoMemory => error.NoMemory,
+                error.ReadFailed, error.WriteFailed => error.MediumFailed,
+            };
+            fs.buffers = count;
+        }
+
         /// Everything the volume held in memory written back and given up;
         /// every key left is stale.
         pub fn unmount(fs: *Fs) void {
@@ -303,6 +342,8 @@ pub fn FileSystem(comptime Media: type) type {
             if (fs.mounted) {
                 if (write_back) {
                     fs.table.flush() catch {};
+                    _ = fs.media.update();
+                    fs.clearDirty();
                 } else {
                     fs.cache.invalidate();
                 }
@@ -400,6 +441,7 @@ pub fn FileSystem(comptime Media: type) type {
                 short[at] = if (char >= 'a' and char <= 'z') char - 32 else char;
             }
             if (!fs.media.writable()) return error.WriteProtected;
+            try fs.changing();
             try fs.dirs.setLabel(&short);
             const boot = fs.cache.getForWrite(fs.geo.first) catch return error.MediumFailed;
             @memcpy(boot[fat.bpb_volume_label..][0..fat.bpb_volume_label_bytes], &short);
@@ -744,6 +786,41 @@ pub fn FileSystem(comptime Media: type) type {
             if (!fs.media.writable()) return error.WriteProtected;
         }
 
+        /// Every block changed so far on the medium now, before anything
+        /// that counts on it is changed: what puts the writes in order.
+        fn writeBack(fs: *Fs) Error!void {
+            _ = fs.cache.flush() catch return error.MediumFailed;
+        }
+
+        /// About to change the volume: it is marked dirty first, and the
+        /// mark is on the medium itself before the change is, so a card
+        /// pulled half way through is known to need checking.
+        fn changing(fs: *Fs) Error!void {
+            if (fs.dirty or fs.found_dirty) return;
+            try fs.table.setClean(false);
+            try fs.writeBack();
+            if (!fs.media.update()) return error.MediumFailed;
+            fs.dirty = true;
+        }
+
+        /// Clean again, if this handler made it dirty and nothing is left
+        /// half done: no open file on this card has been written to. What
+        /// went before is on the medium itself first. A mark that does not
+        /// get there is taken back, or it could go down later, in the
+        /// middle of the next change.
+        fn clearDirty(fs: *Fs) void {
+            if (!fs.dirty) return;
+            var it = fs.locks;
+            while (it) |lock| : (it = lock.nextLock()) if (lock.modified and !lock.key().stale) return;
+            if (!fs.media.update()) return;
+            fs.table.setClean(true) catch return;
+            fs.writeBack() catch {
+                fs.table.setClean(false) catch {};
+                return;
+            };
+            fs.dirty = false;
+        }
+
         /// A key's first cluster and size into its entry, and with a date
         /// its date and archive bit too.
         fn syncKey(fs: *Fs, key: *Key, when: ?_fat.Stamp) Error!void {
@@ -770,11 +847,14 @@ pub fn FileSystem(comptime Media: type) type {
             if (try fs.dirs.find(spot.dir, spot.name, &object.found)) return error.Exists;
 
             const stamp = fs.now();
+            try fs.changing();
             var cluster: u32 = 0;
             if (directory) {
                 cluster = try fs.table.allocate(null);
                 errdefer fs.table.freeChain(cluster) catch {};
                 try fs.dirs.initDirectory(cluster, spot.dir, stamp);
+                // Whole on the medium before an entry names it.
+                try fs.writeBack();
             }
             const attr: u8 = if (directory) _fat.ATTR_DIRECTORY else _fat.ATTR_ARCHIVE;
             try fs.dirs.create(spot.dir, spot.name, .{ .attr = attr, .cluster = cluster, .stamp = stamp }, &object.found);
@@ -798,6 +878,7 @@ pub fn FileSystem(comptime Media: type) type {
             if (key) |held| if (held.locks != 0) return error.InUse;
             if (_fat.protectionOf(found.attr) & dos.FIBF_DELETE != 0) return error.DeleteProtected;
             if (found.isDir() and !try fs.dirs.empty(fs.clusterOfDir(found))) return error.NotEmpty;
+            try fs.changing();
             try fs.dirs.erase(object.dir, found);
             // Told it went, then let go: its watches wait for its name.
             if (key) |gone| {
@@ -805,7 +886,11 @@ pub fn FileSystem(comptime Media: type) type {
                 fs.forsake(gone);
             }
             fs.tellDir(object.dir);
-            if (fs.geo.usable(found.cluster)) try fs.table.freeChain(found.cluster);
+            // Gone from the medium before its clusters are given back.
+            if (fs.geo.usable(found.cluster)) {
+                try fs.writeBack();
+                try fs.table.freeChain(found.cluster);
+            }
         }
 
         // --- files ------------------------------------------------------------------
@@ -818,14 +903,19 @@ pub fn FileSystem(comptime Media: type) type {
             return lock;
         }
 
-        /// A file emptied: its chain given back, every lock on it moved to
-        /// its start.
+        /// A file emptied: its entry says so on the medium, and then its
+        /// chain is given back. Every lock on it moves to its start.
         fn empty(fs: *Fs, key: *Key) Error!void {
-            if (fs.geo.usable(key.first)) try fs.table.freeChain(key.first);
+            const chain = key.first;
             key.first = 0;
             key.size = 0;
             key.changed = true;
             fs.forgetPlaces(key, 0);
+            try fs.syncKey(key, null);
+            if (fs.geo.usable(chain)) {
+                try fs.writeBack();
+                try fs.table.freeChain(chain);
+            }
         }
 
         /// Every lock on a key whose place in the chain may be gone starts
@@ -860,8 +950,8 @@ pub fn FileSystem(comptime Media: type) type {
                     const key = try fs.keyOf(&object);
                     const lock = try fs.getLock(key, dos.EXCLUSIVE_LOCK);
                     errdefer fs.freeLock(lock);
+                    try fs.changing();
                     try fs.empty(key);
-                    try fs.syncKey(key, null);
                     lock.modified = true;
                     break :blk lock;
                 } else |err| blk: {
@@ -898,14 +988,51 @@ pub fn FileSystem(comptime Media: type) type {
             if (key.first == 0) {
                 key.first = try fs.table.allocate(null);
                 key.changed = true;
+                fs.link_to = key.first;
                 place.* = .{ .cluster = key.first };
             }
             if (place.cluster == 0 or place.ordinal > ordinal) place.* = .{ .cluster = key.first };
             while (place.ordinal < ordinal) {
-                place.cluster = try fs.table.next(place.cluster) orelse try fs.table.allocate(place.cluster);
+                place.cluster = try fs.table.next(place.cluster) orelse try fs.lengthen(place.cluster);
                 place.ordinal += 1;
             }
             return place.cluster;
+        }
+
+        /// A cluster taken to follow `last`, where a chain ends. The
+        /// first one after the end of a chain the medium holds is not
+        /// linked on yet (`linkOn` does it); those after it are linked
+        /// to it.
+        fn lengthen(fs: *Fs, last: u32) Error!u32 {
+            if (fs.link_to == 0) {
+                const cluster = try fs.table.allocate(null);
+                fs.link_from = last;
+                fs.link_to = cluster;
+                fs.link_apart = !fs.table.sameSector(last, cluster);
+                return cluster;
+            }
+            if (last == fs.link_from) return fs.link_to;
+            const cluster = try fs.table.allocate(last);
+            if (fs.link_from != 0 and !fs.table.sameSector(fs.link_from, cluster)) fs.link_apart = true;
+            return cluster;
+        }
+
+        /// The clusters a write took linked on to the chain the medium
+        /// holds, the link made last: what the table says of them on the
+        /// medium before the link that makes them part of the file. Made
+        /// first, a cut between the two would leave the chain running
+        /// into clusters the table calls free, which the next file is
+        /// given too. In one sector of the table one write carries both.
+        fn linkOn(fs: *Fs) Error!void {
+            const from = fs.link_from;
+            const to = fs.link_to;
+            const apart = fs.link_apart;
+            fs.link_from = 0;
+            fs.link_to = 0;
+            fs.link_apart = false;
+            if (from == 0) return;
+            if (apart) try fs.writeBack();
+            try fs.table.setEntry(from, to);
         }
 
         fn read(fs: *Fs, args: dos.IOArgs) Error!usize {
@@ -956,6 +1083,15 @@ pub fn FileSystem(comptime Media: type) type {
         /// when it is null. The chain grows as it has to and the size with
         /// it; `place` is where in the chain the writing got to.
         fn put(fs: *Fs, key: *Key, place: *Place, pos: u32, from: ?[*]const u8, len: u32) Error!void {
+            fs.putRun(key, place, pos, from, len) catch |err| {
+                fs.linkOn() catch {};
+                return err;
+            };
+            try fs.linkOn();
+        }
+
+        /// `put` but for the link onto the chain the medium holds.
+        fn putRun(fs: *Fs, key: *Key, place: *Place, pos: u32, from: ?[*]const u8, len: u32) Error!void {
             const sector_bytes = fs.geo.sector_bytes;
             const cluster_bytes = fs.geo.cluster_bytes;
             var at = pos;
@@ -1010,9 +1146,13 @@ pub fn FileSystem(comptime Media: type) type {
             const len: u32 = @intCast(args.length);
             var place = lock.place();
             defer lock.setPlace(place);
+            try fs.changing();
             lock.modified = true;
             try fs.put(key, &place, lock.pos, buffer, len);
             lock.pos += len;
+            // The bytes went straight to the medium; the table follows
+            // them there, and only then the entry that counts on both.
+            try fs.writeBack();
             try fs.syncKey(key, null);
             return len;
         }
@@ -1065,20 +1205,27 @@ pub fn FileSystem(comptime Media: type) type {
             if (target < 0) return error.SeekError;
             if (target > max_size) return error.DiskFull;
             const size: u32 = @intCast(target);
+            try fs.changing();
             if (size < key.size) {
                 const keep = (size + fs.geo.cluster_bytes - 1) / fs.geo.cluster_bytes;
                 if (keep == 0) {
                     try fs.empty(key);
                 } else {
+                    // The entry's new size on the medium before the
+                    // clusters past it are given back.
                     var place: Place = .{};
-                    try fs.table.cutAfter(try fs.clusterAt(key, &place, keep - 1));
+                    const last = try fs.clusterAt(key, &place, keep - 1);
                     key.size = size;
                     key.changed = true;
                     fs.forgetPlaces(key, size);
+                    try fs.syncKey(key, null);
+                    try fs.writeBack();
+                    try fs.table.cutAfter(last);
                 }
             } else if (size > key.size) {
                 var place: Place = .{};
                 try fs.put(key, &place, key.size, null, size - key.size);
+                try fs.writeBack();
             }
             lock.modified = true;
             try fs.syncKey(key, null);
@@ -1219,7 +1366,8 @@ pub fn FileSystem(comptime Media: type) type {
             // The entry's bytes past its name - attributes, dates, cluster,
             // size - kept to go into the new one.
             var old: [fat.entry_bytes]u8 = undefined;
-            @memcpy(&old, try fs.dirs.entryForWrite(from.found.spot));
+            @memcpy(&old, try fs.dirs.entryAt(from.found.spot));
+            try fs.changing();
 
             var made: Found = .{};
             try fs.dirs.create(target.dir, target.name, .{
@@ -1230,6 +1378,10 @@ pub fn FileSystem(comptime Media: type) type {
             }, &made);
             const entry = try fs.dirs.entryForWrite(made.spot);
             @memcpy(entry[fat.ent_create_tenth..], old[fat.ent_create_tenth..]);
+            // The new entry on the medium before the old one goes: power
+            // cut between the two leaves the object under both names,
+            // never under none.
+            try fs.writeBack();
             try fs.dirs.erase(from.dir, &from.found);
             if (from.found.isDir() and target.dir != from.dir) try fs.dirs.setParent(fs.clusterOfDir(&from.found), target.dir);
 
@@ -1255,6 +1407,7 @@ pub fn FileSystem(comptime Media: type) type {
             var object: Object = .{};
             try fs.locate(lockValue(args.lock), args.name orelse return error.InvalidName, &object);
             if (object.is_root) return error.WrongType;
+            try fs.changing();
             const entry = try fs.dirs.entryForWrite(object.found.spot);
             const key = fs.keyAt(object.dir, object.found.index);
             defer if (key) |changed| fs.tell(changed);
@@ -1293,10 +1446,13 @@ pub fn FileSystem(comptime Media: type) type {
 
         /// The answer to one packet (all but STARTUP, which the process
         /// takes). What a packet changed is on the medium before it is
-        /// answered.
+        /// answered - after END and FLUSH on the medium itself, past any
+        /// cache the device keeps - and the volume is marked clean again
+        /// if that leaves nothing half done.
         pub fn answer(fs: *Fs, pkt: *DosPacket) Answer {
             const result = fs.respond(pkt);
-            switch (pkt.getAction()) {
+            const action = pkt.getAction();
+            switch (action) {
                 .create_dir,
                 .delete_object,
                 .rename_object,
@@ -1309,10 +1465,15 @@ pub fn FileSystem(comptime Media: type) type {
                 .write,
                 .end,
                 .flush,
-                => if (fs.mounted) fs.table.flush() catch |err| {
+                => if (fs.mounted) {
                     // A packet that did its work is not answered as done
                     // if the work did not reach the medium.
-                    if (result.res1 != dos.DOSFALSE and result.res1 != -1) return no(err);
+                    const done = result.res1 != dos.DOSFALSE and result.res1 != -1;
+                    fs.table.flush() catch |err| return if (done) no(err) else result;
+                    if ((action == .end or action == .flush) and !fs.media.update()) {
+                        return if (done) no(error.MediumFailed) else result;
+                    }
+                    fs.clearDirty();
                 },
                 else => {},
             }
@@ -1446,7 +1607,6 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .flush => return yes(),
-                .more_cache => return .{ .res1 = @intCast(cache_blocks), .res2 = 0 },
                 .add_notify => {
                     const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
                     fs.addNotify(request orelse return no(error.NotFound)) catch |err| return no(err);

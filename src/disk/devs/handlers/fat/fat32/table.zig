@@ -163,6 +163,12 @@ pub fn Table(comptime Media: type) type {
             return error.DiskFull;
         }
 
+        /// Whether two clusters have their entries in one sector of the
+        /// table.
+        pub fn sameSector(self: *const Self, one: u32, other: u32) bool {
+            return self.geo.entrySpot(0, one).block == self.geo.entrySpot(0, other).block;
+        }
+
         /// Every cluster of the chain from `first` given back.
         pub fn freeChain(self: *Self, first: u32) Error!void {
             var cluster = first;
@@ -188,6 +194,29 @@ pub fn Table(comptime Media: type) type {
             const following = try self.next(last);
             try self.setEntry(last, fat.eoc);
             if (following) |rest| try self.freeChain(rest);
+        }
+
+        // --- the volume's flag ------------------------------------------------
+
+        /// Whether the table says the volume is whole: entry 1's clean
+        /// flag, in the copy that is read.
+        pub fn clean(self: *Self) Error!bool {
+            const spot = self.geo.entrySpot(self.geo.readCopy(), fat.flags_entry);
+            const block = try self.get(spot.block);
+            return fat.u32At(block, spot.at) & fat.clean_flag != 0;
+        }
+
+        /// Entry 1's clean flag set or cleared in every copy that is kept,
+        /// the rest of the entry left as each copy has it.
+        pub fn setClean(self: *Self, whole: bool) Error!void {
+            const copies = self.geo.copies();
+            var copy = copies.first;
+            while (copy < copies.end) : (copy += 1) {
+                const spot = self.geo.entrySpot(copy, fat.flags_entry);
+                const block = try self.getForWrite(spot.block);
+                const flags = fat.u32At(block, spot.at);
+                fat.putU32(block, spot.at, if (whole) flags | fat.clean_flag else flags & ~fat.clean_flag);
+            }
         }
 
         // --- counting ----------------------------------------------------------
@@ -385,6 +414,27 @@ test "a chain that loops is an error, not a hang" {
     // And one that runs into a free cluster is broken.
     try table.setEntry(two, two + 5);
     try testing.expectError(error.MediumFailed, table.length(one));
+}
+
+test "the clean flag is read from the table and set in both copies" {
+    var volume = try testvolume.Volume.init(.{});
+    defer volume.deinit();
+    var table = TestTable.init(&volume.cache, &volume.geo);
+    try table.loadHints();
+    try testing.expect(try table.clean());
+
+    try table.setClean(false);
+    try table.flush();
+    try testing.expect(!try table.clean());
+    for (0..2) |copy| {
+        const spot = volume.geo.entrySpot(@intCast(copy), fat.flags_entry);
+        var block: [512]u8 = undefined;
+        try testing.expect(volume.media.read(spot.block, 1, &block));
+        // Only the one flag: the rest of the entry as it was laid down.
+        try testing.expectEqual(@as(u32, 0x0FFF_FFFF & ~fat.clean_flag), fat.u32At(&block, spot.at));
+    }
+    try table.setClean(true);
+    try testing.expect(try table.clean());
 }
 
 test "the search wraps round to the start of the volume" {

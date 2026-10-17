@@ -7,6 +7,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const subject = @import("../fat32/fs.zig");
 const Answer = @import("../_fat.zig").Answer;
+const dir_area = @import("../fat32/dir.zig");
 const DosPacket = sdk.dos.DosPacket;
 const FileHandle = sdk.dos.FileHandle;
 const FileInfoBlock = sdk.dos.FileInfoBlock;
@@ -15,9 +16,11 @@ const FileSystem = subject.FileSystem;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const dos = sdk.dos;
 const exec = sdk.exec;
+const fat = dos.fat;
 
 const testing = std.testing;
 const notify_course = @import("_notify.zig");
+const cut_course = @import("_cut.zig");
 
 /// A lock as a packet argument.
 fn lockValue(held: ?*FileLock) isize {
@@ -36,7 +39,7 @@ const Rig = struct {
     ub: *UtilityBase,
     fs: TestFs,
 
-    fn init(rig: *Rig, options: testvolume.Options) !void {
+    pub fn init(rig: *Rig, options: testvolume.Options) !void {
         const utility = try utility_library.setUp();
         rig.ub = utility.iface();
         rig.volume = try testvolume.Volume.init(options);
@@ -51,7 +54,7 @@ const Rig = struct {
         try rig.fs.mount();
     }
 
-    fn deinit(rig: *Rig) void {
+    pub fn deinit(rig: *Rig) void {
         rig.fs.deinit();
         rig.volume.deinit();
         kexec.deinit();
@@ -82,7 +85,7 @@ const Rig = struct {
         _ = rig.send(.free_lock, .{ made.res1, 0, 0, 0 });
     }
 
-    fn open(rig: *Rig, fh: *FileHandle, action: dos.ActionCode, name: [*:0]const u8) Answer {
+    pub fn open(rig: *Rig, fh: *FileHandle, action: dos.ActionCode, name: [*:0]const u8) Answer {
         fh.* = .{};
         return rig.sendArgs(action, .{ .find = .{ .fh = fh, .lock = null, .name = name } });
     }
@@ -91,11 +94,11 @@ const Rig = struct {
         return rig.sendArgs(.write, .{ .io = .{ .fh = fh, .buffer = @constCast(bytes.ptr), .length = @intCast(bytes.len) } }).res1;
     }
 
-    fn read(rig: *Rig, fh: *FileHandle, into: []u8) isize {
+    pub fn read(rig: *Rig, fh: *FileHandle, into: []u8) isize {
         return rig.sendArgs(.read, .{ .io = .{ .fh = fh, .buffer = into.ptr, .length = @intCast(into.len) } }).res1;
     }
 
-    fn close(rig: *Rig, fh: *FileHandle) !void {
+    pub fn close(rig: *Rig, fh: *FileHandle) !void {
         try testing.expectEqual(dos.DOSTRUE, rig.sendArgs(.end, .{ .file = .{ .fh = fh } }).res1);
     }
 
@@ -127,6 +130,120 @@ const Rig = struct {
         var data: dos.InfoData = .{};
         try testing.expectEqual(dos.DOSTRUE, rig.send(.disk_info, .{ @bitCast(@intFromPtr(&data)), 0, 0, 0 }).res1);
         return data.num_blocks - data.num_blocks_used;
+    }
+
+    pub fn rename(rig: *Rig, from: [*:0]const u8, to: [*:0]const u8) Answer {
+        return rig.sendArgs(.rename_object, .{ .rename = .{ .from_lock = null, .from_name = from, .to_lock = null, .to_name = to } });
+    }
+
+    pub fn delete(rig: *Rig, name: [*:0]const u8) Answer {
+        return rig.send(.delete_object, .{ 0, @bitCast(@intFromPtr(name)), 0, 0 });
+    }
+
+    /// The volume's flags entry as each copy of the table on the medium
+    /// has it.
+    fn flagsOnMedium(rig: *Rig) ![2]u32 {
+        var flags: [2]u32 = undefined;
+        var block: [512]u8 = undefined;
+        for (&flags, 0..) |*flag, copy| {
+            const spot = rig.fs.geo.entrySpot(@intCast(copy), fat.flags_entry);
+            try testing.expect(rig.volume.media.read(spot.block, 1, &block));
+            flag.* = fat.u32At(&block, spot.at);
+        }
+        return flags;
+    }
+
+    // --- what the power-cut tests ask of it (`_cut.zig`) ---------------
+
+    /// The dot entries and fourteen more fill a cluster of one sector.
+    pub const full_dir_files = 14;
+
+    pub fn testMedia(rig: *Rig) *TestMedia {
+        return &rig.volume.media;
+    }
+
+    /// Every free cluster's sectors filled with bytes that read as
+    /// entries naming no cluster there is. The table is read from the
+    /// medium, so the cache holds what it held.
+    pub fn fillFree(rig: *Rig) !void {
+        const junk: [512]u8 = @splat('A');
+        const geo = &rig.fs.geo;
+        var table: [512]u8 = undefined;
+        var table_block: ?u64 = null;
+        var cluster: u32 = fat.first_cluster;
+        while (cluster < fat.first_cluster + geo.cluster_count) : (cluster += 1) {
+            const spot = geo.entrySpot(geo.readCopy(), cluster);
+            if (table_block == null or table_block.? != spot.block) {
+                try testing.expect(rig.volume.media.read(spot.block, 1, &table));
+                table_block = spot.block;
+            }
+            if (fat.clusterOf(fat.u32At(&table, spot.at)) != fat.free_cluster) continue;
+            for (0..geo.sectors_per_cluster) |sector| try rig.volume.media.place(geo.clusterBlock(cluster) + sector, &junk);
+        }
+    }
+
+    /// The next cluster taken from the table's third sector, which
+    /// nothing has needed yet.
+    pub fn startAllocationFar(rig: *Rig) void {
+        rig.fs.table.next_free = 300;
+    }
+
+    pub fn cleanOnMedium(rig: *Rig) !bool {
+        for (try rig.flagsOnMedium()) |flags| if (flags & fat.clean_flag == 0) return false;
+        return true;
+    }
+
+    /// The card gone with whatever the file system still held, and the
+    /// volume mounted again from what reached it.
+    pub fn restartAfterCut(rig: *Rig) !void {
+        rig.volume.media.budget = 0;
+        rig.fs.deinit();
+        rig.volume.media.budget = null;
+        rig.fs = TestFs.init(&rig.volume.media, rig.ub, null);
+        try rig.fs.mount();
+    }
+
+    /// The whole tree, as a checker would judge it, short of clusters
+    /// taken that nothing names: every entry's chain runs through
+    /// clusters the table holds taken, each named by that entry alone,
+    /// and is long enough for its size. With `named_twice` a chain may be
+    /// named by two entries, as a rename cut short leaves it.
+    pub fn checkTree(rig: *Rig, named_twice: bool) !void {
+        var taken = std.AutoHashMap(u32, void).init(testing.allocator);
+        defer taken.deinit();
+        try rig.checkChain(&taken, rig.fs.geo.root_cluster, null);
+        try rig.checkDir(&taken, rig.fs.geo.root_cluster, named_twice);
+    }
+
+    fn checkDir(rig: *Rig, taken: *std.AutoHashMap(u32, void), first: u32, named_twice: bool) !void {
+        var cursor = dir_area.Cursor.at(first);
+        var index: u32 = 0;
+        var found: dir_area.Found = .{};
+        while (try rig.fs.dirs.next(&cursor, &index, &found)) {
+            if (found.cluster == 0) {
+                try testing.expectEqual(@as(u32, 0), found.size);
+                continue;
+            }
+            if (named_twice and taken.contains(found.cluster)) continue;
+            try rig.checkChain(taken, found.cluster, if (found.isDir()) null else found.size);
+            if (found.isDir()) try rig.checkDir(taken, found.cluster, named_twice);
+        }
+    }
+
+    fn checkChain(rig: *Rig, taken: *std.AutoHashMap(u32, void), first: u32, bytes: ?u32) !void {
+        var cluster = first;
+        var count: u32 = 0;
+        while (true) {
+            try testing.expect(rig.fs.geo.usable(cluster));
+            const following = try rig.fs.table.entry(cluster);
+            try testing.expect(following != fat.free_cluster);
+            try testing.expect(!(try taken.getOrPut(cluster)).found_existing);
+            count += 1;
+            if (fat.endsChain(following)) break;
+            cluster = following;
+        }
+        const cluster_bytes = rig.fs.geo.cluster_bytes;
+        if (bytes) |size| try testing.expect(count >= (size + cluster_bytes - 1) / cluster_bytes);
     }
 };
 
@@ -492,4 +609,94 @@ test "notification: names watched before they are there, told of each change, th
     try rig.init(.{});
     defer rig.deinit();
     try notify_course.course(&rig, &rig.volume.media.changes);
+}
+
+test "the volume is marked dirty while a file is being written, clean after, in both tables" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    for (try rig.flagsOnMedium()) |flags| try testing.expect(flags & fat.clean_flag != 0);
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "open.txt").res1);
+    _ = rig.write(&fh, "some");
+    for (try rig.flagsOnMedium()) |flags| try testing.expectEqual(@as(u32, 0), flags & fat.clean_flag);
+    try rig.close(&fh);
+    for (try rig.flagsOnMedium()) |flags| try testing.expect(flags & fat.clean_flag != 0);
+    // A change that is whole in one packet leaves it clean at once, and
+    // the rest of the entry as it was.
+    try rig.mkdir("D");
+    for (try rig.flagsOnMedium()) |flags| try testing.expectEqual(@as(u32, 0x0FFF_FFFF), flags);
+}
+
+test "a volume found dirty is left dirty, for a checker to look at" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    var block: [512]u8 = undefined;
+    for (0..2) |copy| {
+        const spot = rig.fs.geo.entrySpot(@intCast(copy), fat.flags_entry);
+        try testing.expect(rig.volume.media.read(spot.block, 1, &block));
+        fat.putU32(&block, spot.at, 0x0FFF_FFFF & ~fat.clean_flag);
+        try rig.volume.media.place(spot.block, &block);
+    }
+    try rig.remount();
+    try rig.writeFile("f", "x");
+    for (try rig.flagsOnMedium()) |flags| try testing.expectEqual(@as(u32, 0), flags & fat.clean_flag);
+}
+
+test "a file closed has the device put what it holds on the medium; one only read does not" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    const media = &rig.volume.media;
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "f").res1);
+    _ = rig.write(&fh, "contents");
+    const before_close = media.updates;
+    try rig.close(&fh);
+    try testing.expectEqual(before_close + 1, media.updates);
+
+    // The clean mark the close wrote goes with the next packet that asks;
+    // after that, a file only read asks nothing.
+    var buffer: [16]u8 = undefined;
+    try testing.expectEqualStrings("contents", buffer[0..try rig.readFile("f", &buffer)]);
+    const before_read = media.updates;
+    try testing.expectEqualStrings("contents", buffer[0..try rig.readFile("f", &buffer)]);
+    try testing.expectEqual(before_read, media.updates);
+}
+
+/// A small volume of one-sector clusters, so every block of a step is a
+/// place a cut can fall.
+const cut_volume: testvolume.Options = .{ .clusters = 512, .sectors_per_cluster = 1 };
+
+test "a power cut at any block of a file written leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .write);
+}
+
+test "a power cut at any block of a delete leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .delete);
+}
+
+test "a power cut at any block of a file opened over and rewritten leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .empty);
+}
+
+test "a power cut at any block of a file cut short leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .shorten);
+}
+
+test "a power cut at any block of a file made longer leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .extend);
+}
+
+test "a power cut at any block of a rename leaves the file under one name or both" {
+    try cut_course.everywhere(Rig, cut_volume, .rename);
+}
+
+test "a power cut at any block of a directory growing leaves no stray entries in it" {
+    try cut_course.everywhere(Rig, cut_volume, .grow);
+}
+
+test "a power cut at any block of a directory made leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .mkdir);
 }

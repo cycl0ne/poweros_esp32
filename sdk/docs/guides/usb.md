@@ -319,6 +319,16 @@ A stick pulled out in the middle of a transfer ends that transfer at
 once; the handler then asks about the volume, as for a card pulled out
 of the board's slot.
 
+**What is written reaches the stick itself** when the handler asks: a
+stick may hold writes in memory of its own and put them down later, in
+an order of its own. `CMD_UPDATE` goes to the stick as SYNCHRONIZE
+CACHE for the whole medium, and once it is answered everything written
+before it is on the stick; fat-handler sends it when a file is closed.
+A stick that does not know the command holds nothing to put down, and
+is not asked again until another medium comes into the unit.
+`TDCMD_ERASE` and `CMD_CLEAR` are answered at once: a stick erases for
+itself, and the device holds nothing.
+
 Beside the block commands the units answer `HD_SCSICMD`
 (sdk/devices/scsidisk.zig): a SCSI command block sent to the unit as it
 is, with its data and, on request, the sense of a command that fails.

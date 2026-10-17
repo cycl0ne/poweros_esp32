@@ -7,12 +7,13 @@
 //! It is ACTION_MORE_CACHE to the handler and nothing else: the number is
 //! added to what it has, a negative one takes some away, and it answers
 //! with the total. Without BUFFERS it asks for none, which reads the
-//! current figure.
+//! current figure. DRIVE is a device or volume name, ending in a colon.
 //!
-//! A handler that knows nothing of buffers answers ERROR_ACTION_NOT_KNOWN
-//! and that is what is printed. The flash file system has no buffers of its
-//! own - it reads the medium through its mapping - so it answers with the
-//! number its mountlist gave it and keeps it.
+//! fat-handler (SD0:, DU0:) keeps a block cache of that many blocks.
+//! A handler that keeps no buffers answers ERROR_ACTION_NOT_KNOWN, and
+//! that is said in so many words: the flash file system (DH0:), which
+//! reads the medium through its mapping, RAM:, and anything not a file
+//! system.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -22,13 +23,14 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "AddBuffers";
-const VERSION_STRING = "\x00$VER: AddBuffers 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddBuffers 1.1 (17.10.2026)\r\n";
 
 const template = "DRIVE/A,BUFFERS/N";
 const arg_drive = 0;
 const arg_buffers = 1;
 
 const MSG_CURRENT = "%s has %d buffers\n";
+const MSG_NONE = "%s keeps no buffers\n";
 const MSG_INVALID_DEVICE = "Invalid device or volume name '%s'\n";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -46,7 +48,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
 
     const drive = rdargs.string(argv[arg_drive]).?;
-    const more: i32 = rdargs.number(argv[arg_buffers]) orelse 0;
+    const asked = rdargs.number(argv[arg_buffers]);
+    const more: i32 = asked orelse 0;
+
+    // A name without its colon is a file's, not a drive's.
+    var name_len: usize = 0;
+    while (drive[name_len] != 0) name_len += 1;
+    if (name_len != 0 and drive[name_len - 1] != ':') {
+        _ = Printf(dl, MSG_INVALID_DEVICE, .{drive});
+        return dos.RETURN_ERROR;
+    }
 
     const dp = dl.GetDeviceProc(drive, null) orelse {
         _ = Printf(dl, MSG_INVALID_DEVICE, .{drive});
@@ -60,7 +71,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const total = dl.DoPkt(port, @intFromEnum(dos.ActionCode.more_cache), more, 0, 0, 0, 0);
     if (total == dos.DOSFALSE) {
-        _ = dl.PrintFault(dl.IoErr(), drive);
+        const code = dl.IoErr();
+        if (code == dos.ERROR_ACTION_NOT_KNOWN) {
+            _ = Printf(dl, MSG_NONE, .{drive});
+            return if (asked != null) dos.RETURN_WARN else dos.RETURN_OK;
+        }
+        _ = dl.PrintFault(code, COMMAND_NAME);
         return dos.RETURN_ERROR;
     }
     _ = Printf(dl, MSG_CURRENT, .{ drive, @as(i32, @intCast(total)) });

@@ -24,10 +24,13 @@ const fat = dos.fat;
 
 const testing = std.testing;
 const notify_course = @import("_notify.zig");
+const cut_course = @import("_cut.zig");
 const TestMedia = @import("../testmedia.zig").TestMedia;
 const testvolume = @import("../exfat/testvolume.zig");
 const fixture = @import("../exfat/testfixture.zig");
 const names = @import("../exfat/names.zig");
+const exfat_dir = @import("../exfat/dir.zig");
+const Chain = @import("../exfat/table.zig").Chain;
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
 const TestFs = subject.FileSystem(TestMedia);
@@ -46,7 +49,7 @@ const Rig = struct {
     ub: *UtilityBase,
     fs: TestFs,
 
-    fn init(rig: *Rig, options: testvolume.Options) !void {
+    pub fn init(rig: *Rig, options: testvolume.Options) !void {
         const utility = try utility_library.setUp();
         rig.ub = utility.iface();
         const volume = try testvolume.Volume.init(options);
@@ -75,7 +78,7 @@ const Rig = struct {
     }
 
     /// Everything given back: the file system freed all it took.
-    fn deinit(rig: *Rig) void {
+    pub fn deinit(rig: *Rig) void {
         rig.fs.deinit();
         const left = rig.media.live;
         if (rig.volume) |volume| volume.deinit() else rig.own_media.deinit();
@@ -108,7 +111,7 @@ const Rig = struct {
         _ = rig.send(.free_lock, .{ made.res1, 0, 0, 0 });
     }
 
-    fn open(rig: *Rig, fh: *FileHandle, action: dos.ActionCode, name: [*:0]const u8) Answer {
+    pub fn open(rig: *Rig, fh: *FileHandle, action: dos.ActionCode, name: [*:0]const u8) Answer {
         fh.* = .{};
         return rig.sendArgs(action, .{ .find = .{ .fh = fh, .lock = null, .name = name } });
     }
@@ -117,7 +120,7 @@ const Rig = struct {
         return rig.sendArgs(.write, .{ .io = .{ .fh = fh, .buffer = @constCast(bytes.ptr), .length = @intCast(bytes.len) } }).res1;
     }
 
-    fn read(rig: *Rig, fh: *FileHandle, into: []u8) isize {
+    pub fn read(rig: *Rig, fh: *FileHandle, into: []u8) isize {
         return rig.sendArgs(.read, .{ .io = .{ .fh = fh, .buffer = into.ptr, .length = @intCast(into.len) } }).res1;
     }
 
@@ -129,7 +132,7 @@ const Rig = struct {
         return rig.sendArgs(.set_file_size, .{ .seek = .{ .fh = fh, .position = size, .mode = dos.OFFSET_BEGINNING } });
     }
 
-    fn close(rig: *Rig, fh: *FileHandle) !void {
+    pub fn close(rig: *Rig, fh: *FileHandle) !void {
         try testing.expectEqual(dos.DOSTRUE, rig.sendArgs(.end, .{ .file = .{ .fh = fh } }).res1);
     }
 
@@ -163,11 +166,11 @@ const Rig = struct {
         return data.num_blocks - data.num_blocks_used;
     }
 
-    fn rename(rig: *Rig, from: [*:0]const u8, to: [*:0]const u8) Answer {
+    pub fn rename(rig: *Rig, from: [*:0]const u8, to: [*:0]const u8) Answer {
         return rig.sendArgs(.rename_object, .{ .rename = .{ .from_lock = null, .from_name = from, .to_lock = null, .to_name = to } });
     }
 
-    fn delete(rig: *Rig, name: [*:0]const u8) Answer {
+    pub fn delete(rig: *Rig, name: [*:0]const u8) Answer {
         return rig.send(.delete_object, .{ 0, @bitCast(@intFromPtr(name)), 0, 0 });
     }
 
@@ -192,6 +195,101 @@ const Rig = struct {
         var boot: [512]u8 = undefined;
         try testing.expect(rig.media.read(rig.fs.geo.first, 1, &boot));
         return fat.u16At(&boot, fat.exfat_volume_flags);
+    }
+
+    // --- what the power-cut tests ask of it (`_cut.zig`) ---------------
+
+    /// Three entries a file of a short name, and a cluster of one sector
+    /// holds sixteen.
+    pub const full_dir_files = 5;
+
+    pub fn testMedia(rig: *Rig) *TestMedia {
+        return rig.media;
+    }
+
+    /// Every free cluster's sectors filled with bytes that are not the
+    /// pattern. The bitmap - one run - is read from the medium, so the
+    /// cache holds what it held.
+    pub fn fillFree(rig: *Rig) !void {
+        const junk: [512]u8 = @splat('A');
+        const geo = &rig.fs.geo;
+        const bitmap_first = geo.clusterBlock(rig.fs.bitmap.chain.first);
+        var bits: [512]u8 = undefined;
+        var bits_block: ?u64 = null;
+        var cluster: u32 = fat.exfat_first_cluster;
+        while (cluster < fat.exfat_first_cluster + geo.cluster_count) : (cluster += 1) {
+            const bit = cluster - fat.exfat_first_cluster;
+            const block = bitmap_first + bit / (8 * 512);
+            if (bits_block == null or bits_block.? != block) {
+                try testing.expect(rig.media.read(block, 1, &bits));
+                bits_block = block;
+            }
+            if (bits[bit / 8 % 512] & (@as(u8, 1) << @intCast(bit % 8)) != 0) continue;
+            const sectors = @as(u32, 1) << geo.cluster_shift;
+            for (0..sectors) |sector| try rig.media.place(geo.clusterBlock(cluster) + sector, &junk);
+        }
+    }
+
+    /// The next cluster taken from the bitmap's second block, which
+    /// nothing has needed yet.
+    pub fn startAllocationFar(rig: *Rig) void {
+        rig.fs.bitmap.next_free = 4100;
+    }
+
+    pub fn cleanOnMedium(rig: *Rig) !bool {
+        return try rig.flagsOnMedium() & fat.exfat_volume_dirty == 0;
+    }
+
+    /// The card gone with whatever the file system still held, and the
+    /// volume mounted again from what reached it.
+    pub fn restartAfterCut(rig: *Rig) !void {
+        rig.media.budget = 0;
+        rig.fs.deinit();
+        rig.media.budget = null;
+        rig.fs = TestFs.init(rig.media, rig.ub, null);
+        try rig.fs.mount();
+    }
+
+    /// The whole tree, as a checker would judge it, short of clusters
+    /// marked in use that nothing names: every entry's clusters are in
+    /// use in the bitmap, each named by that entry alone, as many as its
+    /// size needs. With `named_twice` a chain may be named by two
+    /// entries, as a rename cut short leaves it.
+    pub fn checkTree(rig: *Rig, named_twice: bool) !void {
+        var taken = std.AutoHashMap(u32, void).init(testing.allocator);
+        defer taken.deinit();
+        const root = rig.fs.root_key.?.dir();
+        try rig.checkChain(&taken, root.chain, root.length);
+        try rig.checkDir(&taken, root, named_twice);
+    }
+
+    fn checkDir(rig: *Rig, taken: *std.AutoHashMap(u32, void), dir: exfat_dir.Dir, named_twice: bool) !void {
+        var index: u32 = 0;
+        var found: exfat_dir.Found = .{};
+        while (try rig.fs.dirs.next(dir, &index, &found)) {
+            const chain = found.chain();
+            if (chain.first == 0) {
+                try testing.expectEqual(@as(u64, 0), found.size);
+                continue;
+            }
+            if (named_twice and taken.contains(chain.first)) continue;
+            try rig.checkChain(taken, chain, found.size);
+            if (found.isDir()) try rig.checkDir(taken, .{ .chain = chain, .length = found.size }, named_twice);
+        }
+    }
+
+    fn checkChain(rig: *Rig, taken: *std.AutoHashMap(u32, void), chain: Chain, bytes: u64) !void {
+        const count = rig.fs.geo.clustersFor(bytes);
+        var cluster = chain.first;
+        var ordinal: u64 = 0;
+        while (ordinal < count) : (ordinal += 1) {
+            if (ordinal > 0) {
+                cluster = if (chain.contiguous) cluster + 1 else try rig.fs.table.next(cluster) orelse return error.TestUnexpectedResult;
+            }
+            try testing.expect(rig.fs.geo.usable(cluster));
+            try testing.expect(try rig.fs.bitmap.used(cluster));
+            try testing.expect(!(try taken.getOrPut(cluster)).found_existing);
+        }
     }
 };
 
@@ -588,6 +686,43 @@ test "the volume is marked dirty while a file is being written, clean after" {
     // A change that is whole in one packet leaves it clean at once.
     try rig.mkdir("D");
     try testing.expectEqual(@as(u16, 0), try rig.flagsOnMedium() & fat.exfat_volume_dirty);
+}
+
+/// A small volume of one-sector clusters, so every block of a step is a
+/// place a cut can fall, with more clusters than one block of the bitmap
+/// holds, so the second block is one the cache has not read.
+const cut_volume: testvolume.Options = .{ .clusters = 4200, .cluster_shift = 0 };
+
+test "a power cut at any block of a file written leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .write);
+}
+
+test "a power cut at any block of a delete leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .delete);
+}
+
+test "a power cut at any block of a file opened over and rewritten leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .empty);
+}
+
+test "a power cut at any block of a file cut short leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .shorten);
+}
+
+test "a power cut at any block of a file made longer leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .extend);
+}
+
+test "a power cut at any block of a rename leaves the file under one name or both" {
+    try cut_course.everywhere(Rig, cut_volume, .rename);
+}
+
+test "a power cut at any block of a directory growing leaves the directory whole" {
+    try cut_course.everywhere(Rig, cut_volume, .grow);
+}
+
+test "a power cut at any block of a directory made leaves the volume whole" {
+    try cut_course.everywhere(Rig, cut_volume, .mkdir);
 }
 
 test "a file past 4 GiB: its true size, and read at the far end" {

@@ -33,8 +33,8 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 3;
-const BUILD_DATE = "08.10.2026";
+const HANDLER_REVISION = 4;
+const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -128,9 +128,6 @@ const State = struct {
     volume: ?*dos.DosList = null,
     /// The device node dos started us for.
     node: ?*dos.DosList = null,
-    /// de_NumBuffers from the environment, which ACTION_MORE_CACHE answers
-    /// with.
-    buffers: u32 = 0,
     mounted: bool = false,
     /// The volume node is to be made again - after a format - once the
     /// device list can be had.
@@ -181,7 +178,6 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
     }
 
     st.fs = FileSystem.init(&st.media, &me.msg_port);
-    st.fs.buffers = st.buffers;
     if (st.watchers.init(sb)) st.fs.watchers = &st.watchers;
     if (st.fs.mount()) |_| {
         st.mounted = true;
@@ -223,7 +219,6 @@ fn partition(st: *State, fssm: ?*const dos.FileSysStartupMsg) bool {
     if (blocks < 2 or first + blocks * env.size_block > total) return false;
     st.media.first = @intCast(first);
     st.media.length = @intCast(blocks * env.size_block);
-    st.buffers = env.num_buffers;
     return true;
 }
 

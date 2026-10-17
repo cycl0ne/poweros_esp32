@@ -894,8 +894,9 @@ at every exception rather than sampled; read it twice and divide the
 differences for how busy the core was in between, which is what
 `SYS:Programs/CPULoad` charts. Each task's own share is its `timeRun()`,
 counted at the same moments - read under the task lists' lock, as
-`ShowInfo TASKS` reads the tasks - which `C:Top` shows, the busiest task
-first. On the `s3>` console `cores` shows what each
+`ShowInfo TASKS` reads the tasks - which `C:Top` shows: the running
+tasks, then the ready ones, then the waiting ones, the busiest first in
+each. On the `s3>` console `cores` shows what each
 core runs and what has held its interrupts off longest - the system's
 interrupt lock, the cache engine, each device source and interrupt line -
 which is what makes a driver's interrupt late (`cores reset` starts the

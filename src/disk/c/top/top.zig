@@ -11,11 +11,13 @@
 //! Each look has a line per core - how much of the interval it spent in
 //! tasks, in interrupts and idle (`ReadCoreTimes`) - the free memory and
 //! what the system and the tasks that have ended hold, and then every
-//! task, the busiest first: its share of one core over the interval, the
-//! core it runs on if it is running, its priority, its state, the memory
-//! it holds - "system" for exec's own tasks, whose memory is the system's -
-//! and its name. What a task holds is what its blocks' MemBlocks
-//! say, summed over every region (`sdk.exec.memowners`). A task's time is exec's own count of it
+//! task: those running first, then those ready to run, then those
+//! waiting, and in each the busiest first. A task's line has its share of
+//! one core over the interval, the core it runs on if it is running, its
+//! priority, its state, the memory it holds - "system" for exec's own
+//! tasks, whose memory is the system's - and its name. What a task holds
+//! is what its blocks' MemBlocks say, summed over every region
+//! (`sdk.exec.memowners`). A task's time is exec's own count of it
 //! (`Task.timeRun`), taken at every exception, so a task that runs a
 //! moment after each tick shows as much as it takes; time in interrupts
 //! is no task's. The cores' idle tasks - at the lowest priority, each
@@ -44,7 +46,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Top";
-const VERSION_STRING = "\x00$VER: Top 1.2 (15.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Top 1.3 (17.10.2026)\r\n";
 
 const template = "INTERVAL/K/N,COUNT/K/N";
 const arg_interval = 0;
@@ -81,6 +83,10 @@ var dl: *DosBase = undefined;
 /// which allows no allocating, into this program's own memory.
 var holders: exec.memowners.Tally(max_tasks + 8) = .{};
 
+/// Where a look found a task: on a core, in the queue for one, or waiting.
+/// A look lists them in this order.
+const State = enum(u8) { run, ready, wait };
+
 /// A task as it was at a look, copied into this program's own memory: it
 /// may be gone by the time its line is printed.
 const Seen = struct {
@@ -89,7 +95,7 @@ const Seen = struct {
     /// What it took since the look before.
     spent: u64 = 0,
     pri: i8 = 0,
-    state: [*:0]const u8 = "",
+    state: State = .wait,
     /// The core it runs on, for a running one.
     core: ?u32 = null,
     idle: bool = false,
@@ -337,10 +343,10 @@ fn look(into: *Look) void {
     while (core < max_cores and sys.ReadCoreTimes(core, &into.cores[core])) core += 1;
     into.core_count = core;
     core = 0;
-    while (sys.CoreTask(core)) |task| : (core += 1) take(into, task, "run", core);
-    for ([_]struct { state: [*:0]const u8, which: u32 }{
-        .{ .state = "ready", .which = exec.EXECLIST_TASK_READY },
-        .{ .state = "wait", .which = exec.EXECLIST_TASK_WAIT },
+    while (sys.CoreTask(core)) |task| : (core += 1) take(into, task, .run, core);
+    for ([_]struct { state: State, which: u32 }{
+        .{ .state = .ready, .which = exec.EXECLIST_TASK_READY },
+        .{ .state = .wait, .which = exec.EXECLIST_TASK_WAIT },
     }) |queue| {
         const list = sys.LockExecList(queue.which).?;
         var it = list.iterator();
@@ -354,7 +360,7 @@ fn look(into: *Look) void {
     }
 }
 
-fn take(into: *Look, task: *const exec.Task, state: [*:0]const u8, core: ?u32) void {
+fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
     if (into.count == into.seen.len) {
         into.missed += 1;
         return;
@@ -447,14 +453,15 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
     });
     screen.line("", .{});
 
-    // The tasks, busiest first; an insertion sort keeps the ones that
-    // took the same in the order they were found.
+    // The tasks running, then ready, then waiting, and in each the busiest
+    // first; an insertion sort keeps the ones that are alike in the order
+    // they were found.
     var order: [max_tasks]u8 = undefined;
     var count: usize = 0;
     for (now.seen[0..now.count], 0..) |*task, index| {
         if (task.idle) continue;
         var at = count;
-        while (at > 0 and now.seen[order[at - 1]].spent < task.spent) : (at -= 1) order[at] = order[at - 1];
+        while (at > 0 and goesBefore(task, &now.seen[order[at - 1]])) : (at -= 1) order[at] = order[at - 1];
         order[at] = @intCast(index);
         count += 1;
     }
@@ -477,7 +484,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
                 tenth(task.spent, span),
                 @as([*:0]const u8, &core_text),
                 @as(i32, task.pri),
-                task.state,
+                @tagName(task.state).ptr,
                 @as([*:0]const u8, @ptrCast(&task.name)),
             });
             continue;
@@ -487,7 +494,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
             tenth(task.spent, span),
             @as([*:0]const u8, &core_text),
             @as(i32, task.pri),
-            task.state,
+            @tagName(task.state).ptr,
             @as(u32, @intCast(task.memory / 1024)),
             @as([*:0]const u8, @ptrCast(&task.name)),
         });
@@ -495,6 +502,13 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
     const rest: u32 = @intCast(count - shown + not_copied);
     if (rest != 0) screen.line("... and %u more", .{rest});
     screen.end();
+}
+
+/// Whether `one` is listed above `other`: by its state, and in the same
+/// state by what it took.
+fn goesBefore(one: *const Seen, other: *const Seen) bool {
+    if (one.state != other.state) return @intFromEnum(one.state) < @intFromEnum(other.state);
+    return one.spent > other.spent;
 }
 
 /// `part` of `all` in tenths of a percent, at most 999.9 %.

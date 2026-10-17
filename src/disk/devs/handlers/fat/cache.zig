@@ -28,6 +28,12 @@
 //! - a run written over a block that is held would leave the held copy
 //!   standing, and the next `get` would hand back what is no longer
 //!   there. So a run drops any block it crosses.
+//!
+//! **Its size can change while it holds blocks** (`resize`, which
+//! ACTION_MORE_CACHE comes to): the blocks used most lately move over,
+//! and those that no longer fit go back to the medium first. A block is
+//! found by looking through every slot, so a larger cache saves reads and
+//! pays for it in that look.
 
 const std = @import("std");
 
@@ -48,6 +54,17 @@ pub const Error = error{
     WriteFailed,
 };
 
+/// The blocks a cache holds when nothing says otherwise.
+pub const default_blocks: u32 = 32;
+
+/// The fewest it is made with: the blocks one packet goes back to over and
+/// over - an exFAT entry set across two directory blocks, the table sector
+/// of its chain and the bitmap block it takes clusters from.
+pub const least_blocks: u32 = 4;
+
+/// A cache's two allocations: its slots, and their bytes.
+const Memory = struct { slots: []Slot, bytes: []u8 };
+
 pub fn BlockCache(comptime Media: type) type {
     return struct {
         const Self = @This();
@@ -63,22 +80,15 @@ pub fn BlockCache(comptime Media: type) type {
         hits: u32 = 0,
         misses: u32 = 0,
 
-        /// `count` blocks' worth of cache, out of the medium's own memory.
+        /// `count` blocks' worth of cache, out of the medium's own memory;
+        /// one at the least.
         pub fn init(media: *Media, count: u32) Error!Self {
             const block_bytes = media.blockSize();
-            const slot_bytes = @sizeOf(Slot) * count;
-            const slots_memory = media.alloc(slot_bytes) orelse return Error.NoMemory;
-            const bytes = media.alloc(block_bytes * count) orelse {
-                media.free(slots_memory);
-                return Error.NoMemory;
-            };
-            const first_slot: [*]Slot = @ptrCast(@alignCast(slots_memory.ptr));
-            const slots = first_slot[0..count];
-            for (slots) |*slot| slot.* = .{};
+            const memory = try allocate(media, block_bytes, @max(count, 1));
             return .{
                 .media = media,
-                .slots = slots,
-                .bytes = bytes,
+                .slots = memory.slots,
+                .bytes = memory.bytes,
                 .block_bytes = block_bytes,
             };
         }
@@ -88,11 +98,82 @@ pub fn BlockCache(comptime Media: type) type {
         /// and the caller is being taken down.
         pub fn deinit(self: *Self) void {
             _ = self.flush() catch {};
-            const slot_bytes: [*]u8 = @ptrCast(self.slots.ptr);
-            self.media.free(slot_bytes[0 .. self.slots.len * @sizeOf(Slot)]);
-            self.media.free(self.bytes);
+            giveBack(self.media, .{ .slots = self.slots, .bytes = self.bytes });
             self.slots = &.{};
             self.bytes = &.{};
+        }
+
+        /// How many blocks it holds at the most.
+        pub fn size(self: *const Self) u32 {
+            return @intCast(self.slots.len);
+        }
+
+        /// Made `count` blocks big, one at the least. The blocks used most
+        /// lately stay held, changed or not; those that no longer fit go
+        /// back to the medium first if they have changed. When the memory
+        /// cannot be had, or a block will not go back, it stays the size
+        /// it was, with every block it held.
+        pub fn resize(self: *Self, count: u32) Error!void {
+            const wanted: u32 = @max(count, 1);
+            if (wanted == self.slots.len) return;
+            const memory = try allocate(self.media, self.block_bytes, wanted);
+            errdefer giveBack(self.media, memory);
+            const since = self.keptSince(wanted);
+            for (0..self.slots.len) |at| {
+                if (self.slots[at].used < since) try self.writeBack(at);
+            }
+            var into: usize = 0;
+            for (self.slots, 0..) |slot, at| {
+                if (!slot.filled or slot.used < since) continue;
+                memory.slots[into] = slot;
+                @memcpy(memory.bytes[into * self.block_bytes ..][0..self.block_bytes], self.slotBytes(at));
+                into += 1;
+            }
+            giveBack(self.media, .{ .slots = self.slots, .bytes = self.bytes });
+            self.slots = memory.slots;
+            self.bytes = memory.bytes;
+        }
+
+        /// The last use the blocks a cache of `count` keeps have had at
+        /// the earliest: 0 when every block held fits. Each use ticks the
+        /// clock, so no two held blocks share one, and the `count` newest
+        /// are found by stepping down from the newest.
+        fn keptSince(self: *const Self, count: u32) u64 {
+            var held: u32 = 0;
+            for (self.slots) |slot| held += @intFromBool(slot.filled);
+            if (held <= count) return 0;
+            var since: u64 = std.math.maxInt(u64);
+            for (0..count) |_| {
+                var newest: u64 = 0;
+                for (self.slots) |slot| {
+                    if (slot.filled and slot.used < since and slot.used > newest) newest = slot.used;
+                }
+                since = newest;
+            }
+            return since;
+        }
+
+        /// The slots and bytes of `count` blocks, every slot empty; none
+        /// when either would not fit in 32 bits.
+        fn allocate(media: *Media, block_bytes: u32, count: u32) Error!Memory {
+            const slot_bytes = @as(u64, @sizeOf(Slot)) * count;
+            const bytes_wanted = @as(u64, block_bytes) * count;
+            if (slot_bytes > std.math.maxInt(u32) or bytes_wanted > std.math.maxInt(u32)) return Error.NoMemory;
+            const slots_memory = media.alloc(@intCast(slot_bytes)) orelse return Error.NoMemory;
+            const bytes = media.alloc(@intCast(bytes_wanted)) orelse {
+                media.free(slots_memory);
+                return Error.NoMemory;
+            };
+            const first_slot: [*]Slot = @ptrCast(@alignCast(slots_memory.ptr));
+            const slots = first_slot[0..count];
+            for (slots) |*slot| slot.* = .{};
+            return .{ .slots = slots, .bytes = bytes };
+        }
+
+        fn giveBack(media: *Media, memory: Memory) void {
+            const slot_bytes: [*]u8 = @ptrCast(memory.slots.ptr);
+            media.free(slot_bytes[0 .. memory.slots.len * @sizeOf(Slot)]);
+            media.free(memory.bytes);
         }
 
         fn slotBytes(self: *Self, at: usize) []u8 {
@@ -398,6 +479,87 @@ test "the cache works at the far end of a 64 GB card" {
     var back: [512]u8 = @splat(0);
     try testing.expect(media.read(far, 1, &back));
     try testing.expectEqual(@as(u8, 0x6D), back[0]);
+}
+
+test "a cache made larger keeps every block it held, changed ones changed" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    const bytes = try cache.getForWrite(10);
+    bytes[0] = 0x3C;
+    _ = try cache.get(11);
+    _ = try cache.get(12);
+    try cache.resize(8);
+    try testing.expectEqual(@as(u32, 8), cache.size());
+    try testing.expectEqual(@as(u64, 0), media.blocks_written);
+
+    media.blocks_read = 0;
+    try testing.expectEqual(@as(u8, 0x3C), (try cache.get(10))[0]);
+    _ = try cache.get(11);
+    _ = try cache.get(12);
+    try testing.expectEqual(@as(u64, 0), media.blocks_read);
+
+    // Eight blocks fit now: five more push nothing out.
+    for (13..18) |lba| _ = try cache.get(lba);
+    try testing.expect(cache.find(10) != null);
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u64, 1), media.blocks_written);
+}
+
+test "a cache made smaller keeps the blocks used last and writes back the rest" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    // 20 changed and then left alone; 21 changed and used last.
+    (try cache.getForWrite(20))[0] = 0x01;
+    _ = try cache.get(22);
+    _ = try cache.get(23);
+    (try cache.getForWrite(21))[0] = 0x02;
+    try cache.resize(2);
+    try testing.expectEqual(@as(u32, 2), cache.size());
+
+    // 20 went back on its way out; 22 went unwritten, as it was not changed.
+    try testing.expectEqual(@as(u64, 1), media.blocks_written);
+    try testing.expect(cache.find(20) == null);
+    try testing.expect(cache.find(22) == null);
+    try testing.expect(cache.find(23) != null);
+    try testing.expect(cache.find(21) != null);
+    var back: [512]u8 = @splat(0);
+    try testing.expect(media.read(20, 1, &back));
+    try testing.expectEqual(@as(u8, 0x01), back[0]);
+
+    // 21 is still changed, and goes back at the flush.
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u64, 2), media.blocks_written);
+    try testing.expect(media.read(21, 1, &back));
+    try testing.expectEqual(@as(u8, 0x02), back[0]);
+}
+
+test "a cache that cannot be made smaller stays as it was" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    (try cache.getForWrite(30))[0] = 0x0F;
+    _ = try cache.get(31);
+    _ = try cache.get(32);
+    const live = media.live;
+    // 30 cannot go back, so nothing changes.
+    media.read_only = true;
+    try testing.expectError(Error.WriteFailed, cache.resize(1));
+    try testing.expectEqual(@as(u32, 4), cache.size());
+    try testing.expectEqual(live, media.live);
+    for ([_]u64{ 30, 31, 32 }) |lba| try testing.expect(cache.find(lba) != null);
+
+    // More than 32 bits of bytes is refused, and changes nothing either.
+    try testing.expectError(Error.NoMemory, cache.resize(0x0100_0000));
+    try testing.expectEqual(@as(u32, 4), cache.size());
+    media.read_only = false;
 }
 
 test "a read that fails leaves no block claiming to hold anything" {

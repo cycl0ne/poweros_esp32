@@ -77,12 +77,15 @@ AUX3:
  *
  * DosType "MSD\0" is what says FAT to anything that goes by it; the
  * stack is the handler's deepest packet, a rename, with room to spare.
+ * Buffers is how many of the card's table and directory blocks the
+ * handler keeps in memory; C:AddBuffers changes it while it runs.
  */
 SD0:
 	Handler   = HANDLERS:fat-handler
 	Device    = sdcard.device
 	Unit      = 0
 	DosType   = 0x4D534400
+	Buffers   = 32
 	StackSize = 16384
 	Priority  = 5
 	Activate  = 1

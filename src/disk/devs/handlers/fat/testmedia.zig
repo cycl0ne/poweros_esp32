@@ -31,6 +31,10 @@ pub const TestMedia = struct {
     /// from a thousand blocks moved once.
     blocks_read: u64 = 0,
     blocks_written: u64 = 0,
+    /// How often a device would have put blocks it held on the medium
+    /// itself, and blocks written since it last did.
+    updates: u32 = 0,
+    unsynced: u64 = 0,
     /// After this many more blocks are written every further write is
     /// dropped: the card went. Null means it does not.
     budget: ?u32 = null,
@@ -113,9 +117,21 @@ pub const TestMedia = struct {
                 left.* -= 1;
             }
             m.blocks_written += 1;
+            m.unsynced += 1;
             const at = i * m.block_bytes;
             m.put(lba + i, from[at..][0..m.block_bytes]) catch return false;
         }
+        return true;
+    }
+
+    /// What a device would hold in a cache of its own put on the medium:
+    /// this one holds nothing, and counts the times there was something
+    /// written since the last, which is when a device is asked.
+    pub fn update(m: *TestMedia) bool {
+        if (!m.in) return false;
+        if (m.unsynced == 0) return true;
+        m.updates += 1;
+        m.unsynced = 0;
         return true;
     }
 

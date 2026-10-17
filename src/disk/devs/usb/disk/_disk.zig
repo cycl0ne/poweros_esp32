@@ -54,6 +54,9 @@ pub const Unit = extern struct {
     block_bytes: u32 = 512,
     blocks: u64 align(4) = 0,
     write_protected: bool = false,
+    /// The medium in refused SYNCHRONIZE CACHE: it is not asked again
+    /// until another one comes in.
+    sync_refused: bool = false,
     /// The handlers told when a medium comes or goes: the requests of
     /// TD_ADDCHANGEINT, kept until TD_REMCHANGEINT, under the base's
     /// `change_lock`.
