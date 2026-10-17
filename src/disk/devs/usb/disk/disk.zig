@@ -7,10 +7,13 @@
 //!   CMD_READ         io_Length bytes from io_Offset into io_Data; both
 //!                    whole blocks of the medium, and on it.
 //!   CMD_WRITE        io_Length bytes from io_Data at io_Offset.
+//!   CMD_UPDATE       what the stick holds in a cache of its own put on
+//!                    its medium (SYNCHRONIZE CACHE), answered once it is
+//!                    there; at once by a stick that does not know the
+//!                    command.
 //!   TDCMD_ERASE,
-//!   CMD_UPDATE,
-//!   CMD_CLEAR        answer: a stick erases for itself, and nothing is
-//!                    buffered below the handler.
+//!   CMD_CLEAR        answer: a stick erases for itself, and the device
+//!                    buffers nothing.
 //!   TD_GETGEOMETRY   into io_Data: the medium's block size and blocks,
 //!                    and DGF_REMOVABLE.
 //!   TD_GETNUMTRACKS  io_Actual: the medium's blocks.
@@ -68,8 +71,8 @@ const scsi = @import("scsi.zig");
 
 pub const DEVICE_NAME = _disk.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "17.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -117,12 +120,13 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         // Everything that speaks to the stick waits, so it goes to the task.
         exec.CMD_READ,
         exec.CMD_WRITE,
+        exec.CMD_UPDATE,
         td.TD_GETGEOMETRY,
         td.TD_GETNUMTRACKS,
         td.TD_PROTSTATUS,
         scsidisk.HD_SCSICMD,
         => return queue(base, io),
-        td.TDCMD_ERASE, exec.CMD_UPDATE, exec.CMD_CLEAR => {},
+        td.TDCMD_ERASE, exec.CMD_CLEAR => {},
         // A handler's change interrupt: kept, and not answered, until the
         // same request comes back as TD_REMCHANGEINT.
         td.TD_ADDCHANGEINT => if (req.data == null) {

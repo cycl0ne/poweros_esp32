@@ -50,6 +50,36 @@
 //! name - finds each watch's name again on it and tells its watcher. A
 //! watch named on the device (`SD0:x`) is on whichever card is in.
 //!
+//! **The order of the writes.** A card can go - pulled out, the power
+//! cut - between any two blocks, and the handler writes so that what is
+//! left is a volume with something lost at worst, never something wrong.
+//! What a change takes goes down before what names it: a file's bytes,
+//! then its clusters in the table (and on exFAT the bitmap), then the
+//! entry that counts on them; a directory's new cluster is cleared before
+//! it is linked on. What a change gives back goes the other way: the entry
+//! first, then the clusters. Freed first, a cut would leave an entry
+//! naming clusters marked free, which the next file is given too - two
+//! files on the same bytes. In this order a cut leaves clusters nothing
+//! names, which a check gives back, or after a rename the object under
+//! both names. The volume is marked dirty before the first change and
+//! clean once nothing is half done, so a check knows when to look.
+//!
+//! **The device's own cache.** A USB stick may hold writes in memory of
+//! its own and put them down later, in an order of its own. So CMD_UPDATE
+//! goes to the device when a file is closed, on FLUSH, after the dirty
+//! mark and before the clean one: usb/disk.device passes it on as
+//! SYNCHRONIZE CACHE, and from there on what went before is on the medium
+//! itself. Between two of them the order above is the order the device
+//! is given. It is sent only when something was written since the last
+//! one; sdcard.device holds nothing and answers at once.
+//!
+//! **Buffers** are the blocks the cache holds - the table and directory
+//! blocks a packet goes back to, never a file's bytes. There is one count
+//! for the handler, not one per card: the mountlist's `Buffers` gives it
+//! (32 without), ACTION_MORE_CACHE (`C:AddBuffers`) changes it, and the
+//! card in the slot has its cache made that size at once, the next one
+//! from the start.
+//!
 //! **A device it cannot open** - no slot, no controller - is another
 //! matter: there will never be a card. The start then gives back what it
 //! took, answers ERROR_DEVICE_NOT_MOUNTED and ends, and dos unloads the
@@ -70,11 +100,12 @@ const MsgPort = exec.MsgPort;
 const _fat = @import("_fat.zig");
 const fat32_fs = @import("fat32/fs.zig");
 const exfat_fs = @import("exfat/fs.zig");
+const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 4;
-const BUILD_DATE = "12.10.2026";
+const HANDLER_REVISION = 6;
+const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -94,6 +125,9 @@ pub const DeviceMedia = struct {
     geometry: trackdisk.DriveGeometry = .{},
     /// The change count the geometry was read at.
     geometry_change: ?u32 = null,
+    /// Written to since the device was last told to put what it holds on
+    /// the medium itself.
+    unsynced: bool = false,
 
     fn command(media: *DeviceMedia, what: u16, offset: u64, length: u64, data: ?*anyopaque) bool {
         media.io.req.command = what;
@@ -134,7 +168,18 @@ pub const DeviceMedia = struct {
     pub fn write(media: *DeviceMedia, lba: u64, count: u32, from: []const u8) bool {
         const bytes = @as(u64, count) * media.blockSize();
         if (from.len < bytes) return false;
+        media.unsynced = true;
         return media.command(exec.CMD_WRITE, lba * media.blockSize(), bytes, @constCast(from.ptr));
+    }
+
+    /// What the device holds in a cache of its own put on the medium
+    /// itself (CMD_UPDATE). Not asked when nothing has been written since
+    /// the last time.
+    pub fn update(media: *DeviceMedia) bool {
+        if (!media.unsynced) return true;
+        if (!media.command(exec.CMD_UPDATE, 0, 0, null)) return false;
+        media.unsynced = false;
+        return true;
     }
 
     pub fn writable(media: *DeviceMedia) bool {
@@ -243,6 +288,24 @@ const Bodies = struct {
             if (bodies.exfat.holdsLock(lock)) return .exfat;
         }
         return bodies.active();
+    }
+
+    /// The blocks the cache holds, the same for both bodies.
+    fn buffers(bodies: *const Bodies) u32 {
+        if (bodies.exfat.mounted) return bodies.exfat.buffers;
+        return bodies.fat32.buffers;
+    }
+
+    /// Both bodies' caches made `count` blocks: the one with a volume
+    /// first, as only that one can fail, and then nothing has changed.
+    fn setBuffers(bodies: *Bodies, count: u32) _fat.Error!void {
+        if (bodies.active() == .exfat) {
+            try bodies.exfat.setBuffers(count);
+            try bodies.fat32.setBuffers(count);
+        } else {
+            try bodies.fat32.setBuffers(count);
+            try bodies.exfat.setBuffers(count);
+        }
     }
 
     fn volumeName(bodies: *Bodies) []const u8 {
@@ -419,6 +482,12 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const st = start(sys, dl, fssm, &code) orelse return dl.ReplyPkt(startup, dos.DOSFALSE, code);
 
     st.bodies = Bodies.init(&st.media, st.ub, &me.msg_port);
+    // The mountlist's Buffers, when it gives any; before a card is
+    // mounted, so this cannot fail.
+    if (fssm) |startup_msg| if (startup_msg.environ) |env| {
+        if (env.table_size >= dos.filehandler.DE_NUMBUFFERS and env.num_buffers != 0)
+            st.bodies.setBuffers(bounded(env.num_buffers)) catch {};
+    };
     if (st.watchers.init(sys)) {
         st.watching = true;
         const device: []const u8 = if (node) |device_node| std.mem.span(device_node.name) else "";
@@ -516,6 +585,7 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
 /// One packet, to the body it is for. Without a volume only the ones that
 /// say what is in the slot get an answer that is not an error.
 fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
+    if (pkt.getAction() == .more_cache) return moreCache(st, pkt.args.raw[0]);
     if (st.bodies.bodyFor(pkt)) |which| return switch (which) {
         .fat32 => st.bodies.fat32.answer(pkt),
         .exfat => st.bodies.exfat.answer(pkt),
@@ -552,6 +622,25 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
         },
         else => return _fat.no(if (card_in) dos.ERROR_NOT_A_DOS_DISK else dos.ERROR_NO_DISK),
     }
+}
+
+/// ACTION_MORE_CACHE: `more` blocks added to the cache, or taken away
+/// when it is negative - never below `least_blocks` - and none to ask how
+/// many it holds. The answer is that number after it; when the memory for
+/// a larger cache is not there, ERROR_NO_FREE_STORE, and the cache stays
+/// as it was. Taking blocks away writes back the changed ones that go.
+fn moreCache(st: *State, more: isize) _fat.Answer {
+    const wanted = bounded(@as(i64, st.bodies.buffers()) + more);
+    st.bodies.setBuffers(wanted) catch |e| return _fat.no(_fat.codeOf(e));
+    return .{ .res1 = @intCast(st.bodies.buffers()), .res2 = 0 };
+}
+
+/// A count of buffers as the handler keeps it: `least_blocks` at the
+/// least, and no more than the answer's `res1` can say.
+fn bounded(count: i64) u32 {
+    if (count < cache_area.least_blocks) return cache_area.least_blocks;
+    if (count > std.math.maxInt(i32)) return std.math.maxInt(i32);
+    return @intCast(count);
 }
 
 /// The volume node made to match the card the bodies now have: the old

@@ -81,7 +81,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   `SYS:Programs/CPULoad` show what each task and core takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
-  (`SD0:`) and USB sticks (`DU0:`), `RAM:`, `PIPE:`, `NIL:`; partitions
+  (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
+  mid-write leaves a whole volume, `RAM:`, `PIPE:`, `NIL:`; partitions
   from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; consoles with line editing, file
   name completion, and copy and paste; a shell with scripts and 48

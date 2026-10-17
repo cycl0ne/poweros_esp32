@@ -19,8 +19,8 @@
 //!
 //! **A new entry** takes the first run of free slots long enough for it
 //! and its long name, and the directory grows by a cluster if there is
-//! no such run - the new cluster zeroed first, because a zero entry is
-//! what says nothing comes after it.
+//! no such run - the new cluster zeroed on the medium before it is linked
+//! on, because a zero entry is what says nothing comes after it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -353,10 +353,15 @@ pub fn Directory(comptime Media: type) type {
             return error.DiskFull;
         }
 
-        /// One more cluster on the end of a directory, zeroed.
+        /// One more cluster on the end of a directory: taken, zeroed on the
+        /// medium, and only then linked on. Linked first, a cut between
+        /// the two would leave the directory running on into whatever the
+        /// cluster held before, which reads as entries.
         fn grow(self: *Self, last: u32) Error!void {
-            const cluster = try self.table.allocate(last);
+            const cluster = try self.table.allocate(null);
             try self.zeroCluster(cluster);
+            _ = self.cache.flush() catch return error.MediumFailed;
+            try self.table.setEntry(last, cluster);
         }
 
         /// Every block of a cluster set to zeroes, through the cache so a
@@ -446,6 +451,13 @@ pub fn Directory(comptime Media: type) type {
             var cursor = Cursor.at(first);
             const dotdot = try self.rawForWrite(&cursor, 1);
             fat.setEntryCluster(dotdot, if (parent == self.geo.root_cluster) 0 else parent);
+        }
+
+        /// An entry's bytes where it lies, to be read. Good until the next
+        /// call that reads a block.
+        pub fn entryAt(self: *Self, spot: Spot) Error![]const u8 {
+            const block = self.cache.get(spot.block) catch return error.MediumFailed;
+            return block[spot.at..][0..fat.entry_bytes];
         }
 
         /// An entry's bytes where it lies, to be changed in place.

@@ -7,7 +7,8 @@
 //! disk needs: INQUIRY (what the unit is, whether its medium comes out),
 //! TEST UNIT READY (whether a medium is in), READ CAPACITY (10, and 16
 //! for a medium past 2 TiB), READ and WRITE (10, and 16 past 2^32
-//! blocks), REQUEST SENSE (why the last command failed) and MODE SENSE(6)
+//! blocks), SYNCHRONIZE CACHE(10) (what the unit holds written to its
+//! medium), REQUEST SENSE (why the last command failed) and MODE SENSE(6)
 //! (whether the medium is write-protected).
 
 pub const OP_TEST_UNIT_READY: u8 = 0x00;
@@ -17,6 +18,7 @@ pub const OP_MODE_SENSE_6: u8 = 0x1A;
 pub const OP_READ_CAPACITY_10: u8 = 0x25;
 pub const OP_READ_10: u8 = 0x28;
 pub const OP_WRITE_10: u8 = 0x2A;
+pub const OP_SYNCHRONIZE_CACHE_10: u8 = 0x35;
 pub const OP_READ_16: u8 = 0x88;
 pub const OP_WRITE_16: u8 = 0x8A;
 pub const OP_SERVICE_ACTION_IN_16: u8 = 0x9E;
@@ -99,6 +101,14 @@ pub fn readCapacity16() Command {
     cdb.bytes[0] = OP_SERVICE_ACTION_IN_16;
     cdb.bytes[1] = SA_READ_CAPACITY_16;
     put32(cdb.bytes[10..14], capacity_16_bytes);
+    return cdb;
+}
+
+/// SYNCHRONIZE CACHE(10) of the whole medium - from block 0, a count of
+/// 0 being to the end - answered once what the unit holds is on it.
+pub fn synchronizeCache() Command {
+    var cdb: Command = .{ .len = 10 };
+    cdb.bytes[0] = OP_SYNCHRONIZE_CACHE_10;
     return cdb;
 }
 
@@ -196,11 +206,18 @@ pub const Sense = struct {
     pub fn writeProtected(sense: Sense) bool {
         return sense.key == KEY_DATA_PROTECT;
     }
+
+    /// The unit does not do what it was asked: ILLEGAL REQUEST, of any
+    /// code - an operation it does not know, or a field it does not take.
+    pub fn illegalRequest(sense: Sense) bool {
+        return sense.key == KEY_ILLEGAL_REQUEST;
+    }
 };
 
 pub const KEY_NO_SENSE: u8 = 0x0;
 pub const KEY_NOT_READY: u8 = 0x2;
 pub const KEY_MEDIUM_ERROR: u8 = 0x3;
+pub const KEY_ILLEGAL_REQUEST: u8 = 0x5;
 pub const KEY_UNIT_ATTENTION: u8 = 0x6;
 pub const KEY_DATA_PROTECT: u8 = 0x7;
 const ASC_NOT_READY: u8 = 0x04;
@@ -246,6 +263,10 @@ test "a read is READ(10) while it fits, READ(16) past 2^32 blocks" {
     const large = readWrite(false, 0x1_0000_0000, 1);
     try testing.expectEqual(@as(u8, 16), large.len);
     try testing.expectEqualSlices(u8, &.{ OP_READ_16, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0 }, large.slice());
+}
+
+test "SYNCHRONIZE CACHE(10) asks for the whole medium" {
+    try testing.expectEqualSlices(u8, &.{ OP_SYNCHRONIZE_CACHE_10, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, synchronizeCache().slice());
 }
 
 test "INQUIRY: a removable disk and its names" {
@@ -299,6 +320,10 @@ test "sense: no medium, a change, becoming ready, write-protected" {
     try testing.expect(senseOf(&data).?.becomingReady());
     data[2] = KEY_DATA_PROTECT;
     try testing.expect(senseOf(&data).?.writeProtected());
+    data[2] = KEY_ILLEGAL_REQUEST;
+    data[12] = 0x20; // INVALID COMMAND OPERATION CODE
+    try testing.expect(senseOf(&data).?.illegalRequest());
+    try testing.expect(!senseOf(&data).?.writeProtected());
     data[0] = 0x00;
     try testing.expect(senseOf(&data) == null);
 }
