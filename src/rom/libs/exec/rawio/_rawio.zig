@@ -6,7 +6,7 @@
 //! tree is built on it, so a conversion means the same thing in a shell
 //! command, a device's error and a kernel panic. Its rules:
 //!
-//!   %[-][0][width][.limit][l]{d,D,u,U,x,X,s,c}
+//!   %[-][0][width][.limit][l|z]{d,D,u,U,x,X,s,c}
 //!
 //! - Hex is uppercase without leading zeros; 0 prints as "0".
 //! - With zero fill, a "-" goes before the zeros: %03d of -5 is "-05".
@@ -16,7 +16,8 @@
 //!   stream past the values it used.
 //!
 //! The data stream is this chip's:
-//! - %d %u %x %c take 32 bits, with l 64 bits. %s takes a pointer. The
+//! - %d %u %x %c take 32 bits, with l 64 bits, with z a pointer's width
+//!   (usize: 32 bits on the ESP32s, 64 on RV64). %s takes a pointer. The
 //!   stream is packed and read with unaligned loads.
 //! - A null output function stores the characters into put_ch_data as a
 //!   buffer, which is how a string is formatted without writing a
@@ -120,8 +121,12 @@ pub const chip_raw_io: RawIOHardware = .{ .init = uart.consoleInit, .put = uart.
 /// It is not what `RawPutChar` writes to. usbserial.device drives the
 /// same registers while the system runs, and two writers on one FIFO
 /// would tear each other's packets; the debugger takes it only with the
-/// machine stopped, when nothing else is running.
-pub const usb_jtag_raw_io: RawIOHardware = .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet };
+/// machine stopped, when nothing else is running. A machine under SBI
+/// firmware has no such port, and nothing there.
+pub const usb_jtag_raw_io: RawIOHardware = if (sdk.hardware.chip == .rv64sbi)
+    no_raw_io
+else
+    .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet };
 
 fn noInit() void {}
 fn noPut(_: u8) void {}
@@ -360,8 +365,9 @@ pub fn format(format_string: [*:0]const u8, data_stream: ?*const anyopaque, put_
             cursor += 1;
             limit = number(&cursor);
         }
-        const long = cursor[0] == 'l';
-        if (long) cursor += 1;
+        // l: 64 bits; z: a usize, which is 64 bits where pointers are.
+        const long = cursor[0] == 'l' or (cursor[0] == 'z' and @sizeOf(usize) == 8);
+        if (cursor[0] == 'l' or cursor[0] == 'z') cursor += 1;
         const conversion = cursor[0];
         if (conversion == 0) break;
         cursor += 1;
@@ -488,6 +494,8 @@ test "format: conversions, width and fill, odd formats, the stream, a buffer, un
         try testing.expectEqualStrings("-2147483648 4294967295 DEADBEEF", f("%d %u %x", .{ @as(i32, std.math.minInt(i32)), @as(u32, std.math.maxInt(u32)), @as(u32, 0xDEADBEEF) }));
         try testing.expectEqualStrings("-5000000000 18446744073709551615 100000000", f("%ld %lu %lx", .{ @as(i64, -5_000_000_000), @as(u64, std.math.maxInt(u64)), @as(u64, 0x1_0000_0000) }));
         try testing.expectEqualStrings("0 0", f("%x %d", .{ @as(u32, 0), @as(i32, 0) }));
+        // z: a usize, whatever its width here.
+        try testing.expectEqualStrings("0000ABCD 7 -1", f("%08zx %zu %zd", .{ @as(usize, 0xABCD), @as(usize, 7), @as(isize, -1) }));
         try testing.expectEqualStrings("name: exec", f("name: %s", .{"exec"}));
         try testing.expectEqual(@as(u32, 1), FmtSink.nuls); // the final NUL
     }

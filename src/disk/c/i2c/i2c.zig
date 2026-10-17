@@ -332,9 +332,9 @@ fn dump(run: *Run, base: u8, has_base: bool, bytes: []const u8) void {
     while (at < bytes.len) : (at += 16) {
         const end = @min(at + 16, bytes.len);
         if (has_base) {
-            _ = Printf(dl, "%02x: ", .{@as(u32, base) + at});
+            _ = Printf(dl, "%02zx: ", .{@as(u32, base) + at});
         } else {
-            _ = Printf(dl, "%04x: ", .{at});
+            _ = Printf(dl, "%04zx: ", .{at});
         }
         var i = at;
         while (i < at + 16) : (i += 1) {

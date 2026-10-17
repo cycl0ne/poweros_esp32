@@ -61,7 +61,16 @@ pub const help =
     \\
 ;
 
+/// The "from CPU" sources are the ESP32s'; a machine under SBI firmware
+/// raises its software interrupts through the hart's own register and
+/// the firmware's IPIs, which `cause` and `cores` show.
+const has_from_cpu = sdk.hardware.chip != .rv64sbi;
+
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
+    if (comptime !has_from_cpu) {
+        shell.print("trigger: this chip has no \"from CPU\" interrupt sources\n", .{});
+        return;
+    }
     const n = try args.numberOr(0);
     if (n > 3) return error.Usage;
     install(shell);

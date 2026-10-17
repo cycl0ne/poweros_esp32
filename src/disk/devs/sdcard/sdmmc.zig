@@ -32,6 +32,7 @@ const reg = hardware.mmio.reg;
 const chip_host = switch (hardware.chip) {
     .esp32s3 => @import("esp32s3/sdhost.zig"),
     .esp32p4 => @import("esp32p4/sdhost.zig"),
+    .rv64sbi => @compileError("sdcard.device: no SD host for this chip yet"),
 };
 
 const base = hardware.map.SDMMC;

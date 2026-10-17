@@ -60,7 +60,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             n += attribute.name.len + 1;
         }
         buf[n] = 0;
-        shell.print("0x%08x  0x%08x-0x%08x  %4d  %8d  %-18s  %s\n", .{
+        shell.print("0x%08zx  0x%08zx-0x%08zx  %4d  %8d  %-18s  %s\n", .{
             row.address,                             row.lower, row.upper,
             row.pri,                                 row.free,  buf[0..n :0],
             @as([*:0]const u8, @ptrCast(&row.name)),

@@ -165,12 +165,16 @@ const modules = [_]Program{
 const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
 /// Drivers of the ESP32-P4's own hardware: its Ethernet MAC.
 const p4_only = [_][]const u8{"emac.device"};
+/// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
+/// does not: the DWC2 USB controller, the SD host.
+const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
 
 /// Whether `program` is built for `chip`.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
         .esp32s3 => &p4_only,
         .esp32p4 => &s3_only,
+        .rv64sbi => &(s3_only ++ p4_only ++ esp_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name)) return false;

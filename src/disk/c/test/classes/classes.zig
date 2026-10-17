@@ -36,11 +36,11 @@ const DEFAULT_LIBRARY = "gadgets/hello.gadget";
 const DEFAULT_ID = 7;
 
 const MSG_NOLIBRARY = "%s: cannot open %s\n";
-const MSG_OPENED = "%s %d.%d at 0x%08x, open count %d\n";
+const MSG_OPENED = "%s %d.%d at 0x%08zx, open count %d\n";
 const MSG_NOCLASS = "No public class %s\n";
 const MSG_CLASS = "Class %s: %d objects, %d subclasses\n";
 const MSG_NOOBJECT = "%s made no object\n";
-const MSG_OBJECT = "Object 0x%08x, GA_ID %d, class now has %d\n";
+const MSG_OBJECT = "Object 0x%08zx, GA_ID %d, class now has %d\n";
 const MSG_AGAIN = "Opened again: %s, open count %d\n";
 const MSG_SAME = "the same base";
 const MSG_OTHER = "ANOTHER base";

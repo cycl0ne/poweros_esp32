@@ -36,16 +36,16 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     shell.print("owner  task                      blocks       bytes     private\n", .{});
     for (tally.owners[0..tally.used]) |*owner| {
         if (owner.system()) {
-            shell.print("system                          %6u  %10u  %10u\n", .{ owner.blocks, owner.bytes, owner.private_bytes });
+            shell.print("system                          %6u  %10zu  %10zu\n", .{ owner.blocks, owner.bytes, owner.private_bytes });
             continue;
         }
         const task: [*:0]const u8 = if (owner.living) @ptrCast(&owner.name) else "(ended)";
-        shell.print("%5u  %-24s  %6u  %10u  %10u\n", .{ owner.id, task, owner.blocks, owner.bytes, owner.private_bytes });
+        shell.print("%5u  %-24s  %6u  %10zu  %10zu\n", .{ owner.id, task, owner.blocks, owner.bytes, owner.private_bytes });
     }
     if (tally.rest_owners != 0) {
-        shell.print("%5u  more owners               %6u  %10u  %10u\n", .{ tally.rest_owners, tally.rest.blocks, tally.rest.bytes, tally.rest.private_bytes });
+        shell.print("%5u  more owners               %6u  %10zu  %10zu\n", .{ tally.rest_owners, tally.rest.blocks, tally.rest.bytes, tally.rest.private_bytes });
     }
-    shell.print("free   in %u chunks                       %10u\n", .{ tally.free_chunks, tally.free_bytes });
+    shell.print("free   in %u chunks                       %10zu\n", .{ tally.free_chunks, tally.free_bytes });
     if (tally.damaged) |at| {
         shell.print("%u regions, %u blocks - damaged at 0x%08x, the rest of that region not counted\n", .{ tally.regions, tally.blocks, @as(u32, @truncate(at)) });
     } else {
@@ -88,8 +88,8 @@ fn blocksOf(shell: *Shell, id: u32) void {
     shell.print("block       size        private\n", .{});
     for (blocks[0..count]) |*block| {
         const private: [*:0]const u8 = if (block.private) "private" else "";
-        shell.print("0x%08x  %10u  %s\n", .{ @as(u32, @truncate(block.address)), block.bytes, private });
+        shell.print("0x%08x  %10zu  %s\n", .{ @as(u32, @truncate(block.address)), block.bytes, private });
     }
     if (more != 0) shell.print("... and %u more\n", .{more});
-    shell.print("%u blocks, %u bytes with their MemBlocks\n", .{ @as(u32, @intCast(count)) + more, bytes });
+    shell.print("%u blocks, %zu bytes with their MemBlocks\n", .{ @as(u32, @intCast(count)) + more, bytes });
 }

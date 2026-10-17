@@ -326,7 +326,7 @@ fn echo(run: *Run, blocks: u32, timeout: u32, description: [*:0]const u8) u32 {
     var verified: u32 = 0;
     var filled: u32 = 0;
     while (received < wanted) {
-        const got = sb.Recv(descriptor, receive[filled..].ptr, receive.len - filled, 0);
+        const got = sb.Recv(descriptor, receive[filled..].ptr, @intCast(receive.len - filled), 0);
         if (got <= 0) break;
         received += @intCast(got);
         filled += @intCast(got);

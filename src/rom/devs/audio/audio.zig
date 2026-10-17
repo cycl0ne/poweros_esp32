@@ -49,6 +49,7 @@ const GpioBase = gpio_resource.GpioBase;
 const i2s = if (builtin.is_test) no_i2s else switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/i2s.zig"),
     .esp32p4 => @import("esp32p4/i2s.zig"),
+    .rv64sbi => @compileError("audio.device: no I2S for this chip yet"),
 };
 
 const no_i2s = struct {

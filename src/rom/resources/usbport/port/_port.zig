@@ -16,6 +16,7 @@ pub const chip = if (builtin.is_test) no_switch else real;
 const real = switch (sdk.hardware.chip) {
     .esp32s3 => @import("../esp32s3/ports.zig"),
     .esp32p4 => @import("../esp32p4/ports.zig"),
+    .rv64sbi => @compileError("usbport.resource: no USB ports for this chip yet"),
 };
 
 const no_switch = struct {

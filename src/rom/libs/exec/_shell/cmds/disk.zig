@@ -36,7 +36,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         shell.print("unit 0: %ld bytes, %ld sectors of %d\n", .{
             geometry.total_sectors * geometry.sector_size, geometry.total_sectors, geometry.sector_size,
         });
-        shell.print("erase %d, write %d, mapped at 0x%08x\n", .{ geometry.erase_size, geometry.write_size, geometry.map_base });
+        shell.print("erase %d, write %d, mapped at 0x%08zx\n", .{ geometry.erase_size, geometry.write_size, geometry.map_base });
         return;
     };
 

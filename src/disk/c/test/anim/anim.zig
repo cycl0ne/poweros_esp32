@@ -571,7 +571,7 @@ fn drawScroller(gb: *GraphicsBase, rp: *RastPort, s: *Scene, fonts: Fonts, t: i3
 
     // A new style every two seconds or so, of the ones the font allows.
     const styles = [_]u32{ graphics.FS_NORMAL, graphics.FSF_BOLD, graphics.FSF_ITALIC, graphics.FSF_UNDERLINED };
-    const style = styles[@intCast(@mod(@divTrunc(t, 120), styles.len))];
+    const style = styles[@intCast(@mod(@divTrunc(t, 120), @as(i32, styles.len)))];
     _ = gb.SetSoftStyle(rp, style, gb.AskSoftStyle(rp));
 
     const length = gb.TextLength(rp, scroll_text, textLen(scroll_text));

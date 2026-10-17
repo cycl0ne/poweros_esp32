@@ -39,14 +39,14 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
         p.tick_hz,
         p.tick_irq,
     });
-    shell.print("vecbase  0x%08x\n", .{p.vecbase});
-    shell.print("iram     0x%08x-0x%08x  %d bytes code\n", .{ p.iram_lower, p.iram_upper, p.iram_upper - p.iram_lower });
-    shell.print("dram     0x%08x-0x%08x  %d bytes data+bss\n", .{ p.dram_lower, p.dram_upper, p.dram_upper - p.dram_lower });
-    shell.print("flash    0x%08x-0x%08x  %d KiB code\n", .{ p.flash_text_lower, p.flash_text_upper, (p.flash_text_upper - p.flash_text_lower) / 1024 });
-    shell.print("ram      internal %d KiB free, external %d KiB free (see avail)\n", .{ sys.AvailMem(sdk.exec.MEMF_INTERNAL) / 1024, sys.AvailMem(sdk.exec.MEMF_EXTERNAL) / 1024 });
+    shell.print("vecbase  0x%08zx\n", .{p.vecbase});
+    shell.print("iram     0x%08zx-0x%08zx  %zd bytes code\n", .{ p.iram_lower, p.iram_upper, p.iram_upper - p.iram_lower });
+    shell.print("dram     0x%08zx-0x%08zx  %zd bytes data+bss\n", .{ p.dram_lower, p.dram_upper, p.dram_upper - p.dram_lower });
+    shell.print("flash    0x%08zx-0x%08zx  %zd KiB code\n", .{ p.flash_text_lower, p.flash_text_upper, (p.flash_text_upper - p.flash_text_lower) / 1024 });
+    shell.print("ram      internal %zd KiB free, external %zd KiB free (see avail)\n", .{ sys.AvailMem(sdk.exec.MEMF_INTERNAL) / 1024, sys.AvailMem(sdk.exec.MEMF_EXTERNAL) / 1024 });
     if (p.psram_size != 0) {
-        shell.print("psram    0x%08x-0x%08x  %d MiB, vendor 0x%02x\n", .{ p.psram_base, p.psram_base + p.psram_size, p.psram_size >> 20, p.psram_vendor });
+        shell.print("psram    0x%08zx-0x%08zx  %zd MiB, vendor 0x%02x\n", .{ p.psram_base, p.psram_base + p.psram_size, p.psram_size >> 20, p.psram_vendor });
     }
-    shell.print("stack    0x%08x-0x%08x  sp 0x%08x\n", .{ p.stack_lower, p.stack_upper, cpu.stackPointer() });
+    shell.print("stack    0x%08zx-0x%08zx  sp 0x%08zx\n", .{ p.stack_lower, p.stack_upper, cpu.stackPointer() });
     shell.print("built    %s\n", .{p.built.?});
 }

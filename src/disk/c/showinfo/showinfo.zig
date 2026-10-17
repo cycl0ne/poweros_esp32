@@ -301,7 +301,7 @@ const Seen = struct {
             exec.TF_CORE1 => "core 1",
             else => "-",
         };
-        _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08x  %s%s%s\n", .{
+        _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08zx  %s%s%s\n", .{
             seen.state,
             @as([*:0]const u8, &core_text),
             pinned,
@@ -329,7 +329,7 @@ fn modules(title: [*:0]const u8, which: u32) void {
     _ = dl.PutStr("name                  ver  open  pri  address\n");
     const copy = copyRows(which);
     for (rows[0..copy.count]) |*row| {
-        _ = Printf(dl, "%-20s %2d.%-2d %4d  %3d  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %2d.%-2d %4d  %3d  0x%08zx\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.version,
             row.revision,
@@ -366,7 +366,7 @@ fn semaphores() void {
 fn nodeList(which: u32) void {
     const copy = copyRows(which);
     for (rows[0..copy.count]) |*row| {
-        _ = Printf(dl, "%-20s %4d  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %4d  0x%08zx\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.pri,
             row.address,
@@ -383,7 +383,7 @@ fn memory() void {
     const copy = copyRows(exec.EXECLIST_MEMORY);
     for (rows[0..copy.count]) |*row| {
         const largest = sys.AvailMem(row.attributes | exec.MEMF_LARGEST);
-        _ = Printf(dl, "%-29s %4d  %8d  %10d\n", .{
+        _ = Printf(dl, "%-29s %4d  %8zd  %10zd\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.pri,
             row.free,
@@ -573,7 +573,7 @@ fn segments() void {
     var segment = dl.LockSegmentList(true);
     defer dl.UnLockSegmentList();
     while (segment) |s| : (segment = s.next) {
-        _ = Printf(dl, "%-20s %5s  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %5s  0x%08zx\n", .{
             name(s.name),
             useCount(s.uc),
             @intFromPtr(s),

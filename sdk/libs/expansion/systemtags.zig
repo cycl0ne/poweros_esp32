@@ -66,6 +66,26 @@ pub const SYSTAG_PsramSpeed = SYSTAG_Dummy + 14;
 /// a bank of I/O pins or their pull-ups from it. The ESP32-P4 only;
 /// absent, 0, and the channel is left as the ROM left it.
 pub const SYSTAG_Ldo4Voltage = SYSTAG_Dummy + 15;
+/// The machine's RAM, where it starts and how many bytes: a machine under
+/// SBI firmware, whose RAM is one block. The firmware's own part at its
+/// start is left out by the kernel, which links above it.
+pub const SYSTAG_RamBase = SYSTAG_Dummy + 16;
+pub const SYSTAG_RamSize = SYSTAG_Dummy + 17;
+/// The rate of RISC-V's `time` counter, in Hz: what the SBI timer counts
+/// in. A whole number of MHz.
+pub const SYSTAG_Timebase = SYSTAG_Dummy + 18;
+/// The console UART, a 16550, as the machine has it: its address; its
+/// registers' spacing, as a shift (register n at base + n << shift); 1
+/// when its registers want 32-bit accesses; the clock its divisor
+/// divides, in Hz; and its interrupt source on the PLIC.
+pub const SYSTAG_ConsoleBase = SYSTAG_Dummy + 19;
+pub const SYSTAG_ConsoleShift = SYSTAG_Dummy + 20;
+pub const SYSTAG_ConsoleWide = SYSTAG_Dummy + 21;
+pub const SYSTAG_ConsoleClock = SYSTAG_Dummy + 22;
+pub const SYSTAG_ConsoleIrq = SYSTAG_Dummy + 23;
+/// Which PLIC context is supervisor mode of hart n: first + stride * n.
+pub const SYSTAG_PlicFirst = SYSTAG_Dummy + 24;
+pub const SYSTAG_PlicStride = SYSTAG_Dummy + 25;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

@@ -127,7 +127,7 @@ fn isFixed(comptime T: type) bool {
 
 comptime {
     const arch = @import("builtin").cpu.arch;
-    if (arch == .xtensa or arch == .riscv32) {
+    if (arch == .xtensa or arch == .riscv32 or arch == .riscv64) {
         @setEvalBranchQuota(20_000_000);
         checkConstants(@This(), 0);
         checkConstants(@import("root"), 0);

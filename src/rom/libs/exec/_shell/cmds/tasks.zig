@@ -70,7 +70,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             sdk.exec.TF_CORE1 => "1",
             else => "",
         };
-        shell.print("0x%08x  %-16s %-7s %4d  %-6s %-4s  %-3s  %08x  %08x  %08x  %08x  %08x\n", .{
+        shell.print("0x%08zx  %-16s %-7s %4d  %-6s %-4s  %-3s  %08x  %08x  %08x  %08zx  %08zx\n", .{
             entry.address,                                       @as([*:0]const u8, @ptrCast(&entry.name)),
             _shell.enumName(sdk.exec.NodeType, entry.node_type), entry.pri,
             _shell.enumName(sdk.exec.TaskState, entry.state),    core,

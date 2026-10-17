@@ -30,8 +30,10 @@ const disk_tree = "disk";
 /// The boards there is a description for (src/boards/). One kernel image
 /// is built per board. `qemu` is Espressif QEMU's machine, with its
 /// virtual display, keyboard and mouse: the `qemu*` steps always run that
-/// one, whichever board `-Dboard` names.
-const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4 };
+/// one, whichever board `-Dboard` names. `qemu_virt` is upstream QEMU's
+/// RISC-V 64 `virt` machine under OpenSBI, which the `virt` step runs;
+/// `visionfive2` is StarFive's JH7110 board, booted from U-Boot.
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -41,6 +43,7 @@ fn chipOf(board: Board) Chip {
     return switch (board) {
         .waveshare_7b, .es3c35p, .qemu => .esp32s3,
         .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
+        .qemu_virt, .visionfive2 => .rv64sbi,
     };
 }
 
@@ -180,7 +183,7 @@ fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2 => 48,
     };
 }
 
@@ -225,9 +228,11 @@ pub fn build(b: *std.Build) void {
 
     const target = b.resolveTargetQuery(poweros_sdk.target_query);
     const p4_target = b.resolveTargetQuery(poweros_sdk.p4_target_query);
+    const rv64_target = b.resolveTargetQuery(poweros_sdk.rv64_target_query);
     const kernel_target = switch (chipOf(board)) {
         .esp32s3 => target,
         .esp32p4 => p4_target,
+        .rv64sbi => rv64_target,
     };
 
     // The SDK (sdk/, a package of its own): the system's types and the
@@ -296,14 +301,18 @@ pub fn build(b: *std.Build) void {
     const tree = diskTree(b, &made);
     const extras = extraFiles(b, &made);
 
-    // Two images from one recipe: the ESP32-S3's and the ESP32-P4's, which
-    // differ only in their programs' load files.
+    // Three images from one recipe: the ESP32-S3's, the ESP32-P4's and the
+    // RISC-V 64 machines', which differ only in their programs' load
+    // files.
     const make_disk = b.addRunArtifact(mkfs);
     const disk_bin = make_disk.addOutputFileArg("disk.bin");
     const make_p4_disk = b.addRunArtifact(mkfs);
     const p4_disk_bin = make_p4_disk.addOutputFileArg("disk-esp32p4.bin");
-    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk } };
+    const make_rv64_disk = b.addRunArtifact(mkfs);
+    const rv64_disk_made = make_rv64_disk.addOutputFileArg("disk-rv64-made.bin");
+    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
+    const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
     disks.addArgs(&.{
         "System",
         "DH0",
@@ -322,6 +331,9 @@ pub fn build(b: *std.Build) void {
         }
         if (poweros_userland.builtFor(program, .esp32p4)) {
             make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), p4_disk_dep.namedLazyPath(program.disk));
+        }
+        if (poweros_userland.builtFor(program, .rv64sbi)) {
+            make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), rv64_disk_dep.namedLazyPath(program.disk));
         }
     }
     for (poweros_userland.files) |file| {
@@ -424,6 +436,23 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
 
+    // The RISC-V 64 machines' disk is loaded into RAM beside the kernel
+    // (QEMU's -initrd, U-Boot's booti) and is all the disk there is, so it
+    // is made as large as the disk, the rest erased (tools/padimage).
+    const padimage = b.addExecutable(.{
+        .name = "padimage",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/padimage.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const pad_rv64_disk = b.addRunArtifact(padimage);
+    pad_rv64_disk.addFileArg(rv64_disk_made);
+    const rv64_disk_bin = pad_rv64_disk.addOutputFileArg("disk-rv64.bin");
+    pad_rv64_disk.addArg(b.fmt("{d}", .{disk_size}));
+    if (chipOf(board) == .rv64sbi) b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_disk_bin, "disk-rv64.bin").step);
+
     // After linking: every ROM tag's module size into the kernel's
     // resident_sizes table (the shell's `residents` shows them).
     const ressize = b.addExecutable(.{
@@ -447,6 +476,7 @@ pub fn build(b: *std.Build) void {
     const built = switch (chipOf(board)) {
         .esp32s3 => addImage(b, esptool, ressize, kernel, disk_bin, disk_offset),
         .esp32p4 => addP4Image(b, esptool, ramimage, kernel, p4_disk_bin, disk_offset),
+        .rv64sbi => addRv64Image(b, kernel),
     };
     const image = built.image;
     b.getInstallStep().dependOn(&b.addInstallBinFile(built.kernel_elf, "kernel").step);
@@ -501,6 +531,24 @@ pub fn build(b: *std.Build) void {
     run_emu.stdio = .inherit;
     run_emu.has_side_effects = true;
     b.step("emu", "Boot the ESP32-P4 kernel in esp-emulator (quit with Ctrl-C)").dependOn(&run_emu.step);
+
+    // QEMU's RISC-V 64 virt machine, a board of its own: the `virt` step
+    // boots its kernel under the OpenSBI QEMU brings (-bios default),
+    // which enters it in supervisor mode at 0x80200000, with the disk
+    // image as its initrd: QEMU loads it into RAM and says where in the
+    // device tree's /chosen.
+    const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
+    const run_virt = b.addSystemCommand(&.{
+        "qemu-system-riscv64", "-M",    "virt",       "-m", "512M",
+        "-smp",                "1",     "-nographic", "-bios", "default",
+        "-kernel",
+    });
+    run_virt.addArtifactArg(virt_kernel);
+    run_virt.addArg("-initrd");
+    run_virt.addFileArg(rv64_disk_bin);
+    run_virt.stdio = .inherit;
+    run_virt.has_side_effects = true;
+    b.step("virt", "Boot the RISC-V 64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt.step);
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
@@ -642,6 +690,7 @@ pub fn build(b: *std.Build) void {
         const other_target = switch (chipOf(other)) {
             .esp32s3 => target,
             .esp32p4 => p4_target,
+            .rv64sbi => rv64_target,
         };
         if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false).step);
     }
@@ -660,6 +709,7 @@ pub fn build(b: *std.Build) void {
     const board_disk = switch (chipOf(board)) {
         .esp32s3 => disk_bin,
         .esp32p4 => p4_disk_bin,
+        .rv64sbi => rv64_disk_bin,
     };
     const flash = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash" });
     built.addTo(b, flash);
@@ -1023,7 +1073,7 @@ const p4_flash_part_offset = 0x40000;
 
 /// Disk images made from one recipe: what is given goes into each.
 const DiskImages = struct {
-    runs: [2]*std.Build.Step.Run,
+    runs: [3]*std.Build.Step.Run,
 
     fn addArg(images: DiskImages, arg: []const u8) void {
         for (images.runs) |run| run.addArg(arg);
@@ -1037,6 +1087,15 @@ const DiskImages = struct {
         for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
     }
 };
+
+/// A RISC-V 64 kernel made into what is booted: the ELF, which QEMU loads
+/// as it is, and a raw binary of it from its first address (0x80200000),
+/// which U-Boot loads there. Nothing to flash.
+fn addRv64Image(b: *std.Build, kernel: *std.Build.Step.Compile) Image {
+    const kernel_elf = kernel.getEmittedBin();
+    const image = b.addObjCopy(kernel_elf, .{ .format = .bin }).getOutput();
+    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = image };
+}
 
 /// The ESP32-P4's kernel made into what is flashed and what esp-emulator
 /// boots, in two parts: the RAM part, an ESP image the ROM loads and runs,
@@ -1083,13 +1142,17 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
         .root_source_file = b.path(switch (chip) {
             .esp32s3 => "src/main.zig",
             .esp32p4 => "src/main_esp32p4.zig",
+            .rv64sbi => "src/main_rv64sbi.zig",
         }),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
         .unwind_tables = .none,
-        // The P4's backtraces walk the frame-pointer chain.
-        .omit_frame_pointer = if (chip == .esp32p4) false else null,
+        // RISC-V's backtraces walk the frame-pointer chain.
+        .omit_frame_pointer = if (chip == .esp32s3) null else false,
+        // RV64's kernel is at 0x80200000, which the default code model
+        // (medlow, addresses within 2 GiB of 0) cannot reach.
+        .code_model = if (chip == .rv64sbi) .medany else .default,
     });
     kernel_mod.addImport("sdk", sdk);
     const options = b.addOptions();
@@ -1106,6 +1169,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
             kernel_mod.addAssemblyFile(b.path("src/arch/esp32s3/stack.S"));
         },
         .esp32p4 => kernel_mod.addAssemblyFile(b.path("src/arch/esp32p4/start.S")),
+        .rv64sbi => kernel_mod.addAssemblyFile(b.path("src/arch/rv64sbi/start.S")),
     }
 
     const kernel = b.addExecutable(.{
@@ -1115,6 +1179,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     kernel.setLinkerScript(b.path(switch (chip) {
         .esp32s3 => "kernel.ld",
         .esp32p4 => "src/arch/esp32p4/kernel.ld",
+        .rv64sbi => "src/arch/rv64sbi/kernel.ld",
     }));
     kernel.entry = .{ .symbol_name = "_start" };
     // A section per function, so each function's literals (.literal.<fn>)

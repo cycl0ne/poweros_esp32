@@ -268,7 +268,7 @@ fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.
         _ = Printf(dl, "  Write        %d bytes at a time\n", .{geo.write_size});
     }
     if (geo.map_base != 0) {
-        _ = Printf(dl, "  Mapped at    0x%08x, so a read costs no request\n", .{geo.map_base});
+        _ = Printf(dl, "  Mapped at    0x%08zx, so a read costs no request\n", .{geo.map_base});
     }
 }
 

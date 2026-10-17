@@ -177,9 +177,10 @@ fn printDevices(dl: *DosBase, eb: *ExpansionBase, speaks: ?[*:0]const u8) i32 {
 }
 
 /// Every pad that is held, and by whom. Nothing on a machine without
-/// gpio.resource.
+/// gpio.resource, or a chip without pads.
 fn printHolders(sys: *ExecBase, dl: *DosBase) void {
     const gpio = sdk.resources.gpio;
+    if (comptime gpio.GPIO_PADS == 0) return;
     const found = sys.OpenResource(gpio.GPIONAME) orelse return;
     const gb: *gpio.GpioBase = @ptrCast(@alignCast(found));
 

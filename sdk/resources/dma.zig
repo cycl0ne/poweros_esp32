@@ -30,11 +30,13 @@ pub const DMANAME = "dma.resource";
 pub const DMA_CHANNELS: u32 = switch (hardware.chip) {
     .esp32s3 => 5,
     .esp32p4 => 6,
+    .rv64sbi => 0,
 };
 /// The 2D-DMA's channels, numbered from DMA2D_CHANNEL0.
 pub const DMA2D_CHANNELS: u32 = switch (hardware.chip) {
     .esp32s3 => 0,
     .esp32p4 => 3,
+    .rv64sbi => 0,
 };
 pub const DMA2D_CHANNEL0: u32 = DMA_CHANNELS;
 /// Every channel the resource hands out, general and 2D.
@@ -78,6 +80,8 @@ const peripherals = switch (hardware.chip) {
         pub const DMAPERI_AES: u32 = DMAPERI_AXI | 4;
         pub const DMAPERI_SHA: u32 = DMAPERI_AXI | 5;
     },
+    // No general DMA engine of this kind.
+    .rv64sbi => struct {},
 };
 /// On the ESP32-P4: the peripheral is the AXI engine's (channels 3-5).
 pub const DMAPERI_AXI: u32 = 1 << 8;
@@ -160,7 +164,7 @@ pub const DMADF_OWNER: u32 = 1 << 31;
 /// dma_descriptor_align8_t), and one is 16 bytes long.
 const descriptor_align = switch (hardware.chip) {
     .esp32s3 => 4,
-    .esp32p4 => 8,
+    .esp32p4, .rv64sbi => 8,
 };
 
 /// One link of a DMA chain, in memory a DMA engine addresses (MEMF_DMA),
@@ -205,6 +209,7 @@ pub fn dmaIntNumber(channel: u32, side: u32) u32 {
             if (channel >= 3) return (if (in) intbits.INTB_AXI_PDMA_IN_CH0 else intbits.INTB_AXI_PDMA_OUT_CH0) + channel - 3;
             return (if (in) intbits.INTB_AHB_PDMA_IN_CH0 else intbits.INTB_AHB_PDMA_OUT_CH0) + channel;
         },
+        .rv64sbi => return DMA_NOINT,
     }
 }
 

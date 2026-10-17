@@ -25,12 +25,21 @@
 //! few seconds (`displayRecoverable`).
 //!
 //! The requester is intuition's, opened by name and never loaded for
-//! this; without intuition in the system a failure stops the machine.
+//! this; without intuition in the system a failure stops the machine. A
+//! kernel with no display at all says so in its root
+//! (`pub const rom_has_display = false`): this then leaves intuition's
+//! types alone - importing them puts intuition.library's ROM tag in the
+//! image - and every failure stops the machine.
 
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
 const _task = @import("../task/_task.zig");
 const _debug = @import("../debug/_debug.zig");
+const root = @import("root");
+
+/// Whether the ROM has a display, and intuition.library on it: unless the
+/// kernel's root says it has none.
+const rom_has_display = !@hasDecl(root, "rom_has_display") or root.rom_has_display;
 const IntuitionBase = @import("../../intuition/intuition.zig").IntuitionBase;
 const Screen = @import("../../intuition/screen/_screen.zig").Screen;
 const LayerInfo = @import("../../layers/layerinfo/_layerinfo.zig").LayerInfo;
@@ -113,6 +122,7 @@ fn helperMain(sys_base: *sdk.interface.exec.ExecBase) callconv(.c) void {
 /// - `base` - exec: this core's state.
 /// - `exception` - the alert is a CPU exception's.
 pub fn canAsk(base: *ExecBase, exception: bool) bool {
+    if (comptime !rom_has_display) return false;
     if (!exec.initialized) return false;
     const state = &base.failure;
     if (state.asking or state.mask == 0) return false;
@@ -224,6 +234,7 @@ fn askAbout(base: *ExecBase) void {
 /// - `guru` - the Guru line.
 /// - `text` - what went wrong in words, or null.
 pub fn displayRecoverable(base: *ExecBase, alert_num: u32, guru: []const u8, text: ?[*:0]const u8) void {
+    if (comptime !rom_has_display) return;
     if (!exec.initialized or base.failure.displaying) return;
     if (base.cpu().int_depth != 0) return;
     if (base.multitasking == 0 or base.cpu().id_nest_cnt >= 0 or base.cpu().hold_count != 0) return;

@@ -116,23 +116,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             if (p.pll_calibrated != 0) "yes" else "no",
         });
     }
-    if (has(got, "vecbase")) _ = Printf(dl, "vecbase  0x%08x\n", .{p.vecbase});
+    if (has(got, "vecbase")) _ = Printf(dl, "vecbase  0x%08zx\n", .{p.vecbase});
     if (has(got, "stack_upper")) {
-        _ = Printf(dl, "iram     0x%08x-0x%08x  %d bytes code\n", .{ p.iram_lower, p.iram_upper, p.iram_upper - p.iram_lower });
-        _ = Printf(dl, "dram     0x%08x-0x%08x  %d bytes data+bss\n", .{ p.dram_lower, p.dram_upper, p.dram_upper - p.dram_lower });
-        _ = Printf(dl, "flash    0x%08x-0x%08x  %d KiB code\n", .{
+        _ = Printf(dl, "iram     0x%08zx-0x%08zx  %zd bytes code\n", .{ p.iram_lower, p.iram_upper, p.iram_upper - p.iram_lower });
+        _ = Printf(dl, "dram     0x%08zx-0x%08zx  %zd bytes data+bss\n", .{ p.dram_lower, p.dram_upper, p.dram_upper - p.dram_lower });
+        _ = Printf(dl, "flash    0x%08zx-0x%08zx  %zd KiB code\n", .{
             p.flash_text_lower,
             p.flash_text_upper,
             (p.flash_text_upper - p.flash_text_lower) / 1024,
         });
-        _ = Printf(dl, "stack    0x%08x-0x%08x  (the boot task's)\n", .{ p.stack_lower, p.stack_upper });
+        _ = Printf(dl, "stack    0x%08zx-0x%08zx  (the boot task's)\n", .{ p.stack_lower, p.stack_upper });
     }
-    _ = Printf(dl, "ram      internal %d KiB free, external %d KiB free (see Avail)\n", .{
+    _ = Printf(dl, "ram      internal %zd KiB free, external %zd KiB free (see Avail)\n", .{
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
     if (has(got, "psram_vendor") and p.psram_size != 0) {
-        _ = Printf(dl, "psram    0x%08x-0x%08x  %d MiB, vendor 0x%02x\n", .{
+        _ = Printf(dl, "psram    0x%08zx-0x%08zx  %zd MiB, vendor 0x%02x\n", .{
             p.psram_base,
             p.psram_base + p.psram_size,
             p.psram_size >> 20,

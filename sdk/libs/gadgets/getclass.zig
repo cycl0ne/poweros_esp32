@@ -384,7 +384,7 @@ pub fn Library(comptime spec: Spec) type {
         /// room round it, and never so wide that the field has none.
         fn buttonWidth(base: *Base, o: *Object, gi: ?*const classusr.GadgetInfo, whole: i32) i32 {
             const size = fontSize(base, o, gi);
-            const want = size.width * button_text.len + 8;
+            const want = size.width * @as(i32, button_text.len) + 8;
             return @max(@min(want, whole - 8), 0);
         }
 
@@ -440,7 +440,7 @@ pub fn Library(comptime spec: Spec) type {
                 gc.gadget(o).style,
             );
             const size = fontSize(base, o, info);
-            const wide: i32 = size.width * button_text.len;
+            const wide: i32 = size.width * @as(i32, button_text.len);
             const tall: i32 = size.height;
             support.drawText(
                 base.graphics_base,

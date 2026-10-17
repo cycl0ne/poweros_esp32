@@ -17,5 +17,5 @@ pub const help =
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const nr = try args.number();
     const arg = try args.numberOr(0);
-    shell.print("syscall(%d, %d) = %d\n", .{ nr, arg, trap.syscall(nr, arg) });
+    shell.print("syscall(%d, %d) = %zd\n", .{ nr, arg, trap.syscall(nr, arg) });
 }

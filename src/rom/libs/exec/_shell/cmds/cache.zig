@@ -47,6 +47,6 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         }
         const dma = sys.CachePreDMA(address, &length, flags);
         sys.CachePostDMA(address, &length, flags);
-        shell.print("CachePreDMA: DMA at 0x%08x, %d bytes; CachePostDMA: done\n", .{ @intFromPtr(dma), length });
+        shell.print("CachePreDMA: DMA at 0x%08zx, %d bytes; CachePostDMA: done\n", .{ @intFromPtr(dma), length });
     }
 }

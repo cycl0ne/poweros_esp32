@@ -47,7 +47,7 @@ const HelloFn = *const fn (*exec.Library) callconv(.c) [*:0]const u8;
 const LVO_HELLO = exec.libraries.lvo(4);
 
 const MSG_NOOPEN = "%s: cannot open %s version %d\n";
-const MSG_OPENED = "%s %d.%d opened at 0x%08x, open count %d\n";
+const MSG_OPENED = "%s %d.%d opened at 0x%08zx, open count %d\n";
 const MSG_ANSWER = "%s() says: %s\n";
 const MSG_NOCALL = "%s has no function this command knows; opened it only\n";
 

@@ -32,6 +32,7 @@ const types = sdk.resources.dma;
 const chip = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/channels.zig"),
     .esp32p4 => @import("esp32p4/channels.zig"),
+    .rv64sbi => @compileError("dma.resource: no DMA engine for this chip yet"),
 };
 const general = chip.general;
 const all_channels = general + chip.dma2d_channels;

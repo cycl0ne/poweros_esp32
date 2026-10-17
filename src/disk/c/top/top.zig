@@ -425,7 +425,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
             tenth(idle, all),
         });
     }
-    screen.line("memory   %u KiB free internal, %u KiB external", .{
+    screen.line("memory   %zu KiB free internal, %zu KiB external", .{
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
@@ -446,7 +446,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         ended_bytes += owner.bytes;
         ended += 1;
     }
-    screen.line("held     %u KiB by the system, %u KiB by %u tasks that have ended", .{
+    screen.line("held     %zu KiB by the system, %zu KiB by %u tasks that have ended", .{
         system_bytes / 1024,
         ended_bytes / 1024,
         ended,

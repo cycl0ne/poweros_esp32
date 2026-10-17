@@ -35,13 +35,14 @@ pub const max_cores = 2;
 
 /// The core's cycle counter; none on the host.
 pub inline fn cycles() u32 {
-    if (comptime builtin.cpu.arch != .xtensa and builtin.cpu.arch != .riscv32) return 0;
+    if (comptime builtin.cpu.arch != .xtensa and !builtin.cpu.arch.isRISCV()) return 0;
     return sdk.hardware.cpu.ccount();
 }
 
 /// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
-/// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on RISC-V
-/// from mhartid. The host tests have one.
+/// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on the
+/// ESP32-P4 from mhartid, under SBI firmware from tp. The host tests have
+/// one.
 pub inline fn coreId() u32 {
     switch (comptime builtin.cpu.arch) {
         .xtensa => {
@@ -53,6 +54,11 @@ pub inline fn coreId() u32 {
         .riscv32 => return asm volatile ("csrr %[id], mhartid"
             : [id] "=r" (-> u32),
         ),
+        // Supervisor mode cannot read mhartid, and a hart is not a core:
+        // each core keeps its number in tp (src/arch/rv64sbi/cpu.zig).
+        .riscv64 => return @truncate(asm volatile ("mv %[id], tp"
+            : [id] "=r" (-> u64),
+        )),
         else => return 0,
     }
 }

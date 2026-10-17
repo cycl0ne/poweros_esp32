@@ -13,6 +13,7 @@
         "release.zig",
         "program.ld",
         "program_esp32p4.ld",
+        "program_rv64sbi.ld",
         "devices",
         "fd",
         "hardware",

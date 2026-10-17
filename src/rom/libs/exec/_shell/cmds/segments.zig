@@ -28,15 +28,15 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             else => null,
         };
         if (use) |u| {
-            shell.print("%-20s %-9s 0x%08x\n", .{ s.name, u, codeAddress(s) });
+            shell.print("%-20s %-9s 0x%08zx\n", .{ s.name, u, codeAddress(s) });
         } else {
-            shell.print("%-20s %-9d 0x%08x\n", .{ s.name, s.uc, codeAddress(s) });
+            shell.print("%-20s %-9d 0x%08zx\n", .{ s.name, s.uc, codeAddress(s) });
         }
     }
 }
 
 /// A segment's code: its process entry, else its command.
-fn codeAddress(s: *const sdk.dos.Segment) u32 {
+fn codeAddress(s: *const sdk.dos.Segment) usize {
     if (s.code.entry) |entry| return @intFromPtr(entry);
     if (s.code.command) |command| return @intFromPtr(command);
     return 0;

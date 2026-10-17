@@ -35,7 +35,9 @@
 //! The caller's buffer may be in PSRAM too, so every write goes through the
 //! 256-byte buffer the chip's flash layer keeps in internal SRAM:
 //! esp32s3/spiflash.zig on the ESP32-S3, esp32p4/spiflash.zig on the ESP32-P4,
-//! the same calls on each.
+//! the same calls on each. A RISC-V 64 machine under SBI has no flash for
+//! it: its chip is the disk image the loader put in RAM, which behaves as
+//! flash does (rv64sbi/ramflash.zig), and is all disk.
 //!
 //! io_Offset and io_Length are bytes, 64-bit; there is no motor, no
 //! seeking, no removal and no ETD_*; TDCMD_ERASE exists since flash must be
@@ -57,6 +59,7 @@ const st = expansion.systemtags;
 const spiflash = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/spiflash.zig"),
     .esp32p4 => @import("esp32p4/spiflash.zig"),
+    .rv64sbi => @import("rv64sbi/ramflash.zig"),
 };
 const mount = @import("mount.zig");
 
@@ -437,8 +440,17 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
 /// The chip's size and where the disk starts on it, from the board's
 /// system tag list: unit 0 runs from SYSTAG_DiskOffset to the end of the
 /// chip. False if expansion.library is not there, or the two do not make
-/// a disk of whole 64 KiB pages.
+/// a disk of whole 64 KiB pages. A chip that is a disk image is all disk,
+/// and with no image the unit is there and empty: a machine loaded
+/// without one runs on without a disk.
 fn findDisk(fb: *FlashBase) bool {
+    if (comptime @hasDecl(spiflash, "wholeDisk")) {
+        const size = spiflash.wholeDisk() orelse 0;
+        fb.chip_size = size;
+        fb.offset = 0;
+        fb.size = size;
+        return true;
+    }
     const sys = fb.sys_base;
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return false;
     defer sys.CloseLibrary(utility_lib);
@@ -511,7 +523,9 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // The partitions, read out of the mapping: dos takes them in once it
     // is up. Without the mapping a read needs the task, and the disk stays
     // unmounted.
-    if (window(fb)) |disk| {
+    if (fb.size == 0) {
+        sdk.exec.kprintf(sys_base, "%s: no disk image, unit 0 is empty\n", .{DEVICE_NAME});
+    } else if (window(fb)) |disk| {
         mount.mountPartitions(sys_base, disk, spiflash.sector_size);
     } else {
         sdk.exec.kprintf(sys_base, "%s: the disk is not mapped; its partitions are not mounted\n", .{DEVICE_NAME});

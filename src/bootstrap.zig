@@ -16,6 +16,7 @@ const exec = @import("rom/libs/exec/exec.zig");
 const layout = switch (sdk.hardware.chip) {
     .esp32s3 => @import("arch/esp32s3/layout.zig"),
     .esp32p4 => @import("arch/esp32p4/layout.zig"),
+    .rv64sbi => @import("arch/rv64sbi/layout.zig"),
 };
 
 pub const Error = error{ NoExecTag, NoMemory, ExecInitFailed };

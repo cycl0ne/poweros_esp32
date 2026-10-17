@@ -26,7 +26,7 @@ pub const PlatformInfo = extern struct {
     /// PRID: the processor id register, which tells the cores apart.
     prid: u32 = 0,
     /// VECBASE: where the exception vectors are.
-    vecbase: u32 = 0,
+    vecbase: usize = 0,
 
     /// The clock the CPU is configured for, and the one the system
     /// measured against the crystal and actually runs by.
