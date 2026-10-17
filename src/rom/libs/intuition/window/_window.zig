@@ -395,29 +395,39 @@ pub fn barHeight(font_height: u32) i32 {
 /// given as a proportion of that height.
 ///
 /// A pixel on these panels is square, so the shape a gadget is drawn in
-/// is the shape of its two numbers. The close gadget and the depth and
-/// zoom gadgets have the shape of the grid their drawings are laid out on
-/// in sysiclass, 20 by 11 and 24 by 11, so a drawing is scaled the same
-/// across as down and never squeezed. The sizing gadget is a fifth wider
-/// than it is tall. Taking them from the bar's height rather than fixing
-/// them in pixels keeps the shapes whatever font the screen is opened
-/// with; at an eight-row font the bar is 11 rows and the bar's gadgets
-/// are their grids to the pixel.
+/// is the shape of its two numbers. The sizing gadget is a fifth wider
+/// than it is tall. The bar's gadgets have two shapes, and `wide`
+/// (`IPREFS_WideGadgets`) picks one: narrow, the close gadget is 15 by
+/// 11 and the depth and zoom gadgets 18 by 11, about as wide as they are
+/// tall, their drawings squeezed across by a quarter; wide, they are 20
+/// by 11 and 24 by 11, the grids their drawings are laid out on in
+/// sysiclass, so a drawing is scaled the same across as down. Taking
+/// them from the bar's height rather than fixing them in pixels keeps
+/// the shapes whatever font the screen is opened with; at an eight-row
+/// font the bar is 11 rows and the bar's gadgets are those numbers to
+/// the pixel.
 pub fn sizeWidth(font_height: u32) i32 {
     return @divTrunc(barHeight(font_height) * 13, 11);
 }
 
-pub fn closeWidth(font_height: u32) i32 {
-    return @divTrunc(barHeight(font_height) * 20, 11);
+pub fn closeWidth(font_height: u32, wide: bool) i32 {
+    const columns: i32 = if (wide) 20 else 15;
+    return @divTrunc(barHeight(font_height) * columns, 11);
 }
 
-pub fn depthWidth(font_height: u32) i32 {
-    return @divTrunc(barHeight(font_height) * 24, 11);
+pub fn depthWidth(font_height: u32, wide: bool) i32 {
+    const columns: i32 = if (wide) 24 else 18;
+    return @divTrunc(barHeight(font_height) * columns, 11);
 }
 
 /// The zoom gadget is the depth gadget's size, and sits beside it.
-pub fn zoomWidth(font_height: u32) i32 {
-    return depthWidth(font_height);
+pub fn zoomWidth(font_height: u32, wide: bool) i32 {
+    return depthWidth(font_height, wide);
+}
+
+/// Whether the bar's gadgets are wide now (`IPREFS_WideGadgets`).
+pub fn wideGadgets(ib: *const IntuitionBase) bool {
+    return ib.wide_gadgets != 0;
 }
 
 /// The same for a window, from the font its screen was opened with.
@@ -426,14 +436,15 @@ pub fn sizeBoxOf(w: *const Window) struct { width: i32, height: i32 } {
     return .{ .width = sizeWidth(rows), .height = barHeight(rows) };
 }
 
-/// The close gadget's width for a window, the same way.
+/// The close gadget's width for a window, the same way, in the shape the
+/// system has now.
 pub fn closeWidthOf(w: *const Window) i32 {
-    return closeWidth(w.screen.font.image.height);
+    return closeWidth(w.screen.font.image.height, wideGadgets(w.base));
 }
 
 /// The depth gadget's, and the zoom gadget's.
 pub fn depthWidthOf(w: *const Window) i32 {
-    return depthWidth(w.screen.font.image.height);
+    return depthWidth(w.screen.font.image.height, wideGadgets(w.base));
 }
 
 /// Where the depth gadget sits in a window's title bar, and the zoom

@@ -34,8 +34,9 @@ The settings are on six pages, under tabs:
   to bottom - a picture over it and how it is placed, how large icons are
   shown, and how a drawer with no view of its own is shown.
 - **System:** the double-click time, the height of a screen's font when
-  it is given none, when the keyboard on the screen comes up, and whether
-  a window may be moved partly past the screen's edges.
+  it is given none, when the keyboard on the screen comes up, whether a
+  window may be moved partly past the screen's edges, and whether the
+  close, depth and zoom gadgets in the title bars are wide.
 
 The colour wheel opens in a window of its own over the editor: the wheel,
 its brightness beside it, the colour shown on a button and typed in a
@@ -50,5 +51,5 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
 - **Cancel** leaves everything as it was.
 
 Save and Use hand the settings to the system at once. Every open window
-takes the style and the colours straight away; new fonts are used by what
-opens from then on.
+takes the style, the colours and the title bars' gadgets straight away;
+new fonts are used by what opens from then on.

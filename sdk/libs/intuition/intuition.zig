@@ -53,6 +53,7 @@ pub const IPREFS_FixedFont = preferences.IPREFS_FixedFont;
 pub const IPREFS_Pens = preferences.IPREFS_Pens;
 pub const IPREFS_Style = preferences.IPREFS_Style;
 pub const IPREFS_OffScreen = preferences.IPREFS_OffScreen;
+pub const IPREFS_WideGadgets = preferences.IPREFS_WideGadgets;
 pub const KEYBOARD_AUTO = preferences.KEYBOARD_AUTO;
 pub const KEYBOARD_ALWAYS = preferences.KEYBOARD_ALWAYS;
 pub const KEYBOARD_NEVER = preferences.KEYBOARD_NEVER;

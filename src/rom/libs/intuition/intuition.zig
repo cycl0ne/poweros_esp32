@@ -1918,7 +1918,7 @@ test "windows: the zoom gadget flips to a box and back" {
     try testing.expect(win.zoom_image != null);
 
     // Pressed and let go over it: the window is the box it was given.
-    const at_x = 64 - _window.zoomWidth(8) + 4;
+    const at_x = 64 - _window.zoomWidth(8, false) + 4;
     pointerEvent(ib, ie.IECODE_LBUTTON, at_x, 3);
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, at_x, 3);
     try testing.expectEqual(@as(usize, 2), windowAttr(ib, w, wn.WA_Left));
@@ -1927,7 +1927,7 @@ test "windows: the zoom gadget flips to a box and back" {
 
     // Again, and it is back where it was. The gadget moved with the window,
     // so the second press is at the new right-hand end.
-    const back_x = 2 + 30 - _window.zoomWidth(8) + 4;
+    const back_x = 2 + 30 - _window.zoomWidth(8, false) + 4;
     pointerEvent(ib, ie.IECODE_LBUTTON, back_x, 3);
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, back_x, 3);
     try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Left));
@@ -1966,8 +1966,10 @@ test "windows: which border holds the size gadget, and who paints the empty part
     const size_height: usize = @intCast(_window.barHeight(8));
     try testing.expectEqual(@as(usize, 13), size_width);
     try testing.expectEqual(@as(usize, 11), size_height);
-    try testing.expectEqual(@as(i32, 20), _window.closeWidth(8));
-    try testing.expectEqual(@as(i32, 24), _window.depthWidth(8));
+    try testing.expectEqual(@as(i32, 15), _window.closeWidth(8, false));
+    try testing.expectEqual(@as(i32, 18), _window.depthWidth(8, false));
+    try testing.expectEqual(@as(i32, 20), _window.closeWidth(8, true));
+    try testing.expectEqual(@as(i32, 24), _window.depthWidth(8, true));
     try testing.expectEqual(size_width, windowAttr(ib, right, wn.WA_BorderRight));
     try testing.expect(windowAttr(ib, right, wn.WA_BorderBottom) < size_height);
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, right, wn.WA_Screen));
@@ -2545,6 +2547,80 @@ test "windows: with IPREFS_OffScreen a window hangs past the edges, and enough o
     try tearDown(ib);
 }
 
+test "windows: the title bars' gadgets narrow, or wide with IPREFS_WideGadgets" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 128, 40, .rgb565);
+
+    // Narrow is what the system starts with.
+    var wide: u32 = 9;
+    _ = it.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide) }, .{} });
+    try testing.expectEqual(@as(u32, 0), wide);
+
+    const zoom = wn.WindowBox{ .left = 0, .top = 12, .width = 80, .height = 20 };
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 120 },
+        .{ .tag = wn.WA_Height, .data = 26 },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_Zoom, .data = @intFromPtr(&zoom) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const s: *_kscreen.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    var got: [2]intuition.IntuiMessage = undefined;
+
+    // The eight-row font makes the window's bar 11 rows: a close gadget
+    // 15 wide, depth and zoom 18. The screen's bar is 11 rows with its
+    // trim line, so its depth gadget is 10 rows and 15 wide.
+    try testing.expectEqual(@as(usize, 15), getAttr(ib, win.close_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 18), getAttr(ib, win.depth_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 18), getAttr(ib, win.zoom_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(i32, 11), s.bar_height);
+    try testing.expectEqual(@as(i32, 15), s.depth_width);
+    try testing.expectEqual(@as(usize, 15), getAttr(ib, s.depth_image.?, ic.IA_Width));
+    // Two columns past the close gadget is the drag bar.
+    click(ib, 17, 14);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    // A value that means nothing is refused and changes nothing.
+    try testing.expect(!it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = 2 }, .{} }));
+    try testing.expectEqual(@as(usize, 15), getAttr(ib, win.close_image.?, ic.IA_Width));
+
+    // Wide: the window open and the screen's bar take it at once, and the
+    // close gadget reaches where the drag bar was.
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = 1 }, .{} }));
+    _ = it.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide) }, .{} });
+    try testing.expectEqual(@as(u32, 1), wide);
+    try testing.expectEqual(@as(usize, 20), getAttr(ib, win.close_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 24), getAttr(ib, win.depth_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 24), getAttr(ib, win.zoom_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(i32, 21), s.depth_width);
+    try testing.expectEqual(@as(usize, 21), getAttr(ib, s.depth_image.?, ic.IA_Width));
+    click(ib, 17, 14);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_CLOSEWINDOW, got[0].class);
+    _ = it.GetDefPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide) }, .{} });
+    try testing.expectEqual(@as(u32, 0), wide);
+
+    // And narrow again.
+    try testing.expect(it.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_WideGadgets, .data = 0 }, .{} }));
+    try testing.expectEqual(@as(usize, 15), getAttr(ib, win.close_image.?, ic.IA_Width));
+    try testing.expectEqual(@as(i32, 15), s.depth_width);
+
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(@ptrCast(s)));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 /// Every message on a window's port, copied out and replied.
 fn drainMessages(ib: *IntuitionBase, w: *intuition.Window, out: []intuition.IntuiMessage) usize {
     var n: usize = 0;
@@ -2714,8 +2790,8 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     }).?;
     const listen = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_RAWKEY | wn.IDCMP_INTUITICKS | wn.IDCMP_CLOSEWINDOW |
         wn.IDCMP_CHANGEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW;
-    // Close 4..23, drag bar 24..36, depth 37..59 - too narrow for a zoom
-    // gadget beside them; the size gadget in the bottom right corner.
+    // Close 4..18, drag bar 19..25, zoom 26..42, depth 43..59; the size
+    // gadget in the bottom right corner.
     const w = ib.iface().OpenWindowTagList(&[_]TagItem{
         .{ .tag = wn.WA_Left, .data = 4 },
         .{ .tag = wn.WA_Top, .data = 12 },
@@ -2775,9 +2851,9 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
 
     // The drag bar: held, moved by two and one, let go.
-    pointerEvent(ib, ie.IECODE_LBUTTON, 26, 14);
-    pointerEvent(ib, ie.IECODE_NOBUTTON, 28, 15);
-    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 28, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON, 22, 14);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 24, 15);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 24, 15);
     try testing.expectEqual(@as(usize, 6), windowAttr(ib, w, wn.WA_Left));
     try testing.expectEqual(@as(usize, 13), windowAttr(ib, w, wn.WA_Top));
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
@@ -9282,7 +9358,7 @@ test "IDCMP_SIZEVERIFY: sizing waits for the reply, is given up by letting go or
     try testing.expectEqual(wn.IDCMP_NEWSIZE, got[0].class);
 
     // The zoom gadget: asked when let go over it, zipped once answered.
-    const zoom_x = 4 + wnd.width - @divTrunc(_window.zoomWidth(8), 2);
+    const zoom_x = 4 + wnd.width - @divTrunc(_window.zoomWidth(8, false), 2);
     click(ib, zoom_x, 14);
     const zooming = nextMessage(ib, w).?;
     try testing.expectEqual(wn.IDCMP_SIZEVERIFY, zooming.class);

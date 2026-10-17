@@ -65,6 +65,13 @@ pub const IPREFS_Style = IPREFS_Dummy + 8;
 /// above the bottom. A window opens wholly on its screen either way. Got:
 /// a `*u32`.
 pub const IPREFS_OffScreen = IPREFS_Dummy + 9;
+/// How wide the gadgets in the title bars are: 0, the default, makes a
+/// window's close gadget 15 columns for every 11 rows of its bar, its
+/// depth and zoom gadgets 18, and a screen's depth gadget 17; 1 makes
+/// them a third wider - 20, 24 and 23. The sizing gadget keeps its shape
+/// either way. Every screen and window open takes it at once. Got: a
+/// `*u32`.
+pub const IPREFS_WideGadgets = IPREFS_Dummy + 10;
 
 /// `IPREFS_Keyboard`: on a board with no keyboard of its own.
 pub const KEYBOARD_AUTO: u32 = 0;

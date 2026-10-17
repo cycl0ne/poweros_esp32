@@ -3058,8 +3058,8 @@ How many were written.
 What the system is born with, whatever has been set since: a
 double-click of 1500 milliseconds, a screen font 16 rows tall, the
 keyboard on the screen on a board with none, every window kept wholly
-on its screen, pospaz from the ROM for all three fonts, the built-in
-pens. Written as `GetPrefs` writes them;
+on its screen, the title bars' gadgets narrow, pospaz from the ROM for
+all three fonts, the built-in pens. Written as `GetPrefs` writes them;
 what a settings editor's "use the defaults" hands to `SetPrefs`. The
 style is the default when none is set: `IPREFS_Style` with null.
 
@@ -3235,8 +3235,9 @@ fn GetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 - `ib` - intuition.library's base.
 - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
   where its value is written: a `*u32` for `IPREFS_DoubleClick`
-  (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`
-  and `IPREFS_OffScreen`; a `*?*graphics.TextFont` for the three fonts; a
+  (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`,
+  `IPREFS_OffScreen` and `IPREFS_WideGadgets`; a
+  `*?*graphics.TextFont` for the three fonts; a
   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 
 **RESULT**
@@ -7079,6 +7080,10 @@ value:
   screen's edges, 0 or 1; anything else is refused. It holds from the
   next move or size on: a window already past an edge stays there until
   it is moved or sized.
+- `IPREFS_WideGadgets`: whether the gadgets in the title bars are wide,
+  0 or 1; anything else is refused. Every screen's depth gadget and
+  every window's close, depth and zoom gadgets take the width at once,
+  and their bars are drawn again.
 - `IPREFS_ScreenFont`, `IPREFS_DefaultFont`, `IPREFS_FixedFont`: the
   fonts screens, windows and consoles opened from now on use, as
   `SetSystemFonts` sets them; one not given keeps the font it has.
@@ -7110,7 +7115,9 @@ of its own and copies the pens and the style.
 
 **BUGS**
 
-None known.
+- A window whose title bar only just held its close, depth and zoom
+  gadgets when it opened has them overlap once they are made wide; a
+  window that opens too narrow for them goes without the zoom gadget.
 
 **SEE ALSO**
 

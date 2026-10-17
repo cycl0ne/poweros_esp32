@@ -11,8 +11,11 @@
 # OFFSCREEN    whether a window may be moved partly past the screen's
 #              edges: YES or NO. Enough of it always stays on the
 #              screen to take hold of again.
+# WIDEGADGETS  whether the close, depth and zoom gadgets in the
+#              title bars are wide: YES or NO. YES makes them a
+#              third wider.
 #
 # One left out keeps the value intuition has. These are the system's
 # own:
 #
-# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO
+# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO

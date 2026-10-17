@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! intuition.prefs: intuition.library's own settings as a file - one line,
-//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO`:
+//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO`:
 //!
 //! - DOUBLECLICK: how far apart two presses may be and still be one
 //!   double-click, in milliseconds.
@@ -10,6 +10,8 @@
 //!   into - AUTO (on a board with no keyboard), ALWAYS or NEVER.
 //! - OFFSCREEN: whether a window may be moved partly past the screen's
 //!   edges - YES or NO.
+//! - WIDEGADGETS: whether the gadgets in the title bars are wide - YES or
+//!   NO.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `toTags` makes those it gave the tags `SetPrefs` takes,
@@ -22,7 +24,7 @@ const utility = @import("../utility/utility.zig");
 const style = @import("style.zig");
 const TagItem = utility.TagItem;
 
-/// The line's four settings, and which of them it gave.
+/// The line's five settings, and which of them it gave.
 pub const Settings = struct {
     /// Milliseconds.
     double_click: u32 = 1500,
@@ -32,6 +34,8 @@ pub const Settings = struct {
     keyboard: u32 = intuition.KEYBOARD_AUTO,
     /// 1 when a window may hang past the screen's edges.
     off_screen: u32 = 0,
+    /// 1 when the title bars' gadgets are wide.
+    wide_gadgets: u32 = 0,
     /// A bit each, in that order.
     given: u32 = 0,
 };
@@ -39,12 +43,13 @@ const given_double: u32 = 1;
 const given_font: u32 = 2;
 const given_keyboard: u32 = 4;
 const given_off_screen: u32 = 8;
+const given_wide_gadgets: u32 = 16;
 
 pub const ENV_FILE = "ENV:Sys/intuition.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/intuition.prefs";
 
 pub const keyboard_names = [3][]const u8{ "AUTO", "ALWAYS", "NEVER" };
-/// OFFSCREEN's words, by its value.
+/// The words of OFFSCREEN and WIDEGADGETS, by their value.
 pub const off_screen_names = [2][]const u8{ "NO", "YES" };
 
 /// The line read into `settings`, which keeps what it leaves out: null
@@ -85,7 +90,12 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
                 if (style.same(value, name)) break @intCast(k);
             } else return "OFFSCREEN is YES or NO";
             settings.given |= given_off_screen;
-        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO OFFSCREEN=NO";
+        } else if (style.same(word, "WIDEGADGETS")) {
+            settings.wide_gadgets = for (off_screen_names, 0..) |name, k| {
+                if (style.same(value, name)) break @intCast(k);
+            } else return "WIDEGADGETS is YES or NO";
+            settings.given |= given_wide_gadgets;
+        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO";
     }
     return null;
 }
@@ -104,7 +114,7 @@ fn number(value: u32, into: []u8) usize {
     return n;
 }
 
-/// The settings the line gave as `SetPrefs`'s tags, into `out` (four
+/// The settings the line gave as `SetPrefs`'s tags, into `out` (five
 /// will do); how many, no end.
 pub fn toTags(settings: *const Settings, out: []TagItem) usize {
     var n: usize = 0;
@@ -124,10 +134,14 @@ pub fn toTags(settings: *const Settings, out: []TagItem) usize {
         out[n] = .{ .tag = intuition.IPREFS_OffScreen, .data = settings.off_screen };
         n += 1;
     }
+    if (settings.given & given_wide_gadgets != 0) {
+        out[n] = .{ .tag = intuition.IPREFS_WideGadgets, .data = settings.wide_gadgets };
+        n += 1;
+    }
     return n;
 }
 
-/// `settings` written as the line, all four, into `into` (96 bytes will
+/// `settings` written as the line, all five, into `into` (96 bytes will
 /// do); how many bytes, no newline.
 pub fn write(settings: *const Settings, into: []u8) usize {
     var n: usize = 0;
@@ -145,6 +159,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, keyboard_names[@min(settings.keyboard, 2)]);
     put(into, &n, " OFFSCREEN=");
     put(into, &n, off_screen_names[@min(settings.off_screen, 1)]);
+    put(into, &n, " WIDEGADGETS=");
+    put(into, &n, off_screen_names[@min(settings.wide_gadgets, 1)]);
     return n;
 }
 
@@ -163,10 +179,13 @@ pub const header =
     \\# OFFSCREEN    whether a window may be moved partly past the screen's
     \\#              edges: YES or NO. Enough of it always stays on the
     \\#              screen to take hold of again.
+    \\# WIDEGADGETS  whether the close, depth and zoom gadgets in the
+    \\#              title bars are wide: YES or NO. YES makes them a
+    \\#              third wider.
     \\#
     \\# One left out keeps the value intuition has. These are the system's
     \\# own:
     \\#
-    \\# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO
+    \\# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO
     \\
 ;

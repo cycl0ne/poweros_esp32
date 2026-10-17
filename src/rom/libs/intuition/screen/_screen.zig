@@ -444,6 +444,16 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     gb.Text(rp, title, @intCast(nameLen(title)));
 }
 
+/// The width of the depth gadget at the right end of a bar
+/// `bar_height` rows tall. The gadget is as tall as the bar above its
+/// trim line, and 17 columns wide for every 11 of those rows - 23 when
+/// the bars' gadgets are `wide` (`IPREFS_WideGadgets`), the grid its
+/// drawing is laid out on - rounded to the nearest.
+pub fn depthWidth(bar_height: i32, wide: bool) i32 {
+    const columns: i32 = if (wide) 23 else 17;
+    return @divTrunc(columns * (bar_height - 1) + 5, 11);
+}
+
 /// The bar's depth gadget, pressed or not. Drawn after the title, so a
 /// title that runs that far is covered by it.
 fn drawDepthOn(ib: *IntuitionBase, s: *Screen, rp: *graphics.RastPort) void {
