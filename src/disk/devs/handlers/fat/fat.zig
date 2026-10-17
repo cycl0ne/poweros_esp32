@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! fat-handler: FAT32 and exFAT on a card, as a handler on the disk -
 //! `HANDLERS:fat-handler`, which dos loads the first time the device is
-//! used and keeps in the device node from then on. The mountlist gives it
-//! a whole device - sdcard.device's unit 0 - and it finds the volume on it
+//! used and keeps in the device node from then on - or in the ROM of a
+//! machine that can start from its card. It works on whatever device and
+//! unit its startup message names. A mountlist entry gives it a whole
+//! device - sdcard.device's unit 0 - and it finds the volume on it
 //! itself: the card's first block is the volume's boot sector, or a
 //! partition table with the volume in one of its partitions, which is how
-//! cards are sold.
+//! cards are sold. A partition from a RigidDiskBlock comes with its
+//! cylinders in the environment, and then those blocks are the medium,
+//! and the volume's boot sector is their first.
 //!
 //! The file systems are `fat32/fs.zig` and `exfat/fs.zig`, generic over
 //! the medium and tested on the host. This file is what the machine needs:
@@ -119,15 +123,20 @@ const HANDLER_VERSION_STRING =
 
 const UTILITY_VERSION = 1;
 
-/// The medium: the device the startup message names, counted in its own
-/// blocks. What it answers about the card - its size, whether it is in,
-/// whether it may be written - it asks the device each time, because
-/// the card is not always the same one.
+/// The medium: the device the startup message names, or the partition of
+/// it the environment names, counted in the device's own blocks. What it
+/// answers about the card - its size, whether it is in, whether it may be
+/// written - it asks the device each time, because the card is not always
+/// the same one.
 pub const DeviceMedia = struct {
     sys: *ExecBase,
     dl: *DosBase,
     /// The request every command goes out on.
     io: *exec.IOStdReq,
+    /// The partition: its first byte on the device, and how many it has;
+    /// null for the whole device.
+    first: u64 = 0,
+    length: ?u64 = null,
     geometry: trackdisk.DriveGeometry = .{},
     /// The change count the geometry was read at.
     geometry_change: ?u32 = null,
@@ -162,20 +171,39 @@ pub const DeviceMedia = struct {
     }
 
     pub fn blocks(media: *DeviceMedia) u64 {
+        if (media.length) |length| return length / media.blockSize();
         return media.geometryNow().total_sectors;
     }
 
     pub fn read(media: *DeviceMedia, lba: u64, count: u32, into: []u8) bool {
         const bytes = @as(u64, count) * media.blockSize();
-        if (into.len < bytes) return false;
-        return media.command(exec.CMD_READ, lba * media.blockSize(), bytes, into.ptr);
+        if (into.len < bytes or !media.holds(lba, count)) return false;
+        return media.command(exec.CMD_READ, media.first + lba * media.blockSize(), bytes, into.ptr);
     }
 
     pub fn write(media: *DeviceMedia, lba: u64, count: u32, from: []const u8) bool {
         const bytes = @as(u64, count) * media.blockSize();
-        if (from.len < bytes) return false;
+        if (from.len < bytes or !media.holds(lba, count)) return false;
         media.unsynced = true;
-        return media.command(exec.CMD_WRITE, lba * media.blockSize(), bytes, @constCast(from.ptr));
+        return media.command(exec.CMD_WRITE, media.first + lba * media.blockSize(), bytes, @constCast(from.ptr));
+    }
+
+    /// Whether `count` blocks from `lba` are the partition's. The whole
+    /// device's end is the device's to check.
+    fn holds(media: *DeviceMedia, lba: u64, count: u32) bool {
+        if (media.length == null) return true;
+        return lba + count <= media.blocks();
+    }
+
+    /// The partition the environment names, when it names one: LowCyl to
+    /// HighCyl, in cylinders of Surfaces times BlocksPerTrack blocks. One
+    /// whose HighCyl is 0 names none - a mountlist entry that gives no
+    /// geometry - and the medium is the whole device.
+    fn partitionOf(media: *DeviceMedia, env: *const dos.DosEnvec) void {
+        if (env.table_size < dos.filehandler.DE_UPPERCYL or env.high_cyl == 0) return;
+        if (env.high_cyl < env.low_cyl) return;
+        media.first = env.byteOf(0);
+        media.length = env.blocks() * env.size_block;
     }
 
     /// What the device holds in a cache of its own put on the medium
@@ -600,6 +628,7 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
         code.* = dos.ERROR_DEVICE_NOT_MOUNTED;
         return null;
     }
+    if (fssm) |startup_msg| if (startup_msg.environ) |env| st.media.partitionOf(env);
     return st;
 }
 
@@ -775,7 +804,8 @@ fn sweepGone(dl: *DosBase, st: *State) void {
 }
 
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
-/// refers to the tag, dos finds it by looking.
+/// refers to the tag, dos finds it by looking - in the loaded file, or in
+/// the ROM, whose handlers dos puts on its segment list by name.
 export const fat_handler_tag: exec.ResidentHandler linksection(".resident") = .{
     .resident = .{
         .match_tag = &fat_handler_tag.resident,
@@ -791,7 +821,7 @@ export const fat_handler_tag: exec.ResidentHandler linksection(".resident") = .{
 
 /// A handler is not a command. Whoever runs this file gets nothing done
 /// and a return code that says so.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a handler, not a command\n", .{HANDLER_NAME});
@@ -801,7 +831,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 /// The "$VER:" string, which `Version <file>` looks for. Nothing refers to
 /// it, so it needs an export and a section of its own that program.ld
 /// KEEPs.
-export const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
 
 const testing = std.testing;
 
