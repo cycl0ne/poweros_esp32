@@ -164,5 +164,6 @@ test "a RigidDiskBlock and a PartitionBlock are sound once they carry their chec
 test "a partition's handler is the one its DosType asks for" {
     try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK).?));
     try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.ID_MSDOS_DISK).?));
+    try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
     try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300)); // "DOS\0"
 }

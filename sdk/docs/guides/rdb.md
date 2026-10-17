@@ -251,7 +251,7 @@ which may have written part of the table.
 `flash.device` reads the table of the flash disk (its unit 0) once, when
 it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `MSD\0` the FAT handler; a partition whose DosType names
+file system, `MSD` and `MSH` the FAT handler; a partition whose DosType names
 neither, or that has no name, is passed over, and the chain is followed
 for 16 PartitionBlocks at most. It hands the nodes to
 expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
@@ -266,9 +266,12 @@ that finds its partition smaller than it was is not going to like it:
 change a partition's size only when what is on it can go.
 
 A card in the slot is mounted as `SD0:` at boot by `Mount SD0:`, from its entry in
-`DEVS:MountList`, and fat-handler finds the volume from the card's
-own partition table and boot sector - not from a RigidDiskBlock. A
-RigidDiskBlock on a card is for a program that reads it.
+`DEVS:MountList`: the whole card, DosType `MSH\0`, which says the card
+begins with a partition table and the volume is its first FAT
+partition - not a RigidDiskBlock. fat-handler reads that table and the
+boot sector it points at; a card with no table is an entry with
+`MSD\0`, the volume from the card's first block. A RigidDiskBlock on a
+card is for a program that reads it.
 
 ## From the shell
 

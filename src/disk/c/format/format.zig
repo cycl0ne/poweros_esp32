@@ -1,63 +1,71 @@
 // SPDX-License-Identifier: MIT
-//! Format: a disk emptied and given a name. Built against the SDK only.
+//! Format: a fresh, empty volume over the medium in a drive, given a name.
+//! Built against the SDK only.
 //!
-//!   Format DRIVE=DEVICE/K/A,NAME/K/A,QUICK/S
+//!   Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S
 //!
-//!   Format DRIVE DH0: NAME "System"
+//!   Format DRIVE SD0: NAME Photos
+//!   Format DRIVE SD0: NAME Photos EXFAT
 //!
-//! The template holds only what means anything here. There are no FFS,
-//! INTL or NOICONS switches: there is one file system and no Workbench, so
-//! a switch that could only be ignored is left out rather than accepted and
-//! quietly dropped. There is no NOVERIFY for the same reason: nothing here
-//! reads a sector back.
+//! DRIVE is the drive's device, with or without its colon; NAME the new
+//! volume's, without one: one to 30 characters, none of them `:` or `/`.
+//! The file system may hold less - a FAT32 label is eleven characters,
+//! kept in upper case - and refuses a name it cannot hold before it writes
+//! anything.
 //!
-//! QUICK writes a new, empty
-//! file system over the old one instead of erasing the medium first. It is
-//! what flashfs-handler's ACTION_FORMAT does in either case - a log file
-//! system starts a new log and the old records are simply never replayed -
-//! so QUICK only says that no erase is expected.
+//! The format is the drive's own: the file system its node was mounted
+//! with, in the form its DosType names. A FAT drive (`MSD`, `MSH`) writes
+//! FAT32 up to 32 GiB and exFAT past that, unless the DosType's last byte
+//! names one; FAT32 and EXFAT choose for this format, and only on a FAT
+//! drive. QUICK is accepted and changes nothing: every format here writes
+//! the volume's structures over the medium as it is, without erasing or
+//! reading it back.
 //!
 //! It asks before it does anything:
 //!
-//!   Format: Insert the disk to be formatted in device DH0:
+//!   Insert disk to be formatted in device SD0:
 //!   Press RETURN to begin formatting or CTRL-C to abort:
 //!
-//! Since the answer is read from Input(), a script may feed it a blank
-//! line. There is nothing else between a typo and the disk.
-//!
-//! The device takes either keyword, DRIVE or DEVICE (`DRIVE=DEVICE/K/A`):
-//! `Format DRIVE DH0: NAME "Empty"` and `Format DEVICE DH0: NAME "Empty"`
-//! both work. It
-//! takes a device with or without its colon.
-//!
-//! The DosType handed to the handler is the device node's own de_DosType,
-//! read from the DosList, not a constant: a node mounted from a
-//! RigidDiskBlock says which file system it is, and Format has no business
-//! deciding that.
+//! The answer is read from Input(), so a script may give it a blank line.
+//! Then the drive is inhibited, formatted, and let go (dos.library's
+//! Inhibit and Format), and Format waits until the drive has its new
+//! volume. A drive with a file open for writing is not touched. The
+//! return code is 0 for a volume made, 5 for one stopped at the question,
+//! 20 for one that could not be made, with the reason said.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
+const fat = dos.fat;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Format";
-const VERSION_STRING = "\x00$VER: Format 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Format 1.1 (17.10.2026)\r\n";
 
-const template = "DRIVE=DEVICE/K/A,NAME/K/A,QUICK/S";
+const template = "DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S";
 const arg_device = 0;
 const arg_name = 1;
-const arg_quick = 2;
+const arg_fat32 = 2;
+const arg_exfat = 3;
+const arg_count = 5;
 
-const MSG_INSERT = "Format: Insert the disk to be formatted in device %s\n";
+const MSG_INSERT = "Insert disk to be formatted in device %s\n";
 const MSG_PRESS = "Press RETURN to begin formatting or CTRL-C to abort: ";
 const MSG_NOTFS = "%s is not a file system\n";
+const MSG_NOTFAT = "FAT32 and EXFAT are for a FAT drive, which %s is not\n";
+const MSG_INITING = "Initializing disk...\n";
 const MSG_DONE = "Format complete.\n";
 
 /// The most a device name may be: 30, the colon and the NUL.
 const max_device = dos.MAX_DEVICE_NAME + 2;
+
+/// How long the new volume is waited for after the drive is let go, in
+/// ticks between two looks and in looks.
+const settle_ticks = 15;
+const settle_tries = 100;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -66,7 +74,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [arg_count]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -75,9 +83,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const asked = rdargs.string(argv[arg_device]).?;
     const label = rdargs.string(argv[arg_name]).?;
+    if (!dos.volumename.valid(label[0..lengthOf(label)])) {
+        _ = dl.PrintFault(dos.ERROR_INVALID_COMPONENT_NAME, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    }
+    if (argv[arg_fat32] != 0 and argv[arg_exfat] != 0) {
+        _ = dl.PrintFault(dos.ERROR_TOO_MANY_ARGS, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    }
 
-    // "DH0" and "DH0:" both name the device; the colon is what
-    // GetDeviceProc wants, and what the messages read best with.
+    // "SD0" and "SD0:" both name the device; the colon is what dos's
+    // calls want, and what the messages read best with.
     var device: [max_device:0]u8 = @splat(0);
     var at: usize = 0;
     while (asked[at] != 0 and asked[at] != ':' and at + 2 < device.len) : (at += 1) {
@@ -90,19 +106,37 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     device[at] = ':';
     const name: [*:0]const u8 = @ptrCast(&device);
 
-    const dp = dl.GetDeviceProc(name, null) orelse {
-        _ = dl.PrintFault(dl.IoErr(), name);
-        return dos.RETURN_FAIL;
-    };
+    const dp = dl.GetDeviceProc(name, null) orelse return fail(dl, dl.IoErr());
     defer dl.FreeDeviceProc(dp);
-    const port = dp.port orelse {
+    // A device it must be: once inhibited, a drive may have no volume to
+    // be let go by.
+    const node = dp.dev_node orelse return fail(dl, dos.ERROR_DEVICE_NOT_MOUNTED);
+    if (node.type != .device) return fail(dl, dos.ERROR_DEVICE_NOT_MOUNTED);
+    const port = dp.port orelse return fail(dl, dos.ERROR_DEVICE_NOT_MOUNTED);
+    if (!dl.IsFileSystem(name)) {
         _ = Printf(dl, MSG_NOTFS, .{name});
         return dos.RETURN_FAIL;
-    };
+    }
 
-    // The DosType belongs to the node, not to Format: a node mounted from
-    // a RigidDiskBlock carries the file system its partition asked for.
-    const dos_type = dosTypeOf(dp);
+    // The node's own DosType is what the drive holds; a switch only
+    // chooses the FAT format in it.
+    var dos_type: u32 = 0;
+    if (argv[arg_fat32] != 0 or argv[arg_exfat] != 0) {
+        const own = dosTypeOf(node);
+        if (!fat.isFatType(own)) {
+            _ = Printf(dl, MSG_NOTFAT, .{name});
+            return dos.RETURN_FAIL;
+        }
+        dos_type = fat.typeWithFormat(own, if (argv[arg_fat32] != 0) fat.FORMAT_FAT32 else fat.FORMAT_EXFAT);
+    }
+
+    // What can be told before the question is told then.
+    var info: dos.InfoData = .{};
+    if (dl.DoPkt(port, @intFromEnum(dos.ActionCode.disk_info), @bitCast(@intFromPtr(&info)), 0, 0, 0, 0) != dos.DOSFALSE) {
+        if (info.disk_type == dos.ID_NO_DISK_PRESENT) return fail(dl, dos.ERROR_NO_DISK);
+        if (info.disk_type == dos.ID_BUSY_DISK) return fail(dl, dos.ERROR_OBJECT_IN_USE);
+        if (info.disk_state == dos.ID_WRITE_PROTECTED) return fail(dl, dos.ERROR_DISK_WRITE_PROTECTED);
+    }
 
     _ = Printf(dl, MSG_INSERT, .{name});
     if (!confirm(dl)) {
@@ -110,23 +144,58 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     }
 
-    if (dl.DoPkt(port, @intFromEnum(dos.ActionCode.format), @bitCast(@intFromPtr(label)), @bitCast(@as(usize, dos_type)), 0, 0, 0) == dos.DOSFALSE) {
-        _ = dl.PrintFault(dl.IoErr(), name);
-        return dos.RETURN_FAIL;
-    }
+    if (!dl.Inhibit(name, true)) return fail(dl, dl.IoErr());
+    _ = dl.PutStr(MSG_INITING);
+    const made = dl.Format(name, label, dos_type);
+    const code = dl.IoErr();
+    _ = dl.Inhibit(name, false);
+    if (!made) return fail(dl, code);
+    if (!settled(dl, port)) return fail(dl, dos.ERROR_NOT_A_DOS_DISK);
     _ = dl.PutStr(MSG_DONE);
     return dos.RETURN_OK;
 }
 
-/// The de_DosType of the device node the name led to, or 0 when the node
-/// says nothing (an assign, or a handler mounted without an environment).
-fn dosTypeOf(dp: *dos.DevProc) u32 {
-    const node = dp.dev_node orelse return 0;
-    if (node.type != .device) return 0;
+/// The reason said, and the return code for a format not made.
+fn fail(dl: *DosBase, code: i32) i32 {
+    _ = dl.PrintFault(code, COMMAND_NAME);
+    return dos.RETURN_FAIL;
+}
+
+fn lengthOf(text: [*:0]const u8) usize {
+    var count: usize = 0;
+    while (text[count] != 0) count += 1;
+    return count;
+}
+
+/// The device node's de_DosType, or 0 when it was mounted without an
+/// environment.
+fn dosTypeOf(node: *dos.DosList) u32 {
     const startup: ?*const dos.FileSysStartupMsg = @ptrFromInt(node.misc.handler.startup);
     const msg = startup orelse return 0;
     const environ = msg.environ orelse return 0;
     return environ.dos_type;
+}
+
+/// Whether the drive shows a volume again once let go: it reads the
+/// medium when the last inhibit is taken back, and a file system may then
+/// still be checking what it found.
+fn settled(dl: *DosBase, port: *exec.MsgPort) bool {
+    var tries: u32 = 0;
+    while (tries < settle_tries) : (tries += 1) {
+        var info: dos.InfoData = .{};
+        if (dl.DoPkt(port, @intFromEnum(dos.ActionCode.disk_info), @bitCast(@intFromPtr(&info)), 0, 0, 0, 0) != dos.DOSFALSE and
+            info.disk_state != dos.ID_VALIDATING and readable(info.disk_type)) return true;
+        dl.Delay(settle_ticks);
+    }
+    return false;
+}
+
+/// Whether an id_DiskType names a volume a file system reads.
+fn readable(disk_type: u32) bool {
+    return switch (disk_type) {
+        dos.ID_NO_DISK_PRESENT, dos.ID_UNREADABLE_DISK, dos.ID_NOT_REALLY_DOS, dos.ID_BUSY_DISK => false,
+        else => true,
+    };
 }
 
 /// RETURN, or Ctrl-C. A line is read rather than a character so that a

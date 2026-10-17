@@ -300,8 +300,10 @@ pub fn FileSystem(comptime Media: type) type {
 
         // --- mounting -------------------------------------------------------
 
-        /// The volume on the medium, found through its partition table if
-        /// it has one. Every key there was is stale from here on.
+        /// The volume where the drive's DosType says it is: the medium
+        /// itself, or the first partition of its table worth mounting
+        /// (`_fat.findVolume`), when that is an exFAT one. Every key there
+        /// was is stale from here on.
         pub fn mount(fs: *Fs) Error!void {
             fs.unmount();
             fs.change_num = fs.media.changeNum();
@@ -640,6 +642,15 @@ pub fn FileSystem(comptime Media: type) type {
                 if (other.lock.volume == node) count += 1;
             }
             return count;
+        }
+
+        /// Whether a file on the volume is open and has been written to,
+        /// or opened to be written: what ACTION_INHIBIT is refused for,
+        /// since that file's writes would have nowhere to go.
+        pub fn writing(fs: *Fs) bool {
+            var it = fs.locks;
+            while (it) |lock| : (it = lock.nextLock()) if (lock.modified and !lock.key().stale) return true;
+            return false;
         }
 
         /// Whether a lock - a FileLock's address, or a file handle's key -

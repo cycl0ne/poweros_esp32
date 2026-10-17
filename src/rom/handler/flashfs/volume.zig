@@ -103,6 +103,9 @@ pub fn Volume(comptime Media: type) type {
         head_written: u32 = 0,
         /// The next segment's turn.
         next_seq: u64 align(4) = 1,
+        /// The first turn that is this volume's: a segment of an earlier
+        /// one was left by the volume formatted over.
+        first_seq: u64 align(4) = 1,
         /// Where a read lands when the medium can't be read directly.
         scratch: []u8 = &.{},
 
@@ -185,8 +188,10 @@ pub fn Volume(comptime Media: type) type {
 
         // --- mounting -----------------------------------------------------
 
-        /// The superblock and every segment header. The records themselves
-        /// are `replay`'s business.
+        /// The superblock, where the log starts, and every segment header.
+        /// A segment from before the start is left over from the volume
+        /// formatted over: only its count of erases is kept. The records
+        /// themselves are `replay`'s business.
         pub fn mount(v: *V) Error!void {
             try v.take();
             const raw = v.peek(0, @sizeOf(flashfs.Super)) orelse return error.ReadFailed;
@@ -194,17 +199,22 @@ pub fn Volume(comptime Media: type) type {
             @memcpy(std.mem.asBytes(&super), raw);
             if (super.magic != flashfs.super_magic) return error.NotFormatted;
             if (flashfs.checksumOf(&super) != super.checksum) return error.NotFormatted;
-            if (super.version != flashfs.format_version) return error.BadVersion;
+            if (super.version < flashfs.oldest_version or super.version > flashfs.format_version) return error.BadVersion;
             if (super.sector_size != v.sector_size or super.sectors > v.sectors) return error.NotFormatted;
+            // Format 1 has no start: every segment is the volume's.
+            v.first_seq = 1;
+            if (super.version >= 2) v.first_seq = (v.logStart() orelse return error.NotFormatted).first_seq;
             v.super = super;
             v.sectors = super.sectors;
+            v.next_seq = v.first_seq;
 
             var sector: u32 = 1;
             while (sector < v.sectors) : (sector += 1) {
                 const seg = &v.segs[sector];
                 if (v.header(sector)) |h| {
-                    seg.seq = h.seq;
                     seg.erases = h.erases;
+                    if (h.seq < v.first_seq) continue;
+                    seg.seq = h.seq;
                     seg.used = @sizeOf(flashfs.SegmentHeader);
                     if (h.seq >= v.next_seq) v.next_seq = h.seq + 1;
                 } else {
@@ -212,6 +222,16 @@ pub fn Volume(comptime Media: type) type {
                 }
             }
             return;
+        }
+
+        /// The superblock's LogStart, if it has a sound one.
+        fn logStart(v: *V) ?flashfs.LogStart {
+            const raw = v.peek(flashfs.log_start_offset, @sizeOf(flashfs.LogStart)) orelse return null;
+            var start: flashfs.LogStart = undefined;
+            @memcpy(std.mem.asBytes(&start), raw);
+            if (start.magic != flashfs.log_start_magic or start.first_seq == 0) return null;
+            if (flashfs.checksumOf(&start) != start.checksum) return null;
+            return start;
         }
 
         /// A sector's segment header, if it has a sound one.
@@ -348,13 +368,32 @@ pub fn Volume(comptime Media: type) type {
 
         // --- formatting ---------------------------------------------------
 
-        /// A fresh volume: the superblock, and every segment forgotten. The
-        /// sectors are not erased - a segment header that isn't sound means
-        /// the sector holds nothing, and one that is blank is written
-        /// without erasing - so formatting a 14 MiB disk takes one erase
-        /// and one page.
+        /// A fresh volume: the superblock, and the log started at the turn
+        /// after the last one on the medium. The sectors are not erased: a
+        /// segment of an earlier turn is not the volume's, a sector with no
+        /// sound header holds nothing, and a blank one is written without
+        /// erasing - so formatting a 14 MiB disk takes one erase and one
+        /// write, and a look at each sector's header. What a header counted
+        /// of its sector's erases is kept.
+        ///
+        /// The superblock and its start are one write: a power cut in it
+        /// leaves a superblock whose start is not sound, which does not
+        /// mount - never the new volume with the old log in it.
         pub fn format(v: *V, label: []const u8, date: dos.DateStamp) Error!void {
             try v.take();
+            var first = v.next_seq;
+            var sector: u32 = 1;
+            while (sector < v.sectors) : (sector += 1) {
+                const seg = &v.segs[sector];
+                seg.* = .{ .erases = seg.erases };
+                if (v.header(sector)) |h| {
+                    if (h.seq >= first) first = h.seq + 1;
+                    seg.erases = @max(seg.erases, h.erases);
+                } else {
+                    seg.blank = v.blank(sector * v.sector_size, v.sector_size);
+                }
+            }
+
             var super: flashfs.Super = .{
                 .sector_size = v.sector_size,
                 .sectors = v.sectors,
@@ -363,22 +402,20 @@ pub fn Volume(comptime Media: type) type {
             const len = @min(label.len, flashfs.max_volume_name);
             @memcpy(super.name[0..len], label[0..len]);
             super.checksum = flashfs.checksumOf(&super);
+            var start: flashfs.LogStart = .{ .first_seq = first };
+            start.checksum = flashfs.checksumOf(&start);
+            var block: [flashfs.log_start_offset + @sizeOf(flashfs.LogStart)]u8 = undefined;
+            @memcpy(block[0..@sizeOf(flashfs.Super)], std.mem.asBytes(&super));
+            @memcpy(block[flashfs.log_start_offset..], std.mem.asBytes(&start));
 
             if (!v.blank(0, v.sector_size) and !v.media.erase(0, v.sector_size)) return error.EraseFailed;
-            const bytes = std.mem.asBytes(&super);
-            if (!v.media.write(0, bytes)) return error.WriteFailed;
+            if (!v.media.write(0, &block)) return error.WriteFailed;
             v.super = super;
-            @memset(v.segs, .{});
-            v.next_seq = 1;
+            v.first_seq = first;
+            v.next_seq = first;
             v.head = 0;
             v.head_used = 0;
             v.head_written = 0;
-            // Every other sector is stale, not blank: whether it has to be
-            // erased is decided when it is taken.
-            var sector: u32 = 1;
-            while (sector < v.sectors) : (sector += 1) {
-                v.segs[sector].blank = v.blank(sector * v.sector_size, v.sector_size);
-            }
         }
 
         /// The volume's name, as the superblock holds it.
@@ -550,7 +587,7 @@ pub fn Volume(comptime Media: type) type {
         /// can go - and a flush per collection would pad away up to a page
         /// each time, more than moving a full segment frees.
         pub fn forget(v: *V, sector: u32) Error!void {
-            v.segs[sector] = .{};
+            v.segs[sector] = .{ .erases = v.segs[sector].erases };
         }
 
         /// The sector a byte on the medium is in.
@@ -761,9 +798,109 @@ test "a forgotten segment's sector comes back" {
     const before = v.freeSegments();
     const old = v.oldest().?;
     try testing.expect(v.segs[old].seq != 0);
+    v.segs[old].erases = 7;
     try v.forget(old);
     try testing.expectEqual(@as(u64, 0), v.segs[old].seq);
+    try testing.expectEqual(@as(u32, 7), v.segs[old].erases); // the wear it had
     try testing.expectEqual(before + 1, v.freeSegments());
     v.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+/// Records in several segments, on the medium.
+fn filled(v: *TestVolume) !void {
+    const data: flashfs.Data = .{ .inode = 2 };
+    var payload: [200]u8 = undefined;
+    @memset(&payload, 'z');
+    var written: u32 = 0;
+    while (written < 8) : (written += 1) {
+        _ = try v.append(.data, flashfs.bytesOf(&data), &payload, "");
+    }
+    try v.flush();
+}
+
+test "a format over a volume: one erase, one write, and none of the old log comes back" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = testMedia(&store);
+    var v = TestVolume.init(&media);
+    try formatted(&v);
+    try filled(&v);
+    const last = v.next_seq - 1;
+    v.deinit();
+
+    var fresh = TestVolume.init(&media);
+    const erases = media.erases;
+    const writes = media.writes;
+    try fresh.format("Fresh", .{});
+    try testing.expectEqual(erases + 1, media.erases);
+    try testing.expectEqual(writes + 1, media.writes);
+    try testing.expectEqual(last + 1, fresh.first_seq);
+    fresh.deinit();
+
+    var again = TestVolume.init(&media);
+    try again.mount();
+    try testing.expectEqualStrings("Fresh", again.name());
+    var seen: Seen = .{};
+    try again.replay(&seen, Seen.note);
+    try testing.expectEqual(@as(usize, 0), seen.count);
+    try testing.expectEqual(@as(u32, test_sectors - 1), again.freeSegments());
+    // The log goes on above the old turns.
+    const kill_it: flashfs.Kill = .{ .inode = 2 };
+    _ = try again.append(.kill, flashfs.bytesOf(&kill_it), "", "");
+    try again.flush();
+    again.deinit();
+
+    var third = TestVolume.init(&media);
+    try third.mount();
+    var after: Seen = .{};
+    try third.replay(&after, Seen.note);
+    try testing.expectEqual(@as(usize, 1), after.count);
+    try testing.expectEqual(flashfs.Kind.kill, after.kinds[0]);
+    third.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+test "a volume of format 1, with no log start, mounts with every segment its own" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = testMedia(&store);
+    var v = TestVolume.init(&media);
+    try formatted(&v);
+    try filled(&v);
+    v.deinit();
+    // The superblock as format 1 wrote it, and nothing behind it.
+    var super: flashfs.Super = undefined;
+    @memcpy(std.mem.asBytes(&super), store[0..@sizeOf(flashfs.Super)]);
+    super.version = 1;
+    super.checksum = flashfs.checksumOf(&super);
+    @memcpy(store[0..@sizeOf(flashfs.Super)], std.mem.asBytes(&super));
+    @memset(store[flashfs.log_start_offset..][0..@sizeOf(flashfs.LogStart)], 0xFF);
+
+    var again = TestVolume.init(&media);
+    try again.mount();
+    try testing.expectEqual(@as(u64, 1), again.first_seq);
+    var seen: Seen = .{};
+    try again.replay(&seen, Seen.note);
+    try testing.expectEqual(@as(usize, 8), seen.count);
+    again.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+test "a superblock whose write was cut short does not mount, old log or not" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = testMedia(&store);
+    var v = TestVolume.init(&media);
+    try formatted(&v);
+    try filled(&v);
+    v.deinit();
+
+    var fresh = TestVolume.init(&media);
+    media.budget = @sizeOf(flashfs.Super) + 4; // the power goes in the log start
+    try fresh.format("Fresh", .{});
+    media.budget = null;
+    fresh.deinit();
+
+    var again = TestVolume.init(&media);
+    try testing.expectError(error.NotFormatted, again.mount());
+    again.deinit();
     try testing.expectEqual(@as(usize, 0), media.live);
 }

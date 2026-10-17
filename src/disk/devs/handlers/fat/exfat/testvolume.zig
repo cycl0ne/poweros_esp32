@@ -58,6 +58,7 @@ pub const Volume = struct {
         const medium: u64 = if (options.clusters == null) card_medium else options.first + volume_length + 64;
 
         volume.* = .{ .media = TestMedia.init(512, medium), .first = options.first, .clusters = clusters };
+        volume.media.table = true;
         errdefer volume.media.deinit();
         const m = &volume.media;
         const first: u64 = options.first;

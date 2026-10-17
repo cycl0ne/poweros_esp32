@@ -32,7 +32,8 @@ const max_partitions = 16;
 
 /// The handler a partition's de_DosType asks for. The flash file system is
 /// in every ROM; FAT's handler is in the ROM of a machine that can start
-/// from a card, and loaded from HANDLERS: on the others.
+/// from a card, and loaded from HANDLERS: on the others. It takes every FAT
+/// DosType (`MSD`, `MSH`, with any last byte), so it stands here as one.
 const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
     .{ .dos_type = dos.flashfs.ID_FLASHFS_DISK, .handler = "flashfs-handler" },
     .{ .dos_type = dos.ID_MSDOS_DISK, .handler = "fat-handler" },
@@ -43,8 +44,9 @@ const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
 /// INPUTS:
 /// - `dos_type` - the partition's de_DosType.
 pub fn handlerFor(dos_type: u32) ?[*:0]const u8 {
+    const wanted = if (dos.fat.isFatType(dos_type)) dos.ID_MSDOS_DISK else dos_type;
     for (file_systems) |file_system| {
-        if (file_system.dos_type == dos_type) return file_system.handler;
+        if (file_system.dos_type == wanted) return file_system.handler;
     }
     return null;
 }

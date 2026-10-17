@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! flashfs-handler: the flash file system as a ROM module. dos.library's
-//! init reads the disk's RigidDiskBlock and gives the handler a node per
-//! partition whose startup message says which device, which unit and which
-//! blocks of it are the partition's (src/rom/libs/dos/mount.zig).
+//! flashfs-handler: the flash file system as a ROM module. flash.device
+//! reads the disk's RigidDiskBlock at boot and makes a node per partition
+//! (src/rom/devs/flash/mount.zig), whose startup message says which
+//! device, which unit with which flags, and which blocks of it are the
+//! partition's. The handler works on those blocks and nothing else.
 //!
 //! The format on the medium and the packets are in `volume.zig` and
 //! `disk.zig`, both generic over the medium, so all of it is tested on the
@@ -13,6 +14,18 @@
 //! volume. A medium with no file system on it is not an error: the handler
 //! stays, answers ERROR_NOT_A_DOS_DISK, and waits for ACTION_FORMAT, so the
 //! medium can be formatted from the running system.
+//!
+//! **Inhibit** (ACTION_INHIBIT) puts what the log holds on the flash and
+//! answers every packet but those that give a lock back as for a disk that
+//! cannot be read, while Info says the drive is busy (ID_BUSY_DISK). It is
+//! refused while a file is open for writing, and inhibits nest. The
+//! partition is this handler's alone, so the volume is as it left it when
+//! the last inhibit is taken back.
+//!
+//! **Format** (ACTION_FORMAT) writes a fresh volume over the partition,
+//! only with nothing on it in use: the drive inhibited or holding no file
+//! system, and no lock on it - the tree is in memory, and every lock
+//! points into it.
 //!
 //! Notification's watchers (`dos.notify.Watchers`) are the process's: the
 //! file system tells them of its changes, and their replies come to a
@@ -33,7 +46,7 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 6;
+const HANDLER_REVISION = 7;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -134,6 +147,8 @@ const State = struct {
     renew: bool = false,
     /// The volume's name after ACTION_RENAME_DISK, for its node.
     label: dos.volumename.VolumeName = .{},
+    /// ACTION_INHIBIT's count: while it is not 0 the drive is busy.
+    inhibited: u32 = 0,
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
     /// The record locks, when there was memory for their port.
@@ -164,7 +179,8 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
 
     const device = if (fssm) |f| f.device orelse "" else "";
     const unit = if (fssm) |f| f.unit else 0;
-    if (device[0] == 0 or sb.OpenDevice(device, unit, &st.io.req, 0) != 0) {
+    const flags = if (fssm) |f| f.flags else 0;
+    if (device[0] == 0 or sb.OpenDevice(device, unit, &st.io.req, flags) != 0) {
         sb.FreeVec(block);
         sb.DeleteMsgPort(port);
         return dl.ReplyPkt(startup, dos.DOSFALSE, dos.ERROR_DEVICE_NOT_MOUNTED);
@@ -228,20 +244,23 @@ fn partition(st: *State, fssm: ?*const dos.FileSysStartupMsg) bool {
     return true;
 }
 
-/// One packet. Before there is a file system only the ones that say what
-/// the disk is, and ACTION_FORMAT, get through.
+/// One packet. Before there is a file system, and while the drive is
+/// inhibited, only the ones that say what the disk is, ACTION_INHIBIT and
+/// ACTION_FORMAT get through - and, inhibited, those that give a lock
+/// back.
 fn serve(st: *State, pkt: *DosPacket) disk.Answer {
     const action = pkt.getAction();
-    if (!st.mounted) {
+    switch (action) {
+        .inhibit => return inhibit(st, pkt.args.raw[0] != dos.DOSFALSE),
+        .format => return formatVolume(st, pkt),
+        else => {},
+    }
+    if (st.inhibited != 0) switch (action) {
+        .free_lock, .end, .free_record => if (st.mounted) return st.fs.answer(pkt),
+        else => {},
+    };
+    if (!st.mounted or st.inhibited != 0) {
         switch (action) {
-            .format => {
-                const label: ?[*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
-                const name: []const u8 = if (label) |l| std.mem.span(l) else DEFAULT_LABEL;
-                st.fs.format(name) catch |e| return .{ .res1 = dos.DOSFALSE, .res2 = disk.codeOf(e) };
-                st.mounted = true;
-                st.renew = true;
-                return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
-            },
             .disk_info, .info => {
                 const data: ?*dos.InfoData = if (action == .disk_info)
                     @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])))
@@ -251,7 +270,7 @@ fn serve(st: *State, pkt: *DosPacket) disk.Answer {
                     .disk_state = dos.ID_VALIDATED,
                     .num_blocks = st.media.length / st.media.geometry.sector_size,
                     .bytes_per_block = st.media.geometry.sector_size,
-                    .disk_type = dos.ID_NOT_REALLY_DOS,
+                    .disk_type = if (st.inhibited != 0) dos.ID_BUSY_DISK else dos.ID_NOT_REALLY_DOS,
                     .unit_number = 0,
                 };
                 return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
@@ -262,11 +281,45 @@ fn serve(st: *State, pkt: *DosPacket) disk.Answer {
         }
     }
     const reply = st.fs.answer(pkt);
-    // A format renames the volume, so its node is made again, once the
-    // packet is answered; a rename keeps the node and gives it the name.
-    if (action == .format and reply.res1 != dos.DOSFALSE) st.renew = true;
+    // A rename keeps the node and gives it the name.
     if (action == .rename_disk and reply.res1 != dos.DOSFALSE) st.label.set(st.fs.volumeName());
     return reply;
+}
+
+/// ACTION_INHIBIT: on, what the log holds put on the flash and the drive
+/// busy - refused with ERROR_OBJECT_IN_USE while a file is open for
+/// writing, whose writes would have nowhere to go; off, the drive in use
+/// again. They nest, and off on a drive that is not inhibited does
+/// nothing.
+fn inhibit(st: *State, on: bool) disk.Answer {
+    if (!on) {
+        if (st.inhibited != 0) st.inhibited -= 1;
+        return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
+    }
+    if (st.inhibited == 0 and st.mounted) {
+        if (st.fs.writing()) return .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_OBJECT_IN_USE };
+        st.fs.flush() catch |e| return .{ .res1 = dos.DOSFALSE, .res2 = disk.codeOf(e) };
+    }
+    st.inhibited += 1;
+    return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
+}
+
+/// ACTION_FORMAT: a fresh volume over the partition, named as dp_Arg1 says
+/// (DEFAULT_LABEL without). Only with nothing on it in use - the drive
+/// inhibited or holding no file system, and no lock on the volume - else
+/// ERROR_OBJECT_IN_USE; a name a volume cannot have is refused before
+/// anything is written. The DosType in dp_Arg2 is not looked at: the
+/// flash file system has one format. The volume's node is made again
+/// once the packet is answered.
+fn formatVolume(st: *State, pkt: *DosPacket) disk.Answer {
+    if (st.mounted and st.inhibited == 0) return .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_OBJECT_IN_USE };
+    const label: ?[*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
+    const name: []const u8 = if (label) |l| std.mem.span(l) else DEFAULT_LABEL;
+    const made = if (st.mounted) st.fs.reformat(name) else st.fs.format(name);
+    made catch |e| return .{ .res1 = dos.DOSFALSE, .res2 = disk.codeOf(e) };
+    st.mounted = true;
+    st.renew = true;
+    return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
 }
 
 /// The volume node made again to match the file system, but only if the

@@ -160,6 +160,8 @@ pub const LVO = struct {
     pub const LockRecords = libraries.lvo(143);
     pub const UnLockRecord = libraries.lvo(144);
     pub const UnLockRecords = libraries.lvo(145);
+    pub const Inhibit = libraries.lvo(146);
+    pub const Format = libraries.lvo(147);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -307,6 +309,8 @@ pub const Fn = struct {
     pub const LockRecords = *const fn (*DosBase, ?[*]const dos.record.RecordLock, u32) callconv(.c) bool;
     pub const UnLockRecord = *const fn (*DosBase, ?*dos.FileHandle, u64, u64) callconv(.c) bool;
     pub const UnLockRecords = *const fn (*DosBase, ?[*]const dos.record.RecordLock) callconv(.c) bool;
+    pub const Inhibit = *const fn (*DosBase, [*:0]const u8, bool) callconv(.c) bool;
+    pub const Format = *const fn (*DosBase, [*:0]const u8, ?[*:0]const u8, u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1191,5 +1195,18 @@ pub const DosBase = opaque {
     /// held.
     pub fn UnLockRecords(self: *DosBase, records: ?[*]const dos.record.RecordLock) bool {
         return libraries.call(self, LVO.UnLockRecords, Fn.UnLockRecords, .{records});
+    }
+
+    /// Keep the file system of `drive` (with its colon) off its medium, or
+    /// take that back: true, or false with IoErr. Inhibits nest.
+    pub fn Inhibit(self: *DosBase, drive: [*:0]const u8, on: bool) bool {
+        return libraries.call(self, LVO.Inhibit, Fn.Inhibit, .{ drive, on });
+    }
+
+    /// A fresh volume over the medium of `drive`, named `name` (null for the
+    /// file system's own) in the format `dos_type` names (0: the drive's own):
+    /// true, or false with IoErr. Inhibit the drive first.
+    pub fn Format(self: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32) bool {
+        return libraries.call(self, LVO.Format, Fn.Format, .{ drive, name, dos_type });
     }
 };

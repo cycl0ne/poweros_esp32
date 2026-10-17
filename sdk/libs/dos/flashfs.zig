@@ -9,7 +9,7 @@
 //!
 //! **Why a log.** Flash clears bits by writing and sets them only by
 //! erasing a whole 4 KiB sector, which takes tens of milliseconds with the
-//! caches off (docs/flash.md). A file system that writes blocks in place
+//! caches off. A file system that writes blocks in place
 //! turns every SetProtection into read-modify-erase-write of a sector. This
 //! one only ever appends: a change is a record after the last one, and the
 //! newest record about a thing wins. Erasing happens when the collector
@@ -18,7 +18,8 @@
 //! checksum and ends the log - the state before it is intact, so there is
 //! no validator to write.
 //!
-//!     sector 0        the superblock: magic, the volume's name and date
+//!     sector 0        the superblock: magic, the volume's name and date;
+//!                     then where the volume's log starts (LogStart)
 //!     sector 1..n-1   segments, one erase unit each
 //!                       header: magic, seq, erases, checksum
 //!                       records: meta / data / trunc / kill, each checked
@@ -26,6 +27,11 @@
 //! `seq` gives the order the segments were filled in, so replaying them in
 //! that order replays the log. Reading all of it at mount costs nothing:
 //! flash.device maps the medium into the data window.
+//!
+//! **A format erases one sector.** It writes the superblock and starts the
+//! log at the turn after the last one on the medium; the segments of the
+//! volume before stay as they are, below that turn, and are not this
+//! volume's - each is erased when its sector is taken again.
 //!
 //! Every number is little-endian, the chip's and the host tool's order.
 
@@ -44,8 +50,14 @@ pub const super_magic: u32 = 0x464C_5330;
 /// the RDB's own LoadSegBlock (sdk/libs/dos/hardblocks.zig), and two things on
 /// one disk should not answer to the same four letters.
 pub const segment_magic: u32 = 0x4653_4547;
-/// The format this code writes and reads.
-pub const format_version: u32 = 1;
+/// The log start's magic, "FLSS".
+pub const log_start_magic: u32 = 0x464C_5353;
+/// The format this code writes: 2, a superblock followed by its LogStart.
+pub const format_version: u32 = 2;
+/// The oldest format it reads: 1, a superblock alone, whose every segment
+/// is the volume's. A kernel that knows only 1 refuses a volume of 2 rather
+/// than replay the log of the volume before it.
+pub const oldest_version: u32 = 1;
 
 /// The longest name of a file or a directory, and the longest comment:
 /// dos's limits. Neither is part of the format - a meta record carries
@@ -68,8 +80,8 @@ pub const max_volume_name = 30;
 /// object.
 pub const root_inode: u32 = 1;
 
-/// Sector 0: what the volume is. Written by format (and by a relabel) and
-/// then left alone - it is the one thing that is not a log.
+/// Sector 0: what the volume is. Written by format and then left alone -
+/// it is the one thing that is not a log.
 pub const Super = extern struct {
     magic: u32 = super_magic,
     version: u32 = format_version,
@@ -92,6 +104,20 @@ pub const Super = extern struct {
         return s.name.len;
     }
 };
+
+/// What follows the superblock in sector 0 (format 2): the turn the
+/// volume's log starts at. A segment whose `seq` is below it was left by
+/// a volume formatted over, and is not this one's.
+pub const LogStart = extern struct {
+    /// The first segment turn that is this volume's.
+    first_seq: u64 align(4) = 1,
+    magic: u32 = log_start_magic,
+    /// crc32 of the bytes before it.
+    checksum: u32 = 0,
+};
+
+/// Where in sector 0 the LogStart is: right behind the superblock.
+pub const log_start_offset = @sizeOf(Super);
 
 /// A segment's first bytes. `seq` counts up over the volume's whole life:
 /// the segment with the highest one is the log's head. It comes first so
@@ -135,6 +161,9 @@ comptime {
     }
     if (@sizeOf(SegmentHeader) != 24 or @offsetOf(SegmentHeader, "checksum") != 16) {
         @compileError("the segment header's layout moved");
+    }
+    if (@sizeOf(LogStart) != 16 or @offsetOf(LogStart, "checksum") != 12) {
+        @compileError("the log start's layout moved");
     }
     if (@sizeOf(RecordHeader) != 12 or @sizeOf(Meta) != 36 or @sizeOf(Data) != 16 or @sizeOf(Trunc) != 16 or @sizeOf(Kill) != 4) {
         @compileError("a record's layout moved");

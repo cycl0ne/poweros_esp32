@@ -231,7 +231,7 @@ The Icons menu works on the icons picked:
 | Snapshot, UnSnapshot | each one's place written into its icon, or forgotten; a file without an icon gets one |
 | Leave Out, Put Away | a file's icon put on the desktop, kept in `.backdrop` in its volume's root (`:Work/Notes`), or put back |
 | Delete | asked first, naming how many; a drawer with all in it |
-| Format Disk | asked first; the disk's device formatted, keeping its name |
+| Format Disk | asked first; the disk's device inhibited, formatted keeping its name, and let go |
 | Empty Trash | what is in the trash deleted |
 
 The Window menu adds New Drawer (asks the name, makes the drawer and its

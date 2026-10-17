@@ -20,6 +20,15 @@
 //!   always 0. de_Baud and de_Control are here, in their DE_* slots, and
 //!   mean what they say: a handler on a serial port is
 //!   given the line's speed and shape (see `control` below).
+//!
+//! **The area.** A file system works on the blocks the environment gives
+//! it, from `low_cyl` to `high_cyl`, and on nothing else: that is what
+//! keeps a partition table and the partitions beside it out of its
+//! reach. An environment with both at 0 (a mountlist entry that names no
+//! cylinders) gives the whole medium, as large as the device says it is
+//! (`wholeMedium`) - which, for a medium that changes, is asked again for
+//! each one. The handler is told what is in its area by `dos_type` too,
+//! and reads it from there rather than looking for itself.
 
 /// struct FileSysStartupMsg: the device the handler works on.
 pub const FileSysStartupMsg = extern struct {
@@ -96,6 +105,14 @@ pub const DosEnvec = extern struct {
     pub fn byteOf(env: *const DosEnvec, block: u64) u64 {
         const first = @as(u64, env.low_cyl) * env.surfaces * env.blocks_per_track;
         return (first + block) * env.size_block;
+    }
+
+    /// Whether the area is the whole medium rather than cylinders of it:
+    /// no cylinder given, `low_cyl` and `high_cyl` both 0. `blocks` and
+    /// `byteOf` then mean nothing, and the device's geometry says how
+    /// large the area is.
+    pub fn wholeMedium(env: *const DosEnvec) bool {
+        return env.low_cyl == 0 and env.high_cyl == 0;
     }
 };
 

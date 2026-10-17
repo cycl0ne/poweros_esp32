@@ -43,6 +43,9 @@ pub const TestMedia = struct {
     /// What `present` answers, and what `changeNum` counts.
     in: bool = true,
     changes: u32 = 1,
+    /// What `partitioned` answers: whether the drive's DosType says the
+    /// medium begins with a partition table.
+    table: bool = false,
     /// Allocations still out, so a test can insist the file system gave
     /// everything back.
     live: usize = 0,
@@ -84,6 +87,10 @@ pub const TestMedia = struct {
 
     pub fn changeNum(m: *TestMedia) u32 {
         return m.changes;
+    }
+
+    pub fn partitioned(m: *TestMedia) bool {
+        return m.table;
     }
 
     pub fn read(m: *TestMedia, lba: u64, count: u32, into: []u8) bool {

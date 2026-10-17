@@ -58,6 +58,7 @@ pub const Volume = struct {
         const total = if (options.clusters == null) card_total else reserved + 2 * fat_sectors + clusters * spc;
 
         volume.media = TestMedia.init(512, @as(u64, options.first) + total);
+        volume.media.table = options.first != 0;
         errdefer volume.media.deinit();
         try lay(&volume.media, options, clusters, fat_sectors, total);
 

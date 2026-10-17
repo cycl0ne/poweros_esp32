@@ -3,11 +3,14 @@
 //!
 //! **A unit's node** is made the first time a medium comes into the unit:
 //! `DU<n>` on the device list, as a MountList entry would make it -
-//! fat-handler, the DosType for FAT, a startup message naming this
-//! device and the unit - and its handler started at once, which reads
-//! the medium and puts its volume on the list. The handler finds the
-//! volume from the medium's own partition table and boot sector, as
-//! `SD0:`'s does, so the node carries no geometry. The node stays for as
+//! fat-handler, a startup message naming this device and the unit - and
+//! its handler started at once, which reads the medium and puts its
+//! volume on the list. The DosType is `MSH\0`: the whole medium, with a
+//! partition table first and the volume in its first FAT partition, as
+//! sticks and cards are sold and as `SD0:`'s is - so the node carries no
+//! geometry, and a stick formatted here gets the same. One with no table,
+//! the volume from its first block, is a MountList entry's with
+//! `MSD\0`, which then stands for the unit. The node stays for as
 //! long as the system runs; a medium going takes only its volume. A node
 //! of that name already there - a MountList's, mounted by hand - is left
 //! as it is and told like the device's own.
@@ -88,7 +91,7 @@ fn nameLength(unit: *const Unit) usize {
 /// `DU<n>` on the device list, with what its handler is started with.
 fn makeNode(dl: *DosBase, unit: *Unit) void {
     const node = dl.MakeDosEntry(@ptrCast(&unit.name), dos.DLT_DEVICE) orelse return;
-    unit.environ = .{ .dos_type = dos.ID_MSDOS_DISK };
+    unit.environ = .{ .dos_type = dos.ID_MSDOS_DISK_HD };
     unit.startup = .{ .unit = unit.number, .device = td.USBDISKNAME, .environ = &unit.environ };
     node.misc.handler.handler = handler_name;
     node.misc.handler.stack_size = handler_stack;
