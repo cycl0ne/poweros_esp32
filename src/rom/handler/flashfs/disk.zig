@@ -127,7 +127,7 @@ fn no(e: Error) Answer {
     return .{ .res1 = dos.DOSFALSE, .res2 = errorCode(e) };
 }
 
-/// For READ, WRITE and SEEK, which answer -1 on failure.
+/// For READ and WRITE, which answer -1 on failure.
 fn minusOne(e: Error) Answer {
     return .{ .res1 = -1, .res2 = errorCode(e) };
 }
@@ -1123,7 +1123,9 @@ pub fn FileSystem(comptime Media: type) type {
                 dos.OFFSET_END => size,
                 else => return error.SeekError,
             };
-            const target = from + args.position;
+            const sum = @addWithOverflow(from, args.position);
+            if (sum[1] != 0) return error.SeekError;
+            const target = sum[0];
             if (target < 0 or target > size) return error.SeekError;
             const old = l.pos;
             l.pos = @intCast(target);
@@ -1161,7 +1163,9 @@ pub fn FileSystem(comptime Media: type) type {
                 dos.OFFSET_END => @intCast(n.size),
                 else => return error.SeekError,
             };
-            const target = from + args.position;
+            const sum = @addWithOverflow(from, args.position);
+            if (sum[1] != 0) return error.SeekError;
+            const target = sum[0];
             if (target < 0) return error.SeekError;
             const size: u64 = @intCast(target);
             try fs.writeTrunc(n, size);
@@ -1424,8 +1428,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return .{ .res1 = @intCast(count), .res2 = 0 };
                 },
                 .seek => {
-                    const old = fs.seek(pkt.args.seek) catch |e| return minusOne(e);
-                    return .{ .res1 = @intCast(old), .res2 = 0 };
+                    pkt.args.seek.answer = @intCast(fs.seek(pkt.args.seek) catch |e| return no(e));
+                    return yes();
                 },
                 .end => {
                     fs.close(pkt.args.file) catch |e| return no(e);
@@ -1448,8 +1452,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .set_file_size => {
-                    const size = fs.setFileSize(pkt.args.seek) catch |e| return minusOne(e);
-                    return .{ .res1 = @intCast(size), .res2 = 0 };
+                    pkt.args.seek.answer = @intCast(fs.setFileSize(pkt.args.seek) catch |e| return no(e));
+                    return yes();
                 },
                 .parent_fh, .copy_dir_fh => {
                     const l = fs.fileOf(pkt.args.file.fh) catch |e| return no(e);
@@ -1525,6 +1529,16 @@ fn send(fs: *TestFs, action: dos.ActionCode, args: [4]isize) Answer {
 fn sendArgs(fs: *TestFs, action: dos.ActionCode, args: dos.PacketArgs) Answer {
     var pkt = DosPacket.init(action, args);
     return fs.answer(&pkt);
+}
+
+/// What a SEEK or SET_FILE_SIZE came back with: dp_Res1 and dp_Res2, and
+/// the handler's answer in the packet.
+const Moved = struct { reply: Answer, answer: i64 };
+
+fn sendSeek(fs: *TestFs, action: dos.ActionCode, fh: *FileHandle, position: i64, mode: i32) Moved {
+    var pkt = DosPacket.init(action, .{ .seek = .{ .fh = fh, .position = position, .mode = mode } });
+    const reply = fs.answer(&pkt);
+    return .{ .reply = reply, .answer = pkt.args.seek.answer };
 }
 
 /// A file written from nothing: its contents, through the packets a
@@ -1630,7 +1644,8 @@ test "writing over the middle of a file wins, and survives mounting" {
 
     var fh: FileHandle = .{};
     try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findupdate, .{ .find = .{ .fh = &fh, .lock = null, .name = "f" } }).res1);
-    try testing.expectEqual(@as(isize, 0), sendArgs(&fs, .seek, .{ .seek = .{ .fh = &fh, .position = 3, .mode = dos.OFFSET_BEGINNING } }).res1);
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 0 }, sendSeek(&fs, .seek, &fh, 3, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(Moved{ .reply = no(error.SeekError), .answer = 0 }, sendSeek(&fs, .seek, &fh, std.math.maxInt(i64), dos.OFFSET_CURRENT));
     const written = sendArgs(&fs, .write, .{ .io = .{ .fh = &fh, .buffer = @constCast(@as([]const u8, "bbbb").ptr), .length = 4 } });
     try testing.expectEqual(@as(isize, 4), written.res1);
     try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .end, .{ .file = .{ .fh = &fh } }).res1);
@@ -1654,8 +1669,8 @@ test "cutting a file and growing it again reads zeros" {
 
     var fh: FileHandle = .{};
     try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findupdate, .{ .find = .{ .fh = &fh, .lock = null, .name = "f" } }).res1);
-    try testing.expectEqual(@as(isize, 4), sendArgs(&fs, .set_file_size, .{ .seek = .{ .fh = &fh, .position = 4, .mode = dos.OFFSET_BEGINNING } }).res1);
-    try testing.expectEqual(@as(isize, 10), sendArgs(&fs, .set_file_size, .{ .seek = .{ .fh = &fh, .position = 10, .mode = dos.OFFSET_BEGINNING } }).res1);
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 4 }, sendSeek(&fs, .set_file_size, &fh, 4, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 10 }, sendSeek(&fs, .set_file_size, &fh, 10, dos.OFFSET_BEGINNING));
     try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .end, .{ .file = .{ .fh = &fh } }).res1);
     fs.deinit();
 

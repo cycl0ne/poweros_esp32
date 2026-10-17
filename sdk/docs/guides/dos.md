@@ -69,7 +69,10 @@ how many were written, or -1. `Seek(fh, position, mode)` counts from
 `OFFSET_BEGINNING`, `OFFSET_CURRENT` or `OFFSET_END` and answers the
 position before the move, so `Seek(fh, 0, OFFSET_CURRENT)` reads where
 the file is. `Close` gives the handle back, once, even when it answers
-false.
+false. A position is an `i64` on every machine - `Seek`'s and
+`SetFileSize`'s arguments and answers - so a file past 2 GiB is reached
+on a 32-bit one too; a count that `Read` and `Write` move is a machine
+word, `isize`.
 
 ```zig
 /// One file into another, a kilobyte at a time.
@@ -669,7 +672,12 @@ A `DosPacket` carries an `action` (a `dos.ActionCode`: `.findinput`,
 (`args`, raw or through the typed views of `PacketArgs`). It comes back
 with `res1`, the call's answer, and `res2`, which becomes the caller's
 `IoErr()`; each call's BEHAVIOR in the reference names the packet it
-sends. `DoPkt(port, action, arg1, ..., arg5)` sends one and waits for
+sends. The arguments are machine words, but a position is 64 bits
+everywhere: `.seek` and `.set_file_size` carry it in `args.seek`
+(`SeekArgs`), which takes two words for it where a word is 32 bits, and
+the handler writes its answer - the old position, the new size - into
+the packet's `args.seek.answer` and replies `DOSTRUE`, or `DOSFALSE`
+with the error in `res2`. `DoPkt(port, action, arg1, ..., arg5)` sends one and waits for
 it - `C:Info` asks each handler for `.disk_info` so, with a node's `task`
 as the port. `SendPkt` sends one without waiting, `WaitPkt` takes the
 next one that reaches the process's port, `ReplyPkt(pkt, res1, res2)`

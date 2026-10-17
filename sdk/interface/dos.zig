@@ -208,7 +208,7 @@ pub const Fn = struct {
     pub const Close = *const fn (*DosBase, ?*dos.FileHandle) callconv(.c) bool;
     pub const Read = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, isize) callconv(.c) isize;
     pub const Write = *const fn (*DosBase, ?*dos.FileHandle, [*]const u8, isize) callconv(.c) isize;
-    pub const Seek = *const fn (*DosBase, ?*dos.FileHandle, isize, i32) callconv(.c) isize;
+    pub const Seek = *const fn (*DosBase, ?*dos.FileHandle, i64, i32) callconv(.c) i64;
     pub const Input = *const fn (*DosBase) callconv(.c) ?*dos.FileHandle;
     pub const Output = *const fn (*DosBase) callconv(.c) ?*dos.FileHandle;
     pub const SelectInput = *const fn (*DosBase, ?*dos.FileHandle) callconv(.c) ?*dos.FileHandle;
@@ -248,7 +248,7 @@ pub const Fn = struct {
     pub const SetComment = *const fn (*DosBase, [*:0]const u8, [*:0]const u8) callconv(.c) bool;
     pub const SetFileDate = *const fn (*DosBase, [*:0]const u8, *const dos.DateStamp) callconv(.c) bool;
     pub const SetOwner = *const fn (*DosBase, [*:0]const u8, u32) callconv(.c) bool;
-    pub const SetFileSize = *const fn (*DosBase, ?*dos.FileHandle, isize, i32) callconv(.c) isize;
+    pub const SetFileSize = *const fn (*DosBase, ?*dos.FileHandle, i64, i32) callconv(.c) i64;
     pub const DupLockFromFH = *const fn (*DosBase, ?*dos.FileHandle) callconv(.c) ?*dos.FileLock;
     pub const ParentOfFH = *const fn (*DosBase, ?*dos.FileHandle) callconv(.c) ?*dos.FileLock;
     pub const NameFromFH = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, u32) callconv(.c) bool;
@@ -617,8 +617,8 @@ pub const DosBase = opaque {
     }
 
     /// Move to `position` from OFFSET_BEGINNING, OFFSET_CURRENT or OFFSET_END:
-    /// the old position, -1 on error. Not past the end.
-    pub fn Seek(self: *DosBase, file: ?*dos.FileHandle, position: isize, mode: i32) isize {
+    /// the old position, -1 on error. Not past the end. 64 bits on every machine.
+    pub fn Seek(self: *DosBase, file: ?*dos.FileHandle, position: i64, mode: i32) i64 {
         return libraries.call(self, LVO.Seek, Fn.Seek, .{ file, position, mode });
     }
 
@@ -850,7 +850,8 @@ pub const DosBase = opaque {
 
     /// Cut or grow an open file to `offset` from OFFSET_BEGINNING,
     /// OFFSET_CURRENT or OFFSET_END; new bytes are 0. The new size, or -1.
-    pub fn SetFileSize(self: *DosBase, file: ?*dos.FileHandle, offset: isize, mode: i32) isize {
+    /// 64 bits on every machine.
+    pub fn SetFileSize(self: *DosBase, file: ?*dos.FileHandle, offset: i64, mode: i32) i64 {
         return libraries.call(self, LVO.SetFileSize, Fn.SetFileSize, .{ file, offset, mode });
     }
 

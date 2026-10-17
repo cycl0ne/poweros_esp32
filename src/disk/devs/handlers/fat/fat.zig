@@ -104,7 +104,7 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 6;
+const HANDLER_REVISION = 7;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++

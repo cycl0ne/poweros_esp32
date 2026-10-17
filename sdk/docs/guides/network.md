@@ -687,10 +687,8 @@ scp -r -P 2222 claus@localhost:/SYS/S saved-s
 - **Times** are the clock's local time turned into UTC by the zone in
   `ENVARC:Sys/timezone`, and back.
 - SFTP version 3, as OpenSSH speaks it; up to 16 files and directories
-  open at once in a session. No links. A file past 2 GiB (exFAT) is read
-  and written front to back, as `get` and `put` do; a jump within it
-  past 2 GiB, or cutting it there, fails: dos.library's `Seek` and
-  `SetFileSize` take 32-bit positions.
+  open at once in a session. No links. A file past 4 GiB (exFAT) is read,
+  written, jumped about in and cut anywhere.
 
 ### The client: C:net/SSH
 

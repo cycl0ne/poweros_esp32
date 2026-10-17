@@ -18,8 +18,9 @@
 //!   locks or holds is freed (`settle`).
 //! - **Sizes and positions are 64 bits.** A file lists with its true size
 //!   and is read and written straight through at any length. SEEK and
-//!   SET_FILE_SIZE carry dos's isize, so a position past what that holds
-//!   is answered ERROR_SEEK_ERROR.
+//!   SET_FILE_SIZE carry 64-bit positions in the packet's SeekArgs on
+//!   every machine; one past what an i64 holds is answered
+//!   ERROR_SEEK_ERROR.
 //! - **A file's clusters are one run while they can be** - the stream says
 //!   NoFatChain and the table is not touched. When the cluster after the
 //!   run is taken, the run is linked through the table and goes on as a
@@ -197,7 +198,7 @@ fn no(err: Error) Answer {
     return _fat.no(_fat.codeOf(err));
 }
 
-/// For READ, WRITE, SEEK and SET_FILE_SIZE, which answer -1 on failure.
+/// For READ and WRITE, which answer -1 on failure.
 fn minusOne(err: Error) Answer {
     return .{ .res1 = -1, .res2 = _fat.codeOf(err) };
 }
@@ -1338,14 +1339,14 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         /// To a position; the old one. Not before the start or past the
-        /// end, and not from or to where dos's isize cannot say.
-        fn seek(fs: *Fs, args: dos.SeekArgs) Error!isize {
+        /// end, and not from where the packet's i64 cannot say.
+        fn seek(fs: *Fs, args: dos.SeekArgs) Error!i64 {
             const lock = try fs.fileOf(args.fh);
             const key = lock.key();
             const to = try target(lock, key, args);
             if (to < 0 or to > key.size) return error.SeekError;
-            if (lock.pos > std.math.maxInt(isize)) return error.SeekError;
-            const old: isize = @intCast(lock.pos);
+            if (lock.pos > std.math.maxInt(i64)) return error.SeekError;
+            const old: i64 = @intCast(lock.pos);
             lock.pos = @intCast(to);
             return old;
         }
@@ -1368,12 +1369,12 @@ pub fn FileSystem(comptime Media: type) type {
         /// SET_FILE_SIZE: the file cut or grown. Grown, only its size
         /// moves - what is past its valid length reads as zeroes - and its
         /// clusters are taken. Handles past a new end move back to it.
-        fn setFileSize(fs: *Fs, args: dos.SeekArgs) Error!isize {
+        fn setFileSize(fs: *Fs, args: dos.SeekArgs) Error!i64 {
             const lock = try fs.fileOf(args.fh);
             const key = lock.key();
             const to = try target(lock, key, args);
             if (to < 0) return error.SeekError;
-            if (to > std.math.maxInt(isize)) return error.SeekError;
+            if (to > std.math.maxInt(i64)) return error.SeekError;
             try fs.changing();
             const size: u64 = @intCast(to);
             if (size < key.size) {
@@ -1720,8 +1721,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return .{ .res1 = @intCast(count), .res2 = 0 };
                 },
                 .seek => {
-                    const old = fs.seek(pkt.args.seek) catch |err| return minusOne(err);
-                    return .{ .res1 = old, .res2 = 0 };
+                    pkt.args.seek.answer = fs.seek(pkt.args.seek) catch |err| return no(err);
+                    return yes();
                 },
                 .end => {
                     fs.close(pkt.args.file) catch |err| {
@@ -1764,8 +1765,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .set_file_size => {
-                    const size = fs.setFileSize(pkt.args.seek) catch |err| return minusOne(err);
-                    return .{ .res1 = size, .res2 = 0 };
+                    pkt.args.seek.answer = fs.setFileSize(pkt.args.seek) catch |err| return no(err);
+                    return yes();
                 },
                 .parent_fh, .copy_dir_fh => {
                     const lock = fs.fileOf(pkt.args.file.fh) catch |err| return no(err);

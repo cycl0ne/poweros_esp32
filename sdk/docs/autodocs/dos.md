@@ -6249,7 +6249,7 @@ Moves a file's position.
 **SYNOPSIS**
 
 ```zig
-fn Seek(db: *DosBase, file: ?*FileHandle, position: isize, mode: i32) isize
+fn Seek(db: *DosBase, file: ?*FileHandle, position: i64, mode: i32) i64
 ```
 
 **SINCE**
@@ -6259,7 +6259,8 @@ fn Seek(db: *DosBase, file: ?*FileHandle, position: isize, mode: i32) isize
 **INPUTS**
 
 - `file` - the handle.
-- `position` - the offset, which may be negative.
+- `position` - the offset, which may be negative; 64 bits on every
+  machine.
 - `mode` - what it counts from: `OFFSET_BEGINNING`, `OFFSET_CURRENT` or
   `OFFSET_END`.
 
@@ -6273,7 +6274,9 @@ before the start or past the end, ...).
 
 The handle's buffer is flushed first - waiting bytes written, read-ahead
 given back - so the handler's position is the caller's. Then
-`ACTION_SEEK` moves it. `Seek(fh, 0, OFFSET_CURRENT)` is how the
+`ACTION_SEEK` moves it: the packet carries the position in `SeekArgs`,
+and the handler answers DOSTRUE with the old position in its `answer`,
+or DOSFALSE with the error. `Seek(fh, 0, OFFSET_CURRENT)` is how the
 position is read.
 
 **CONTEXT**
@@ -6286,6 +6289,11 @@ position is read.
 **OWNERSHIP**
 
 Nothing is allocated.
+
+**NOTES**
+
+- Position and result are 64 bits on every machine, so a file past
+  2 GiB is reached on a 32-bit one too.
 
 **BUGS**
 
@@ -6832,7 +6840,7 @@ Sets the size of an open file.
 **SYNOPSIS**
 
 ```zig
-fn SetFileSize(db: *DosBase, file: ?*FileHandle, offset: isize, mode: i32) isize
+fn SetFileSize(db: *DosBase, file: ?*FileHandle, offset: i64, mode: i32) i64
 ```
 
 **SINCE**
@@ -6842,7 +6850,8 @@ fn SetFileSize(db: *DosBase, file: ?*FileHandle, offset: isize, mode: i32) isize
 **INPUTS**
 
 - `file` - the handle.
-- `offset` - where the new end is, counted from `mode`.
+- `offset` - where the new end is, counted from `mode`; 64 bits on
+  every machine.
 - `mode` - `OFFSET_BEGINNING`, `OFFSET_CURRENT` or `OFFSET_END`.
 
 **RESULT**
@@ -6854,8 +6863,9 @@ code).
 **BEHAVIOR**
 
 The buffer is flushed first, so waiting bytes are in the file before it
-is cut. Then `ACTION_SET_FILE_SIZE` goes to the handler; bytes a grown
-file gains are 0.
+is cut. Then `ACTION_SET_FILE_SIZE` goes to the handler, the offset in
+`SeekArgs`; it answers DOSTRUE with the new size in its `answer`, or
+DOSFALSE with the error. Bytes a grown file gains are 0.
 
 **CONTEXT**
 
@@ -6867,6 +6877,11 @@ file gains are 0.
 **OWNERSHIP**
 
 Nothing is allocated.
+
+**NOTES**
+
+- Offset and result are 64 bits on every machine, so a file past 2 GiB
+  is sized on a 32-bit one too.
 
 **BUGS**
 

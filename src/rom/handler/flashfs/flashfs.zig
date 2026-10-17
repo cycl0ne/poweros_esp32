@@ -33,7 +33,7 @@ const disk = @import("disk.zig");
 
 pub const HANDLER_NAME = "flashfs-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 4;
+const HANDLER_REVISION = 5;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++

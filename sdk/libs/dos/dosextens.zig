@@ -144,12 +144,20 @@ pub const IOArgs = extern struct {
     length: isize,
 };
 
-/// SEEK's arguments; it answers the old position, or -1.
+/// SEEK and SET_FILE_SIZE's arguments. The position is 64 bits on every
+/// machine, two slots where a slot is 32 bits, so a file past 2 GiB is
+/// reached there too. The handler answers DOSTRUE with `answer` set, or
+/// DOSFALSE with the error in dp_Res2.
 pub const SeekArgs = extern struct {
     fh: ?*FileHandle,
-    position: isize,
+    /// Where to, counted from `mode`: the new position (SEEK), the new end
+    /// (SET_FILE_SIZE).
+    position: i64 align(4),
     /// OFFSET_BEGINNING, OFFSET_CURRENT or OFFSET_END.
     mode: isize,
+    /// Written by the handler: the old position (SEEK), the new size
+    /// (SET_FILE_SIZE).
+    answer: i64 align(4) = 0,
 };
 
 /// EXAMINE_OBJECT and EXAMINE_NEXT's arguments.
@@ -237,6 +245,15 @@ pub const PacketArgs = extern union {
     info: InfoArgs,
     fh_from_lock: FhFromLockArgs,
 };
+
+// Every layout fits the seven slots, at a slot's alignment.
+comptime {
+    for (@typeInfo(PacketArgs).@"union".fields) |field| {
+        if (@sizeOf(field.type) > @sizeOf([7]isize))
+            @compileError("PacketArgs." ++ field.name ++ " is larger than a packet's seven slots");
+    }
+    if (@alignOf(PacketArgs) != @alignOf(isize)) @compileError("PacketArgs is aligned past a slot");
+}
 
 /// What a FileHandle's buffer holds.
 pub const BufferState = enum(u8) {

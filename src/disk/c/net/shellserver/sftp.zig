@@ -679,8 +679,8 @@ fn send(sys: *ExecBase, io: *exec.IOStdReq, bytes: []const u8) bool {
     return sys.DoIO(&io.req) == 0;
 }
 
-/// The furthest a file is moved: Seek's offsets are 32 bits.
-const max_offset: u64 = 0x7FFF_FFFF;
+/// The furthest a file is moved: what Seek's 64-bit positions hold.
+const max_offset: u64 = 0x7FFF_FFFF_FFFF_FFFF;
 /// A position no offset matches: the next request seeks.
 const unknown_position: u64 = ~@as(u64, 0);
 const ticks_per_second = 50;

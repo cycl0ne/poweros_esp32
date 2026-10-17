@@ -96,5 +96,7 @@ pub fn GetVar(db: *DosBase, name: [*:0]const u8, buffer: [*]u8, size: isize, fla
     const total = dos_lib.Seek(fh, 0, dos.OFFSET_BEGINNING);
     const got = dos_lib.Read(fh, buffer, @intCast(room));
     if (total < 0 or got < 0) return -1;
-    return deliver(db, buffer[0..@intCast(got)], @intCast(total), buffer, room, binary, null_term);
+    // IoErr says the whole length, as far as its 32 bits go.
+    const whole: usize = if (total > 0x7FFF_FFFF) 0x7FFF_FFFF else @intCast(total);
+    return deliver(db, buffer[0..@intCast(got)], whole, buffer, room, binary, null_term);
 }

@@ -23,6 +23,15 @@ const dos = sdk.dos;
 const fat = dos.fat;
 
 const testing = std.testing;
+
+/// What a SEEK or SET_FILE_SIZE came back with: dp_Res1 and dp_Res2, and
+/// the handler's answer in the packet.
+const Moved = struct { reply: Answer, answer: i64 };
+
+/// A SEEK or SET_FILE_SIZE answered DOSTRUE with `answer`.
+fn answered(answer: i64) Moved {
+    return .{ .reply = .{ .res1 = dos.DOSTRUE, .res2 = 0 }, .answer = answer };
+}
 const notify_course = @import("_notify.zig");
 const cut_course = @import("_cut.zig");
 const TestMedia = @import("../testmedia.zig").TestMedia;
@@ -124,12 +133,19 @@ const Rig = struct {
         return rig.sendArgs(.read, .{ .io = .{ .fh = fh, .buffer = into.ptr, .length = @intCast(into.len) } }).res1;
     }
 
-    fn seek(rig: *Rig, fh: *FileHandle, position: isize, mode: i32) Answer {
-        return rig.sendArgs(.seek, .{ .seek = .{ .fh = fh, .position = position, .mode = mode } });
+    /// SEEK or SET_FILE_SIZE through the packet's SeekArgs.
+    fn sendSeek(rig: *Rig, action: dos.ActionCode, fh: *FileHandle, position: i64, mode: i32) Moved {
+        var pkt = DosPacket.init(action, .{ .seek = .{ .fh = fh, .position = position, .mode = mode } });
+        const reply = rig.fs.answer(&pkt);
+        return .{ .reply = reply, .answer = pkt.args.seek.answer };
     }
 
-    fn setSize(rig: *Rig, fh: *FileHandle, size: isize) Answer {
-        return rig.sendArgs(.set_file_size, .{ .seek = .{ .fh = fh, .position = size, .mode = dos.OFFSET_BEGINNING } });
+    pub fn seek(rig: *Rig, fh: *FileHandle, position: i64, mode: i32) Moved {
+        return rig.sendSeek(.seek, fh, position, mode);
+    }
+
+    pub fn setSize(rig: *Rig, fh: *FileHandle, size: i64) Moved {
+        return rig.sendSeek(.set_file_size, fh, size, dos.OFFSET_BEGINNING);
     }
 
     pub fn close(rig: *Rig, fh: *FileHandle) !void {
@@ -429,11 +445,11 @@ test "a file cut short gives clusters back, and grown reads as zeroes" {
 
     var fh: FileHandle = undefined;
     try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findupdate, "cut.bin").res1);
-    try testing.expectEqual(@as(isize, 1000), rig.setSize(&fh, 1000).res1);
+    try testing.expectEqual(answered(1000), rig.setSize(&fh, 1000));
     try testing.expectEqual(free - 1, try rig.freeClusters());
     // Grown: the size moves, the clusters are taken, and what was not
     // written reads as zeroes - also where the old bytes still lie.
-    try testing.expectEqual(@as(isize, 200_000), rig.setSize(&fh, 200_000).res1);
+    try testing.expectEqual(answered(200_000), rig.setSize(&fh, 200_000));
     try testing.expectEqual(free - 2, try rig.freeClusters());
     try rig.close(&fh);
 
@@ -765,20 +781,18 @@ test "a file past 4 GiB: its true size, and read at the far end" {
     rig.unlock(held);
     var fh: FileHandle = undefined;
     try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findinput, "film.mp4").res1);
-    // To 100 bytes before the end: the old position (0) fits an isize.
-    try testing.expectEqual(@as(isize, 0), rig.seek(&fh, -100, dos.OFFSET_END).res1);
+    // To 100 bytes before the end, from the start.
+    try testing.expectEqual(answered(0), rig.seek(&fh, -100, dos.OFFSET_END));
     var tail: [100]u8 = undefined;
     try testing.expectEqual(@as(isize, 100), rig.read(&fh, &tail));
     try testing.expectEqualStrings("END!", tail[96..]);
-    // From there, the old position is five GiB. Where an isize is 32 bits,
-    // as on the machine, SEEK cannot answer it and says so; where it is 64,
-    // as on the host running these tests, it answers it.
-    const back = rig.seek(&fh, 0, dos.OFFSET_BEGINNING);
-    if (@bitSizeOf(isize) == 32) {
-        try testing.expectEqual(dos.ERROR_SEEK_ERROR, back.res2);
-    } else {
-        try testing.expectEqual(@as(isize, @intCast(five)), back.res1);
-    }
+    // From there, the old position is five GiB, which the packet's 64-bit
+    // answer holds on every machine; and five GiB less four bytes goes in
+    // as a position.
+    try testing.expectEqual(answered(@intCast(five)), rig.seek(&fh, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(answered(0), rig.seek(&fh, @intCast(five - 4), dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(isize, 4), rig.read(&fh, tail[0..4]));
+    try testing.expectEqualStrings("END!", tail[0..4]);
     try rig.close(&fh);
 }
 
@@ -932,7 +946,7 @@ test "a volume this made, written out for fsck.exfat if asked" {
     pattern(&big, 4);
     try rig.writeFile("cut.bin", &big);
     try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findupdate, "cut.bin").res1);
-    try testing.expectEqual(@as(isize, 9000), rig.setSize(&fh, 9000).res1);
+    try testing.expectEqual(answered(9000), rig.setSize(&fh, 9000));
     try rig.close(&fh);
     try rig.writeFile("gone", "x");
     try testing.expectEqual(dos.DOSTRUE, rig.delete("gone").res1);

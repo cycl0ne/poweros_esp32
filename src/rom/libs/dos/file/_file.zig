@@ -9,7 +9,10 @@
 //! DupLockFromFH and ParentOfFH. Every packet about an open file carries
 //! the FileHandle, so a handler with many files open knows which one is
 //! meant. Read and Write answer a count (0 at the end) or -1, Seek the old
-//! position or -1, and IoErr() holds the reason for a -1.
+//! position or -1, and IoErr() holds the reason for a -1. A position is 64
+//! bits on every machine: SEEK and SET_FILE_SIZE carry it in SeekArgs, two
+//! slots where a slot is 32 bits, and the handler gives its answer back in
+//! the same packet.
 //!
 //! Open takes three modes, one per packet: MODE_OLDFILE (FINDINPUT),
 //! MODE_NEWFILE (FINDOUTPUT) and MODE_READWRITE (FINDUPDATE); anything else
@@ -121,8 +124,8 @@ pub fn openOnPort(db: *DosBase, port: *sdk.exec.MsgPort, name: [*:0]const u8, mo
     return fh;
 }
 
-/// Sends a packet about an open file - READ, WRITE, SEEK, SET_FILE_SIZE -
-/// as (fh, arg2, arg3) to its handler.
+/// Sends a packet about an open file - READ, WRITE - as (fh, arg2, arg3)
+/// to its handler.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -183,8 +186,36 @@ pub fn rawWrite(db: *DosBase, fh: *FileHandle, buffer: [*]const u8, length: isiz
 ///
 /// RESULT:
 /// The old position, or -1 with `IoErr()` set.
-pub fn rawSeek(db: *DosBase, fh: *FileHandle, position: isize, mode: i32) isize {
-    return fileAction(db, fh, .seek, position, mode);
+pub fn rawSeek(db: *DosBase, fh: *FileHandle, position: i64, mode: i32) i64 {
+    return positionAction(db, fh, .seek, position, mode);
+}
+
+/// Sends SEEK or SET_FILE_SIZE about an open file to its handler, the
+/// position in `SeekArgs`.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the handle.
+/// - `action` - `.seek` or `.set_file_size`.
+/// - `position` - the offset.
+/// - `mode` - `OFFSET_BEGINNING`, `OFFSET_CURRENT` or `OFFSET_END`.
+///
+/// RESULT:
+/// The handler's `answer` when it says DOSTRUE - the old position, the
+/// new size. -1 when it says DOSFALSE, with dp_Res2 as `IoErr()`; -1 with
+/// `ERROR_INVALID_LOCK` for a handle without a handler, and with
+/// `ERROR_NO_FREE_STORE` when no packet can be sent.
+pub fn positionAction(db: *DosBase, fh: *FileHandle, action: ActionCode, position: i64, mode: i32) i64 {
+    const port = fh.task orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
+    // exchange carries dp_Arg1 to dp_Arg5; the answer is the handler's.
+    comptime if (@offsetOf(dos.SeekArgs, "answer") > 5 * @sizeOf(isize)) @compileError("SeekArgs past five slots");
+    var sent: dos.PacketArgs = .{ .raw = @splat(0) };
+    sent.seek = .{ .fh = fh, .position = position, .mode = mode };
+    const answer = packets.exchange(db.sys_base, port, @intFromEnum(action), sent.raw[0..5].*) orelse
+        return failWith(db, dos.ERROR_NO_FREE_STORE, -1);
+    if (answer.res1 == dos.DOSFALSE) return failWith(db, answer.res2, -1);
+    const back: dos.PacketArgs = .{ .raw = answer.args };
+    return back.seek.answer;
 }
 
 /// Sends a console's packet - SCREEN_MODE, WAIT_CHAR - with its one

@@ -105,7 +105,7 @@ fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, length: *u32) ?[*]u
     if (size <= 0 or size > limit) return null;
     const memory = sys.AllocVec(@intCast(size), exec.MEMF_ANY) orelse return null;
     const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, size) != size) {
+    if (dl.Read(file, bytes, @intCast(size)) != size) {
         sys.FreeVec(memory);
         return null;
     }

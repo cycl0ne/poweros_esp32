@@ -20,8 +20,8 @@ const Process = dos.Process;
 
 pub const HANDLER_NAME = "nil-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "15.9.2026";
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -30,10 +30,15 @@ const HANDLER_VERSION_STRING =
 pub const Answer = struct { res1: isize, res2: i32 };
 
 /// NIL:'s answer to a packet: EOF for reads, the whole length for writes,
-/// yes for opening and closing, and "not known" for the rest.
-pub fn nilAnswer(pkt: *const DosPacket) Answer {
+/// position 0 for a seek, yes for opening and closing, and "not known" for
+/// the rest.
+pub fn nilAnswer(pkt: *DosPacket) Answer {
     return switch (pkt.getAction()) {
-        .read, .seek => .{ .res1 = 0, .res2 = 0 },
+        .read => .{ .res1 = 0, .res2 = 0 },
+        .seek => {
+            pkt.args.seek.answer = 0;
+            return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
+        },
         .write => .{ .res1 = pkt.args.raw[2], .res2 = 0 }, // dp_Arg3: the length
         .findinput, .findoutput, .findupdate, .end => .{ .res1 = dos.DOSTRUE, .res2 = 0 },
         .is_filesystem => .{ .res1 = dos.DOSFALSE, .res2 = 0 },
@@ -93,6 +98,9 @@ test "NIL: reads as empty, takes every write, knows little else" {
     try testing.expectEqual(Answer{ .res1 = 5, .res2 = 0 }, nilAnswer(&pkt));
     pkt.action = @intFromEnum(dos.ActionCode.read);
     try testing.expectEqual(Answer{ .res1 = 0, .res2 = 0 }, nilAnswer(&pkt));
+    var seek = DosPacket.init(.seek, .{ .seek = .{ .fh = null, .position = 10, .mode = dos.OFFSET_BEGINNING, .answer = 7 } });
+    try testing.expectEqual(Answer{ .res1 = dos.DOSTRUE, .res2 = 0 }, nilAnswer(&seek));
+    try testing.expectEqual(@as(i64, 0), seek.args.seek.answer);
     pkt.action = @intFromEnum(dos.ActionCode.findinput);
     try testing.expectEqual(Answer{ .res1 = dos.DOSTRUE, .res2 = 0 }, nilAnswer(&pkt));
     pkt.action = @intFromEnum(dos.ActionCode.end);

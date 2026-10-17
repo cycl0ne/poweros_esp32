@@ -13,14 +13,15 @@ const FileHandle = dos.FileHandle;
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn Seek(db: *DosBase, file: ?*FileHandle, position: isize, mode: i32) isize
+/// fn Seek(db: *DosBase, file: ?*FileHandle, position: i64, mode: i32) i64
 /// ```
 ///
 /// SINCE: 1.0. LVO -208.
 ///
 /// INPUTS:
 /// - `file` - the handle.
-/// - `position` - the offset, which may be negative.
+/// - `position` - the offset, which may be negative; 64 bits on every
+///   machine.
 /// - `mode` - what it counts from: `OFFSET_BEGINNING`, `OFFSET_CURRENT` or
 ///   `OFFSET_END`.
 ///
@@ -32,7 +33,9 @@ const FileHandle = dos.FileHandle;
 /// BEHAVIOR:
 /// The handle's buffer is flushed first - waiting bytes written, read-ahead
 /// given back - so the handler's position is the caller's. Then
-/// `ACTION_SEEK` moves it. `Seek(fh, 0, OFFSET_CURRENT)` is how the
+/// `ACTION_SEEK` moves it: the packet carries the position in `SeekArgs`,
+/// and the handler answers DOSTRUE with the old position in its `answer`,
+/// or DOSFALSE with the error. `Seek(fh, 0, OFFSET_CURRENT)` is how the
 /// position is read.
 ///
 /// CONTEXT:
@@ -43,6 +46,10 @@ const FileHandle = dos.FileHandle;
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
+///
+/// NOTES:
+/// - Position and result are 64 bits on every machine, so a file past
+///   2 GiB is reached on a 32-bit one too.
 ///
 /// BUGS:
 /// None known.
@@ -55,7 +62,7 @@ const FileHandle = dos.FileHandle;
 /// const old = dos_lib.Seek(fh, 0, dos.OFFSET_END);
 /// const size = dos_lib.Seek(fh, old, dos.OFFSET_BEGINNING);
 /// ```
-pub fn Seek(db: *DosBase, file: ?*FileHandle, position: isize, mode: i32) isize {
+pub fn Seek(db: *DosBase, file: ?*FileHandle, position: i64, mode: i32) i64 {
     const fh = file orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
     if (!_file.flush(db, fh)) return -1;
     return rawSeek(db, fh, position, mode);

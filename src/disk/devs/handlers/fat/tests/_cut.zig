@@ -22,7 +22,7 @@
 //! medium in the wrong order, and the test sees it.
 //!
 //! `Rig` is either test file's. Besides the packets (`open`, `read`,
-//! `close`, `sendArgs`, `writeFile`, `mkdir`, `delete`, `rename`) it has `init`, `deinit`, `testMedia`, `fillFree`,
+//! `close`, `sendArgs`, `setSize`, `writeFile`, `mkdir`, `delete`, `rename`) it has `init`, `deinit`, `testMedia`, `fillFree`,
 //! `startAllocationFar`, `restartAfterCut`, `checkTree` and
 //! `cleanOnMedium`, and `full_dir_files`: how many files of a short name
 //! fill a new directory's one cluster.
@@ -128,12 +128,13 @@ fn perform(rig: anytype, step: Step) !void {
             try rig.writeFile(subject(step), new[0..new_bytes]);
         },
         .shorten, .extend => {
-            const size: isize = if (step == .shorten) new_bytes else long_bytes;
+            const size: i64 = if (step == .shorten) new_bytes else long_bytes;
             if (step == .extend) rig.startAllocationFar();
             var fh: FileHandle = undefined;
             try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findupdate, subject(step)).res1);
-            const sized = rig.sendArgs(.set_file_size, .{ .seek = .{ .fh = &fh, .position = size, .mode = dos.OFFSET_BEGINNING } });
-            try testing.expectEqual(size, sized.res1);
+            const sized = rig.setSize(&fh, size);
+            try testing.expectEqual(dos.DOSTRUE, sized.reply.res1);
+            try testing.expectEqual(size, sized.answer);
             try rig.close(&fh);
         },
         .rename => try testing.expectEqual(dos.DOSTRUE, rig.rename(subject(step), "D/G").res1),

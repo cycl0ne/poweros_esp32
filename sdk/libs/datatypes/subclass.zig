@@ -79,6 +79,7 @@ pub fn readWhole(sys: *ExecBase, dl: *DosBase, lock: ?*dos.FileLock) Read {
     if (dl.Seek(file, 0, dos.OFFSET_END) < 0) return .no_file;
     const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
     if (size <= 0) return .no_file;
+    if (size > ~@as(usize, 0)) return .too_large; // more than an address can say
     const length: usize = @intCast(size);
     if (!roomFor(sys, length)) return .too_large;
     const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return .too_large;

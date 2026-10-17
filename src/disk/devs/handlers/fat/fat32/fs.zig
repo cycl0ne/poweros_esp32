@@ -149,7 +149,7 @@ fn no(err: Error) Answer {
     return _fat.no(_fat.codeOf(err));
 }
 
-/// For READ, WRITE, SEEK and SET_FILE_SIZE, which answer -1 on failure.
+/// For READ and WRITE, which answer -1 on failure.
 fn minusOne(err: Error) Answer {
     return .{ .res1 = -1, .res2 = _fat.codeOf(err) };
 }
@@ -1168,7 +1168,9 @@ pub fn FileSystem(comptime Media: type) type {
                 dos.OFFSET_END => size,
                 else => return error.SeekError,
             };
-            const target = from + args.position;
+            const sum = @addWithOverflow(from, args.position);
+            if (sum[1] != 0) return error.SeekError;
+            const target = sum[0];
             if (target < 0 or target > size) return error.SeekError;
             const old = lock.pos;
             lock.pos = @intCast(target);
@@ -1201,7 +1203,9 @@ pub fn FileSystem(comptime Media: type) type {
                 dos.OFFSET_END => key.size,
                 else => return error.SeekError,
             };
-            const target = from + args.position;
+            const sum = @addWithOverflow(from, args.position);
+            if (sum[1] != 0) return error.SeekError;
+            const target = sum[0];
             if (target < 0) return error.SeekError;
             if (target > max_size) return error.DiskFull;
             const size: u32 = @intCast(target);
@@ -1538,8 +1542,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return .{ .res1 = @intCast(count), .res2 = 0 };
                 },
                 .seek => {
-                    const old = fs.seek(pkt.args.seek) catch |err| return minusOne(err);
-                    return .{ .res1 = @intCast(old), .res2 = 0 };
+                    pkt.args.seek.answer = fs.seek(pkt.args.seek) catch |err| return no(err);
+                    return yes();
                 },
                 .end => {
                     fs.close(pkt.args.file) catch |err| {
@@ -1582,8 +1586,8 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .set_file_size => {
-                    const size = fs.setFileSize(pkt.args.seek) catch |err| return minusOne(err);
-                    return .{ .res1 = @intCast(size), .res2 = 0 };
+                    pkt.args.seek.answer = fs.setFileSize(pkt.args.seek) catch |err| return no(err);
+                    return yes();
                 },
                 .parent_fh, .copy_dir_fh => {
                     const lock = fs.fileOf(pkt.args.file.fh) catch |err| return no(err);

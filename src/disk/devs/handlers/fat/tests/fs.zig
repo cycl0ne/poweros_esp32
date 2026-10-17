@@ -19,6 +19,15 @@ const exec = sdk.exec;
 const fat = dos.fat;
 
 const testing = std.testing;
+
+/// What a SEEK or SET_FILE_SIZE came back with: dp_Res1 and dp_Res2, and
+/// the handler's answer in the packet.
+const Moved = struct { reply: Answer, answer: i64 };
+
+/// A SEEK or SET_FILE_SIZE answered DOSTRUE with `answer`.
+fn answered(answer: i64) Moved {
+    return .{ .reply = .{ .res1 = dos.DOSTRUE, .res2 = 0 }, .answer = answer };
+}
 const notify_course = @import("_notify.zig");
 const cut_course = @import("_cut.zig");
 
@@ -96,6 +105,21 @@ const Rig = struct {
 
     pub fn read(rig: *Rig, fh: *FileHandle, into: []u8) isize {
         return rig.sendArgs(.read, .{ .io = .{ .fh = fh, .buffer = into.ptr, .length = @intCast(into.len) } }).res1;
+    }
+
+    /// SEEK or SET_FILE_SIZE through the packet's SeekArgs.
+    fn sendSeek(rig: *Rig, action: dos.ActionCode, fh: *FileHandle, position: i64, mode: i32) Moved {
+        var pkt = DosPacket.init(action, .{ .seek = .{ .fh = fh, .position = position, .mode = mode } });
+        const reply = rig.fs.answer(&pkt);
+        return .{ .reply = reply, .answer = pkt.args.seek.answer };
+    }
+
+    pub fn seek(rig: *Rig, fh: *FileHandle, position: i64, mode: i32) Moved {
+        return rig.sendSeek(.seek, fh, position, mode);
+    }
+
+    pub fn setSize(rig: *Rig, fh: *FileHandle, size: i64) Moved {
+        return rig.sendSeek(.set_file_size, fh, size, dos.OFFSET_BEGINNING);
     }
 
     pub fn close(rig: *Rig, fh: *FileHandle) !void {
@@ -394,12 +418,14 @@ test "writing over the middle of a file, and past its end" {
 
     var fh: FileHandle = undefined;
     try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findupdate, "f").res1);
-    try testing.expectEqual(@as(isize, 0), rig.sendArgs(.seek, .{ .seek = .{ .fh = &fh, .position = 3, .mode = dos.OFFSET_BEGINNING } }).res1);
+    try testing.expectEqual(answered(0), rig.seek(&fh, 3, dos.OFFSET_BEGINNING));
     try testing.expectEqual(@as(isize, 4), rig.write(&fh, "bbbb"));
-    try testing.expectEqual(@as(isize, 7), rig.sendArgs(.seek, .{ .seek = .{ .fh = &fh, .position = 0, .mode = dos.OFFSET_END } }).res1);
+    try testing.expectEqual(answered(7), rig.seek(&fh, 0, dos.OFFSET_END));
     try testing.expectEqual(@as(isize, 3), rig.write(&fh, "ccc"));
     // Past the end is not somewhere a seek goes.
-    try testing.expectEqual(@as(isize, -1), rig.sendArgs(.seek, .{ .seek = .{ .fh = &fh, .position = 1, .mode = dos.OFFSET_END } }).res1);
+    const refused: Moved = .{ .reply = .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_SEEK_ERROR }, .answer = 0 };
+    try testing.expectEqual(refused, rig.seek(&fh, 1, dos.OFFSET_END));
+    try testing.expectEqual(refused, rig.seek(&fh, std.math.maxInt(i64), dos.OFFSET_CURRENT));
     try rig.close(&fh);
 
     var buffer: [32]u8 = undefined;
@@ -419,9 +445,9 @@ test "a file cut short gives clusters back, and grows with zeroes" {
 
     var fh: FileHandle = undefined;
     try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findupdate, "f").res1);
-    try testing.expectEqual(@as(isize, 40_000), rig.sendArgs(.set_file_size, .{ .seek = .{ .fh = &fh, .position = 40_000, .mode = dos.OFFSET_BEGINNING } }).res1);
+    try testing.expectEqual(answered(40_000), rig.setSize(&fh, 40_000));
     try testing.expectEqual(before - 2, try rig.freeClusters());
-    try testing.expectEqual(@as(isize, 41_000), rig.sendArgs(.set_file_size, .{ .seek = .{ .fh = &fh, .position = 41_000, .mode = dos.OFFSET_BEGINNING } }).res1);
+    try testing.expectEqual(answered(41_000), rig.setSize(&fh, 41_000));
     try rig.close(&fh);
 
     const back = try testing.allocator.alloc(u8, 50_000);

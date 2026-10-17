@@ -475,7 +475,7 @@ fn lvoRead(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize) callc
 fn lvoWrite(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isize) callconv(.c) isize {
     return Write(db, file, buffer, length);
 }
-fn lvoSeek(db: *DosBase, file: ?*FileHandle, position: isize, mode: i32) callconv(.c) isize {
+fn lvoSeek(db: *DosBase, file: ?*FileHandle, position: i64, mode: i32) callconv(.c) i64 {
     return Seek(db, file, position, mode);
 }
 fn lvoInput(db: *DosBase) callconv(.c) ?*FileHandle {
@@ -595,7 +595,7 @@ fn lvoSetFileDate(db: *DosBase, name: [*:0]const u8, date: *const dos.DateStamp)
 fn lvoSetOwner(db: *DosBase, name: [*:0]const u8, owner_info: u32) callconv(.c) bool {
     return SetOwner(db, name, owner_info);
 }
-fn lvoSetFileSize(db: *DosBase, file: ?*FileHandle, offset: isize, mode: i32) callconv(.c) isize {
+fn lvoSetFileSize(db: *DosBase, file: ?*FileHandle, offset: i64, mode: i32) callconv(.c) i64 {
     return SetFileSize(db, file, offset, mode);
 }
 fn lvoDupLockFromFH(db: *DosBase, file: ?*FileHandle) callconv(.c) ?*FileLock {

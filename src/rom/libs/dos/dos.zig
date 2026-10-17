@@ -791,9 +791,11 @@ const FakeFs = struct {
     var calls: u32 = 0;
     var action: dos.ActionCode = .nil;
     var args: [7]isize = @splat(0);
+    /// The last SEEK or SET_FILE_SIZE's arguments, read through its view.
+    var seek: dos.SeekArgs = .{ .fh = null, .position = 0, .mode = 0 };
     /// ACTION_SAME_LOCK's answer; null: not known.
     var same: ?bool = null;
-    /// READ, WRITE, SEEK and END fail.
+    /// READ, WRITE, SEEK, SET_FILE_SIZE and END fail.
     var io_fail: bool = false;
     var root: FileLock = .{ .key = 1, .task = &port };
     var dir: FileLock = .{ .key = 2, .task = &port };
@@ -841,15 +843,19 @@ const FakeFs = struct {
                 pkt.args.find.fh.?.key = &dir;
                 res1 = dos.DOSTRUE;
             },
-            .read, .write, .seek => if (io_fail) {
+            .read, .write => if (io_fail) {
                 res1 = -1;
-                res2 = if (action == .seek) dos.ERROR_SEEK_ERROR else dos.ERROR_DISK_FULL;
+                res2 = dos.ERROR_DISK_FULL;
             } else {
-                res1 = switch (action) {
-                    .read => 7, // bytes "read"
-                    .write => args[2], // all of them
-                    else => 42, // the old position
-                };
+                res1 = if (action == .read) 7 else args[2]; // bytes "read"; all of them written
+            },
+            .seek, .set_file_size => if (io_fail) {
+                res2 = dos.ERROR_SEEK_ERROR;
+            } else {
+                seek = pkt.args.seek;
+                // The old position, the new size: past what 32 bits hold.
+                pkt.args.seek.answer = (5 << 30) + 42;
+                res1 = dos.DOSTRUE;
             },
             .end => if (io_fail) {
                 res2 = dos.ERROR_DISK_FULL;
@@ -1093,14 +1099,26 @@ test "Read, Write, Seek: the handler's answers; -1 with IoErr; Close" {
     try testing.expectEqual(@as(isize, @bitCast(@intFromPtr(&buf))), FakeFs.args[1]);
     try testing.expectEqual(@as(isize, 16), FakeFs.args[2]);
     try testing.expectEqual(@as(isize, 5), dl.Write(fh, "hello", 5));
-    try testing.expectEqual(@as(isize, 42), dl.Seek(fh, 10, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, (5 << 30) + 42), dl.Seek(fh, 10, dos.OFFSET_BEGINNING));
     try testing.expectEqual(dos.ActionCode.seek, FakeFs.action);
-    try testing.expectEqual(@as(isize, dos.OFFSET_BEGINNING), FakeFs.args[2]);
+    try testing.expectEqual(@as(?*FileHandle, fh), FakeFs.seek.fh);
+    try testing.expectEqual(@as(i64, 10), FakeFs.seek.position);
+    try testing.expectEqual(@as(isize, dos.OFFSET_BEGINNING), FakeFs.seek.mode);
+    // A position past 32 bits goes to the handler whole, and so does a size.
+    _ = dl.Seek(fh, 6 << 30, dos.OFFSET_CURRENT);
+    try testing.expectEqual(@as(i64, 6 << 30), FakeFs.seek.position);
+    try testing.expectEqual(@as(isize, dos.OFFSET_CURRENT), FakeFs.seek.mode);
+    try testing.expectEqual(@as(i64, (5 << 30) + 42), dl.SetFileSize(fh, -(7 << 30), dos.OFFSET_END));
+    try testing.expectEqual(dos.ActionCode.set_file_size, FakeFs.action);
+    try testing.expectEqual(@as(i64, -(7 << 30)), FakeFs.seek.position);
+    try testing.expectEqual(@as(isize, dos.OFFSET_END), FakeFs.seek.mode);
 
     FakeFs.io_fail = true;
     try testing.expectEqual(@as(isize, -1), dl.Write(fh, "x", 1));
     try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
-    try testing.expectEqual(@as(isize, -1), dl.Seek(fh, 0, dos.OFFSET_END));
+    try testing.expectEqual(@as(i64, -1), dl.Seek(fh, 0, dos.OFFSET_END));
+    try testing.expectEqual(dos.ERROR_SEEK_ERROR, dl.IoErr());
+    try testing.expectEqual(@as(i64, -1), dl.SetFileSize(fh, 0, dos.OFFSET_END));
     try testing.expectEqual(dos.ERROR_SEEK_ERROR, dl.IoErr());
     try testing.expectEqual(@as(isize, -1), dl.Read(null, &buf, 1));
     try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
@@ -1183,7 +1201,7 @@ test "Open, Write, Seek, Read, Close on a RAM: disk" {
     var back: [5000]u8 = undefined;
     const out = dl.Open("RAMT:file", dos.MODE_NEWFILE).?;
     try testing.expectEqual(@as(isize, 3000), dl.Write(out, &data, data.len));
-    try testing.expectEqual(@as(isize, 3000), dl.Seek(out, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, 3000), dl.Seek(out, 0, dos.OFFSET_BEGINNING));
     try testing.expectEqual(@as(isize, 3000), dl.Read(out, &back, 3000));
     try testing.expectEqualSlices(u8, &data, back[0..3000]);
     try testing.expect(dl.Close(out));
@@ -1191,7 +1209,7 @@ test "Open, Write, Seek, Read, Close on a RAM: disk" {
     const in = dl.Open("ramt:FILE", dos.MODE_OLDFILE).?;
     try testing.expectEqual(@as(isize, 3000), dl.Read(in, &back, back.len));
     try testing.expectEqual(@as(isize, 0), dl.Read(in, &back, back.len)); // the end
-    try testing.expectEqual(@as(isize, -1), dl.Seek(in, 1, dos.OFFSET_END));
+    try testing.expectEqual(@as(i64, -1), dl.Seek(in, 1, dos.OFFSET_END));
     try testing.expectEqual(dos.ERROR_SEEK_ERROR, dl.IoErr());
     try testing.expect(dl.Close(in));
     try testing.expect(dl.Open("RAMT:none", dos.MODE_OLDFILE) == null);
@@ -2124,7 +2142,7 @@ test "SetFileSize: grown with zeroes, cut, another handle moved back, bad sizes"
 
     const fh = dl.Open("RAMT:f", dos.MODE_READWRITE).?;
     try testing.expectEqual(@as(isize, 5), dl.Write(fh, "hello", 5));
-    try testing.expectEqual(@as(isize, 3000), dl.SetFileSize(fh, 3000, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, 3000), dl.SetFileSize(fh, 3000, dos.OFFSET_BEGINNING));
     _ = dl.Seek(fh, 0, dos.OFFSET_BEGINNING);
     try testing.expectEqual(@as(isize, 3000), dl.Read(fh, &buf, buf.len));
     try testing.expectEqualStrings("hello", buf[0..5]);
@@ -2132,15 +2150,15 @@ test "SetFileSize: grown with zeroes, cut, another handle moved back, bad sizes"
 
     const other = dl.Open("RAMT:f", dos.MODE_READWRITE).?;
     _ = dl.Seek(other, 2500, dos.OFFSET_BEGINNING);
-    try testing.expectEqual(@as(isize, 2), dl.SetFileSize(fh, 2, dos.OFFSET_BEGINNING));
-    try testing.expectEqual(@as(isize, 2), dl.Seek(other, 0, dos.OFFSET_CURRENT)); // moved back to the end
-    try testing.expectEqual(@as(isize, 3), dl.SetFileSize(fh, 1, dos.OFFSET_END));
+    try testing.expectEqual(@as(i64, 2), dl.SetFileSize(fh, 2, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, 2), dl.Seek(other, 0, dos.OFFSET_CURRENT)); // moved back to the end
+    try testing.expectEqual(@as(i64, 3), dl.SetFileSize(fh, 1, dos.OFFSET_END));
     _ = dl.Seek(fh, 0, dos.OFFSET_BEGINNING);
     try testing.expectEqual(@as(isize, 3), dl.Read(fh, &buf, buf.len));
     try testing.expectEqualSlices(u8, "he\x00", buf[0..3]); // the old "l" is gone
-    try testing.expectEqual(@as(isize, -1), dl.SetFileSize(fh, -5, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, -1), dl.SetFileSize(fh, -5, dos.OFFSET_BEGINNING));
     try testing.expectEqual(dos.ERROR_SEEK_ERROR, dl.IoErr());
-    try testing.expectEqual(@as(isize, -1), dl.SetFileSize(null, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, -1), dl.SetFileSize(null, 0, dos.OFFSET_BEGINNING));
     try testing.expect(dl.Close(other));
     try testing.expect(dl.Close(fh));
     RamFs.disk.deinit();
@@ -2322,7 +2340,7 @@ test "FGetC, UnGetC, FGets: one READ for the buffer, the end not sticky" {
     const fresh = dl.Open("RAMT:f", dos.MODE_OLDFILE).?;
     try testing.expect(dl.UnGetC(fresh, 'z'));
     try testing.expect(dl.Flush(fresh));
-    try testing.expectEqual(@as(isize, 0), dl.Seek(fresh, 0, dos.OFFSET_CURRENT));
+    try testing.expectEqual(@as(i64, 0), dl.Seek(fresh, 0, dos.OFFSET_CURRENT));
     try testing.expect(dl.Close(fresh));
 
     RamFs.disk.deinit();
@@ -2378,7 +2396,7 @@ test "buffered and unbuffered calls mix on one handle" {
     try testing.expectEqual(@as(isize, 3), dl.Read(fh, &three, 3)); // from the read-ahead
     try testing.expectEqualStrings("123", &three);
     try testing.expectEqual(@as(i32, '4'), dl.FGetC(fh));
-    try testing.expectEqual(@as(isize, 5), dl.Seek(fh, 0, dos.OFFSET_CURRENT)); // read-ahead given back
+    try testing.expectEqual(@as(i64, 5), dl.Seek(fh, 0, dos.OFFSET_CURRENT)); // read-ahead given back
     try testing.expectEqual(@as(i32, '5'), dl.FGetC(fh));
     try testing.expectEqual(@as(isize, 1), dl.Write(fh, "X", 1)); // at 6
     try testing.expectEqual(@as(i32, '7'), dl.FGetC(fh));
@@ -2387,8 +2405,8 @@ test "buffered and unbuffered calls mix on one handle" {
     try testing.expect(dl.UnGetC(fh, -1));
     try testing.expect(dl.UnGetC(fh, 'q'));
     // '9' came from the file and goes back; 'q' is the caller's own.
-    try testing.expectEqual(@as(isize, 9), dl.Seek(fh, 0, dos.OFFSET_CURRENT));
-    try testing.expectEqual(@as(isize, 9), dl.Seek(fh, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i64, 9), dl.Seek(fh, 0, dos.OFFSET_CURRENT));
+    try testing.expectEqual(@as(i64, 9), dl.Seek(fh, 0, dos.OFFSET_BEGINNING));
     var all: [16]u8 = undefined;
     try testing.expectEqual(@as(isize, 10), dl.FRead(fh, &all, all.len));
     try testing.expectEqualStrings("012345X7Y9", all[0..10]);

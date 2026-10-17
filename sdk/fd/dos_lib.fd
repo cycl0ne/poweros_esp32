@@ -189,8 +189,8 @@ isize Read(?*dos.FileHandle file, [*]u8 buffer, isize length)
 /// Write `length` bytes: the number written, -1 on error.
 isize Write(?*dos.FileHandle file, [*]const u8 buffer, isize length)
 /// Move to `position` from OFFSET_BEGINNING, OFFSET_CURRENT or OFFSET_END:
-/// the old position, -1 on error. Not past the end.
-isize Seek(?*dos.FileHandle file, isize position, i32 mode)
+/// the old position, -1 on error. Not past the end. 64 bits on every machine.
+i64 Seek(?*dos.FileHandle file, i64 position, i32 mode)
 /// The process's input (pr_CIS); don't close it. Null from a plain task.
 ?*dos.FileHandle Input()
 /// The process's output (pr_COS); don't close it. Null from a plain task.
@@ -307,7 +307,8 @@ bool SetFileDate([*:0]const u8 name, *const dos.DateStamp date)
 bool SetOwner([*:0]const u8 name, u32 owner_info)
 /// Cut or grow an open file to `offset` from OFFSET_BEGINNING,
 /// OFFSET_CURRENT or OFFSET_END; new bytes are 0. The new size, or -1.
-isize SetFileSize(?*dos.FileHandle file, isize offset, i32 mode)
+/// 64 bits on every machine.
+i64 SetFileSize(?*dos.FileHandle file, i64 offset, i32 mode)
 /// A shared lock on an open file.
 ?*dos.FileLock DupLockFromFH(?*dos.FileHandle file)
 /// A shared lock on the directory an open file is in.

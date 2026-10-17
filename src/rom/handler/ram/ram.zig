@@ -29,9 +29,10 @@
 //! data block is ERROR_DISK_FULL; SAME_LOCK answers DOSTRUE; the property
 //! packets are (lock, name, value); SET_OWNER is answered; a null date for
 //! SET_DATE is now; SET_FILE_SIZE moves the handles past the new end back
-//! to it; INFO counts free memory as free space and refuses a bad lock
-//! with ERROR_INVALID_LOCK; a name with ':' is refused. No hard or soft
-//! links or record locks yet.
+//! to it; SEEK and SET_FILE_SIZE answer DOSTRUE with the old position or
+//! the new size in the packet's SeekArgs; INFO counts free memory as free
+//! space and refuses a bad lock with ERROR_INVALID_LOCK; a name with ':'
+//! is refused. No hard or soft links or record locks yet.
 //!
 //! **Notification** (ADD_NOTIFY, REMOVE_NOTIFY): the requests are kept by
 //! a `dos.notify.Watchers`, keyed by node. A file is told of when a
@@ -59,8 +60,8 @@ const notify = dos.notify;
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 2;
-const BUILD_DATE = "08.10.2026";
+const HANDLER_REVISION = 3;
+const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -185,7 +186,7 @@ fn no(e: Error) Answer {
     return .{ .res1 = dos.DOSFALSE, .res2 = errorCode(e) };
 }
 
-/// For READ, WRITE and SEEK, which answer -1 on failure.
+/// For READ and WRITE, which answer -1 on failure.
 fn minusOne(e: Error) Answer {
     return .{ .res1 = -1, .res2 = errorCode(e) };
 }
@@ -624,7 +625,9 @@ pub const RamDisk = struct {
             dos.OFFSET_END => size,
             else => return error.SeekError,
         };
-        const target = from + args.position;
+        const sum = @addWithOverflow(from, args.position);
+        if (sum[1] != 0) return error.SeekError;
+        const target = sum[0];
         if (target < 0 or target > size) return error.SeekError;
         const old = l.pos;
         l.pos = @intCast(target);
@@ -839,7 +842,9 @@ pub const RamDisk = struct {
             dos.OFFSET_END => @intCast(n.size),
             else => return error.SeekError,
         };
-        const target = from + args.position;
+        const sum = @addWithOverflow(from, args.position);
+        if (sum[1] != 0) return error.SeekError;
+        const target = sum[0];
         if (target < 0) return error.SeekError;
         const size: u64 = @intCast(target);
         if (size > n.size) try disk.growTo(n, size) else disk.cutTo(n, size);
@@ -966,8 +971,8 @@ pub const RamDisk = struct {
                 return .{ .res1 = @intCast(count), .res2 = 0 };
             },
             .seek => {
-                const old = disk.seek(pkt.args.seek) catch |e| return minusOne(e);
-                return .{ .res1 = @intCast(old), .res2 = 0 };
+                pkt.args.seek.answer = @intCast(disk.seek(pkt.args.seek) catch |e| return no(e));
+                return yes();
             },
             .end => {
                 disk.close(pkt.args.file) catch |e| return no(e);
@@ -990,8 +995,8 @@ pub const RamDisk = struct {
                 return yes();
             },
             .set_file_size => {
-                const size = disk.setFileSize(pkt.args.seek) catch |e| return minusOne(e);
-                return .{ .res1 = @intCast(size), .res2 = 0 };
+                pkt.args.seek.answer = @intCast(disk.setFileSize(pkt.args.seek) catch |e| return no(e));
+                return yes();
             },
             .parent_fh, .copy_dir_fh => {
                 const l = disk.fileOf(pkt.args.file.fh) catch |e| return no(e);
@@ -1108,6 +1113,16 @@ fn send(disk: *RamDisk, action: dos.ActionCode, args: [4]isize) Answer {
     return disk.answer(&pkt);
 }
 
+/// What a SEEK or SET_FILE_SIZE came back with: dp_Res1 and dp_Res2, and
+/// the handler's answer in the packet.
+const Moved = struct { reply: Answer, answer: i64 };
+
+fn sendSeek(disk: *RamDisk, action: dos.ActionCode, fh: *FileHandle, position: i64, mode: i32) Moved {
+    var pkt = DosPacket.init(action, .{ .seek = .{ .fh = fh, .position = position, .mode = mode } });
+    const reply = disk.answer(&pkt);
+    return .{ .reply = reply, .answer = pkt.args.seek.answer };
+}
+
 /// A lock from an answer, or a test failure.
 fn lockOf(reply: Answer) !isize {
     try testing.expect(reply.res1 != 0);
@@ -1189,15 +1204,18 @@ test "RAM: files: write across blocks, seek, read back, open modes" {
     try testing.expectEqual(Answer{ .res1 = 3000, .res2 = 0 }, send(&disk, .write, .{ arg(&out), arg(&pattern), 3000, 0 }));
     var in: FileHandle = .{};
     try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, send(&disk, .findinput, .{ arg(&in), 0, arg("RAM:f"), 0 }).res2);
-    try testing.expectEqual(Answer{ .res1 = 3000, .res2 = 0 }, send(&disk, .seek, .{ arg(&out), 0, dos.OFFSET_BEGINNING, 0 }));
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 3000 }, sendSeek(&disk, .seek, &out, 0, dos.OFFSET_BEGINNING));
     try testing.expectEqual(Answer{ .res1 = 3000, .res2 = 0 }, send(&disk, .read, .{ arg(&out), arg(&back), 5000, 0 }));
     try testing.expectEqualSlices(u8, &pattern, back[0..3000]);
     try testing.expectEqual(Answer{ .res1 = 0, .res2 = 0 }, send(&disk, .read, .{ arg(&out), arg(&back), 10, 0 })); // at the end
-    _ = send(&disk, .seek, .{ arg(&out), -10, dos.OFFSET_END, 0 });
+    _ = sendSeek(&disk, .seek, &out, -10, dos.OFFSET_END);
     try testing.expectEqual(Answer{ .res1 = 10, .res2 = 0 }, send(&disk, .read, .{ arg(&out), arg(&back), 20, 0 }));
     try testing.expectEqualSlices(u8, pattern[2990..], back[0..10]);
-    try testing.expectEqual(Answer{ .res1 = -1, .res2 = dos.ERROR_SEEK_ERROR }, send(&disk, .seek, .{ arg(&out), 1, dos.OFFSET_END, 0 }));
-    try testing.expectEqual(Answer{ .res1 = -1, .res2 = dos.ERROR_SEEK_ERROR }, send(&disk, .seek, .{ arg(&out), 0, 7, 0 }));
+    const refused = Moved{ .reply = no(error.SeekError), .answer = 0 };
+    try testing.expectEqual(refused, sendSeek(&disk, .seek, &out, 1, dos.OFFSET_END));
+    try testing.expectEqual(refused, sendSeek(&disk, .seek, &out, 0, 7));
+    try testing.expectEqual(refused, sendSeek(&disk, .seek, &out, std.math.maxInt(i64), dos.OFFSET_END));
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 3000 }, sendSeek(&disk, .set_file_size, &out, 0, dos.OFFSET_END));
     try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&out), 0, 0, 0 }));
     try testing.expect(out.key == null);
 

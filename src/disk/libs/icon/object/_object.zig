@@ -186,7 +186,7 @@ pub fn readWhole(base: *IconBase, path: [*:0]const u8) Read {
     const length: usize = @intCast(size);
     const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return .{ .failed = dos.ERROR_NO_FREE_STORE };
     const bytes: [*]u8 = @ptrCast(memory);
-    if (dl.Read(file, bytes, size) != size) {
+    if (dl.Read(file, bytes, @intCast(size)) != size) {
         const failure = dl.IoErr();
         sys.FreeVec(memory);
         return .{ .failed = if (failure != 0) failure else dos.ERROR_OBJECT_WRONG_TYPE };
