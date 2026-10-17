@@ -37,7 +37,9 @@ const activate = _window.activate;
 const backfill = _window.backfill;
 const bottom_border = _window.bottom_border;
 const closeWidth = _window.closeWidth;
+const closeWidthOf = _window.closeWidthOf;
 const depthWidth = _window.depthWidth;
+const depthWidthOf = _window.depthWidthOf;
 const disposeParts = _window.disposeParts;
 const drawBorder = _window.drawBorder;
 const flagIf = _window.flagIf;
@@ -269,9 +271,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     // the one to go without when the title bar is too narrow to hold it
     // beside the close and depth gadgets and leave a bar to drag by.
     if (flags & WF_HASZOOM != 0) {
-        var taken: i32 = zoomWidth(font_height);
-        if (flags & WF_CLOSE != 0) taken += closeWidth(font_height);
-        if (flags & WF_DEPTH != 0) taken += depthWidth(font_height);
+        const wide = _window.wideGadgets(ib);
+        var taken: i32 = zoomWidth(font_height, wide);
+        if (flags & WF_CLOSE != 0) taken += closeWidth(font_height, wide);
+        if (flags & WF_DEPTH != 0) taken += depthWidth(font_height, wide);
         if (taken > width) flags &= ~WF_HASZOOM;
     }
 
@@ -448,15 +451,15 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         w.frame = it.NewObjectTagList(ib.frame_class, null, &edges);
         if (w.frame == null) ok = false;
         if (flags & WF_CLOSE != 0) {
-            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, closeWidth(font_height), bt);
+            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, closeWidthOf(w), bt);
             if (w.close_image == null) ok = false;
         }
         if (flags & WF_DEPTH != 0) {
-            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depthWidth(font_height), bt);
+            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depthWidthOf(w), bt);
             if (w.depth_image == null) ok = false;
         }
         if (flags & WF_HASZOOM != 0) {
-            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, zoomWidth(font_height), bt);
+            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, depthWidthOf(w), bt);
             if (w.zoom_image == null) ok = false;
         }
         if (flags & WF_SIZE != 0) {

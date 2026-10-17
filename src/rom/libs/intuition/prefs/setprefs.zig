@@ -11,6 +11,12 @@ const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _prefs = @import("_prefs.zig");
 const _font = @import("../font/_font.zig");
 const _input = @import("../input/_input.zig");
+const _window = @import("../window/_window.zig");
+const _screen = @import("../screen/_screen.zig");
+const Window = _window.Window;
+const Screen = _screen.Screen;
+const Object = intuition.Object;
+const ic = intuition.imageclass;
 
 /// The system's settings changed.
 ///
@@ -46,6 +52,10 @@ const _input = @import("../input/_input.zig");
 ///   screen's edges, 0 or 1; anything else is refused. It holds from the
 ///   next move or size on: a window already past an edge stays there until
 ///   it is moved or sized.
+/// - `IPREFS_WideGadgets`: whether the gadgets in the title bars are wide,
+///   0 or 1; anything else is refused. Every screen's depth gadget and
+///   every window's close, depth and zoom gadgets take the width at once,
+///   and their bars are drawn again.
 /// - `IPREFS_ScreenFont`, `IPREFS_DefaultFont`, `IPREFS_FixedFont`: the
 ///   fonts screens, windows and consoles opened from now on use, as
 ///   `SetSystemFonts` sets them; one not given keeps the font it has.
@@ -73,7 +83,9 @@ const _input = @import("../input/_input.zig");
 /// - What `C:SetPrefs` calls at boot, from the files in `ENV:Sys`.
 ///
 /// BUGS:
-/// None known.
+/// - A window whose title bar only just held its close, depth and zoom
+///   gadgets when it opened has them overlap once they are made wide; a
+///   window that opens too narrow for them goes without the zoom gadget.
 ///
 /// SEE ALSO:
 /// `GetPrefs`, `GetDefPrefs`, `SetStyle`, `SetScreenPens`,
@@ -134,6 +146,14 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
                 ib.off_screen = @truncate(item.data);
                 told = true;
             },
+            intuition.IPREFS_WideGadgets => {
+                if (item.data > 1) {
+                    taken = false;
+                    continue;
+                }
+                if (item.data != ib.wide_gadgets) refit(ib, @truncate(item.data));
+                told = true;
+            },
             intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {
                 const at = _prefs.whichFont(item.tag);
                 fonts[at] = @ptrFromInt(item.data);
@@ -168,4 +188,39 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
     }
     if (told) _input.tellAll(ib, wn.IDCMP_NEWPREFS);
     return taken;
+}
+
+/// The title bars' gadgets made wide (`wide` 1) or narrow (0) on every
+/// screen and window, and the bars drawn again: a screen's depth gadget,
+/// a window's close, depth and zoom gadgets. The setting changes under
+/// the screen list's lock, so nothing draws a bar between the new width
+/// and its images. An image draws itself afresh at its new size, so
+/// nothing is made or freed.
+fn refit(ib: *IntuitionBase, wide: u32) void {
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    ib.wide_gadgets = wide;
+    var screens = ib.screen_list.head;
+    while (screens) |sn| : (screens = sn.succ) {
+        if (sn.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(sn));
+        if (s.depth_image) |image| {
+            s.depth_width = _screen.depthWidth(s.bar_height, wide != 0);
+            setWidth(ib, image, s.depth_width);
+            _screen.drawBar(ib, s);
+        }
+        var windows = s.windows.head;
+        while (windows) |n| : (windows = n.succ) {
+            if (n.succ == null) break;
+            const w: *Window = @ptrCast(@alignCast(n));
+            if (w.close_image) |image| setWidth(ib, image, _window.closeWidthOf(w));
+            if (w.depth_image) |image| setWidth(ib, image, _window.depthWidthOf(w));
+            if (w.zoom_image) |image| setWidth(ib, image, _window.depthWidthOf(w));
+            _window.drawBorder(ib, w);
+        }
+    }
+}
+
+fn setWidth(ib: *IntuitionBase, image: *Object, width: i32) void {
+    _ = ib.iface().SetAttrsTagList(image, &[_]TagItem{ .{ .tag = ic.IA_Width, .data = @intCast(width) }, .{} });
 }

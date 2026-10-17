@@ -10,7 +10,8 @@
 //!
 //! - intuition.prefs: the double-click time, the height of a screen's
 //!   font when it is given none, when the keyboard on the screen comes up,
-//!   and whether a window may be moved partly past the screen's edges.
+//!   whether a window may be moved partly past the screen's edges, and
+//!   whether the gadgets in the title bars are wide.
 //! - font.prefs: the fonts of screens' bars and menus, of windows and
 //!   gadgets, and of consoles - each opened with diskfont.library, so any
 //!   size of any family in FONTS: will do; one left out is pospaz from the
@@ -21,7 +22,8 @@
 //!   that cannot be read is reported with its number and passed over.
 //!
 //! A file that is not there changes nothing of its own. Every screen and
-//! window takes the pens and the style at once, those open too; the
+//! window takes the pens, the style and the title bars' gadgets at once,
+//! those open too; the
 //! fonts and the font height reach what opens from then on. The files'
 //! forms are `sdk.prefs`'s, which SYS:Programs/Prefs writes too, and
 //! S:Startup-Sequence runs this once at boot.
@@ -35,6 +37,7 @@
 //!   SCREENFONT   16 rows
 //!   KEYBOARD     AUTO
 //!   OFFSCREEN    NO
+//!   WIDEGADGETS  NO
 //!   SCREEN       go.font 24 rows
 //!   DEFAULT      go.font 21 rows
 //!   FIXED        pospaz.font 16 rows (ROM)
@@ -63,7 +66,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.0 (3.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.1 (17.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -279,17 +282,20 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     var rows: u32 = 0;
     var keys: u32 = 0;
     var off_screen: u32 = 0;
+    var wide_gadgets: u32 = 0;
     _ = l.ib.GetDefPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
         .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
+        .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide_gadgets) },
         .{},
     });
     g.add(intuition.IPREFS_DoubleClick, ms);
     g.add(intuition.IPREFS_ScreenFontHeight, rows);
     g.add(intuition.IPREFS_Keyboard, keys);
     g.add(intuition.IPREFS_OffScreen, off_screen);
+    g.add(intuition.IPREFS_WideGadgets, wide_gadgets);
     for (font_tags) |tag| g.add(tag, 0);
     g.add(intuition.IPREFS_Pens, 0);
     g.add(intuition.IPREFS_Style, 0);
@@ -301,6 +307,7 @@ fn show(l: Libs) void {
     var rows: u32 = 0;
     var keys: u32 = 0;
     var off_screen: u32 = 0;
+    var wide_gadgets: u32 = 0;
     var fonts: [3]?*graphics.TextFont = @splat(null);
     var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
     _ = l.ib.GetPrefs(&[_]TagItem{
@@ -308,6 +315,7 @@ fn show(l: Libs) void {
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
         .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
+        .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide_gadgets) },
         .{ .tag = font_tags[0], .data = @intFromPtr(&fonts[0]) },
         .{ .tag = font_tags[1], .data = @intFromPtr(&fonts[1]) },
         .{ .tag = font_tags[2], .data = @intFromPtr(&fonts[2]) },
@@ -325,6 +333,10 @@ fn show(l: Libs) void {
     const answer = intuition_file.off_screen_names[@min(off_screen, 1)];
     @memcpy(past_edges[0..answer.len], answer);
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "OFFSCREEN"), @as([*:0]const u8, &past_edges) });
+    var wide: [4:0]u8 = @splat(0);
+    const shape = intuition_file.off_screen_names[@min(wide_gadgets, 1)];
+    @memcpy(wide[0..shape.len], shape);
+    _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "WIDEGADGETS"), @as([*:0]const u8, &wide) });
     const font_names = [3][*:0]const u8{ "SCREEN", "DEFAULT", "FIXED" };
     for (fonts, font_names) |font, label| {
         const f = font orelse continue;

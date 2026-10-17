@@ -175,6 +175,14 @@ intuition puts on the task, with a line on the system log naming the
 task. A window opened between `BeginSystemMemory` and `EndSystemMemory`
 is the system's and stays.
 
+The gadgets in a title bar are as tall as the bar, which follows the
+screen's font, and narrow: the close gadget 15 columns for every 11 rows,
+the depth and zoom gadgets 18, a screen's depth gadget 17. With
+`IPREFS_WideGadgets` set - `WIDEGADGETS=YES` in `intuition.prefs`, "Wide
+title bar gadgets" in `SYS:Programs/Prefs` - they are a third wider: 20,
+24 and 23. Every screen and window open takes the change at once; the
+sizing gadget keeps its shape either way.
+
 The depth gadget brings a window that another one overlaps from in front
 to the front, and sends a window nothing covers to the back, so that
 pressing it again and again goes through every window piled on one spot.

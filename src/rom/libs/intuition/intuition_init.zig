@@ -113,9 +113,10 @@ pub const LIBRARY_VERSION = 0;
 /// 42: a tablet's place (IESUBCLASS_TABLET) puts the pointer as far across
 /// the front screen. 43: IntuiMessages are the system's memory, not the
 /// task's that set them off. 44: the windows a task leaves open are closed
-/// when it ends (an end hook per task with windows open).
-pub const LIBRARY_REVISION = 44;
-const BUILD_DATE = "16.10.2026";
+/// when it ends (an end hook per task with windows open). 45: the title
+/// bars' gadgets narrow, or wide with IPREFS_WideGadgets.
+pub const LIBRARY_REVISION = 45;
+const BUILD_DATE = "17.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -221,6 +222,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.double_micros = @import("prefs/_prefs.zig").default_double_micros;
     ib.keyboard_mode = sdk.intuition.KEYBOARD_AUTO;
     ib.off_screen = 0;
+    ib.wide_gadgets = 0;
     ib.style_serial = 0;
     ib.system_pens = @import("screen/_screen.zig").default_pens;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));

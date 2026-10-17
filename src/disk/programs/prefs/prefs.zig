@@ -34,15 +34,16 @@
 //!   and how it is placed, how large icons are shown, and how a drawer
 //!   with no view of its own is shown.
 //! - **System**: the double-click time, the height of a screen's font when
-//!   it is given none, when the keyboard on the screen comes up, and
-//!   whether a window may be moved partly past the screen's edges.
+//!   it is given none, when the keyboard on the screen comes up, whether
+//!   a window may be moved partly past the screen's edges, and whether the
+//!   gadgets in the title bars are wide.
 //!
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
 //! hand them to the system as S:Startup-Sequence does at boot, running
 //! C:SetPrefs: every window open takes the
-//! style and the colours at once; fonts are taken by what opens from then
-//! on. The colours' file is written only when a colour was changed. **Cancel**
+//! style, the colours and the title bars' gadgets at once; fonts are taken
+//! by what opens from then on. The colours' file is written only when a colour was changed. **Cancel**
 //! leaves everything as it was. The files' forms are `sdk.prefs`'s, and
 //! the style file keeps its explanation and the default written out.
 //!
@@ -97,8 +98,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.5";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.6";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (17.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -128,6 +129,7 @@ const ID_KEYBOARD = 58;
 const ID_PRESET = 59;
 const ID_BUILTIN = 60;
 const ID_OFFSCREEN = 61;
+const ID_WIDE = 62;
 /// A colour field's chooser's ID: this and its key's number.
 const ID_PEN_CHOICE = 64;
 /// A system pen's field's ID, and its button's: these and the pen.
@@ -330,6 +332,7 @@ const Editor = struct {
     height: *Object = undefined,
     keyboard: *Object = undefined,
     off_screen: *Object = undefined,
+    wide_gadgets: *Object = undefined,
     /// The system's pens as the colours page has them, and whether one
     /// was changed.
     pens: [sc.NUMDRIPENS]Pen = palette_file.defaults,
@@ -702,6 +705,8 @@ const Editor = struct {
         p.keyboard = @intCast(@min(value, 2));
         _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.off_screen, &value);
         p.off_screen = @intFromBool(value != 0);
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.wide_gadgets, &value);
+        p.wide_gadgets = @intFromBool(value != 0);
         return p;
     }
 
@@ -1325,6 +1330,7 @@ fn build(e: *Editor) ?*Object {
         pair(intuition.IPREFS_ScreenFontHeight, @intFromPtr(&now.screen_font)),
         pair(intuition.IPREFS_Keyboard, @intFromPtr(&now.keyboard)),
         pair(intuition.IPREFS_OffScreen, @intFromPtr(&now.off_screen)),
+        pair(intuition.IPREFS_WideGadgets, @intFromPtr(&now.wide_gadgets)),
         .{},
     });
     e.double = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
@@ -1353,7 +1359,12 @@ fn build(e: *Editor) ?*Object {
         pair(cb.CHECKBOX_Checked, now.off_screen),
         .{},
     }) orelse return null;
-    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges" }) orelse return null;
+    e.wide_gadgets = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_WIDE),
+        pair(cb.CHECKBOX_Checked, now.wide_gadgets),
+        .{},
+    }) orelse return null;
+    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen, e.wide_gadgets }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges", "Wide title bar gadgets" }) orelse return null;
 
     const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&pages)), .{} }) orelse return null;
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{

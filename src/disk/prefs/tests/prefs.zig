@@ -71,9 +71,9 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expectEqual(@as(u32, 400), settings.double_click);
     try testing.expectEqual(sdk.intuition.KEYBOARD_ALWAYS, settings.keyboard);
     try testing.expectEqual(@as(u32, 16), settings.screen_font);
-    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=NO", out[0..prefs.intuition.write(&settings, &out)]);
+    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=NO WIDEGADGETS=NO", out[0..prefs.intuition.write(&settings, &out)]);
     // Only what the line gave becomes a tag: the font height was left out.
-    var tags: [4]sdk.utility.TagItem = undefined;
+    var tags: [5]sdk.utility.TagItem = undefined;
     try testing.expectEqual(@as(usize, 2), prefs.intuition.toTags(&settings, &tags));
     try testing.expectEqual(sdk.intuition.IPREFS_DoubleClick, tags[0].tag);
     try testing.expectEqual(@as(usize, 400), tags[0].data);
@@ -85,8 +85,16 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expectEqual(@as(usize, 3), prefs.intuition.toTags(&settings, &tags));
     try testing.expectEqual(sdk.intuition.IPREFS_OffScreen, tags[2].tag);
     try testing.expectEqual(@as(usize, 1), tags[2].data);
-    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=YES", out[0..prefs.intuition.write(&settings, &out)]);
+    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=YES WIDEGADGETS=NO", out[0..prefs.intuition.write(&settings, &out)]);
     try testing.expect(prefs.intuition.parse("OFFSCREEN=MAYBE", &settings) != null);
+    // The title bars' gadgets wide: YES or NO, and a tag of its own.
+    try testing.expect(prefs.intuition.parse("WIDEGADGETS=yes", &settings) == null);
+    try testing.expectEqual(@as(u32, 1), settings.wide_gadgets);
+    try testing.expectEqual(@as(usize, 4), prefs.intuition.toTags(&settings, &tags));
+    try testing.expectEqual(sdk.intuition.IPREFS_WideGadgets, tags[3].tag);
+    try testing.expectEqual(@as(usize, 1), tags[3].data);
+    try testing.expectEqualStrings("DOUBLECLICK=400 SCREENFONT=16 KEYBOARD=ALWAYS OFFSCREEN=YES WIDEGADGETS=YES", out[0..prefs.intuition.write(&settings, &out)]);
+    try testing.expect(prefs.intuition.parse("WIDEGADGETS=SOMETIMES", &settings) != null);
 }
 
 test "anvil.prefs: a line read, its picture quoted, written back" {

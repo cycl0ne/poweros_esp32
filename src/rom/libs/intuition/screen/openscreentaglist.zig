@@ -241,11 +241,11 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         s.bar = lb.CreateLayerTagList(info, &bar_tags);
         if (s.bar == null) s.bar_height = 0;
         // The depth gadget at its right end, the bar's height above the
-        // trim line and as wide as that height makes its 23 by 11 design;
-        // without memory for it, the bar has none.
+        // trim line and as wide as that height makes its shape, narrow or
+        // wide; without memory for it, the bar has none.
         if (s.bar != null) {
             const h = s.bar_height - 1;
-            s.depth_width = @divTrunc(23 * h + 5, 11);
+            s.depth_width = _screen.depthWidth(s.bar_height, ib.wide_gadgets != 0);
             const image_tags = [_]TagItem{
                 .{ .tag = ic.SYSIA_Which, .data = ic.SDEPTHIMAGE },
                 .{ .tag = ic.SYSIA_DrawInfo, .data = @intFromPtr(&s.draw_info) },
