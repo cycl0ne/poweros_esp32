@@ -265,6 +265,9 @@ pub const PARTKIND_UART: u32 = 18;
 /// cell: PART_Bus and PART_BusUnit the I2C bus, PART_Address the chip.
 /// battclock.resource keeps the date in it.
 pub const PARTKIND_RTC: u32 = 19;
+/// A random number generator in the chip, which sdk.hardware.rng reads:
+/// PART_Address where its registers are (BUS_MEMORY).
+pub const PARTKIND_RNG: u32 = 20;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -315,6 +318,9 @@ pub const CHIP_TP4054: u32 = 21;
 /// NXP's PCF8563 clock (PARTKIND_RTC), at 0x51 on I2C; the BM8563 is the
 /// same chip to a driver.
 pub const CHIP_PCF8563: u32 = 22;
+/// The JH7110's TRNG, in its security block (PARTKIND_RNG on
+/// BUS_MEMORY), which the kernel starts.
+pub const CHIP_JH7110_TRNG: u32 = 23;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

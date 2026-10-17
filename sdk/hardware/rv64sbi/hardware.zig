@@ -23,6 +23,7 @@ pub const plic = @import("plic.zig");
 pub const systimer = @import("systimer.zig");
 pub const ramdisk = @import("ramdisk.zig");
 pub const rng = @import("rng.zig");
+pub const trng = @import("trng.zig");
 
 /// A data cache line, in bytes: the U74's, and QEMU's as it reports one.
 pub const DCACHE_LINE_SIZE = 64;

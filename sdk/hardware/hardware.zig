@@ -88,6 +88,7 @@ pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// machine under SBI firmware. The ESP32s have flash, so there it is
 /// empty.
 pub const ramdisk = if (chip == .rv64sbi) own.ramdisk else struct {};
+pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

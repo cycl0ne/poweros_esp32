@@ -109,6 +109,8 @@ fn takeBoard(tree: device_tree.Facts) void {
     hardware.system.before_reset = boards.before_reset;
     ram.ram_base = tree.ram_base orelse boards.fact(st.SYSTAG_RamBase, 0x8000_0000);
     ram.ram_size = tree.ram_size orelse boards.fact(st.SYSTAG_RamSize, 128 * 1024 * 1024);
+    for (tree.reservedRanges(), 0..) |range, index| ram.reserved[index] = range;
+    ram.reserved_count = tree.reserved_count;
     if (tree.initrd_start != null and tree.initrd_end != null and tree.initrd_end.? > tree.initrd_start.?) {
         hardware.ramdisk.base = tree.initrd_start.?;
         hardware.ramdisk.size = tree.initrd_end.? - tree.initrd_start.?;
@@ -157,10 +159,13 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     boot_task.sp_upper = layout.stackTop();
     note("%s %d.%d at 0x%lx", .{ exec.SysBase.lib.name(), exec.LIBRARY_VERSION, exec.LIBRARY_REVISION, @as(u64, @intFromPtr(exec.SysBase)) });
     note("memory 0x%lx-0x%lx, %ld KiB free", .{
-        @as(u64, layout.heapStart()),
+        @as(u64, ram.ram_base),
         @as(u64, ram.ramEnd()),
         @as(u64, sys.AvailMem(exec.MEMF_ANY) / 1024),
     });
+    for (ram.reserved[0..ram.reserved_count]) |range| {
+        note("reserved 0x%lx-0x%lx", .{ @as(u64, range.start), @as(u64, range.end) });
+    }
     if (hardware.ramdisk.size != 0) {
         note("disk image 0x%lx-0x%lx, %ld KiB", .{
             @as(u64, hardware.ramdisk.base),
@@ -168,6 +173,7 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
             @as(u64, hardware.ramdisk.size / 1024),
         });
     } else note("no disk image", .{});
+    startGenerator();
     if (exec.SysBase.mem_debug.on) note("memory debugging on since exec started (-Dmemdebug)", .{});
     // Who asks about a task that failed, so the machine need not stop.
     exec.failure.startHelper(exec.SysBase);
@@ -191,6 +197,19 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     shell_code(sys);
     sys.RemTask(null);
     unreachable;
+}
+
+/// The board's random number generator started, where it has one that
+/// the kernel drives; sdk.hardware.rng finds it in the board's list.
+fn startGenerator() void {
+    const base = comptime boards.partFact(st.PARTKIND_RNG, st.PART_Address, 0);
+    if (comptime base == 0 or boards.partFact(st.PARTKIND_RNG, st.PART_Chip, 0) != st.CHIP_JH7110_TRNG) {
+        note("random numbers from timing jitter: no generator", .{});
+        return;
+    }
+    if (hardware.trng.start(base)) {
+        note("random number generator at 0x%lx", .{@as(u64, base)});
+    } else note("random number generator at 0x%lx did not seed: random numbers from timing jitter", .{@as(u64, base)});
 }
 
 /// The microseconds since the machine came up, by `time`: the log's clock.

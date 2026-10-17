@@ -1,30 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The machine's free RAM, handed to exec: from above the kernel's boot
-//! stack to the end of RAM, as the device tree or else the board says
-//! (SYSTAG_RamBase, SYSTAG_RamSize), less the disk image the loader put in
-//! it (sdk.hardware.ramdisk) - a region below the image and one above.
-//! Everything below the kernel - the firmware, and on the JH7110 what
-//! U-Boot leaves, the device tree and the disk image among it - is left
-//! alone.
+//! The machine's free RAM, handed to exec: all of RAM as the device tree
+//! or else the board says (SYSTAG_RamBase, SYSTAG_RamSize), less what is
+//! in use - the kernel's image with AbsExecBase's page below it, the disk
+//! image the loader put in RAM (sdk.hardware.ramdisk), and the ranges the
+//! device tree reserves (`reserved`: OpenSBI's own, and the disk image
+//! again where U-Boot lists it). On the JH7110 that gives exec the
+//! gigabyte below the kernel too, less OpenSBI's 256 KiB at its start:
+//! what U-Boot left there - the image it was loaded at, the device tree -
+//! is done with once the kernel has read the tree. A tree that reserves
+//! nothing gets nothing below the kernel handed out, as the firmware is
+//! there and has not said where.
 //!
 //! It is all DRAM, so it is both internal and external memory as exec's
 //! callers ask for them. Only what is below 4 GiB is MEMF_DMA: the DMA
 //! engines' descriptors hold 32-bit addresses, so a region that crosses
 //! the line is cut there. And exec counts a region's free bytes in 32
-//! bits (MemHeader.free, MemChunk.bytes), so none is larger than 2 GiB:
-//! the VisionFive 2's 8 GiB are four regions.
+//! bits (MemHeader.free, MemChunk.bytes), so none is larger than 2 GiB.
+//! The region the kernel's heap starts in comes first, as it holds
+//! SysBase; then the rest above the kernel, then what is below it.
 
 const exec = @import("../../rom/libs/exec/exec.zig");
 const layout = @import("layout.zig");
-const ramdisk = @import("sdk").hardware.ramdisk;
+const sdk = @import("sdk");
+const ramdisk = sdk.hardware.ramdisk;
+const Range = @import("fdt.zig").Range;
+const max_reserved = @import("fdt.zig").max_reserved;
 
-/// Below and above the disk image, each cut at 4 GiB and into pieces of
-/// `largest`: 8 GiB from 0x40000000 is 8 at the most.
-pub const max_regions = 8;
+/// The VisionFive 2's 8 GiB: above the kernel, to 4 GiB and three pieces
+/// of `largest` after it; below it, around the disk image. Room besides
+/// for the pieces more reserved ranges cut.
+pub const max_regions = 12;
 
 /// Where RAM is, which the kernel sets from the board.
 pub var ram_base: usize = 0;
 pub var ram_size: usize = 0;
+
+/// What the device tree reserves, which the kernel sets from it.
+pub var reserved: [max_reserved]Range = undefined;
+pub var reserved_count: usize = 0;
 
 pub fn ramEnd() usize {
     return ram_base + ram_size;
@@ -36,19 +49,67 @@ const smallest = 64 * 1024;
 const dma_limit: usize = 1 << 32;
 /// The most one region holds.
 const largest: usize = 1 << 31;
+const page = 4096;
+
+/// What is not free, each widened to whole pages: the kernel, the disk
+/// image and the reserved ranges, in no order.
+fn holes(buf: *[max_reserved + 2]Range) []const Range {
+    var count: usize = 0;
+    buf[count] = .{ .start = @intFromPtr(sdk.exec.AbsExecBase) & ~@as(usize, page - 1), .end = layout.heapStart() };
+    count += 1;
+    if (ramdisk.size != 0) {
+        buf[count] = .{ .start = ramdisk.base, .end = ramdisk.base + ramdisk.size };
+        count += 1;
+    }
+    for (reserved[0..reserved_count]) |range| {
+        buf[count] = range;
+        count += 1;
+    }
+    for (buf[0..count]) |*hole| {
+        hole.start &= ~@as(usize, page - 1);
+        hole.end = (hole.end +| (page - 1)) & ~@as(usize, page - 1);
+    }
+    return buf[0..count];
+}
 
 /// Regions for the bootstrap. The first one also holds SysBase.
 pub fn regions(buf: *[max_regions]exec.MemRegion) []const exec.MemRegion {
-    const start = layout.heapStart();
-    const end = ramEnd();
-    const page = 4096;
-    // The image, widened to whole pages, where it is inside the free RAM.
-    const disk_start = if (ramdisk.size != 0) ramdisk.base & ~@as(usize, page - 1) else end;
-    const disk_end = if (ramdisk.size != 0) (ramdisk.base + ramdisk.size + page - 1) & ~@as(usize, page - 1) else end;
+    var hole_buf: [max_reserved + 2]Range = undefined;
+    const in_use = holes(&hole_buf);
+    const kernel = in_use[0];
     var count: usize = 0;
-    add(buf, &count, start, @max(start, @min(disk_start, end)));
-    add(buf, &count, @min(end, @max(start, disk_end)), end);
+    free(buf, &count, in_use, kernel.end, ramEnd());
+    // A tree that reserves nothing has not said where the firmware is,
+    // which is below the kernel: none of it is handed out then.
+    if (reserved_count != 0) free(buf, &count, in_use, ram_base, kernel.start);
     return buf[0..count];
+}
+
+/// The free parts of `from` to `to` as regions: what lies between the
+/// holes in it, lowest first.
+fn free(buf: *[max_regions]exec.MemRegion, count: *usize, in_use: []const Range, from: usize, to: usize) void {
+    var at = from;
+    while (at < to) {
+        // Past every hole `at` is in.
+        var moved = true;
+        while (moved) {
+            moved = false;
+            for (in_use) |hole| {
+                if (hole.start <= at and hole.end > at) {
+                    at = hole.end;
+                    moved = true;
+                }
+            }
+        }
+        if (at >= to) return;
+        // Up to the next hole above it.
+        var stop = to;
+        for (in_use) |hole| {
+            if (hole.start > at and hole.start < stop) stop = hole.start;
+        }
+        add(buf, count, at, stop);
+        at = stop;
+    }
 }
 
 /// `from` to `to` as regions: cut where it crosses 4 GiB, and into

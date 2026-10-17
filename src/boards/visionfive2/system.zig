@@ -23,6 +23,16 @@ const st = sdk.expansion.systemtags;
 /// The board, as StarFive names it.
 const name = "StarFive VisionFive 2";
 
+/// The TRNG in the JH7110's security block.
+const trng = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RNG),
+    .value(st.PART_Chip, st.CHIP_JH7110_TRNG),
+    .pointer(st.PART_ChipName, "jh7110 trng"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1600_C000),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -39,6 +49,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_PlicFirst, 0),
     .value(st.SYSTAG_PlicStride, 2),
     .value(st.SYSTAG_Cores, 1),
+    .pointer(st.SYSTAG_Part, &trng),
     .done,
 };
 

@@ -261,6 +261,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_USB => "usb",
         st.PARTKIND_UART => "uart",
         st.PARTKIND_RTC => "rtc",
+        st.PARTKIND_RNG => "rng",
         else => "?",
     };
 }
