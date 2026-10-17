@@ -243,7 +243,12 @@ pub fn alignUp(value: usize, alignment: usize) usize {
 
 // --- the boot and idle tasks ------------------------------------------------
 
-const idle_names = [exec_base.max_cores][:0]const u8{ "idle", "idle 1" };
+const idle_names = names: {
+    var names: [exec_base.max_cores][:0]const u8 = undefined;
+    names[0] = "idle";
+    for (1..exec_base.max_cores) |core| names[core] = @import("std").fmt.comptimePrint("idle {d}", .{core});
+    break :names names;
+};
 
 /// Makes the machine able to run tasks: the code running now becomes the
 /// first task, "kernel", and an idle task is created under everything else.
@@ -298,7 +303,7 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
     const task = newTask(base, idle_names[core].ptr, -128, 0) orelse return false;
     task.sp_lower = stack_lower;
     task.sp_upper = stack_upper;
-    task.flags |= if (core == 0) sdk.exec.TF_CORE0 else sdk.exec.TF_CORE1;
+    task.flags |= sdk.exec.coreFlag(core);
     task.sig_alloc |= sdk.exec.tasks.system_signals;
     task.state = .run;
     guardStack(task);
@@ -365,6 +370,20 @@ fn idleLoop(sys: *sdk.exec.ExecBase) callconv(.c) void {
 fn idleRound(base: *ExecBase) void {
     base.cpu().idle_count +%= 1;
     task_hardware.idle();
+}
+
+/// Counts `missed` cycles more to the core's idle task: for a CPU whose
+/// cycle counter stops while it sleeps (the U74's in `wfi`), its idle hook
+/// times the sleep on another clock and says what the counter missed. From
+/// the idle task, its interrupts masked, before it takes the interrupt that
+/// woke it: the next exception entry counts them with the rest.
+///
+/// INPUTS:
+/// - `base` - exec: this core's times.
+/// - `missed` - the cycles the sleep took that the counter did not count.
+pub fn idleSlept(base: *ExecBase, missed: u32) void {
+    const cpu = base.cpu();
+    if (cpu.this_task == cpu.idle_task) cpu.time_mark -%= missed;
 }
 
 // --- a task's memory and code -----------------------------------------------
@@ -1019,7 +1038,7 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         // outermost exception exit on a half-switched machine, so it
         // cannot call a vector something may have replaced (codex rule 1).
         Enqueue(base, &base.task_ready, &current.node);
-        offerOther(base, current, core);
+        offerOthers(base, current, core);
     }
     cpu.sys_flags &= ~(SFF_SAR | SFF_TQE);
 
@@ -1060,10 +1079,13 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     if (next.flags & sdk.exec.TF_LAUNCH != 0) {
         if (next.launch_code) |launch_code| launch_code(next, base.iface());
     }
-    // What is left ready may be the other core's to run.
-    if (base.cores_running > 1) {
-        const other = 1 - core;
-        if (bestReady(base, other)) |waiting| offerOther(base, waiting, core);
+    // What is left ready may be another core's to run.
+    for (0..base.cores_running) |number| {
+        const other: u32 = @intCast(number);
+        if (other == core) continue;
+        if (bestReady(base, other)) |waiting| {
+            if (waiting.node.pri > base.cpus[other].this_task.node.pri) pokeCore(other);
+        }
     }
     return raiseException(base, next, next.sp_reg.?);
 }
@@ -1089,19 +1111,24 @@ fn waitLeft(task: *const Task, core: u32) void {
 
 // --- the cores --------------------------------------------------------------
 
-/// Whether `task` may run on `core`: pinned to it, or to neither core (or
-/// both) - and then on core 1 only once the cores share.
+/// The flags of the cores exec keeps state for.
+const machine_cores: u8 = cores: {
+    var flags: u8 = 0;
+    for (0..exec_base.max_cores) |core| flags |= sdk.exec.coreFlag(core);
+    break :cores flags;
+};
+
+/// Whether `task` may run on `core`: pinned to cores that include it, or
+/// to none of them (or all) - and then on a core but 0 only once the
+/// cores share.
 ///
 /// INPUTS:
 /// - `base` - exec: whether the cores share.
 /// - `task` - the task.
 /// - `core` - the core.
 pub fn runnableOn(base: *const ExecBase, task: *const Task, core: u32) bool {
-    const both = sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1;
-    const pins = task.flags & both;
-    const own: u8 = if (core == 0) sdk.exec.TF_CORE0 else sdk.exec.TF_CORE1;
-    if (pins == own) return true;
-    if (pins != 0 and pins != both) return false;
+    const pins = task.flags & machine_cores;
+    if (pins != 0 and pins != machine_cores) return pins & sdk.exec.coreFlag(core) != 0;
     return core == 0 or base.share_cores != 0;
 }
 
@@ -1140,11 +1167,11 @@ fn takeReady(base: *ExecBase, core: u32) *Task {
 }
 
 /// `task`, just made ready, brought to a core that should run it now:
-/// the other core poked when it may run there, outranks what runs there,
-/// and that is less than what runs here; else this core's dispatcher
-/// asked to look when it may run here and outranks what runs here. The
-/// caller holds the interrupt lock, which keeps every core's running task
-/// where it is.
+/// of the other cores it may run on and outranks what runs there, the one
+/// running the least poked, when that is less than what runs here or the
+/// task may not run here; else this core's dispatcher asked to look when
+/// it may run here and outranks what runs here. The caller holds the
+/// interrupt lock, which keeps every core's running task where it is.
 ///
 /// INPUTS:
 /// - `base` - exec: the cores' running tasks and flags.
@@ -1153,10 +1180,8 @@ pub fn wakeFor(base: *ExecBase, task: *Task) void {
     const core = exec_base.coreId();
     const here = base.cpus[core].this_task.node.pri;
     const may_here = runnableOn(base, task, core);
-    if (base.cores_running > 1) {
-        const other = 1 - core;
-        const there = base.cpus[other].this_task.node.pri;
-        if (runnableOn(base, task, other) and task.node.pri > there and (!may_here or there < here)) {
+    if (leastOutranked(base, task, core)) |other| {
+        if (!may_here or base.cpus[other].this_task.node.pri < here) {
             pokeCore(other);
             return;
         }
@@ -1164,13 +1189,28 @@ pub fn wakeFor(base: *ExecBase, task: *Task) void {
     if (may_here and task.node.pri > here) base.cpus[core].sys_flags |= SFF_SAR;
 }
 
-/// `task`, ready, offered to the core that is not `core`: poked when the
-/// task may run there and outranks what runs there.
-fn offerOther(base: *ExecBase, task: *const Task, core: u32) void {
-    if (base.cores_running < 2) return;
-    const other = 1 - core;
-    if (!runnableOn(base, task, other)) return;
-    if (task.node.pri > base.cpus[other].this_task.node.pri) pokeCore(other);
+/// `task`, ready, offered to the cores that are not `core`: the one
+/// `leastOutranked` names poked.
+fn offerOthers(base: *ExecBase, task: *const Task, core: u32) void {
+    if (leastOutranked(base, task, core)) |other| pokeCore(other);
+}
+
+/// Of the running cores but `core`, the one `task` may run on whose
+/// running task is the least and below it - an idle one before a busy
+/// one; null for none.
+fn leastOutranked(base: *const ExecBase, task: *const Task, core: u32) ?u32 {
+    var found: ?u32 = null;
+    var least = task.node.pri;
+    for (0..base.cores_running) |number| {
+        const other: u32 = @intCast(number);
+        if (other == core) continue;
+        const there = base.cpus[other].this_task.node.pri;
+        if (there < least and runnableOn(base, task, other)) {
+            found = other;
+            least = there;
+        }
+    }
+    return found;
 }
 
 /// The dispatcher of the core running `task` asked to look again: this

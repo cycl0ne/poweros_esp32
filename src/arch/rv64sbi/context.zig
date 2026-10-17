@@ -9,7 +9,9 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
+const timer = @import("timer.zig");
 const trap = @import("trap.zig");
+const systimer = @import("sdk").hardware.systimer;
 
 pub const hardware: exec.TaskHardware = .{
     .init_context = initContext,
@@ -54,8 +56,21 @@ fn switchNow() void {
     _ = trap.syscall(@intFromEnum(trap.Syscall.reschedule), 0);
 }
 
+/// The idle task's sleep. exec counts a core's time in cycles, and the
+/// U74's cycle counter stops in `wfi`, so the sleep is timed on `time` as
+/// well and what the counter missed counted to idle (exec's `idleSlept`) -
+/// with the interrupts masked over it, so before the interrupt that ends
+/// it is taken. `wfi` wakes for any interrupt sie lets through, masked or
+/// not. Where the counter runs on (QEMU), it misses nothing.
 fn idle() void {
+    _ = cpu.disableInterrupts();
+    const time_before = timer.now();
+    const cycles_before = exec_base.cycles();
     cpu.waitForInterrupt();
+    const counted = exec_base.cycles() -% cycles_before;
+    const slept = (timer.now() -% time_before) * timer.cpu_hz / systimer.timebase_hz;
+    if (slept > counted) exec.idleSlept(exec.SysBase, @intCast(@min(slept - counted, std.math.maxInt(u32))));
+    cpu.enableInterrupts();
 }
 
 /// A task exception: a first context as for a new task, whose stack starts

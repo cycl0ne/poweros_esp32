@@ -847,32 +847,34 @@ code goes. exec says when it is:
   it runs; dos closes it once that code has returned, so the library
   cannot be expunged under it.
 
-## Two cores
+## Several cores
 
-The kernel runs on both of the chip's cores, on every board and in
-QEMU, and `-Dcores=1` builds one that keeps to one. Each core has a
-dispatcher of its own, both take tasks from one ready list, and a task
-runs on whichever core is free - so two tasks really do run at once, and
-what keeps them apart has to hold on both cores:
+The kernel runs on every core of the chip - the ESP32s' two, the
+VisionFive 2's four U74s and QEMU virt's four harts - and `-Dcores=1`
+builds one that keeps to one. Each core has a dispatcher of its own, all
+take tasks from one ready list, and a task runs on whichever core is free
+- so tasks really do run at once, and what keeps them apart has to hold
+on every core:
 
 - **Nothing stops the whole machine.** exec's lists, every library's
   vectors and every module's own data are under locks of their own, which
-  hold on both cores; a task made ready runs as soon as a core is free.
-- **Disable** masks this core's interrupts and holds off the other core's
+  hold on every core; a task made ready runs as soon as a core is free.
+- **Disable** masks this core's interrupts and holds off the other cores'
   interrupts and Disables as well. The devices' interrupts are all core
   0's.
 - **A spinlock** stops task switching on its own core only, which is all
-  it needs: the other core spins until it is free.
+  it needs: another core spins until it is free.
 - **The cycle counter** (`sdk.hardware.cpu.ccount`) is each core's own,
-  and the two do not agree. A wait of a few microseconds is
+  and the cores' do not agree. A wait of a few microseconds is
   `cpu.spinCycles`, which keeps the task on one core while it counts.
 - **SYSTEM's clock and reset registers** are shared by every driver on
-  both cores: a driver changes them inside `Disable`.
+  every core: a driver changes them inside `Disable`.
 
 A task that has to stay on one core - code written for one core, or one
 that drives a core's own hardware - is pinned with `SetTaskAffinity`, or
-from its first instruction: with its `TF_CORE0` or `TF_CORE1` set in the
-`Task` handed to `AddTask`, or with `NP_Affinity` when dos makes it:
+from its first instruction: with its core's flag (`TF_CORE0` to
+`TF_CORE3`, `coreFlag(core)`) set in the `Task` handed to `AddTask`, or
+with `NP_Affinity` when dos makes it:
 
 ```zig
 radio.task = .{
@@ -901,9 +903,9 @@ each. On the `s3>` console `cores` shows what each
 core runs and what has held its interrupts off longest - the system's
 interrupt lock, the cache engine, each device source and interrupt line -
 which is what makes a driver's interrupt late (`cores reset` starts the
-count again), and `cores share off` keeps the second core to its own
-tasks, which is how a fault is told from one that only shows with two
-cores.
+count again), and `cores share off` keeps the other cores to their own
+tasks, which is how a fault is told from one that only shows with
+several cores.
 `C:test/Cores` sets tasks on each other through all of the above - FREE
-lets them run flat out, PIN puts half on each core - and checks that
-nothing overlapped and nothing was lost.
+lets them run flat out, PIN shares them out over the cores in turn - and
+checks that nothing overlapped and nothing was lost.

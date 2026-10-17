@@ -162,11 +162,13 @@ pub const startMultitasking = _task.startMultitasking;
 pub const interruptEnter = _task.interruptEnter;
 pub const interruptExit = _task.interruptExit;
 pub const tickQuantum = _task.tickQuantum;
-/// The second core's part (task/_task.zig): its idle task made before it
-/// starts, its start, its idle loop, and its cross-core interrupt.
+/// The other cores' part (task/_task.zig): a core's idle task made before
+/// it starts, its start, its idle loop, and its cross-core interrupt; and
+/// an idle task's sleep its cycle counter missed.
 pub const prepareCore = _task.prepareCore;
 pub const coreStarted = _task.coreStarted;
 pub const idleHere = _task.idleHere;
+pub const idleSlept = _task.idleSlept;
 pub const crossCorePoke = _task.crossCorePoke;
 
 /// Signals and task exceptions (task/).

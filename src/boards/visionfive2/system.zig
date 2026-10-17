@@ -133,7 +133,9 @@ pub const root = [_]Tag{
     // The L2 cache controller's Flush64: the JH7110's devices do not see
     // the U74s' caches.
     .value(st.SYSTAG_CacheFlush, 0x0201_0200),
-    .value(st.SYSTAG_Cores, 1),
+    // The four U74s; the S7 has no supervisor mode and stays the
+    // firmware's.
+    .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),

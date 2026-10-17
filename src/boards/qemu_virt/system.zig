@@ -101,7 +101,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleIrq, 10),
     .value(st.SYSTAG_PlicFirst, 1),
     .value(st.SYSTAG_PlicStride, 2),
-    .value(st.SYSTAG_Cores, 1),
+    // As many as `-smp` gives the machine, up to four.
+    .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),

@@ -13,7 +13,7 @@
  *
  * Only the first hart to arrive goes on; one that comes after it - a
  * U-Boot built for SMP sends every hart it has - is stopped (SBI HSM),
- * where the kernel can start it again. The first masks the hart's
+ * where the kernel can start it again, at _start_other. The first masks the hart's
  * interrupts, switches the FPU on (a floating-point instruction traps
  * while sstatus.FS is off), makes the hart core 0 (tp, cpu.zig), clears
  * .bss, points stvec at the trap entry and calls kmain(hartid, fdt).
@@ -42,7 +42,7 @@
 
 /* exec's max_cores, and a stack of each one's own for a trap that came
    on a stack with no room. */
-#define MAX_CORES       2
+#define MAX_CORES       4
 #define FAULT_STACK_SIZE 2048
 
 #define SSTATUS_SIE     0x2
@@ -116,6 +116,36 @@ _boot_other:
 4:  wfi                             /* the firmware would not stop it */
     j       4b
     .size _start, . - _start
+
+/*
+ * Where another hart comes in, started by core 0 through the SBI's
+ * hart_start (cpu1.zig): a0 its hart id, a1 the core number core 0 gave
+ * it. It is set up as _start sets up core 0 - interrupts masked, the FPU
+ * on, tp the core's number, stvec the trap entry - on the stack core 0
+ * set aside for it (riscv_core_stacks), and calls kmain_other(core).
+ */
+    .balign 4
+    .global _start_other
+    .type _start_other, @function
+_start_other:
+    csrci   sstatus, SSTATUS_SIE
+    csrw    sie, zero
+    li      t0, SSTATUS_FS_INITIAL
+    csrs    sstatus, t0
+    mv      tp, a1
+    la      t0, riscv_core_stacks
+    slli    t1, a1, 3
+    add     t0, t0, t1
+    ld      sp, 0(t0)
+    la      t0, _trap_entry
+    csrw    stvec, t0
+    li      ra, 0
+    li      s0, 0
+    mv      a0, a1
+    call    kmain_other
+5:  wfi
+    j       5b
+    .size _start_other, . - _start_other
 
     /* Set by the first hart through _boot: in .data, which _start does
        not clear. */

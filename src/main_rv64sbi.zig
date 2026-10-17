@@ -128,6 +128,33 @@ fn takeBoard(tree: device_tree.Facts) void {
     }
     rv_stack_low = ram.ram_base + trap.frame_offset;
     rv_stack_high = ram.ramEnd();
+    cpu1.takeHarts(tree.hartIds(), cpu.hartids[0]);
+}
+
+/// Each other core's stack, which its idle task goes on running on.
+const other_stack_size = 16 * 1024;
+
+/// The other cores started in turn, as many as the board says and there
+/// are harts for; the first that does not come up ends it.
+fn startOthers(sys: *sdk.interface.exec.ExecBase) void {
+    var core: u32 = 1;
+    while (core < @min(cpu1.cores, cpu1.found)) : (core += 1) {
+        const stack = sys.AllocMem(other_stack_size, exec.MEMF_ANY) orelse {
+            note("core %d: no memory for its stack", .{core});
+            return;
+        };
+        const lower = @intFromPtr(stack);
+        const top = (lower + other_stack_size) & ~@as(usize, 15);
+        if (!exec.prepareCore(exec.SysBase, core, lower, top)) {
+            note("core %d: no memory for its idle task", .{core});
+            return;
+        }
+        if (!cpu1.start(core, top)) {
+            note("core %d (hart %ld) did not start", .{ core, @as(u64, cpu.hartids[core]) });
+            return;
+        }
+        note("core %d up (hart %ld)", .{ core, @as(u64, cpu.hartids[core]) });
+    }
 }
 
 /// Called from _start on the boot hart, with the stack set up and
@@ -190,7 +217,10 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     exec.failure.startHelper(exec.SysBase);
     timer.init(100);
     clock.init();
+    // The other cores, where the board has them: let go once exec and the
+    // tick's rate exist.
     cpu1.cores = boards.cores;
+    startOthers(sys);
     note("cpu clock %d MHz (measured), timebase %d MHz, tick %d Hz", .{
         timer.measured_cpu_hz / 1_000_000,
         hardware.systimer.timebase_hz / 1_000_000,
@@ -201,6 +231,13 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     // Multitasking starts. The exec task runs first: it starts the
     // RTF_COLDSTART residents and ends. This task goes on as the boot task.
     exec.startMultitasking(exec.SysBase);
+    // Until here the other cores ran only their idle tasks; from here they
+    // take any task that is not pinned.
+    if (cpu1.isUp()) {
+        sys.Disable();
+        exec.SysBase.share_cores = 1;
+        sys.Enable();
+    }
 
     // The shell's code is a task's code: it gets SysBase as the tasks of
     // CreateTask do, and when it returns, the task ends.

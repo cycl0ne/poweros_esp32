@@ -46,8 +46,8 @@ pub const NP_ExitData = NP_Dummy + 25;
 /// its code finds with FindTask(null), which is how a module hands its
 /// own process its base.
 pub const NP_UserData = NP_Dummy + 26;
-/// The cores the new process runs on (exec's TF_CORE0, TF_CORE1, or 0 for
-/// any), set before it first runs.
+/// The cores the new process runs on (exec's TF_CORE0 to TF_CORE3, or 0
+/// for any), set before it first runs.
 pub const NP_Affinity = NP_Dummy + 27;
 /// A message replied to its reply port once the new process has ended and
 /// nothing runs on its stack any more (exec's SetTaskEndMsg): when the code

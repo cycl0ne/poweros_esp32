@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! cores: how many cores the kernel runs on, what each is running and has
-//! done, and whether the second one takes any task or only its own.
+//! done, and whether the others take any task or only their own.
 
 const _shell = @import("../shell.zig");
 const cpu1 = @import("../../../../../arch/arch.zig").cpu1;
@@ -9,6 +9,8 @@ const timer = @import("../../../../../arch/arch.zig").timer;
 const rendezvous = @import("../../../../../arch/arch.zig").rendezvous;
 const trap = @import("../../../../../arch/arch.zig").trap;
 const _cache = @import("../../cache/_cache.zig");
+const exec_base = @import("../../exec_base.zig");
+const ExecBase = @import("../../exec.zig").ExecBase;
 const Shell = _shell.Shell;
 const Args = _shell.Args;
 
@@ -17,8 +19,9 @@ pub const usage = "cores [ping | share on|off | reset]";
 pub const help =
     \\  cores                the cores the kernel runs on: what each runs, its
     \\                       dispatches, idle rounds and cross-core interrupts
-    \\  cores ping           raise core 1's cross-core interrupt
-    \\  cores share on|off   whether core 1 takes any task, or only its own
+    \\  cores ping           raise the other cores' cross-core interrupts
+    \\  cores share on|off   whether the cores but 0 take any task, or only
+    \\                       their own
     \\  cores reset          clear the worst waits and holds below
     \\
     \\  Under each core: the longest it held the system's interrupt lock and the
@@ -35,12 +38,12 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     shell.print("%d core(s) built in\n", .{cpu1.cores});
     if (cpu1.cores < 2) return;
     if (!cpu1.isUp()) {
-        shell.print("core 1 not running\n", .{});
+        shell.print("no other core running\n", .{});
         return;
     }
     if (args.next()) |word| {
         if (_shell.same(word, "ping")) {
-            intmatrix.raiseCrossCore(1);
+            pokeOthers(base);
         } else if (_shell.same(word, "reset")) {
             sys.Disable();
             for (&base.cpus) |*cpu| {
@@ -60,13 +63,12 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             sys.Disable();
             base.share_cores = share;
             sys.Enable();
-            // Core 1 looks at the ready list again.
-            intmatrix.raiseCrossCore(1);
+            // The others look at the ready list again.
+            pokeOthers(base);
         } else return error.Usage;
     }
-    shell.print("core 1 takes %s; it has ticked %u times\n", .{
-        @as([*:0]const u8, if (base.share_cores != 0) "any task" else "only its own tasks"),
-        timer.core1TickCount(),
+    shell.print("the cores but 0 take %s\n", .{
+        @as([*:0]const u8, if (base.share_cores != 0) "any task" else "only their own tasks"),
     });
     shell.print("device sources over 50 us:", .{});
     for (intmatrix.source_longest, 0..) |cycles, source| {
@@ -86,9 +88,10 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         const dispatches = cpu.disp_count;
         const idle_rounds = cpu.idle_count;
         sys.Enable();
-        shell.print("core %u: running %s; %u dispatches, %u idle rounds, %u cross-core interrupts\n", .{
+        shell.print("core %u: running %s; %u ticks, %u dispatches, %u idle rounds, %u cross-core interrupts\n", .{
             @as(u32, @intCast(core)),
             @as([*:0]const u8, @ptrCast(&running)),
+            ticksOf(@intCast(core)),
             dispatches,
             idle_rounds,
             intmatrix.cross_core_count[core],
@@ -114,5 +117,23 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             if (cycles / per_us > 50) shell.print(" %u: %u us", .{ @as(u32, @intCast(line)), cycles / per_us });
         }
         shell.print("\n", .{});
+    }
+}
+
+/// Core `core`'s ticks: a chip that counts every core's, or core 0's and
+/// core 1's.
+fn ticksOf(core: u32) u32 {
+    if (@hasDecl(timer, "coreTickCount")) return timer.coreTickCount(core);
+    return if (core == 0) timer.tickCount() else timer.core1TickCount();
+}
+
+/// The cross-core interrupt raised on every running core but this one.
+fn pokeOthers(base: *ExecBase) void {
+    const sys = base.iface();
+    sys.Disable();
+    defer sys.Enable();
+    const me = exec_base.coreId();
+    for (0..base.cores_running) |core| {
+        if (core != me) intmatrix.raiseCrossCore(@intCast(core));
     }
 }

@@ -198,10 +198,11 @@ pub fn build(b: *std.Build) void {
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
-    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
+    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 board (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
-    if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
+    const most_cores: u32 = if (chipOf(board) == .rv64sbi) 4 else 2;
+    if (cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
@@ -540,7 +541,7 @@ pub fn build(b: *std.Build) void {
     const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
     const run_virt = b.addSystemCommand(&.{
         "qemu-system-riscv64", "-M",    "virt",       "-m", "512M",
-        "-smp",                "1",     "-nographic", "-bios", "default",
+        "-smp",                "4",     "-nographic", "-bios", "default",
         "-kernel",
     });
     run_virt.addArtifactArg(virt_kernel);

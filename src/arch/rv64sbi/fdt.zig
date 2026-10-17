@@ -5,9 +5,13 @@
 //! and `linux,initrd-end`, which QEMU's -initrd and U-Boot's booti write),
 //! and the RAM that is not the kernel's: the header's reservation block
 //! (where U-Boot puts the disk image) and every `/reserved-memory` node
-//! with a `reg` (where OpenSBI puts itself). Read once in kmain, before
-//! exec's memory exists: the tree sits in RAM exec is given, and is gone
-//! after.
+//! with a `reg` (where OpenSBI puts itself); and the harts that can run
+//! the kernel - every `/cpus/cpu@` node that is not disabled, has an MMU
+//! (`mmu-type`) and the FPU the kernel uses (F and D in `riscv,isa`). That
+//! leaves out the JH7110's S7, which the tree lists beside the U74s and
+//! the firmware would even start, but which has neither the FPU nor
+//! supervisor mode. Read once in kmain, before exec's memory exists: the
+//! tree sits in RAM exec is given, and is gone after.
 //!
 //! The flattened tree is big-endian: a header, then a structure block of
 //! tokens - a node begins with its name, a property is its length, the
@@ -31,6 +35,9 @@ pub const Range = struct { start: usize, end: usize };
 /// less.
 pub const max_reserved = 8;
 
+/// The most harts kept; more are left out.
+pub const max_harts = 8;
+
 pub const Facts = struct {
     ram_base: ?usize = null,
     ram_size: ?usize = null,
@@ -38,6 +45,14 @@ pub const Facts = struct {
     initrd_end: ?usize = null,
     reserved: [max_reserved]Range = undefined,
     reserved_count: usize = 0,
+    /// The harts' ids, in the tree's order.
+    harts: [max_harts]usize = undefined,
+    hart_count: usize = 0,
+
+    /// The harts that can run the kernel.
+    pub fn hartIds(facts: *const Facts) []const usize {
+        return facts.harts[0..facts.hart_count];
+    }
 
     /// The reserved ranges.
     pub fn reservedRanges(facts: *const Facts) []const Range {
@@ -94,6 +109,16 @@ fn number(bytes: []const u8) ?usize {
     };
 }
 
+/// Whether an ISA string - `rv64imafdc_zicsr...` - has the F and D
+/// extensions, or G, which has both: its single letters, up to the first
+/// multi-letter one. One that is not an RV string is taken at its word.
+fn hasFpu(isa: []const u8) bool {
+    if (isa.len < 4 or !std.mem.startsWith(u8, isa, "rv")) return true;
+    const letters = isa[4..@max(std.mem.indexOfScalar(u8, isa, '_') orelse isa.len, 4)];
+    if (std.mem.indexOfScalar(u8, letters, 'g') != null) return true;
+    return std.mem.indexOfScalar(u8, letters, 'f') != null and std.mem.indexOfScalar(u8, letters, 'd') != null;
+}
+
 /// The facts the tree at `address` has; none if there is no tree there.
 pub fn read(address: usize) Facts {
     var facts: Facts = .{};
@@ -124,8 +149,16 @@ pub fn read(address: usize) Facts {
     var reserved_size_cells: u32 = 1;
     var depth: u32 = 0;
     // What the root's child being read is.
-    const Node = enum { other, memory, chosen, reserved_memory };
+    const Node = enum { other, memory, chosen, reserved_memory, cpus };
     var node: Node = .other;
+    // /cpus's cell size, which a cpu node's reg is written in; and the cpu
+    // node being read, if one is: its id, and whether it can run us.
+    var cpus_address_cells: u32 = 1;
+    var in_cpu = false;
+    var cpu_id: ?usize = null;
+    var cpu_okay = true;
+    var cpu_mmu = false;
+    var cpu_fpu = true;
     while (at + 4 <= tree.len) {
         const token = be32(tree[at..]);
         at += 4;
@@ -143,11 +176,26 @@ pub fn read(address: usize) Facts {
                         break :reserved .reserved_memory;
                     } else if (std.mem.startsWith(u8, name, "memory") and facts.ram_size == null)
                         .memory
+                    else if (std.mem.eql(u8, name, "cpus"))
+                        .cpus
                     else
                         .other;
+                } else if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
+                    in_cpu = true;
+                    cpu_id = null;
+                    cpu_okay = true;
+                    cpu_mmu = false;
+                    cpu_fpu = true;
                 }
             },
             END_NODE => {
+                if (depth == 3 and in_cpu) {
+                    in_cpu = false;
+                    if (cpu_id != null and cpu_okay and cpu_mmu and cpu_fpu and facts.hart_count < max_harts) {
+                        facts.harts[facts.hart_count] = cpu_id.?;
+                        facts.hart_count += 1;
+                    }
+                }
                 depth -|= 1;
                 if (depth < 2) node = .other;
             },
@@ -167,6 +215,15 @@ pub fn read(address: usize) Facts {
                 } else if (depth == 2 and node == .chosen) {
                     if (std.mem.eql(u8, name, "linux,initrd-start")) facts.initrd_start = number(value);
                     if (std.mem.eql(u8, name, "linux,initrd-end")) facts.initrd_end = number(value);
+                } else if (depth == 2 and node == .cpus) {
+                    if (std.mem.eql(u8, name, "#address-cells")) cpus_address_cells = be32(value);
+                } else if (depth == 3 and in_cpu) {
+                    if (std.mem.eql(u8, name, "reg") and cpus_address_cells >= 1 and cpus_address_cells <= 2 and len >= cpus_address_cells * 4) {
+                        cpu_id = cellsAt(value, cpus_address_cells);
+                    }
+                    if (std.mem.eql(u8, name, "status")) cpu_okay = std.mem.startsWith(u8, value, "okay") or std.mem.startsWith(u8, value, "ok");
+                    if (std.mem.eql(u8, name, "mmu-type")) cpu_mmu = true;
+                    if (std.mem.eql(u8, name, "riscv,isa")) cpu_fpu = hasFpu(std.mem.sliceTo(value, 0));
                 } else if (depth == 2 and node == .reserved_memory) {
                     if (std.mem.eql(u8, name, "#address-cells")) reserved_address_cells = be32(value);
                     if (std.mem.eql(u8, name, "#size-cells")) reserved_size_cells = be32(value);

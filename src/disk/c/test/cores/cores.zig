@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
-//! Cores: the two cores against each other.
+//! Cores: the cores against each other.
 //!
 //! Worker tasks - as many as TASKS says, on whichever core is free, or
-//! half pinned to each with PIN - go round every way exec keeps code
+//! pinned to the running cores in turn with PIN - go round every way exec keeps code
 //! apart, for SECONDS: Disable, a semaphore and a spinlock, each around
 //! a section that checks it is alone in it; memory allocated,
 //! filled, checked and freed; and a ring of signals, each worker passing
 //! a token on to the next and waiting for one from the one before. The
 //! ring keeps the workers nearly in step; FREE leaves it out, and they
-//! run flat out against each other on both cores.
+//! run flat out against each other on every core.
 //!
 //! What it checks: no two workers are ever in the same section at once;
 //! the count each section keeps inside it - added to without any care -
@@ -247,7 +247,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(library);
     const opened_before = library.open_cnt;
 
-    _ = Printf(dl, "%u tasks%s for %u seconds\n", .{ wanted, @as([*:0]const u8, if (pin) ", half on each core" else ""), seconds });
+    // The cores running: those ReadCoreTimes answers for.
+    var cores: u32 = 0;
+    var times: exec.CoreTimes = .{};
+    while (cores < 4 and sys.ReadCoreTimes(cores, &times)) cores += 1;
+    cores = @max(cores, 1);
+    _ = Printf(dl, "%u tasks%s for %u seconds\n", .{ wanted, @as([*:0]const u8, if (pin) ", pinned to the cores in turn" else ""), seconds });
     _ = dl.Flush(dl.Output());
 
     // Made one by one, each waiting for the go; counted in, pinned and its
@@ -262,7 +267,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const task = sys.CreateTask(@ptrCast(name), -1, &workerCode, worker_stack) orelse break;
         worker.ended = .{ .reply_port = ended };
         sys.SetTaskEndMsg(task, &worker.ended);
-        if (pin) _ = sys.SetTaskAffinity(task, if (number % 2 == 0) exec.TF_CORE0 else exec.TF_CORE1);
+        if (pin) _ = sys.SetTaskAffinity(task, exec.coreFlag(@intCast(number % cores)));
         worker.task = task;
         run.count += 1;
     }

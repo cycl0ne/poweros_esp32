@@ -365,7 +365,7 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         into.missed += 1;
         return;
     }
-    const pins = task.flags & (exec.TF_CORE0 | exec.TF_CORE1);
+    const pins = task.flags & exec.TF_CORES;
     const seen = &into.seen[into.count];
     into.count += 1;
     seen.* = .{
@@ -374,7 +374,7 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         .pri = task.node.pri,
         .state = state,
         .core = core,
-        .idle = task.node.pri == -128 and (pins == exec.TF_CORE0 or pins == exec.TF_CORE1),
+        .idle = task.node.pri == -128 and @popCount(pins) == 1,
         .id = task.id,
     };
     copyName(&seen.name, task.node.name);

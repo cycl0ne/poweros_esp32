@@ -9,7 +9,8 @@
 //!
 //! Each core has a bar with how busy it was over the last interval - in
 //! tasks and in interrupts together - and a line under it saying how much
-//! of that was each. The chart under them has two lines per core: how
+//! of that was each, two cores to a row. The chart under them has two
+//! lines per core, for as many cores as it has room for (four): how
 //! busy it was, and, lighter, how much of that was interrupts. A load a
 //! task makes and one the hardware makes look different at once.
 //!
@@ -43,8 +44,8 @@ const tx = sdk.gadgets.text;
 const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "CPULoad";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (17.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -60,12 +61,18 @@ const MSG_NOWINDOW = "%s: no window\n";
 /// The chart holds two lines a core, so this many cores fit on it.
 const max_cores = cr.CHART_MAX_SERIES / 2;
 
-/// A core's line and, lighter, its interrupts' line: blue, then green.
+/// How many cores go side by side, in the grid of their bars.
+const per_row = 2;
+
+/// A core's line and, lighter, its interrupts' line: blue, green, orange,
+/// purple.
 const colours = [max_cores][2]u32{
     .{ 0xFF3070C0, 0xFF9DB8E0 },
     .{ 0xFF2E9E4F, 0xFF9FD3AE },
+    .{ 0xFFD07A1E, 0xFFEBC08F },
+    .{ 0xFF8A4FC0, 0xFFC9ADE3 },
 };
-const colour_names = [max_cores][*:0]const u8{ "blue", "green" };
+const colour_names = [max_cores][*:0]const u8{ "blue", "green", "orange", "purple" };
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -176,13 +183,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    // The cores side by side, the chart under them.
-    var row_tags: [2 + max_cores]TagItem = undefined;
-    n = 0;
-    row_tags[n] = pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ);
-    n += 1;
-    row_tags[n] = pair(lg.LAYOUTA_Spacing, 6);
-    n += 1;
+    // The cores side by side, `per_row` to a row, the chart under them.
     var groups: [max_cores]?*Object = @splat(null);
     for (cores[0..count], 0..) |*core, index| {
         groups[index] = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -196,18 +197,20 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .{},
         });
     }
-    var row_list: [3 + max_cores]TagItem = undefined;
+    var grid_list: [4 + max_cores]TagItem = undefined;
     var r: usize = 0;
-    row_list[r] = row_tags[0];
+    grid_list[r] = pair(lg.LAYOUTA_Orientation, lg.LORIENT_GRID);
     r += 1;
-    row_list[r] = row_tags[1];
+    grid_list[r] = pair(lg.LAYOUTA_Columns, @min(count, per_row));
+    r += 1;
+    grid_list[r] = pair(lg.LAYOUTA_Spacing, 6);
     r += 1;
     for (groups[0..count]) |group| {
-        row_list[r] = pair(lg.LAYOUTA_AddChild, @intFromPtr(group));
+        grid_list[r] = pair(lg.LAYOUTA_AddChild, @intFromPtr(group));
         r += 1;
     }
-    row_list[r] = .{};
-    const top = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &row_list);
+    grid_list[r] = .{};
+    const top = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &grid_list);
     var chart_title: [48:0]u8 = @splat(0);
     const chart_stream = exec.fmtStream(.{history * interval});
     comptime exec.checkFormat("Busy and interrupts, last %u s", @TypeOf(.{@as(u32, 0)}));

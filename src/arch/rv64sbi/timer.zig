@@ -21,6 +21,7 @@ const hardware = @import("sdk").hardware;
 const sbi = hardware.sbi;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
+const max_cores = @import("../../rom/libs/exec/exec_base.zig").max_cores;
 
 /// The tick's interrupt, each core's.
 pub const tick_irq = trap.tick_line;
@@ -30,10 +31,10 @@ pub var measured_cpu_hz: u32 = 0;
 pub var cpu_hz: u32 = 0;
 pub var tick_hz: u32 = 0;
 var period: u64 = 0;
-var ticks: u32 = 0;
-var core1_ticks: u32 = 0;
+/// Each core's ticks; core 0's are the system's.
+var ticks: [max_cores]u32 = @splat(0);
 /// Each core's next tick, in the timebase's units.
-var next_tick: [2]u64 = @splat(0);
+var next_tick: [max_cores]u64 = @splat(0);
 /// Another core changed an alarm: core 0 sets its comparator again at
 /// its cross-core interrupt.
 var rethink_asked: u32 = 0;
@@ -53,12 +54,17 @@ pub fn spinUs(us: u64) void {
 }
 
 pub fn tickCount() u32 {
-    return @as(*volatile u32, &ticks).*;
+    return coreTickCount(0);
 }
 
 /// Core 1's ticks.
 pub fn core1TickCount() u32 {
-    return @as(*volatile u32, &core1_ticks).*;
+    return coreTickCount(1);
+}
+
+/// Core `core`'s ticks.
+pub fn coreTickCount(core: u32) u32 {
+    return @atomicLoad(u32, &ticks[core], .monotonic);
 }
 
 /// Core 0's tick at `hz` ticks a second, and the CPU's clock measured.
@@ -71,7 +77,8 @@ pub fn init(hz: u32) void {
     start();
 }
 
-/// Core 1's tick, on core 1: its own comparator, at core 0's rate.
+/// Another core's tick, on that core: its own comparator, at core 0's
+/// rate.
 pub fn initCore1() void {
     start();
 }
@@ -140,14 +147,9 @@ fn onTick(_: u6) void {
     if (at >= next_tick[core]) {
         next_tick[core] += period;
         if (next_tick[core] <= at) next_tick[core] = at + period;
-        if (core == 0) {
-            ticks +%= 1;
-            exec.tickQuantum(exec.SysBase);
-            exec.tickLog(exec.SysBase);
-        } else {
-            core1_ticks +%= 1;
-            exec.tickQuantum(exec.SysBase);
-        }
+        ticks[core] +%= 1;
+        exec.tickQuantum(exec.SysBase);
+        if (core == 0) exec.tickLog(exec.SysBase);
     }
     program(core);
 }
