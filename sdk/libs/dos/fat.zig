@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! The structures on a card formatted the way cards are sold: the
 //! partition table in its first block, the boot sector of a volume, and
-//! the directory entries of a FAT volume.
+//! the directory entries of a FAT volume - and what a FAT drive's DosType
+//! says about its area.
 //!
-//! They are read by two places that must agree - dos.library's mount,
-//! which looks at a card to decide what to put on the device list, and
-//! fat-handler, which then reads the volume - so they live here rather
-//! than in either.
+//! They are here rather than in fat-handler because more than the handler
+//! reads them: whatever mounts a FAT drive names its DosType, and a
+//! program may read a card's table.
 //!
 //! **Nothing here is aligned.** A boot sector has 16-bit fields at odd
 //! offsets, so every field is read out of a byte slice with `u16At` and
@@ -22,6 +22,8 @@
 //! or above the bad value, so everything above the table compares
 //! against one pair of constants and never has to know how wide the
 //! table is.
+
+const dos = @import("dos.zig");
 
 // --- reading and writing what is on the medium -------------------------------
 
@@ -116,6 +118,46 @@ pub fn mountable(kind: u8) bool {
         TYPE_FAT16_SMALL, TYPE_FAT16, TYPE_NTFS_OR_EXFAT, TYPE_FAT32, TYPE_FAT32_LBA, TYPE_FAT16_LBA => true,
         else => false,
     };
+}
+
+// --- what a FAT drive's DosType says ------------------------------------------
+
+/// A FAT drive's DosType (de_DosType) says two things. Its first three
+/// bytes are what the drive's area holds: `MSD` (ID_MSDOS_DISK) the volume
+/// itself, `MSH` (ID_MSDOS_DISK_HD) a partition table, the volume in the
+/// first of its partitions of a FAT type. Its last byte is the format
+/// ACTION_FORMAT writes there when it is given the type: one of these.
+///
+/// A card is sold with a partition table, so a drive for cards is `MSH`;
+/// `MSD` is for a medium formatted whole, and for a partition of a disk
+/// whose own table already says where the volume is.
+pub const FORMAT_BY_SIZE: u8 = 0;
+/// FAT32: a card of up to 32 GiB is sold so.
+pub const FORMAT_FAT32: u8 = 1;
+/// exFAT: a larger card is sold so.
+pub const FORMAT_EXFAT: u8 = 2;
+
+const type_mask: u32 = 0xFFFF_FF00;
+
+/// Whether a DosType is a FAT drive's, `MSD` or `MSH` with any last byte.
+pub fn isFatType(dos_type: u32) bool {
+    const kind = dos_type & type_mask;
+    return kind == dos.ID_MSDOS_DISK or kind == dos.ID_MSDOS_DISK_HD;
+}
+
+/// Whether a FAT drive's area begins with a partition table.
+pub fn partitionedType(dos_type: u32) bool {
+    return dos_type & type_mask == dos.ID_MSDOS_DISK_HD;
+}
+
+/// The format a FAT DosType's last byte names: `FORMAT_*`.
+pub fn formatOfType(dos_type: u32) u8 {
+    return @truncate(dos_type);
+}
+
+/// The DosType with its last byte set to `format` (`FORMAT_*`).
+pub fn typeWithFormat(dos_type: u32, format: u8) u32 {
+    return (dos_type & type_mask) | format;
 }
 
 // --- what is on a volume -----------------------------------------------------

@@ -13,16 +13,21 @@
 //!
 //! **The medium** is duck-typed, as the other handler's is, so both file
 //! systems are tested on the host against `testmedia.zig` and given
-//! sdcard.device on the machine. It must offer
+//! sdcard.device on the machine. It is the drive's area, not the device:
+//! block 0 is the area's first, and `blocks` how many it has. It must
+//! offer
 //!
 //!     blockSize() u32          blocks() u64
 //!     read(lba: u64, count: u32, into: []u8) bool
 //!     write(lba: u64, count: u32, from: []const u8) bool
 //!     writable() bool          present() bool      changeNum() u32
+//!     partitioned() bool
 //!     alloc(u32) ?[]u8         free([]u8)          now() DateStamp
 //!
-//! There is no `erase`: a card needs none. There is no `bytes`: a card
-//! cannot be read as memory.
+//! `partitioned` is what the drive's DosType says the area holds: a
+//! partition table (`MSH`), or the volume itself (`MSD`). There is no
+//! `erase`: a card needs none. There is no `bytes`: a card cannot be read
+//! as memory.
 //!
 //! **Two of the three conversions invert, in opposite senses**, which is
 //! the kind of thing that is wrong for months before anyone notices. See
@@ -70,6 +75,9 @@ pub const Error = error{
     NotImplemented,
     /// The medium said no, or what is on it does not make sense.
     MediumFailed,
+    /// A format asked for that the area cannot have: too small for it,
+    /// too large, or no format at all.
+    Unsuitable,
 };
 
 /// The dos error a file system error answers with.
@@ -90,6 +98,7 @@ pub fn codeOf(e: Error) i32 {
         error.NoMoreEntries => dos.ERROR_NO_MORE_ENTRIES,
         error.NotImplemented => dos.ERROR_ACTION_NOT_KNOWN,
         error.MediumFailed => dos.ERROR_NOT_A_DOS_DISK,
+        error.Unsuitable => dos.ERROR_INVALID_ARGUMENT,
     };
 }
 
@@ -98,16 +107,19 @@ pub fn codeOf(e: Error) i32 {
 /// Where a medium's volume starts, and which format it is.
 pub const Volume = struct { first: u64, format: fat.Format };
 
-/// The volume on a medium: the medium itself if its first block is a
-/// boot sector of either format, else the first partition of its table
-/// worth mounting whose first block is one. `sector` is one block of
-/// scratch; the medium is duck-typed as the file systems' is.
+/// The volume where the drive's DosType says it is: the area itself, or,
+/// when the area is `partitioned`, the first partition of the table in
+/// its first block that is of a type worth mounting and whose first block
+/// is a boot sector of either format. Nothing is guessed: an area said to
+/// be a volume that holds a table, or one said to hold a table that is a
+/// volume, is not a volume. `sector` is one block of scratch; the medium
+/// is duck-typed as the file systems' is.
 pub fn findVolume(media: anytype, sector: []u8) Error!Volume {
     if (!media.read(0, 1, sector)) return error.MediumFailed;
-    switch (fat.formatOf(sector)) {
-        .unknown => {},
-        else => |format| return .{ .first = 0, .format = format },
-    }
+    if (!media.partitioned()) return switch (fat.formatOf(sector)) {
+        .unknown => error.MediumFailed,
+        else => |format| .{ .first = 0, .format = format },
+    };
     if (!fat.signed(sector)) return error.MediumFailed;
     var partitions: [fat.partition_count]fat.Partition = undefined;
     for (&partitions, 0..) |*partition, which| partition.* = fat.partitionOf(sector, which);
@@ -120,6 +132,70 @@ pub fn findVolume(media: anytype, sector: []u8) Error!Volume {
         }
     }
     return error.MediumFailed;
+}
+
+/// The partition table a format writes in an area's first block: one
+/// partition of type `kind` from block `first`, `count` blocks long, and
+/// the other three entries empty. The disk's signature, which a PC tells
+/// its disks apart by, is `signature`. `block` is one block of scratch,
+/// which is written whole. Its start and end are given as cylinder, head
+/// and sector too, for a reader that still goes by them; past what those
+/// can hold they are the marks that say so.
+pub fn writeTable(media: anytype, first: u32, count: u32, kind: u8, signature: u32, block: []u8) Error!void {
+    @memset(block, 0);
+    fat.putU32(block, disk_signature_at, signature);
+    const at = fat.partition_table_at;
+    putChs(block[at + 1 ..][0..3], first);
+    block[at + 4] = kind;
+    putChs(block[at + 5 ..][0..3], first + count - 1);
+    fat.putU32(block, at + 8, first);
+    fat.putU32(block, at + 12, count);
+    fat.putU16(block, fat.signature_at, fat.signature);
+    if (!media.write(0, 1, block)) return error.MediumFailed;
+}
+
+/// Where a partition table keeps its disk's signature.
+const disk_signature_at: usize = 440;
+
+/// The heads and the sectors in a track that cylinder, head and sector
+/// are counted in, and the most cylinders the three bytes can hold.
+const chs_heads: u32 = 255;
+const chs_sectors: u32 = 63;
+const chs_cylinders: u32 = 1024;
+
+/// A block's number as cylinder, head and sector, in the three bytes a
+/// partition entry keeps them in: the head, then the sector with the
+/// cylinder's two high bits above it, then the cylinder's low eight. A
+/// block past the last cylinder is the last there is.
+fn putChs(into: *[3]u8, block: u32) void {
+    var cylinder = block / (chs_heads * chs_sectors);
+    var head = (block / chs_sectors) % chs_heads;
+    var sector = block % chs_sectors + 1;
+    if (cylinder >= chs_cylinders) {
+        cylinder = chs_cylinders - 1;
+        head = chs_heads - 1;
+        sector = chs_sectors;
+    }
+    into[0] = @intCast(head);
+    into[1] = @intCast(sector | ((cylinder >> 2) & 0xC0));
+    into[2] = @truncate(cylinder);
+}
+
+/// A name as a FAT volume label: eleven characters in upper case with
+/// spaces after them, which is what a PC reads. A name of more than
+/// eleven, or with a character a label cannot hold, is refused.
+pub fn shortLabel(name: []const u8) Error![fat.bpb_volume_label_bytes]u8 {
+    if (name.len == 0 or name.len > fat.bpb_volume_label_bytes or !dos.volumename.valid(name)) return error.InvalidName;
+    var short: [fat.bpb_volume_label_bytes]u8 = @splat(' ');
+    for (name, 0..) |char, at| {
+        switch (char) {
+            '"', '*', '+', ',', '.', ';', '<', '=', '>', '?', '[', '\\', ']', '|' => return error.InvalidName,
+            else => {},
+        }
+        if (char > 0x7E) return error.InvalidName;
+        short[at] = upper(char);
+    }
+    return short;
 }
 
 // --- the attribute byte ------------------------------------------------------

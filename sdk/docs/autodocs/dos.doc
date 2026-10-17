@@ -49,6 +49,7 @@ dos.library/FindDosEntry
 dos.library/FindSegment
 dos.library/FindVar
 dos.library/Flush
+dos.library/Format
 dos.library/FreeArgs
 dos.library/FreeDeviceProc
 dos.library/FreeDosEntry
@@ -64,6 +65,7 @@ dos.library/GetProgramName
 dos.library/GetPrompt
 dos.library/GetVar
 dos.library/Info
+dos.library/Inhibit
 dos.library/Input
 dos.library/IoErr
 dos.library/IsFileSystem
@@ -2421,6 +2423,72 @@ dos.library/WriteChars
    EXAMPLES
 	    _ = dos_lib.PutStr("Name: ");
 	    _ = dos_lib.Flush(dos_lib.Output());
+dos.library/Format                                          dos.library/Format
+
+   NAME
+	Format -- Writes a fresh, empty volume over the medium in a drive.
+
+   SYNOPSIS
+	    fn Format(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32) bool
+
+   SINCE
+	1.8. LVO -592.
+
+   INPUTS
+	- `drive` - the drive's device, with its colon (`SD0:`).
+	- `name` - the new volume's name, without a colon: one to 30
+	  characters, none of them `:` or `/`. Null for the file system's own:
+	  none on FAT, `Empty` on the flash file system.
+	- `dos_type` - the format, for a file system that writes more than one;
+	  0 for the drive's own. A FAT drive takes its own DosType with the
+	  last byte `FORMAT_FAT32`, `FORMAT_EXFAT` or `FORMAT_BY_SIZE`
+	  (`sdk.dos.fat.typeWithFormat`).
+
+   RESULT
+	True when the volume is written; false with IoErr saying why -
+	`ERROR_INVALID_COMPONENT_NAME` for a name that cannot be a volume's, or
+	what the handler answered: `ERROR_OBJECT_IN_USE` for a drive that is
+	not inhibited and has a volume, or one with something on it locked;
+	`ERROR_NO_DISK`; `ERROR_DISK_WRITE_PROTECTED`; `ERROR_INVALID_ARGUMENT`
+	for a format the medium cannot have or a DosType the handler does not
+	write; `ERROR_INVALID_COMPONENT_NAME` for a name its format cannot
+	hold; `ERROR_ACTION_NOT_KNOWN` from a handler that cannot format.
+
+   BEHAVIOR
+	`ACTION_FORMAT` to the drive's handler, with the name and the
+	DosType. The handler refuses what it can before it writes anything,
+	then lays the volume out over the drive's area as its startup message
+	gives it - the whole medium, or the blocks its node names. Everything
+	that was on the area is gone. An inhibited drive keeps the new volume
+	until the last inhibit is taken back; one that held no volume mounts
+	it at once.
+
+   CONTEXT
+	- Waits: yes, for the handler, which writes the volume's structures -
+	  on a large card a few seconds.
+	- Interrupts: no.
+	- Locks: no spinlock may be held, nor the device list.
+	- Process: a Process.
+
+   OWNERSHIP
+	`name` is read while the call lasts.
+
+   NOTES
+	Inhibit the drive first: a drive whose volume is in use refuses. The
+	medium is taken as it is - nothing is erased or checked block by block
+	- so a format of a large card is quick.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`Inhibit`, `Relabel`, `Info`
+
+   EXAMPLES
+	    if (dos_lib.Inhibit("SD0:", true)) {
+	        if (!dos_lib.Format("SD0:", "Photos", 0)) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Format");
+	        _ = dos_lib.Inhibit("SD0:", false);
+	    }
 dos.library/FreeArgs                                      dos.library/FreeArgs
 
    NAME
@@ -3094,6 +3162,63 @@ dos.library/WriteChars
    EXAMPLES
 	    var info: dos.InfoData = .{};
 	    if (dos_lib.Info(lock, &info)) used = info.num_blocks_used;
+dos.library/Inhibit                                        dos.library/Inhibit
+
+   NAME
+	Inhibit -- Stops a drive's file system from using its medium, or lets it use the medium again.
+
+   SYNOPSIS
+	    fn Inhibit(db: *DosBase, drive: [*:0]const u8, on: bool) bool
+
+   SINCE
+	1.8. LVO -588.
+
+   INPUTS
+	- `drive` - the drive, with its colon: a device (`SD0:`), a volume or
+	  an assign to one. Once inhibited a drive may have no volume, so it is
+	  let go by its device's name.
+	- `on` - true to inhibit the drive, false to take an inhibit back.
+
+   RESULT
+	True when the handler did it; false with IoErr saying why -
+	`ERROR_OBJECT_IN_USE` while a file on the drive is open for writing,
+	`ERROR_ACTION_NOT_KNOWN` from a handler that cannot be inhibited,
+	`ERROR_DEVICE_NOT_MOUNTED` for a drive that is not there.
+
+   BEHAVIOR
+	`ACTION_INHIBIT` to the drive's handler, with `DOSTRUE` or `DOSFALSE`.
+	Inhibited, the handler puts what it holds in memory on the medium and
+	keeps off it: it answers every packet but those that give a lock or a
+	file back as for a disk it cannot read (`ERROR_NOT_A_DOS_DISK`), and
+	Info says the drive is busy (`ID_BUSY_DISK`). Inhibits nest, and the
+	drive is in use again when the last one is taken back: the handler
+	then reads the medium as it finds it - the same, a fresh one, or none.
+	Taking back an inhibit the drive does not have does nothing.
+
+   CONTEXT
+	- Waits: yes, for the handler, which writes what it holds first.
+	- Interrupts: no.
+	- Locks: no spinlock may be held, nor the device list.
+	- Process: a Process.
+
+   OWNERSHIP
+	Nothing is kept.
+
+   NOTES
+	A program that writes a medium itself - a format, a copy of a whole
+	disk - inhibits its drive first and takes the inhibit back however it
+	ends; a drive left inhibited stays busy until the system starts again.
+	A lock taken before stays a lock, but what it names may be gone after.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`Format`, `Info`
+
+   EXAMPLES
+	    if (!dos_lib.Inhibit("SD0:", true)) return dos_lib.IoErr();
+	    defer _ = dos_lib.Inhibit("SD0:", false);
 dos.library/Input                                            dos.library/Input
 
    NAME

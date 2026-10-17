@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MIT
 //! fat-handler: FAT32 and exFAT on a card, as a handler on the disk -
 //! `HANDLERS:fat-handler`, which dos loads the first time the device is
-//! used and keeps in the device node from then on. The mountlist gives it
-//! a whole device - sdcard.device's unit 0 - and it finds the volume on it
-//! itself: the card's first block is the volume's boot sector, or a
-//! partition table with the volume in one of its partitions, which is how
-//! cards are sold.
+//! used and keeps in the device node from then on.
+//!
+//! **What it works on** is what its startup message says: the device, its
+//! unit and its flags, and the environment's area - cylinders of a disk,
+//! or the whole medium when it names none, as `SD0:`'s entry does, read
+//! again for each card - in transfers of at most its MaxTransfer. Where
+//! the volume is in that area the DosType says (`sdk.dos.fat`): `MSD`, the
+//! area is the volume; `MSH`, the area begins with a partition table and
+//! the volume is in its first partition of a FAT type, which is how cards
+//! are sold. Nothing is guessed at: a card laid out otherwise than its
+//! drive says is not a volume there.
 //!
 //! The file systems are `fat32/fs.zig` and `exfat/fs.zig`, generic over
 //! the medium and tested on the host. This file is what the machine needs:
@@ -86,6 +92,19 @@
 //! card in the slot has its cache made that size at once, the next one
 //! from the start.
 //!
+//! **Inhibit** (ACTION_INHIBIT) puts the volume away as if its card had
+//! gone - written back first, and refused while a file is open for
+//! writing - and leaves the card alone: no change is looked for, Info
+//! says the drive is busy (ID_BUSY_DISK), and every packet but those that
+//! free a lock is answered as for a card that cannot be read. Inhibits
+//! nest; the last one taken back reads the card afresh, as one just put
+//! in. A lock taken before is no good after.
+//!
+//! **Format** (ACTION_FORMAT, `format.zig`) lays a fresh volume over the
+//! area, in the format the packet's DosType names - the drive's own when it
+//! is 0 - labelled as it says: only on a drive with nothing in use,
+//! inhibited or with no volume.
+//!
 //! **A device it cannot open** - no slot, no controller - is another
 //! matter: there will never be a card. The start then gives back what it
 //! took, answers ERROR_DEVICE_NOT_MOUNTED and ends, and dos unloads the
@@ -104,13 +123,14 @@ const DosPacket = dos.DosPacket;
 const Process = dos.Process;
 const MsgPort = exec.MsgPort;
 const _fat = @import("_fat.zig");
+const format_area = @import("format.zig");
 const fat32_fs = @import("fat32/fs.zig");
 const exfat_fs = @import("exfat/fs.zig");
 const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 8;
+const HANDLER_REVISION = 9;
 const BUILD_DATE = "17.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -119,10 +139,11 @@ const HANDLER_VERSION_STRING =
 
 const UTILITY_VERSION = 1;
 
-/// The medium: the device the startup message names, counted in its own
-/// blocks. What it answers about the card - its size, whether it is in,
-/// whether it may be written - it asks the device each time, because
-/// the card is not always the same one.
+/// The medium: the drive's area on the device the startup message names,
+/// counted in the device's blocks from the area's first. What it answers
+/// about the card - its size, whether it is in, whether it may be written
+/// - it asks the device each time, because the card is not always the
+/// same one.
 pub const DeviceMedia = struct {
     sys: *ExecBase,
     dl: *DosBase,
@@ -134,6 +155,28 @@ pub const DeviceMedia = struct {
     /// Written to since the device was last told to put what it holds on
     /// the medium itself.
     unsynced: bool = false,
+    /// The area the environment gives, in bytes from the device's first:
+    /// null for the whole medium, however large each card is.
+    area: ?Area = null,
+    /// What the DosType says the area holds: a partition table, or the
+    /// volume itself.
+    table: bool = false,
+    /// The drive's DosType, whose last byte is the format ACTION_FORMAT
+    /// writes when the packet names none.
+    dos_type: u32 = dos.ID_MSDOS_DISK,
+    /// The most bytes one command may move (de_MaxTransfer).
+    max_transfer: u64 = std.math.maxInt(u32),
+
+    pub const Area = struct { first: u64, bytes: u64 };
+
+    /// The area and what is in it, as the startup message's environment
+    /// says; with none, the whole medium, the volume itself.
+    pub fn takeEnvironment(media: *DeviceMedia, env: *const dos.filehandler.DosEnvec) void {
+        if (!env.wholeMedium()) media.area = .{ .first = env.byteOf(0), .bytes = env.blocks() * env.size_block };
+        media.table = dos.fat.partitionedType(env.dos_type);
+        media.dos_type = env.dos_type;
+        if (env.table_size >= dos.filehandler.DE_MAXTRANSFER and env.max_transfer != 0) media.max_transfer = env.max_transfer;
+    }
 
     fn command(media: *DeviceMedia, what: u16, offset: u64, length: u64, data: ?*anyopaque) bool {
         media.io.req.command = what;
@@ -161,21 +204,51 @@ pub const DeviceMedia = struct {
         return if (size == 0) 512 else size;
     }
 
+    /// The area's blocks: the card's, for the whole medium. An area that
+    /// does not start on a block, or that runs past the card, has none.
     pub fn blocks(media: *DeviceMedia) u64 {
-        return media.geometryNow().total_sectors;
+        const total = media.geometryNow().total_sectors;
+        const area = media.area orelse return total;
+        const size: u64 = media.blockSize();
+        if (area.first % size != 0) return 0;
+        const first = area.first / size;
+        const count = area.bytes / size;
+        if (first > total or count > total - first) return 0;
+        return count;
     }
 
     pub fn read(media: *DeviceMedia, lba: u64, count: u32, into: []u8) bool {
         const bytes = @as(u64, count) * media.blockSize();
         if (into.len < bytes) return false;
-        return media.command(exec.CMD_READ, lba * media.blockSize(), bytes, into.ptr);
+        return media.transfer(exec.CMD_READ, lba, count, into.ptr);
     }
 
     pub fn write(media: *DeviceMedia, lba: u64, count: u32, from: []const u8) bool {
         const bytes = @as(u64, count) * media.blockSize();
         if (from.len < bytes) return false;
         media.unsynced = true;
-        return media.command(exec.CMD_WRITE, lba * media.blockSize(), bytes, @constCast(from.ptr));
+        return media.transfer(exec.CMD_WRITE, lba, count, @constCast(from.ptr));
+    }
+
+    /// `count` blocks from the area's block `lba`, in commands of at most
+    /// de_MaxTransfer bytes - a whole block each at the least. Nothing
+    /// outside the area is reached.
+    fn transfer(media: *DeviceMedia, what: u16, lba: u64, count: u32, data: [*]u8) bool {
+        const size: u64 = media.blockSize();
+        if (lba > media.blocks() or count > media.blocks() - lba) return false;
+        const first: u64 = if (media.area) |area| area.first / size else 0;
+        const most: u64 = @max(media.max_transfer / size, 1);
+        var done: u64 = 0;
+        while (done < count) {
+            const piece = @min(count - done, most);
+            if (!media.command(what, (first + lba + done) * size, piece * size, data + @as(usize, @intCast(done * size)))) return false;
+            done += piece;
+        }
+        return true;
+    }
+
+    pub fn partitioned(media: *DeviceMedia) bool {
+        return media.table;
     }
 
     /// What the device holds in a cache of its own put on the medium
@@ -271,6 +344,18 @@ const Bodies = struct {
         const one = bodies.fat32.checkMedium();
         const other = bodies.exfat.checkMedium();
         return one or other;
+    }
+
+    /// Whether a file on the volume is open for writing.
+    fn writing(bodies: *Bodies) bool {
+        return bodies.fat32.writing() or bodies.exfat.writing();
+    }
+
+    /// The volume written back and given up, as for a card taken out
+    /// whose locks stay - and are no good from here on.
+    fn putAway(bodies: *Bodies) void {
+        bodies.fat32.unmount();
+        bodies.exfat.unmount();
     }
 
     /// The body with a volume, if either has one.
@@ -370,6 +455,9 @@ const State = struct {
     gone: [8]?*dos.DosList = @splat(null),
     /// The volume's name after ACTION_RENAME_DISK, for its node.
     label: dos.volumename.VolumeName = .{},
+    /// ACTION_INHIBIT's count: while it is not 0 the volume is put away
+    /// and the card is not looked at.
+    inhibited: u32 = 0,
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
     watching: bool = false,
@@ -429,7 +517,7 @@ fn listenForChanges(sys: *ExecBase, st: *State, process: *exec.Task) void {
 /// The device said its card came or went: looked at now - nobody may be
 /// asking anything - the volume node renewed, and input told.
 fn mediumChanged(sys: *ExecBase, dl: *DosBase, st: *State, port: *MsgPort) void {
-    if (st.bodies.checkMedium()) st.renew = true;
+    if (st.inhibited == 0 and st.bodies.checkMedium()) st.renew = true;
     renewSoon(dl, st, port);
     const class = if (st.media.present()) inputevent.IECLASS_DISKINSERTED else inputevent.IECLASS_DISKREMOVED;
     st.input.announce(sys, class);
@@ -536,10 +624,11 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     }
 }
 
-/// One packet: the card checked first, the packet served - asked about
-/// again while the user says to retry - and answered.
+/// One packet: the card checked first - unless the drive is inhibited -
+/// the packet served - asked about again while the user says to retry -
+/// and answered.
 fn handle(dl: *DosBase, st: *State, pkt: *DosPacket, port: *MsgPort) void {
-    if (st.bodies.checkMedium()) st.renew = true;
+    if (st.inhibited == 0 and st.bodies.checkMedium()) st.renew = true;
     if (st.renew) renewVolume(dl, st, port);
     var reply = serve(st, pkt);
     // A mounted volume that suddenly cannot be read is a read or
@@ -548,7 +637,7 @@ fn handle(dl: *DosBase, st: *State, pkt: *DosPacket, port: *MsgPort) void {
     // Nothing is asked when there is no volume to name - an empty
     // slot and a card this handler cannot read both answer the same
     // way, and neither is worth a question.
-    while (reply.res2 == dos.ERROR_NOT_A_DOS_DISK and st.volume != null) {
+    while (reply.res2 == dos.ERROR_NOT_A_DOS_DISK and st.volume != null and st.inhibited == 0) {
         const volume = st.volume.?;
         if (dl.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, @intFromPtr(volume), null)) break;
         if (st.bodies.checkMedium()) {
@@ -593,7 +682,9 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
 
     const device = if (fssm) |startup_msg| startup_msg.device orelse "" else "";
     const unit = if (fssm) |startup_msg| startup_msg.unit else 0;
-    if (device[0] == 0 or sys.OpenDevice(device, unit, &st.io.req, 0) != 0) {
+    const flags = if (fssm) |startup_msg| startup_msg.flags else 0;
+    if (fssm) |startup_msg| if (startup_msg.environ) |env| st.media.takeEnvironment(env);
+    if (device[0] == 0 or sys.OpenDevice(device, unit, &st.io.req, flags) != 0) {
         sys.FreeVec(block);
         sys.DeleteMsgPort(port);
         sys.CloseLibrary(utility);
@@ -603,10 +694,16 @@ fn start(sys: *ExecBase, dl: *DosBase, fssm: ?*const dos.FileSysStartupMsg, code
     return st;
 }
 
-/// One packet, to the body it is for. Without a volume only the ones that
-/// say what is in the slot get an answer that is not an error.
+/// One packet, to the body it is for. Without a volume - none on the
+/// card, or the drive inhibited - only the ones that say what is in the
+/// slot get an answer that is not an error.
 fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
-    if (pkt.getAction() == .more_cache) return moreCache(st, pkt.args.raw[0]);
+    switch (pkt.getAction()) {
+        .more_cache => return moreCache(st, pkt.args.raw[0]),
+        .inhibit => return inhibit(st, pkt.args.raw[0] != dos.DOSFALSE),
+        .format => return formatDrive(st, pkt),
+        else => {},
+    }
     if (st.bodies.bodyFor(pkt)) |which| return switch (which) {
         .fat32 => st.bodies.fat32.answer(pkt),
         .exfat => st.bodies.exfat.answer(pkt),
@@ -620,8 +717,15 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
             else
                 pkt.args.info.info;
             if (data) |into| into.* = .{
-                .disk_state = dos.ID_VALIDATED,
-                .disk_type = if (card_in) dos.ID_NOT_REALLY_DOS else dos.ID_NO_DISK_PRESENT,
+                .disk_state = if (card_in and !st.media.writable()) dos.ID_WRITE_PROTECTED else dos.ID_VALIDATED,
+                .num_blocks = if (card_in) st.media.blocks() else 0,
+                .bytes_per_block = if (card_in) st.media.blockSize() else 0,
+                .disk_type = if (st.inhibited != 0)
+                    dos.ID_BUSY_DISK
+                else if (card_in)
+                    dos.ID_NOT_REALLY_DOS
+                else
+                    dos.ID_NO_DISK_PRESENT,
             };
             return _fat.yes();
         },
@@ -643,6 +747,57 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
         },
         else => return _fat.no(if (card_in) dos.ERROR_NOT_A_DOS_DISK else dos.ERROR_NO_DISK),
     }
+}
+
+/// ACTION_INHIBIT: on, the volume put away as for a card taken out -
+/// refused with ERROR_OBJECT_IN_USE while a file is open for writing,
+/// whose writes would have nowhere to go - and the card not looked at
+/// until it is off again; off, the card read afresh, as one just put in.
+/// They nest: only the first on puts the volume away, and only the last
+/// off reads the card. Off on a drive that is not inhibited does nothing.
+fn inhibit(st: *State, on: bool) _fat.Answer {
+    if (on) {
+        if (st.inhibited == 0) {
+            if (st.bodies.writing()) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+            st.bodies.putAway();
+            st.renew = true;
+        }
+        st.inhibited += 1;
+        return _fat.yes();
+    }
+    if (st.inhibited == 0) return _fat.yes();
+    st.inhibited -= 1;
+    if (st.inhibited == 0) {
+        st.bodies.mount();
+        st.renew = true;
+    }
+    return _fat.yes();
+}
+
+/// ACTION_FORMAT: a fresh volume over the area (`format.zig`), named as
+/// dp_Arg1 says and in the format dp_Arg2's DosType names (its last byte;
+/// a DosType of 0 is the drive's own). Only on a drive with nothing on it in
+/// use - inhibited, or with no volume - else ERROR_OBJECT_IN_USE; with no
+/// card ERROR_NO_DISK, with one that will not be written
+/// ERROR_DISK_WRITE_PROTECTED, and a name or a format the volume cannot
+/// have is refused before anything is written. An inhibited drive stays
+/// so, and its volume is read when it is let go; otherwise at once.
+fn formatDrive(st: *State, pkt: *DosPacket) _fat.Answer {
+    if (st.inhibited == 0 and st.bodies.active() != null) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+    if (!st.media.present()) return _fat.no(dos.ERROR_NO_DISK);
+    if (!st.media.writable()) return _fat.no(dos.ERROR_DISK_WRITE_PROTECTED);
+    const given_type: u32 = @truncate(@as(usize, @bitCast(pkt.args.raw[1])));
+    if (given_type != 0 and !dos.fat.isFatType(given_type)) return _fat.no(dos.ERROR_INVALID_ARGUMENT);
+    const dos_type = if (given_type == 0) st.media.dos_type else given_type;
+    const given: ?[*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
+    const name: ?[]const u8 = if (given) |label| std.mem.span(label) else null;
+    format_area.format(&st.media, st.ub, dos_type, name) catch |e| return _fat.no(_fat.codeOf(e));
+    if (!st.media.update()) return _fat.no(dos.ERROR_NOT_A_DOS_DISK);
+    if (st.inhibited == 0) {
+        st.bodies.mount();
+        st.renew = true;
+    }
+    return _fat.yes();
 }
 
 /// ACTION_MORE_CACHE: `more` blocks added to the cache, or taken away

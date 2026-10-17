@@ -141,8 +141,14 @@ pub const ID_CON: u32 = 0x434F_4E00;
 pub const ID_RAWCON: u32 = 0x5241_5700;
 /// "KICK"
 pub const ID_KICKSTART_DISK: u32 = 0x4B49_434B;
-/// "MSD\0"
+/// "MSD\0": a FAT volume. As a drive's DosType, the drive's area is the
+/// volume itself (`sdk.dos.fat` has the rest of what it says).
 pub const ID_MSDOS_DISK: u32 = 0x4D53_4400;
+/// "MSH\0": as a drive's DosType, a FAT drive whose area begins with a
+/// partition table, the volume in one of its partitions.
+pub const ID_MSDOS_DISK_HD: u32 = 0x4D53_4800;
+/// "BUSY": an inhibited drive's id_DiskType (ACTION_INHIBIT).
+pub const ID_BUSY_DISK: u32 = 0x4255_5359;
 
 // id_DiskState
 pub const ID_WRITE_PROTECTED: i32 = 80;

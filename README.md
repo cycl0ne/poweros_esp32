@@ -90,7 +90,9 @@ ESP32-P4 boards and in Espressif's QEMU.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
   (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
-  mid-write leaves a whole volume, `RAM:`, `PIPE:`, `NIL:`; partitions
+  mid-write leaves a whole volume, `RAM:`, `PIPE:`, `NIL:`; any of the
+  disks formatted from the running system (`C:Format`: FAT32 or exFAT
+  by a card's size, or as asked); partitions
   from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;

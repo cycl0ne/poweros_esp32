@@ -121,6 +121,12 @@ fn fromVolume(e: volume.Error) Error {
 /// later (a record lock that waits) and must not be replied now.
 pub const Answer = struct { res1: isize, res2: i32, held: bool = false };
 
+/// Whether a volume can be named so: a volume's name, and short enough
+/// for the superblock.
+fn validLabel(label: []const u8) bool {
+    return label.len <= flashfs.max_volume_name and dos.volumename.valid(label);
+}
+
 fn yes() Answer {
     return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
 }
@@ -421,8 +427,10 @@ pub fn FileSystem(comptime Media: type) type {
             try fs.settle();
         }
 
-        /// A fresh volume: a superblock and an empty root.
+        /// A fresh volume: a superblock and an empty root. A name a volume
+        /// cannot have is refused before anything is written.
         pub fn format(fs: *Fs, label: []const u8) Error!void {
+            if (!validLabel(label)) return error.InvalidName;
             fs.vol.format(label, fs.media.now()) catch |e| return fromVolume(e);
             try fs.takeBuckets();
             try fs.makeRoot();
@@ -448,9 +456,11 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         /// ACTION_FORMAT on a volume that is already mounted: everything on
-        /// it goes. Refused while anything is locked, as a format must be.
+        /// it goes. Refused while anything is locked, as a format must be,
+        /// and for a name a volume cannot have, before anything goes.
         pub fn reformat(fs: *Fs, label: []const u8) Error!void {
             if (fs.locks != null) return error.InUse;
+            if (!validLabel(label)) return error.InvalidName;
             if (fs.watchers) |watchers| watchers.orphanAll();
             for (fs.buckets) |head| {
                 var n = head;
@@ -853,6 +863,23 @@ pub fn FileSystem(comptime Media: type) type {
         }
 
         // --- locks -----------------------------------------------------------
+
+        /// Whether a file is open and has been written to, or opened to be
+        /// written: what ACTION_INHIBIT is refused for, since that file's
+        /// writes would have nowhere to go.
+        pub fn writing(fs: *const Fs) bool {
+            var it = fs.locks;
+            while (it) |x| : (it = x.nextLock()) {
+                if (x.modified) return true;
+            }
+            return false;
+        }
+
+        /// Everything the log holds in memory put on the medium, as
+        /// ACTION_FLUSH does.
+        pub fn flush(fs: *Fs) Error!void {
+            fs.vol.flush() catch |e| return fromVolume(e);
+        }
 
         fn owns(fs: *Fs, l: *DiskLock) bool {
             var it = fs.locks;
@@ -1603,6 +1630,50 @@ test "a formatted volume has an empty root" {
     try testing.expectEqual(dos.ST_ROOT, fib.dir_entry_type);
     try testing.expectEqual(dos.DOSFALSE, sendArgs(&fs, .examine_next, .{ .examine = .{ .lock = null, .fib = &fib } }).res1);
     fs.deinit();
+    try testing.expectEqual(@as(usize, 0), media.live);
+}
+
+test "a file open to be written is what an inhibit is refused for; a format, anything locked or a bad name" {
+    var store: [test_sectors * test_sector]u8 = undefined;
+    var media = MemMedia.init(&store, test_sector, test_page);
+    var fs = TestFs.init(&media, null);
+    try fs.format("System");
+    try writeFile(&fs, "hello", "one");
+    try testing.expect(!fs.writing());
+
+    var reader: FileHandle = .{};
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findinput, .{ .find = .{ .fh = &reader, .lock = null, .name = "hello" } }).res1);
+    try testing.expect(!fs.writing());
+    try testing.expectError(error.InUse, fs.reformat("Empty"));
+    var writer: FileHandle = .{};
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .findoutput, .{ .find = .{ .fh = &writer, .lock = null, .name = "other" } }).res1);
+    try testing.expect(fs.writing());
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .end, .{ .file = .{ .fh = &writer } }).res1);
+    try testing.expectEqual(dos.DOSTRUE, sendArgs(&fs, .end, .{ .file = .{ .fh = &reader } }).res1);
+    try testing.expect(!fs.writing());
+    try fs.flush();
+
+    // Refused before anything goes.
+    try testing.expectError(error.InvalidName, fs.reformat("a:b"));
+    try testing.expectError(error.InvalidName, fs.reformat(""));
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqualStrings("one", buffer[0..try readFile(&fs, "hello", &buffer)]);
+
+    try fs.reformat("Empty");
+    try testing.expectEqualStrings("Empty", fs.volumeName());
+    var fh: FileHandle = .{};
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, sendArgs(&fs, .findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "hello" } }).res2);
+    try writeFile(&fs, "fresh", "two");
+    fs.deinit();
+
+    // Mounted again, nothing of the old log comes back.
+    var again = TestFs.init(&media, null);
+    try again.mount();
+    try testing.expectEqualStrings("Empty", again.volumeName());
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, sendArgs(&again, .findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "hello" } }).res2);
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, sendArgs(&again, .findinput, .{ .find = .{ .fh = &fh, .lock = null, .name = "other" } }).res2);
+    try testing.expectEqualStrings("two", buffer[0..try readFile(&again, "fresh", &buffer)]);
+    again.deinit();
     try testing.expectEqual(@as(usize, 0), media.live);
 }
 

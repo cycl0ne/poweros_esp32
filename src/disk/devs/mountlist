@@ -69,14 +69,17 @@ AUX3:
 /* The card in the slot, on a board that has one. Both halves are on
  * this disk rather than in the ROM: the handler is HANDLERS:fat-handler,
  * which dos loads the first time the device is used, and it opens
- * sdcard.device, which ramlib loads from DEVS:. fat-handler finds the volume
- * on the card itself - the partition table in its first block and the
- * boot sector behind it - so the entry names only the device, and the
- * volume takes the card's own name. Activate starts the handler at once,
+ * sdcard.device, which ramlib loads from DEVS:. With no LowCyl and
+ * HighCyl the drive is the whole card, and DosType "MSH\0" says what is
+ * on it: a partition table in its first block, the volume in its first
+ * FAT partition - as cards are sold, and as Format writes one - so the
+ * entry names only the device, and the volume takes the card's own name.
+ * A card with no table, its volume from the first block, is "MSD\0".
+ * The last byte is the format Format writes: 0 FAT32 up to 32 GiB and
+ * exFAT past that, 1 FAT32, 2 exFAT. Activate starts the handler at once,
  * so the volume is there as soon as the card is mounted.
  *
- * DosType "MSD\0" is what says FAT to anything that goes by it; the
- * stack is the handler's deepest packet, a rename, with room to spare.
+ * The stack is the handler's deepest packet, a rename, with room to spare.
  * Buffers is how many of the card's table and directory blocks the
  * handler keeps in memory; C:AddBuffers changes it while it runs.
  */
@@ -84,7 +87,7 @@ SD0:
 	Handler   = HANDLERS:fat-handler
 	Device    = sdcard.device
 	Unit      = 0
-	DosType   = 0x4D534400
+	DosType   = 0x4D534800
 	Buffers   = 32
 	StackSize = 16384
 	Priority  = 5

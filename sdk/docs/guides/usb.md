@@ -306,9 +306,12 @@ plugged in is `DU0:` again.
 
 **The drive is made by the device.** The first time a medium comes into
 unit n, the device puts `DU<n>` on the device list, as a MountList
-entry would - fat-handler, FAT's DosType - and starts the handler, which
-reads the stick's partition table and boot sector and puts its volume
-on the list; the desktop shows it. The node stays from then on: a stick
+entry would - fat-handler, the whole medium, DosType `MSH\0` - and
+starts the handler, which reads the stick's partition table and the
+boot sector of its first FAT partition and puts its volume on the list;
+the desktop shows it. A stick with no partition table needs a MountList
+entry of the unit's name with DosType `MSD\0`, mounted before it is
+plugged in, which then stands for the unit. The node stays from then on: a stick
 going takes only its volume, and the next one in the unit brings its
 own. Nothing in the MountList is needed, and nothing USB is loaded at
 boot where no stick is plugged in.

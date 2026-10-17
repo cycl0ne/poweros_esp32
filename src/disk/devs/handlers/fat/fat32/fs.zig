@@ -254,9 +254,10 @@ pub fn FileSystem(comptime Media: type) type {
 
         // --- mounting ---------------------------------------------------------
 
-        /// The volume on the medium: the medium itself if its first block
-        /// is a FAT32 boot sector, else the first partition of its table
-        /// that is one. Every key there was is stale from here on.
+        /// The volume where the drive's DosType says it is: the medium
+        /// itself, or the first partition of its table worth mounting
+        /// (`_fat.findVolume`), when that is a FAT32 one. Every key there
+        /// was is stale from here on.
         pub fn mount(fs: *Fs) Error!void {
             fs.unmount();
             fs.change_num = fs.media.changeNum();
@@ -272,7 +273,9 @@ pub fn FileSystem(comptime Media: type) type {
                 fs.sector = &.{};
             }
 
-            const first = try fs.volumeStart();
+            const volume = try _fat.findVolume(fs.media, fs.sector);
+            if (volume.format != .fat32) return error.NotImplemented;
+            const first = volume.first;
             if (!fs.media.read(first, 1, fs.sector)) return error.MediumFailed;
             fs.geo = try Geometry.of(fs.sector, first, fs.media.blocks(), block_bytes);
             // A size set while no card was in is tried only now; when its
@@ -294,30 +297,6 @@ pub fn FileSystem(comptime Media: type) type {
             fs.mounted = true;
             fs.nameVolume() catch {};
             fs.arrive("", true);
-        }
-
-        /// Where the volume starts: block 0 if it is a boot sector itself,
-        /// else the first partition worth mounting whose first block is one.
-        fn volumeStart(fs: *Fs) Error!u64 {
-            if (!fs.media.read(0, 1, fs.sector)) return error.MediumFailed;
-            switch (fat.formatOf(fs.sector)) {
-                .fat32 => return 0,
-                .exfat => return error.NotImplemented,
-                .unknown => {},
-            }
-            if (!fat.signed(fs.sector)) return error.MediumFailed;
-            var partitions: [fat.partition_count]fat.Partition = undefined;
-            for (&partitions, 0..) |*partition, which| partition.* = fat.partitionOf(fs.sector, which);
-            for (partitions) |partition| {
-                if (!partition.real() or !fat.mountable(partition.kind)) continue;
-                if (!fs.media.read(partition.first, 1, fs.sector)) return error.MediumFailed;
-                switch (fat.formatOf(fs.sector)) {
-                    .fat32 => return partition.first,
-                    .exfat => return error.NotImplemented,
-                    .unknown => {},
-                }
-            }
-            return error.MediumFailed;
         }
 
         /// The cache made `count` blocks: at once on a mounted volume, and
@@ -518,6 +497,15 @@ pub fn FileSystem(comptime Media: type) type {
                 if (other.lock.volume == node) count += 1;
             }
             return count;
+        }
+
+        /// Whether a file on the volume is open and has been written to,
+        /// or opened to be written: what ACTION_INHIBIT is refused for,
+        /// since that file's writes would have nowhere to go.
+        pub fn writing(fs: *Fs) bool {
+            var it = fs.locks;
+            while (it) |lock| : (it = lock.nextLock()) if (lock.modified and !lock.key().stale) return true;
+            return false;
         }
 
         /// Whether a lock - a FileLock's address, or a file handle's key -

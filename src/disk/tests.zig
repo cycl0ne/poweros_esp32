@@ -83,6 +83,7 @@ test {
     _ = @import("devs/handlers/fat/fat32/names.zig");
     _ = @import("devs/handlers/fat/fat32/dir.zig");
     _ = @import("devs/handlers/fat/fat32/fs.zig");
+    _ = @import("devs/handlers/fat/fat32/format.zig");
     _ = @import("devs/handlers/fat/exfat/layout.zig");
     _ = @import("devs/handlers/fat/exfat/table.zig");
     _ = @import("devs/handlers/fat/exfat/bitmap.zig");
@@ -90,6 +91,8 @@ test {
     _ = @import("devs/handlers/fat/exfat/names.zig");
     _ = @import("devs/handlers/fat/exfat/dir.zig");
     _ = @import("devs/handlers/fat/exfat/fs.zig");
+    _ = @import("devs/handlers/fat/exfat/format.zig");
+    _ = @import("devs/handlers/fat/format.zig");
     _ = @import("devs/handlers/fat/fat.zig");
     _ = @import("devs/handlers/fat/tests/_fat.zig");
     _ = @import("devs/handlers/fat/tests/names.zig");
@@ -97,6 +100,7 @@ test {
     _ = @import("devs/handlers/fat/tests/fs.zig");
     _ = @import("devs/handlers/fat/tests/exfat_dir.zig");
     _ = @import("devs/handlers/fat/tests/exfat_fs.zig");
+    _ = @import("devs/handlers/fat/tests/format.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");

@@ -493,4 +493,12 @@ bool UnLockRecord(?*dos.FileHandle file, u64 offset, u64 length)
 /// Give back every record of a LockRecords array: true when every one was
 /// held.
 bool UnLockRecords(?[*]const dos.record.RecordLock records)
+// Drives
+/// Keep the file system of `drive` (with its colon) off its medium, or
+/// take that back: true, or false with IoErr. Inhibits nest.
+bool Inhibit([*:0]const u8 drive, bool on)
+/// A fresh volume over the medium of `drive`, named `name` (null for the
+/// file system's own) in the format `dos_type` names (0: the drive's own):
+/// true, or false with IoErr. Inhibit the drive first.
+bool Format([*:0]const u8 drive, ?[*:0]const u8 name, u32 dos_type)
 ##end

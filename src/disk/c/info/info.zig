@@ -25,7 +25,8 @@
 //! - **`ID_FLASHFS_DISK` counts as a file system.** A DosType that is not
 //!   in the list is unreadable; the flash disk's is `FLS\0`, so it is in the
 //!   list. An unformatted partition still answers `ID_NOT_REALLY_DOS` and
-//!   still prints "Not a DOS disk", which is what it is.
+//!   still prints "Not a DOS disk", which is what it is; an inhibited
+//!   drive answers `ID_BUSY_DISK` and prints "Disk busy".
 //! - **Sizes are 64-bit.** id_NumBlocks and id_NumBlocksUsed are u64 here,
 //!   so a disk larger than 4 GiB counts correctly; a 32-bit product would
 //!   wrap.
@@ -47,7 +48,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Info";
-const VERSION_STRING = "\x00$VER: Info 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Info 1.1 (17.10.2026)\r\n";
 
 const template = "DEVICE";
 const arg_device = 0;
@@ -63,6 +64,7 @@ const MSG_TYPE_NONE = "No disk present";
 const MSG_TYPE_BAD = "Unreadable disk";
 const MSG_TYPE_KICK = "Kickstart disk";
 const MSG_TYPE_NDOS = "Not a DOS disk";
+const MSG_TYPE_BUSY = "Disk busy";
 /// Kept apart from the format strings, because another
 /// language's "Kilo" and "Mega" may not begin with K and M.
 const MSG_KILOBYTES = "K";
@@ -300,6 +302,7 @@ fn printOne(run: *Run, info: *const dos.InfoData, node: *const dos.DosList, volu
             dos.ID_NO_DISK_PRESENT => MSG_TYPE_NONE,
             dos.ID_KICKSTART_DISK => MSG_TYPE_KICK,
             dos.ID_NOT_REALLY_DOS => MSG_TYPE_NDOS,
+            dos.ID_BUSY_DISK => MSG_TYPE_BUSY,
             else => MSG_TYPE_BAD,
         };
         _ = Printf(dl, "%-10s%s\n", .{ unit_name, what });

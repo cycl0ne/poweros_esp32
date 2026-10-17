@@ -260,8 +260,8 @@ fn putAway(d: *Desktop) void {
     }
 }
 
-/// Format Disk: asked first, then the disk's device formatted, keeping
-/// its name.
+/// Format Disk: asked first, then the disk's device inhibited, formatted
+/// keeping the disk's name, and let go.
 fn format(d: *Desktop, picked: Picked) void {
     if (kindOf(picked) != icon.WBDISK) return;
     var volume: [dos.name_max + 2:0]u8 = @splat(0);
@@ -278,27 +278,35 @@ fn format(d: *Desktop, picked: Picked) void {
     const dp = d.dl.GetDeviceProc(&volume, null) orelse return d.say("The disk is not there");
     defer d.dl.FreeDeviceProc(dp);
     const port = dp.port orelse return d.say("The disk is not there");
+    // The drive by its device: once inhibited it may have no volume.
+    var device: [dos.MAX_DEVICE_NAME + 2:0]u8 = @splat(0);
+    if (!deviceOf(d, port, &device)) return d.say("The disk is not there");
     var label: [dos.name_max + 1:0]u8 = @splat(0);
     @memcpy(label[0..name.len], name);
-    if (d.dl.DoPkt(port, @intFromEnum(dos.ActionCode.format), @bitCast(@intFromPtr(&label)), @bitCast(@as(usize, dosTypeOf(d, port))), 0, 0, 0) == dos.DOSFALSE) {
-        d.say("The disk could not be formatted");
-    }
+    if (!d.dl.Inhibit(&device, true)) return d.say("The disk is in use");
+    if (!d.dl.Format(&device, &label, 0)) d.say("The disk could not be formatted");
+    _ = d.dl.Inhibit(&device, false);
 }
 
-/// The DosType of the device a handler serves: its node's own.
-fn dosTypeOf(d: *Desktop, port: *exec.MsgPort) u32 {
+/// The name of the device a handler serves, with its colon, into `into`:
+/// false when no device has that handler.
+fn deviceOf(d: *Desktop, port: *exec.MsgPort, into: *[dos.MAX_DEVICE_NAME + 2:0]u8) bool {
     const flags = dos.LDF_DEVICES | dos.LDF_READ;
-    const first = d.dl.LockDosList(flags) orelse return 0;
+    const first = d.dl.LockDosList(flags) orelse return false;
     defer d.dl.UnLockDosList(flags);
     var node = first;
     while (d.dl.NextDosEntry(node, dos.LDF_DEVICES)) |entry| : (node = entry) {
         if (entry.task != port) continue;
-        const startup: ?*const dos.FileSysStartupMsg = @ptrFromInt(entry.misc.handler.startup);
-        const message = startup orelse return 0;
-        const environ = message.environ orelse return 0;
-        return environ.dos_type;
+        const given = entry.name;
+        var at: usize = 0;
+        while (given[at] != 0) : (at += 1) {
+            if (at + 2 >= into.len) return false;
+            into[at] = given[at];
+        }
+        into[at] = ':';
+        return true;
     }
-    return 0;
+    return false;
 }
 
 // --- the Window menu's file work ------------------------------------------------------

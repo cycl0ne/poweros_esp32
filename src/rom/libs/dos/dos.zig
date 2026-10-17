@@ -805,6 +805,8 @@ const FakeFs = struct {
     var same: ?bool = null;
     /// READ, WRITE, SEEK, SET_FILE_SIZE and END fail.
     var io_fail: bool = false;
+    /// INHIBIT and FORMAT are refused ERROR_OBJECT_IN_USE.
+    var in_use: bool = false;
     var root: FileLock = .{ .key = 1, .task = &port };
     var dir: FileLock = .{ .key = 2, .task = &port };
     var copy: FileLock = .{ .key = 2, .task = &port };
@@ -883,6 +885,11 @@ const FakeFs = struct {
                     res1 = dos.DOSTRUE;
                 }
             },
+            .inhibit, .format => if (in_use) {
+                res2 = dos.ERROR_OBJECT_IN_USE;
+            } else {
+                res1 = dos.DOSTRUE;
+            },
             .examine_all => res2 = dos.ERROR_NO_MORE_ENTRIES, // a handler that knows it: done at once
             .examine_all_end => res1 = dos.DOSTRUE,
             else => res2 = dos.ERROR_ACTION_NOT_KNOWN,
@@ -899,6 +906,7 @@ const FakeFs = struct {
         calls = 0;
         same = null;
         io_fail = false;
+        in_use = false;
         range_count = 0;
         refuse_at = ~@as(u64, 0);
         const node = dl.MakeDosEntry("FS", dos.DLT_DEVICE).?;
@@ -1226,6 +1234,44 @@ test "LockRecord, UnLockRecord, LockRecords, UnLockRecords: the packets, the unw
     try testing.expect(dl.UnLockRecords(&empty));
     try testing.expectEqual(before, FakeFs.calls);
     try testing.expect(dl.Close(fh));
+    try tearDown(db);
+}
+
+test "Inhibit and Format: the drive's handler asked, its refusal kept, names refused before" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    try testing.expect(dl.Inhibit("FS:", true));
+    try testing.expectEqual(dos.ActionCode.inhibit, FakeFs.action);
+    try testing.expectEqual(@as(isize, dos.DOSTRUE), FakeFs.args[0]);
+    const name = "Photos";
+    try testing.expect(dl.Format("FS:", name, dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)));
+    try testing.expectEqual(dos.ActionCode.format, FakeFs.action);
+    try testing.expectEqual(@as(isize, @bitCast(@intFromPtr(name))), FakeFs.args[0]);
+    try testing.expectEqual(@as(isize, 0x4D53_4802), FakeFs.args[1]);
+    try testing.expect(dl.Format("FS:", null, 0));
+    try testing.expectEqual(@as(isize, 0), FakeFs.args[0]);
+    try testing.expectEqual(@as(isize, 0), FakeFs.args[1]);
+    try testing.expect(dl.Inhibit("FS:", false));
+    try testing.expectEqual(@as(isize, dos.DOSFALSE), FakeFs.args[0]);
+
+    FakeFs.in_use = true;
+    try testing.expect(!dl.Inhibit("FS:", true));
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, dl.IoErr());
+    try testing.expect(!dl.Format("FS:", "Photos", 0));
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, dl.IoErr());
+    const calls = FakeFs.calls;
+    try testing.expect(!dl.Format("FS:", "a:b", 0));
+    try testing.expectEqual(dos.ERROR_INVALID_COMPONENT_NAME, dl.IoErr());
+    try testing.expect(!dl.Format("FS:", "", 0));
+    try testing.expectEqual(calls, FakeFs.calls); // no packet
+    try testing.expect(!dl.Inhibit("NOWHERE:", true));
+    try testing.expect(!dl.Format("NOWHERE:", null, 0));
     try tearDown(db);
 }
 

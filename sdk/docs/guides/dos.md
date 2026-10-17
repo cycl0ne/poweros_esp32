@@ -780,7 +780,7 @@ handler waits on beside its packets and empties with `collect`.
 dos does not look for disks. A disk's driver reads its RigidDiskBlock
 and makes a device node per partition with expansion.library's
 `MakeDosNode`, named as the partition says and with the handler its
-DosType asks for (`FLS\0` flashfs-handler, `MSD\0` fat-handler), and
+DosType asks for (`FLS\0` flashfs-handler, `MSD` and `MSH` fat-handler), and
 hands it over with `AddBootNode`. `flash.device` does this at cold
 start, before dos is up, so expansion.library keeps the nodes until
 dos's init takes them in with `EnterBootNodes`; a node handed over later
@@ -794,6 +794,20 @@ ends by starting the desktop and closing that window.
 on a board without one nothing is left on the list. [Disks and partitions](rdb.md) has the partition
 table and how to change it.
 
+**A handler works on what its startup message names**, and on nothing
+else: the device, the unit and the flags it opens it with, and in the
+DosEnvec the blocks that are the drive - `LowCyl` to `HighCyl`, or the
+whole medium when both are 0, so a card of any size needs no geometry -
+and the DosType, which says what is in them. It finds nothing out for
+itself: a partition is a drive because its node says so, and a medium
+that does not hold what the DosType says is not a DOS disk. A FAT
+drive's DosType says it in its first three bytes: `MSD` for a drive
+that is the volume itself, from its first block, and `MSH` for one that
+begins with a partition table, whose first FAT partition is the volume
+- a card or a stick as it is sold. Its last byte is the format a format
+writes (`sdk.dos.fat`): 0 FAT32 up to 32 GiB and exFAT past that, 1
+FAT32, 2 exFAT.
+
 `Relabel(drive, name)` - and `C:Relabel DRIVE/A,NAME/A` - gives a volume
 a new name, which its handler writes where its format keeps one: the
 flash disk's root record, a FAT card's label in upper case and at most
@@ -802,6 +816,31 @@ keeps its place on the device list and takes the new name, so a lock
 on the volume names it by that at once. A handler that does this gives
 its node the name with `dos.volumename.VolumeName`, after the packet is
 answered and only when the device list can be had at once.
+
+**A drive is formatted** inhibited: `Inhibit(drive, true)` has its
+handler put what it holds in memory on the medium and keep off it -
+every packet but those that give a lock or a file back answered
+`ERROR_NOT_A_DOS_DISK`, and Info saying `ID_BUSY_DISK` - and
+`Inhibit(drive, false)` lets it read the medium again, as it finds it.
+Inhibits nest, and the first is refused with `ERROR_OBJECT_IN_USE` while
+a file on the drive is open for writing. `Format(drive, name,
+dos_type)` then has the handler write a fresh volume over the drive's
+area, named `name` (null for none on FAT, `Empty` on the flash disk), in
+the format `dos_type` names - 0 for the drive's own. A handler refuses a
+format while the drive's volume is in use, and everything it can refuse
+- a name its format cannot hold, a format the area is too small for - it
+refuses before it writes. On a FAT drive whose DosType is `MSH` it
+writes a partition table too, with one partition from 4 MiB on (16 MiB
+past 32 GiB, 32 MiB past 512 GiB, never more than a 64th of the card),
+where cards keep their volume; the volume's clusters are laid on the
+same boundary. On the flash disk a format erases one sector, the
+superblock's: the new log starts at the turn after the last one on the
+flash, so what the volume before left is not the new one's, and its
+sectors are erased one by one as the log comes to them. `C:Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S`
+asks first, then inhibits, formats and lets the drive go, and waits
+until it shows the new volume; FAT32 and EXFAT choose the format on a
+FAT drive. `s3> format <device> <name>` does the same from the ROM's
+debug shell, for a disk with no `C:` on it yet.
 
 **A card or stick can go at any moment** - pulled out, the power cut -
 and fat-handler writes so that what is left is a volume with something
