@@ -142,21 +142,37 @@ fn sysBase() *exec.ExecBase {
     return cell.*;
 }
 
-/// A check with up to two values, each a word or a string: `format`
+/// A check with up to two values, all words or all strings: `format`
 /// checked at compile time against `Args`, the values' types, and the
 /// values handed on as words.
 inline fn values(comptime format_string: [:0]const u8, comptime Args: type, first: usize, second: usize, where: usize) noreturn {
     comptime fmt.checkFormat(format_string, Args);
-    report(format_string, first, second, where);
+    report(format_string, comptime strings(Args), first, second, where);
 }
 
-/// The two words as RawDoFmt's stream - a word and a string pointer are
-/// both 32 bits here - into the buffer, then the alert. One function for
+/// Whether `Args` are strings rather than words; never a mix.
+fn strings(comptime Args: type) bool {
+    const fields = @typeInfo(Args).@"struct".fields;
+    const first = fields[0].type != u32;
+    for (fields) |field| {
+        if ((field.type != u32) != first) @compileError("a check's values are all words or all strings");
+    }
+    return first;
+}
+
+/// The two values as RawDoFmt's stream into the buffer, then the alert:
+/// a word is 32 bits in it, a string pointer as wide as an address - the
+/// same on the ESP32s, twice that on a 64-bit machine. One function for
 /// every check, not one per format.
-noinline fn report(format_string: [*:0]const u8, first: usize, second: usize, where: usize) noreturn {
-    const stream = [2]u32{ @truncate(first), @truncate(second) };
+noinline fn report(format_string: [*:0]const u8, pointers: bool, first: usize, second: usize, where: usize) noreturn {
     var text: [text_size]u8 = undefined;
-    _ = sysBase().RawDoFmt(format_string, &stream, null, &text);
+    if (pointers) {
+        const stream = [2]usize{ first, second };
+        _ = sysBase().RawDoFmt(format_string, &stream, null, &text);
+    } else {
+        const stream = [2]u32{ @truncate(first), @truncate(second) };
+        _ = sysBase().RawDoFmt(format_string, &stream, null, &text);
+    }
     raise(&text, where);
 }
 
