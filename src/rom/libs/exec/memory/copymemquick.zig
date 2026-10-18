@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! CopyMemQuick: `CopyMem` for word-aligned memory in whole words. The
 //! alignment is an assertion about the arguments rather than a different
-//! algorithm: arguments that do not meet it are handed to `CopyMem`, so
-//! this is always safe and only sometimes faster.
+//! algorithm: it is the same loop as `CopyMem`'s, which takes aligned
+//! arguments without a byte to spare at either end, and copies any other
+//! right.
 
 const ExecBase = @import("../exec.zig").ExecBase;
+const words = @import("words.zig");
 
 /// Copies whole words between word-aligned addresses.
 ///
@@ -24,9 +26,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// Arguments that do not meet the conditions are **handed to `CopyMem`**
-/// rather than giving a wrong answer, so this is always safe to call and
-/// only sometimes faster. Overlap is handled, as there.
+/// The loop is `CopyMem`'s, so arguments that do not meet the conditions
+/// are **copied as `CopyMem` copies them** rather than giving a wrong
+/// answer: always safe, and as fast as `CopyMem` at any alignment. Overlap
+/// is handled, as there.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -47,14 +50,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// ```zig
 /// sys.CopyMemQuick(src, dst, words * 4);
 /// ```
-pub fn CopyMemQuick(base: *ExecBase, source: *const anyopaque, dest: *anyopaque, size: usize) void {
-    if ((@intFromPtr(source) | @intFromPtr(dest) | size) & 3 != 0)
-        return base.iface().CopyMem(source, dest, size);
-    const words = size / 4;
-    if (words == 0) return;
-    const from: [*]const u32 = @ptrCast(@alignCast(source));
-    const to: [*]u32 = @ptrCast(@alignCast(dest));
-    @memmove(to[0..words], from[0..words]);
+pub fn CopyMemQuick(_: *ExecBase, source: *const anyopaque, dest: *anyopaque, size: usize) void {
+    words.move(@ptrCast(dest), @ptrCast(source), size);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -62,8 +59,8 @@ pub fn CopyMemQuick(base: *ExecBase, source: *const anyopaque, dest: *anyopaque,
 const testing = @import("std").testing;
 
 test "CopyMemQuick copies whole words, overlap included" {
-    const base: *ExecBase = undefined; // the aligned path never reads it
-    var words = [_]u32{ 1, 2, 3, 4 };
-    CopyMemQuick(base, &words, &words[1], 3 * 4);
-    try testing.expectEqualSlices(u32, &.{ 1, 1, 2, 3 }, &words);
+    const base: *ExecBase = undefined; // CopyMemQuick never reads it
+    var longs = [_]u32{ 1, 2, 3, 4 };
+    CopyMemQuick(base, &longs, &longs[1], 3 * 4);
+    try testing.expectEqualSlices(u32, &.{ 1, 1, 2, 3 }, &longs);
 }

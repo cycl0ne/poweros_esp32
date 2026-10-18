@@ -273,4 +273,6 @@ pub const AN_LockDeadlock = alerts.AN_LockDeadlock;
 pub const AN_BadFreeSize = alerts.AN_BadFreeSize;
 pub const AN_MemWall = alerts.AN_MemWall;
 pub const panic = @import("panic.zig").panic;
+/// A program's memcpy, memmove and memset: exec's (`sdk/program.zig`).
+pub const libc = @import("libc.zig");
 pub const AG_MakeLib = alerts.AG_MakeLib;

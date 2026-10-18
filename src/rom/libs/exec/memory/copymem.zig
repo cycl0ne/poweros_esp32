@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! CopyMem: copies bytes, overlap allowed. It is `@memmove`, which
-//! compiler_rt implements with word-sized loads and stores where the
-//! alignment allows (byte loops only in ReleaseSmall builds), so there is
-//! no slower "safe" case to pay for.
+//! CopyMem: copies bytes, overlap allowed, a word at a time where it can
+//! (words.zig) - also every memcpy and memmove a program makes.
 
 const ExecBase = @import("../exec.zig").ExecBase;
+const words = @import("words.zig");
 
 /// Copies bytes, whatever their alignment and however they overlap.
 ///
@@ -30,7 +29,14 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// worth stating because it is the one thing a caller cannot test for
 /// cheaply and the one that fails intermittently when it is wrong.
 ///
-/// Word-sized loads and stores are used where the alignment allows.
+/// Whole words where the length allows: bytes up to a word boundary,
+/// then words, shifted into place where the two areas are not as far from
+/// a boundary as each other - each load and store aligned, on a CPU that
+/// has no fast misaligned ones.
+///
+/// A program's memcpy and memmove - what its `@memcpy` and struct copies
+/// become - are this call (sdk/libs/exec/libc.zig), so a program copies
+/// with the loop the kernel was built with for the board.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -52,10 +58,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// sys.CopyMem(src, dst, len);
 /// ```
 pub fn CopyMem(_: *ExecBase, source: *const anyopaque, dest: *anyopaque, size: usize) void {
-    if (size == 0) return;
-    const from: [*]const u8 = @ptrCast(source);
-    const to: [*]u8 = @ptrCast(dest);
-    @memmove(to[0..size], from[0..size]);
+    words.move(@ptrCast(dest), @ptrCast(source), size);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

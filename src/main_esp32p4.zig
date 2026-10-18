@@ -74,6 +74,7 @@ pub const rom_modules = .{
 
 comptime {
     _ = @import("arch/esp32p4/trap.zig"); // exports riscv_exception for start.S
+    _ = @import("rom/libs/exec/memory/libc.zig"); // memcpy, memmove, memset
     // The board's description: its system tag list, a ROM tag of its own.
     _ = &boards.system.system_tag;
     _ = rom_modules;

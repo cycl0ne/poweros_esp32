@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! SetMem: fills bytes with one value. It is `@memset`, which stores whole
-//! words where the alignment allows.
+//! SetMem: fills bytes with one value, a word at a time where it can
+//! (words.zig) - also every memset a program makes.
 
 const ExecBase = @import("../exec.zig").ExecBase;
+const words = @import("words.zig");
 
 /// Fills memory with one byte value.
 ///
@@ -22,7 +23,10 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// Word-sized stores where the alignment allows.
+/// Bytes up to a word boundary, then whole words, then the bytes left.
+///
+/// A program's memset - what its `@memset` becomes - is this call
+/// (sdk/libs/exec/libc.zig).
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -48,9 +52,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// sys.SetMem(buf, 0, len);
 /// ```
 pub fn SetMem(_: *ExecBase, dest: *anyopaque, value: u8, size: usize) void {
-    if (size == 0) return;
-    const to: [*]u8 = @ptrCast(dest);
-    @memset(to[0..size], value);
+    words.fill(@ptrCast(dest), value, size);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

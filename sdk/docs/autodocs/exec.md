@@ -2578,7 +2578,14 @@ whichever way keeps it from overwriting what it has yet to read. That is
 worth stating because it is the one thing a caller cannot test for
 cheaply and the one that fails intermittently when it is wrong.
 
-Word-sized loads and stores are used where the alignment allows.
+Whole words where the length allows: bytes up to a word boundary,
+then words, shifted into place where the two areas are not as far from
+a boundary as each other - each load and store aligned, on a CPU that
+has no fast misaligned ones.
+
+A program's memcpy and memmove - what its `@memcpy` and struct copies
+become - are this call (sdk/libs/exec/libc.zig), so a program copies
+with the loop the kernel was built with for the board.
 
 **CONTEXT**
 
@@ -2631,9 +2638,10 @@ Nothing.
 
 **BEHAVIOR**
 
-Arguments that do not meet the conditions are **handed to `CopyMem`**
-rather than giving a wrong answer, so this is always safe to call and
-only sometimes faster. Overlap is handled, as there.
+The loop is `CopyMem`'s, so arguments that do not meet the conditions
+are **copied as `CopyMem` copies them** rather than giving a wrong
+answer: always safe, and as fast as `CopyMem` at any alignment. Overlap
+is handled, as there.
 
 **CONTEXT**
 
@@ -8241,7 +8249,10 @@ Nothing.
 
 **BEHAVIOR**
 
-Word-sized stores where the alignment allows.
+Bytes up to a word boundary, then whole words, then the bytes left.
+
+A program's memset - what its `@memset` becomes - is this call
+(sdk/libs/exec/libc.zig).
 
 **CONTEXT**
 

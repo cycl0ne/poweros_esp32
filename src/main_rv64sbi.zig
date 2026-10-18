@@ -68,6 +68,7 @@ pub const rom_modules = .{
 
 comptime {
     _ = trap; // exports riscv_exception for start.S
+    _ = @import("rom/libs/exec/memory/libc.zig"); // memcpy, memmove, memset
     // Where RAM starts, as a symbol for kernel.ld: the Image header's
     // text_offset is the kernel's distance from it.
     asm (std.fmt.comptimePrint(

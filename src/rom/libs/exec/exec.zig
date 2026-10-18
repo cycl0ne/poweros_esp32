@@ -637,6 +637,7 @@ test {
     _ = @import("memory/copymem.zig");
     _ = @import("memory/copymemquick.zig");
     _ = @import("memory/setmem.zig");
+    _ = @import("memory/words.zig");
     _ = @import("device/adddevice.zig");
     _ = @import("device/remdevice.zig");
     _ = @import("device/opendevice.zig");
