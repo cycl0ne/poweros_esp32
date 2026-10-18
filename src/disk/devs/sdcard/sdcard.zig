@@ -116,8 +116,8 @@ const Work = _sdcard.Work;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
-const BUILD_DATE = "13.10.2026";
+const DEVICE_REVISION = 5;
+const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -368,7 +368,8 @@ inline fn onSpi(sb: *const SdCardBase) bool {
 }
 
 /// The card in the slot, identified and made ready: block addressing,
-/// four bits wide, and the fast clock. False if there is no card, or if
+/// four bits wide, and the fast clock - high speed's, where the card and
+/// the chip both have it. False if there is no card, or if
 /// it is one this driver cannot use.
 ///
 /// The order is the card's own: it is reset, asked what voltages it
@@ -428,7 +429,7 @@ fn identify(sb: *SdCardBase) bool {
 
     // Its configuration, which is sent as eight bytes of data rather than
     // as an answer, and says whether it will work four bits wide.
-    if (readRegister(sb, card.SEND_SCR, 8)) |raw| {
+    if (readRegister(sb, appCommand, card.SEND_SCR, 0, 8)) |raw| {
         sb.card.scr = card.decodeScr(raw[0..8]);
     }
 
@@ -448,17 +449,41 @@ fn identify(sb: *SdCardBase) bool {
     const length = command(sb, card.SET_BLOCKLEN, @intCast(card.block_bytes), .short, null);
     if (!length.ok()) return false;
 
-    sb.card.clock_hz = sdmmc.setClock(sdmmc.fast_hz);
+    const fast = if (highSpeed(sb)) sdmmc.high_speed_hz else sdmmc.fast_hz;
+    sb.card.clock_hz = sdmmc.setClock(fast);
     return true;
 }
 
-/// A register the card sends over the data lines rather than as an
-/// answer: `bytes` of it, into the work buffer. Null if the card did not
-/// send it.
+/// The card switched to high speed, where the chip's side can clock it
+/// that fast and the card offers it: asked first (CMD6 checking), then
+/// told. Only a card that says it took the mode is clocked faster; it
+/// takes it eight clocks after its answer, long before the clock
+/// changes. False leaves the card in the mode every card starts in.
+fn highSpeed(sb: *SdCardBase) bool {
+    if (sdmmc.high_speed_hz == 0 or !sb.card.canSwitch()) return false;
+    const bytes = card.switch_status_bytes;
+    const asked = readRegister(sb, command, card.SWITCH_FUNC, card.switch_check_high_speed, bytes) orelse return false;
+    const can = card.decodeSwitch(asked[0..bytes]);
+    if (!can.offered or !can.high_speed) return false;
+    const told = readRegister(sb, command, card.SWITCH_FUNC, card.switch_to_high_speed, bytes) orelse return false;
+    sb.card.high_speed = card.decodeSwitch(told[0..bytes]).high_speed;
+    return sb.card.high_speed;
+}
+
+/// What the card sends over the data lines rather than as an answer:
+/// `bytes` of it, into the work buffer, for command `index` sent by
+/// `send` - `appCommand` for one the card only hears after APP_CMD. Null
+/// if the card did not send it.
 ///
 /// The controller is told the register's own length is a whole block, or
 /// it would wait for the rest of a 512-byte one that is never coming.
-fn readRegister(sb: *SdCardBase, index: u32, bytes: u32) ?[]const u8 {
+fn readRegister(
+    sb: *SdCardBase,
+    comptime send: fn (*SdCardBase, u32, u32, sdmmc.Response, ?Blocks) Answer,
+    index: u32,
+    argument: u32,
+    bytes: u32,
+) ?[]const u8 {
     const work = sb.work.?;
     @memset(work.buffer[0..bytes], 0);
     work.chain[0].set(
@@ -467,7 +492,7 @@ fn readRegister(sb: *SdCardBase, index: u32, bytes: u32) ?[]const u8 {
         sdmmc.Descriptor.first | sdmmc.Descriptor.last,
         null,
     );
-    const answer = appCommand(sb, index, 0, .short, .{
+    const answer = send(sb, index, argument, .short, .{
         .chain = &work.chain[0],
         .way = .from_card,
         .block_size = bytes,
@@ -1429,8 +1454,10 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         };
         sb.work_memory = memory;
         const aligned = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
+        // Cleared memory is every field's start but the interrupt's, which
+        // is set here: `work.* = .{}` would copy a block of zeroes as
+        // large as the buffer out of the image.
         const work: *Work = @ptrFromInt(aligned);
-        work.* = .{};
         sb.work = work;
         work.int = .{
             .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },

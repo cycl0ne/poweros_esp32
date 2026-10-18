@@ -19,6 +19,8 @@ pub const base: usize = hardware.map.SDMMC;
 /// the divider: the controller runs at 80 MHz.
 pub const source_hz: u32 = 160_000_000;
 pub const clock_div: u32 = 2;
+/// No high speed: the phases above 20 MHz have not been measured here.
+pub const high_speed_hz: u32 = 0;
 
 /// Outside the controller proper: the clock this chip feeds it, and the
 /// phases of the clock it sends out and the one it samples on.

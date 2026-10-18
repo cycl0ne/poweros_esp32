@@ -71,6 +71,16 @@ pub const op_cond_arg: u32 = (1 << 30) | 0x00FF_8000;
 pub const bus_width_1: u32 = 0;
 pub const bus_width_4: u32 = 2;
 
+/// CMD6's argument: function group 1, the access mode, asked about
+/// (bit 31 clear) or switched (set) to high speed, which is its function
+/// 1; every other group is left as it is (0xF).
+pub const switch_check_high_speed: u32 = 0x00FF_FFF1;
+pub const switch_to_high_speed: u32 = 0x80FF_FFF1;
+/// What CMD6 sends back over the data lines: 512 bits.
+pub const switch_status_bytes: u32 = 64;
+/// The command class CMD6 is in, as the card's description lists them.
+pub const class_switch: u16 = 1 << 10;
+
 // --- the answers ----------------------------------------------------------
 
 /// `len` bits of `words` from bit `start`, counting from the lowest bit of
@@ -238,6 +248,25 @@ pub fn decodeScr(raw: *const [8]u8) Scr {
     };
 }
 
+/// What CMD6 said about the access mode: whether the card offers high
+/// speed, and whether that is the mode it took - or, asked rather than
+/// switched, would take.
+pub const AccessMode = struct {
+    offered: bool = false,
+    high_speed: bool = false,
+};
+
+/// The 64 bytes CMD6 sends, highest first. Function group 1's support
+/// bits are bytes 12 and 13, high speed bit 1 of byte 13; the function
+/// it took is the low half of byte 16, 0xF if it could not take the one
+/// it was given.
+pub fn decodeSwitch(raw: *const [64]u8) AccessMode {
+    return .{
+        .offered = raw[13] & 0x2 != 0,
+        .high_speed = raw[16] & 0xF == 1,
+    };
+}
+
 /// The eight bytes of an answer sent as data, read as one number, highest
 /// byte first - which is the order a card sends them in.
 pub fn beU32(raw: []const u8) u32 {
@@ -259,12 +288,20 @@ pub const Card = extern struct {
     scr: Scr = .{},
     /// Whether the bus was actually widened.
     wide: bool = false,
+    /// Whether the card was switched to high speed.
+    high_speed: bool = false,
     /// The clock the card is being run at.
     clock_hz: u32 = 0,
 
     /// The card's size in bytes.
     pub fn bytes(self: *const Card) u64 {
         return self.csd.blocks * block_bytes;
+    }
+
+    /// Whether the card can be asked to switch its mode (CMD6): it was
+    /// built to version 1.10 or later and serves the command's class.
+    pub fn canSwitch(self: *const Card) bool {
+        return self.scr.spec >= 1 and self.csd.command_classes & class_switch != 0;
     }
 
     /// Whether the card refuses to be written, for any of the reasons it
@@ -428,6 +465,36 @@ test "the configuration register: four bits, and the block count" {
     const narrow = [8]u8{ 0x00, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     try testing.expect(!decodeScr(&narrow).four_bit);
     try testing.expect(!decodeScr(&narrow).set_block_count);
+}
+
+test "high speed, as CMD6 says it is offered and taken" {
+    // Max current 100 mA, every group's default function, group 2's
+    // function 1 and group 1's high speed offered; group 1 switched to
+    // high speed, group 2 left at its default; structure version 1.
+    var raw: [64]u8 = @splat(0);
+    @memcpy(raw[0..18], &[18]u8{ 0x00, 0x64, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x03, 0x80, 0x03, 0x00, 0x00, 0x01, 0x01 });
+    const taken = decodeSwitch(&raw);
+    try testing.expect(taken.offered);
+    try testing.expect(taken.high_speed);
+
+    // A switch the card could not make answers 0xF for the group.
+    raw[16] = 0x0F;
+    try testing.expect(!decodeSwitch(&raw).high_speed);
+    // A card that offers only the default.
+    raw[13] = 0x01;
+    raw[16] = 0x00;
+    try testing.expect(!decodeSwitch(&raw).offered);
+    try testing.expect(!decodeSwitch(&raw).high_speed);
+}
+
+test "only a card built to 1.10 that serves class 10 is asked to switch" {
+    // The 64 GB card's command classes, 0x5B5, which include 10.
+    var new = Card{ .scr = .{ .spec = 2 }, .csd = .{ .command_classes = 0x5B5 } };
+    try testing.expect(new.canSwitch());
+    new.csd.command_classes = 0x1B5;
+    try testing.expect(!new.canSwitch());
+    const old = Card{ .scr = .{ .spec = 0 }, .csd = .{ .command_classes = 0x5B5 } };
+    try testing.expect(!old.canSwitch());
 }
 
 test "what a card is doing, and where its answer said so" {

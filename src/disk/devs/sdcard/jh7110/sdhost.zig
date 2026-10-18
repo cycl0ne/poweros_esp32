@@ -31,6 +31,9 @@ pub const base: usize = 0x1602_0000;
 /// until a card is switched to high speed.
 pub const source_hz: u32 = 396_000_000;
 pub const clock_div: u32 = 8;
+/// A card switched to high speed gets the controller's clock undivided,
+/// as U-Boot runs it.
+pub const high_speed_hz: u32 = 50_000_000;
 
 const SYS_CRG: usize = 0x1302_0000;
 const SYSCLK_SDIO1_AHB = SYS_CRG + 92 * 4;

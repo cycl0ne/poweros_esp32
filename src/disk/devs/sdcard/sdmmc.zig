@@ -144,10 +144,13 @@ const controller_hz: u32 = source_hz / clock_div;
 pub const identify_hz: u32 = 400_000;
 /// The card's clock once it is identified: 25 MHz, as fast as a card goes
 /// before it is switched into high speed. The divider reaches 20 of it
-/// from the ESP32s' controller clock and 24.75 from the JH7110's; the
-/// switch (CMD6) and the speeds above it are a later change, measured
-/// rather than assumed.
+/// from the ESP32s' controller clock and 24.75 from the JH7110's.
 pub const fast_hz: u32 = 25_000_000;
+/// The card's clock once it is switched to high speed (CMD6), on a chip
+/// whose side was measured there: 50 MHz, of which the JH7110's
+/// controller clock gives 49.5 undivided. 0 where a card stays at
+/// `fast_hz`.
+pub const high_speed_hz: u32 = chip_host.high_speed_hz;
 
 /// A block, which is what a card of this age reads and writes.
 pub const block_bytes: u32 = 512;
