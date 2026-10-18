@@ -82,7 +82,7 @@ const pr: *sdk.interface.platform.PlatformBase = @ptrCast(@alignCast(found));
 
 ## Memory
 
-The chip has two kinds of memory, and exec keeps each as a region with
+An ESP32 has two kinds of memory, and exec keeps each as a region with
 attributes and a priority. Internal SRAM is `MEMF_INTERNAL` and
 `MEMF_DMA`, at priority -10: fast, with no cache in the way, reachable by
 the DMA engines, and readable while the caches are suspended. PSRAM is
@@ -90,6 +90,16 @@ the DMA engines, and readable while the caches are suspended. PSRAM is
 cache. An allocation comes from the first region, by priority, that has
 every attribute asked for and room - so `MEMF_ANY` takes PSRAM first
 where there is PSRAM, and internal memory is kept for what only it can do.
+
+A RISC-V 64 machine has one kind, its DRAM: every region is
+`MEMF_INTERNAL` and `MEMF_EXTERNAL` at once, at priority 0. The regions
+are the RAM the device tree names less what is in use - the kernel, the
+disk image the loader put in RAM, and the ranges the tree reserves for
+the firmware. Only RAM below 4 GiB is `MEMF_DMA`, since the DMA engines'
+descriptors hold 32-bit addresses, so a region that crosses 4 GiB is cut
+there; and no region is larger than 2 GiB, as exec counts a region's free
+bytes in 32 bits. Such a board says so with `SYSTAG_UnifiedMemory`, so a
+program shows one figure of free memory rather than the same one twice.
 
 | Flag | |
 |---|---|
@@ -104,7 +114,12 @@ where there is PSRAM, and internal memory is kept for what only it can do.
 | `MEMF_NO_EXPUNGE` | fail rather than ask the low-memory handlers |
 
 A buffer in PSRAM that a DMA engine reads or writes goes through
-`CachePreDMA` before the transfer and `CachePostDMA` after it.
+`CachePreDMA` before the transfer and `CachePostDMA` after it. On the
+VisionFive 2 the devices do not see the cores' caches either: there the
+cache calls write each line of the range back and drop it through the L2
+cache controller's Flush64 register, which the board names
+(`SYSTAG_CacheFlush`). QEMU's virt names none, as its devices see the
+caches, and the calls do nothing there.
 
 **Two ways to allocate.** `AllocMem(size, flags)` answers a block that
 `FreeMem` takes back with the same size, which the caller remembers.
@@ -221,7 +236,7 @@ for (keys.slice()) |key| use(key);
 
 **How much there is.** `AvailMem(flags)` answers the free bytes of the
 regions with those attributes; with `MEMF_LARGEST` the largest block
-`AllocMem` could answer, with `MEMF_TOTAL` the regions' whole size. Another task, on either
+`AllocMem` could answer, with `MEMF_TOTAL` the regions' whole size. Another task, on any
 core, may allocate the moment it has answered, so a program allocates and
 tests the answer rather than asking first. `C:Avail` prints the numbers.
 
@@ -238,7 +253,13 @@ is, which runs every handler.
 
 Memory is not allocated or freed in an interrupt, and not allocated while
 a spinlock is held. `CopyMem`, `CopyMemQuick` (word-aligned) and `SetMem`
-copy and fill.
+copy and fill: `CopyMem` whatever the alignment and however the two areas
+overlap, a word at a time where it can, in loops chosen for the CPU the
+kernel is built for. They are the kernel's `memcpy`, `memmove`
+and `memset` as well, and a program's through the jump table
+(`sdk/program.zig`), so every `@memcpy`, `@memset` and structure copy the
+compiler leaves to a call runs them. A program whose root declares
+`own_memory_calls` keeps memory calls of its own.
 
 ## Lists
 
@@ -307,7 +328,7 @@ once; [Several cores](programs.md#several-cores) has what that changes.
 **Starting one.** `CreateTask(name, pri, code, stack_size)` allocates the
 task, its name and its stack in one block (8 KiB of stack for 0), starts
 it, and frees the block when it ends. It takes no argument, and the new
-task may be running on the other core before the call returns. A task
+task may be running on another core before the call returns. A task
 that needs something handed to it is laid out by the caller, in a
 structure of its own, and started with `AddTask`; its code finds the
 structure from its `Task`:
@@ -641,7 +662,7 @@ A device's BeginIO works the quick-I/O protocol from the other side:
 
 Semaphores (`ObtainSemaphore`), spinlocks (`AcquireLock`) and `Disable`
 each keep two pieces of code from changing the same thing at once, on
-either core; which one fits depends on whether the holder waits and
+any core; which one fits depends on whether the holder waits and
 whether an interrupt touches the data. Nothing that may wait is called
 with a spinlock held, and `Wait` with one held is a dead end. The table,
 the rules exec checks and the lock order are in

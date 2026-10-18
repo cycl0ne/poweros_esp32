@@ -12,12 +12,15 @@ to reach for first.
 |---|---|---|---|
 | `C:Log`, `C:Top`, `C:Avail OWNERS`, `C:MemDebug`, `ShowInfo TASKS` | a shell, in a window or on the serial console | dos, a console, memory | the shell's console or dos is stuck |
 | `s3>` | the serial console | the scheduler, a console device, memory | the scheduler or memory is broken |
-| `dbg>`, the ROM debugger | both raw ports at once | nothing: no task, no device, no memory | never; only a blown stack stops it |
-| the system log | `Log`, the raw port, a syslog server | nothing: exec writes it | never; its last 4 KiB survive a dead end's restart |
-| JTAG | the chip's USB port, OpenOCD and gdb on the PC | the chip | never |
+| `dbg>`, the ROM debugger | both raw ports at once, on the ESP32s | nothing: no task, no device, no memory | never; only a blown stack stops it |
+| the system log | `Log`, the raw port, a syslog server | nothing: exec writes it | never; on the ESP32s its last 4 KiB survive a dead end's restart |
+| JTAG | an ESP32's USB port, OpenOCD and gdb on the PC | the chip | never |
 
 **The serial console** is UART0 in QEMU and on the CrowPanel, and the
-chip's own USB port on the 7B, the ES3C35P and the Olimex. Its `s3>`
+chip's own USB port on the 7B, the ES3C35P and the Olimex. On a RISC-V
+64 machine it is UART0 as well, at 115200 baud as the firmware left it:
+the terminal QEMU's virt runs in, and on the VisionFive 2 the debug UART
+on header pins 8 and 10. Its `s3>`
 prompt is the ROM's console, not a CLI: `newshell` starts a dos shell on
 it (`List`, `Info`, `Mount`, ...), and `EndCLI` comes back. A number
 typed at `s3>` is decimal unless it starts with `0x`; one typed at
@@ -54,9 +57,16 @@ frame:
 *** CPU exception 29 (store_prohibited) at 0x4201A2C4, address 0x00000004
 ```
 
+On a RISC-V 64 machine the addresses are 64 bits wide, the place is a
+line of its own - `*** at 0x... in EchoArgs at +0x51a` - and a CPU
+exception adds the call chain after the frame, found by its frame
+pointers: `*** called from:` and a line per return address with the code
+it is in.
+
 **The alert numbers.** The top bit is `AT_DeadEnd`. A CPU exception is
 `AT_DeadEnd` with the CPU's own exception number below it (EXCCAUSE on
-the ESP32-S3, mcause on the ESP32-P4): `8000001D` is the S3's
+the ESP32-S3, mcause on the ESP32-P4, scause's code on RISC-V 64):
+`8000001D` is the S3's
 `store_prohibited`, a write through a bad pointer. The others
 (`sdk.exec.alerts`):
 
@@ -82,6 +92,10 @@ of the log over the restart, offers the ROM debugger for a few seconds
 boot's log starts with the last words of the one before; `Log` shows
 them.
 
+A RISC-V 64 machine asks nothing and has no debugger: every dead end
+prints its Guru and `*** system halted`, and the machine stays stopped,
+for whoever reads the console.
+
 ## From an address to a line
 
 **In the ROM.** The address as the Guru printed it, looked up in the
@@ -96,7 +110,7 @@ llvm-symbolizer --obj=zig-out/bin/kernel <address>
 that file's linked ELF, which is linked at 0. The ELF is the program's
 `compile exe` output in Zig's cache, named like the file with dots and
 dashes made underscores (`bsdsocket_library`); `file` tells which chip it
-is for, since the S3 and the P4 builds have the same name:
+is for, since every chip's build has the same name:
 
 ```sh
 $ ls -t .zig-cache/o/*/memowner | head -1
@@ -111,11 +125,16 @@ memowner.misuse
 ```
 
 **A return address points after the call.** Take 3 off on the ESP32-S3
-and 4 on the ESP32-P4 to land inside it, as above for a Guru's `+0x1885`.
+to land inside it, as above for a Guru's `+0x1885`. On the RISC-V chips
+take 4 off, or 2 after a call through a pointer, which is often the
+compressed `jalr`.
 A CPU exception's address is exact. The lines `bt` prints in the ROM
 debugger are inside the call already.
 
 ## The ROM debugger
+
+The ESP32s have the ROM debugger. A RISC-V 64 machine has none: `debug`
+at `s3>` and `Debug(0)` say `*** no debugger on this machine` and go on.
 
 The debugger runs with interrupts masked, on no task and through no
 device, and allocates nothing, so it works when everything else has
@@ -261,7 +280,7 @@ Everything written to the raw port is kept in a ring, each line with the
 time since the boot and its writer: `Log` shows it, follows it, saves it
 and sends it to a syslog server, and `Log LEVEL debug` keeps the debug
 lines too. A dead end that restarts the machine keeps the last 4 KiB in
-RTC memory for the next boot. [The system log](programs.md#the-system-log)
+RTC memory for the next boot, on the ESP32s. [The system log](programs.md#the-system-log)
 has the details.
 
 What a task's end gave back is a line each:
@@ -353,8 +372,9 @@ structure, a `FreeMem` refused, a crash far from its cause.
 size. With memory debugging on, the guard is wide enough to catch a large
 frame that jumps over the narrow one.
 
-**The machine restarts by itself.** The first lines of `Log` after the
-boot are the last words of the boot before, if it ended in a dead end.
+**The machine restarts by itself.** On an ESP32 the first lines of
+`Log` after the boot are the last words of the boot before, if it ended
+in a dead end.
 From the reset button there are none: it powers the chip down.
 
 **It fails before the console is up.** The raw port has the log from the
@@ -374,10 +394,14 @@ commands are put on the disk as `s/User-Startup` with
 screen. The emulator has no debug triggers: the ROM debugger runs there,
 but its breakpoints and watchpoints never fire - QEMU's do, on both
 cores. QEMU's time is not the chip's: compare speeds on a board.
+`./zig build virt` boots the RISC-V 64 kernel in QEMU's `virt` machine,
+the upstream `qemu-system-riscv64` the host has: four harts, 512 MiB, the
+serial console in the terminal, and the disk image in RAM, so nothing
+written to it stays. Ctrl-A X quits.
 
 ## Over JTAG
 
-Both chips' USB port is a JTAG port too, so a board that prints nothing
+Both ESP32s' USB port is a JTAG port too, so a board that prints nothing
 can still be stopped and read. OpenOCD from ESP-IDF's tools takes
 `board/esp32s3-builtin.cfg` or `board/esp32p4-builtin.cfg`, with
 `-c "set ESP_RTOS none"`, since the system has no tasks OpenOCD knows.

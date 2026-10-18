@@ -33,7 +33,7 @@ reference: [rtg](../autodocs/rtg.md).
         |
   rtg.library          boards, modes, buffers, showing them
         |
-  a driver             "rgb", "dcs" on "qspi", "dsi", "qemu", ...
+  a driver             "rgb", "dcs" on "qspi", "dsi", "qemu", "fb", ...
 ```
 
 rtg.library knows displays and nothing about drawing. A buffer is memory
@@ -64,9 +64,9 @@ const rb: *RtgBase = @ptrCast(lib);
 Two kinds of thing are registered with the library:
 
 - A **driver** is a module that knows one kind of display hardware. It
-  joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu") and
-  stays until `RemRtgDriver`, which is refused while anything it made is
-  alive.
+  joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu",
+  "fb") and stays until `RemRtgDriver`, which is refused while anything
+  it made is alive.
 - A **board** is one display that a driver brought up. A caller makes one
   with `CreateBoardTagList(driver_name, tags)`, giving the panel's numbers
   in `RTGA_` tags, and gets an `RtgBoard` back. `DeleteBoard` stops it.
@@ -111,7 +111,9 @@ volatile buffer agreed to lose its memory: it keeps its handle and loses
 its pixels.
 
 The panels of this machine have one mode each - the 3.5" board has two,
-upright and on its side.
+upright and on its side. A display that reads its picture out of RAM
+(the `fb` driver, below) has the one its board names: on the VisionFive 2
+1920 x 1080 at 60 Hz, 32 bits a pixel, with no monitor's EDID read.
 
 ## Buffers
 
@@ -132,8 +134,16 @@ driver describes as a region:
 - with `RTGRF_SYSTEM_MEMORY`, no stretch at all: each buffer is taken
   from exec's memory (external first) when it is allocated and given back
   when it is freed, and the region's size is the most the buffers may
-  hold together. Both panels of this machine work this way, so memory
-  is spent only on the pictures that exist.
+  hold together. The ESP32s' panels work this way, so memory is spent
+  only on the pictures that exist.
+
+The `fb` driver has a stretch: one block of DMA memory, below 4 GiB, which
+it takes as the board is made - as many pictures as the board's
+`RTGA_Buffers` asks for, and one more, the frame it lays the pointer into
+(below). On the VisionFive 2 the display does not see the processor's
+caches, so the region is `RTGRF_CPU_CACHED`: a buffer from it is
+`RTGBMF_CACHED`, and every refresh writes the rows it names back out of
+the caches with `CacheClearE`.
 
 `RTGBMF_DISPLAYABLE` asks for a buffer the board can show: memory it can
 read, laid out as its mode wants it. Rows start on the region's
@@ -152,14 +162,15 @@ time keeps them so. graphics.library draws on a `Surface`, so it is
 handed an rtg buffer by pointer and nothing is translated. The fields past
 the head are the library's and the board's.
 
-The pixel formats are `PixelFormat`: `rgb565` on every panel here, and
-`rgba32`, `bgra32`, `rgb24`, `bgr24`, `argb1555`, `indexed8`, `gray8` and
-`mono1` for buffers that are not shown. `PackRtgColor` turns three 8-bit
+The pixel formats are `PixelFormat`: `rgb565` on the ESP32s' panels,
+`bgra32` on the displays of the RISC-V 64 machines (the `fb` driver takes
+either), and `rgba32`, `rgb24`, `bgr24`, `argb1555`, `indexed8`, `gray8`
+and `mono1` for buffers that are not shown. `PackRtgColor` turns three 8-bit
 channels into a pixel of a format, and `UnpackRtgColor` takes one apart.
 
 ## Handing on what was drawn
 
-Writing into a buffer is not yet showing it. A board does one of two
+Writing into a buffer is not yet showing it. A board does one of three
 things with its picture:
 
 - **It streams** (`RTGBF_STREAMING`): the board reads its memory over and
@@ -169,6 +180,12 @@ things with its picture:
   reached over a bus, such as the 3.5" board's. Nothing reaches the glass
   until it goes over the bus. The emulator's display is handed on the same
   way: its refresh tells the emulator that the buffer on show changed.
+- **It reads the picture out of RAM** every frame by itself, wherever it
+  is told the picture is: the `fb` boards. There is no stream to keep fed
+  and nothing to send, so showing a buffer is naming its address, and
+  what the CPU writes into the buffer shown is on the glass by the next
+  frame - once it is out of the caches, where the display does not see
+  them.
 
 Either way the writer says what it wrote, with `RefreshBitMap(bitmap, y,
 rows)` (`rows` 0: every row from `y` on). A streaming board writes those
@@ -193,7 +210,9 @@ if (rb.ShowBitMap(board, picture, 0, 0) != rtg.errors.RTGERR_OK) return dos.RETU
 board that is a flip: the new buffer is taken up at the start of a frame,
 whole, and the call returns when it has - from then on the old one is not
 read and may be drawn into. Nothing is copied and nothing tears. On a
-sending board the whole new buffer is sent.
+sending board the whole new buffer is sent. An `fb` board is told the
+new buffer's address, and a flip from one picture to another waits out a
+frame by the clock before the call returns.
 
 So **double buffering** is two buffers and two calls: draw into the one
 not shown, show it, draw into the other. intuition does exactly this for a
@@ -207,12 +226,15 @@ The `x` and `y` are the buffer's pixel at the display's top left, for a
 buffer larger than the display shown through a window of it. No board on
 this machine can pan: each driver refuses anything but `(0, 0)` itself,
 the 7B's and the 3.5" board's with `RTGERR_NOT_SUPPORTED`, the
-emulator's with `RTGERR_BAD_ARG`.
+emulator's and the `fb` boards' with `RTGERR_BAD_ARG`.
 
 `WaitVBlank(board, frames)` waits for the display's blanking: 0 is the
 next one. A board that neither streams nor has a wait of its own has no
 blanking to wait for and answers `RTGERR_NOT_SUPPORTED` - the 3.5"
-board does. `SetBoardDisplay` turns the display on or off, and
+board does. An `fb` board is not told when a frame begins either; it
+waits the frames out at 60 a second on timer.device, so a program that
+paces itself by the display runs at the speed it would on one that
+says. `SetBoardDisplay` turns the display on or off, and
 `SetBoardBrightness` sets the backlight, 0 to 100 whichever way round the
 part counts.
 
@@ -251,6 +273,10 @@ has not got. Every buffer in a band is marked showing; `BoardDisplayBitMap`
 answers the last band's, the one at the bottom. A streaming board takes
 the new bands up at a frame's start, as a flip.
 
+An `fb` board composes the bands into its extra frame, each row from the
+buffer its band shows, and the display reads that frame; a refresh
+copies the rows the bands show into it.
+
 A board without bands answers `RTGERR_NOT_SUPPORTED`, unless there is one
 plain band at origin 0, which is just `ShowBitMap`. intuition then shows
 the front screen alone.
@@ -288,7 +314,8 @@ is one whole piece of a board's buffer. What the board refuses it does
 itself, with the same result.
 
 The ESP32-S3's boards have no engine: that chip has nothing that draws,
-so graphics.library draws everything with the CPU there. The ESP32-P4's
+so graphics.library draws everything with the CPU there, and so it does
+on the `fb` boards of the RISC-V 64 machines. The ESP32-P4's
 `dsi` board fills with the PPA and copies with the 2D-DMA, for RGB565
 buffers whose start and pitch are whole cache lines. The engine writes
 memory behind the cache's back, so it is given only the whole 64-byte
@@ -356,6 +383,22 @@ copy. The pointer and a dragged icon go into the copy through the data
 cache and reach memory a whole line at a time, so moving them leaves
 the stream its bandwidth.
 
+An `fb` board lays them into its extra frame: while a pointer or the
+overlay is shown, or the picture is several bands, the display reads
+that frame - the shown buffer's rows copied in as they are refreshed,
+the images laid over them - and with nothing over the picture it reads
+the shown buffer itself, and nothing is copied. A move puts back the old
+rectangle from the shown buffer and lays the image at the new one, so it
+costs the pointer's size, not the picture's. On the VisionFive 2 the
+pointer is the display controller's cursor plane instead, which lays it
+over the picture itself: the image goes into one of two buffers as ARGB,
+opaque where the mask says and clear elsewhere, and a change writes the
+plane's buffer, place and configuration together while the controller's
+shadow registers are held - a new place is taken only with the
+configuration written after it. The two buffers take turns, so the one
+the plane reads is never the one written. The overlay still goes into
+the extra frame.
+
 - `SetBoardPointer(board, image, hot_x, hot_y)` takes a surface with an
   alpha channel, at most `RTG_POINTER_MAX` (64) each way, and converts it
   once into the board's format with a one-bit mask. Pixel `(hot_x, hot_y)`
@@ -411,8 +454,8 @@ driver raises an event with `SignalRtgEvent`, from its own interrupt.
 
 Which events come depends on the board: the 7B's RGB panel raises
 `RTGEV_VBLANK` and `RTGEV_SHOWN`, the QSPI and I2C transports
-`RTGEV_TX_DONE`; the 3.5" board and the emulator raise neither of the
-first two, so a server for them never runs there.
+`RTGEV_TX_DONE`; the 3.5" board, the emulator and the `fb` boards raise
+neither of the first two, so a server for them never runs there.
 
 ## Asking a board about itself
 
@@ -537,6 +580,18 @@ older SDK keeps its layout.
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
+| VisionFive 2 on HDMI, 1920 x 1080 | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, and sets the transmitter's PHY for 1080p at 60 Hz | the bands composed into one picture, which the controller then reads |
+| QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
+
+graphics.library hands a panel in the memory map to the `qemu` driver
+when it is the ESP32-S3 emulator's display, and to `fb` otherwise. The
+`fb` driver joins rtg.library only on a board that lists a panel of a
+chip it drives (`CHIP_JH7110_DC8200`, `CHIP_QEMU_RAMFB`). On the
+VisionFive 2 it says on the raw port when the power domain or the
+transmitter's PLL does not come up, and when no monitor is plugged in.
+`./zig build virt` starts QEMU without a display, so the virt machine's
+ramfb is there only on a QEMU started with `-device ramfb`; without it
+the machine has no display and runs on its serial console.
 
 The 7B's panel is never fed straight from PSRAM: the memory's own refresh
 stalls the stream for longer than the panel's pixel buffer lasts, and the

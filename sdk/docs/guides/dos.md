@@ -111,8 +111,9 @@ and `FRead`, and write with `FPutC`, `FPuts`, `FWrite` and `VFPrintf`;
 `dos.stdio` packs a format's values: `Printf(dl, format, .{...})` writes
 to `Output()`, `FPrintf(dl, fh, format, .{...})` to a file. The format is
 RawDoFmt's, checked when the program is compiled: `%d %u %x %c` take
-values of up to 32 bits, `%ld %lu %lx` 64-bit ones, `%s` a
-NUL-terminated string.
+values of up to 32 bits, `%ld %lu %lx` 64-bit ones, `%zd %zu %zx` one
+as wide as a `usize` - 32 bits on the ESP32s, 64 on RISC-V 64 - and
+`%s` a NUL-terminated string.
 
 ```zig
 // Every line of a file, numbered.
@@ -783,12 +784,14 @@ in this order:
    drive with the same entry then runs that code, which stays for the
    system's life. Code that does not load is freed, and the node's
    handler name is tried instead.
-2. **Among dos's resident segments**, by the node's handler name: the
-   ROM's handlers (`nil-handler`, `ram-handler`, `con-handler`,
-   `pipe-handler`, `flashfs-handler`).
-3. **As a file**, a bare name from `HANDLERS:`, where `fat-handler` and
-   `posfs-handler` are, unloaded again when the last process running it
-   ends.
+2. **Among dos's resident segments**, by the last part of the node's
+   handler name: the ROM's handlers (`nil-handler`, `ram-handler`,
+   `con-handler`, `pipe-handler`, `flashfs-handler`, and `fat-handler`
+   in the ROM of a machine that starts from its card).
+3. **As a file**: a name with a path from that path, as a MountList's
+   `Handler = DH0:devs/handlers/posfs-handler` gives it, and a bare name
+   from `HANDLERS:`, where `fat-handler` and `posfs-handler` are -
+   unloaded again when the last process running it ends.
 
 A `DosPacket` carries an `action` (a `dos.ActionCode`: `.findinput`,
 `.read`, `.locate_object`, `.disk_info`, ...) and up to seven arguments
@@ -887,20 +890,23 @@ and makes a device node per partition with expansion.library's
 DosType asks for (`FLS\0` flashfs-handler, `POS\0` posfs-handler, `MSD`
 and `MSH` fat-handler), and
 hands it over with `AddBootNode`. `flash.device` does this at cold
-start, before dos is up, so expansion.library keeps the nodes until
-dos's init takes them in with `EnterBootNodes`; a node handed over later
-goes on the list at once. dos then makes `SYS:` a late assign to the
-bootable partition with the highest boot priority, `C:`, `S:`, `LIBS:`,
-`DEVS:` and `HANDLERS:` late assigns to its directories, and starts the
-first shell, in a console window, reading `S:Startup-Sequence` - which
-ends by starting the desktop and closing that window.
+start, before dos is up - on a RISC-V 64 machine over the disk image in
+RAM - and so does sdcard.device on a machine whose ROM holds it, the
+VisionFive 2, for the card in its slot. expansion.library keeps the
+nodes until dos's init takes them in with `EnterBootNodes`; a node
+handed over later goes on the list at once. dos then makes `SYS:` a
+late assign to the bootable partition with the highest boot priority,
+`C:`, `S:`, `LIBS:`, `DEVS:` and `HANDLERS:` late assigns to its
+directories, and starts the first shell, in a console window, reading
+`S:Startup-Sequence` - which ends by starting the desktop and closing
+that window.
 `Mount` puts a device on the list from its entry in `DEVS:MountList`.
 The card slot needs none: `C:BindDrivers`, in the startup-sequence,
 starts the block devices in `DEVS:` for the board's hardware -
-sdcard.device on a board with a slot - and a device that starts makes
-its drives from the first medium in it, as usb/disk.device does for a
-stick. [Disks and partitions](rdb.md) has the partition table and how
-to change it.
+sdcard.device on a board with a slot, nvme.device on the RISC-V 64
+disk - and a device that starts makes its drives from the first medium
+in it, as usb/disk.device does for a stick. [Disks and
+partitions](rdb.md) has the partition table and how to change it.
 
 **A handler works on what its startup message names**, and on nothing
 else: the device, the unit and the flags it opens it with, and in the
