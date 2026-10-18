@@ -25,9 +25,9 @@ const Delay = @import("../delay.zig").Delay;
 /// - `device` - a function the caller has claimed.
 ///
 /// RESULT:
-/// True when the function was reset and answers again; false when it
-/// cannot be reset on its own, or did not answer within a second of its
-/// reset.
+/// True when the function was reset, or had been, and answers again;
+/// false when it cannot be reset on its own, or did not answer within a
+/// minute - when asked, or after its reset.
 ///
 /// BEHAVIOR:
 /// The first way the function has is taken, as Linux takes them:
@@ -39,20 +39,32 @@ const Delay = @import("../delay.zig").Delay;
 /// 4. a reset of the bus it is on, through the bridge above it - only
 ///    where it is the one function on that bus.
 ///
-/// Before it, its configuration is kept - its command, BARs, expansion
+/// **A function that does not answer** is waited for first: one whose
+/// power dipped takes its link down and brings it up again, and what
+/// reads back meanwhile is neither its configuration nor the way it
+/// resets. **One that answers having lost its configuration** - reset
+/// behind the library's back since it was set up - has had its reset:
+/// what the library set up in it is written back, and it is not reset
+/// again.
+///
+/// Otherwise its configuration is kept - its command, BARs, expansion
 /// ROM, cache line, interrupt line, and its PCI Express control - and
-/// its decoding and bus mastering switched off. A function that has
-/// lost it already, reset behind the library's back, is given what the
-/// library set up in it instead. A function level reset
+/// its decoding and bus mastering switched off. A function level reset
 /// waits up to 700 ms for the transactions the function has out to be
 /// done. The reset is given 100 ms (a bus reset its link's training
-/// first, and 1 s on conventional PCI), and the function up to a second
-/// more to answer its configuration; then all that was kept is written
-/// back, the command last, and its MSI or MSI-X as AllocPCIVectors set
-/// it up, each vector let through that has a server.
+/// first, and 1 s on conventional PCI), and then the function is waited
+/// for to answer its configuration; all that was kept is written back,
+/// the command last, and its MSI or MSI-X as AllocPCIVectors set it up,
+/// each vector let through that has a server.
+///
+/// **A function is waited for up to a minute**, as Linux waits for one:
+/// PCI Express gives a function a second to answer after its reset, and
+/// not every one keeps to it - a Micron 2550 answers 1.4 s after its
+/// function level reset.
 ///
 /// CONTEXT:
-/// - Waits: yes, up to two seconds, on timer.device.
+/// - Waits: yes, on timer.device: up to a minute for a function that
+///   does not answer, and as long again after its reset.
 /// - Interrupts: no.
 /// - Locks: none taken.
 /// - Process: a Task: it waits on a message port of its own.
@@ -82,11 +94,16 @@ const Delay = @import("../delay.zig").Delay;
 pub fn ResetPCIDevice(base: *PCIBase, device: *pci.PCIDevice) bool {
     if (device.header_type != pci.PCI_HEADER_NORMAL) return false;
     const entry = _host.entryOf(device);
-    const method = methodOf(base, entry) orelse return false;
     var delay = Delay.open(base.sys_base) orelse return false;
     defer delay.close();
+    if (!ready(entry, &delay)) return false;
+    if (_state.lost(entry, &entry.kept)) {
+        _state.restore(entry, &entry.kept);
+        return true;
+    }
+    const method = methodOf(base, entry) orelse return false;
 
-    const saved = if (_state.lost(entry, &entry.kept)) entry.kept else _state.save(entry);
+    const saved = _state.save(entry);
     write(entry, pci.PCI_COMMAND, 2, pci.PCI_COMMAND_INTX_DISABLE);
     const reset = switch (method) {
         .flr => flr(entry, &delay),
@@ -203,14 +220,14 @@ fn linkBack(port: *Entry, delay: *Delay) bool {
     while (true) {
         const up = if (own) _host.linkUp(host) else read(port, exp + pci.PCI_EXP_LNKSTA, 2) & pci.PCI_EXP_LNKSTA_DLLLA != 0;
         if (up) return true;
-        if (waited >= ready_us) return false;
+        if (waited >= link_us) return false;
         delay.wait(step_us);
         waited += step_us;
     }
 }
 
-/// Whether the function answers its configuration again, within a
-/// second: not all ones, nor asking to be asked again.
+/// Whether the function answers its configuration, within a minute: not
+/// all ones, nor asking to be asked again.
 fn ready(entry: *Entry, delay: *Delay) bool {
     var waited: u32 = 0;
     while (true) {
@@ -227,7 +244,8 @@ const d3_us: u32 = 10_000;
 const bus_reset_us: u32 = 2_000;
 const retrain_us: u32 = 20_000;
 const conventional_us: u32 = 1_000_000;
-const ready_us: u32 = 1_000_000;
+const link_us: u32 = 1_000_000;
+const ready_us: u32 = 60_000_000;
 const step_us: u32 = 10_000;
 
 fn read(entry: *Entry, offset: u32, size: u32) u32 {

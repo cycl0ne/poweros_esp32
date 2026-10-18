@@ -28,10 +28,11 @@
 //!
 //! **Memory a function reads and writes itself** is RAM at the address
 //! the processor has it: the bridges let a function reach all of it. A
-//! function that addresses 32 bits needs RAM below 4 GiB (MEMF_DMA). The
-//! JH7110's functions do not see the processors' caches: what is written
-//! for one is pushed out with CachePreDMA, and what one wrote is read
-//! after CachePostDMA.
+//! function that addresses 32 bits needs RAM below 4 GiB (MEMF_DMA).
+//! Where a function sees the processors' caches - `dma_coherent`, as it
+//! is behind both of the JH7110's bridges and on QEMU - nothing more is
+//! needed. Where it does not, what is written for it is pushed out with
+//! CachePreDMA, and what it wrote is read after CachePostDMA.
 
 /// The library's name, for OpenLibrary.
 pub const PCINAME = "pci.library";
@@ -143,6 +144,14 @@ pub const PCIDevice = extern struct {
     /// memory window, which every bridge has; 0 for a function that is
     /// no bridge. A window it has not reads as one at 0.
     bridge_windows: u8 = 0,
+
+    // --- since 2.1 -----------------------------------------------------------
+
+    /// Whether what the function reads and writes in RAM sees the
+    /// processors' caches, as its host bridge has it: then its driver
+    /// needs neither CachePreDMA nor CachePostDMA for it. Read it only
+    /// from revision 1 on (`lib_Revision`); before, take it as false.
+    dma_coherent: bool = false,
 };
 
 /// PCIDevice.vector_kind: none, MSI or MSI-X.

@@ -12,8 +12,8 @@
 //!                  that has it, and what it is
 //!   PCIInfo FULL   with each function's subsystem, BARs and expansion
 //!                  ROM, a bridge's buses and windows, its PCI Express link
-//!                  and payload, its power, its interrupts, what it decodes
-//!                  and its capabilities
+//!                  and payload, whether it sees the caches, its power, its
+//!                  interrupts, what it decodes and its capabilities
 //!   PCIInfo TREE   each function below the bridge it is behind
 //!   PCIInfo HEX    with each function's configuration space, its
 //!                  extended space too on PCI Express (rows of zeros left
@@ -34,7 +34,7 @@ const classes = @import("classes.zig");
 const Ids = @import("ids.zig").Ids;
 
 pub const COMMAND_NAME = "PCIInfo";
-const VERSION_STRING = "\x00$VER: PCIInfo 2.0 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: PCIInfo 2.1 (18.10.2026)\r\n";
 
 const template = "FULL/S,TREE/S,HEX/S";
 const arg_full = 0;
@@ -166,6 +166,7 @@ fn printFull(c: *const Context, function: *const pci.PCIDevice) void {
     printBars(c, function);
     if (function.header_type == pci.PCI_HEADER_BRIDGE) printBridge(c, function);
     printExpress(c, function);
+    printDma(c, function);
     printPower(c, function);
     printInterrupts(c, function);
     printDecoding(c, function);
@@ -323,6 +324,16 @@ fn speedName(generation: u8) [*:0]const u8 {
         6 => "64",
         else => "?",
     };
+}
+
+/// Whether what it reads and writes in RAM sees the processors' caches;
+/// a bridge moves nothing of its own. Unknown before pci.library 2.1.
+fn printDma(c: *const Context, function: *const pci.PCIDevice) void {
+    if (function.header_type != pci.PCI_HEADER_NORMAL) return;
+    const lib: *const exec.Library = @ptrCast(@alignCast(c.pb));
+    if (lib.revision < 1) return;
+    const how: [*:0]const u8 = if (function.dma_coherent) "sees the caches" else "goes past the caches (CachePreDMA, CachePostDMA)";
+    _ = Printf(c.dl, "      memory it reads and writes %s\n", .{how});
 }
 
 fn printPower(c: *const Context, function: *const pci.PCIDevice) void {

@@ -937,6 +937,13 @@ test "the host bridge's vectors are given out in runs, aligned as asked" {
     try testing.expectEqual(@as(?u8, null), _host.takeVectors(&host, 33, 1));
 }
 
+test "DMA: what a function behind either host bridge moves sees the caches" {
+    // QEMU's devices reach memory as its processors do; the JH7110's were
+    // measured to on the board.
+    try testing.expect(_host.coherent(.ecam));
+    try testing.expect(_host.coherent(.jh7110));
+}
+
 // --- a function reset behind the library's back ------------------------------------------
 
 test "a function reset since the walk: seen to have lost its BARs or its decoding, and given them back" {

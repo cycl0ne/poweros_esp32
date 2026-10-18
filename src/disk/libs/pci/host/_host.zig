@@ -111,6 +111,19 @@ pub fn addressOf(device: *const pci.PCIDevice) Address {
     return .{ .bus = device.bus, .device = device.device, .function = device.function };
 }
 
+/// Whether what a function behind the chip's bridge reads and writes in
+/// RAM sees the processors' caches. QEMU's devices reach the guest's
+/// memory as its processors do. The JH7110's do too, measured on a
+/// VisionFive 2 with an NVMe SSD: what it wrote was read through dirty
+/// lines and through stale clean ones, and it took a command the
+/// processor had not written back; Linux's device tree marks none of the
+/// chip's devices dma-noncoherent either.
+pub fn coherent(chip: Chip) bool {
+    return switch (chip) {
+        .ecam, .jh7110 => true,
+    };
+}
+
 /// The chip a board part names, or null for one the library does not
 /// know.
 pub fn chipOf(chip: u32) ?Chip {

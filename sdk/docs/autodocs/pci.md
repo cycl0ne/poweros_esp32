@@ -901,9 +901,9 @@ fn ResetPCIDevice(base: *PCIBase, device: *pci.PCIDevice) bool
 
 **RESULT**
 
-True when the function was reset and answers again; false when it
-cannot be reset on its own, or did not answer within a second of its
-reset.
+True when the function was reset, or had been, and answers again;
+false when it cannot be reset on its own, or did not answer within a
+minute - when asked, or after its reset.
 
 **BEHAVIOR**
 
@@ -916,21 +916,33 @@ The first way the function has is taken, as Linux takes them:
 4. a reset of the bus it is on, through the bridge above it - only
    where it is the one function on that bus.
 
-Before it, its configuration is kept - its command, BARs, expansion
+**A function that does not answer** is waited for first: one whose
+power dipped takes its link down and brings it up again, and what
+reads back meanwhile is neither its configuration nor the way it
+resets. **One that answers having lost its configuration** - reset
+behind the library's back since it was set up - has had its reset:
+what the library set up in it is written back, and it is not reset
+again.
+
+Otherwise its configuration is kept - its command, BARs, expansion
 ROM, cache line, interrupt line, and its PCI Express control - and
-its decoding and bus mastering switched off. A function that has
-lost it already, reset behind the library's back, is given what the
-library set up in it instead. A function level reset
+its decoding and bus mastering switched off. A function level reset
 waits up to 700 ms for the transactions the function has out to be
 done. The reset is given 100 ms (a bus reset its link's training
-first, and 1 s on conventional PCI), and the function up to a second
-more to answer its configuration; then all that was kept is written
-back, the command last, and its MSI or MSI-X as AllocPCIVectors set
-it up, each vector let through that has a server.
+first, and 1 s on conventional PCI), and then the function is waited
+for to answer its configuration; all that was kept is written back,
+the command last, and its MSI or MSI-X as AllocPCIVectors set it up,
+each vector let through that has a server.
+
+**A function is waited for up to a minute**, as Linux waits for one:
+PCI Express gives a function a second to answer after its reset, and
+not every one keeps to it - a Micron 2550 answers 1.4 s after its
+function level reset.
 
 **CONTEXT**
 
-- Waits: yes, up to two seconds, on timer.device.
+- Waits: yes, on timer.device: up to a minute for a function that
+  does not answer, and as long again after its reset.
 - Interrupts: no.
 - Locks: none taken.
 - Process: a Task: it waits on a message port of its own.
