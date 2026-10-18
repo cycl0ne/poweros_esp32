@@ -21,6 +21,8 @@ const std = @import("std");
 
 pub const CAP: usize = 0x00;
 pub const VS: usize = 0x08;
+/// VS as NVMe 1.1 has it: major in bits 31:16, minor in 15:8.
+pub const VS_1_1: u32 = 0x0001_0100;
 /// Interrupt mask set and clear: the vectors held back, for a function
 /// on INTx or MSI - never with MSI-X.
 pub const INTMS: usize = 0x0C;
@@ -121,6 +123,7 @@ pub const Completion = extern struct {
 comptime {
     std.debug.assert(@sizeOf(Command) == 64);
     std.debug.assert(@sizeOf(Completion) == 16);
+    std.debug.assert(@sizeOf(Range) == 16);
 }
 
 /// A status's code and its type.
@@ -149,11 +152,25 @@ pub const ADMIN_SET_FEATURES: u8 = 0x09;
 pub const NVM_FLUSH: u8 = 0x00;
 pub const NVM_WRITE: u8 = 0x01;
 pub const NVM_READ: u8 = 0x02;
+pub const NVM_DATASET_MANAGEMENT: u8 = 0x09;
+
+/// Dataset Management's CDW11: its ranges deallocated.
+pub const DSM_DEALLOCATE: u32 = 1 << 2;
+
+/// One range of Dataset Management's list: `blocks` from `lba`.
+pub const Range = extern struct {
+    attributes: u32 = 0,
+    blocks: u32,
+    lba: u64,
+};
 
 /// Identify's CNS: a namespace, the controller, the active namespaces.
 pub const CNS_NAMESPACE: u32 = 0x00;
 pub const CNS_CONTROLLER: u32 = 0x01;
 pub const CNS_ACTIVE_NAMESPACES: u32 = 0x02;
+/// What the controller says of itself for the NVM command set (CSI 0,
+/// CDW11's top byte).
+pub const CNS_CONTROLLER_NVM: u32 = 0x06;
 
 /// Set Features: the number of queues.
 pub const FEATURE_QUEUES: u32 = 0x07;
@@ -180,6 +197,8 @@ pub const ControllerInfo = struct {
     /// It has a volatile write cache: Flush is what puts it on the
     /// medium.
     volatile_cache: bool,
+    /// It has Dataset Management (ONCS bit 2): blocks can be deallocated.
+    dataset_management: bool,
 
     pub fn of(page: *const [4096]u8) ControllerInfo {
         return .{
@@ -190,6 +209,7 @@ pub const ControllerInfo = struct {
             .mdts = page[77],
             .namespaces = std.mem.readInt(u32, page[516..520], .little),
             .volatile_cache = page[525] & 1 != 0,
+            .dataset_management = page[520] & 1 << 2 != 0,
         };
     }
 };
@@ -202,6 +222,9 @@ pub const NamespaceInfo = struct {
     /// carries.
     block_shift: u8,
     metadata: u16,
+    /// What a deallocated block reads as (DLFEAT's low bits): 1 zeroes,
+    /// 2 bytes of 0xFF, 0 where it does not say.
+    deallocated: u3,
 
     pub fn of(page: *const [4096]u8) NamespaceInfo {
         const formats = page[25];
@@ -215,6 +238,24 @@ pub const NamespaceInfo = struct {
             .blocks = std.mem.readInt(u64, page[0..8], .little),
             .block_shift = format[2],
             .metadata = std.mem.readInt(u16, format[0..2], .little),
+            .deallocated = @truncate(page[33]),
+        };
+    }
+};
+
+/// What Dataset Management takes at most (CNS 6), 0 where there is no
+/// limit: the ranges of one command, the blocks of one range, the blocks
+/// of one command.
+pub const NvmLimits = struct {
+    ranges: u8 = 0,
+    range_blocks: u32 = 0,
+    blocks: u64 = 0,
+
+    pub fn of(page: *const [4096]u8) NvmLimits {
+        return .{
+            .ranges = page[3],
+            .range_blocks = std.mem.readInt(u32, page[4..8], .little),
+            .blocks = std.mem.readInt(u64, page[8..16], .little),
         };
     }
 };

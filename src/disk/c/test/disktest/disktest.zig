@@ -2,9 +2,10 @@
 //! DiskTest: a block device's unit looked at through its requests - its
 //! geometry, the partition table in its first blocks, how fast it reads
 //! - and, only when asked, how fast it writes and whether what was
-//! written reads back. Built against the SDK only.
+//! written reads back, and how fast it trims and what trimmed blocks
+//! read as. Built against the SDK only.
 //!
-//!   DiskTest DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S
+//!   DiskTest DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S,TRIM/S
 //!
 //!   DiskTest nvme.device              unit 0: its size, and its MBR or
 //!                                     GPT partitions
@@ -25,8 +26,14 @@
 //!                                     (CMD_UPDATE), read back and
 //!                                     compared: **what was there is
 //!                                     gone**
+//!   DiskTest nvme.device SPEED 8 AT 4096 WRITE TRIM
+//!                                     ... and then trimmed (TDCMD_TRIM)
+//!                                     and read again: zeroes, 0xFF,
+//!                                     what was written, or other bytes.
+//!                                     TRIM without WRITE trims too:
+//!                                     **what was there is gone**
 //!
-//! Only reads are sent without WRITE; COMPARE reads only too. A GPT is read where block 0 holds
+//! Only reads are sent without WRITE or TRIM; COMPARE reads only too. A GPT is read where block 0 holds
 //! the protective MBR's partition (type 0xEE): its header in block 1,
 //! and its partitions where the header says, each with its type named
 //! where it is one of the usual.
@@ -43,10 +50,10 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "DiskTest";
-const VERSION_STRING = "\x00$VER: DiskTest 1.0 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskTest 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S";
+const template = "DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S,TRIM/S";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_speed = 2;
@@ -55,6 +62,7 @@ const arg_align = 4;
 const arg_at = 5;
 const arg_write = 6;
 const arg_compare = 7;
+const arg_trim = 8;
 
 /// What one request of the speed test moves without BUFFER, and at most.
 const default_request: u32 = 1024 * 1024;
@@ -86,7 +94,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [8]usize = @splat(0);
+    var argv: [9]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -99,6 +107,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const at = number(argv[arg_at], 0);
     const write = argv[arg_write] != 0;
     const compare = argv[arg_compare] != 0;
+    const trim = argv[arg_trim] != 0;
     const request_bytes = std.mem.alignForward(u32, std.math.clamp(number(argv[arg_buffer], default_request), 4096, most_request), 4096);
 
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
@@ -177,25 +186,82 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         _ = Printf(dl, "what was written read back as it was\n", .{});
     }
-    if (!compare) return dos.RETURN_OK;
+    if (compare) {
+        const check: [*]u8 = @ptrFromInt(page + request_bytes + 4096);
+        const result = compareReads(&disk, buffer, check, first, total, request_bytes, where);
+        if (result != dos.RETURN_OK) return result;
+    }
+    if (trim) return trimmed(&disk, timer_base, buffer, first, total, request_bytes, write);
+    return dos.RETURN_OK;
+}
 
-    // Each buffer filled with its own bytes first: a request that leaves
-    // a part of one as it was differs too.
-    const check: [*]u8 = @ptrFromInt(page + request_bytes + 4096);
-    done = 0;
+/// COMPARE: each request read into the buffer and into `check`, on a
+/// page, and the two compared. Each filled with its own bytes first: a
+/// request that leaves a part of one as it was differs too.
+fn compareReads(disk: *Disk, buffer: [*]u8, check: [*]u8, first: u64, total: u64, request_bytes: u32, where: [*:0]const u8) i32 {
+    var done: u64 = 0;
     while (done < total) {
         const piece: u32 = @intCast(@min(total - done, request_bytes));
         @memset(buffer[0..piece], 0xA5);
         @memset(check[0..piece], 0x5A);
-        if (disk.send(exec.CMD_READ, first + done, piece, buffer) != 0) return failed(&disk, "read", first + done);
-        if (disk.send(exec.CMD_READ, first + done, piece, check) != 0) return failed(&disk, "read", first + done);
+        if (disk.send(exec.CMD_READ, first + done, piece, buffer) != 0) return failed(disk, "read", first + done);
+        if (disk.send(exec.CMD_READ, first + done, piece, check) != 0) return failed(disk, "read", first + done);
         if (std.mem.indexOfDiff(u8, buffer[0..piece], check[0..piece])) |byte| {
-            _ = Printf(dl, "%s: byte %lu read into the buffer %s differs from it read on a page\n", .{ COMMAND_NAME, first + done + byte, where });
+            _ = Printf(disk.dl, "%s: byte %lu read into the buffer %s differs from it read on a page\n", .{ COMMAND_NAME, first + done + byte, where });
             return dos.RETURN_ERROR;
         }
         done += piece;
     }
-    _ = Printf(dl, "%lu MiB read twice, the buffer %s and on a page, alike\n", .{ total >> 20, where });
+    _ = Printf(disk.dl, "%lu MiB read twice, the buffer %s and on a page, alike\n", .{ total >> 20, where });
+    return dos.RETURN_OK;
+}
+
+/// What trimmed blocks read as.
+const Reads = enum {
+    zeroes,
+    ones,
+    written,
+    other,
+    mixed,
+
+    fn of(bytes: []const u8, offset: u64, written: bool) Reads {
+        if (std.mem.allEqual(u8, bytes, 0)) return .zeroes;
+        if (std.mem.allEqual(u8, bytes, 0xFF)) return .ones;
+        if (written and differs(bytes, offset) == null) return .written;
+        return .other;
+    }
+
+    fn name(reads: Reads) [*:0]const u8 {
+        return switch (reads) {
+            .zeroes => "zeroes",
+            .ones => "bytes of 0xFF",
+            .written => "what was written",
+            .other => "other bytes",
+            .mixed => "partly one thing, partly another",
+        };
+    }
+};
+
+/// TRIM: the blocks trimmed in one request, timed, then read back.
+fn trimmed(disk: *Disk, timer_base: *TimerBase, buffer: [*]u8, first: u64, total: u64, request_bytes: u32, written: bool) i32 {
+    const dl = disk.dl;
+    const started = eclock(timer_base);
+    if (disk.send(td.TDCMD_TRIM, first, total, null) != 0) {
+        if (disk.io.req.err != exec.IOERR_NOCMD) return failed(disk, "trim", first);
+        _ = Printf(dl, "%s: the unit cannot trim\n", .{COMMAND_NAME});
+        return dos.RETURN_WARN;
+    }
+    const us = eclock(timer_base) - started;
+    var reads: ?Reads = null;
+    var done: u64 = 0;
+    while (done < total) {
+        const piece: u32 = @intCast(@min(total - done, request_bytes));
+        if (disk.send(exec.CMD_READ, first + done, piece, buffer) != 0) return failed(disk, "read", first + done);
+        const these = Reads.of(buffer[0..piece], first + done, written);
+        reads = if (reads == null or reads.? == these) these else .mixed;
+        done += piece;
+    }
+    _ = Printf(dl, "%lu MiB trimmed in %lu.%03lu ms; they read as %s\n", .{ total >> 20, us / 1000, us % 1000, reads.?.name() });
     return dos.RETURN_OK;
 }
 

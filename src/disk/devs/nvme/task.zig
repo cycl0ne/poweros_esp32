@@ -15,6 +15,10 @@
 //! **CMD_UPDATE** is Flush where the controller has a volatile write
 //! cache, and answered at once where it has none: what it was given is on
 //! the medium already.
+//!
+//! **TDCMD_TRIM** is Dataset Management, its ranges deallocated: as many
+//! ranges a command as the controller takes (dsm.zig), one command out at
+//! a time. A controller without it answers IOERR_NOCMD.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -28,6 +32,7 @@ const Controller = _nvme.Controller;
 const Unit = _nvme.Unit;
 const regs = @import("regs.zig");
 const prp = @import("prp.zig");
+const dsm = @import("dsm.zig");
 const controller = @import("controller.zig");
 
 pub fn nvmeTask(sys: *ExecBase) callconv(.c) void {
@@ -78,6 +83,7 @@ fn serve(base: *NvmeBase, io: *exec.IORequest) void {
     switch (io.command) {
         exec.CMD_READ, exec.CMD_WRITE => readWrite(base, c, unit, io),
         exec.CMD_UPDATE => flush(c, unit, io),
+        td.TDCMD_TRIM => trim(c, unit, io),
         else => io.err = exec.IOERR_NOCMD,
     }
 }
@@ -228,31 +234,85 @@ fn receive(c: *const Controller, slot: *_nvme.Slot, piece: *const Piece) void {
     @memcpy(caller[piece.bytes - plan.tail ..][0..plan.tail], tail[0..plan.tail]);
 }
 
+// --- commands without data ---------------------------------------------------------------
+
 /// CMD_UPDATE: Flush, where the controller has a cache that needs it.
 fn flush(c: *Controller, unit: *Unit, io: *exec.IORequest) void {
     if (!c.volatile_cache) return;
-    var tries: u32 = 0;
-    while (tries < 2) : (tries += 1) {
-        if (c.alive) {
-            const slot = &c.slots[0];
-            slot.busy = true;
-            slot.done = false;
-            controller.submit(c, &c.io, .{ .opcode = regs.NVM_FLUSH, .id = 0, .nsid = unit.nsid });
-            var waited: u32 = 0;
-            while (true) {
-                controller.reap(c);
-                if (slot.done) break;
-                if (!controller.healthy(c) or !controller.sleep(c, &waited, controller.io_ms)) break;
-            }
-            slot.busy = false;
-            if (slot.done) {
-                if (slot.status != 0) io.err = errorOf(slot.status);
+    const command = regs.Command{ .opcode = regs.NVM_FLUSH, .nsid = unit.nsid };
+    const status = (if (c.alive) one(c, command) else null) orelse
+        (if (controller.recover(c)) one(c, command) else null) orelse {
+        io.err = td.TDERR_NotSpecified;
+        return;
+    };
+    if (status != 0) io.err = errorOf(status);
+}
+
+/// TDCMD_TRIM: the blocks deallocated, a command at a time, the list of
+/// its ranges in slot 0's list page.
+fn trim(c: *Controller, unit: *Unit, io: *exec.IORequest) void {
+    const req = _nvme.stdReq(io);
+    if (!c.deallocates) {
+        io.err = exec.IOERR_NOCMD;
+        return;
+    }
+    if (!_nvme.inside(unit, req.offset, req.length)) {
+        io.err = exec.IOERR_BADADDRESS;
+        return;
+    }
+    const page = c.slots[0].pages[2];
+    const list: *[dsm.most_ranges]regs.Range = @ptrFromInt(page);
+    var lba = req.offset >> @intCast(unit.block_shift);
+    var left = req.length >> @intCast(unit.block_shift);
+    var recovered = false;
+    while (left != 0) {
+        const filled = dsm.fill(list, lba, left, c.trim_limits);
+        _nvme.toDevice(c, page, filled.ranges * @sizeOf(regs.Range));
+        const command = regs.Command{
+            .opcode = regs.NVM_DATASET_MANAGEMENT,
+            .nsid = unit.nsid,
+            .prp1 = page,
+            .cdw10 = filled.ranges - 1,
+            .cdw11 = regs.DSM_DEALLOCATE,
+        };
+        // A controller that stops answering is reset, and the command
+        // sent again: once a request.
+        const status = (if (c.alive) one(c, command) else null) orelse {
+            if (recovered or !controller.recover(c)) {
+                io.err = td.TDERR_NotSpecified;
                 return;
             }
+            recovered = true;
+            continue;
+        };
+        if (status != 0) {
+            io.err = errorOf(status);
+            return;
         }
-        if (tries == 0 and !controller.recover(c)) break;
+        lba += filled.blocks;
+        left -= filled.blocks;
     }
-    io.err = td.TDERR_NotSpecified;
+    req.actual = req.length;
+}
+
+/// `command` alone on slot 0, and its answer waited for: its status, or
+/// null where the controller stopped answering.
+fn one(c: *Controller, command: regs.Command) ?u15 {
+    const slot = &c.slots[0];
+    slot.busy = true;
+    slot.done = false;
+    slot.status = 0;
+    var sent = command;
+    sent.id = 0;
+    controller.submit(c, &c.io, sent);
+    var waited: u32 = 0;
+    while (true) {
+        controller.reap(c);
+        if (slot.done) break;
+        if (!controller.healthy(c) or !controller.sleep(c, &waited, controller.io_ms)) break;
+    }
+    slot.busy = false;
+    return if (slot.done) slot.status else null;
 }
 
 /// A failed command's status as the request's error.

@@ -10,6 +10,9 @@
 //!   CMD_UPDATE       what the controller holds in its volatile write
 //!                    cache put on the medium (Flush); at once where it
 //!                    has no such cache.
+//!   TDCMD_TRIM       io_Length bytes from io_Offset deallocated (Dataset
+//!                    Management): the controller may forget them, and
+//!                    they read as it says - IOERR_NOCMD where it cannot.
 //!   TDCMD_ERASE,
 //!   CMD_CLEAR        answered: an SSD erases for itself, and the device
 //!                    buffers nothing.
@@ -52,7 +55,7 @@ const task_file = @import("task.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -90,7 +93,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const req = _nvme.stdReq(io);
     req.actual = 0;
     switch (io.command) {
-        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_UPDATE => return queue(base, io),
+        exec.CMD_READ, exec.CMD_WRITE, exec.CMD_UPDATE, td.TDCMD_TRIM => return queue(base, io),
         td.TDCMD_ERASE, exec.CMD_CLEAR => {},
         td.TD_GETGEOMETRY => if (req.data) |data| {
             _nvme.geometry(unit, @ptrCast(@alignCast(data)));
@@ -225,5 +228,6 @@ export const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version"
 
 test {
     _ = @import("prp.zig");
+    _ = @import("dsm.zig");
     _ = @import("regs.zig");
 }

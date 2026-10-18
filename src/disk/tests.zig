@@ -52,6 +52,7 @@ test {
     _ = @import("libs/usb/tests/usb.zig");
     _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/nvme/prp.zig");
+    _ = @import("devs/nvme/dsm.zig");
     _ = @import("devs/nvme/tests/nvme.zig");
     _ = @import("devs/usb/hid/report.zig");
     _ = @import("devs/usb/disk/scsi.zig");

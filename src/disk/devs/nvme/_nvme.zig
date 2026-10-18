@@ -23,6 +23,7 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const PCIBase = sdk.interface.pci.PCIBase;
 const regs = @import("regs.zig");
+const dsm = @import("dsm.zig");
 
 pub const DEVICE_NAME = "nvme.device";
 
@@ -77,6 +78,10 @@ pub const Controller = struct {
     /// The most bytes one of its commands moves.
     max_transfer: u32 = page,
     volatile_cache: bool = false,
+    /// It has Dataset Management, for TDCMD_TRIM, and what one of those
+    /// commands takes at most.
+    deallocates: bool = false,
+    trim_limits: dsm.Limits = .{},
     /// Whether what it reads and writes in memory sees the processors'
     /// caches (PCIDevice.dma_coherent): then nothing is written back or
     /// dropped for it.

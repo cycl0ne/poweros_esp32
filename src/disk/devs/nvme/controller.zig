@@ -7,7 +7,8 @@
 //! (CC.EN off, CSTS.RDY waited for); the admin queues given (AQA, ASQ,
 //! ACQ); it started with 4 KiB pages and the entry sizes of 64 and 16
 //! bytes, and CSTS.RDY waited for, as long as CAP.TO says. Then Identify
-//! asks what it is, Set Features asks for one pair of I/O queues, and
+//! asks what it is - and what it takes of Dataset Management, where it
+//! has that - Set Features asks for one pair of I/O queues, and
 //! the pair is made: the completion queue first, on vector 0, the same
 //! the admin queue's completions come on.
 //!
@@ -37,6 +38,7 @@ const NvmeBase = _nvme.NvmeBase;
 const Controller = _nvme.Controller;
 const Queue = _nvme.Queue;
 const regs = @import("regs.zig");
+const dsm = @import("dsm.zig");
 
 /// How long an admin command may take, and how long one of the I/O
 /// queue's may go without any of them answered.
@@ -162,6 +164,13 @@ pub fn start(c: *Controller, first: bool) bool {
     c.max_transfer = _nvme.max_transfer;
     if (info.mdts != 0 and info.mdts < 20) {
         c.max_transfer = @min(c.max_transfer, @as(u32, _nvme.page) << @intCast(info.mdts));
+    }
+    // What Dataset Management takes, where the controller says it (NVMe
+    // 1.1 on); one that does not answer takes what the command allows.
+    c.deallocates = info.dataset_management;
+    c.trim_limits = .{};
+    if (c.deallocates and _nvme.reg(c, regs.VS).* >= regs.VS_1_1 and identify(c, regs.CNS_CONTROLLER_NVM, 0)) {
+        c.trim_limits = dsm.Limits.of(regs.NvmLimits.of(c.identify[0..4096]));
     }
 
     // One submission queue and one completion queue, as 0's-based counts.
@@ -439,7 +448,12 @@ fn findNamespaces(base: *NvmeBase, c: *Controller) void {
         const name = regs.trimmed(&c.model);
         @memcpy(model[0..name.len], name);
         const mib = (info.blocks << @intCast(info.block_shift)) >> 20;
-        sdk.exec.kprintf(base.sys_base, "%s: unit %ld: %s, namespace %ld, %ld MiB in blocks of %ld bytes\n", .{ _nvme.DEVICE_NAME, @as(i64, base.unit_count), @as([*:0]const u8, &model), @as(i64, nsid), @as(i64, @intCast(mib)), @as(i64, 1) << @intCast(info.block_shift) });
+        const trims: [*:0]const u8 = if (!c.deallocates) "" else switch (info.deallocated) {
+            1 => ", TRIM: trimmed blocks read as zeroes",
+            2 => ", TRIM: trimmed blocks read as 0xFF",
+            else => ", TRIM",
+        };
+        sdk.exec.kprintf(base.sys_base, "%s: unit %ld: %s, namespace %ld, %ld MiB in blocks of %ld bytes%s\n", .{ _nvme.DEVICE_NAME, @as(i64, base.unit_count), @as([*:0]const u8, &model), @as(i64, nsid), @as(i64, @intCast(mib)), @as(i64, 1) << @intCast(info.block_shift), trims });
         base.unit_count += 1;
     }
 }
