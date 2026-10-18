@@ -88,7 +88,7 @@ pub fn begin(d: *Desktop) void {
     const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(@as([*]u8, @ptrCast(memory)) + @sizeOf(Startup)));
     if (dl.Examine(lock, fib)) {
         while (dl.ExNext(lock, fib)) {
-            if (fib.dir_entry_type > 0) continue;
+            if (dos.isDirectory(fib.dir_entry_type)) continue;
             const name = textOf(@ptrCast(&fib.file_name));
             if (name.len <= 5 or !endsInInfo(name)) continue;
             readEntry(d, startup, name[0 .. name.len - 5]);

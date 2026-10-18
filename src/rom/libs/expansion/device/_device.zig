@@ -175,7 +175,7 @@ fn fromDrawer(dl: *DosBase, gathered: *Gathered, drawer: []const u8, wanted: u32
     const fib = &gathered.drawer_fib;
     if (!dl.Examine(lock, fib)) return;
     while (dl.ExNext(lock, fib)) {
-        if (fib.dir_entry_type >= 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         readFile(dl, gathered, drawer, nameOf(fib), wanted);
     }
 }

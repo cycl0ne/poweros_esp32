@@ -21,6 +21,7 @@ const InfoData = @import("dos.zig").InfoData;
 const ExAllControl = @import("exall.zig").ExAllControl;
 const Resident = @import("../exec/resident.zig").Resident;
 const Library = @import("../exec/libraries.zig").Library;
+const TagItem = @import("../utility/utility.zig").TagItem;
 
 const Message = ports.Message;
 const MsgPort = ports.MsgPort;
@@ -213,6 +214,39 @@ pub const RenameArgs = extern struct {
     to_name: ?[*:0]const u8,
 };
 
+/// MAKE_LINK's arguments: the new link's name, from a directory's lock,
+/// and what it names - for a hard link (`kind` LINK_HARD) a lock on the
+/// object, on the same volume; for a soft link (LINK_SOFT) a path, kept
+/// as it is given.
+pub const MakeLinkArgs = extern struct {
+    lock: ?*FileLock,
+    name: ?[*:0]const u8,
+    /// The object's lock (`?*FileLock`) or the path (`[*:0]const u8`).
+    dest: usize,
+    kind: isize,
+};
+
+/// READ_LINK's arguments: a name, from a directory's lock, that met a soft
+/// link (ERROR_IS_SOFT_LINK), and the buffer for the path that takes its
+/// place. The handler answers the path's length, -1 with the error in
+/// dp_Res2, or -2 with ERROR_BUFFER_OVERFLOW when `size` bytes do not
+/// hold it and its NUL.
+pub const ReadLinkArgs = extern struct {
+    lock: ?*FileLock,
+    path: ?[*:0]const u8,
+    buffer: ?[*]u8,
+    size: isize,
+};
+
+/// FORMAT's arguments: the new volume's name (null: the file system's
+/// own), the DosType of the format to write (0: the drive's own), and
+/// FormatTags's tags (null: none).
+pub const FormatArgs = extern struct {
+    name: ?[*:0]const u8,
+    dos_type: usize,
+    tags: ?[*]const TagItem,
+};
+
 /// SET_PROTECT, SET_COMMENT, SET_DATE and SET_OWNER's arguments, the lock
 /// first. The value is the bits, the comment
 /// (a C string), the DateStamp's address, or user << 16 | group.
@@ -269,6 +303,9 @@ pub const PacketArgs = extern union {
     change_mode: ChangeModeArgs,
     info: InfoArgs,
     fh_from_lock: FhFromLockArgs,
+    make_link: MakeLinkArgs,
+    read_link: ReadLinkArgs,
+    format: FormatArgs,
 };
 
 // Every layout fits the seven slots, at a slot's alignment.
@@ -609,6 +646,38 @@ pub const DosListHandler = extern struct {
     /// `seg_list`. When the last one ends the code is unloaded and the
     /// next use loads it again.
     users: u32 = 0,
+    /// The file system's code that came with the partition table the
+    /// drive was mounted from, or null: what dos starts the handler from,
+    /// ahead of `handler`'s name.
+    file_sys: ?*FileSysEntry = null,
+};
+
+/// A file system's code that came with a drive's partition table (a
+/// FileSysHeaderBlock and its LoadSegBlocks), for the drives mounted from
+/// that table. The driver that mounts them makes one per file system, puts
+/// the load file in `image` and the entry on each of its nodes
+/// (`DosListHandler.file_sys`); dos loads the image when the first of
+/// those drives starts its handler, and every other one runs the same
+/// code. The entry and its code are the system's from then on: neither is
+/// ever freed.
+pub const FileSysEntry = extern struct {
+    /// fse_DosType: the DosType of the partitions it serves.
+    dos_type: u32 = 0,
+    /// fse_Version: version << 16 | revision, as fhb_Version holds it.
+    version: u32 = 0,
+    /// The load file, until dos has loaded it; then null, and freed. An
+    /// allocation with AllocVec, dos's to free once the entry is on a
+    /// node.
+    image: ?[*]u8 = null,
+    image_size: u32 = 0,
+    /// The handler's entry, once loaded; null before, and after a load
+    /// that failed - the drive then starts the handler `handler` names.
+    entry: ?TaskFn = null,
+    /// What the load made.
+    seg_list: ?*SegList = null,
+    /// What the loaded code is called on the list of loaded files: the
+    /// handler's name.
+    name: [32:0]u8 = @splat(0),
 };
 
 /// A volume's part of a DosList.

@@ -4,8 +4,9 @@
 //!
 //!   Dir DIR,OPT/K,ALL/S,DIRS/S,FILES/S,INTER/S
 //!
-//! DIR may be a pattern. ALL goes into every directory as well, indented.
-//! DIRS and FILES show only the one kind; neither shows both. OPT takes
+//! DIR may be a pattern. ALL goes into every directory as well, indented;
+//! a soft link is shown with the files and never gone through. DIRS and
+//! FILES show only the one kind; neither shows both. OPT takes
 //! the letters A, D, F and I and means the same as the switches; a letter
 //! that is none of them is "<c> option ignored". With no name the current
 //! directory is listed.
@@ -50,7 +51,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dir";
-const VERSION_STRING = "\x00$VER: Dir 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dir 1.1 (18.10.2026)\r\n";
 
 const template = "DIR,OPT/K,ALL/S,DIRS/S,FILES/S,INTER/S";
 const arg_dir = 0;
@@ -195,7 +196,7 @@ fn doDir(run: *Run, level: u32) void {
     run.enter = false; // one directory only
 
     var err: i32 = 0;
-    if (ap.info.dir_entry_type > 0) {
+    if (dos.isDirectory(ap.info.dir_entry_type)) {
         // A pattern at the top level lists what it matched; it does not go
         // into it unless ALL says so.
         if (!(level == 0 and ap.flags & dos.APF_ITSWILD != 0)) {
@@ -225,7 +226,7 @@ fn doDir(run: *Run, level: u32) void {
         // A directory goes out as it is met, unsorted.
         var doomed: [max_name:0]u8 = @splat(0);
         var remove_dir = false;
-        if (ap.info.dir_entry_type > 0) {
+        if (dos.isDirectory(ap.info.dir_entry_type)) {
             if (run.dirs) {
                 var shown: [max_path:0]u8 = @splat(0);
                 const name = dirName(run, level, &shown);

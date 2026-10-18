@@ -74,6 +74,15 @@ pub fn plan(first: u64, sectors: u64, sector_bytes: u32, boundary: u32) ?Plan {
     }
 }
 
+/// `plan` with clusters of `cluster_bytes`, as a format was asked for: a
+/// power of two from one sector to 32 KiB, and at least `min_clusters` of
+/// them. Null when the volume cannot have them.
+pub fn planCluster(first: u64, sectors: u64, sector_bytes: u32, boundary: u32, cluster_bytes: u32) ?Plan {
+    if (sectors > std.math.maxInt(u32) or sectors <= least_reserved) return null;
+    if (cluster_bytes < sector_bytes or cluster_bytes > max_cluster_bytes or cluster_bytes & (cluster_bytes - 1) != 0) return null;
+    return planWith(first, @intCast(sectors), sector_bytes, cluster_bytes / sector_bytes, boundary);
+}
+
 /// The cluster a volume of `bytes` gets.
 fn clusterBytesFor(bytes: u64, sector_bytes: u32) u32 {
     const mib: u64 = 1024 * 1024;

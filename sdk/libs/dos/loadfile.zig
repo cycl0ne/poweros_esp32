@@ -322,6 +322,50 @@ pub fn readDevice(source: Source, found: FoundTag, into: *DeviceTag) bool {
     return true;
 }
 
+/// A handler's ROM tag as its load file has it - a `ResidentHandler`: its
+/// name, and its version as fhb_Version holds one (version << 16 |
+/// revision).
+pub const HandlerTag = struct {
+    name: [32:0]u8 = @splat(0),
+    version: u32 = 0,
+};
+
+/// The handler tag found in a module's load file, into `into`: false for
+/// a tag that is not a handler's, or one whose name lies past its
+/// segment.
+pub fn readHandler(source: Source, found: FoundTag, into: *HandlerTag) bool {
+    into.* = .{};
+    var head: [3]u8 = undefined;
+    if (!readBytes(source, found, found.tag + TAG_FLAGS, &head)) return false;
+    if (head[2] != @intFromEnum(NodeType.handler)) return false;
+    const name_at = readWord(source, found, found.tag + TAG_NAME) orelse return false;
+    _ = readString(source, found, name_at, into.name[0..into.name.len]) orelse return false;
+    var revision: u16 = 0;
+    const id_at = readWord(source, found, found.tag + TAG_ID_STRING) orelse return false;
+    if (id_at != 0) {
+        var id: [64]u8 = undefined;
+        if (readString(source, found, id_at, &id)) |text| revision = resident.revisionOf(text);
+    }
+    into.version = @as(u32, head[1]) << 16 | revision;
+    return true;
+}
+
+/// A load file's bytes in memory, as a Source: `source()` reads them.
+pub const Bytes = struct {
+    data: []const u8,
+
+    pub fn source(bytes: *Bytes) Source {
+        return .{ .context = bytes, .readAt = readAt };
+    }
+
+    fn readAt(context: *anyopaque, offset: u32, into: []u8) bool {
+        const bytes: *Bytes = @ptrCast(@alignCast(context));
+        if (offset > bytes.data.len or bytes.data.len - offset < into.len) return false;
+        @memcpy(into, bytes.data[offset..][0..into.len]);
+        return true;
+    }
+};
+
 /// Unit `index`'s label, of a device tag `readDevice` read, into `into`;
 /// null for a device without labels, past its units, or one whose label
 /// does not fit. A label pointer of 0 is none: offset 0 of a module's data

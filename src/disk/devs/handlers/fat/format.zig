@@ -18,8 +18,13 @@
 //! past that, as cards are made, but never more than a 64th of the area,
 //! so a small one gives little of itself to it.
 //!
+//! **The cluster** is the format's choice by the volume's size, or the one
+//! a format is asked for (FormatTags's FORMAT_BlockSize), when the format
+//! can have it on the area.
+//!
 //! Everything that can be refused is refused before the first write: a
-//! label the format cannot hold, a format the area cannot have.
+//! label the format cannot hold, a format or a cluster the area cannot
+//! have.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -48,6 +53,12 @@ const Made = union(enum) {
 /// none). The medium is duck-typed as the file systems' is; `ub` dates
 /// the label.
 pub fn format(media: anytype, ub: *UtilityBase, dos_type: u32, name: ?[]const u8) Error!void {
+    return formatWith(media, ub, dos_type, name, 0);
+}
+
+/// `format` with clusters of `cluster_bytes`, or by the volume's size for
+/// 0.
+pub fn formatWith(media: anytype, ub: *UtilityBase, dos_type: u32, name: ?[]const u8, cluster_bytes: u32) Error!void {
     const sector_bytes = media.blockSize();
     const sectors = media.blocks();
     if (sectors == 0) return error.MediumFailed;
@@ -58,7 +69,7 @@ pub fn format(media: anytype, ub: *UtilityBase, dos_type: u32, name: ?[]const u8
     // A table counts a partition's blocks in 32 bits.
     const volume_sectors = if (table) @min(sectors - first, std.math.maxInt(u32)) else sectors - first;
 
-    const made = try choose(fat.formatOfType(dos_type), first, volume_sectors, sector_bytes, boundary);
+    const made = try choose(fat.formatOfType(dos_type), first, volume_sectors, sector_bytes, boundary, cluster_bytes);
     const label: ?[]const u8 = if (name) |given| (if (given.len == 0) null else given) else null;
     const when = media.now();
     const serial = serialOf(when);
@@ -82,19 +93,30 @@ pub fn format(media: anytype, ub: *UtilityBase, dos_type: u32, name: ?[]const u8
     try _fat.writeTable(media, @intCast(first), @intCast(volume_sectors), kind, serial, block);
 }
 
-/// The volume for the format `which` (`FORMAT_*`) asks for.
-fn choose(which: u8, first: u64, sectors: u64, sector_bytes: u32, boundary: u32) Error!Made {
+/// The volume for the format `which` (`FORMAT_*`) asks for, with clusters
+/// of `cluster_bytes` (0: by its size).
+fn choose(which: u8, first: u64, sectors: u64, sector_bytes: u32, boundary: u32, cluster_bytes: u32) Error!Made {
     switch (which) {
-        fat.FORMAT_FAT32 => return .{ .fat32 = fat32_format.plan(first, sectors, sector_bytes, boundary) orelse return error.Unsuitable },
-        fat.FORMAT_EXFAT => return .{ .exfat = exfat_format.plan(first, sectors, sector_bytes, boundary) orelse return error.Unsuitable },
+        fat.FORMAT_FAT32 => return .{ .fat32 = fat32Plan(first, sectors, sector_bytes, boundary, cluster_bytes) orelse return error.Unsuitable },
+        fat.FORMAT_EXFAT => return .{ .exfat = exfatPlan(first, sectors, sector_bytes, boundary, cluster_bytes) orelse return error.Unsuitable },
         fat.FORMAT_BY_SIZE => {
             if (sectors * sector_bytes <= fat32_most) {
-                if (fat32_format.plan(first, sectors, sector_bytes, boundary)) |plan| return .{ .fat32 = plan };
+                if (fat32Plan(first, sectors, sector_bytes, boundary, cluster_bytes)) |plan| return .{ .fat32 = plan };
             }
-            return .{ .exfat = exfat_format.plan(first, sectors, sector_bytes, boundary) orelse return error.Unsuitable };
+            return .{ .exfat = exfatPlan(first, sectors, sector_bytes, boundary, cluster_bytes) orelse return error.Unsuitable };
         },
         else => return error.Unsuitable,
     }
+}
+
+fn fat32Plan(first: u64, sectors: u64, sector_bytes: u32, boundary: u32, cluster_bytes: u32) ?fat32_format.Plan {
+    if (cluster_bytes == 0) return fat32_format.plan(first, sectors, sector_bytes, boundary);
+    return fat32_format.planCluster(first, sectors, sector_bytes, boundary, cluster_bytes);
+}
+
+fn exfatPlan(first: u64, sectors: u64, sector_bytes: u32, boundary: u32, cluster_bytes: u32) ?exfat_format.Plan {
+    if (cluster_bytes == 0) return exfat_format.plan(first, sectors, sector_bytes, boundary);
+    return exfat_format.planCluster(first, sectors, sector_bytes, boundary, cluster_bytes);
 }
 
 /// The boundary for an area of `bytes`, in sectors.
@@ -125,10 +147,26 @@ test "the boundary is the card's unit, but never more than a 64th of the area" {
 }
 
 test "by size: FAT32 up to 32 GiB, exFAT past it and below FAT32's least" {
-    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 8192, 30_000_000, 512, 8192) == .fat32);
-    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 32768, 124_000_000, 512, 32768) == .exfat);
-    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 0, 16384, 512, 128) == .exfat);
-    try testing.expect(try choose(fat.FORMAT_EXFAT, 8192, 30_000_000, 512, 8192) == .exfat);
-    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_FAT32, 0, 16384, 512, 128));
-    try testing.expectError(error.Unsuitable, choose(7, 8192, 30_000_000, 512, 8192));
+    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 8192, 30_000_000, 512, 8192, 0) == .fat32);
+    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 32768, 124_000_000, 512, 32768, 0) == .exfat);
+    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 0, 16384, 512, 128, 0) == .exfat);
+    try testing.expect(try choose(fat.FORMAT_EXFAT, 8192, 30_000_000, 512, 8192, 0) == .exfat);
+    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_FAT32, 0, 16384, 512, 128, 0));
+    try testing.expectError(error.Unsuitable, choose(7, 8192, 30_000_000, 512, 8192, 0));
+}
+
+test "a cluster asked for: taken where the format can have it, refused where not" {
+    // 15 GB: FAT32 by size would take 8 KiB.
+    const fat32 = (try choose(fat.FORMAT_BY_SIZE, 8192, 30_000_000, 512, 8192, 16384)).fat32;
+    try testing.expectEqual(@as(u32, 32), fat32.sectors_per_cluster);
+    const exfat = (try choose(fat.FORMAT_EXFAT, 8192, 30_000_000, 512, 8192, 1024 * 1024)).exfat;
+    try testing.expectEqual(@as(u5, 11), exfat.cluster_shift);
+    // FAT32 has none past 32 KiB, nor one that leaves too few clusters.
+    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_FAT32, 8192, 30_000_000, 512, 8192, 65536));
+    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_FAT32, 1024, 4_000_000, 512, 1024, 32768));
+    // Not a power of two, smaller than a sector.
+    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_EXFAT, 8192, 30_000_000, 512, 8192, 3000));
+    try testing.expectError(error.Unsuitable, choose(fat.FORMAT_EXFAT, 8192, 30_000_000, 512, 8192, 256));
+    // By size with a cluster FAT32 cannot have: exFAT, which can.
+    try testing.expect(try choose(fat.FORMAT_BY_SIZE, 8192, 30_000_000, 512, 8192, 65536) == .exfat);
 }

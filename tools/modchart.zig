@@ -52,10 +52,13 @@ const left_out = [_][]const u8{ "exec.library", "utility.library", "expansion.li
 const run_time = [_][2][]const u8{
     // The device in the mount entry: the flash disk's partitions, SD0:.
     .{ "flashfs-handler", "flash.device" },
+    .{ "posfs-handler", "flash.device" },
+    .{ "posfs-handler", "sdcard.device" },
     .{ "fat-handler", "sdcard.device" },
     // The disk the caller names.
     .{ "rdb.library", "flash.device" },
     .{ "rdb.library", "sdcard.device" },
+    .{ "rdb.library", "disk.device" },
     // The device an interface's file in DEVS:NetInterfaces/ names.
     .{ "bsdsocket.library", "openeth.device" },
     .{ "bsdsocket.library", "esp32s3wifi.device" },
@@ -75,6 +78,12 @@ const run_time = [_][2][]const u8{
     // Opened by an SDK helper the module calls (sdk.anvil.DropTarget),
     // which names it where the module's code does not.
     .{ "asl.library", "anvil.library" },
+    // A removable unit's drives (sdk.devices.automount): its table read
+    // and its partitions mounted, and input told a disk came.
+    .{ "disk.device", "rdb.library" },
+    .{ "disk.device", "input.device" },
+    .{ "sdcard.device", "rdb.library" },
+    .{ "sdcard.device", "input.device" },
     // The serial unit (sdk.devices.serialunit), for a break's time.
     .{ "serial.device", "timer.device" },
     // The record locks' table (sdk.dos.record.Records), for the time a

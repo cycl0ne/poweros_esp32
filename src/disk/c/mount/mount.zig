@@ -26,7 +26,7 @@
 //!
 //! | Keyword | What it sets |
 //! |---------|--------------|
-//! | `Handler`, `FileSystem` | the code that serves the device. dos looks for it by the name at the end of the path among its segments, where the ROM's handlers are - con-handler, ram-handler, pipe-handler, nil-handler, flashfs-handler - and failing that loads the file, the first time the device is used: the path as written, and a bare name from `HANDLERS:`, where the handlers that are not in the ROM are (fat-handler) |
+//! | `Handler`, `FileSystem` | the code that serves the device. dos looks for it by the name at the end of the path among its segments, where the ROM's handlers are - con-handler, ram-handler, pipe-handler, nil-handler, flashfs-handler - and failing that loads the file, the first time the device is used: the path as written, and a bare name from `HANDLERS:`, where the handlers that are not in the ROM are (fat-handler, posfs-handler) |
 //! | `StackSize`, `Priority` | the handler process's, when it is started |
 //! | `Device`, `Unit`, `Flags` | the exec device under it, which the handler is given as a FileSysStartupMsg |
 //! | `Startup` | that startup as a plain number instead, for a handler that reads it as one (a console: 0 a window, 1 a raw window) |

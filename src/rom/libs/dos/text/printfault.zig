@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! PrintFault: writes the text for an error code, and a newline, to
-//! Output().
+//! PrintFault: writes the text for an error code, and a newline, to the
+//! error stream, or to Output() when there is none.
 
 const DosBase = @import("../dos_base.zig").DosBase;
 
-/// Writes the text for an error code, and a newline, to Output().
+/// Writes the text for an error code, and a newline, to the process's
+/// error stream, or to Output() when it has none.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -19,19 +20,22 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// RESULT:
 /// True when the line was written, or there was nothing to write (a code of
-/// 0). False when the process has no Output() or the write fails.
+/// 0). False when the process has neither stream or the write fails.
 ///
 /// BEHAVIOR:
 /// The line is Fault's text, at most 254 characters, and a newline, written
-/// with FWrite. IoErr is set to `code` afterwards whatever happened, so the
-/// caller can report an error and still hand it on.
+/// with FWrite to ErrorOutput(), else to Output(). The shell gives every
+/// command it runs its console as the error stream, so a command's errors
+/// stay on the console when `>` sends its output to a file. IoErr is set to
+/// `code` afterwards whatever happened, so the caller can report an error
+/// and still hand it on.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the output's handler.
 /// - Interrupts: not callable.
 /// - Locks: no spinlock may be held.
-/// - Process: required for output; a plain task has no Output() and gets
-///   false.
+/// - Process: required for output; a plain task has neither stream and
+///   gets false.
 ///
 /// OWNERSHIP:
 /// Nothing is kept.
@@ -40,7 +44,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `Fault`, `IoErr`
+/// `Fault`, `IoErr`, `ErrorOutput`, `SelectError`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -55,7 +59,7 @@ pub fn PrintFault(db: *DosBase, code: i32, header: ?[*:0]const u8) bool {
     var line: [256]u8 = undefined;
     const n: usize = @intCast(dos_lib.Fault(code, header, &line, line.len - 1));
     if (n == 0) return true;
-    const out = dos_lib.Output() orelse return false;
+    const out = dos_lib.ErrorOutput() orelse dos_lib.Output() orelse return false;
     line[n] = '\n';
     return dos_lib.FWrite(out, &line, @intCast(n + 1)) >= 0;
 }

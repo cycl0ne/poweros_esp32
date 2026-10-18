@@ -118,7 +118,21 @@ and paste, find and replace; View turns word wrap and the line numbers
 on and off. The mouse wheel scrolls it, a double press selects a word and
 a third the whole line, and Return keeps a line's indentation.
 
-## CPU load: `SYS:Programs/CPULoad`
+## Partitions: `SYS:System/HDToolBox`
+
+![HDToolBox with three partitions on the flash disk](hdtoolbox.png)
+
+The flash disk's partition table, before it is saved: DH0, the system's
+own, and two posfs partitions made in the free space behind it. The bar
+is the drive from its first usable cylinder to its last; a partition is
+moved by its middle and made larger or smaller by an edge, and a click
+on a free run and New fills it. The list says what each one is and which
+drive it is mounted as now. DH0 holds SYS:, so its place and its file
+system stay as they are. Save says which partitions lose their data and
+which drives stop, writes the table, and mounts the new partitions at
+once.
+
+## CPU load: `SYS:System/CPULoad`
 
 ![CPULoad after a burst of C:test/Anim](cpuload.png)
 

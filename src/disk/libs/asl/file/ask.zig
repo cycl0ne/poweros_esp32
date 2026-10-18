@@ -223,7 +223,7 @@ fn parsePattern(s: *Session, text: ?[*:0]const u8, into: []u8) bool {
 /// order.
 fn shown(s: *Session, name: [*:0]const u8, kind: i32) bool {
     const r = s.r;
-    const is_dir = kind > 0;
+    const is_dir = dos.isDirectory(kind);
     if (!is_dir and r.flags2 & asl.FRF2_DRAWERSONLY != 0) return false;
     // The patterns are put to files, and to drawers only when asked.
     const filtered = !is_dir or r.flags2 & asl.FRF2_FILTERDRAWERS != 0;

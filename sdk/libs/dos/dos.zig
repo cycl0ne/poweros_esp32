@@ -2,8 +2,9 @@
 //! dos.library (dos/dos.h): its name, the object types for AllocDosObject,
 //! the error codes IoErr() returns and the commands' return codes. The
 //! errors from 400 up are the system's own additions. Packets and
-//! processes are in dosextens.zig, CreateNewProc's tags in dostags.zig;
-//! everything is also here by name.
+//! processes are in dosextens.zig, the tags of CreateNewProc,
+//! SystemTagList and FormatTags in dostags.zig; everything is also here by
+//! name.
 
 pub const dosextens = @import("dosextens.zig");
 pub const dostags = @import("dostags.zig");
@@ -21,6 +22,12 @@ pub const filehandler = @import("filehandler.zig");
 pub const hardblocks = @import("hardblocks.zig");
 pub const flashfs = @import("flashfs.zig");
 pub const fat = @import("fat.zig");
+/// The file systems there is a handler for: which a DosType asks for, and
+/// where each may go.
+pub const filesystems = @import("filesystems.zig");
+/// posfs, the PowerOS file system: its format, its names and its own
+/// packets (sdk/libs/dos/posfs).
+pub const posfs = @import("posfs/posfs.zig");
 pub const workfile = @import("workfile.zig");
 /// Keyword files: the mountlist format, read a token at a time.
 pub const keywords = @import("keywords.zig");
@@ -100,6 +107,19 @@ pub const ST_SOFTLINK: i32 = 3;
 pub const ST_LINKDIR: i32 = 4;
 pub const ST_FILE: i32 = -3;
 pub const ST_LINKFILE: i32 = -4;
+
+/// Whether an entry of `entry_type` - a FileInfoBlock's `dir_entry_type`,
+/// an ExAll record's `type` - is a directory: the root, a drawer, or a
+/// hard link to one. A soft link (`ST_SOFTLINK`) is not, though its type
+/// is above 0: it is a name for a path, followed when it is locked or
+/// opened, and a walk through a tree passes it by as it does a file.
+pub fn isDirectory(entry_type: i32) bool {
+    return entry_type > 0 and entry_type != ST_SOFTLINK;
+}
+
+// MakeLink's kinds, in ACTION_MAKE_LINK's dp_Arg4.
+pub const LINK_HARD: isize = 0;
+pub const LINK_SOFT: isize = 1;
 
 // FileInfoBlock's protection bits (the low four are set to forbid).
 pub const FIBF_DELETE: u32 = 1 << 0;
@@ -286,6 +306,9 @@ pub const ERROR_HANDLER_START_ERROR: i32 = 410;
 /// A write to a pipe whose reader has gone, rather than the data thrown
 /// away unseen.
 pub const ERROR_BROKEN_PIPE: i32 = 411;
+/// What was read from the medium is not what was written: the checksum
+/// kept with it does not match.
+pub const ERROR_BAD_CHECKSUM: i32 = 412;
 
 // The commands' return codes (FAILAT, IF).
 pub const RETURN_OK: i32 = 0;
@@ -314,6 +337,7 @@ pub const DosList = dosextens.DosList;
 pub const DosListType = dosextens.DosListType;
 pub const DosListMisc = dosextens.DosListMisc;
 pub const DosListHandler = dosextens.DosListHandler;
+pub const FileSysEntry = dosextens.FileSysEntry;
 pub const DosListVolume = dosextens.DosListVolume;
 pub const DosListAssign = dosextens.DosListAssign;
 pub const AssignList = dosextens.AssignList;
@@ -349,6 +373,9 @@ pub const ExamineFHArgs = dosextens.ExamineFHArgs;
 pub const ExAllArgs = dosextens.ExAllArgs;
 pub const RenameArgs = dosextens.RenameArgs;
 pub const PropertyArgs = dosextens.PropertyArgs;
+pub const MakeLinkArgs = dosextens.MakeLinkArgs;
+pub const ReadLinkArgs = dosextens.ReadLinkArgs;
+pub const FormatArgs = dosextens.FormatArgs;
 pub const ChangeModeArgs = dosextens.ChangeModeArgs;
 pub const InfoArgs = dosextens.InfoArgs;
 pub const FhFromLockArgs = dosextens.FhFromLockArgs;
@@ -492,3 +519,5 @@ pub const SYS_UserShell = dostags.SYS_UserShell;
 pub const SYS_CustomShell = dostags.SYS_CustomShell;
 pub const SYS_ScriptFile = dostags.SYS_ScriptFile;
 pub const SYS_Window = dostags.SYS_Window;
+pub const FORMAT_Dummy = dostags.FORMAT_Dummy;
+pub const FORMAT_BlockSize = dostags.FORMAT_BlockSize;

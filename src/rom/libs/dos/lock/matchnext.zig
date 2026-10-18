@@ -39,10 +39,12 @@ const finish = _lock.finish;
 ///
 /// BEHAVIOR:
 /// With APF_DODIR the directory just found is gone into (a hard link to a
-/// directory only with APF_FollowHLinks); once it is read through it comes
-/// once more, with APF_DIDDIR set, which stays set until the caller clears
-/// it. APF_DirChanged says the entry is in another directory than the one
-/// before. The break signals are checked, and cleared, between entries. Any
+/// directory only with APF_FollowHLinks, a soft link never); once it is
+/// read through it comes once more, with APF_DIDDIR set, which stays set
+/// until the caller clears it. A soft link on an inner level of the
+/// pattern is followed, as Lock follows it, so `a/#?/b` finds the `b` in
+/// a directory a link in `a` names. APF_DirChanged says the entry is in
+/// another directory than the one before. The break signals are checked, and cleared, between entries. Any
 /// error but ERROR_BUFFER_OVERFLOW frees the chain.
 ///
 /// CONTEXT:
@@ -64,7 +66,7 @@ const finish = _lock.finish;
 /// EXAMPLES:
 /// ```zig
 /// while (dos_lib.MatchNext(&anchor) == 0) {
-///     if (anchor.info.dir_entry_type > 0 and anchor.flags & dos.APF_DIDDIR == 0) anchor.flags |= dos.APF_DODIR;
+///     if (dos.isDirectory(anchor.info.dir_entry_type) and anchor.flags & dos.APF_DIDDIR == 0) anchor.flags |= dos.APF_DODIR;
 ///     anchor.flags &= ~dos.APF_DIDDIR;
 /// }
 /// ```
@@ -79,7 +81,8 @@ pub fn MatchNext(db: *DosBase, anchor: *dos.AnchorPath) i32 {
     var at: Step = .loop;
     if (anchor.flags & dos.APF_DODIR != 0) {
         anchor.flags &= ~dos.APF_DODIR;
-        if (anchor.flags & dos.APF_FollowHLinks == 0 and anchor.info.dir_entry_type == dos.ST_LINKDIR) {
+        const entry_type = anchor.info.dir_entry_type;
+        if (entry_type == dos.ST_SOFTLINK or (anchor.flags & dos.APF_FollowHLinks == 0 and entry_type == dos.ST_LINKDIR)) {
             at = .did_dir;
         } else {
             const all = addAnchor(&s, &any_name, dos.DDF_PatternBit) catch return finish(db, anchor, s.code);

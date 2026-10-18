@@ -22,7 +22,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Type";
-const VERSION_STRING = "\x00$VER: Type 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Type 1.1 (18.10.2026)\r\n";
 
 /// The line buffer, and 16 bytes a row for HEX.
 const out_size = 255;
@@ -123,7 +123,7 @@ fn typePattern(dl: *DosBase, pattern: [*:0]const u8, mode: Mode) i32 {
     defer dl.MatchEnd(&anchor.ap);
     while (true) {
         const current = anchor.ap.last orelse break;
-        if (anchor.ap.info.dir_entry_type < 0) { // a file, not a directory
+        if (!dos.isDirectory(anchor.ap.info.dir_entry_type)) { // a file, or a soft link to one
             const old = dl.CurrentDir(current.lock);
             const fh = dl.Open(@ptrCast(&anchor.ap.info.file_name), dos.MODE_OLDFILE);
             _ = dl.CurrentDir(old);

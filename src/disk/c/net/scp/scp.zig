@@ -41,7 +41,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SCP";
-const VERSION_STRING = "\x00$VER: SCP 1.0 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SCP 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,ALL/S,PORT/K/N,USER/K,QUIET/S";
@@ -544,7 +544,8 @@ fn putDirectory(st: *State) void {
         const local_length = span(&st.local).len;
         const remote_length = st.remote_length;
         if (dl.AddPart(&st.local, name, st.local.len) and st.pushRemote(span(name))) {
-            if (info.dir_entry_type > 0) putDirectory(st) else putFile(st);
+            // A soft link is sent as the file it names, never gone through.
+            if (dos.isDirectory(info.dir_entry_type)) putDirectory(st) else putFile(st);
         }
         st.local[local_length] = 0;
         st.remote_length = remote_length;

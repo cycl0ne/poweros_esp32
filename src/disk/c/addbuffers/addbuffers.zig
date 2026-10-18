@@ -9,11 +9,11 @@
 //! with the total. Without BUFFERS it asks for none, which reads the
 //! current figure. DRIVE is a device or volume name, ending in a colon.
 //!
-//! fat-handler (SD0:, DU0:) keeps a block cache of that many blocks.
-//! A handler that keeps no buffers answers ERROR_ACTION_NOT_KNOWN, and
-//! that is said in so many words: the flash file system (DH0:), which
-//! reads the medium through its mapping, RAM:, and anything not a file
-//! system.
+//! fat-handler (SD0:, DU0:) keeps a block cache of that many blocks, and
+//! so does posfs-handler on a card or a stick. A handler that keeps no
+//! buffers answers ERROR_ACTION_NOT_KNOWN, and that is said in so many
+//! words: the file systems on the internal flash (DH0:), which read the
+//! medium through its mapping, RAM:, and anything not a file system.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;

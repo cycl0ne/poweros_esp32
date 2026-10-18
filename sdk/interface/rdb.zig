@@ -22,6 +22,10 @@ pub const LVO = struct {
     pub const AddPartition = libraries.lvo(9);
     pub const RemPartition = libraries.lvo(10);
     pub const WriteRDB = libraries.lvo(11);
+    pub const MountPartition = libraries.lvo(12);
+    pub const NextFileSystem = libraries.lvo(13);
+    pub const AddFileSystem = libraries.lvo(14);
+    pub const RemFileSystem = libraries.lvo(15);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -35,6 +39,10 @@ pub const Fn = struct {
     pub const AddPartition = *const fn (*RDBBase, *rdb.RDBHandle, [*:0]const u8, u32, u32, u32) callconv(.c) i32;
     pub const RemPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBPartition) callconv(.c) void;
     pub const WriteRDB = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) i32;
+    pub const MountPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBPartition, ?*rdb.MountName, u32) callconv(.c) i32;
+    pub const NextFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, ?*rdb.RDBFileSystem) callconv(.c) ?*rdb.RDBFileSystem;
+    pub const AddFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, u32, [*]const u8, u32) callconv(.c) i32;
+    pub const RemFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBFileSystem) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -86,5 +94,30 @@ pub const RDBBase = opaque {
     /// The handle's table checked and written to the disk.
     pub fn WriteRDB(self: *RDBBase, handle: *rdb.RDBHandle) i32 {
         return libraries.call(self, LVO.WriteRDB, Fn.WriteRDB, .{handle});
+    }
+
+    /// A device node for a partition on dos's list, named as the partition
+    /// (with dots added while the name is taken), its handler started with
+    /// RDBMF_START; the name used goes where `name` points.
+    pub fn MountPartition(self: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPartition, name: ?*rdb.MountName, flags: u32) i32 {
+        return libraries.call(self, LVO.MountPartition, Fn.MountPartition, .{ handle, partition, name, flags });
+    }
+
+    /// The file system after `previous` on the handle's list of the file
+    /// systems kept in the table, or the first.
+    pub fn NextFileSystem(self: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.RDBFileSystem) ?*rdb.RDBFileSystem {
+        return libraries.call(self, LVO.NextFileSystem, Fn.NextFileSystem, .{ handle, previous });
+    }
+
+    /// A handler's load file, `size` bytes at `code`, kept in the table for
+    /// the partitions of `dos_type` - in place of one kept for it already -
+    /// once WriteRDB writes it.
+    pub fn AddFileSystem(self: *RDBBase, handle: *rdb.RDBHandle, dos_type: u32, code: [*]const u8, size: u32) i32 {
+        return libraries.call(self, LVO.AddFileSystem, Fn.AddFileSystem, .{ handle, dos_type, code, size });
+    }
+
+    /// A file system taken out of the handle's table and freed.
+    pub fn RemFileSystem(self: *RDBBase, handle: *rdb.RDBHandle, file_system: *rdb.RDBFileSystem) void {
+        return libraries.call(self, LVO.RemFileSystem, Fn.RemFileSystem, .{ handle, file_system });
     }
 };

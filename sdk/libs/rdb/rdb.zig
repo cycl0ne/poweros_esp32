@@ -11,7 +11,15 @@
 //! are the program's to set directly. Nothing reaches the disk before
 //! WriteRDB, which checks the whole table, gives each PartitionBlock a
 //! block, puts the checksums in and writes it; CloseRDB lets everything
-//! go.
+//! go. MountPartition puts a partition on dos's list, as a device node
+//! its handler is started from.
+//!
+//! A file system's code can be kept in the table too: an `RDBFileSystem`
+//! per DosType on the handle's second list, which AddFileSystem and
+//! RemFileSystem change and WriteRDB writes as a FileSysHeaderBlock and a
+//! chain of LoadSegBlocks. The partitions of that DosType run it when the
+//! ROM has no handler for the DosType or an older one
+//! (`sdk.dos.filesystems.storedWins`).
 //!
 //! The handle and its nodes are the library's allocations, handed to the
 //! program until CloseRDB. A program changes what is documented as its to
@@ -20,6 +28,7 @@
 const exec = @import("../exec/exec.zig");
 const trackdisk = @import("../../devices/trackdisk.zig");
 const hardblocks = @import("../dos/hardblocks.zig");
+const path = @import("../dos/path.zig");
 
 /// The library's name, for OpenLibrary.
 pub const RDBNAME = "rdb.library";
@@ -44,15 +53,41 @@ pub const RDBERR_NORDB: i32 = -4;
 /// not the size of its own blocks.
 pub const RDBERR_BLOCKSIZE: i32 = -5;
 /// A partition name that is empty, longer than MAX_DEVICE_NAME, holds a
-/// colon or a slash, or is another partition's already.
+/// colon or a slash, or is another partition's already. MountPartition
+/// also answers it when the name is taken on dos's list with every dot
+/// that still fits added.
 pub const RDBERR_NAME: i32 = -6;
 /// Cylinders the partition may not have: outside the RigidDiskBlock's
 /// usable ones, the wrong way round, or another partition's. AddPartition
 /// with 0 and 0 also answers it when no cylinder is free at all.
 pub const RDBERR_RANGE: i32 = -7;
 /// No block left in the RigidDiskBlock's own area for another
-/// PartitionBlock.
+/// PartitionBlock, or for the code of the table's file systems even with
+/// the area grown up to the first partition.
 pub const RDBERR_FULL: i32 = -8;
+/// The medium in the unit is not the one the handle's table was read
+/// from: it was taken out, or another put in, since OpenRDB. Nothing is
+/// written or mounted; a new OpenRDB reads the medium that is there.
+pub const RDBERR_CHANGED: i32 = -9;
+/// MountPartition: a device node on dos's list already opens some of the
+/// partition's blocks - the partition mounted before, or a drive over
+/// the whole medium or another area that reaches into it.
+pub const RDBERR_MOUNTED: i32 = -10;
+/// MountPartition: no handler serves the partition's DosType, or its file
+/// system cannot go on this medium or inside a partition. AddFileSystem:
+/// the code is not a handler's load file for this machine.
+pub const RDBERR_FILESYSTEM: i32 = -11;
+
+// --- MountPartition -------------------------------------------------------------
+
+/// MountPartition's flags.
+/// The handler started before the call returns, so the volume is on
+/// dos's list, rather than at the drive's first use.
+pub const RDBMF_START: u32 = 1;
+
+/// The name a partition is mounted under, without the colon: the
+/// partition's own, or with dots added.
+pub const MountName = [path.MAX_DEVICE_NAME:0]u8;
 
 // --- the handle ---------------------------------------------------------------
 
@@ -76,8 +111,8 @@ pub const RDBF_CHANGED: u32 = 8;
 pub const RDBHandle = extern struct {
     /// RDBF_*.
     flags: u32 = 0,
-    /// The block the RigidDiskBlock was found in, and where WriteRDB puts
-    /// it.
+    /// The block the RigidDiskBlock was found in, or WriteRDB last put it
+    /// in.
     block: u32 = 0,
     /// What TD_GETGEOMETRY said about the medium.
     geometry: trackdisk.DriveGeometry = .{},
@@ -89,6 +124,14 @@ pub const RDBHandle = extern struct {
     /// chain: walk it with NextPartition, change it with AddPartition and
     /// RemPartition.
     partitions: exec.List = .{},
+    /// TD_CHANGENUM when the table was read: which medium it is of.
+    /// WriteRDB and MountPartition refuse when the unit's count has moved
+    /// on since. 0 for a device that does not count.
+    change_num: u32 = 0,
+    /// The file systems kept in the table, RDBFileSystem nodes in the
+    /// order of the disk's chain: walk it with NextFileSystem, change it
+    /// with AddFileSystem and RemFileSystem.
+    file_systems: exec.List = .{},
 };
 
 /// One partition, on its handle's list.
@@ -102,6 +145,27 @@ pub const RDBPartition = extern struct {
     /// flags and its environment are the program's to change; `next` and
     /// the checksum are WriteRDB's.
     block: hardblocks.PartitionBlock = .{},
+};
+
+/// One file system's code kept in the table, on its handle's list. All of
+/// it is the library's: a program reads it. What the DosType is called is
+/// `sdk.dos.filesystems`'s to say.
+pub const RDBFileSystem = extern struct {
+    /// On the handle's list; it has no name.
+    node: exec.Node = .{},
+    /// The block its FileSysHeaderBlock was read from or last written to;
+    /// `end_of_list` for one AddFileSystem made that WriteRDB has not
+    /// written yet.
+    at: u32 = hardblocks.end_of_list,
+    /// The FileSysHeaderBlock: the DosType it serves (`dos_type`), its
+    /// version (`version`: version << 16 | revision) and where its code
+    /// starts on the disk.
+    header: hardblocks.FileSysHeaderBlock = .{},
+    /// The code's size in bytes: the load file's, as the chain holds it.
+    size: u32 = 0,
+    /// The blocks the code takes on the disk; 0 for code WriteRDB has
+    /// not written yet.
+    blocks: u32 = 0,
 };
 
 /// The partition's drive name, as the node calls it.

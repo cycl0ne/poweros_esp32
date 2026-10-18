@@ -514,13 +514,15 @@ const StartupWait = struct {
     var name_arg: isize = 0;
     var node: ?*DosList = null;
     var claim: bool = true;
+    /// The handler's process, by the node's name.
+    var task_name: [*:0]const u8 = "NIL";
 
     /// nil-handler's entry in the test's segment; never run on the host.
     fn neverRun(_: *ExecBase) callconv(.c) void {}
 
     fn wait(proc: *Process, sys: *ExecBase) callconv(.c) *exec.Message {
         calls += 1;
-        const handler: *Process = @fieldParentPtr("task", sys.FindTask("NIL").?);
+        const handler: *Process = @fieldParentPtr("task", sys.FindTask(task_name).?);
         const pkt = DosPacket.fromMessage(sys.GetMsg(&handler.msg_port).?);
         action = pkt.getAction();
         name_arg = pkt.args.raw[0];
@@ -600,6 +602,54 @@ test "GetDeviceProc: a handler that claims nothing is started per name" {
     kexec.RemTask(kexec.SysBase, &second.task);
 
     StartupWait.claim = true;
+    try tearDown(db);
+}
+
+test "GetDeviceProc: the code a partition table brought first, the handler's name when it is none" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    StartupWait.dl = dl;
+    StartupWait.calls = 0;
+    StartupWait.claim = true;
+    var tp: TestProcess = .{};
+    tp.proc.pkt_wait = &StartupWait.wait;
+    tp.enter();
+    defer tp.leave();
+    try testing.expect(dl.AddSegment(dos_init.nil_handler_name, &never_code, dos.CMD_SYSTEM));
+
+    // Code another drive of the table loaded already: this one runs it,
+    // though its name finds nothing.
+    var loaded: dos.FileSysEntry = .{ .entry = &StartupWait.neverRun };
+    const first = dl.MakeDosEntry("FIRST", dos.DLT_DEVICE).?;
+    first.misc.handler.handler = "gone-handler";
+    first.misc.handler.file_sys = &loaded;
+    try testing.expect(dl.AddDosEntry(first));
+    StartupWait.task_name = "FIRST";
+    defer StartupWait.task_name = "NIL";
+    const dp = dl.GetDeviceProc("FIRST:", null).?;
+    try testing.expectEqual(@as(?exec.TaskFn, &StartupWait.neverRun), first.misc.handler.entry);
+    try testing.expect(first.misc.handler.seg_list == null); // the system's, never counted
+    dl.FreeDeviceProc(dp);
+    kexec.RemTask(kexec.SysBase, db.sys_base.FindTask("FIRST").?);
+    first.task = null;
+
+    // An image that is no load file is freed, and the drive starts the
+    // handler its name says.
+    const image: [*]u8 = @ptrCast(db.sys_base.AllocVec(16, exec.MEMF_CLEAR).?);
+    var broken: dos.FileSysEntry = .{ .image = image, .image_size = 16 };
+    const second = dl.MakeDosEntry("SECOND", dos.DLT_DEVICE).?;
+    second.misc.handler.handler = dos_init.nil_handler_name;
+    second.misc.handler.file_sys = &broken;
+    try testing.expect(dl.AddDosEntry(second));
+    StartupWait.task_name = "SECOND";
+    const again = dl.GetDeviceProc("SECOND:", null).?;
+    try testing.expectEqual(@as(?exec.TaskFn, &StartupWait.neverRun), second.misc.handler.entry);
+    try testing.expect(broken.image == null);
+    try testing.expect(broken.entry == null);
+    dl.FreeDeviceProc(again);
+    kexec.RemTask(kexec.SysBase, db.sys_base.FindTask("SECOND").?);
+    second.task = null;
     try tearDown(db);
 }
 
@@ -807,6 +857,14 @@ const FakeFs = struct {
     var io_fail: bool = false;
     /// INHIBIT and FORMAT are refused ERROR_OBJECT_IN_USE.
     var in_use: bool = false;
+    /// The path READ_LINK answers for a name through "lnk".
+    var link_to: [*:0]const u8 = "FS:dir";
+    /// The READ_LINKs that came, and the directory of the last.
+    var read_links: u32 = 0;
+    var read_link_from: isize = 0;
+    /// The directories of the last two name packets before it, newest
+    /// last.
+    var dirs: [2]isize = @splat(0);
     var root: FileLock = .{ .key = 1, .task = &port };
     var dir: FileLock = .{ .key = 2, .task = &port };
     var copy: FileLock = .{ .key = 2, .task = &port };
@@ -823,6 +881,38 @@ const FakeFs = struct {
         return std.mem.endsWith(u8, std.mem.span(name), "missing");
     }
 
+    /// The name in dp_Arg`index` meets a soft link: it has "lnk" in it, a
+    /// link to itself ("loop") or one whose path is too long ("long").
+    fn linked(pkt: *DosPacket, index: usize) bool {
+        const name: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[index])));
+        const text = std.mem.span(name);
+        return std.mem.indexOf(u8, text, "lnk") != null or std.mem.indexOf(u8, text, "loop") != null or
+            std.mem.indexOf(u8, text, "long") != null;
+    }
+
+    fn readLink(pkt: *DosPacket) struct { isize, i32 } {
+        read_links += 1;
+        const view = pkt.args.read_link;
+        read_link_from = asArg(view.lock);
+        const asked = std.mem.span(view.path.?);
+        if (std.mem.indexOf(u8, asked, "long") != null) return .{ -2, dos.ERROR_BUFFER_OVERFLOW };
+        const answer = if (std.mem.indexOf(u8, asked, "loop") != null)
+            asked
+        else if (std.mem.indexOf(u8, asked, "lnk") != null)
+            std.mem.span(link_to)
+        else
+            return .{ -1, dos.ERROR_OBJECT_WRONG_TYPE };
+        const room: usize = @intCast(view.size);
+        if (answer.len + 1 > room) return .{ -2, dos.ERROR_BUFFER_OVERFLOW };
+        @memmove(view.buffer.?[0..answer.len], answer);
+        view.buffer.?[answer.len] = 0;
+        return .{ @intCast(answer.len), 0 };
+    }
+
+    fn asArg(p: anytype) isize {
+        return @bitCast(@intFromPtr(p));
+    }
+
     fn wait(proc: *Process, sys: *ExecBase) callconv(.c) *exec.Message {
         const pkt = DosPacket.fromMessage(sys.GetMsg(&port).?);
         calls += 1;
@@ -831,6 +921,25 @@ const FakeFs = struct {
         var res1: isize = 0;
         var res2: i32 = 0;
         switch (action) {
+            .locate_object, .create_dir, .delete_object, .rename_object, .make_link => {
+                dirs = .{ dirs[1], args[0] };
+            },
+            .findinput, .findoutput, .findupdate => dirs = .{ dirs[1], args[1] },
+            else => {},
+        }
+        const through_link = switch (action) {
+            .locate_object, .create_dir, .delete_object, .make_link => linked(pkt, 1),
+            .rename_object => linked(pkt, 1) or linked(pkt, 3),
+            .findinput, .findoutput, .findupdate => linked(pkt, 2),
+            else => false,
+        };
+        if (through_link) {
+            res2 = dos.ERROR_IS_SOFT_LINK;
+        } else switch (action) {
+            .read_link => {
+                res1, res2 = readLink(pkt);
+            },
+            .make_link, .rename_object => res1 = dos.DOSTRUE,
             .locate_object, .create_dir => if (missing(pkt, 1)) {
                 res2 = dos.ERROR_OBJECT_NOT_FOUND;
             } else {
@@ -907,6 +1016,8 @@ const FakeFs = struct {
         same = null;
         io_fail = false;
         in_use = false;
+        link_to = "FS:dir";
+        read_links = 0;
         range_count = 0;
         refuse_at = ~@as(u64, 0);
         const node = dl.MakeDosEntry("FS", dos.DLT_DEVICE).?;
@@ -1272,6 +1383,153 @@ test "Inhibit and Format: the drive's handler asked, its refusal kept, names ref
     try testing.expectEqual(calls, FakeFs.calls); // no packet
     try testing.expect(!dl.Inhibit("NOWHERE:", true));
     try testing.expect(!dl.Format("NOWHERE:", null, 0));
+    try tearDown(db);
+}
+
+test "FormatTags: the tags in dp_Arg3, none from Format" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = dos.FORMAT_BlockSize, .data = 16384 },
+        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+    };
+    try testing.expect(dl.FormatTags("FS:", "Work", 0, &tags));
+    try testing.expectEqual(dos.ActionCode.format, FakeFs.action);
+    try testing.expectEqual(@as(isize, @bitCast(@intFromPtr(&tags))), FakeFs.args[2]);
+    try testing.expect(dl.Format("FS:", "Work", 0));
+    try testing.expectEqual(@as(isize, 0), FakeFs.args[2]);
+    try tearDown(db);
+}
+
+test "soft links: followed from the same directory, from the root, onto another device" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    // A path of its own device: GetDeviceProc anew, the root's lock.
+    try testing.expectEqual(&FakeFs.dir, dl.Lock("FS:lnk/a", dos.SHARED_LOCK).?);
+    try testing.expectEqual(@as(u32, 1), FakeFs.read_links);
+    try testing.expectEqual(dos.ActionCode.locate_object, FakeFs.action);
+    try testing.expectEqualStrings("FS:dir", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[1]))))));
+
+    // A relative path: the same directory as the name that met the link.
+    try testing.expect(dl.CurrentDir(&FakeFs.dir) == null);
+    FakeFs.link_to = "sub/b";
+    try testing.expect(dl.Lock("x/lnk", dos.SHARED_LOCK) != null);
+    try testing.expectEqual(FakeFs.at(&FakeFs.dir), FakeFs.read_link_from);
+    try testing.expectEqual(FakeFs.at(&FakeFs.dir), FakeFs.dirs[1]);
+    try testing.expectEqualStrings("sub/b", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[1]))))));
+
+    // A colon first: the volume's root, on the same handler.
+    FakeFs.link_to = ":top";
+    try testing.expect(dl.Lock("x/lnk", dos.SHARED_LOCK) != null);
+    try testing.expectEqual(FakeFs.at(&FakeFs.dir), FakeFs.dirs[0]);
+    try testing.expectEqual(@as(isize, 0), FakeFs.dirs[1]);
+
+    // Open and the setters go the same way.
+    FakeFs.link_to = "FS:file";
+    const fh = dl.Open("FS:lnk", dos.MODE_OLDFILE).?;
+    try testing.expectEqualStrings("FS:file", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[2]))))));
+    try testing.expect(dl.Close(fh));
+    try testing.expect(dl.DeleteFile("FS:lnk/old"));
+    try testing.expectEqual(dos.ActionCode.delete_object, FakeFs.action);
+
+    // A device that is not there.
+    FakeFs.link_to = "NOWHERE:x";
+    try testing.expect(dl.Lock("FS:lnk", dos.SHARED_LOCK) == null);
+    try testing.expectEqual(dos.ERROR_DEVICE_NOT_MOUNTED, dl.IoErr());
+    _ = dl.CurrentDir(null);
+    try tearDown(db);
+}
+
+test "soft links: a circle ends after 16, a path too long, ReadLink's answers" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    try testing.expect(dl.Lock("FS:loop", dos.SHARED_LOCK) == null);
+    try testing.expectEqual(dos.ERROR_TOO_MANY_LEVELS, dl.IoErr());
+    try testing.expectEqual(@as(u32, 16), FakeFs.read_links);
+    try testing.expect(dl.Lock("FS:long", dos.SHARED_LOCK) == null);
+    try testing.expectEqual(dos.ERROR_LINE_TOO_LONG, dl.IoErr());
+
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, 6), dl.ReadLink(&FakeFs.port, null, "FS:lnk", &buffer, buffer.len));
+    try testing.expectEqualStrings("FS:dir", buffer[0..6]);
+    try testing.expectEqual(@as(i32, -2), dl.ReadLink(&FakeFs.port, null, "FS:lnk", &buffer, 6));
+    try testing.expectEqual(dos.ERROR_BUFFER_OVERFLOW, dl.IoErr());
+    try testing.expectEqual(@as(i32, -1), dl.ReadLink(&FakeFs.port, null, "FS:plain", &buffer, buffer.len));
+    try testing.expectEqual(dos.ERROR_OBJECT_WRONG_TYPE, dl.IoErr());
+    try tearDown(db);
+}
+
+test "Rename through soft links: the source's asked first, then the target's" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    FakeFs.link_to = "FS:dir/a";
+    try testing.expect(dl.Rename("FS:lnk/a", "FS:b"));
+    try testing.expectEqual(@as(u32, 1), FakeFs.read_links);
+    try testing.expectEqualStrings("FS:dir/a", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[1]))))));
+    FakeFs.link_to = "FS:dir/b";
+    try testing.expect(dl.Rename("FS:a", "FS:lnk/b"));
+    try testing.expectEqual(@as(u32, 3), FakeFs.read_links); // the source's said no
+    try testing.expectEqualStrings("FS:a", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[1]))))));
+    try testing.expectEqualStrings("FS:dir/b", std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @bitCast(FakeFs.args[3]))))));
+    FakeFs.link_to = "NOWHERE:b";
+    try testing.expect(!dl.Rename("FS:a", "FS:lnk/b"));
+    try testing.expectEqual(dos.ERROR_DEVICE_NOT_MOUNTED, dl.IoErr());
+    try tearDown(db);
+}
+
+test "MakeLink: soft with a path, hard with a lock on the same handler" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+
+    const target: [*:0]const u8 = "FS:dir/file";
+    try testing.expect(dl.MakeLink("FS:new", @intFromPtr(target), true));
+    try testing.expectEqual(dos.ActionCode.make_link, FakeFs.action);
+    try testing.expectEqual(@as(isize, 0), FakeFs.args[0]);
+    try testing.expectEqual(@as(isize, @bitCast(@intFromPtr(target))), FakeFs.args[2]);
+    try testing.expectEqual(dos.LINK_SOFT, FakeFs.args[3]);
+    try testing.expect(dl.MakeLink("FS:new", @intFromPtr(&FakeFs.dir), false));
+    try testing.expectEqual(FakeFs.at(&FakeFs.dir), FakeFs.args[2]);
+    try testing.expectEqual(dos.LINK_HARD, FakeFs.args[3]);
+
+    const calls = FakeFs.calls;
+    var other_port: MsgPort = undefined;
+    var elsewhere: FileLock = .{ .key = 9, .task = &other_port };
+    try testing.expect(!dl.MakeLink("FS:new", @intFromPtr(&elsewhere), false));
+    try testing.expectEqual(dos.ERROR_RENAME_ACROSS_DEVICES, dl.IoErr());
+    try testing.expect(!dl.MakeLink("FS:new", 0, false));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
+    try testing.expect(!dl.MakeLink("FS:new", @intFromPtr(""), true));
+    try testing.expectEqual(dos.ERROR_REQUIRED_ARG_MISSING, dl.IoErr());
+    try testing.expectEqual(calls, FakeFs.calls); // no packet
     try tearDown(db);
 }
 
@@ -2626,6 +2884,36 @@ test "PutStr, WriteChars, Printf: to Output()" {
     _ = dl.SelectOutput(null);
     try testing.expect(dl.Close(out));
     try expectContents(dl, "RAMT:o", "one two 3 three");
+
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "PrintFault: to the error stream when there is one, else to Output()" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+
+    try testing.expect(!dl.PrintFault(dos.ERROR_OBJECT_NOT_FOUND, "Echo")); // neither stream
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
+    const out = dl.Open("RAMT:out", dos.MODE_NEWFILE).?;
+    const errors = dl.Open("RAMT:errors", dos.MODE_NEWFILE).?;
+    _ = dl.SelectOutput(out);
+    try testing.expect(dl.PrintFault(dos.ERROR_OBJECT_NOT_FOUND, "Echo"));
+    _ = dl.SelectError(errors);
+    try testing.expect(dl.PrintFault(dos.ERROR_KEY_NEEDS_ARG, "Echo"));
+    try testing.expect(dl.PrintFault(0, "Echo")); // nothing to write
+    try testing.expectEqual(@as(i32, 0), dl.IoErr());
+    _ = dl.SelectError(null);
+    _ = dl.SelectOutput(null);
+    try testing.expect(dl.Close(out));
+    try testing.expect(dl.Close(errors));
+    try expectContents(dl, "RAMT:out", "Echo: object not found\n");
+    try expectContents(dl, "RAMT:errors", "Echo: value after keyword missing\n");
 
     RamFs.disk.deinit();
     try tearDown(db);

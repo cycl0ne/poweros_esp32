@@ -200,6 +200,7 @@ flowchart TB
     m_nvme_device["nvme.device"]
     m_openeth_device["openeth.device"]
     m_pci_library["pci.library"]
+    m_posfs_handler["posfs-handler"]
     m_rdb_library["rdb.library"]
     m_rs485_device["rs485.device"]
     m_sdcard_device["sdcard.device"]
@@ -254,7 +255,8 @@ flowchart TB
     m_datatypes_library --> m_iffparse_library
     m_datatypes_library --> m_intuition_library
     m_disk_device --> m_dos_library
-    m_disk_device --> m_input_device
+    m_disk_device -.-> m_input_device
+    m_disk_device -.-> m_rdb_library
     m_disk_device --> m_timer_device
     m_disk_device --> m_usb_library
     m_diskfont_library --> m_dos_library
@@ -289,13 +291,23 @@ flowchart TB
     m_nvme_device --> m_timer_device
     m_openeth_device --> m_timer_device
     m_pci_library --> m_timer_device
+    m_posfs_handler --> m_dos_library
+    m_posfs_handler -.-> m_flash_device
+    m_posfs_handler --> m_input_device
+    m_posfs_handler -.-> m_sdcard_device
+    m_posfs_handler --> m_timer_device
+    m_rdb_library -.-> m_disk_device
+    m_rdb_library --> m_dos_library
     m_rdb_library -.-> m_flash_device
     m_rdb_library -.-> m_sdcard_device
     m_rs485_device --> m_gpio_resource
     m_rs485_device --> m_timer_device
     m_sdcard_device --> m_dma_resource
+    m_sdcard_device --> m_dos_library
     m_sdcard_device --> m_expander_resource
     m_sdcard_device --> m_gpio_resource
+    m_sdcard_device -.-> m_input_device
+    m_sdcard_device -.-> m_rdb_library
     m_sdcard_device --> m_timer_device
     m_slip_device --> m_serial_device
     m_slip_device --> m_timer_device
@@ -327,7 +339,7 @@ flowchart TB
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
-    class m_fat_handler hand
+    class m_fat_handler,m_posfs_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151

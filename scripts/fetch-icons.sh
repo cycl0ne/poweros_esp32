@@ -34,6 +34,7 @@ actions/system-search
 apps/preferences-desktop-font
 categories/preferences-system
 apps/utilities-system-monitor
+devices/computer
 devices/battery
 apps/utilities-terminal
 categories/preferences-desktop

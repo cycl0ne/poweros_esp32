@@ -72,7 +72,20 @@ pub fn LoadSeg(db: *DosBase, name: [*:0]const u8) ?*dos.SegList {
     const dos_lib = db.iface();
     const fh = dos_lib.Open(name, dos.MODE_OLDFILE) orelse return null;
     defer _ = dos_lib.Close(fh);
+    return loadFrom(db, fh, name);
+}
 
+/// LoadSeg's work on a load file that is open already: a file, or a
+/// handle over bytes in memory - a file system's code from a partition
+/// table. As LoadSeg answers, IoErr and all.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the load file, at its start.
+/// - `name` - what the list of loaded files calls it: the file's part
+///   after its last `/` or `:`.
+pub fn loadFrom(db: *DosBase, fh: *dos.FileHandle, name: [*:0]const u8) ?*dos.SegList {
+    const dos_lib = db.iface();
     // A version-1 header is the first part of a version-2 one.
     var header: loadfile.Header = undefined;
     const header_bytes: [*]u8 = @ptrCast(&header);

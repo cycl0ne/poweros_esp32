@@ -22,13 +22,14 @@
 //! **LFORMAT** takes these letters, in either case:
 //!
 //!   %A  the protection bits ("hsparwed", a '-' where a bit is off)
-//!   %B  the size in blocks ("Dir" for a directory, "empty" for a size of 0)
+//!   %B  the size in blocks ("Dir" for a directory, "Link" for a soft
+//!       link, "empty" for a size of 0)
 //!   %C  the comment
 //!   %D  the date
 //!   %E  the part of the name after the last '.'
 //!   %F  the full path of the directory, with its separator
 //!   %K  the handler's key for the entry
-//!   %L  the size in bytes ("Dir", "empty" as %B)
+//!   %L  the size in bytes ("Dir", "Link", "empty" as %B)
 //!   %M  the name without that extension
 //!   %N  the name
 //!   %P  the path of the directory as it was walked to, with its separator
@@ -57,6 +58,8 @@
 //!   them back on a QUICK listing.
 //! - The recursion is a FIFO of directory names, so ALL costs one
 //!   allocation per directory and no stack.
+//! - **A soft link** is listed as "Link" and counted with the files; ALL
+//!   does not go through it, so a link back up the tree is not a circle.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -66,9 +69,10 @@ const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "List";
-const VERSION_STRING = "\x00$VER: List 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: List 1.2 (18.10.2026)\r\n";
 
 const template = "DIR/M,P=PAT/K,KEYS/S,DATES/S,NODATES/S,TO/K,SUB/K,SINCE/K," ++
     "UPTO/K,QUICK/S,BLOCK/S,NOHEAD/S,FILES/S,DIRS/S,LFORMAT/K,ALL/S";
@@ -97,6 +101,7 @@ const MSG_DIR = "Directory \"%s\" ";
 const MSG_DIR_EMPTY = "is empty\n";
 const MSG_DIR_ON = "on %s %s\n";
 const MSG_DIR_TYPE = "Dir";
+const MSG_LINK_TYPE = "Link";
 const MSG_NO_INFO = "No information for \"%s\"";
 const MSG_EMPTY = "empty";
 const MSG_TOTAL = "\nTOTAL: ";
@@ -289,7 +294,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var old_output: ?*dos.FileHandle = null;
     if (rdargs.string(argv[arg_to])) |name| {
         to_file = dl.Open(name, dos.MODE_NEWFILE) orelse {
-            _ = Printf(dl, MSG_CANT_OPEN, .{name});
+            // The line's start goes where PrintFault ends it.
+            _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_CANT_OPEN, .{name});
             _ = dl.PrintFault(dl.IoErr(), null);
             return dos.RETURN_FAIL;
         };
@@ -612,7 +618,7 @@ fn listDir(run: *Run, anchor: *Anchor) i32 {
         return run.rc;
     }
     if (err != 0) {
-        if (run.lformat == null and !run.nohead) _ = Printf(dl, MSG_NO_INFO, .{name});
+        if (run.lformat == null and !run.nohead) _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_NO_INFO, .{name});
         _ = dl.PrintFault(err, "");
         return run.rc;
     }
@@ -641,7 +647,7 @@ fn listDir(run: *Run, anchor: *Anchor) i32 {
 
         // ALL keeps every directory it meets for later, in the order it
         // met them.
-        if (run.all and entry_type >= 0) {
+        if (run.all and dos.isDirectory(entry_type)) {
             if (run.sys.AllocVec(@sizeOf(DirNode), exec.MEMF_CLEAR)) |raw| {
                 const node: *DirNode = @ptrCast(@alignCast(raw));
                 copyZ(&node.name, @ptrCast(&run.namebuf));
@@ -653,7 +659,7 @@ fn listDir(run: *Run, anchor: *Anchor) i32 {
 
         if (wanted(run, ap)) {
             printEntry(run, ap, entry_type);
-            if (entry_type >= 0) {
+            if (dos.isDirectory(entry_type)) {
                 if (!run.files) {
                     run.dircount += 1;
                     run.totaldirs += 1;
@@ -752,7 +758,8 @@ fn wanted(run: *Run, ap: *dos.AnchorPath) bool {
     const entry_type = ap.info.dir_entry_type;
     // One of the two switches keeps the other kind out; both (or neither)
     // let everything through.
-    if ((entry_type < 0 and run.dirs) or (entry_type > 0 and run.files)) {
+    const directory = dos.isDirectory(entry_type);
+    if ((!directory and run.dirs) or (directory and run.files)) {
         if (!run.dirs or !run.files) return false;
     }
     // CompareDates is negative when the first date is the earlier: an entry
@@ -845,10 +852,11 @@ fn printEntry(run: *Run, ap: *dos.AnchorPath, entry_type: i32) void {
     _ = dl.PutStr("\n");
 }
 
-/// What goes in a size column: "Dir" for a directory, "empty" for nothing
-/// in it, else the number already written out.
+/// What goes in a size column: "Dir" for a directory, "Link" for a soft
+/// link, "empty" for nothing in it, else the number already written out.
 fn size(entry_type: i32, bytes: u64, text: *const [number_size:0]u8) usize {
-    if (entry_type >= 0) return @intFromPtr(MSG_DIR_TYPE);
+    if (entry_type == dos.ST_SOFTLINK) return @intFromPtr(MSG_LINK_TYPE);
+    if (dos.isDirectory(entry_type)) return @intFromPtr(MSG_DIR_TYPE);
     if (bytes == 0) return @intFromPtr(MSG_EMPTY);
     return @intFromPtr(text);
 }

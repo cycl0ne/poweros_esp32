@@ -24,8 +24,8 @@ const segment = @import("program/_program.zig");
 /// What the library is on exec's list as, and its version.
 pub const LIBRARY_NAME = sdk.dos.DOSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 8;
-const BUILD_DATE = "17.10.2026";
+pub const LIBRARY_REVISION = 11;
+const BUILD_DATE = "18.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -100,6 +100,7 @@ fn initBase(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) call
     db.utility_base = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null);
     doslist.init(db);
     sys_base.InitSemaphore(&db.cli_lock);
+    sys_base.InitSemaphore(&db.file_sys_lock);
     db.clis = @splat(null);
     const nil_node = dos_lib.MakeDosEntry("NIL", dos.DLT_DEVICE) orelse {
         sys_base.CloseLibrary(db.utility_base.lib());

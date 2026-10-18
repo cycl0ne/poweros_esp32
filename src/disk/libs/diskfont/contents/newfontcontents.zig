@@ -92,7 +92,7 @@ pub fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]cons
     var count: usize = 0;
     _ = dl.CurrentDir(dir);
     while (count < max_sizes and dl.ExNext(dir, &fib)) {
-        if (fib.dir_entry_type > 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         var path: [fontfile.MAXFONTPATH]u8 = @splat(0);
         const path_len = joinPath(&path, family[0..stem], &fib.file_name) orelse continue;
         const entry = readEntry(dfb, @ptrCast(&fib.file_name), path[0..path_len]) orelse continue;

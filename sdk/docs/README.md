@@ -82,9 +82,14 @@ tags and constants, each with its doc comment.
   telnet.device, SSH both ways (ShellServer SSH with sftp and scp,
   `C:net/SSH`, `C:net/SCP`, ssh.device), a packet filter and the packet hooks under it, and the
   commands.
+- [posfs](guides/posfs.md) - the journaling file system: when a change
+  is durable, names and attributes, files, checksums and compression,
+  links, Recycled and undelete, snapshots and rollback, `C:PosFS` and
+  the check, putting it on a drive, its limits.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
-  one, errors, when a change is seen, and `C:RDB`.
+  one, file systems kept in the table, errors, when a change is seen,
+  and `C:RDB`.
 - [Modbus](guides/modbus.md) - a device's tables, the RS-485 bus
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
@@ -209,6 +214,7 @@ its device is used.
 | nil-handler | ROM | `NIL:`, which swallows what is written | dos.library |
 | flashfs-handler | ROM | `DH0:` and every partition of type `FLS\0` | [`flashfs.zig`](../libs/dos/flashfs.zig) |
 | fat-handler | `HANDLERS:` | `SD0:`, FAT32 and exFAT on a card | dos.library |
+| posfs-handler | `HANDLERS:` | posfs, `POS\0` and `POS\1`: a partition of the flash disk, a card, a stick | [posfs guide](guides/posfs.md), [`packets.zig`](../libs/dos/posfs/packets.zig) |
 
 ## intuition's classes
 

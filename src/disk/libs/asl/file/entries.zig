@@ -50,8 +50,10 @@ pub const Entry = extern struct {
         return @ptrCast(from + at + 1);
     }
 
+    /// A drawer to go into; a soft link is offered as a file, which
+    /// opens what it names.
     pub fn isDir(e: *const Entry) bool {
-        return e.kind > 0;
+        return dos.isDirectory(e.kind);
     }
 };
 
@@ -102,7 +104,7 @@ fn before(ub: *UtilityBase, one: *const Entry, other: *const Entry) bool {
 pub fn add(sys: *ExecBase, ub: *UtilityBase, list: *exec.List, name: [*:0]const u8, kind: i32, size: u64) bool {
     var right: [right_max]u8 = @splat(0);
     var right_len: usize = 0;
-    if (kind > 0) {
+    if (dos.isDirectory(kind)) {
         const word = "Drawer";
         @memcpy(right[0..word.len], word);
         right_len = word.len;

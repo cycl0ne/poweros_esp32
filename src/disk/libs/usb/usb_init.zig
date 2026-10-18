@@ -14,8 +14,8 @@ const _bind = @import("bind/_bind.zig");
 
 pub const LIBRARY_NAME = usb.USBNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "15.10.2026";
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "18.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

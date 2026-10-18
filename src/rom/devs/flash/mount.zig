@@ -5,9 +5,28 @@
 //! The disk says what is on it: its first blocks hold a RigidDiskBlock
 //! (sdk/libs/dos/hardblocks.zig), and its chain of PartitionBlocks names
 //! each partition, its cylinders and its file system. flash.device reads
-//! them once, at cold start - before dos.library is up - and hands each to
-//! expansion.library as a boot node (sdk/libs/expansion/bootdisk.zig,
-//! which sdcard.device's card shares).
+//! them once, at cold start - before dos.library is up - and makes a device
+//! node for each partition not marked PBFF_NOMOUNT with expansion.library's
+//! MakeDosNode: named as the partition says (pb_DriveName), with the
+//! handler its de_DosType asks for (sdk/libs/dos/filesystems.zig), and the
+//! partition's DosEnvec as the environment its handler is started with.
+//! AddBootNode keeps the nodes until dos takes them in. A bootable
+//! partition stands at its de_BootPri, the others at -128, which is never
+//! booted from.
+//!
+//! A partition whose file system cannot serve a part of the flash is not
+//! mounted: FAT, which erases nothing, a DosType whose area begins with a
+//! partition table of its own (`MSH`, `POS\1`), and one there is no
+//! handler for.
+//!
+//! **A file system the table brings** - a FileSysHeaderBlock for the
+//! partition's DosType, its code in a chain of LoadSegBlocks - is what the
+//! partition runs when the ROM has no handler for the DosType or an older
+//! one (`sdk.dos.filesystems.storedWins`), and a DosType nothing else
+//! knows is mounted with it. dos is not up yet to load it, so the code is
+//! copied out of the disk into memory and hung on the node as a
+//! FileSysEntry, one for every partition of that file system; dos loads it
+//! when the first of them starts its handler.
 //!
 //! Nothing about the disk is written down in the kernel: a second
 //! partition, or another file system on the same chip, is a matter of
@@ -20,34 +39,199 @@
 
 const std = @import("std");
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const dos = sdk.dos;
 const hardblocks = dos.hardblocks;
+const loadfile = dos.loadfile;
 const td = sdk.devices.trackdisk;
 const ExecBase = sdk.interface.exec.ExecBase;
-const bootdisk = sdk.expansion.bootdisk;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 
 /// The unit the disk is, for the handlers' OpenDevice.
 const disk_unit = 0;
 
-pub const handlerFor = bootdisk.handlerFor;
+/// A runaway partition chain stops here.
+const max_partitions = 16;
 
-/// The disk as the mapping shows it.
-const Mapped = struct {
-    bytes: []const u8,
+/// A runaway chain of file system headers stops here.
+const max_file_systems = 16;
+
+/// The handler for a partition of the flash, or null for one whose file
+/// system cannot serve it.
+///
+/// INPUTS:
+/// - `dos_type` - the partition's de_DosType.
+/// - `erase_size` - the flash's erase unit.
+pub fn handlerFor(dos_type: u32, erase_size: u32) ?[*:0]const u8 {
+    if (!dos.filesystems.suits(dos_type, erase_size, false)) return null;
+    return dos.filesystems.handlerFor(dos_type);
+}
+
+/// The partitions a disk names, one after the other: every sound
+/// PartitionBlock on the RigidDiskBlock's chain that is not marked
+/// PBFF_NOMOUNT.
+pub const Partitions = struct {
+    disk: []const u8,
     block_bytes: u32,
+    /// The next PartitionBlock's number, or end_of_list.
+    next: u32,
+    seen: u32 = 0,
+    /// The first FileSysHeaderBlock's number, or end_of_list.
+    file_systems: u32 = hardblocks.end_of_list,
 
-    /// The start of a block, out of the mapping. False past the disk's
-    /// end.
-    pub fn readBlock(disk: Mapped, block: u32, into: []u8) bool {
-        const offset = @as(u64, block) * disk.block_bytes;
-        if (into.len > disk.block_bytes or offset + into.len > disk.bytes.len) return false;
-        const start: usize = @intCast(offset);
-        @memcpy(into, disk.bytes[start..][0..into.len]);
-        return true;
+    /// The disk's chain, or null when the disk has no sound
+    /// RigidDiskBlock, or one written for another block size: the block
+    /// numbers in it count the disk's blocks.
+    ///
+    /// INPUTS:
+    /// - `disk` - the disk's bytes.
+    /// - `block_bytes` - its block size, the erase unit.
+    pub fn of(disk: []const u8, block_bytes: u32) ?Partitions {
+        var rdb: hardblocks.RigidDiskBlock = undefined;
+        var block: u32 = 0;
+        while (block < hardblocks.RDB_LOCATION_LIMIT) : (block += 1) {
+            if (!readBlock(disk, block, block_bytes, &rdb)) return null;
+            if (hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK)) break;
+        } else return null;
+        if (rdb.block_bytes != block_bytes) return null;
+        return .{ .disk = disk, .block_bytes = block_bytes, .next = rdb.partition_list, .file_systems = rdb.file_sys_header_list };
+    }
+
+    /// The next partition to mount into `into`; false at the chain's end,
+    /// at a block that is not a sound PartitionBlock, or after
+    /// max_partitions.
+    pub fn nextPartition(partitions: *Partitions, into: *hardblocks.PartitionBlock) bool {
+        while (partitions.next != hardblocks.end_of_list and partitions.seen < max_partitions) {
+            partitions.seen += 1;
+            if (!readBlock(partitions.disk, partitions.next, partitions.block_bytes, into)) return false;
+            if (!hardblocks.sound(into, hardblocks.IDNAME_PARTITION)) return false;
+            partitions.next = into.next;
+            if (into.flags & hardblocks.PBFF_NOMOUNT == 0) return true;
+        }
+        return false;
     }
 };
 
-const Partitions = bootdisk.Partitions(Mapped);
+/// A FileSysHeaderBlock and the block it is in.
+pub const Header = struct {
+    at: u32,
+    block: hardblocks.FileSysHeaderBlock,
+};
+
+/// The FileSysHeaderBlock for `dos_type` on the chain from `first`, or
+/// null when the chain has none: it ends, breaks at a block that is not a
+/// sound header, or runs past max_file_systems first.
+///
+/// INPUTS:
+/// - `disk` - the disk's bytes.
+/// - `block_bytes` - its block size.
+/// - `first` - rdb_FileSysHeaderList.
+/// - `dos_type` - the partition's de_DosType.
+pub fn headerFor(disk: []const u8, block_bytes: u32, first: u32, dos_type: u32) ?Header {
+    var next = first;
+    var seen: u32 = 0;
+    while (next != hardblocks.end_of_list and seen < max_file_systems) : (seen += 1) {
+        var header: hardblocks.FileSysHeaderBlock = undefined;
+        if (!readBlock(disk, next, block_bytes, &header)) return null;
+        if (!hardblocks.sound(&header, hardblocks.IDNAME_FILESYSHEADER)) return null;
+        if (header.dos_type == dos_type) return .{ .at = next, .block = header };
+        next = header.next;
+    }
+    return null;
+}
+
+/// The load file a chain of LoadSegBlocks holds, copied into `into` when
+/// there is one: its size, or null for an empty chain or one that breaks
+/// - a block past the disk, one that is not a sound LoadSegBlock, more
+/// blocks than the disk has - or does not fit `into`.
+///
+/// INPUTS:
+/// - `disk` - the disk's bytes.
+/// - `block_bytes` - its block size.
+/// - `first` - fhb_SegListBlocks.
+/// - `into` - where the code goes, or null to only measure it.
+pub fn codeOf(disk: []const u8, block_bytes: u32, first: u32, into: ?[]u8) ?u32 {
+    const blocks = disk.len / block_bytes;
+    var next = first;
+    var seen: u32 = 0;
+    var size: u32 = 0;
+    while (next != hardblocks.end_of_list) : (seen += 1) {
+        if (seen >= blocks or next >= blocks) return null;
+        const block = disk[@as(usize, next) * block_bytes ..][0..block_bytes];
+        const data = hardblocks.loadSegData(block) orelse return null;
+        if (into) |buffer| {
+            if (buffer.len - size < data.len) return null;
+            @memcpy(buffer[size..][0..data.len], data);
+        }
+        size += @intCast(data.len);
+        next = std.mem.readInt(u32, block[@offsetOf(hardblocks.LoadSegBlock, "next")..][0..4], .little);
+    }
+    return if (size == 0) null else size;
+}
+
+/// The entries made so far, one per FileSysHeaderBlock, for the
+/// partitions of the same file system to share.
+const Made = struct {
+    at: [max_file_systems]u32 = undefined,
+    entry: [max_file_systems]*dos.FileSysEntry = undefined,
+    count: usize = 0,
+};
+
+/// The entry the table's code for `dos_type` gives a partition, or null
+/// when the table brings none, the ROM's handler is as new, or there is
+/// no memory for it.
+fn storedFor(sys: *ExecBase, partitions: *const Partitions, dos_type: u32, made: *Made) ?*dos.FileSysEntry {
+    const header = headerFor(partitions.disk, partitions.block_bytes, partitions.file_systems, dos_type) orelse return null;
+    if (!dos.filesystems.storedWins(header.block.version, dos.filesystems.romVersion(sys, dos_type))) return null;
+    for (made.at[0..made.count], made.entry[0..made.count]) |at, entry| {
+        if (at == header.at) return entry;
+    }
+    const entry = makeEntry(sys, partitions, &header.block) orelse return null;
+    if (made.count < made.at.len) {
+        made.at[made.count] = header.at;
+        made.entry[made.count] = entry;
+        made.count += 1;
+    }
+    return entry;
+}
+
+/// An entry with the header's code copied into memory, both the system's,
+/// named after the handler the code holds.
+fn makeEntry(sys: *ExecBase, partitions: *const Partitions, header: *const hardblocks.FileSysHeaderBlock) ?*dos.FileSysEntry {
+    const first: u32 = @bitCast(header.seg_list_blocks);
+    const size = codeOf(partitions.disk, partitions.block_bytes, first, null) orelse return null;
+    const image_memory = sys.AllocVec(size, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return null;
+    const image: [*]u8 = @ptrCast(image_memory);
+    _ = codeOf(partitions.disk, partitions.block_bytes, first, image[0..size]) orelse {
+        sys.FreeVec(image_memory);
+        return null;
+    };
+    const entry_memory = sys.AllocVec(@sizeOf(dos.FileSysEntry), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
+        sys.FreeVec(image_memory);
+        return null;
+    };
+    const entry: *dos.FileSysEntry = @ptrCast(@alignCast(entry_memory));
+    entry.* = .{ .dos_type = header.dos_type, .version = header.version, .image = image, .image_size = size };
+    var bytes = loadfile.Bytes{ .data = image[0..size] };
+    const source = bytes.source();
+    if (loadfile.findResident(source)) |found| {
+        var tag: loadfile.HandlerTag = .{};
+        if (loadfile.readHandler(source, found, &tag)) entry.name = tag.name;
+    }
+    return entry;
+}
+
+/// One of the disk's blocks into `into`, as far as the structure goes:
+/// they all live at the start of a block. False past the disk's end.
+fn readBlock(disk: []const u8, block: u32, block_bytes: u32, into: anytype) bool {
+    const size = @sizeOf(@TypeOf(into.*));
+    const offset = @as(u64, block) * block_bytes;
+    if (offset + size > disk.len) return false;
+    const start: usize = @intCast(offset);
+    const bytes: [*]u8 = @ptrCast(into);
+    @memcpy(bytes[0..size], disk[start..][0..size]);
+    return true;
+}
 
 /// Every partition the disk names, as a device node handed to
 /// expansion.library for dos.
@@ -62,7 +246,32 @@ const Partitions = bootdisk.Partitions(Mapped);
 /// - Locks: none held. - Process: a Task will do: it runs in the device's
 ///   init.
 pub fn mountPartitions(sys: *ExecBase, disk: []const u8, block_bytes: u32) void {
-    bootdisk.mountPartitions(sys, td.FLASHNAME, disk_unit, Mapped{ .bytes = disk, .block_bytes = block_bytes }, block_bytes);
+    var partitions = Partitions.of(disk, block_bytes) orelse return;
+    const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return;
+    defer sys.CloseLibrary(expansion_lib);
+    const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    var pb: hardblocks.PartitionBlock = undefined;
+    var made: Made = .{};
+    while (partitions.nextPartition(&pb)) {
+        const dos_type = pb.environment.dos_type;
+        const handler = handlerFor(dos_type, block_bytes);
+        // A file system known to be wrong for the flash stays off it,
+        // whatever code the table brings for it.
+        if (handler == null and dos.filesystems.of(dos_type) != null) continue;
+        const stored = storedFor(sys, &partitions, dos_type, &made);
+        if (handler == null and stored == null) continue;
+        const drive = pb.name();
+        if (drive.len == 0) continue;
+        // The partition block holds the name as a C string of at most 31
+        // characters, which may fill its 32 bytes.
+        var name: [pb.drive_name.len + 1:0]u8 = @splat(0);
+        @memcpy(name[0..drive.len], drive);
+        const node = eb.MakeDosNode(&name, td.FLASHNAME, disk_unit, pb.dev_flags, &pb.environment) orelse continue;
+        node.misc.handler.handler = handler;
+        node.misc.handler.file_sys = stored;
+        const boot_pri: i32 = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
+        if (!eb.AddBootNode(boot_pri, node)) sys.FreeVec(node);
+    }
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -104,22 +313,77 @@ fn testDisk(disk: *[4 * test_block]u8) void {
 test "the partitions to mount: the chain's sound blocks, PBFF_NOMOUNT passed over" {
     var disk: [4 * test_block]u8 = undefined;
     testDisk(&disk);
-    var partitions = Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block).?;
+    var partitions = Partitions.of(&disk, test_block).?;
     var pb: hardblocks.PartitionBlock = undefined;
     try testing.expect(partitions.nextPartition(&pb));
     try testing.expectEqualStrings("DH0", pb.name());
     try testing.expect(pb.flags & hardblocks.PBFF_BOOTABLE != 0);
     try testing.expect(!partitions.nextPartition(&pb));
     // A table written for another block size is not this disk's.
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = 512 }, 512));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, 512));
+}
+
+test "a file system the table brings: its header by DosType, its code from the chain" {
+    var disk: [8 * test_block]u8 = undefined;
+    @memset(&disk, 0xFF);
+    const other: u32 = 0x5445_5300; // "TES\0"
+    var first: hardblocks.FileSysHeaderBlock = .{ .next = 2, .dos_type = flashfs.ID_FLASHFS_DISK, .version = 0x0001_0009 };
+    first.checksum = hardblocks.checksumOf(&first);
+    @memcpy(disk[1 * test_block ..][0..@sizeOf(hardblocks.FileSysHeaderBlock)], std.mem.asBytes(&first));
+    var second: hardblocks.FileSysHeaderBlock = .{ .dos_type = other, .version = 0x0002_0001, .seg_list_blocks = 3 };
+    second.checksum = hardblocks.checksumOf(&second);
+    @memcpy(disk[2 * test_block ..][0..@sizeOf(hardblocks.FileSysHeaderBlock)], std.mem.asBytes(&second));
+    // The code: a block's worth and ten bytes more, in blocks 3 and 5.
+    const room = comptime hardblocks.loadSegRoom(test_block);
+    var code: [room + 10]u8 = undefined;
+    for (&code, 0..) |*byte, index| byte.* = @truncate(index * 7 + 1);
+    hardblocks.makeLoadSeg(disk[3 * test_block ..][0..test_block], code[0..room], 5);
+    hardblocks.makeLoadSeg(disk[5 * test_block ..][0..test_block], code[room..], hardblocks.end_of_list);
+
+    const header = headerFor(&disk, test_block, 1, other).?;
+    try testing.expectEqual(@as(u32, 2), header.at);
+    try testing.expectEqual(@as(u32, 0x0002_0001), header.block.version);
+    try testing.expectEqual(@as(?Header, null), headerFor(&disk, test_block, 1, 0x1234_5678));
+    try testing.expectEqual(@as(?Header, null), headerFor(&disk, test_block, hardblocks.end_of_list, other));
+
+    // The last block's piece is whole longwords: the ten bytes and two
+    // zeroes.
+    const size = codeOf(&disk, test_block, 3, null).?;
+    try testing.expectEqual(@as(u32, room + 12), size);
+    var into: [room + 12]u8 = undefined;
+    try testing.expectEqual(size, codeOf(&disk, test_block, 3, &into).?);
+    try testing.expectEqualSlices(u8, &code, into[0..code.len]);
+    try testing.expectEqualSlices(u8, &.{ 0, 0 }, into[code.len..]);
+    var small: [room]u8 = undefined;
+    try testing.expectEqual(@as(?u32, null), codeOf(&disk, test_block, 3, &small));
+
+    // A broken block, and a chain that comes back on itself, are no code.
+    disk[5 * test_block + 30] ^= 1;
+    try testing.expectEqual(@as(?u32, null), codeOf(&disk, test_block, 3, null));
+    hardblocks.makeLoadSeg(disk[5 * test_block ..][0..test_block], code[room..], 3);
+    try testing.expectEqual(@as(?u32, null), codeOf(&disk, test_block, 3, null));
+    try testing.expectEqual(@as(?u32, null), codeOf(&disk, test_block, hardblocks.end_of_list, null));
+}
+
+test "the table's file system wins when the ROM has none or an older one" {
+    const filesystems = dos.filesystems;
+    try testing.expect(filesystems.storedWins(0x0001_0002, null));
+    try testing.expect(filesystems.storedWins(0x0001_0003, 0x0001_0002));
+    try testing.expect(filesystems.storedWins(0x0002_0000, 0x0001_0009));
+    try testing.expect(!filesystems.storedWins(0x0001_0002, 0x0001_0002));
+    try testing.expect(!filesystems.storedWins(0x0001_0001, 0x0001_0002));
+    const tag: exec.Resident = .{ .match_tag = undefined, .version = 1, .name = "flashfs-handler", .id_string = "flashfs-handler 1.7 (17.10.2026)\r\n" };
+    try testing.expectEqual(@as(u32, 0x0001_0007), filesystems.versionOf(&tag));
+    const bare: exec.Resident = .{ .match_tag = undefined, .version = 3, .name = "x" };
+    try testing.expectEqual(@as(u32, 0x0003_0000), filesystems.versionOf(&bare));
 }
 
 test "a blank disk has no partitions" {
     var disk: [4 * test_block]u8 = undefined;
     @memset(&disk, 0xFF);
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, test_block));
     @memset(&disk, 0);
-    try testing.expectEqual(@as(?Partitions, null), Partitions.of(.{ .bytes = &disk, .block_bytes = test_block }, test_block));
+    try testing.expectEqual(@as(?Partitions, null), Partitions.of(&disk, test_block));
 }
 
 test "a RigidDiskBlock and a PartitionBlock are sound once they carry their checksum" {
@@ -161,9 +425,52 @@ test "a RigidDiskBlock and a PartitionBlock are sound once they carry their chec
     try testing.expectEqual(@as(u64, 16 * 4096), part.environment.byteOf(0));
 }
 
-test "a partition's handler is the one its DosType asks for" {
-    try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK).?));
-    try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.ID_MSDOS_DISK).?));
-    try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
-    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300)); // "DOS\0"
+test "a partition's handler is the one its DosType asks for, where it can serve the flash" {
+    try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK, test_block).?));
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(handlerFor(dos.posfs.ID_POSFS_DISK, test_block).?));
+    // FAT erases nothing; `POS\1` and `MSH` begin with a table of their own.
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(dos.ID_MSDOS_DISK, test_block));
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(dos.posfs.ID_POSFS_MBR, test_block));
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300, test_block)); // "DOS\0"
+}
+
+test "the file systems: each DosType's handler, where it may go, and what a whole medium gets" {
+    const filesystems = dos.filesystems;
+    try testing.expectEqualStrings("fat-handler", std.mem.span(filesystems.handlerFor(dos.ID_MSDOS_DISK).?));
+    try testing.expectEqualStrings("fat-handler", std.mem.span(filesystems.handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(filesystems.handlerFor(dos.posfs.ID_POSFS_MBR).?));
+    try testing.expectEqual(@as(?[*:0]const u8, null), filesystems.handlerFor(0x444F5300));
+
+    // A card erases for itself: FAT and posfs, in a partition or whole;
+    // the flash file system never.
+    try testing.expect(filesystems.suits(dos.ID_MSDOS_DISK, 0, false));
+    try testing.expect(filesystems.suits(dos.ID_MSDOS_DISK_HD, 0, true));
+    try testing.expect(!filesystems.suits(dos.ID_MSDOS_DISK_HD, 0, false));
+    try testing.expect(filesystems.suits(dos.posfs.ID_POSFS_DISK, 0, false));
+    try testing.expect(!filesystems.suits(dos.posfs.ID_POSFS_MBR, 0, false));
+    try testing.expect(!filesystems.suits(flashfs.ID_FLASHFS_DISK, 0, false));
+    try testing.expect(filesystems.suits(flashfs.ID_FLASHFS_DISK, test_block, false));
+
+    // A whole medium: a posfs label, a table with a posfs partition, and
+    // anything else FAT behind a table.
+    var block: [512]u8 = @splat(0);
+    try testing.expectEqual(dos.ID_MSDOS_DISK_HD, filesystems.wholeMediumChoice(&block).dos_type);
+    try testing.expectEqual(dos.ID_MSDOS_DISK_HD, filesystems.wholeMediumChoice(&.{}).dos_type);
+    dos.posfs.table.writeTable(&block, 2048, 100_000, 0x1234_5678);
+    try testing.expectEqual(dos.posfs.ID_POSFS_MBR, filesystems.wholeMediumChoice(&block).dos_type);
+    @memset(&block, 0);
+    std.mem.writeInt(u32, block[0..4], dos.posfs.layout.label_magic, .little);
+    const label = filesystems.wholeMediumChoice(&block);
+    try testing.expectEqual(dos.posfs.ID_POSFS_DISK, label.dos_type);
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(label.handler));
+}
+
+test "a device node's startup: a FileSysStartupMsg, or a plain number" {
+    const startupOf = dos.filehandler.startupOf;
+    try testing.expect(startupOf(0) == null);
+    try testing.expect(startupOf(1) == null);
+    try testing.expect(startupOf(0xFFF) == null);
+    const msg: dos.FileSysStartupMsg = .{ .unit = 3 };
+    try testing.expectEqual(@as(u32, 3), startupOf(@intFromPtr(&msg)).?.unit);
+    try testing.expect(startupOf(@intFromPtr(&msg) + 1) == null);
 }

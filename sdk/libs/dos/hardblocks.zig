@@ -17,7 +17,10 @@
 //! AddBootNode), which dos.library takes in at boot - which is how `DH0:`
 //! comes to exist. It is what makes a second partition, or another file
 //! system on the same chip, a matter of writing blocks rather than of
-//! changing the kernel.
+//! changing the kernel. A file system's code kept in the table - a
+//! FileSysHeaderBlock with its LoadSegBlocks - is what the partitions of
+//! its DosType run when the ROM has no handler for it or an older one
+//! (`sdk.dos.filesystems.storedWins`).
 //!
 //! Made for this machine:
 //! - Little-endian, like everything else here, so a disk does not travel to
@@ -150,10 +153,10 @@ pub const PartitionBlock = extern struct {
     }
 };
 
-/// struct FileSysHeaderBlock: which file system a partition's de_DosType
-/// asks for, and where its code is. Nothing reads one yet - the handlers
-/// are all in ROM - but a partition names its file system by DosType
-/// already, so putting one on the disk is what this is for.
+/// struct FileSysHeaderBlock: a file system's code kept in the table, for
+/// the partitions whose de_DosType is `dos_type`: its version and the
+/// first LoadSegBlock of the load file. One per DosType; they are chained
+/// from rdb_FileSysHeaderList.
 pub const FileSysHeaderBlock = extern struct {
     id: u32 = IDNAME_FILESYSHEADER,
     summed_longs: u32 = @sizeOf(FileSysHeaderBlock) / 4,
@@ -167,7 +170,8 @@ pub const FileSysHeaderBlock = extern struct {
     /// fhb_Version: release << 16 | revision.
     version: u32 = 0,
     /// fhb_PatchFlags: which of the fields below to put into the device
-    /// node.
+    /// node. Only the code is taken (FHBF_SEGLIST); the node keeps its
+    /// own stack size and priority.
     patch_flags: u32 = 0,
     node_type: u32 = 0,
     task: u32 = 0,
@@ -184,9 +188,13 @@ pub const FileSysHeaderBlock = extern struct {
     reserved3: [21]u32 = @splat(0),
 };
 
+/// fhb_PatchFlags: the node's code (dn_SegList) is the header's.
+pub const FHBF_SEGLIST: u32 = 1 << 7;
+
 /// struct LoadSegBlock: a piece of a file system's code. The data runs from
-/// the end of this header to the end of the block, so how much one holds
-/// depends on rdb_BlockBytes (123 longwords in a 512-byte block).
+/// the end of this header to the end of the longwords the checksum covers,
+/// the whole block but in the chain's last (123 longwords in a 512-byte
+/// block); the pieces in chain order are the load file.
 pub const LoadSegBlock = extern struct {
     id: u32 = IDNAME_LOADSEG,
     summed_longs: u32 = 0,
@@ -194,6 +202,58 @@ pub const LoadSegBlock = extern struct {
     host_id: u32 = 7,
     next: u32 = end_of_list,
 };
+
+/// How many bytes of code a LoadSegBlock in a block of `block_bytes`
+/// holds.
+pub fn loadSegRoom(block_bytes: u32) u32 {
+    return block_bytes - @sizeOf(LoadSegBlock);
+}
+
+/// The code a LoadSegBlock holds, from its block's bytes: what follows its
+/// header up to the end of the longwords its checksum covers. Null for a
+/// block that is not a sound LoadSegBlock: its identifier, a count of
+/// longwords from the header's to the block's, and the checksum over
+/// them.
+///
+/// INPUTS:
+/// - `block` - the whole block.
+pub fn loadSegData(block: []const u8) ?[]const u8 {
+    if (block.len < @sizeOf(LoadSegBlock)) return null;
+    if (std.mem.readInt(u32, block[0..4], .little) != IDNAME_LOADSEG) return null;
+    const longs = std.mem.readInt(u32, block[4..8], .little);
+    if (longs < @sizeOf(LoadSegBlock) / 4 or longs > block.len / 4) return null;
+    if (sumLongs(block[0 .. longs * 4]) != 0) return null;
+    return block[@sizeOf(LoadSegBlock) .. longs * 4];
+}
+
+/// A LoadSegBlock made in `block`: its header, `data` (at most
+/// `loadSegRoom` bytes) and zeroes to the block's end, with its checksum;
+/// `next` is the chain's next block. The checksum covers the whole block
+/// where the data fills it, and the data's longwords where it does not.
+///
+/// INPUTS:
+/// - `block` - the whole block, written over.
+/// - `data` - the piece of the load file.
+/// - `next` - the next LoadSegBlock's number, or `end_of_list`.
+pub fn makeLoadSeg(block: []u8, data: []const u8, next: u32) void {
+    @memset(block, 0);
+    const head_longs = @sizeOf(LoadSegBlock) / 4;
+    const data_longs: u32 = @intCast((data.len + 3) / 4);
+    const longs: u32 = if (data.len == loadSegRoom(@intCast(block.len))) @intCast(block.len / 4) else head_longs + data_longs;
+    const head: LoadSegBlock = .{ .summed_longs = longs, .next = next };
+    @memcpy(block[0..@sizeOf(LoadSegBlock)], std.mem.asBytes(&head));
+    @memcpy(block[@sizeOf(LoadSegBlock)..][0..data.len], data);
+    const total = sumLongs(block[0 .. longs * 4]);
+    std.mem.writeInt(i32, block[8..12], @bitCast(0 -% total), .little);
+}
+
+/// The longwords of `bytes`, summed.
+fn sumLongs(bytes: []const u8) u32 {
+    var total: u32 = 0;
+    var at: usize = 0;
+    while (at + 4 <= bytes.len) : (at += 4) total +%= std.mem.readInt(u32, bytes[at..][0..4], .little);
+    return total;
+}
 
 /// struct BadBlockBlock's header; the pairs follow it to the end of the
 /// block. Nothing writes one: the flash chip spares its own bad blocks.

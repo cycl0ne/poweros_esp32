@@ -24,3 +24,6 @@ pub const telnet = @import("telnet.zig");
 pub const clipboard = @import("clipboard.zig");
 pub const usbhc = @import("usbhc.zig");
 pub const usbclass = @import("usbclass.zig");
+/// A removable unit's drives, made from its first medium: a table's
+/// partitions, or the unit's own drive.
+pub const automount = @import("automount.zig");

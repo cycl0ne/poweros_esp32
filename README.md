@@ -29,16 +29,17 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md) |
 | [Wi-Fi](docs/esp32s3wifi.md) | the ESP32-S3's radio's device, and how it is built |
 | [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
+| [posfs](docs/posfs.md) | the PowerOS file system: its format on the medium, field by field, and how it works |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
 | [License](#license) | MPL-2.0 for the system, MIT for the SDK and programs |
@@ -77,7 +78,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   loaded from disk when wanted and expunged when memory runs short;
   internal SRAM and PSRAM as memory with attributes, every block marked
   with the task that owns it, so a wrong or second free is refused and
-  `C:Avail OWNERS` and `SYS:Programs/MemMap` show who holds what. A
+  `C:Avail OWNERS` and `SYS:System/MemMap` show who holds what. A
   system log from the first byte of the boot (`C:Log` sends it to a
   syslog server), a Guru with a ROM debugger on the serial ports, memory
   debugging (a wall behind every block, patterns in new and freed
@@ -86,17 +87,30 @@ ESP32-P4 boards and in Espressif's QEMU.
   held and asked about while the system runs on - Suspend, Kill or
   Reboot. A task that ends, by itself or killed, gives back the
   semaphores it held, the windows it left open and its private memory.
-  `C:Top` and `SYS:Programs/CPULoad` show what each task and core takes.
+  `C:Top` and `SYS:System/CPULoad` show what each task and core takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
-  log-structured flash file system (`DH0:`), FAT32 and exFAT on SD cards
+  log-structured flash file system (`DH0:`); posfs, a journaling file
+  system of copy-on-write trees with UTF-8 names, soft and hard links,
+  checksummed data, LZ4 compression, a Recycled directory deletes go
+  to and come back from, and snapshots read under `.snapshots` that the
+  volume can be rolled back to, for a partition of the flash disk, an SD
+  card or a USB stick, which a power cut at any moment leaves whole and
+  which mounts again at once, checked while in use (`C:PosFS`) ([posfs
+  guide](sdk/docs/guides/posfs.md));
+  FAT32 and exFAT on SD cards
   (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
-  mid-write leaves a whole volume, `RAM:`, `PIPE:`, `NIL:`; any of the
-  disks formatted from the running system (`C:Format`: FAT32 or exFAT
-  by a card's size, or as asked); partitions
-  from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
+  mid-write leaves a whole volume; `RAM:`, `PIPE:`, `NIL:`; any of the
+  disks formatted from the running system (`C:Format`: posfs, or FAT32
+  or exFAT by a card's size, or as asked, with the block or cluster size
+  asked for); partitions from a RigidDiskBlock on the flash disk, a card
+  or a stick, each mounted as its own drive - a card's and a stick's by
+  their device when they come in - and laid out on any drive by dragging
+  them in `SYS:System/HDToolBox`; a file system's code kept in the
+  table, which its partitions run when the ROM has none or an older one
+  ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
-  a shell with scripts and 49 commands in `C:` - `ScreenDump` saves a
+  a shell with scripts and 53 commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
 - **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
@@ -108,8 +122,10 @@ ESP32-P4 boards and in Espressif's QEMU.
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard), FontView, CPULoad, MemMap (who holds the memory, as a
-  map), Battery and Prefs.
+  what is heard), FontView, Battery and Prefs. In `SYS:System`, beside
+  the Shell, with their readmes in `SYS:System/Docs`: HDToolBox (a
+  drive's partitions), CPULoad and MemMap (who holds the memory, as a
+  map).
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales;
   graphics.library with smooth curves, gradients, shadows and scaled
@@ -251,7 +267,10 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
+| `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
+| `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
+| `-Drdb-size=1024` | the flash disk's partition table area before `DH0:`, in KiB (default 64): room for file systems kept in the table (HDToolBox, `C:RDB ADDFS`) |
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |

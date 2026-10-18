@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! A disk's partitions handed to expansion.library when its device starts,
 //! as boot nodes: what a block device in the ROM does at cold start, so
-//! that dos.library finds the disks it may start from.
+//! that dos.library finds the disks it may start from - sdcard.device in
+//! the ROM of a machine that starts from its card. (flash.device has a
+//! walk of its own over its mapping, src/rom/devs/flash/mount.zig, which
+//! also runs the file systems its table keeps.)
 //!
 //! The disk says what is on it: its first blocks hold a RigidDiskBlock
 //! (`dos.hardblocks`), and its chain of PartitionBlocks names each
@@ -9,13 +12,17 @@
 //! once - before dos.library is up - and makes a device node for each
 //! partition not marked PBFF_NOMOUNT with MakeDosNode: named as the
 //! partition says (pb_DriveName), with the handler its de_DosType asks
-//! for, and the partition's DosEnvec as the environment its handler is
-//! started with. AddBootNode keeps the nodes until dos takes them in. A
-//! bootable partition stands at its de_BootPri, the others at -128, which
-//! is never booted from; dos starts from the highest.
+//! for (`dos.filesystems`), and the partition's DosEnvec as the
+//! environment its handler is started with. A partition whose file system
+//! cannot go on the medium - the flash file system on a card, FAT on
+//! flash, a DosType whose area begins with a partition table of its own -
+//! or that there is no handler for is passed over. AddBootNode keeps the
+//! nodes until dos takes them in. A bootable partition stands at its
+//! de_BootPri, the others at -128, which is never booted from; dos starts
+//! from the highest.
 //!
-//! How a block is read is the device's: flash.device has the disk mapped,
-//! sdcard.device asks the card. `Disk` is anything with
+//! How a block is read is the device's: sdcard.device asks the card.
+//! `Disk` is anything with
 //!
 //!     readBlock(block: u32, into: []u8) bool   the first into.len bytes
 //!                                              of a block; false past
@@ -23,6 +30,7 @@
 
 const dos = @import("../dos/dos.zig");
 const hardblocks = dos.hardblocks;
+const filesystems = dos.filesystems;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const ExpansionBase = @import("../../interface/expansion.zig").ExpansionBase;
 const EXPANSIONNAME = @import("expansion.zig").EXPANSIONNAME;
@@ -30,25 +38,16 @@ const EXPANSIONNAME = @import("expansion.zig").EXPANSIONNAME;
 /// A runaway partition chain stops here.
 const max_partitions = 16;
 
-/// The handler a partition's de_DosType asks for. The flash file system is
-/// in every ROM; FAT's handler is in the ROM of a machine that can start
-/// from a card, and loaded from HANDLERS: on the others. It takes every FAT
-/// DosType (`MSD`, `MSH`, with any last byte), so it stands here as one.
-const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
-    .{ .dos_type = dos.flashfs.ID_FLASHFS_DISK, .handler = "flashfs-handler" },
-    .{ .dos_type = dos.ID_MSDOS_DISK, .handler = "fat-handler" },
-};
-
-/// The handler for a DosType, or null for a file system there is none for.
+/// The handler for a partition, or null for one whose file system cannot
+/// go on the medium or that there is none for.
 ///
 /// INPUTS:
 /// - `dos_type` - the partition's de_DosType.
-pub fn handlerFor(dos_type: u32) ?[*:0]const u8 {
-    const wanted = if (dos.fat.isFatType(dos_type)) dos.ID_MSDOS_DISK else dos_type;
-    for (file_systems) |file_system| {
-        if (file_system.dos_type == wanted) return file_system.handler;
-    }
-    return null;
+/// - `erase_size` - the medium's erase unit, 0 for one that erases for
+///   itself.
+pub fn handlerFor(dos_type: u32, erase_size: u32) ?[*:0]const u8 {
+    if (!filesystems.suits(dos_type, erase_size, false)) return null;
+    return filesystems.handlerFor(dos_type);
 }
 
 /// The partitions a disk names, one after the other: every sound
@@ -113,6 +112,7 @@ pub fn Partitions(comptime Disk: type) type {
 /// - `device` - the device the handlers open, and `unit` its unit.
 /// - `disk` - how its blocks are read (see the top of the file).
 /// - `block_bytes` - the disk's block size.
+/// - `erase_size` - its erase unit, 0 for a medium that erases for itself.
 ///
 /// CONTEXT:
 /// - Waits: in OpenLibrary, MakeDosNode and AddBootNode, and in reading.
@@ -120,14 +120,14 @@ pub fn Partitions(comptime Disk: type) type {
 /// - Locks: none held.
 /// - Process: a Task will do: it runs in the device's init, or on its
 ///   task before the init lets go.
-pub fn mountPartitions(sys: *ExecBase, device: [*:0]const u8, unit: u32, disk: anytype, block_bytes: u32) void {
+pub fn mountPartitions(sys: *ExecBase, device: [*:0]const u8, unit: u32, disk: anytype, block_bytes: u32, erase_size: u32) void {
     var partitions = Partitions(@TypeOf(disk)).of(disk, block_bytes) orelse return;
     const expansion_lib = sys.OpenLibrary(EXPANSIONNAME, 1) orelse return;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
     var pb: hardblocks.PartitionBlock = undefined;
     while (partitions.nextPartition(&pb)) {
-        const handler = handlerFor(pb.environment.dos_type) orelse continue;
+        const handler = handlerFor(pb.environment.dos_type, erase_size) orelse continue;
         const drive = pb.name();
         if (drive.len == 0) continue;
         // The partition block holds the name as a C string of at most 31

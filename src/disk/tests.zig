@@ -8,6 +8,7 @@ test {
     _ = @import("classes/gadgets/textedit/text.zig");
     _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
+    _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
     _ = @import("programs/terminal/tests/terminal.zig");
     _ = @import("programs/player/spectrum.zig");
     _ = @import("programs/player/visual.zig");
@@ -107,6 +108,17 @@ test {
     _ = @import("devs/handlers/fat/tests/exfat_dir.zig");
     _ = @import("devs/handlers/fat/tests/exfat_fs.zig");
     _ = @import("devs/handlers/fat/tests/format.zig");
+    _ = @import("devs/handlers/posfs/testmedia.zig");
+    _ = @import("devs/handlers/posfs/cache.zig");
+    _ = @import("devs/handlers/posfs/tests/lz4.zig");
+    _ = @import("devs/handlers/posfs/tests/tree.zig");
+    _ = @import("devs/handlers/posfs/tests/format.zig");
+    _ = @import("devs/handlers/posfs/tests/fs.zig");
+    _ = @import("devs/handlers/posfs/tests/recycled.zig");
+    _ = @import("devs/handlers/posfs/tests/snapshots.zig");
+    _ = @import("devs/handlers/posfs/tests/powercut.zig");
+    _ = @import("devs/handlers/posfs/tests/system.zig");
+    _ = @import("devs/handlers/posfs/posfs.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");

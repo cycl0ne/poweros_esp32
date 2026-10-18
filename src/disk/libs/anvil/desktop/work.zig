@@ -9,7 +9,8 @@
 //! pieces. A copy asks before it puts a file where one is already
 //! (Replace, Replace All, Skip, Stop); a drawer that is there already is
 //! copied into. A file's icon goes with it, and its protection, date and
-//! comment are kept.
+//! comment are kept. A soft link in a drawer is never gone through: a
+//! copy takes the file it names, a delete takes the link itself.
 //!
 //! **Its life**: StartAnvil's library code runs on it, so it holds the
 //! library open (`NP_HoldLibrary`); the desktop counts it among what it
@@ -287,7 +288,8 @@ fn newFib(job: *Job) ?*dos.FileInfoBlock {
 }
 
 /// What `path` holds counted into the total: its bytes for a copy, one
-/// for each file for a delete - a drawer and everything in it.
+/// for each file for a delete - a drawer and everything in it. A soft
+/// link in a drawer counts as a file: the walk never goes through one.
 fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     const dl = job.dl;
     const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return;
@@ -295,7 +297,7 @@ fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     const fib = newFib(job) orelse return;
     defer job.sys.FreeVec(fib);
     if (!dl.Examine(lock, fib)) return;
-    if (fib.dir_entry_type <= 0) {
+    if (!dos.isDirectory(fib.dir_entry_type)) {
         job.total += if (job.kind == .copy) fib.size else 1;
         return;
     }
@@ -303,6 +305,10 @@ fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     if (depth == depth_max) return;
     var below: [dos.path_max + 1:0]u8 = @splat(0);
     while (dl.ExNext(lock, fib)) {
+        if (!dos.isDirectory(fib.dir_entry_type)) {
+            job.total += if (job.kind == .copy) fib.size else 1;
+            continue;
+        }
         _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
         measure(job, &below, depth + 1);
     }
@@ -362,7 +368,9 @@ fn copyName(job: *Job, source: [*:0]const u8, into: *[dos.path_max + 1:0]u8) boo
     return false;
 }
 
-/// `source` - a file, or a drawer with all in it - copied as `target`.
+/// `source` - a file, or a drawer with all in it - copied as `target`. A
+/// soft link in a drawer is copied as the file it names, never gone
+/// through.
 fn copyTree(job: *Job, source: [*:0]const u8, target: [*:0]const u8, depth: usize) void {
     if (job.stopped) return;
     const dl = job.dl;
@@ -371,7 +379,7 @@ fn copyTree(job: *Job, source: [*:0]const u8, target: [*:0]const u8, depth: usiz
     const fib = newFib(job) orelse return;
     defer job.sys.FreeVec(fib);
     if (!dl.Examine(lock, fib)) return;
-    if (fib.dir_entry_type <= 0) {
+    if (!dos.isDirectory(fib.dir_entry_type)) {
         _ = copyFile(job, source, target);
         return;
     }
@@ -388,7 +396,7 @@ fn copyTree(job: *Job, source: [*:0]const u8, target: [*:0]const u8, depth: usiz
         const name = textOf(@ptrCast(&fib.file_name));
         _ = drawer_path.join(&from, textOf(source), name) orelse continue;
         _ = drawer_path.join(&to, textOf(target), name) orelse continue;
-        copyTree(job, &from, &to, depth + 1);
+        if (dos.isDirectory(fib.dir_entry_type)) copyTree(job, &from, &to, depth + 1) else _ = copyFile(job, &from, &to);
     }
 }
 
@@ -486,46 +494,50 @@ fn emptyDrawer(job: *Job, path: [*:0]const u8, depth: usize) void {
 }
 
 /// `path` deleted, a drawer after all that is in it, and its icon; false
-/// when something in it could not be.
+/// when something in it could not be. The name is deleted first, and only
+/// a drawer that is not empty is gone into: so a soft link goes itself,
+/// never what it names.
 fn deleteAll(job: *Job, path: [*:0]const u8, depth: usize) bool {
     if (job.stopped) return false;
     const dl = job.dl;
-    var whole = true;
-    if (dl.Lock(path, dos.SHARED_LOCK)) |lock| {
-        const fib = newFib(job) orelse {
-            dl.UnLock(lock);
-            return false;
-        };
-        defer job.sys.FreeVec(fib);
-        const is_drawer = dl.Examine(lock, fib) and fib.dir_entry_type > 0;
-        if (is_drawer and depth < depth_max) {
-            // What is in it first; the walk starts again after each, since
-            // a drawer changes under ExNext as it is emptied.
-            var below: [dos.path_max + 1:0]u8 = @splat(0);
-            var skipped: usize = 0;
-            outer: while (!job.stopped) {
-                if (!dl.Examine(lock, fib)) break;
-                var n: usize = 0;
-                while (dl.ExNext(lock, fib)) : (n += 1) {
-                    if (n < skipped) continue;
-                    _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
-                    if (!deleteAll(job, &below, depth + 1)) {
-                        skipped += 1;
-                        whole = false;
-                    }
-                    continue :outer;
-                }
-                break;
-            }
-        }
-        dl.UnLock(lock);
-    }
-    if (!whole) return false;
     show(job, textOf(dl.FilePart(path)));
-    if (!dl.DeleteFile(path)) return false;
+    if (!dl.DeleteFile(path)) {
+        if (dl.IoErr() != dos.ERROR_DIRECTORY_NOT_EMPTY or depth >= depth_max) return false;
+        if (!deleteInside(job, path, depth)) return false;
+        if (!dl.DeleteFile(path)) return false;
+    }
     job.done += 1;
     // Its icon goes with it.
     var info: [dos.path_max + 6:0]u8 = @splat(0);
     if (withInfo(&info, textOf(path))) _ = dl.DeleteFile(&info);
     return true;
+}
+
+/// Everything in the drawer `path` deleted; false when something could
+/// not be. The walk starts again after each, since a drawer changes under
+/// ExNext as it is emptied.
+fn deleteInside(job: *Job, path: [*:0]const u8, depth: usize) bool {
+    const dl = job.dl;
+    const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return false;
+    defer dl.UnLock(lock);
+    const fib = newFib(job) orelse return false;
+    defer job.sys.FreeVec(fib);
+    var below: [dos.path_max + 1:0]u8 = @splat(0);
+    var whole = true;
+    var skipped: usize = 0;
+    outer: while (!job.stopped) {
+        if (!dl.Examine(lock, fib)) return false;
+        var n: usize = 0;
+        while (dl.ExNext(lock, fib)) : (n += 1) {
+            if (n < skipped) continue;
+            _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
+            if (!deleteAll(job, &below, depth + 1)) {
+                skipped += 1;
+                whole = false;
+            }
+            continue :outer;
+        }
+        break;
+    }
+    return whole and !job.stopped;
 }

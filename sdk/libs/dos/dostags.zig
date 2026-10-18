@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! CreateNewProc's tags. NP_Dummy is TAG_USER + 1000, so these never
-//! meet another dos tag set (SYS_*, ADO_*) in one list. Which of them
-//! CreateNewProc honours, and how, is its contract
-//! (src/rom/libs/dos/process/createnewproc.zig).
+//! dos's tags: CreateNewProc's (NP_*), SystemTagList's (SYS_*) and
+//! FormatTags's (FORMAT_*). Each set has a base of its own, so that no
+//! two sets meet in one list. Which of them a call honours, and how, is
+//! that call's contract.
 const TAG_USER = @import("../utility/utility.zig").TAG_USER;
 
 pub const NP_Dummy = TAG_USER + 1000;
@@ -89,3 +89,11 @@ pub const SYS_ScriptFile = SYS_Dummy + 6;
 /// for a console that is one window per Open: opening such a name twice
 /// makes two windows. The shell closes it at its end.
 pub const SYS_Window = SYS_Dummy + 7;
+
+// FormatTags's tags.
+pub const FORMAT_Dummy = TAG_USER + 3000;
+/// The new volume's unit of allocation, in bytes: a file system's block,
+/// FAT's cluster. 0, or the tag left out, for the file system's own
+/// choice. A size the file system or the medium cannot have is refused
+/// with ERROR_INVALID_ARGUMENT before anything is written.
+pub const FORMAT_BlockSize = FORMAT_Dummy + 1;

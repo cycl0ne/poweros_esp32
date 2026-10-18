@@ -2,10 +2,7 @@
 //! Format: a fresh, empty volume over the medium in a drive.
 
 const sdk = @import("sdk");
-const dos = sdk.dos;
 const DosBase = @import("../dos_base.zig").DosBase;
-const _lock = @import("_lock.zig");
-const packets = @import("../packet/_packet.zig");
 
 /// Writes a fresh, empty volume over the medium in a drive.
 ///
@@ -20,7 +17,7 @@ const packets = @import("../packet/_packet.zig");
 /// - `drive` - the drive's device, with its colon (`SD0:`).
 /// - `name` - the new volume's name, without a colon: one to 30
 ///   characters, none of them `:` or `/`. Null for the file system's own:
-///   none on FAT, `Empty` on the flash file system.
+///   none on FAT, `Empty` on the flash file system and on posfs.
 /// - `dos_type` - the format, for a file system that writes more than one;
 ///   0 for the drive's own. A FAT drive takes its own DosType with the
 ///   last byte `FORMAT_FAT32`, `FORMAT_EXFAT` or `FORMAT_BY_SIZE`
@@ -37,11 +34,12 @@ const packets = @import("../packet/_packet.zig");
 /// hold; `ERROR_ACTION_NOT_KNOWN` from a handler that cannot format.
 ///
 /// BEHAVIOR:
-/// `ACTION_FORMAT` to the drive's handler, with the name and the
-/// DosType. The handler refuses what it can before it writes anything,
-/// then lays the volume out over the drive's area as its startup message
-/// gives it - the whole medium, or the blocks its node names. Everything
-/// that was on the area is gone. An inhibited drive keeps the new volume
+/// FormatTags with no tags: `ACTION_FORMAT` to the drive's handler, with
+/// the name and the DosType, and the file system's own choice of
+/// everything else. The handler refuses what it can before it writes
+/// anything, then lays the volume out over the drive's area as its startup
+/// message gives it - the whole medium, or the blocks its node names.
+/// Everything that was on the area is gone. An inhibited drive keeps the new volume
 /// until the last inhibit is taken back; one that held no volume mounts
 /// it at once.
 ///
@@ -64,7 +62,7 @@ const packets = @import("../packet/_packet.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `Inhibit`, `Relabel`, `Info`
+/// `FormatTags`, `Inhibit`, `Relabel`, `Info`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -74,24 +72,5 @@ const packets = @import("../packet/_packet.zig");
 /// }
 /// ```
 pub fn Format(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32) bool {
-    const dos_lib = db.iface();
-    if (name) |given| {
-        const len = db.utility_base.Strlen(given);
-        if (!dos.volumename.valid(given[0..len])) return _lock.failZero(db, dos.ERROR_INVALID_COMPONENT_NAME) != 0;
-    }
-    const dp = dos_lib.GetDeviceProc(drive, null) orelse return false;
-    defer dos_lib.FreeDeviceProc(dp);
-    const port = dp.port orelse return _lock.failZero(db, dos.ERROR_DEVICE_NOT_MOUNTED) != 0;
-    const answer = packets.exchange(db.sys_base, port, @intFromEnum(dos.ActionCode.format), .{
-        @bitCast(@intFromPtr(name)),
-        @bitCast(@as(usize, dos_type)),
-        0,
-        0,
-        0,
-    }) orelse return _lock.failZero(db, dos.ERROR_NO_FREE_STORE) != 0;
-    if (answer.res1 == 0) {
-        _ = dos_lib.SetIoErr(answer.res2);
-        return false;
-    }
-    return true;
+    return db.iface().FormatTags(drive, name, dos_type, null);
 }

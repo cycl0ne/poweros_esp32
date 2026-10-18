@@ -22,11 +22,15 @@ const td = sdk.devices.trackdisk;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
+const DosBase = sdk.interface.dos.DosBase;
+const automount = sdk.devices.automount;
 const dma = sdk.resources.dma;
 const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
 
 pub const DEVICE_NAME = "sdcard.device";
+/// The card's own drive, when it has no RigidDiskBlock.
+pub const DRIVE_NAME = "SD0";
 
 /// The blocks one transfer moves at a time. A file system asks in
 /// clusters, and a card of 4 to 32 GB is formatted with 32 KiB ones, so
@@ -142,6 +146,18 @@ pub const SdCardBase = extern struct {
     dma_channel: u32 = 0,
     /// What the device was loaded from, for its expunge to hand back.
     seg_list: ?*anyopaque = null,
+    /// The DOS process that makes the card's drives (mount.zig): dos for
+    /// it, its port, and the message the task tells it a card came with -
+    /// `told` while that message is on its way. `mounter` is set under
+    /// `change_lock`, against the task's telling.
+    dos_base: ?*DosBase = null,
+    mounter: ?*exec.MsgPort = null,
+    told: u8 = 0,
+    pad3: [3]u8 = .{ 0, 0, 0 },
+    tell: exec.Message = .{},
+    /// The card's drives: whether they are made, and what its own points
+    /// at.
+    medium: automount.MediumNode = .{},
 };
 
 /// A line the slot does not have.

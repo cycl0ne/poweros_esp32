@@ -9,12 +9,13 @@
 //! protection - is the task's to write; BeginIO reads the change count
 //! and whether a medium is in without asking anyone.
 //!
-//! **A unit's node** is the DOS process's: made once, the first time a
-//! medium comes into the unit, and kept. The unit carries what the node
-//! points at - its startup message and environment - so they live as
-//! long as the device does, which is as long as the system runs. After
-//! that the node's handler hears of every medium coming and going by its
-//! change interrupt (TD_ADDCHANGEINT), which the task causes.
+//! **A unit's drives** are the DOS process's: made once, the first time a
+//! medium comes into the unit, and kept (`sdk.devices.automount`). The
+//! unit carries what its own drive points at - its startup message and
+//! environment - so they live as long as the device does, which is as
+//! long as the system runs. After that each drive's handler hears of
+//! every medium coming and going by its change interrupt
+//! (TD_ADDCHANGEINT), which the task causes.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -25,6 +26,7 @@ const usb = sdk.usb;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UsbBase = sdk.interface.usb.UsbBase;
 const DosBase = sdk.interface.dos.DosBase;
+const automount = sdk.devices.automount;
 const bot = @import("bot.zig");
 
 pub const DEVICE_NAME = "disk.device";
@@ -61,18 +63,16 @@ pub const Unit = extern struct {
     /// TD_ADDCHANGEINT, kept until TD_REMCHANGEINT, under the base's
     /// `change_lock`.
     changes: exec.List = .{},
-    /// The DOS process's: the node made, and a message telling it a
-    /// medium came into a unit without one - `told` while that message
-    /// is on its way.
-    node_made: bool = false,
+    /// The DOS process's: a message telling it a medium came into a unit
+    /// whose drives are not made yet - `told` while that message is on
+    /// its way.
     told: u8 = 0,
-    pad: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
     tell: exec.Message = .{},
-    /// "DU<n>", its node's name.
+    /// "DU<n>", its own drive's name.
     name: [8]u8 = @splat(0),
-    /// What the node points at.
-    startup: dos.FileSysStartupMsg = .{},
-    environ: dos.DosEnvec = .{},
+    /// Its drives: whether they are made, and what its own points at.
+    medium: automount.MediumNode = .{},
 };
 
 /// A bound interface: its way to the device, and its logical units'

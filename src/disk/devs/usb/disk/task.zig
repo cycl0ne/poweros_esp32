@@ -8,8 +8,8 @@
 //! asked its size (READ CAPACITY, 10 and then 16 where the medium is too
 //! large for 10) and its write protection (MODE SENSE); the unit counts
 //! the change and causes its handlers' change interrupts - or, for a
-//! unit that has no node yet, tells the DOS process (mount.zig), which
-//! makes one.
+//! unit whose drives are not made yet, tells the DOS process
+//! (mount.zig), which makes them.
 //!
 //! **The poll.** While anything is bound the task looks at every unit
 //! once a second with TEST UNIT READY: a card put into a reader's slot
@@ -291,7 +291,7 @@ fn tell(base: *DiskBase, unit: *Unit) void {
         sys.Cause(@ptrCast(@alignCast(data)));
     }
     sys.ReleaseLock(&base.change_lock);
-    if (@atomicLoad(bool, &unit.node_made, .acquire)) return;
+    if (@atomicLoad(bool, &unit.medium.node_made, .acquire)) return;
     const port = base.mounter orelse return;
     if (@cmpxchgStrong(u8, &unit.told, 0, 1, .acq_rel, .monotonic) != null) return;
     unit.tell.reply_port = null;

@@ -13,8 +13,9 @@
 //! hh:mm:ss, so they may come in any order; what is not given is now's.
 //! WEEKDAY is there so that what Date prints ("Friday 25-Sep-2026
 //! 22:43:11") can be handed back as it is. ALL steps into directories,
-//! and a directory is set as well as what is in it. It says nothing when
-//! it succeeds; Ctrl-C stops it with a warning.
+//! and a directory is set as well as what is in it; a soft link gets the
+//! date itself and is not stepped through. It says nothing when it
+//! succeeds; Ctrl-C stops it with a warning.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -24,7 +25,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 
 pub const COMMAND_NAME = "SetDate";
-const VERSION_STRING = "\x00$VER: SetDate 1.0 (25.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetDate 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,WEEKDAY,DATE,TIME,ALL/S";
@@ -97,7 +98,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             err = dl.MatchNext(ap);
             continue;
         }
-        if (ap.info.dir_entry_type >= 0 and all) ap.flags |= dos.APF_DODIR;
+        if (dos.isDirectory(ap.info.dir_entry_type) and all) ap.flags |= dos.APF_DODIR;
 
         // SetFileDate works from the name, so the entry's own directory
         // has to be the current one while it runs.

@@ -43,6 +43,9 @@ pub const DosBase = extern struct {
     /// file with the count of processes running it (`users`). A spinlock,
     /// held for a few lines - never across a load or an unload.
     code_lock: exec.Lock,
+    /// A file system's code from a partition table being loaded
+    /// (FileSysEntry): one loader at a time, across the load.
+    file_sys_lock: exec.SignalSemaphore,
     /// dl_TimeReq: timer.device, opened for good for DateStamp; null
     /// without it.
     timer_io: ?*exec.IORequest,

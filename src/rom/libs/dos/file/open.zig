@@ -40,7 +40,8 @@ const FileHandle = dos.FileHandle;
 /// directory's lock and the name. Along a multi-assign the next directory
 /// is tried while the file isn't found - except for `MODE_NEWFILE`, which
 /// creates the file in the first directory rather than looking for one to
-/// replace.
+/// replace. A soft link on the way or at the end of the name is followed
+/// as Lock follows it, so a link opens the file it names.
 ///
 /// "*" is the process's console, as CONSOLE:, or NIL: when the process has
 /// none (or the caller is a plain Task). The handle starts line buffered,

@@ -18,7 +18,9 @@
 //!
 //! ALL steps into directories, making them on the other side as it goes
 //! ("[created]" when it had to). Without it a directory is named and
-//! passed over. QUIET says nothing at all.
+//! passed over. A soft link met on the way is copied as the file it names,
+//! and never stepped through, so a link back up the tree is not a circle.
+//! QUIET says nothing at all.
 //!
 //! What travels with the bytes: the protection bits always, less the
 //! archive bit, unless NOPRO; the date with DATES or CLONE; the comment
@@ -41,9 +43,10 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.2 (18.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -200,7 +203,7 @@ fn walk(run: *Run, anchor: *Anchor, source: [*:0]const u8) void {
     // by their own names whatever the source was, which is what
     // "Copy file RAM:" means.
     const wild = anchor.ap.flags & dos.APF_ITSWILD != 0;
-    const source_is_dir = anchor.ap.info.dir_entry_type > 0;
+    const source_is_dir = dos.isDirectory(anchor.ap.info.dir_entry_type);
     run.many = run.many_args or wild or source_is_dir;
     run.into_dir = run.many or isDir(run, run.to);
 
@@ -235,7 +238,7 @@ fn walk(run: *Run, anchor: *Anchor, source: [*:0]const u8) void {
             return;
         }
 
-        if (ap.info.dir_entry_type > 0) {
+        if (dos.isDirectory(ap.info.dir_entry_type)) {
             if (!run.quiet) {
                 tab(run, run.level + 1);
                 _ = Printf(dl, MSG_DIR, .{@as([*:0]const u8, @ptrCast(&ap.info.file_name))});
@@ -451,7 +454,8 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
         // A half-written file is worse than none.
         const target: [*:0]const u8 = if (run.into_dir) name else run.to;
         if (code != 0) {
-            _ = Printf(dl, MSG_IOERROR, .{@as([*:0]const u8, if (reading) MSG_READ else MSG_WRITE)});
+            // The line's start goes where PrintFault ends it.
+            _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_IOERROR, .{@as([*:0]const u8, if (reading) MSG_READ else MSG_WRITE)});
             _ = dl.PrintFault(code, null);
             run.rc = dos.RETURN_ERROR;
             run.res2 = code;
@@ -489,8 +493,9 @@ fn keep(run: *Run, done: bool) void {
 fn cantOpen(run: *Run, name: [*:0]const u8, output: bool) void {
     const dl = run.dl;
     const code = dl.IoErr();
-    _ = Printf(dl, MSG_NOOPEN, .{name});
-    _ = Printf(dl, MSG_INOUT, .{@as([*:0]const u8, if (output) MSG_OUT else MSG_IN)});
+    const errors = dl.ErrorOutput() orelse dl.Output(); // where PrintFault ends the line
+    _ = FPrintf(dl, errors, MSG_NOOPEN, .{name});
+    _ = FPrintf(dl, errors, MSG_INOUT, .{@as([*:0]const u8, if (output) MSG_OUT else MSG_IN)});
     _ = dl.PrintFault(code, null);
     if (run.rc < dos.RETURN_WARN) run.rc = dos.RETURN_WARN;
     run.res2 = code;
