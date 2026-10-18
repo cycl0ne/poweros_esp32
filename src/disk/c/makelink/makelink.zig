@@ -24,9 +24,10 @@ const FileLock = dos.FileLock;
 const FileInfoBlock = dos.FileInfoBlock;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "MakeLink";
-const VERSION_STRING = "\x00$VER: MakeLink 1.0 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MakeLink 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,HARD/S,FORCE/S";
@@ -81,7 +82,8 @@ fn fail(dl: *DosBase, code: i32) i32 {
 /// What could not be found and why, and the return code for a link not
 /// made.
 fn notFound(dl: *DosBase, to: [*:0]const u8, code: i32) i32 {
-    _ = Printf(dl, MSG_CANTFIND, .{to});
+    // The line's start goes where PrintFault ends it.
+    _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_CANTFIND, .{to});
     _ = dl.PrintFault(code, null);
     return dos.RETURN_FAIL;
 }

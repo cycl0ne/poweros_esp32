@@ -43,9 +43,10 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.2 (18.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -453,7 +454,8 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
         // A half-written file is worse than none.
         const target: [*:0]const u8 = if (run.into_dir) name else run.to;
         if (code != 0) {
-            _ = Printf(dl, MSG_IOERROR, .{@as([*:0]const u8, if (reading) MSG_READ else MSG_WRITE)});
+            // The line's start goes where PrintFault ends it.
+            _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_IOERROR, .{@as([*:0]const u8, if (reading) MSG_READ else MSG_WRITE)});
             _ = dl.PrintFault(code, null);
             run.rc = dos.RETURN_ERROR;
             run.res2 = code;
@@ -491,8 +493,9 @@ fn keep(run: *Run, done: bool) void {
 fn cantOpen(run: *Run, name: [*:0]const u8, output: bool) void {
     const dl = run.dl;
     const code = dl.IoErr();
-    _ = Printf(dl, MSG_NOOPEN, .{name});
-    _ = Printf(dl, MSG_INOUT, .{@as([*:0]const u8, if (output) MSG_OUT else MSG_IN)});
+    const errors = dl.ErrorOutput() orelse dl.Output(); // where PrintFault ends the line
+    _ = FPrintf(dl, errors, MSG_NOOPEN, .{name});
+    _ = FPrintf(dl, errors, MSG_INOUT, .{@as([*:0]const u8, if (output) MSG_OUT else MSG_IN)});
     _ = dl.PrintFault(code, null);
     if (run.rc < dos.RETURN_WARN) run.rc = dos.RETURN_WARN;
     run.res2 = code;

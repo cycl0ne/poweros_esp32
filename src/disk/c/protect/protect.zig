@@ -36,9 +36,10 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Protect";
-const VERSION_STRING = "\x00$VER: Protect 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Protect 1.2 (18.10.2026)\r\n";
 
 const template = "FILE/A,FLAGS,ADD/S,SUB/S,ALL/S,QUIET/S";
 const arg_file = 0;
@@ -211,7 +212,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         rc = dos.RETURN_WARN;
     }
 
-    if (failed_path) |path| _ = Printf(dl, MSG_SETFAILED, .{path});
+    // The line's start goes where PrintFault ends it.
+    if (failed_path) |path| _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_SETFAILED, .{path});
     if (err != 0) _ = dl.PrintFault(err, null);
     _ = dl.SetIoErr(err);
     return rc;

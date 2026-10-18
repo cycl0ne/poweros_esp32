@@ -69,9 +69,10 @@ const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
+const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "List";
-const VERSION_STRING = "\x00$VER: List 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: List 1.2 (18.10.2026)\r\n";
 
 const template = "DIR/M,P=PAT/K,KEYS/S,DATES/S,NODATES/S,TO/K,SUB/K,SINCE/K," ++
     "UPTO/K,QUICK/S,BLOCK/S,NOHEAD/S,FILES/S,DIRS/S,LFORMAT/K,ALL/S";
@@ -293,7 +294,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var old_output: ?*dos.FileHandle = null;
     if (rdargs.string(argv[arg_to])) |name| {
         to_file = dl.Open(name, dos.MODE_NEWFILE) orelse {
-            _ = Printf(dl, MSG_CANT_OPEN, .{name});
+            // The line's start goes where PrintFault ends it.
+            _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_CANT_OPEN, .{name});
             _ = dl.PrintFault(dl.IoErr(), null);
             return dos.RETURN_FAIL;
         };
@@ -616,7 +618,7 @@ fn listDir(run: *Run, anchor: *Anchor) i32 {
         return run.rc;
     }
     if (err != 0) {
-        if (run.lformat == null and !run.nohead) _ = Printf(dl, MSG_NO_INFO, .{name});
+        if (run.lformat == null and !run.nohead) _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_NO_INFO, .{name});
         _ = dl.PrintFault(err, "");
         return run.rc;
     }

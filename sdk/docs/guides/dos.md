@@ -138,8 +138,11 @@ without a newline needs `Flush(Output())` to be seen.
 shell's console, or what `<` and `>` named on its line. They belong to
 the process, and a program never closes them. `SelectInput` and
 `SelectOutput` put others in their place and answer the old ones, to be
-put back; `SelectError` and `ErrorOutput` set and give an error stream.
-`IsInteractive` tells whether a handle is a console.
+put back; `SelectError` and `ErrorOutput` set and give an error stream,
+where `PrintFault` writes when there is one, else to `Output()`. The
+shell runs every command with its console as the error stream, so a
+command's errors stay on the console when `>` sends its output to a
+file. `IsInteractive` tells whether a handle is a console.
 
 ## Names and paths
 

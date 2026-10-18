@@ -132,6 +132,17 @@ fn getArgs(dl: *DosBase, template: [*:0]const u8, argv: []usize) ?*dos.RDArgs {
     return rda;
 }
 
+/// A code's text, after `header` and ": ", and a newline, to Output():
+/// what Why and Fault print is their output, where PrintFault would send
+/// it to the error stream.
+fn putFault(dl: *DosBase, code: i32, header: ?[*:0]const u8) void {
+    var line: [256]u8 = undefined;
+    const n: usize = @intCast(dl.Fault(code, header, &line, line.len - 1));
+    if (n == 0) return;
+    line[n] = '\n';
+    _ = dl.WriteChars(&line, @intCast(n + 1));
+}
+
 /// A text of Fault's with one %ld (a long: RawDoFmt's %ld is 64 bits).
 fn faultNumber(dl: *DosBase, code: i32, value: i64) bool {
     var text: [64]u8 = undefined;
@@ -361,9 +372,9 @@ pub fn cmdWhy(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     if (code != 0) {
         var header: [48]u8 = undefined;
         _ = dl.Fault(STR_LAST_MSG_FAILED, null, &header, 44);
-        _ = dl.PrintFault(code, @ptrCast(&header));
+        putFault(dl, code, @ptrCast(&header));
     } else {
-        _ = dl.PrintFault(STR_NO_RETURN_CODE, null);
+        putFault(dl, STR_NO_RETURN_CODE, null);
     }
     _ = dl.SetIoErr(code);
     return dos.RETURN_WARN; // so the shell keeps cli_Result2
@@ -382,7 +393,7 @@ pub fn cmdFault(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
         rc = dos.RETURN_WARN;
         code = rdargs.multiNumber(argv[0], i);
         _ = faultNumber(dl, STR_FAULT, code);
-        _ = dl.PrintFault(code, "");
+        putFault(dl, code, "");
     }
     _ = dl.SetIoErr(code);
     return rc;

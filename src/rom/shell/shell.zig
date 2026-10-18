@@ -18,7 +18,11 @@
 //!   the end continues on the next line, and after a space "<file",
 //!   ">file", ">>file" and "<>file" redirect (not after the first word
 //!   of Run and Set). $variables again, and "echo" (a local variable "on")
-//!   shows the line.
+//!   shows the line. A refused redirection runs nothing, and the rest of
+//!   the line is read past.
+//! - A command's errors go to the shell's own output whatever its line
+//!   redirects: it runs with that as its error stream (SelectError),
+//!   where PrintFault writes.
 //! - `command` (backquotes) in the command's name and its line is replaced
 //!   by what the command prints ("*`" is a plain backquote).
 //! - The command: the resident list (FindSegment: user segments, then
@@ -56,8 +60,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 1;
-const BUILD_DATE = "15.10.2026";
+const SHELL_REVISION = 2;
+const BUILD_DATE = "18.10.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
@@ -843,11 +847,13 @@ fn openf(gv: *Global, name: *[NAMEMAX + 1]u8, mode: i32) ?*FileHandle {
 }
 
 /// A redirection failed, or the line is too long: the streams opened so far
-/// close, and the command doesn't run.
+/// close, and the command doesn't run. The line's end has not been read,
+/// so what is left of it is read past, not taken for the next command.
 fn notRun(gv: *Global, code: i32, in: ?*FileHandle, out: ?*FileHandle) i32 {
     if (in) |f| _ = gv.dl.Close(f);
     if (out) |f| _ = gv.dl.Close(f);
     gv.res2 = code;
+    gv.last_ch = 0;
     return NOT_RUN;
 }
 
@@ -963,10 +969,12 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
     }
     _ = dl.SelectInput(in orelse termin);
     _ = dl.SelectOutput(out orelse termout);
+    const old_error = dl.SelectError(termout);
     _ = dl.SetIoErr(0);
     _ = dl.CheckSignal(exec.SIGBREAKF_CTRL_C);
     const rc = dl.RunCommand(code, cli.default_stack, buf, @intCast(len));
     gv.res2 = dl.IoErr();
+    _ = dl.SelectError(old_error);
     if (in) |f| _ = dl.Close(f);
     if (out) |f| _ = dl.Close(f);
     return rc;

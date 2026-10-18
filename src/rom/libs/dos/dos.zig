@@ -2839,6 +2839,36 @@ test "PutStr, WriteChars, Printf: to Output()" {
     try tearDown(db);
 }
 
+test "PrintFault: to the error stream when there is one, else to Output()" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+
+    try testing.expect(!dl.PrintFault(dos.ERROR_OBJECT_NOT_FOUND, "Echo")); // neither stream
+    try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
+    const out = dl.Open("RAMT:out", dos.MODE_NEWFILE).?;
+    const errors = dl.Open("RAMT:errors", dos.MODE_NEWFILE).?;
+    _ = dl.SelectOutput(out);
+    try testing.expect(dl.PrintFault(dos.ERROR_OBJECT_NOT_FOUND, "Echo"));
+    _ = dl.SelectError(errors);
+    try testing.expect(dl.PrintFault(dos.ERROR_KEY_NEEDS_ARG, "Echo"));
+    try testing.expect(dl.PrintFault(0, "Echo")); // nothing to write
+    try testing.expectEqual(@as(i32, 0), dl.IoErr());
+    _ = dl.SelectError(null);
+    _ = dl.SelectOutput(null);
+    try testing.expect(dl.Close(out));
+    try testing.expect(dl.Close(errors));
+    try expectContents(dl, "RAMT:out", "Echo: object not found\n");
+    try expectContents(dl, "RAMT:errors", "Echo: value after keyword missing\n");
+
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
 // --- ReadArgs ---
 
 /// ReadArgs on `line` through the caller's RDArgs, as its CSource.
