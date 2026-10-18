@@ -22,8 +22,8 @@
 //!                    so it goes with SendIO, on a request of its own.
 //!   TD_REMCHANGEINT  that same request, taken off again and answered.
 //!   TDCMD_ERASE      ours: erases the blocks io_Offset..io_Offset+io_Length.
-//!   TDCMD_TRIM       ours: the blocks io_Offset..io_Offset+io_Length are
-//!                    no longer in use, and the medium may forget them.
+//!   TDCMD_TRIM       an addition: the blocks io_Offset..io_Offset+io_Length
+//!                    are no longer in use, and the medium may forget them.
 //!
 //! What the medium being flash, not a floppy, changes:
 //! - io_Offset and io_Length are 64-bit (exec's IOStdReq), so a unit may be
@@ -31,8 +31,8 @@
 //! - TDCMD_ERASE and DriveGeometry's `erase_size` and `map_base` are added:
 //!   flash must be erased before it is written, and the medium can be read
 //!   through the CPU's address space without a request at all.
-//! - TDCMD_TRIM is added: an SSD that is told which blocks are free keeps
-//!   no copies of them, and writes faster for it.
+//! - TDCMD_TRIM says which blocks are free: an SSD told so keeps no
+//!   copies of them, and writes faster for it.
 //! - No motor, seek, index or raw-track commands (TD_MOTOR, TD_SEEK,
 //!   TD_RAWREAD, TD_RAWWRITE, TD_GETDRIVETYPE) and no ETD_* (the extended
 //!   requests that check a change number). A unit whose medium can be taken
