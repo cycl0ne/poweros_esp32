@@ -31,8 +31,9 @@
 //!   desktop icons' fonts.
 //! - **Desktop**: the desktop's ground - a colour, or two shaded from top
 //!   to bottom, typed or picked on the colour wheel - a picture over it
-//!   and how it is placed, how large icons are shown, and how a drawer
-//!   with no view of its own is shown.
+//!   and how it is placed, how large icons are shown, whether an icon
+//!   that is moved snaps to the grid, and how a drawer with no view of
+//!   its own is shown.
 //! - **System**: the double-click time, the height of a screen's font when
 //!   it is given none, when the keyboard on the screen comes up, whether
 //!   a window may be moved partly past the screen's edges, and whether the
@@ -98,7 +99,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.7";
+const VERSION = "1.8";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -357,6 +358,7 @@ const Editor = struct {
     picture: *Object = undefined,
     place: *Object = undefined,
     icon_size: *Object = undefined,
+    snap: *Object = undefined,
     view: *Object = undefined,
     /// The tags the preview is drawn with, and the fills they point to.
     tags: [max_lines * style_file.tags_per_line + 2]TagItem = undefined,
@@ -772,6 +774,8 @@ const Editor = struct {
         p.place = @enumFromInt(@min(value, anvil_file.place_names.len - 1));
         _ = e.ib.GetAttr(ig.INTEGER_Number, e.icon_size, &value);
         p.icon_size = @intCast(@min(@max(@as(isize, @bitCast(value)), anvil_file.icon_size_min), anvil_file.icon_size_max));
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.snap, &value);
+        p.snap = value != 0;
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.view, &value);
         p.view = @enumFromInt(@min(value, anvil_file.view_names.len - 1));
         return p;
@@ -1309,6 +1313,10 @@ fn build(e: *Editor) ?*Object {
         pair(ig.INTEGER_Number, e.desktop.icon_size),
         .{},
     }) orelse return null;
+    e.snap = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.desktop.snap)),
+        .{},
+    }) orelse return null;
     e.view = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
         pair(ch.CHOOSER_Labels, @intFromPtr(&view_labels)),
         pair(ch.CHOOSER_Active, @intFromEnum(e.desktop.view)),
@@ -1320,8 +1328,8 @@ fn build(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     const ground_group = column(ib, "Ground", &.{ ground_row, ground_note, e.picture, e.place }, &.{ "_Ground", null, "P_icture", "Pl_ace" }) orelse return null;
-    const drawers_group = column(ib, "Drawers", &.{ e.icon_size, e.view }, &.{ "Icon si_ze", "_View" }) orelse return null;
-    pages[page_desktop] = column(ib, null, &.{ ground_group, drawers_group }, &.{}) orelse return null;
+    const icons_group = column(ib, "Icons", &.{ e.icon_size, e.snap, e.view }, &.{ "Icon si_ze", "Snap _to grid", "Drawers' _view" }) orelse return null;
+    pages[page_desktop] = column(ib, null, &.{ ground_group, icons_group }, &.{}) orelse return null;
 
     // The system page.
     var now: intuition_file.Settings = .{};

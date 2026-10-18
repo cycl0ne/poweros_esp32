@@ -61,7 +61,6 @@ const Rect = graphics.Rect;
 const Pen = graphics.Pen;
 const _base = @import("../anvil_base.zig");
 const AnvilBase = _base.AnvilBase;
-const anvil_init = @import("../anvil_init.zig");
 const icons = @import("../icons/_icons.zig");
 const Icon = icons.Icon;
 const ground_area = @import("ground.zig");
@@ -77,6 +76,7 @@ const commands = @import("commands.zig");
 const run_area = @import("run.zig");
 const app_area = @import("app.zig");
 const startup_area = @import("startup.zig");
+const about_area = @import("about.zig");
 
 /// How often the title and the disks are looked at, in seconds.
 pub const tick_seconds = 2;
@@ -449,9 +449,12 @@ pub const Desktop = struct {
     // --- the prefs ---------------------------------------------------------
 
     /// `anvil.prefs` read; a file that is not there, or says something
-    /// wrong, leaves the desktop's own.
+    /// wrong, leaves the desktop's own. The buffer holds the file's
+    /// explanation (`header`) and its line with room to spare: a file cut
+    /// short would lose the line, which comes last.
     fn readPrefs(d: *Desktop) void {
-        var text: [1024]u8 = undefined;
+        var text: [2048]u8 = undefined;
+        comptime if (anvil_prefs.header.len + 241 > text.len) @compileError("anvil.prefs' explanation has outgrown readPrefs' buffer");
         var settings: anvil_prefs.Settings = .{};
         if (sdk.prefs.load(d.dl, anvil_prefs.ENV_FILE, &text)) |read| {
             if (sdk.prefs.firstLine(read)) |line| {
@@ -867,7 +870,7 @@ pub const Desktop = struct {
                     menus.ITEM_REDRAW_ALL => d.redrawAll(),
                     menus.ITEM_UPDATE_ALL => d.updateAll(),
                     menus.ITEM_LAST_MESSAGE => d.lastMessage(),
-                    menus.ITEM_ABOUT => d.about(),
+                    menus.ITEM_ABOUT => about_area.show(d),
                     menus.ITEM_QUIT => d.askQuit(),
                     else => {},
                 },
@@ -890,6 +893,8 @@ pub const Desktop = struct {
             switch (mn.ITEMNUM(number)) {
                 menus.ITEM_SELECT_CONTENTS => select.contents(d, null),
                 menus.ITEM_CLEAN_UP => commands.cleanUp(d, null),
+                menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, null, mn.SUBNUM(number)),
+                menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
                 else => {},
             }
             return;
@@ -897,6 +902,8 @@ pub const Desktop = struct {
         switch (mn.ITEMNUM(number)) {
             menus.ITEM_NEW_DRAWER => commands.newDrawer(d, dr),
             menus.ITEM_CLEAN_UP => commands.cleanUp(d, dr),
+            menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, dr, mn.SUBNUM(number)),
+            menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
             menus.ITEM_SNAPSHOT_WINDOW => commands.snapshotWindow(d, dr, mn.SUBNUM(number) == menus.SUB_SNAPSHOT_ALL),
             menus.ITEM_SELECT_CONTENTS => select.contents(d, dr),
             menus.ITEM_OPEN_PARENT => drawer.openParent(d, dr),
@@ -911,14 +918,11 @@ pub const Desktop = struct {
         }
     }
 
-    fn about(d: *Desktop) void {
-        const easy = intuition.requesters.EasyStruct{
-            .title = "About Anvil",
-            .text_format = "Anvil %s\nThe PowerOS desktop",
-            .gadget_format = "OK",
-        };
-        const args = [_]usize{@intFromPtr(anvil_init.VERSION_TEXT.ptr)};
-        _ = d.ib.EasyRequestArgs(d.backdrop, &easy, null, &args);
+    /// Whether the item `number` names has its mark: a toggled item's
+    /// mark is already turned when the pick arrives.
+    fn isChecked(d: *Desktop, number: u32) bool {
+        const item = d.ib.ItemAddress(d.menu_strip, number) orelse return false;
+        return item.flags & mn.CHECKED != 0;
     }
 
     /// Quit asked for: refused while programs it started still run, or
@@ -987,13 +991,18 @@ pub const Desktop = struct {
     /// A file it follows changed: the prefs made anew from, or a drawer
     /// read again.
     fn notified(d: *Desktop) void {
-        var prefs_changed = false;
+        var desktop_prefs = false;
+        var font_prefs_changed = false;
         while (d.sys.GetMsg(d.notify_port.?)) |message| {
             const told: *notify.NotifyMessage = @fieldParentPtr("message", message);
             const request = told.request;
             d.sys.ReplyMsg(message);
-            if (request == &d.watching[0] or request == &d.watching[1]) {
-                prefs_changed = true;
+            if (request == &d.watching[0]) {
+                desktop_prefs = true;
+                continue;
+            }
+            if (request == &d.watching[1]) {
+                font_prefs_changed = true;
                 continue;
             }
             const wanted = request orelse continue;
@@ -1006,7 +1015,18 @@ pub const Desktop = struct {
                 }
             }
         }
-        if (prefs_changed) d.renew();
+        if (font_prefs_changed or (desktop_prefs and d.lookChanged())) d.renew();
+    }
+
+    /// anvil.prefs read again after it changed: whether the desktop has
+    /// to be made anew. A change of SNAP alone - the Window menu's own
+    /// writing it, or Prefs - is taken as it is, its mark set.
+    fn lookChanged(d: *Desktop) bool {
+        const was = d.prefs;
+        d.readPrefs();
+        if (!anvil_prefs.sameLook(&was, &d.prefs)) return true;
+        commands.rethink(d, d.active_window);
+        return false;
     }
 
     /// The desktop's screen brought to the front - from any task.

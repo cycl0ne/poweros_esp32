@@ -42,8 +42,8 @@ pub fn lastPart(path: []const u8) []const u8 {
 }
 
 /// A disk's window title: its name and how full it is, as "Work  45%
-/// full, 1,234K free, 980K in use" - kilobytes, or megabytes past 9,999K.
-/// NUL after it; its length.
+/// full, 1,234K free, 980K in use" - in the units `amount` picks. NUL
+/// after it; its length.
 pub fn diskTitle(into: []u8, name: []const u8, total_blocks: u64, used_blocks: u64, bytes_per_block: u32) usize {
     var n: usize = 0;
     n += put(into[n..], name);
@@ -68,16 +68,16 @@ fn put(into: []u8, text: []const u8) usize {
     return text.len;
 }
 
-/// Bytes as K, or as M past 9,999K.
-fn amount(into: []u8, bytes: u64) usize {
+/// Bytes as K, or as M past 9,999K, G past 9,999M, T past 9,999G and
+/// P past 9,999T, each rounded down: never more than four digits but in
+/// P, which a u64 holds no more than 16,383 of. No NUL; its length.
+pub fn amount(into: []u8, bytes: u64) usize {
+    const letters = "KMGTP";
     var units = bytes / 1024;
-    var letter: u8 = 'K';
-    if (units > 9999) {
-        units /= 1024;
-        letter = 'M';
-    }
+    var unit: usize = 0;
+    while (units > 9999 and unit + 1 < letters.len) : (unit += 1) units /= 1024;
     const n = number(into, units);
-    into[n] = letter;
+    into[n] = letters[unit];
     return n + 1;
 }
 

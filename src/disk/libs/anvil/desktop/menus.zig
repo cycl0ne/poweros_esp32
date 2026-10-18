@@ -30,9 +30,15 @@ pub const ITEM_CLOSE = 2;
 pub const ITEM_UPDATE = 3;
 pub const ITEM_SELECT_CONTENTS = 5;
 pub const ITEM_CLEAN_UP = 6;
-pub const ITEM_SNAPSHOT_WINDOW = 8;
-pub const ITEM_SHOW = 9;
-pub const ITEM_VIEW_BY = 10;
+pub const ITEM_CLEAN_UP_BY = 7;
+pub const ITEM_SNAP_TO_GRID = 8;
+pub const ITEM_SNAPSHOT_WINDOW = 10;
+pub const ITEM_SHOW = 11;
+pub const ITEM_VIEW_BY = 12;
+/// Clean Up By's subitems.
+pub const SUB_CLEAN_BY_NAME = 0;
+pub const SUB_CLEAN_BY_DATE = 1;
+pub const SUB_CLEAN_BY_SIZE = 2;
 /// Snapshot's subitems.
 pub const SUB_SNAPSHOT_WINDOW = 0;
 pub const SUB_SNAPSHOT_ALL = 1;
@@ -89,6 +95,11 @@ pub const table = [_]mn.NewMenu{
     bar,
     item("Select Contents", "A", 0),
     item("Clean Up", ".", 0),
+    item("Clean Up By", null, 0),
+    sub("Name", 0, 0),
+    sub("Date", 0, 0),
+    sub("Size", 0, 0),
+    item("Snap to Grid", null, mn.CHECKIT | mn.MENUTOGGLE),
     bar,
     item("Snapshot", null, 0),
     sub("Window", 0, 0),

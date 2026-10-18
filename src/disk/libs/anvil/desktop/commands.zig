@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! What the Icons menu and the file work of the Window menu do with the
 //! icons picked: open, copy, rename, snapshot, leave out and put away,
-//! delete, format, empty the trash; a new drawer, cleaning up, and a
-//! window's snapshot.
+//! delete, format, empty the trash; a new drawer, cleaning up - as the
+//! icons lie or sorted - snapping to the grid, and a window's snapshot.
 //!
 //! The work that takes long - copying, deleting, emptying - goes to a
 //! process of its own (`work.zig`); the rest is done at once. A file's
@@ -32,6 +32,8 @@ const ask = @import("ask.zig");
 const leaveout = @import("leaveout.zig");
 const volumes = @import("volumes.zig");
 const select = @import("select.zig");
+const textview = @import("../drawer/textview.zig");
+const anvil_prefs = sdk.prefs.anvil;
 
 /// An icon picked, and the ground it lies on (none: the desktop's).
 const Picked = struct { where: ?*Drawer, icon: *Icon };
@@ -346,6 +348,48 @@ pub fn cleanUp(d: *Desktop, where: ?*Drawer) void {
     d.drawWholeNow();
 }
 
+/// Clean Up By, subitem `sub`: the icons sorted - by name, by date (the
+/// newest first) or by size (the largest first), drawers before files
+/// and a tie by name, as a drawer's list is sorted - and laid out again
+/// in that order, as Clean Up lays them out. Their places are kept until
+/// Snapshot writes them, as Clean Up's are.
+pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
+    const view: anvil_prefs.View = switch (sub) {
+        menus.SUB_CLEAN_BY_NAME => .name,
+        menus.SUB_CLEAN_BY_DATE => .date,
+        menus.SUB_CLEAN_BY_SIZE => .size,
+        else => return,
+    };
+    if (where) |dr| if (dr.view != .icon) return;
+    const list = if (where) |dr| &dr.icons else &d.volumes;
+    var sorted: exec.List = .{};
+    sorted.init(.unknown);
+    while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &sorted, @alignCast(@fieldParentPtr("node", node)), view);
+    while (d.sys.RemHead(&sorted)) |node| d.sys.AddTail(list, node);
+    cleanUp(d, where);
+}
+
+/// Snap to Grid switched `on` or off: kept in anvil.prefs, in ENV: for
+/// now and in ENVARC: across a boot, with the rest of the file as the
+/// desktop has it. The file's notification then finds nothing drawn
+/// changed, so nothing is made anew.
+pub fn snapToGrid(d: *Desktop, on: bool) void {
+    d.prefs.snap = on;
+    const line_room = 240;
+    const room = anvil_prefs.header.len + line_room + 1;
+    const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.say("Snap to Grid could not be kept");
+    defer d.sys.FreeVec(memory);
+    const text: [*]u8 = @ptrCast(memory);
+    var length: usize = anvil_prefs.header.len;
+    @memcpy(text[0..length], anvil_prefs.header);
+    length += anvil_prefs.write(&d.prefs, text[length..room]);
+    text[length] = '\n';
+    length += 1;
+    const now = sdk.prefs.save(d.dl, anvil_prefs.ENV_FILE, text[0..length]);
+    const kept = sdk.prefs.save(d.dl, anvil_prefs.ENVARC_FILE, text[0..length]);
+    if (!now or !kept) d.say("Snap to Grid could not be written to anvil.prefs");
+}
+
 /// Snapshot Window: the window's box, view and shown files written into
 /// the drawer's icon; with `all` every icon's place too.
 pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
@@ -381,8 +425,10 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
 /// picked, and of them only Open for programs' icons alone; Delete not
 /// for a disk or the trash, Empty Trash only for the trash, Format only
 /// for disks, Leave Out only for icons in drawers, Put Away only for
-/// left-out ones; the drawer's own items only in a drawer; Clean Up only
-/// where icons are shown.
+/// left-out ones; the drawer's own items only in a drawer; Clean Up and
+/// Clean Up By only where icons are shown, and on the desktop's ground by
+/// name alone, since a disk has no date or size of its own. Snap to
+/// Grid's mark is the prefs'.
 pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     const strip = d.menu_strip orelse return;
     const Tally = struct {
@@ -419,6 +465,7 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLOSE, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_UPDATE, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLEAN_UP, .on = shows_icons },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLEAN_UP_BY, .on = shows_icons },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SNAPSHOT_WINDOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SHOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_VIEW_BY, .on = in_drawer },
@@ -438,9 +485,17 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
         const item = d.ib.ItemAddress(strip, mn.FULLMENUNUM(entry.menu, entry.item, mn.NOSUB)) orelse continue;
         if (entry.on) item.flags |= mn.ITEMENABLED else item.flags &= ~mn.ITEMENABLED;
     }
+    for ([_]u32{ menus.SUB_CLEAN_BY_DATE, menus.SUB_CLEAN_BY_SIZE }) |sub| {
+        const item = d.ib.ItemAddress(strip, mn.FULLMENUNUM(menus.MENU_WINDOW, menus.ITEM_CLEAN_UP_BY, sub)) orelse continue;
+        if (in_drawer) item.flags |= mn.ITEMENABLED else item.flags &= ~mn.ITEMENABLED;
+    }
     const backdrop = d.ib.ItemAddress(strip, mn.FULLMENUNUM(menus.MENU_ANVIL, menus.ITEM_BACKDROP, mn.NOSUB));
     if (backdrop) |item| {
         if (d.as_backdrop) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
+    }
+    const snap = d.ib.ItemAddress(strip, mn.FULLMENUNUM(menus.MENU_WINDOW, menus.ITEM_SNAP_TO_GRID, mn.NOSUB));
+    if (snap) |item| {
+        if (d.prefs.snap) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
     }
     if (dr) |held| d.showChecks(held.view, held.show_all);
 }

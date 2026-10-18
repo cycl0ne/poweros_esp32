@@ -147,6 +147,24 @@ pub fn place(d: *Desktop, ic: *Icon) void {
     ic.putInCell(&d.look, at.x, at.y);
 }
 
+/// An icon moved on the desktop put in the free cell nearest where it was
+/// let go, of the grid down the right edge `place` puts disks on: Snap
+/// to Grid.
+pub fn snap(d: *Desktop, ic: *Icon) void {
+    var taken: [max_volumes]Rect = undefined;
+    var count: usize = 0;
+    var it = d.volumes.iterator();
+    while (it.next()) |node| {
+        const other: *Icon = @alignCast(@fieldParentPtr("node", node));
+        if (other == ic or count == taken.len) continue;
+        taken[count] = other.box(&d.look);
+        count += 1;
+    }
+    const area = Rect{ .min_x = margin, .min_y = margin, .max_x = d.width - margin, .max_y = d.height - margin };
+    const at = icons.place.nearestFree(area, d.look.cell, taken[0..count], ic.cellOrigin(&d.look), .columns_from_right);
+    ic.putInCell(&d.look, at.x, at.y);
+}
+
 /// An icon taken off the desktop: the ground painted where it was, and
 /// what else lay there drawn again.
 pub fn remove(d: *Desktop, ic: *Icon) void {

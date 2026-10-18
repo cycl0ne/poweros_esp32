@@ -10,7 +10,9 @@
 //!
 //! **Where it is let go** (`EndDrag` names the window):
 //! - on the ground of the window it came from: the icons move there - in
-//!   memory, until Snapshot writes their places;
+//!   memory, until Snapshot writes their places - and with Snap to Grid
+//!   on, each into the free cell of the ground's grid nearest where it
+//!   was let go;
 //! - on a drawer, a disk or the trash, or into another drawer's window:
 //!   the files go into that drawer - moved, with their icons, when it is
 //!   on the same volume, and copied when it is not;
@@ -44,6 +46,7 @@ const select = @import("select.zig");
 const run = @import("run.zig");
 const copy = @import("copy.zig");
 const app = @import("app.zig");
+const volumes = @import("volumes.zig");
 
 /// How far the pointer moves, held on an icon, before it is a drag.
 const threshold = 6;
@@ -226,6 +229,8 @@ fn dropOn(d: *Desktop, held: *const Held, where: ?*Drawer, ic: *Icon) bool {
 
 /// The icons picked in the held icon's window moved by (`dx`, `dy`) on
 /// its ground: painted away where they were and drawn where they are.
+/// With Snap to Grid each then goes into its cell - once all have moved,
+/// so none is kept out of a cell by where another lay before.
 fn moveIcons(d: *Desktop, held: *const Held, dx: i32, dy: i32) void {
     const list = if (held.drawer) |dr| &dr.icons else &d.volumes;
     var it = list.iterator();
@@ -235,6 +240,14 @@ fn moveIcons(d: *Desktop, held: *const Held, dx: i32, dy: i32) void {
         ic.x += dx;
         ic.y += dy;
         ic.moved = true;
+    }
+    if (d.prefs.snap) {
+        it = list.iterator();
+        while (it.next()) |node| {
+            const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
+            if (!ic.selected) continue;
+            if (held.drawer) |dr| drawer.snap(d, dr, ic) else volumes.snap(d, ic);
+        }
     }
     if (held.drawer) |dr| return drawer.drawInside(d, dr);
     d.drawWholeNow();

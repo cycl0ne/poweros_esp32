@@ -3838,7 +3838,7 @@ test "SystemTagList, Execute: a shell with its CLI set up, the startup packet, t
 
 const shellmod = @import("../../shell/shell.zig");
 
-test "the shell: variables, aliases, redirection, built-ins, unknown commands, return codes" {
+test "the shell: variables, aliases, redirection, the error stream, built-ins, unknown commands, return codes" {
     const db = try setUp();
     defer kexec.deinit();
     const dl = base(db);
@@ -3855,6 +3855,10 @@ test "the shell: variables, aliases, redirection, built-ins, unknown commands, r
         "ll 1 2\n" ++
         "failat 30\n" ++
         "failat\n" ++
+        "echo first *>RAMT:e1\n" ++ // ReadArgs's error into the file
+        "echo first *>>RAMT:e1\n" ++ // and a second after it
+        "echo first >RAMT:o3 *>RAMT:e3\n" ++ // output and errors apart
+        "echo \"*>RAMT:e2\" a*>b * end\n" ++ // quoted ("*" escapes ">"), not after a space, the console's name
         "nosuch\n" ++
         "why\n" ++
         "echo $RC +\nmore\n" ++
@@ -3882,12 +3886,17 @@ test "the shell: variables, aliases, redirection, built-ins, unknown commands, r
     try expectContents(dl, "RAMT:out", "hello world\n" ++
         "1 2 done\n" ++
         "Fail limit: 30\n" ++
+        ">RAMT:e2 a*>b * end\n" ++
         "nosuch: Unknown command\n" ++ // 10, below the limit: on
         "Last command failed because : object not found\n" ++ // the search's Result2
         "5\n" ++ // Why's RC; "+": "more" belongs to echo's line, not a command
         "nocmd: Unknown command\n" ++
         "nocmd failed returncode 10\n"); // at the limit (5): the script stops
     try expectContents(dl, "RAMT:o2", "a b\n");
+    try expectContents(dl, "RAMT:e1", "value after keyword missing\n" ++ "value after keyword missing\n");
+    try expectContents(dl, "RAMT:o3", "");
+    try expectContents(dl, "RAMT:e3", "value after keyword missing\n");
+    try testing.expect(dl.Lock("RAMT:e2", dos.SHARED_LOCK) == null);
     process.freeVars(db, &tp.proc);
     tp.proc.cli = null;
     dl.FreeDosObject(dos.DOS_CLI, cli);

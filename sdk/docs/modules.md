@@ -200,6 +200,7 @@ flowchart TB
     m_nvme_device["nvme.device"]
     m_openeth_device["openeth.device"]
     m_pci_library["pci.library"]
+    m_platform_resource["platform.resource"]
     m_posfs_handler["posfs-handler"]
     m_rdb_library["rdb.library"]
     m_rs485_device["rs485.device"]
@@ -233,6 +234,7 @@ flowchart TB
     m_anvil_library --> m_icon_library
     m_anvil_library --> m_intuition_library
     m_anvil_library --> m_layers_library
+    m_anvil_library --> m_platform_resource
     m_anvil_library --> m_timer_device
     m_asl_library -.-> m_anvil_library
     m_asl_library --> m_diskfont_library
@@ -344,7 +346,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
+    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_platform_resource,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
 ```
 <!-- modchart end -->
 
