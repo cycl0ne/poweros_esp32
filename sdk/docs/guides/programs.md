@@ -452,7 +452,7 @@ check is a Guru on the serial console that says what failed and where:
 
 **The machine runs on.** The task that failed is held where it is - it
 never runs another instruction - and a Software Failure requester on the
-display names it, on either chip:
+display names it, on every board with a display:
 
 - **Suspend** leaves it held for good, with whatever it holds, while
   everything else goes on.

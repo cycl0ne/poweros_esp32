@@ -80,7 +80,9 @@ has the details). Any other dead end stops the machine: it keeps the end
 of the log over the restart, offers the ROM debugger for a few seconds
 (`*** enter the debugger? (y)`), and restarts if nobody answers. The next
 boot's log starts with the last words of the one before; `Log` shows
-them.
+them. On the VisionFive 2 and QEMU virt such a dead end halts the
+machine (`*** system halted`): they have no ROM debugger and keep no
+last words, so the raw port is where it is read.
 
 ## From an address to a line
 
