@@ -43,7 +43,8 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = cv.CANVAS_CLASS,
     .version = 2,
-    .date = "11.10.2026",
+    .revision = 1,
+    .date = "18.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -69,16 +70,28 @@ pub const Data = extern struct {
 const default_width = 160;
 const default_height = 120;
 
-/// A bitmap of `width` by `height` in the display's format, cleared, and
-/// a RastPort onto it; null with no memory.
-fn makePicture(gb: *GraphicsBase, width: u32, height: u32) ?struct { bitmap: *sdk.rtg.Surface, rast_port: *graphics.RastPort } {
+/// The display's pixel format, read from a RastPort on it: the picture is
+/// made in it, since a blit into a window does not convert. rgb565 with no
+/// display.
+fn displayFormat(gb: *GraphicsBase) u32 {
+    var format: u32 = @intFromEnum(sdk.rtg.PixelFormat.rgb565);
+    const display = gb.CreateRastPortTagList(null) orelse return format;
+    defer gb.FreeRastPort(display);
+    gb.GetRPAttrs(display, &[_]TagItem{ .{ .tag = graphics.RPTAG_Format, .data = @intFromPtr(&format) }, .{} });
+    return format;
+}
+
+/// A bitmap of `width` by `height` in `format`, cleared, and a RastPort
+/// onto it; null with no memory.
+fn makePicture(gb: *GraphicsBase, width: u32, height: u32, format: u32) ?struct { bitmap: *sdk.rtg.Surface, rast_port: *graphics.RastPort } {
     const bitmap = gb.AllocBitMapTagList(&[_]TagItem{
         .{ .tag = graphics.BMTAG_Width, .data = width },
         .{ .tag = graphics.BMTAG_Height, .data = height },
+        .{ .tag = graphics.BMTAG_Format, .data = format },
         .{ .tag = graphics.BMTAG_Clear, .data = 1 },
         .{},
     }) orelse return null;
-    const rast_port = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} }) orelse {
+    const rast_port = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(bitmap) }, .{} }) orelse {
         gb.FreeBitMap(bitmap);
         return null;
     };
@@ -90,7 +103,8 @@ fn makePicture(gb: *GraphicsBase, width: u32, height: u32) ?struct { bitmap: *sd
 /// False with no memory: the picture stays as it was.
 fn resize(gb: *GraphicsBase, own: *Data, width: u32, height: u32) bool {
     if (width == own.width and height == own.height) return true;
-    const picture = makePicture(gb, width, height) orelse return false;
+    const format: u32 = if (own.bitmap) |old| @intFromEnum(old.format) else displayFormat(gb);
+    const picture = makePicture(gb, width, height, format) orelse return false;
     if (own.bitmap) |old| {
         _ = gb.BltBitMap(old, 0, 0, picture.bitmap, 0, 0, @intCast(@min(width, own.width)), @intCast(@min(height, own.height)));
     }
@@ -188,7 +202,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.height = @max(if (asked_h != 0) asked_h else given_h, 1);
             own.nominal_width = own.width;
             own.nominal_height = own.height;
-            if (makePicture(gb, own.width, own.height)) |picture| {
+            if (makePicture(gb, own.width, own.height, displayFormat(gb))) |picture| {
                 own.bitmap = picture.bitmap;
                 own.rast_port = picture.rast_port;
             }
